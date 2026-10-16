@@ -228,6 +228,14 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
    titles rather than claiming exact equivalents.
 3. Add skeleton/structure gallery, quick styles, global font and custom theme editor;
    maintain per-topic override precedence and opt-in reuse of recent choices.
+   Use the Map-tab anchored preview selector for changing existing sheets as well as
+   choosing new-map defaults. Group Mind map, Logic, Brace, Org, Tree, Timeline,
+   Fishbone, Tree table, Matrix and the newly observed Grid family; audit supported
+   structures and implement missing Grid semantics only after reference verification.
+   Separate structural layout from visual skeleton presets, generate thumbnails,
+   and apply each choice in one undoable transaction preserving content/relationships.
+   Include palette/add-theme, color variants, background, global font and branch-width
+   controls; keep popup columns responsive and current selection visible.
 
 **Exit:** every template validates and opens, previews match created maps, Cancel
 creates nothing, recent/filter state persists correctly and licensed assets are tracked.
