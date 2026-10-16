@@ -96,8 +96,23 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   exposing enabled actions. Use licensed/original sticker and illustration assets.
   XMind's "PRO" badges are product-specific and do not establish yMind licensing.
   Cover menu accessibility, dismissal/focus, insertion undo and packaged-file round trips.
+- P1 Right-sidebar navigation: two adjacent buttons at the top-right of the canvas.
+  The smiley selects the Symbol / Sticker / Illustration panel family; the panel
+  icon selects the Style ("Stil") / Pitch / Map family. Show the active family
+  and active tab distinctly, using one shared sidebar region rather than six
+  unrelated panes. Preserve topic selection while switching families/tabs.
+  Repeated-click collapse behavior and whether each family remembers its last tab
+  still need verification. Test both families, tab navigation and accessible names.
+- P1 Style pane reference: topic-style preview/preset selector followed by grouped
+  Shape (fill, border and width/fit), Text (font family, size, weight, color,
+  emphasis and alignment), Structure, Branch (geometry, line/end style, thickness
+  and color) and Numbering controls, plus an apply-to-related-topics action.
+  Reuse existing formatting commands; verify unlabeled dropdowns and the scope of
+  "related topics" before defining behavior. Do not assume the displayed font is
+  licensed or installed across platforms. Pitch and Map tab contents need their
+  own references; the screenshot establishes their navigation, not their controls.
 - P1 Right-side symbol pane: selection-aware insertion from Symbol, Sticker and
-  Illustration tabs, opened from the canvas pane toggle. Provide scrollable,
+  Illustration tabs, opened with the smiley button. Provide scrollable,
   collapsible groups, an optional legend and a "New group" action. Reuse the existing
   marker model/actions rather than adding a separate icon system.
 - P2 Symbol library coverage: colored tags, priorities 1-7, task progress through
