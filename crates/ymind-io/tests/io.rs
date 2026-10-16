@@ -90,6 +90,42 @@ fn xmind_export_import_roundtrips_model() {
     let restored = import_bytes(Format::XMind, &bytes).unwrap();
     assert_eq!(restored, w);
 }
+
+#[test]
+fn xmind_export_uses_xmind_metadata_and_public_content() {
+    // XMind mutates creator.name while loading; a string creator rejects the archive.
+    let bytes = export_bytes(&sample(), Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_reader(archive.by_name("metadata.json").unwrap()).unwrap();
+    assert_eq!(metadata["creator"]["name"], "yMind");
+    assert!(metadata["creator"]["version"].is_string());
+    assert_eq!(metadata["dataStructureVersion"], "2");
+    let manifest: serde_json::Value =
+        serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+    assert!(manifest["file-entries"]["content.json"].is_object());
+    assert!(manifest["file-entries"]["metadata.json"].is_object());
+
+    let mut content = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("content.json").unwrap(), &mut content)
+        .unwrap();
+    // Do not let the private lossless workbook bypass parsing the exported XMind tree.
+    let public_archive = zip_with(&[("content.json", &content)]);
+    let restored = import_bytes(Format::XMind, &public_archive).unwrap();
+    assert_eq!(restored.sheets.len(), 2);
+    let sheet = &restored.sheets[0];
+    assert_eq!(sheet.root_topic().title, "Central & topic");
+    let branch = sheet.topic(sheet.root_topic().children[0]).unwrap();
+    assert_eq!(branch.title, "Branch <A>");
+    assert_eq!(branch.notes.as_deref(), Some("Notes & details"));
+    assert_eq!(branch.markers, vec!["priority-1", "flag-red"]);
+    assert_eq!(branch.labels, vec!["work", "important"]);
+    assert_eq!(sheet.floating.len(), 1);
+    assert_eq!(sheet.relationships.len(), 1);
+    assert_eq!(sheet.boundaries.len(), 1);
+    assert_eq!(sheet.summaries.len(), 1);
+}
+
 #[test]
 fn xmind_json_imports_tree_and_metadata() {
     let content=br##"[{"id":"s1","class":"sheet","title":"Fixture","rootTopic":{"id":"r","class":"topic","title":"Root","structureClass":"org.xmind.ui.logic.right","children":{"attached":[{"id":"a","class":"topic","title":"Child","markers":[{"markerId":"priority-2"}],"labels":["label"],"notes":{"plain":{"content":"memo"}},"href":"https://example.org","branch":"folded","style":{"properties":{"svg:fill":"#112233","fo:font-weight":"bold"}}}]}}}]"##;

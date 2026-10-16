@@ -6,6 +6,10 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Fixed XMind rejecting exports: archive metadata now uses a creator object and
+  data-structure version 2, matching XMind's expected format. Confirmed the old
+  failure and successful corrected-file opening in the installed Windows XMind app.
+  Added public archive contract/content coverage independent of the private workbook.
 - Style shows the selected topic's resolved colors, including inherited/custom
   values outside the preset palette, with a checked swatch and hexadecimal readout.
   Missing fill/border colors are explicit. Map shows the effective sheet background

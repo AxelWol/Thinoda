@@ -412,6 +412,13 @@ First slice implemented (Windows x64 source verification):
   case, 14 UI unit tests). Formatting and workspace clippy pass; the follow-up full
   CI run was blocked by Windows Application Control on the app's empty binary test
   executable. Targeted affected suites and the Windows x64 package build pass.
+- XMind export compatibility: reproduced rejection in native XMind, whose error
+  was `Cannot create property 'name' on string 'yMind'`. Corrected metadata to
+  `creator: {name, version}` with `dataStructureVersion: "2"`, following the
+  official xmind-generator archive format. A newly exported six-topic Unicode
+  sample opens in installed Windows XMind with its hierarchy/text visible.
+  Regression checks validate metadata/manifest and parse public content without
+  yMind's private lossless payload. This verifies opening, not full visual fidelity.
 
 Continue R1 command-availability consistency and R2 preferences/bottom controls,
 alongside reference verification. Sticker/Illustration/Pitch panes and persistent
