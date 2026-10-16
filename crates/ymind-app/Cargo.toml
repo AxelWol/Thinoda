@@ -39,3 +39,56 @@ sys-locale.workspace = true
 [dev-dependencies]
 egui_kittest.workspace = true
 tempfile.workspace = true
+
+# Installers: `cargo xtask package` (wraps `cargo packager --release -p ymind-app`).
+[package.metadata.packager]
+product-name = "yMind"
+identifier = "io.github.axelwol.ymind"
+publisher = "yMind contributors"
+copyright = "Copyright © yMind contributors"
+category = "Productivity"
+description = "Fast, cross-platform mind mapping"
+long-description = "yMind is a free, GPU-accelerated mind mapping app with XMind, FreeMind, OPML and Markdown import/export, crash-safe autosave and an optional local AI assistant."
+out-dir = "../../target/packages"
+icons = ["../../assets/icon.ico", "../../assets/icon-512.png", "../../assets/icon-256.png", "../../assets/icon-128.png", "../../assets/icon-32.png"]
+binaries = [{ path = "ymind", main = true }]
+
+[[package.metadata.packager.file-associations]]
+extensions = ["ymind"]
+name = "yMind Map"
+description = "yMind mind map"
+mime-type = "application/x-ymind"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["xmind"]
+name = "XMind Map"
+description = "XMind mind map"
+mime-type = "application/vnd.xmind.workbook"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["mm"]
+name = "FreeMind Map"
+description = "FreeMind / Freeplane mind map"
+mime-type = "application/x-freemind"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["opml"]
+name = "OPML Outline"
+description = "OPML outline"
+mime-type = "text/x-opml"
+role = "viewer"
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+languages = ["English", "German"]
+display-language-selector = true
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+[package.metadata.packager.deb]
+section = "editors"
+depends = ["libgtk-3-0", "libxkbcommon0", "libxcb1", "libgl1", "libwayland-client0"]
