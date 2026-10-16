@@ -117,7 +117,7 @@ impl YMindApp {
             }
         }
 
-        egui::CentralPanel::default()
+        let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 if !show_doc {
@@ -128,6 +128,20 @@ impl YMindApp {
                     self.map(ui);
                 }
             });
+
+        if show_doc && !self.zen && !self.any_modal_open() && !self.dialogs.settings {
+            self.editing_toolbar(&ctx, center.response.rect);
+        }
+
+        if show_doc
+            && self.mode == CenterMode::Map
+            && !self.search.open
+            && !self.palette.open
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+        {
+            self.topic_toolbar(&ctx);
+        }
 
         if show_doc && self.search.open {
             self.search_bar(&ctx);
@@ -168,7 +182,6 @@ impl YMindApp {
             ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
                 self.main_menu(ui, &mut cmd)
             });
-            let has_doc = self.doc().is_some();
             let (can_undo, can_redo) = self
                 .doc()
                 .map_or((false, false), |d| (d.doc.can_undo(), d.doc.can_redo()));
@@ -262,29 +275,6 @@ impl YMindApp {
                 {
                     cmd = Some(Cmd::Find);
                 }
-                widgets::vdivider(ui);
-                // Insert toolbar (right-to-left, so reversed).
-                ui.add_enabled_ui(has_doc, |ui| {
-                    ui.menu_button(icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
-                        .response
-                        .on_hover_text(t("Marker"));
-                    let tools = [
-                        (icons::BOUNDARY, "Boundary", Action::AddBoundary),
-                        (icons::SUMMARY, "Summary", Action::AddSummary),
-                        (
-                            icons::RELATIONSHIP,
-                            "Relationship",
-                            Action::StartRelationship,
-                        ),
-                        (icons::SUBTOPIC, "Subtopic", Action::InsertChild),
-                        (icons::TOPIC, "Topic", Action::InsertSibling),
-                    ];
-                    for (icon, label, action) in tools {
-                        if widgets::toolbar_button(ui, icon, t(label), true).clicked() {
-                            cmd = Some(Cmd::Canvas(action));
-                        }
-                    }
-                });
             });
         });
         if let Some(c) = cmd {
@@ -374,6 +364,7 @@ impl YMindApp {
                 ("Delete", "Del", Cmd::Canvas(Action::Delete)),
                 ("Select All", "Ctrl+A", Cmd::Canvas(Action::SelectAll)),
                 ("Find…", "Ctrl+F", Cmd::Find),
+                ("Find and Replace…", "Ctrl+H", Cmd::FindReplace),
                 ("Command Palette…", "Ctrl+Shift+P", Cmd::Palette),
             ];
             for (l, sc, c) in e {
@@ -469,12 +460,102 @@ impl YMindApp {
 
     // ----- center -------------------------------------------------------------------------------
 
+    fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) {
+        let Some(d) = self.doc() else { return };
+        let has_selection = !d.view.selection.is_empty();
+        let single = d.view.selection.len() == 1;
+        let mut cmd = None;
+        egui::Area::new(egui::Id::unique("ymind_editing_toolbar"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(canvas.center_top() + vec2(0.0, 12.0))
+            .constrain_to(canvas)
+            .movable(false)
+            .show(ctx, |ui| {
+                widgets::card(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_enabled_ui(has_selection, |ui| {
+                            for (icon, label, action) in [
+                                (icons::TOPIC, "Topic", Action::InsertSibling),
+                                (icons::SUBTOPIC, "Subtopic", Action::InsertChild),
+                                (
+                                    icons::RELATIONSHIP,
+                                    "Relationship",
+                                    Action::StartRelationship,
+                                ),
+                                (icons::BOUNDARY, "Boundary", Action::AddBoundary),
+                                (icons::SUMMARY, "Summary", Action::AddSummary),
+                            ] {
+                                if widgets::icon_button(ui, icon, t(label), false).clicked() {
+                                    cmd = Some(Cmd::Canvas(action));
+                                }
+                            }
+                        });
+                        widgets::vdivider(ui);
+                        ui.menu_button(icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
+                            .response
+                            .accessible_name(t("Marker"))
+                            .on_hover_text(t("Marker"));
+                        ui.menu_button(format!("{} {}", icons::ADD, icons::CHEVRON_DOWN), |ui| {
+                            ui.set_min_width(190.0);
+                            for (icon, label, enabled, command) in [
+                                (
+                                    icons::NOTE,
+                                    "Notes",
+                                    single,
+                                    Cmd::EditField(FocusField::Notes),
+                                ),
+                                (
+                                    icons::LINK,
+                                    "Hyperlink",
+                                    single,
+                                    Cmd::EditField(FocusField::Hyperlink),
+                                ),
+                                (
+                                    icons::TODO,
+                                    "To-Do",
+                                    has_selection,
+                                    Cmd::Canvas(Action::ToggleTodo),
+                                ),
+                                (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
+                            ] {
+                                if ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::new(format!("{icon} {}", t(label))),
+                                    )
+                                    .accessible_name(t(label))
+                                    .clicked()
+                                {
+                                    cmd = Some(command);
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button(t("Find and Replace…")).clicked() {
+                                cmd = Some(Cmd::FindReplace);
+                                ui.close();
+                            }
+                        })
+                        .response
+                        .accessible_name(t("More insert actions"))
+                        .on_hover_text(t("More insert actions"));
+                    });
+                });
+            });
+        if let Some(command) = cmd {
+            self.exec(ctx, command);
+        }
+    }
+
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let paste = std::mem::take(&mut self.paste_requested);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        d.view.add_control_labels.child = t("Add child topic").into();
+        d.view.add_control_labels.sibling = t("Add sibling topic").into();
         if paste {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
             ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
@@ -497,8 +578,107 @@ impl YMindApp {
         }
     }
 
+    fn topic_toolbar(&mut self, ctx: &Context) {
+        let Some(d) = self.doc() else { return };
+        if d.view.selection.len() != 1
+            || d.view.editing_topic().is_some()
+            || d.view.relationship_from.is_some()
+        {
+            return;
+        }
+        let Some(rect) = d.view.selected_topic_rect(&d.doc) else {
+            return;
+        };
+        let canvas = d.view.canvas_rect();
+        let topic = d.view.primary().and_then(|id| d.doc.sheet().topic(id));
+        let has_link = topic.is_some_and(|topic| topic.hyperlink.is_some());
+        let todo = topic.is_some_and(|topic| topic.todo.is_some());
+        let below = rect.top() - 52.0 < canvas.top();
+        let position = egui::pos2(
+            rect.center().x,
+            if below {
+                rect.bottom() + 12.0
+            } else {
+                rect.top() - 12.0
+            },
+        );
+        let mut cmd = None;
+        egui::Area::new(egui::Id::unique("ymind_topic_toolbar"))
+            .order(egui::Order::Foreground)
+            .pivot(if below {
+                egui::Align2::CENTER_TOP
+            } else {
+                egui::Align2::CENTER_BOTTOM
+            })
+            .fixed_pos(position)
+            .constrain_to(canvas.shrink(4.0))
+            .movable(false)
+            .show(ctx, |ui| {
+                widgets::card(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if self.settings.ai.enabled {
+                            if ui.button(t("Expand ideas")).clicked() {
+                                cmd = Some(Cmd::Ai(crate::ai::AiCommand::Brainstorm));
+                            }
+                            widgets::vdivider(ui);
+                        }
+                        for (icon, label, selected, command) in [
+                            (
+                                icons::SUBTOPIC,
+                                "Add subtopic",
+                                false,
+                                Cmd::Canvas(Action::InsertChild),
+                            ),
+                            (
+                                icons::RELATIONSHIP,
+                                "Connect topics",
+                                false,
+                                Cmd::Canvas(Action::StartRelationship),
+                            ),
+                            (
+                                icons::LINK,
+                                "Edit hyperlink",
+                                has_link,
+                                Cmd::EditField(FocusField::Hyperlink),
+                            ),
+                            (
+                                icons::NOTE,
+                                "Edit notes",
+                                false,
+                                Cmd::EditField(FocusField::Notes),
+                            ),
+                            (
+                                icons::TODO,
+                                "Toggle to-do",
+                                todo,
+                                Cmd::Canvas(Action::ToggleTodo),
+                            ),
+                            (icons::FORMAT, "Topic style", false, Cmd::TopicStyle),
+                        ] {
+                            if widgets::icon_button(ui, icon, t(label), selected).clicked() {
+                                cmd = Some(command);
+                            }
+                        }
+                    });
+                });
+            });
+        if let Some(command) = cmd {
+            self.exec(ctx, command);
+        }
+    }
+
     fn context_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         let has_sel = self.doc().is_some_and(|d| !d.view.selection.is_empty());
+        let single = self.doc().is_some_and(|d| d.view.selection.len() == 1);
+        let non_root = self
+            .doc()
+            .is_some_and(|d| has_sel && !d.view.selection.contains(&d.doc.sheet().root));
+        let has_children = self.doc().is_some_and(|d| {
+            d.view
+                .selection
+                .iter()
+                .any(|id| !d.doc.sheet().children(*id).is_empty())
+        });
         let has_link = self.doc().is_some_and(|d| {
             d.view
                 .primary()
@@ -508,6 +688,7 @@ impl YMindApp {
         let mut item = |ui: &mut Ui, label: &str, sc: &str, c: Cmd, enabled: bool| {
             if ui
                 .add_enabled(enabled, egui::Button::new(label).shortcut_text(sc))
+                .accessible_name(label)
                 .clicked()
             {
                 *cmd = Some(c);
@@ -533,7 +714,7 @@ impl YMindApp {
             t("Parent Topic"),
             "Ctrl+Enter",
             Cmd::Canvas(Action::InsertParent),
-            has_sel,
+            single && non_root,
         );
         ui.separator();
         item(
@@ -541,7 +722,7 @@ impl YMindApp {
             t("Relationship"),
             "Ctrl+Shift+L",
             Cmd::Canvas(Action::StartRelationship),
-            has_sel,
+            single,
         );
         item(
             ui,
@@ -558,6 +739,23 @@ impl YMindApp {
             has_sel,
         );
         item(ui, t("To-Do"), "", Cmd::Canvas(Action::ToggleTodo), has_sel);
+        if single {
+            item(
+                ui,
+                t("Edit hyperlink"),
+                "Ctrl+K",
+                Cmd::EditField(FocusField::Hyperlink),
+                true,
+            );
+            item(
+                ui,
+                t("Edit notes"),
+                "Ctrl+Shift+N",
+                Cmd::EditField(FocusField::Notes),
+                true,
+            );
+            item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
+        }
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
                 for a in crate::ai::AiCommand::ALL {
@@ -580,7 +778,7 @@ impl YMindApp {
             item(ui, t("Open Link"), "", Cmd::OpenLink, true);
         }
         ui.separator();
-        item(ui, t("Cut"), "Ctrl+X", Cmd::Canvas(Action::Cut), has_sel);
+        item(ui, t("Cut"), "Ctrl+X", Cmd::Canvas(Action::Cut), non_root);
         item(ui, t("Copy"), "Ctrl+C", Cmd::Canvas(Action::Copy), has_sel);
         item(ui, t("Paste"), "Ctrl+V", Cmd::MenuPaste, true);
         item(
@@ -588,15 +786,21 @@ impl YMindApp {
             t("Duplicate"),
             "Ctrl+D",
             Cmd::Canvas(Action::Duplicate),
-            has_sel,
+            non_root,
         );
-        item(ui, t("Delete"), "Del", Cmd::Canvas(Action::Delete), has_sel);
+        item(
+            ui,
+            t("Delete"),
+            "Del",
+            Cmd::Canvas(Action::Delete),
+            non_root,
+        );
         item(
             ui,
             t("Delete Topic Only"),
             "Ctrl+Del",
             Cmd::Canvas(Action::DeleteKeepChildren),
-            has_sel,
+            non_root,
         );
         ui.separator();
         item(
@@ -604,7 +808,7 @@ impl YMindApp {
             t("Collapse / Expand"),
             "Ctrl+/",
             Cmd::Canvas(Action::ToggleCollapse),
-            has_sel,
+            has_children,
         );
         item(
             ui,
@@ -1433,7 +1637,11 @@ impl YMindApp {
                 widgets::card(ui).show(ui, |ui| {
                     ui.set_width(340.0);
                     ui.horizontal(|ui| {
-                        let r = widgets::search_field(ui, &mut self.search.query, t("Search"));
+                        let r = ui
+                            .allocate_ui(vec2(230.0, 28.0), |ui| {
+                                widgets::search_field(ui, &mut self.search.query, t("Search"))
+                            })
+                            .inner;
                         if std::mem::take(&mut self.search.focus) {
                             r.request_focus();
                         }
@@ -1442,13 +1650,25 @@ impl YMindApp {
                             self.goto_hit(if back { -1 } else { 1 });
                             r.request_focus();
                         }
-                        if ui.small_button("▲").clicked() {
+                        if ui
+                            .small_button("▲")
+                            .accessible_name(t("Previous result"))
+                            .clicked()
+                        {
                             self.goto_hit(-1);
                         }
-                        if ui.small_button("▼").clicked() {
+                        if ui
+                            .small_button("▼")
+                            .accessible_name(t("Next result"))
+                            .clicked()
+                        {
                             self.goto_hit(1);
                         }
-                        if ui.small_button(icons::CLOSE).clicked() {
+                        if ui
+                            .small_button(icons::CLOSE)
+                            .accessible_name(t("Close search"))
+                            .clicked()
+                        {
                             close = true;
                         }
                     });
@@ -1476,7 +1696,8 @@ impl YMindApp {
                                 TextEdit::singleline(&mut self.search.replace)
                                     .hint_text(t("Replace"))
                                     .desired_width(220.0),
-                            );
+                            )
+                            .accessible_name(t("Replace with"));
                             if ui
                                 .add_enabled(n > 0, egui::Button::new(t("Replace All")))
                                 .clicked()
