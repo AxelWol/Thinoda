@@ -423,17 +423,28 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   shortcut conflict/reset behavior.
 
 ## Canvas visual and interaction parity (user screenshots, 2026-10-16)
-- P1 Drag-and-drop hierarchy refinement: extend existing topic reparent/floating
-  drag support to match the supplied interaction reference. Show a translucent
-  dragged subtree, dim its original location and preview the proposed parent,
-  connector and sibling insertion slot in blue before release. Support changing
+- P1 Drag-and-drop hierarchy refinement (partially delivered): full visible subtree
+  ghosts now include owned Summary trees, boundaries and internal relationships;
+  their original content is dimmed and proposed parents highlighted. Escape, popups,
+  changed document/sheet/selection and lost drags cancel without edits. Self/owned
+  descendant and outside-canvas drops fail visibly instead of detaching. Central
+  and Summary roots are protected. Edge auto-pan is bounded to 480 logical pixels
+  per second with a 50 ms frame cap. Top-most movable roots commit atomically,
+  retain external relationships and expand an accepted parent. Eight new cases
+  cover actual ghost content, collapsed subtrees, ownership, one-step undo/redo,
+  cancellation, invalid drops and zoom/pan. Remaining: exact reference comparison,
+  proposed connector and sibling insertion-slot previews in blue. Support changing
   parent, sibling order and main-branch side, not just moving a card visually.
   Preserve subtree contents and cross-topic relationships; distinguish hierarchy
   changes from independent dashed relationships ("associations").
   Verify exact target/ordering rules against XMind rather than inferring them from
   the static screenshots. Cover invalid self/descendant drops, root protection,
   cancellation, undo/redo, zoom/pan coordinates and viewport-edge auto-pan, plus
-  a keyboard alternative. Confirm detach-to-floating gestures before changing them.
+  a keyboard alternative. Official Topic/Floating Topic guides confirm dragging
+  regular topics to blank space and floating topics back into branches; existing
+  yMind gestures are retained. Flexible Floating Topics setting parity remains open.
+  Sources: https://xmind.com/user-guide/topic-editing-new ,
+  https://xmind.com/user-guide/floating-topic
 - P1 Reference styling: plain bold central topic, rounded colored main topics,
   pale rounded first-level subtopics, deeper underlined topics, thin colored curved
   main branches and compact rounded sub-branch junctions. Clarity theme now provides

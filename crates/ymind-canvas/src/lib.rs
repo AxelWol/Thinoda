@@ -16,6 +16,7 @@ mod actions;
 mod measure;
 mod relationship_editing;
 mod render;
+mod topic_drag;
 mod view;
 
 pub use actions::{Action, FloatingArrangement, apply_action};

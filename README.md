@@ -43,6 +43,13 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   guaranteed. The original document and its save destination are retained.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
+- Hierarchy drags show a translucent visible subtree, including owned Summary trees,
+  boundaries and internal relationships, while dimming its source. Valid parents
+  are highlighted; self/descendant and outside-canvas drops are rejected visibly.
+  Escape, popups and stale document/selection changes cancel without edits.
+  Viewport-edge auto-pan keeps the ghost under the pointer. Dropping on a parent
+  appends once and expands it; blank drops retain the existing detach-to-floating
+  behavior. Sibling insertion previews and manual branch-side placement remain open.
 - Insert > Labels, the topic/context menus and Style > Edit labels open the same
   anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
   remove chips; Apply commits once, while Escape/Cancel/outside click discards the

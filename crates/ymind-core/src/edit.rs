@@ -88,7 +88,8 @@ impl Sheet {
         Ok(new)
     }
 
-    fn owned_subtree_ids(&self, id: TopicId) -> std::collections::HashSet<TopicId> {
+    /// Includes the topic tree and all recursively owned Summary trees.
+    pub fn owned_subtree_ids(&self, id: TopicId) -> std::collections::HashSet<TopicId> {
         let mut owned: std::collections::HashSet<_> = self.subtree_ids(id).into_iter().collect();
         loop {
             let before = owned.len();

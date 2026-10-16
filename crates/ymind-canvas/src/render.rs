@@ -59,6 +59,8 @@ pub struct PaintOptions<'a> {
     pub dark: bool,
     /// Topics dimmed by an active filter (`None` = no filter).
     pub filter: Option<&'a [TopicId]>,
+    /// Additional source topics dimmed while a view-only drag preview is active.
+    pub dimmed: Option<&'a std::collections::BTreeSet<TopicId>>,
     pub selected_object: Option<ObjectSelection>,
 }
 
@@ -100,19 +102,25 @@ pub fn paint_map(
 ) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
-    let dim = |id: TopicId| opts.filter.is_some_and(|f| !f.contains(&id));
+    let dim = |id: TopicId| {
+        opts.filter.is_some_and(|f| !f.contains(&id))
+            || opts.dimmed.is_some_and(|ids| ids.contains(&id))
+    };
 
     // Boundaries.
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
         let selected = opts.selected_object == Some(ObjectSelection::Boundary(b.id));
-        let color = if selected {
+        let mut color = if selected {
             opts.accent
         } else {
             bd.and_then(|x| x.color)
                 .map(color32)
                 .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0))
         };
+        if bd.is_some_and(|b| dim(b.parent)) {
+            color = color.gamma_multiply(0.3);
+        }
         let r = xf.rect(b.rect);
         painter.rect_filled(
             r,
@@ -222,7 +230,7 @@ pub fn paint_map(
     // Relationships (on top of topics, like XMind).
     for r in &layout.relationships {
         let rel = sheet.relationships.iter().find(|x| x.id == r.id);
-        let color = rel
+        let mut color = rel
             .and_then(|x| x.color)
             .map(color32)
             .unwrap_or(if opts.dark {
@@ -230,6 +238,9 @@ pub fn paint_map(
             } else {
                 Color32::from_rgb(0x5A, 0x6A, 0x80)
             });
+        if rel.is_some_and(|r| dim(r.from) && dim(r.to)) {
+            color = color.gamma_multiply(0.3);
+        }
         let pts: Vec<Pos2> = (0..=RELATIONSHIP_SEGMENTS)
             .map(|i| {
                 xf.pos(cubic(

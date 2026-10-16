@@ -185,9 +185,11 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
 
 ### R3 - Canvas interaction and visual completion
 
-1. Refine reparenting with subtree ghost/dimmed origin, target connector and insertion
-   slot previews; sibling ordering, main-branch sides, cancellation and edge auto-pan.
-   Verify detach gestures; reject self/descendant/root-invalid drops atomically.
+1. Delivered visible-subtree ghosts/dimmed origins, parent highlighting, cancellation,
+   stale-source protection, bounded edge auto-pan and atomic protected drops.
+   Existing detach gestures are retained and supported by the official guides.
+   Remaining: target connector/insertion-slot previews, sibling ordering, manual
+   main-branch sides, Flexible Floating Topics parity and native reference comparison.
 2. Delivered relationship endpoint reconnect, Bezier handles/guides and a dedicated
    Style editor without replacing relationship colors with selection color.
    Relative controls persist with one-step undo; keyboard alternatives exist.
@@ -394,6 +396,21 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R3 hierarchy-drag feedback delivered: the complete visible owned subtree is painted
+at 55% opacity while its source is dimmed, including Summary trees, boundaries and
+internal relationships. External relationships stay on the original sheet and
+survive reparenting. Drag ownership is cached and bound to document revision, sheet
+and selection. Escape, popups and lost drags cancel; invalid self/owned-descendant
+or outside-canvas drops report errors without mutation. Central/Summary roots
+cannot start a move. Parent drops append atomically and expand collapsed targets;
+blank drops preserve existing detach/move behavior. Stationary edge drags pan at
+up to 480 logical pixels/second with a 50 ms frame cap and retain pointer alignment.
+Eight new cases cover these contracts, visible ghost text, collapsed content,
+ownership and undo/redo at multiple zoom levels. All 210 core/canvas/IO/platform/UI,
+31 app-library/relationship/German and 60 non-CLI e2e cases pass; formatting/clippy
+pass. Full hierarchy ordering, insertion connectors/slots and branch-side placement
+are not marked complete.
 
 R3 relationship editing delivered: selected lines retain their original color
 beneath a separate overlay with endpoint circles, control squares and guide lines.
