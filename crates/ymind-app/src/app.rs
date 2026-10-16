@@ -355,7 +355,12 @@ impl YMindApp {
                     CenterMode::Map
                 };
             }
-            Cmd::ToggleZen => self.zen = !self.zen,
+            Cmd::ToggleZen => {
+                self.zen = !self.zen;
+                if self.zen {
+                    self.toasts.info(t("Zen Mode: press F11 to exit"));
+                }
+            }
             Cmd::ToggleFormatPanel => {
                 self.settings.show_format_panel = !self.settings.show_format_panel;
                 self.save_settings();

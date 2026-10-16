@@ -111,10 +111,29 @@ fn outliner_and_zen_toggle() {
     h.run_steps(2);
     assert!(h.state().zen);
     assert!(
+        h.state()
+            .toasts
+            .texts()
+            .any(|text| text == "Zen Mode: press F11 to exit")
+    );
+    h.get_by_label("Zen Mode: press F11 to exit");
+    assert!(
         h.query_by_role_and_label(Role::Button, "Outliner")
             .is_none(),
         "chrome hidden in Zen mode"
     );
+    h.state_mut().toasts.tick(10.0);
+    h.key_press(egui::Key::F11);
+    h.run_steps(2);
+    assert!(!h.state().zen);
+    assert!(h.state().toasts.is_empty(), "no entry toast when exiting");
+    h.key_press(egui::Key::F11);
+    h.run_steps(2);
+    assert!(h.state().zen);
+    assert_eq!(h.state().toasts.len(), 1);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state().zen);
 }
 
 #[test]

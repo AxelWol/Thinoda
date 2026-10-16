@@ -3,6 +3,7 @@
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
 
 ## Recently completed
+- Entering Zen mode displays a localized toast explaining that F11 exits it.
 - Fixed the Windows Search crash caused by a dangling accessibility label reference.
 - Floating topic toolbar for AI expansion, subtopics, relationships, links, notes, to-dos and style.
 - Floating main editing toolbar with a compact insert popover, keeping the title bar uncluttered.

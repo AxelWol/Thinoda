@@ -70,6 +70,10 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    (
+        "Zen Mode: press F11 to exit",
+        "Zen-Modus: F11 zum Beenden drücken",
+    ),
     ("Expand ideas", "Ideen ausbauen"),
     ("Add subtopic", "Unterthema hinzufügen"),
     ("Add child topic", "Unterthema am Anschluss hinzufügen"),
