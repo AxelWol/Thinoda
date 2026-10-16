@@ -6,6 +6,13 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Template-section navigation: EN/DE category chevrons and counts open each of
+  the eight sections; fixed All templates returns to the overview. Each view
+  retains its own scroll position, selections clear on navigation, and Create/
+  Cancel retain their non-destructive semantics. All sections support keyboard
+  activation and narrow/wide layouts. Reference-specific additional template
+  content remains open. All 378 workspace cases and all-target clippy pass
+  with live AI disabled; Windows EXE/NSIS refreshed.
 - Custom-theme authoring: staged EN/DE editor with actual-renderer previews,
   built-in base, 1-16 palette colors, separate light/dark backgrounds, global
   font and central/main/sub/floating/Summary role defaults. Apply embeds the
@@ -100,7 +107,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   Previews and keyboard activation are shared reusable UI/canvas helpers.
   Native/XMind round trips cover every template; English/German selection,
   cancellation, category filtering, restart persistence and narrow/wide bounds
-  are covered. Further reference-specific content and section navigation remain open.
+  are covered. Section navigation is delivered above; reference-specific content remains open.
 - Map structure preview gallery: current-layout thumbnail/name opens an anchored,
   bounded scrollable popup with nine collapsible families and responsive one-to-three
   column cards for all 17 supported structures. Original samples use the real core
@@ -417,8 +424,9 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
 ## Template gallery parity (user screenshots, 2026-10-16)
 - Implemented generated previews, responsive grids, scrolling, fixed header/category
   filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
-  Selection enables Create without immediate creation. Section navigation chevrons
-  and additional reference-specific content still need verified implementation.
+  Selection enables Create without immediate creation. Section navigation chevrons,
+  counts and fixed All templates return navigation are implemented (see above).
+  Additional reference-specific content still needs verified implementation.
 - Implemented category filters: All, Basic, Knowledge management, Meeting and planning,
   Study and education, Project management, Entertainment and life, Analysis and
   decision, Creativity. Recent templates are separate from recent documents.

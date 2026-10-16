@@ -76,7 +76,8 @@ pub(crate) fn show(
     category: Option<TemplateCategory>,
     choice: &mut Option<&'static str>,
     recent: &[String],
-) {
+) -> Option<TemplateCategory> {
+    let mut navigate = None;
     let recent: Vec<_> = recent
         .iter()
         .filter_map(|id| templates::TEMPLATES.iter().find(|info| info.id == id))
@@ -92,14 +93,31 @@ pub(crate) fn show(
         if category.is_some_and(|category| category != group) {
             continue;
         }
-        ui.heading(t(group.label()));
         let entries: Vec<_> = templates::TEMPLATES
             .iter()
             .filter(|info| info.category == group)
             .collect();
+        ui.horizontal(|ui| {
+            ui.heading(t(group.label()));
+            if category.is_none() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = format!("{}: {}", t("Browse templates"), t(group.label()));
+                    if ui
+                        .small_button(ymind_ui::icons::CHEVRON_RIGHT)
+                        .on_hover_text(&label)
+                        .accessible_name(label)
+                        .clicked()
+                    {
+                        navigate = Some(group);
+                    }
+                    ui.label(entries.len().to_string());
+                });
+            }
+        });
         ui.push_id(group.label(), |ui| cards(ui, &entries, choice, false));
         ui.add_space(16.0);
     }
+    navigate
 }
 
 #[cfg(test)]

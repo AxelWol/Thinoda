@@ -1178,24 +1178,29 @@ impl YMindApp {
                 ui.set_min_size(ui.available_size());
                 ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
                 let previous = self.template_category;
-                egui::ComboBox::from_id_salt("template_category")
-                    .selected_text(
-                        self.template_category
-                            .map_or(t("All"), |category| t(category.label())),
-                    )
-                    .width(ui.available_width().min(360.0))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.template_category, None, t("All"));
-                        for category in templates::TemplateCategory::ALL {
-                            ui.selectable_value(
-                                &mut self.template_category,
-                                Some(category),
-                                t(category.label()),
-                            );
-                        }
-                    })
-                    .response
-                    .accessible_name(t("Template Category"));
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("template_category")
+                        .selected_text(
+                            self.template_category
+                                .map_or(t("All"), |category| t(category.label())),
+                        )
+                        .width(ui.available_width().min(360.0))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.template_category, None, t("All"));
+                            for category in templates::TemplateCategory::ALL {
+                                ui.selectable_value(
+                                    &mut self.template_category,
+                                    Some(category),
+                                    t(category.label()),
+                                );
+                            }
+                        })
+                        .response
+                        .accessible_name(t("Template Category"));
+                    if self.template_category.is_some() && ui.button(t("All templates")).clicked() {
+                        self.template_category = None;
+                    }
+                });
                 if previous != self.template_category {
                     self.template_choice = None;
                 }
@@ -1234,70 +1239,79 @@ impl YMindApp {
                             }
                         });
                     });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    crate::template_gallery::show(
-                        ui,
-                        self.template_category,
-                        &mut self.template_choice,
-                        &self.settings.recent_templates,
-                    );
-                    ui.add_space(24.0);
-                    ui.horizontal(|ui| {
-                        ui.heading(RichText::new(t("Recent")).size(18.0).strong());
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if widgets::secondary_button(ui, t("Open File…")).clicked() {
-                                cmd = Some(Cmd::Open);
-                            }
-                        });
-                    });
-                    ui.add_space(6.0);
-                    let recent: Vec<_> = self
-                        .settings
-                        .existing_recent()
-                        .into_iter()
-                        .cloned()
-                        .collect();
-                    if recent.is_empty() {
-                        widgets::caption(ui, t("No recent files"));
-                    }
-                    for r in recent.iter().take(20) {
+                egui::ScrollArea::vertical()
+                    .id_salt((
+                        "home_templates",
+                        self.template_category
+                            .map_or("all", |category| category.label()),
+                    ))
+                    .show(ui, |ui| {
+                        if let Some(category) = crate::template_gallery::show(
+                            ui,
+                            self.template_category,
+                            &mut self.template_choice,
+                            &self.settings.recent_templates,
+                        ) {
+                            self.template_category = Some(category);
+                            self.template_choice = None;
+                        }
+                        ui.add_space(24.0);
                         ui.horizontal(|ui| {
-                            if ui
-                                .small_button(if r.pinned { icons::PIN } else { "·" })
-                                .clicked()
-                            {
-                                self.settings.pin_recent(&r.path, !r.pinned);
-                                self.save_settings();
-                            }
-                            let name = r
-                                .path
-                                .file_name()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            if ui.link(name).clicked() {
-                                cmd = Some(Cmd::OpenPath(r.path.clone()));
-                            }
-                            let cloud = ymind_platform::cloud::provider_for_path(
-                                &self.services.cloud,
-                                &r.path,
-                            );
-                            if let Some(c) = cloud {
-                                widgets::chip(
-                                    ui,
-                                    &format!("{} {}", icons::CLOUD, c.name),
-                                    p.accent,
-                                );
-                            }
-                            widgets::caption(
-                                ui,
-                                r.path
-                                    .parent()
-                                    .map(|x| x.display().to_string())
-                                    .unwrap_or_default(),
-                            );
+                            ui.heading(RichText::new(t("Recent")).size(18.0).strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::secondary_button(ui, t("Open File…")).clicked() {
+                                    cmd = Some(Cmd::Open);
+                                }
+                            });
                         });
-                    }
-                });
+                        ui.add_space(6.0);
+                        let recent: Vec<_> = self
+                            .settings
+                            .existing_recent()
+                            .into_iter()
+                            .cloned()
+                            .collect();
+                        if recent.is_empty() {
+                            widgets::caption(ui, t("No recent files"));
+                        }
+                        for r in recent.iter().take(20) {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .small_button(if r.pinned { icons::PIN } else { "·" })
+                                    .clicked()
+                                {
+                                    self.settings.pin_recent(&r.path, !r.pinned);
+                                    self.save_settings();
+                                }
+                                let name = r
+                                    .path
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                if ui.link(name).clicked() {
+                                    cmd = Some(Cmd::OpenPath(r.path.clone()));
+                                }
+                                let cloud = ymind_platform::cloud::provider_for_path(
+                                    &self.services.cloud,
+                                    &r.path,
+                                );
+                                if let Some(c) = cloud {
+                                    widgets::chip(
+                                        ui,
+                                        &format!("{} {}", icons::CLOUD, c.name),
+                                        p.accent,
+                                    );
+                                }
+                                widgets::caption(
+                                    ui,
+                                    r.path
+                                        .parent()
+                                        .map(|x| x.display().to_string())
+                                        .unwrap_or_default(),
+                                );
+                            });
+                        }
+                    });
             });
         if let Some(c) = cmd {
             let ctx = ui.ctx().clone();

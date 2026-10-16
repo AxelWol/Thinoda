@@ -22,6 +22,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   Select a card, then Create; Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
   from recent files. Ctrl+N still creates a blank map directly.
+  Section chevrons open a category directly; All templates returns to the
+  overview. Each view retains its own scroll position. Navigation clears the
+  pending selection and never creates or changes a map.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.

@@ -401,6 +401,15 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 template-section navigation delivered: eight accessible EN/DE chevrons/counts
+open category views, and fixed All templates returns to the overview. Per-view
+scroll state restores the overview position rather than inheriting a deep offset
+in the category view. Navigation clears selection, does not create maps or alter
+recents, and preserves source documents. Keyboard activation and all categories
+at 480/1280 widths are covered. All 378 workspace cases and all-target clippy pass
+with live AI disabled; Windows EXE/NSIS refreshed. Additional reference-specific
+template content, Grid-family and visual skeleton work remain open.
+
 R5 custom-theme authoring delivered: staged EN/DE editor and actual-renderer
 preview support a built-in base, 1-16 colors, light/dark backgrounds, global font
 and five role defaults. Apply embeds the theme in one undo step; Save to Library
@@ -615,8 +624,8 @@ but Windows Application Control blocked its IO unit-test executable (4551).
 The normal standalone IO suite subsequently passed; system policy was not changed.
 Live AI is explicitly disabled. The earlier full-gallery CI success below is
 historical and is not a claim that this latest full invocation finished.
-Reference-specific template expansion, section navigation, richer assets and theme
-authoring remain open; R5 is not complete.
+Section navigation and theme authoring were subsequently delivered above.
+Reference-specific template expansion and richer assets remain open; R5 is not complete.
 
 R5 structure-gallery slice delivered: the Map selector shows the current layout
 thumbnail/name and a bounded, anchored scrollable popup with nine collapsible families

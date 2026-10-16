@@ -124,6 +124,8 @@ const DE: &[(&str, &str)] = &[
     ("Recently used templates", "Zuletzt verwendete Vorlagen"),
     ("Recent template", "Zuletzt verwendete Vorlage"),
     ("Template Category", "Vorlagenkategorie"),
+    ("Browse templates", "Vorlagen durchsuchen"),
+    ("All templates", "Alle Vorlagen"),
     (
         "Select a template, then choose Create.",
         "Vorlage auswählen und dann Erstellen wählen.",

@@ -1517,6 +1517,68 @@ fn template_chooser_filters_selects_before_creating_and_cancels_without_touching
 }
 
 #[test]
+fn template_sections_navigate_with_keyboard_and_return_without_changing_maps() {
+    use ymind_core::templates::{TEMPLATES, TemplateCategory};
+    for width in [480.0, 1280.0] {
+        let mut app = YMindApp::headless();
+        let source = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&egui::Context::default(), Cmd::Home);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 900.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.run_steps(4);
+        for category in TemplateCategory::ALL {
+            let label = format!("Browse templates: {}", category.label());
+            h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+            h.run_steps(10);
+            h.get_by_role_and_label(Role::Button, &label).focus();
+            h.run_steps(2);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(4);
+            assert_eq!(h.state().template_category, Some(category));
+            assert!(h.state().template_choice.is_none());
+            let info = TEMPLATES
+                .iter()
+                .find(|info| info.category == category)
+                .unwrap();
+            let card = h.get_by_role_and_label(Role::Button, info.name);
+            assert!(
+                h.ctx.content_rect().contains_rect(card.rect()),
+                "{} at {width}",
+                info.name
+            );
+            card.click();
+            h.run_steps(3);
+            assert_eq!(h.state().template_choice, Some(info.id));
+            let back = h.get_by_role_and_label(Role::Button, "All templates");
+            assert!(h.ctx.content_rect().contains_rect(back.rect()));
+            back.click();
+            h.run_steps(4);
+            assert!(h.state().template_category.is_none());
+            assert!(h.state().template_choice.is_none());
+            assert!(
+                h.get_by_role_and_label(Role::Button, "Create")
+                    .accesskit_node()
+                    .is_disabled()
+            );
+            assert!(
+                h.ctx
+                    .content_rect()
+                    .contains_rect(h.get_by_role_and_label(Role::Button, &label).rect())
+            );
+            assert_eq!(h.state().docs.len(), 1);
+            assert_eq!(h.state().docs[0].doc.workbook(), &source);
+            assert!(h.state().settings.recent_templates.is_empty());
+        }
+        h.get_by_role_and_label(Role::Button, "Cancel").click();
+        h.run_steps(3);
+        assert_eq!(h.state().active, 0);
+    }
+}
+
+#[test]
 fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::from_root(dir.path());

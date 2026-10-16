@@ -385,4 +385,20 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             .custom_theme
             .is_some()
     );
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Alle Vorlagen")
+        .click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Vorlagen durchsuchen: Lernen und Bildung")
+        .scroll_to_me();
+    h.run_steps(10);
+    h.get_by_role_and_label(Role::Button, "Vorlagen durchsuchen: Lernen und Bildung")
+        .click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Alle Vorlagen")
+        .click();
+    h.run_steps(4);
+    assert!(h.state().template_category.is_none());
 }
