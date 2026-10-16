@@ -2334,6 +2334,43 @@ impl YMindApp {
             });
         });
 
+        widgets::section(ui, t("Branches"), true, |ui| {
+            let mut automatic = ts.line_width.is_none();
+            widgets::property_field(ui, t("Automatic branch width"), |ui| {
+                widgets::toggle(ui, &mut automatic, t("Automatic branch width"))
+            });
+            if automatic {
+                ts.line_width = None;
+            } else {
+                let width = ts.line_width.unwrap_or(1.5);
+                ts.line_width = Some(width);
+                widgets::property_field(ui, t("Branch Line Width"), |ui| {
+                    let (response, done) = buffered_text(
+                        ui,
+                        (
+                            &d.key,
+                            d.doc.active_index(),
+                            d.doc.state_id(),
+                            "branch-width",
+                        ),
+                        &width.to_string(),
+                        0,
+                        "0.5-16",
+                    );
+                    if let Some(done) = done {
+                        match done.trim().parse::<f32>() {
+                            Ok(value) => ts.line_width = Some(value),
+                            Err(error) => {
+                                self.toasts
+                                    .warning(format!("{}: {error}", t("Invalid branch width")));
+                            }
+                        }
+                    }
+                    response
+                });
+            }
+        });
+
         widgets::section(ui, t("Advanced Layout"), true, |ui| {
             widgets::property_field(ui, t("Flexible Floating Topics"), |ui| {
                 widgets::toggle(
@@ -2366,10 +2403,14 @@ impl YMindApp {
         });
 
         if ts != before {
-            let _ = d.doc.edit_sheet(t("Theme"), |s| {
+            let result = d.doc.edit_sheet(t("Theme"), |s| {
+                ts.validate().map_err(ymind_core::EditError::Invalid)?;
                 s.theme = ts;
                 Ok(())
             });
+            if let Err(error) = result {
+                self.toasts.error(error.to_string());
+            }
         }
     }
 
@@ -2941,6 +2982,16 @@ fn buffered_text(
         TextEdit::multiline(&mut buf).desired_rows(rows)
     };
     let r = ui.add(edit.id(id).hint_text(hint).desired_width(f32::INFINITY));
+    if rows == 0 && r.lost_focus() {
+        let cancel = ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter);
+            input.consume_key(Modifiers::NONE, Key::Escape)
+        });
+        if cancel {
+            ui.data_mut(|data| data.remove::<String>(id));
+            return (r, None);
+        }
+    }
     if r.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, buf));
         (r, None)

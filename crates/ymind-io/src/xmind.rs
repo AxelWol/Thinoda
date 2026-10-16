@@ -128,7 +128,7 @@ fn public_content(book: &Workbook) -> Value {
         if let Some(color) = style.line_color {
             properties.insert("line-color".into(), json!(color.to_hex()));
         }
-        if let Some(width) = style.line_width {
+        if let Some(width) = style.line_width.or(sheet.theme.line_width) {
             properties.insert("line-width".into(), json!(width.to_string()));
         }
         if let Some(shape) = style.shape {
@@ -378,7 +378,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
         if let Some(color) = style.line_color {
             properties.push(format!("line-color=\"{}\"", color.to_hex()));
         }
-        if let Some(width) = style.line_width {
+        if let Some(width) = style.line_width.or(sheet.theme.line_width) {
             properties.push(format!("line-width=\"{width}\""));
         }
         if let Some(line_shape) = style.line_shape {
@@ -1079,6 +1079,7 @@ mod tests {
     fn legacy_xml_export_preserves_topic_style_and_content() {
         let mut w = Workbook::new(Sheet::new("S", "Root & title"));
         w.active_mut().theme.font_family = Some("monospace".into());
+        w.active_mut().theme.line_width = Some(3.5);
         let root = w.active().root;
         let child = w.active_mut().add_child(root, None, "Child");
         w.active_mut().topic_mut(child).unwrap().style = ymind_core::TopicStyle {
@@ -1087,6 +1088,7 @@ mod tests {
             line_shape: Some(LineShape::RoundedElbow),
             font_family: Some("Noto Sans".into()),
             font_size: Some(14.0),
+            line_width: Some(4.0),
             ..Default::default()
         };
         let bytes = export(&w).unwrap();
@@ -1097,6 +1099,7 @@ mod tests {
         assert!(xml.contains("Child"));
         assert!(xml.contains("shape-class=\"org.xmind.topicShape.diamond\""));
         let imported = import_legacy_xml(xml.as_bytes()).unwrap();
+        assert_eq!(imported.active().root_topic().style.line_width, Some(3.5));
         assert_eq!(
             imported.active().root_topic().style.font_family.as_deref(),
             Some("monospace")
@@ -1106,6 +1109,7 @@ mod tests {
             .topic(imported.active().root_topic().children[0])
             .unwrap();
         assert_eq!(imported_child.style.fill, Some(Color::rgb(10, 20, 30)));
+        assert_eq!(imported_child.style.line_width, Some(4.0));
         assert_eq!(imported_child.style.shape, Some(TopicShape::Diamond));
         assert_eq!(
             imported_child.style.line_shape,

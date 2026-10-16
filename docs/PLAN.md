@@ -401,6 +401,17 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 map-wide branch width delivered: Automatic retains theme/level defaults;
+explicit 0.5-16 widths apply across topic roles without replacing per-topic
+overrides. The EN/DE Map control buffers numeric edits until confirmation and
+supports Escape cancellation; invalid drafts neither dirty maps nor add history.
+Shared single-line sidebar fields now consume confirmation/cancel keys so Enter
+does not leak into canvas topic insertion. Native/private snapshots retain the
+setting, and public XMind JSON/XML carries effective widths.
+All 352 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with map-wide width controls and safe numeric editing.
+Quick-style libraries and the full custom-theme editor remain open.
+
 R2/R5 real global/topic fonts delivered: selectors enumerate installed system and
 user fonts, registering requested faces lazily in the reusable UI crate. Canvas
 measurement, painting, inline editing and Map Shot use the same family; font

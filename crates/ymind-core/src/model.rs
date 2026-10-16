@@ -874,6 +874,7 @@ impl Sheet {
         if !self.contains(self.root) {
             return Err("root topic missing".into());
         }
+        self.theme.validate()?;
         if self.root_topic().parent.is_some() {
             return Err("root has a parent".into());
         }

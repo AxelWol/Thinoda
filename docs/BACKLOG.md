@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Map-wide branch stroke width: Map > Branches offers Automatic or an explicit
+  0.5-16 width in EN/DE. Topic overrides take precedence; restoring Automatic
+  returns the theme's level-specific defaults. Buffered numeric drafts commit
+  once, reject malformed/nonfinite/out-of-range values visibly and cancel with
+  Escape. Confirming sidebar fields consumes Enter rather than inserting topics.
+  Native/unchanged yMind XMind snapshots preserve inheritance; public JSON/XML
+  exports include effective widths. Full custom-theme authoring and quick styles
+  remain open.
 - Real font-family support: Map > Theme > Global Font and Style > Text > Font
   Family select local installed faces (including user-installed fonts); Auto
   inherits the map setting. Reusable UI font registration loads only requested
@@ -280,7 +288,9 @@ are not lists of wholly missing features; audit and reuse existing implementatio
     them. Apply as one undoable edit, re-layout and keep selection/camera usable.
   - Map-tab reference also shows theme palette selection/add, multicolor and single-
     color variant previews, background color, global font and branch-line width.
-    Reuse existing theme settings and verify partially visible controls.
+    Global font and map-wide branch width are implemented; theme creation and
+    exact reference previews still remain. Reuse existing theme settings and
+    verify partially visible controls.
   - Generate previews from original sample maps, not copied XMind thumbnails;
     commercial badges do not establish yMind feature restrictions. Test every preset,
     undo/redo, saved-file round trips, large/deep trees and keyboard popup navigation.

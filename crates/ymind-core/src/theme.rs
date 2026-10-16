@@ -26,6 +26,9 @@ pub struct ThemeSettings {
     pub flexible_floating_topics: bool,
     /// Taper branch lines (thicker near the center).
     pub tapered_lines: bool,
+    /// Default branch stroke width; explicit topic widths still win.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_width: Option<f32>,
     /// Override global font family.
     pub font_family: Option<String>,
     /// Spacing multiplier between topics.
@@ -42,9 +45,21 @@ impl Default for ThemeSettings {
             balanced: false,
             flexible_floating_topics: false,
             tapered_lines: true,
+            line_width: None,
             font_family: None,
             spacing: 1.0,
         }
+    }
+}
+
+impl ThemeSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(width) = self.line_width
+            && (!width.is_finite() || !(0.5..=16.0).contains(&width))
+        {
+            return Err("theme branch line width must be between 0.5 and 16".into());
+        }
+        Ok(())
     }
 }
 
@@ -335,6 +350,9 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
     }
     if clarity {
         r.line_width = 1.5;
+    }
+    if let Some(width) = settings.line_width {
+        r.line_width = width;
     }
     if let Some(t) = topic {
         let s = &t.style;

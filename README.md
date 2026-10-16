@@ -14,6 +14,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   unavailable families warn and keep their requested names. Native files retain
   the settings, and public XMind JSON/XML receive the effective font names.
   Fonts are not embedded or redistributed; install them on each target machine.
+- Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
+  Per-topic line widths still override it. Confirm numeric drafts with Enter or
+  blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - Home offers rendered previews of 17 original templates across eight categories.
   Select a card, then Create; Cancel returns to the previous document without

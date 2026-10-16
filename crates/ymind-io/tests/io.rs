@@ -10,6 +10,7 @@ fn sample() -> Workbook {
     let mut s = Sheet::new("First sheet", "Central & topic");
     s.theme.flexible_floating_topics = true;
     s.theme.font_family = Some("serif".into());
+    s.theme.line_width = Some(3.5);
     let a = s.add_child(s.root, None, "Branch <A>");
     let b = s.add_child(s.root, None, "Branch B");
     let child = s.add_child(a, None, "Nested");
@@ -215,6 +216,7 @@ fn xmind_export_import_roundtrips_model() {
     assert_eq!(restored.sheets.len(), 2);
     let sheet = &restored.sheets[0];
     assert_eq!(sheet.root_topic().title, "Central & topic");
+    assert_eq!(sheet.root_topic().style.line_width, Some(3.5));
     assert_eq!(
         sheet.root_topic().style.font_family.as_deref(),
         Some("serif")
