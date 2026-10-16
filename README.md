@@ -68,6 +68,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
+- XMind reopening honors edits made by other applications rather than silently
+  restoring a stale private snapshot. Unchanged yMind exports retain lossless
+  reopening; supported public theme defaults and inline overrides are imported.
 - Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
 - Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders

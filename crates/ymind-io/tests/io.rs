@@ -232,6 +232,171 @@ fn xmind_export_import_roundtrips_model() {
     assert_eq!(sheet.topics[&sheet.summaries[0].topic].title, "Summary");
 }
 
+fn xmind_json_parts(book: &Workbook) -> (serde_json::Value, serde_json::Value) {
+    let bytes = export_bytes(book, Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let content = serde_json::from_reader(archive.by_name("content.json").unwrap()).unwrap();
+    let metadata = serde_json::from_reader(archive.by_name("metadata.json").unwrap()).unwrap();
+    (content, metadata)
+}
+
+fn xmind_from_parts(content: &serde_json::Value, metadata: &serde_json::Value) -> Vec<u8> {
+    zip_with(&[
+        ("content.json", &serde_json::to_vec_pretty(content).unwrap()),
+        ("metadata.json", &serde_json::to_vec(metadata).unwrap()),
+    ])
+}
+
+#[test]
+fn xmind_snapshot_is_content_bound_but_ignores_json_whitespace() {
+    let mut book = sample();
+    let root = book.sheets[0].root;
+    book.sheets[0].topic_mut(root).unwrap().todo = Some(true);
+    book.metadata.description = Some("Private lossless field".into());
+    let (content, metadata) = xmind_json_parts(&book);
+    assert_eq!(metadata["ymindContentSha256"].as_str().unwrap().len(), 64);
+    let bytes = xmind_from_parts(&content, &metadata);
+    assert_eq!(import_bytes(Format::XMind, &bytes).unwrap(), book);
+    let mut legacy = metadata.clone();
+    legacy.as_object_mut().unwrap().remove("ymindContentSha256");
+    assert_eq!(
+        import_bytes(Format::XMind, &xmind_from_parts(&content, &legacy)).unwrap(),
+        book
+    );
+}
+
+#[test]
+fn external_xmind_edits_win_over_current_and_legacy_private_snapshots() {
+    let book = sample();
+    let (mut content, metadata) = xmind_json_parts(&book);
+    content.as_array_mut().unwrap().truncate(1);
+    content[0]["title"] = serde_json::json!("Edited sheet");
+    content[0]["rootTopic"]["title"] = serde_json::json!("Edited outside yMind");
+    content[0]["rootTopic"]["notes"] = serde_json::json!({"plain":{"content":"new note"}});
+    content[0]["rootTopic"]["children"] =
+        serde_json::json!({"attached":[{"id":"new","title":"Replacement"}]});
+    content[0]["rootTopic"]
+        .as_object_mut()
+        .unwrap()
+        .remove("summaries");
+    content[0]["rootTopic"]
+        .as_object_mut()
+        .unwrap()
+        .remove("boundaries");
+    content[0]["relationships"] = serde_json::json!([]);
+    for legacy in [false, true] {
+        let mut meta = metadata.clone();
+        if legacy {
+            meta.as_object_mut().unwrap().remove("ymindContentSha256");
+        }
+        let restored = import_bytes(Format::XMind, &xmind_from_parts(&content, &meta)).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.sheets.len(), 1);
+        let sheet = &restored.sheets[0];
+        assert_eq!(sheet.title, "Edited sheet");
+        assert_eq!(sheet.root_topic().title, "Edited outside yMind");
+        assert_eq!(sheet.root_topic().notes.as_deref(), Some("new note"));
+        assert_eq!(sheet.topic_count(), 2);
+        assert_eq!(
+            sheet.topic(sheet.root_topic().children[0]).unwrap().title,
+            "Replacement"
+        );
+        assert!(
+            sheet.summaries.is_empty()
+                && sheet.boundaries.is_empty()
+                && sheet.relationships.is_empty()
+        );
+        let native = export_bytes(&restored, Format::YMind, &Default::default()).unwrap();
+        assert_eq!(import_bytes(Format::YMind, &native).unwrap(), restored);
+    }
+    assert_eq!(book.sheets[0].root_topic().title, "Central & topic");
+}
+
+#[test]
+fn invalid_private_snapshots_do_not_hide_valid_public_maps_or_broken_public_json() {
+    let (content, metadata) = xmind_json_parts(&sample());
+    for snapshot in ["{broken", r#"{"sheets":[],"active_sheet":0}"#] {
+        let mut meta = metadata.clone();
+        meta["ymindWorkbook"] = serde_json::json!(snapshot);
+        let restored = import_bytes(Format::XMind, &xmind_from_parts(&content, &meta)).unwrap();
+        assert_eq!(restored.sheets[0].root_topic().title, "Central & topic");
+    }
+    let mut malformed_hash = metadata.clone();
+    malformed_hash["ymindContentSha256"] = serde_json::json!(42);
+    assert!(import_bytes(Format::XMind, &xmind_from_parts(&content, &malformed_hash)).is_ok());
+    let bytes = zip_with(&[
+        ("content.json", b"{broken"),
+        ("metadata.json", &serde_json::to_vec(&metadata).unwrap()),
+    ]);
+    assert!(import_bytes(Format::XMind, &bytes).is_err());
+}
+
+#[test]
+fn xmind_theme_defaults_are_materialized_per_role_and_inline_styles_win() {
+    // Field names/role structure follow xmindltd/xmind-viewer example/content.json.
+    // This original fixture deliberately uses different values and topic content.
+    let content = serde_json::json!([{
+        "title":"Theme fixture",
+        "theme":{
+            "centralTopic":{"properties":{"svg:fill":"#112233","fo:font-size":28,"fo:font-weight":"600"}},
+            "mainTopic":{"properties":{"svg:fill":"#445566","fo:font-size":"20pt","fo:color":"#123456"}},
+            "subTopic":{"properties":{"fo:font-size":13,"shape-class":"org.xmind.topicShape.underline"}},
+            "floatingTopic":{"properties":{"svg:fill":"#778899","fo:font-size":17}},
+            "summaryTopic":{"properties":{"svg:fill":"#AABBCC","fo:font-size":19}}
+        },
+        "rootTopic":{
+            "id":"root","title":"Root",
+            "style":{"properties":{"fo:font-size":30}},
+            "children":{
+                "attached":[{"id":"main","title":"Main","style":{"properties":{"svg:fill":"#FF0000","fo:font-size":22}},
+                    "children":{"attached":[{"id":"sub","title":"Sub"}]}}],
+                "detached":[{"id":"float","title":"Floating","position":{"x":250,"y":80},
+                    "children":{"attached":[{"id":"float-child","title":"Floating child"}]}}],
+                "summary":[{"id":"summary","title":"Summary",
+                    "children":{"attached":[{"id":"summary-child","title":"Summary child"}]}}]
+            },
+            "summaries":[{"id":"sum","range":"(0, 0)","topicId":"summary"}]
+        }
+    },{
+        "title":"No inherited sheet theme","rootTopic":{"id":"other","title":"Other"}
+    }]);
+    let bytes = zip_with(&[("content.json", &serde_json::to_vec(&content).unwrap())]);
+    let book = import_bytes(Format::XMind, &bytes).unwrap();
+    book.validate().unwrap();
+    let sheet = &book.sheets[0];
+    let named = |title| {
+        sheet
+            .topics
+            .values()
+            .find(|topic| topic.title == title)
+            .unwrap()
+    };
+    assert_eq!(named("Root").style.fill, Some(Color::rgb(17, 34, 51)));
+    assert_eq!(named("Root").style.font_size, Some(30.0));
+    assert_eq!(named("Root").style.bold, Some(true));
+    assert_eq!(named("Main").style.fill, Some(Color::rgb(255, 0, 0)));
+    assert_eq!(named("Main").style.font_size, Some(22.0));
+    assert_eq!(named("Main").style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(
+        named("Floating").style.fill,
+        Some(Color::rgb(119, 136, 153))
+    );
+    assert_eq!(named("Summary").style.fill, Some(Color::rgb(170, 187, 204)));
+    for title in ["Sub", "Floating child", "Summary child"] {
+        assert_eq!(named(title).style.font_size, Some(13.0), "{title}");
+        assert_eq!(
+            named(title).style.shape,
+            Some(TopicShape::Underline),
+            "{title}"
+        );
+    }
+    assert_eq!(book.sheets[1].root_topic().style, Default::default());
+    for format in [Format::YMind, Format::XMind] {
+        let output = export_bytes(&book, format, &Default::default()).unwrap();
+        assert_eq!(import_bytes(format, &output).unwrap(), book);
+    }
+}
+
 #[test]
 fn xmind_export_uses_xmind_metadata_and_public_content() {
     // XMind mutates creator.name while loading; a string creator rejects the archive.

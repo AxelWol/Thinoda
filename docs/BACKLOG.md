@@ -6,6 +6,20 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- XMind external-edit coherence: lossless private snapshots are bound to canonical
+  public `content.json` with SHA-256. Changed public maps take precedence over stale
+  metadata, including topic/sheet deletion and replacement; JSON formatting changes
+  alone do not discard the snapshot. Older undigested exports are accepted only
+  when their generated public representation matches. Invalid private data is
+  logged and ignored, never used to hide corrupt public JSON. This is a coherence
+  check, not authentication or encryption. Public-only content still cannot
+  preserve fields that the public exporter does not yet support.
+  Supported per-role theme properties (central/main/sub/floating/Summary) now merge
+  beneath inline overrides and are materialized as topic styles. This follows the
+  [official viewer example](https://github.com/xmindltd/xmind-viewer/blob/master/example/content.json);
+  it does not add editable imported themes, style-ID registries, assets or full
+  native visual fidelity. Rich unmodified and externally edited round trips,
+  invalid/legacy snapshots, role precedence and native reopening are covered.
 - Tools > Map Shot (F7) uses native GPU canvas readback, not the approximate
   export renderer. A clean frame omits menus, toolbars, selection and search
   dimming; DPI-aware cropping retains only the canvas. The frozen review supports
@@ -111,7 +125,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Improved public XMind topic/line style class mappings, font/alignment/decorations/
   border/connector properties, relationship/boundary colors and structural element
   classes, including legacy topic-style parsing. Coverage imports public content
-  without the private workbook payload. Theme references, fixed widths, image/to-do
+  without the private workbook payload. Style-ID registries, fixed widths, image/to-do
   export and legacy relationships/boundaries/summaries/floating topics remain gaps;
   these style changes do not imply verified native visual fidelity.
 - Style shows the selected topic's resolved colors, including inherited/custom

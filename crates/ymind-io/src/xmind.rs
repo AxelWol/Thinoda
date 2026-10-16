@@ -1,5 +1,6 @@
 use crate::{IoError, zip_entry};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use ymind_core::{
@@ -67,7 +68,7 @@ fn parse_line_class(class: &str) -> Option<LineShape> {
     }
 }
 
-pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+fn public_content(book: &Workbook) -> Value {
     fn topic(sheet: &Sheet, id: TopicId, ids: &HashMap<TopicId, String>) -> Value {
         let model = &sheet.topics[&id];
         let mut children = serde_json::Map::new();
@@ -220,7 +221,6 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         }
         value
     }
-    let stable = serde_json::to_string(book)?;
     let sheets: Vec<Value> = book
         .sheets
         .iter()
@@ -244,11 +244,25 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
             })
         })
         .collect();
+    json!(sheets)
+}
+
+fn content_digest(content: &Value) -> Result<String, IoError> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(content)?)
+    ))
+}
+
+pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+    let stable = serde_json::to_string(book)?;
+    let sheets = public_content(book);
     let content = serde_json::to_vec(&sheets)?;
     let metadata = serde_json::to_vec(&json!({
         "creator": {"name": "yMind", "version": env!("CARGO_PKG_VERSION")},
         "dataStructureVersion": "2",
-        "ymindWorkbook": stable
+        "ymindWorkbook": stable,
+        "ymindContentSha256": content_digest(&sheets)?
     }))?;
     let manifest =
         serde_json::to_vec(&json!({"file-entries":{"content.json":{},"metadata.json":{}}}))?;
@@ -440,6 +454,8 @@ fn parse_topic(
     parent: Option<TopicId>,
     depth: usize,
     idmap: &mut HashMap<String, TopicId>,
+    theme: &Value,
+    role: &'static str,
 ) -> Result<TopicId, IoError> {
     if depth > 2000 {
         return Err(IoError::Invalid("XMind topic nesting exceeds 2000".into()));
@@ -488,11 +504,20 @@ fn parse_topic(
     {
         t.structure = Some(st);
     }
-    if let Some(props) = v
+    let mut props = theme
+        .get(role)
+        .and_then(|style| style.get("properties"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(overrides) = v
         .get("style")
         .and_then(|x| x.get("properties"))
         .and_then(Value::as_object)
     {
+        props.extend(overrides.clone());
+    }
+    if !props.is_empty() {
         let style = &mut s.topic_mut(id).unwrap().style;
         style.fill = props
             .get("svg:fill")
@@ -564,7 +589,12 @@ fn parse_topic(
         .cloned()
         .unwrap_or_default();
     for child in attached {
-        parse_topic(&child, s, Some(id), depth + 1, idmap)?;
+        let child_role = if role == "centralTopic" {
+            "mainTopic"
+        } else {
+            "subTopic"
+        };
+        parse_topic(&child, s, Some(id), depth + 1, idmap, theme, child_role)?;
     }
     if let Some(boundaries) = v.get("boundaries").and_then(Value::as_array) {
         for boundary in boundaries {
@@ -593,7 +623,15 @@ fn parse_topic(
         .and_then(Value::as_array)
     {
         for summary_topic in summaries {
-            let summary_id = parse_topic(summary_topic, s, Some(id), depth + 1, idmap)?;
+            let summary_id = parse_topic(
+                summary_topic,
+                s,
+                Some(id),
+                depth + 1,
+                idmap,
+                theme,
+                "summaryTopic",
+            )?;
             s.topic_mut(id)
                 .unwrap()
                 .children
@@ -641,7 +679,7 @@ fn parse_topic(
                     )
                 })
                 .unwrap_or(Vec2::ZERO);
-            let fid = parse_topic(&d, s, Some(id), depth + 1, idmap)?;
+            let fid = parse_topic(&d, s, Some(id), depth + 1, idmap, theme, "floatingTopic")?;
             s.topic_mut(id)
                 .unwrap()
                 .children
@@ -658,11 +696,18 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
     if bytes.starts_with(b"PK\x03\x04") {
         let mut z = ZipArchive::new(Cursor::new(bytes))?;
         if z.file_names().any(|n| n.is_ok_and(|v| v == "content.json")) {
+            let doc: Value = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
             let meta = if z
                 .file_names()
                 .any(|n| n.is_ok_and(|v| v == "metadata.json"))
             {
-                serde_json::from_slice::<Value>(&zip_entry(&mut z, "metadata.json")?).ok()
+                match serde_json::from_slice::<Value>(&zip_entry(&mut z, "metadata.json")?) {
+                    Ok(metadata) => Some(metadata),
+                    Err(e) => {
+                        log::warn!("Ignoring invalid XMind metadata; reading public content: {e}");
+                        None
+                    }
+                }
             } else {
                 None
             };
@@ -671,9 +716,31 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("ymindWorkbook"))
                 .and_then(Value::as_str)
             {
-                return Ok(serde_json::from_str(w)?);
+                match serde_json::from_str::<Workbook>(w) {
+                    Ok(workbook) => {
+                        if let Err(e) = workbook.validate() {
+                            log::warn!("Ignoring invalid private XMind snapshot: {e}");
+                        } else {
+                            let unchanged = match meta
+                                .as_ref()
+                                .and_then(|m| m.get("ymindContentSha256"))
+                            {
+                                Some(hash) => hash.as_str() == Some(content_digest(&doc)?.as_str()),
+                                // Old yMind exports have no digest. Only trust them when their
+                                // generated public representation still matches the actual file.
+                                None => public_content(&workbook) == doc,
+                            };
+                            if unchanged {
+                                return Ok(workbook);
+                            }
+                            log::warn!(
+                                "XMind public content changed; ignoring stale private snapshot"
+                            );
+                        }
+                    }
+                    Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
+                }
             }
-            let doc: Value = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
             let arr = doc
                 .as_array()
                 .ok_or_else(|| IoError::Invalid("XMind content must be an array".into()))?;
@@ -685,7 +752,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                     .ok_or_else(|| IoError::Invalid("XMind sheet missing rootTopic".into()))?;
                 let mut s = Sheet::new(title, "Untitled");
                 let mut ids = HashMap::new();
-                parse_topic(root, &mut s, None, 0, &mut ids)?;
+                parse_topic(root, &mut s, None, 0, &mut ids, &v["theme"], "centralTopic")?;
                 if let Some(rels) = v.get("relationships").and_then(Value::as_array) {
                     for r in rels {
                         let a = r

@@ -16,6 +16,7 @@ quick-xml.workspace = true
 resvg.workspace = true
 image.workspace = true
 log.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile.workspace = true
