@@ -6,6 +6,12 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Individual relationship/boundary/Summary selection and deletion via canvas
+  outlines/braces, Delete/Backspace and named contextual actions, with undo/redo.
+  Covered branches are preserved. Summary deletion removes its owned topic/children
+  and their annotations; the context menu explains that scope. Tests cover
+  pointer selection at multiple zooms, light/dark context menus and native/XMind
+  saved-file reopening after deletion.
 - Working General, Editor, AI and Cloud settings categories with scrolling.
   Editor has independently persisted topic-toolbar/add-button visibility, initial
   canvas zoom and opt-in last structure/theme defaults for new blank maps.
@@ -52,13 +58,11 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
 
 ## XMind parity (from the user guide)
-- P1 Delete structural objects: relationships (Beziehungen), boundaries (Umrandung)
-  and summaries (Zusammenfassung) must be individually selectable and deletable
-  through Delete and a contextual action, with undo/redo. Deleting a relationship
-  or boundary must preserve its topics and their content. Verify Summary deletion
-  semantics for its independent summary topic/children before implementing them;
-  never silently delete the covered sibling branches. Cover selection feedback,
-  keyboard/context-menu parity and save/import/export after deletion.
+- Implemented structural-object deletion for relationships (Beziehungen), boundaries
+  (Umrandung) and summaries (Zusammenfassung), including selection feedback,
+  Delete/context actions, undo/redo and saved-file reopening. Summary deletion uses
+  the existing model ownership rule: its own topic tree is deleted, covered sibling
+  branches are not. No XMind-specific alternative deletion behavior is implied.
 - P1 Summary ("Zusammenfassung") interaction/visual parity, clarified by the
   supplied screenshot: a brace spans a range of sibling branches, including their
   descendant extents, and connects to a separate editable summary topic outside

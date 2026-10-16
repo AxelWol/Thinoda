@@ -690,11 +690,44 @@ impl YMindApp {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        if let Some(object) = self.doc().and_then(|d| d.view.selected_object) {
+            let label = match object {
+                ymind_canvas::ObjectSelection::Relationship(_) => "Delete Relationship",
+                ymind_canvas::ObjectSelection::Boundary(_) => "Delete Boundary",
+                ymind_canvas::ObjectSelection::Summary(_) => "Delete Summary",
+            };
+            if matches!(object, ymind_canvas::ObjectSelection::Summary(_)) {
+                widgets::caption(
+                    ui,
+                    t("Deletes the summary topic and its children, not the covered branches."),
+                );
+            }
+            if ui.button(t(label)).clicked() {
+                *cmd = Some(Cmd::Canvas(Action::Delete));
+                ui.close();
+            }
+            return;
+        }
         let has_sel = self.doc().is_some_and(|d| !d.view.selection.is_empty());
         let single = self.doc().is_some_and(|d| d.view.selection.len() == 1);
         let non_root = self
             .doc()
             .is_some_and(|d| has_sel && !d.view.selection.contains(&d.doc.sheet().root));
+        let summary_topic = self.doc().is_some_and(|d| {
+            single
+                && d.doc
+                    .sheet()
+                    .summaries
+                    .iter()
+                    .any(|s| Some(s.topic) == d.view.primary())
+        });
+        let has_parent = self.doc().is_some_and(|d| {
+            single
+                && d.view
+                    .primary()
+                    .and_then(|id| d.doc.sheet().parent(id))
+                    .is_some()
+        });
         let has_children = self.doc().is_some_and(|d| {
             d.view
                 .selection
@@ -810,9 +843,19 @@ impl YMindApp {
             Cmd::Canvas(Action::Duplicate),
             non_root,
         );
+        if summary_topic {
+            widgets::caption(
+                ui,
+                t("Deletes the summary topic and its children, not the covered branches."),
+            );
+        }
         item(
             ui,
-            t("Delete"),
+            t(if summary_topic {
+                "Delete Summary"
+            } else {
+                "Delete"
+            }),
             "Del",
             Cmd::Canvas(Action::Delete),
             non_root,
@@ -822,7 +865,7 @@ impl YMindApp {
             t("Delete Topic Only"),
             "Ctrl+Del",
             Cmd::Canvas(Action::DeleteKeepChildren),
-            non_root,
+            has_parent,
         );
         ui.separator();
         item(

@@ -147,6 +147,17 @@ fn zoom_menu_has_presets_current_value_and_fit_without_changing_ui_scale() {
     assert_eq!(h.state().settings.ui_scale, 1.0);
     h.get_by_label("Zoom").click();
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "500%").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 500);
+    h.get_by_label("Zoom").click();
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("500%").count(), 1);
+    h.get_by_role_and_label(Role::Button, "10%").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 10);
+    h.get_by_label("Zoom").click();
+    h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Fit Map").click();
     h.run_steps(3);
     assert!(h.state().doc().unwrap().view.zoom > 0.0);
@@ -1062,6 +1073,109 @@ fn right_click_at(h: &mut Harness<'static, YMindApp>, pos: egui::Pos2) {
         });
     }
     h.run_steps(3);
+}
+
+#[test]
+fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_disk() {
+    use ymind_canvas::ObjectSelection;
+    for dark in [false, true] {
+        for kind in 0..3 {
+            let mut app = YMindApp::headless();
+            app.settings.show_topic_add_buttons = false;
+            app.settings.theme = if dark { Theme::Dark } else { Theme::Light };
+            let d = app.doc_mut().unwrap();
+            let mut book = Workbook::default();
+            let s = &mut book.sheets[0];
+            *s = ymind_core::Sheet::new("S", "Root");
+            s.structure = ymind_core::Structure::LogicRight;
+            let a = s.add_child(s.root, None, "Covered A");
+            let b = s.add_child(s.root, None, "Covered B");
+            let (object, label) = match kind {
+                0 => (
+                    ObjectSelection::Relationship(s.add_relationship(a, b).unwrap()),
+                    "Delete Relationship",
+                ),
+                1 => (
+                    ObjectSelection::Boundary(s.add_boundary(&[a, b]).unwrap()),
+                    "Delete Boundary",
+                ),
+                _ => {
+                    let topic = s.add_summary(&[a, b], "Conclusion").unwrap();
+                    s.add_child(topic, None, "Summary child");
+                    (
+                        ObjectSelection::Summary(s.summaries[0].id),
+                        "Delete Summary",
+                    )
+                }
+            };
+            d.doc.replace(book);
+            d.view.reset();
+            let mut h = harness(app);
+            let before = h.state().doc().unwrap().doc.sheet().clone();
+            let point = {
+                let d = h.state_mut().doc_mut().unwrap();
+                let layout = d.view.layout_for(&d.doc);
+                let point = match object {
+                    ObjectSelection::Relationship(_) => {
+                        let r = &layout.relationships[0];
+                        ymind_core::layout::cubic(r.start, r.c1, r.c2, r.end, 0.5)
+                    }
+                    ObjectSelection::Boundary(_) => layout.boundaries[0].rect.top_center(),
+                    ObjectSelection::Summary(_) => layout.summaries[0].tip,
+                };
+                d.view.canvas_rect().center()
+                    + d.view.offset
+                    + egui::vec2(point.x, point.y) * d.view.zoom
+            };
+            right_click_at(&mut h, point);
+            assert_eq!(h.state().doc().unwrap().view.selected_object, Some(object));
+            if kind == 2 {
+                h.get_by_label(
+                    "Deletes the summary topic and its children, not the covered branches.",
+                );
+            }
+            h.get_by_role_and_label(Role::Button, label).click();
+            h.run_steps(3);
+            assert!(!object.exists(h.state().doc().unwrap().doc.sheet()));
+            let ctx = h.ctx.clone();
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+            h.run_steps(3);
+            assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+            h.event(egui::Event::PointerMoved(point));
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            h.run_steps(3);
+            assert_eq!(h.state().doc().unwrap().view.selected_object, Some(object));
+            h.key_press(egui::Key::Delete);
+            h.run_steps(3);
+            let sheet = h.state().doc().unwrap().doc.sheet();
+            assert!(!object.exists(sheet));
+            assert_eq!(sheet.topic(a), before.topic(a));
+            assert_eq!(sheet.topic(b), before.topic(b));
+            sheet.validate().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            for extension in ["ymind", "xmind"] {
+                let path = dir.path().join(format!("deleted.{extension}"));
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .save_to(&path, false)
+                    .unwrap();
+                let imported = ymind_io::import_file(&path).unwrap();
+                let sheet = imported.active();
+                assert!(!object.exists(sheet));
+                assert!(sheet.contains(a) && sheet.contains(b));
+                sheet.validate().unwrap();
+            }
+        }
+    }
 }
 
 #[test]

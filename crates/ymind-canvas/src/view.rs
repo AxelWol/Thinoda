@@ -7,7 +7,7 @@ use egui::{
     Response, Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2 as EVec2, pos2, vec2,
 };
 use ymind_core::{
-    ApproxMeasure, Document, Layout, RelationshipId, Sheet, TopicId,
+    ApproxMeasure, BoundaryId, Document, Layout, RelationshipId, Sheet, SummaryId, TopicId,
     clipboard::ClipboardPayload,
     geometry::Vec2,
     layout::{Dir, Icon},
@@ -18,11 +18,28 @@ use ymind_core::{
 use crate::{
     actions::{Action, apply_action},
     measure::EguiMeasure,
-    render::{PaintOptions, Xf, color32, paint_map, sheet_background},
+    render::{PaintOptions, Xf, brace_path, color32, paint_map, sheet_background},
 };
 
 pub const MIN_ZOOM: f32 = 0.1;
-pub const MAX_ZOOM: f32 = 4.0;
+pub const MAX_ZOOM: f32 = 5.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectSelection {
+    Relationship(RelationshipId),
+    Boundary(BoundaryId),
+    Summary(SummaryId),
+}
+
+impl ObjectSelection {
+    pub fn exists(self, sheet: &Sheet) -> bool {
+        match self {
+            Self::Relationship(id) => sheet.relationships.iter().any(|r| r.id == id),
+            Self::Boundary(id) => sheet.boundaries.iter().any(|b| b.id == id),
+            Self::Summary(id) => sheet.summaries.iter().any(|s| s.id == id),
+        }
+    }
+}
 
 /// Default titles for newly created topics (localizable by the host app).
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +112,7 @@ pub struct MapView {
     pub offset: EVec2,
     pub zoom: f32,
     pub selection: Vec<TopicId>,
-    pub selected_relationship: Option<RelationshipId>,
+    pub selected_object: Option<ObjectSelection>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
     pub titles: NewTopicTitles,
@@ -126,7 +143,7 @@ impl Default for MapView {
             offset: EVec2::ZERO,
             zoom: 1.0,
             selection: Vec::new(),
-            selected_relationship: None,
+            selected_object: None,
             relationship_from: None,
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
@@ -154,10 +171,18 @@ impl MapView {
             self.pending_reveal = Some(id);
         }
         self.selection = vec![id];
-        self.selected_relationship = None;
+        self.selected_object = None;
+    }
+
+    pub fn select_object(&mut self, object: ObjectSelection) {
+        self.selection.clear();
+        self.selected_object = Some(object);
+        self.relationship_from = None;
+        self.pending_reveal = None;
     }
 
     pub fn toggle_selected(&mut self, id: TopicId) {
+        self.selected_object = None;
         if let Some(i) = self.selection.iter().position(|x| *x == id) {
             self.selection.remove(i);
         } else {
@@ -201,10 +226,10 @@ impl MapView {
         self.selection
             .retain(|id| sheet.topic(*id).is_some() && sheet.is_visible(*id));
         if self
-            .selected_relationship
-            .is_some_and(|r| !sheet.relationships.iter().any(|x| x.id == r))
+            .selected_object
+            .is_some_and(|object| !object.exists(sheet))
         {
-            self.selected_relationship = None;
+            self.selected_object = None;
         }
         if let Some(e) = &self.editing
             && sheet.topic(e.topic).is_none()
@@ -216,7 +241,7 @@ impl MapView {
     /// Resets per-sheet state (call when switching sheets or documents).
     pub fn reset(&mut self) {
         self.selection.clear();
-        self.selected_relationship = None;
+        self.selected_object = None;
         self.relationship_from = None;
         self.editing = None;
         self.drag = Drag::None;
@@ -459,7 +484,7 @@ impl AddHandle {
 fn add_handles(view: &MapView, sheet: &Sheet, layout: &Layout) -> Vec<AddHandle> {
     if !view.show_add_controls
         || view.selection.len() != 1
-        || view.selected_relationship.is_some()
+        || view.selected_object.is_some()
         || view.editing.is_some()
         || view.relationship_from.is_some()
         || !matches!(view.drag, Drag::None)
@@ -534,6 +559,7 @@ impl MapCanvas {
         view.canvas_rect = rect;
         view.prune_selection(doc.sheet());
         let before_sel = view.selection.clone();
+        let before_object = view.selected_object;
         let mut out = CanvasOutput {
             response: response.clone(),
             open_link: None,
@@ -692,8 +718,7 @@ impl MapCanvas {
                     if from != t {
                         match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
                             Ok(r) => {
-                                view.selection.clear();
-                                view.selected_relationship = Some(r);
+                                view.select_object(ObjectSelection::Relationship(r));
                             }
                             Err(e) => out.error = Some(e),
                         }
@@ -718,16 +743,15 @@ impl MapCanvas {
                         view.select_only(t);
                     }
                 }
-            } else if let Some(r) = hit_relationship(&layout, sp, 6.0 / view.zoom) {
+            } else if let Some(object) = hit_object(&layout, sp, 6.0 / view.zoom) {
                 view.commit_edit(doc);
-                view.selection.clear();
-                view.selected_relationship = Some(r);
+                view.select_object(object);
             } else {
                 view.commit_edit(doc);
                 view.relationship_from = None;
                 if !(mods.command || mods.shift) {
                     view.selection.clear();
-                    view.selected_relationship = None;
+                    view.selected_object = None;
                 }
             }
         }
@@ -740,7 +764,9 @@ impl MapCanvas {
             if let Some(t) = layout.hit_test(sp) {
                 view.select_only(t);
                 view.begin_edit(doc.sheet(), t, true);
-            } else if layout.hit_badge(sp).is_none() {
+            } else if layout.hit_badge(sp).is_none()
+                && hit_object(&layout, sp, 6.0 / view.zoom).is_none()
+            {
                 run(doc, view, Action::InsertFloating(sp), &mut out);
             }
         }
@@ -754,12 +780,11 @@ impl MapCanvas {
                     view.select_only(t);
                 }
                 out.context_topic = Some(t);
-            } else if let Some(r) = hit_relationship(&layout, view.xf().sheet(p), 6.0 / view.zoom) {
-                view.selection.clear();
-                view.selected_relationship = Some(r);
+            } else if let Some(object) = hit_object(&layout, view.xf().sheet(p), 6.0 / view.zoom) {
+                view.select_object(object);
             } else {
                 view.selection.clear();
-                view.selected_relationship = None;
+                view.selected_object = None;
             }
         }
 
@@ -767,6 +792,7 @@ impl MapCanvas {
         if response.drag_stopped() {
             match std::mem::replace(&mut view.drag, Drag::None) {
                 Drag::Rubber { start, additive } => {
+                    view.selected_object = None;
                     let end = pointer.unwrap_or(start);
                     let a = view.xf().sheet(start);
                     let b = view.xf().sheet(end);
@@ -822,7 +848,7 @@ impl MapCanvas {
             accent: view.accent,
             dark: view.dark,
             filter: filter.as_deref(),
-            selected_relationship: view.selected_relationship,
+            selected_object: view.selected_object,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
         if !space {
@@ -923,7 +949,8 @@ impl MapCanvas {
             ctx.set_cursor_icon(icon);
         }
 
-        out.selection_changed = before_sel != view.selection;
+        out.selection_changed =
+            before_sel != view.selection || before_object != view.selected_object;
         out
     }
 }
@@ -1007,11 +1034,8 @@ fn handle_keys(
     }
     if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
         view.relationship_from = None;
-        if view.selected_relationship.is_some() {
-            view.selected_relationship = None;
-        } else {
-            view.selection.clear();
-        }
+        view.selected_object = None;
+        view.selection.clear();
         return;
     }
     // Clipboard and type-to-edit come in as events.
@@ -1220,6 +1244,51 @@ fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId
     })
 }
 
+fn hit_object(layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
+    if let Some(id) = hit_relationship(layout, p, tol) {
+        return Some(ObjectSelection::Relationship(id));
+    }
+    for summary in layout.summaries.iter().rev() {
+        let points = brace_path(summary.start, summary.end, summary.tip, summary.dir);
+        let brace_hit = points
+            .windows(2)
+            .any(|line| dist_to_segment(p, line[0], line[1]) <= tol);
+        let connector_hit = layout.rect(summary.topic).is_some_and(|topic| {
+            let end = match summary.dir {
+                Dir::Right => topic.left_center(),
+                Dir::Left => topic.right_center(),
+                Dir::Down => topic.top_center(),
+                Dir::Up => topic.bottom_center(),
+            };
+            dist_to_segment(p, summary.tip, end) <= tol
+        });
+        if brace_hit || connector_hit {
+            return Some(ObjectSelection::Summary(summary.id));
+        }
+    }
+    // Match the visible outline, not the entire enclosed area. Prefer the smallest
+    // boundary when nested outlines share an edge.
+    layout
+        .boundaries
+        .iter()
+        .filter(|boundary| {
+            let rect = boundary.rect;
+            let max = rect.max();
+            let points = [
+                rect.min,
+                Vec2::new(max.x, rect.min.y),
+                max,
+                Vec2::new(rect.min.x, max.y),
+                rect.min,
+            ];
+            points
+                .windows(2)
+                .any(|line| dist_to_segment(p, line[0], line[1]) <= tol)
+        })
+        .min_by(|a, b| (a.rect.size.x * a.rect.size.y).total_cmp(&(b.rect.size.x * b.rect.size.y)))
+        .map(|boundary| ObjectSelection::Boundary(boundary.id))
+}
+
 fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len2 = ab.x * ab.x + ab.y * ab.y;
@@ -1260,6 +1329,126 @@ mod tests {
                 },
                 State { doc, view },
             )
+    }
+
+    #[test]
+    fn object_outlines_select_with_pointer_and_delete_with_keyboard_at_each_zoom() {
+        for kind in 0..3 {
+            for zoom in [0.5, 1.0, 2.0] {
+                let mut h = harness();
+                let object;
+                {
+                    let state = h.state_mut();
+                    let mut book = Workbook::default();
+                    let sheet = &mut book.sheets[0];
+                    *sheet = Sheet::new("S", "Root");
+                    sheet.structure = ymind_core::Structure::LogicRight;
+                    let a = sheet.add_child(sheet.root, None, "A");
+                    let b = sheet.add_child(sheet.root, None, "B");
+                    object = match kind {
+                        0 => ObjectSelection::Relationship(sheet.add_relationship(a, b).unwrap()),
+                        1 => ObjectSelection::Boundary(sheet.add_boundary(&[a, b]).unwrap()),
+                        _ => {
+                            sheet.add_summary(&[a, b], "Conclusion").unwrap();
+                            ObjectSelection::Summary(sheet.summaries[0].id)
+                        }
+                    };
+                    state.doc.replace(book);
+                    state.view.reset();
+                    state.view.show_add_controls = false;
+                    state.view.set_initial_zoom(zoom);
+                }
+                h.run();
+                let pos = {
+                    let state = h.state_mut();
+                    let layout = state.view.layout_for(&state.doc);
+                    let p = match object {
+                        ObjectSelection::Relationship(_) => {
+                            let r = &layout.relationships[0];
+                            bezier(r.start, r.c1, r.c2, r.end, 0.5)
+                        }
+                        ObjectSelection::Boundary(_) => layout.boundaries[0].rect.top_center(),
+                        ObjectSelection::Summary(_) => layout.summaries[0].tip,
+                    };
+                    assert!(layout.hit_test(p).is_none());
+                    assert_eq!(hit_object(&layout, p, 6.0 / zoom), Some(object));
+                    state.view.xf().pos(p)
+                };
+                assert!(h.state().view.canvas_rect().contains(pos));
+                click_at(&mut h, pos, PointerButton::Primary);
+                assert_eq!(
+                    h.state().view.selected_object,
+                    Some(object),
+                    "kind {kind}, zoom {zoom}"
+                );
+                assert!(h.state().view.selection.is_empty());
+                assert!(h.query_by_label("Add child topic").is_none());
+                let before = h.state().doc.sheet().clone();
+                h.key_press(Key::Delete);
+                h.run();
+                assert!(!object.exists(h.state().doc.sheet()));
+                h.state().doc.sheet().validate().unwrap();
+                h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+                h.run();
+                assert_eq!(h.state().doc.sheet(), &before);
+                click_at(&mut h, pos, PointerButton::Secondary);
+                assert_eq!(h.state().view.selected_object, Some(object));
+                h.key_press(Key::Escape);
+                h.run();
+                assert!(h.state().view.selected_object.is_none());
+                click_at(&mut h, pos, PointerButton::Primary);
+                let topic = h.state().doc.sheet().root;
+                h.state_mut().view.select_only(topic);
+                assert!(h.state().view.selected_object.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn boundary_hit_test_ignores_interior_and_prefers_nested_outline() {
+        let mut sheet = Sheet::new("S", "Root");
+        let a = sheet.add_child(sheet.root, None, "A");
+        let b = sheet.add_child(sheet.root, None, "B");
+        let outer = sheet.add_boundary(&[sheet.root]).unwrap();
+        let inner = sheet.add_boundary(&[a, b]).unwrap();
+        let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let inner_rect = layout
+            .boundaries
+            .iter()
+            .find(|b| b.id == inner)
+            .unwrap()
+            .rect;
+        layout
+            .boundaries
+            .iter_mut()
+            .find(|b| b.id == outer)
+            .unwrap()
+            .rect = inner_rect.expand(20.0);
+        assert_eq!(
+            hit_object(&layout, inner_rect.top_center(), 0.1),
+            Some(ObjectSelection::Boundary(inner))
+        );
+        assert_eq!(hit_object(&layout, inner_rect.center(), 0.1), None);
+        let outer_rect = layout
+            .boundaries
+            .iter()
+            .find(|b| b.id == outer)
+            .unwrap()
+            .rect;
+        assert_eq!(
+            hit_object(&layout, outer_rect.left_center(), 0.1),
+            Some(ObjectSelection::Boundary(outer))
+        );
+        layout
+            .boundaries
+            .iter_mut()
+            .find(|b| b.id == outer)
+            .unwrap()
+            .rect = ymind_core::Rect::from_min_size(inner_rect.min, inner_rect.size * 2.0);
+        assert_eq!(
+            hit_object(&layout, inner_rect.top_center(), 0.1),
+            Some(ObjectSelection::Boundary(inner))
+        );
     }
 
     #[test]
@@ -1708,7 +1897,7 @@ mod tests {
         let blank = h.state().view.canvas_rect().left_top() + vec2(10.0, 10.0);
         click_at(&mut h, blank, PointerButton::Secondary);
         assert!(h.state().view.selection.is_empty());
-        assert!(h.state().view.selected_relationship.is_none());
+        assert!(h.state().view.selected_object.is_none());
     }
 
     #[test]

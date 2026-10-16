@@ -727,9 +727,7 @@ impl Sheet {
         self.summaries
             .retain(|s| !removed.contains(&s.parent) && !removed.contains(&s.topic));
         for st in orphan_summaries {
-            for t in self.subtree_ids(st) {
-                self.topics.remove(&t);
-            }
+            self.detach_subtree(st);
         }
         let alive = |s: &Sheet, t: TopicId| s.topics.contains_key(&t);
         let rels: Vec<_> = self

@@ -450,23 +450,15 @@ impl Sheet {
         Ok(topic)
     }
 
+    /// Removes the annotation and its owned topic tree, preserving the covered branches.
     pub fn remove_summary(&mut self, id: SummaryId) -> EditResult<()> {
-        let pos = self
+        let topic = self
             .summaries
             .iter()
-            .position(|s| s.id == id)
+            .find(|s| s.id == id)
+            .map(|s| s.topic)
             .ok_or(EditError::NotFound)?;
-        let s = self.summaries.remove(pos);
-        for t in self.subtree_ids(s.topic) {
-            self.topics.remove(&t);
-        }
-        let rels: Vec<_> = self
-            .relationships
-            .iter()
-            .filter(|r| self.contains(r.from) && self.contains(r.to))
-            .cloned()
-            .collect();
-        self.relationships = rels;
+        self.detach_subtree(topic).ok_or(EditError::NotFound)?;
         Ok(())
     }
 
@@ -718,5 +710,34 @@ mod tests {
             s.topic(k[0]).unwrap().structure,
             Some(Structure::LogicRight)
         );
+    }
+    #[test]
+    fn deleting_summary_cleans_owned_annotations_and_preserves_covered_branches() {
+        let mut s = Sheet::new("S", "Root");
+        let a = s.add_child(s.root, None, "A");
+        let b = s.add_child(s.root, None, "B");
+        let topic = s.add_summary(&[a, b], "Summary").unwrap();
+        let summary_id = s.summaries[0].id;
+        let child = s.add_child(topic, None, "Child");
+        let other = s.add_child(topic, None, "Other");
+        let nested = s.add_summary(&[child, other], "Nested").unwrap();
+        let nested_child = s.add_child(nested, None, "Nested child");
+        s.add_boundary(&[topic]).unwrap();
+        s.add_boundary(&[nested]).unwrap();
+        s.add_boundary(&[nested_child]).unwrap();
+        s.add_relationship(a, child).unwrap();
+        s.add_relationship(b, nested_child).unwrap();
+        let kept_boundary = s.add_boundary(&[a, b]).unwrap();
+        let kept_relationship = s.add_relationship(a, b).unwrap();
+        s.remove_summary(summary_id).unwrap();
+        assert_eq!(s.all_ids_ordered(), vec![s.root, a, b]);
+        assert_eq!(s.topics.len(), 3);
+        assert!(s.summaries.is_empty());
+        assert_eq!(s.boundaries.len(), 1);
+        assert_eq!(s.boundaries[0].id, kept_boundary);
+        assert_eq!(s.relationships.len(), 1);
+        assert_eq!(s.relationships[0].id, kept_relationship);
+        s.validate().unwrap();
+        assert_eq!(s.remove_summary(summary_id), Err(EditError::NotFound));
     }
 }

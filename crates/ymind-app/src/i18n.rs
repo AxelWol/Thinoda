@@ -72,6 +72,13 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 const DE: &[(&str, &str)] = &[
     ("Editor", "Editor"),
     ("Written by", "Geschrieben von"),
+    ("Delete Relationship", "Beziehung löschen"),
+    ("Delete Boundary", "Umrandung löschen"),
+    ("Delete Summary", "Zusammenfassung löschen"),
+    (
+        "Deletes the summary topic and its children, not the covered branches.",
+        "Löscht das Zusammenfassungsthema und seine Unterthemen, nicht die zusammengefassten Zweige.",
+    ),
     ("Contact", "Kontakt"),
     ("All sheets", "Alle Blätter"),
     ("Include labels", "Beschriftungen einbeziehen"),

@@ -1,6 +1,7 @@
 //! Painting of a laid-out sheet.
 
 use crate::measure::BOLD_WIDTH;
+use crate::view::ObjectSelection;
 use egui::{
     Align, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke,
     StrokeKind, pos2,
@@ -56,7 +57,7 @@ pub struct PaintOptions<'a> {
     pub dark: bool,
     /// Topics dimmed by an active filter (`None` = no filter).
     pub filter: Option<&'a [TopicId]>,
-    pub selected_relationship: Option<ymind_core::RelationshipId>,
+    pub selected_object: Option<ObjectSelection>,
 }
 
 /// Background color of the sheet.
@@ -79,10 +80,14 @@ pub fn paint_map(
     // Boundaries.
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
-        let color = bd
-            .and_then(|x| x.color)
-            .map(color32)
-            .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0));
+        let selected = opts.selected_object == Some(ObjectSelection::Boundary(b.id));
+        let color = if selected {
+            opts.accent
+        } else {
+            bd.and_then(|x| x.color)
+                .map(color32)
+                .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0))
+        };
         let r = xf.rect(b.rect);
         painter.rect_filled(
             r,
@@ -92,7 +97,7 @@ pub fn paint_map(
         dashed_rect(
             painter,
             r,
-            Stroke::new(1.5 * z.max(0.5), color),
+            Stroke::new(if selected { 2.5 } else { 1.5 } * z.max(0.5), color),
             6.0 * z,
             4.0 * z,
         );
@@ -132,7 +137,8 @@ pub fn paint_map(
 
     // Summaries (brace + connector to summary topic).
     for s in &layout.summaries {
-        let selected = opts.selection.contains(&s.topic);
+        let selected = opts.selection.contains(&s.topic)
+            || opts.selected_object == Some(ObjectSelection::Summary(s.id));
         let mut color = layout
             .topics
             .get(&s.topic)
@@ -202,7 +208,7 @@ pub fn paint_map(
         let pts: Vec<Pos2> = (0..=32)
             .map(|i| xf.pos(cubic(r.start, r.c1, r.c2, r.end, i as f32 / 32.0)))
             .collect();
-        let selected = opts.selected_relationship == Some(r.id);
+        let selected = opts.selected_object == Some(ObjectSelection::Relationship(r.id));
         let stroke = Stroke::new(
             if selected { 2.5 } else { 1.5 } * z.max(0.5),
             if selected { opts.accent } else { color },
