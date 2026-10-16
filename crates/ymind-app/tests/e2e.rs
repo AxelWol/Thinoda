@@ -51,6 +51,73 @@ fn root_title(wb: &Workbook) -> String {
 }
 
 #[test]
+fn home_templates_wrap_within_the_window() {
+    for width in [480.0, 800.0, 1280.0, 2400.0] {
+        let mut app = YMindApp::headless();
+        app.active = app.docs.len();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 1600.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.run_steps(4);
+        let first = h.get_by_role_and_label(Role::Button, "Mind Map").rect();
+        let last = h.get_by_role_and_label(Role::Button, "Project Plan").rect();
+        for template in ymind_core::templates::TEMPLATES {
+            let rect = h.get_by_role_and_label(Role::Button, template.name).rect();
+            assert!(
+                rect.min.x >= 0.0 && rect.max.x <= width,
+                "{width}: {} at {rect:?}",
+                template.name
+            );
+        }
+        if width < 2400.0 {
+            assert!(last.min.y > first.min.y, "templates must wrap at {width}");
+        }
+        h.get_by_role_and_label(Role::Button, "Project Plan")
+            .click();
+        h.run_steps(3);
+        assert!(h.state().doc().is_some());
+    }
+}
+
+#[test]
+fn format_panel_can_be_hidden_and_restored_repeatedly() {
+    let mut h = harness(YMindApp::headless());
+    for _ in 0..3 {
+        assert!(h.query_by_role_and_label(Role::Tab, "Style").is_some());
+        h.get_by_role_and_label(Role::Button, "Format Panel")
+            .click();
+        h.run_steps(3);
+        assert!(!h.state().settings.show_format_panel);
+        assert!(h.query_by_role_and_label(Role::Tab, "Style").is_none());
+        h.get_by_role_and_label(Role::Button, "Format Panel")
+            .click();
+        h.run_steps(3);
+        assert!(h.state().settings.show_format_panel);
+        assert!(h.query_by_role_and_label(Role::Tab, "Style").is_some());
+    }
+}
+
+#[test]
+fn format_panel_on_home_explains_why_it_is_hidden() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Format Panel")
+        .click();
+    h.run_steps(3);
+    assert!(h.state().settings.show_format_panel);
+    h.get_by_label("Open or select a map to show the Format Panel");
+    assert!(h.query_by_role_and_label(Role::Tab, "Style").is_none());
+    h.get_by_role_and_label(Role::Button, "Central Topic")
+        .click();
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(Role::Tab, "Style").is_some());
+}
+
+#[test]
 fn toolbar_inserts_subtopic_and_topic() {
     let mut h = harness(YMindApp::headless());
     let before = root_children(h.state());

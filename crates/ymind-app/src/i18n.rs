@@ -71,6 +71,10 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 /// English → German.
 const DE: &[(&str, &str)] = &[
     (
+        "Open or select a map to show the Format Panel",
+        "Eine Map öffnen oder auswählen, um den Formatbereich anzuzeigen",
+    ),
+    (
         "Zen Mode: press F11 to exit",
         "Zen-Modus: F11 zum Beenden drücken",
     ),

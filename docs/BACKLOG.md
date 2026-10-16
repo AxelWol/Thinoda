@@ -72,6 +72,32 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   Layout-dependent keys (# and umlaut keys in the reference) need physical/logical
   key and macOS/Linux verification. Preserve current shortcuts pending an explicit
   compatibility-keymap decision.
+- P2 Bottom-left sheet-tab context menu: Rename; Copy, Paste, Duplicate, Delete;
+  New sheet; Save sheet as a separate file. Match the reference separators and
+  contextual availability, reusing existing sheet commands. Verify clipboard
+  representation and whether relationships/assets outside the sheet are included
+  when saving. Protect the last sheet, preserve active-sheet selection and support
+  undo for document changes; cover keyboard access and menu placement near screen edges.
+
+## Template gallery parity (user screenshots, 2026-10-16)
+- P1 Replace generic template icons with generated map previews; retain a responsive
+  grid and vertical scrolling. Reference chooser has a fixed header/category filter,
+  scrollable category sections, Recently used, section navigation chevrons and a fixed
+  Cancel/Create footer. Selecting a card enables Create; do not assume immediate creation.
+- P2 Category filter: All, Basic, Knowledge management, Meeting and planning,
+  Study and education, Project management, Entertainment and life, Analysis and
+  decision, Creativity. Keep recent templates separate from recent documents.
+- P2 Expand original template content: basic Mind map/Logic/Brace/Org; problem solving,
+  framework and architecture maps; business plans, workshops and dissertation plans;
+  school timetable, note-taking, language learning and AR applications; project
+  planning, BCG analysis, organization and nine-box matrices; weekly plans, shopping
+  lists, mood tracking and service comparisons; cause/effect, comparisons and social
+  media marketing; creative workflows, recipes and film production.
+  Several reference titles are truncated: verify full names/content before specifying
+  exact equivalents. Do not copy proprietary template text, thumbnails or paid assets.
+- P2 Verify category filtering, recent-template persistence, keyboard selection,
+  Cancel without document creation and creation from each template; cover narrow
+  windows, display scaling and long localized names.
 
 ## Settings parity (user-supplied XMind screenshots, 2026-10-16)
 These are reference requirements, not a claim that the settings are implemented.
