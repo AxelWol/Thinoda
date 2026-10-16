@@ -20,4 +20,6 @@ mod view;
 pub use actions::{Action, apply_action};
 pub use measure::EguiMeasure;
 pub use render::{color32, paint_map};
-pub use view::{AddControlLabels, CanvasOutput, MapCanvas, MapView, NewTopicTitles};
+pub use view::{
+    AddControlLabels, CanvasOutput, MapCanvas, MapView, NewTopicTitles, ObjectSelection,
+};

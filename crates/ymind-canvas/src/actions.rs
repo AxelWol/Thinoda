@@ -1,6 +1,6 @@
 //! Editing actions shared by keyboard shortcuts, menus, toolbars and the command palette.
 
-use crate::view::MapView;
+use crate::view::{MapView, ObjectSelection};
 use ymind_core::{
     Document, EditError, TopicId, clipboard,
     geometry::Vec2,
@@ -77,7 +77,10 @@ pub fn apply_action(
     action: Action,
 ) -> Result<bool, EditError> {
     view.prune_selection(doc.sheet());
-    if action.needs_selection() && view.selection.is_empty() {
+    if action.needs_selection()
+        && view.selection.is_empty()
+        && !(action == Action::Delete && view.selected_object.is_some())
+    {
         if matches!(action, Action::Navigate(_)) {
             view.select_only(doc.sheet().root);
             return Ok(true);
@@ -140,8 +143,19 @@ pub fn apply_action(
             view.begin_edit(doc.sheet(), id, true);
         }
         Action::Delete => {
-            if let Some(rel) = view.selected_relationship.take() {
-                doc.edit_sheet("Delete Relationship", |s| s.remove_relationship(rel))?;
+            if let Some(object) = view.selected_object {
+                match object {
+                    ObjectSelection::Relationship(id) => {
+                        doc.edit_sheet("Delete Relationship", |s| s.remove_relationship(id))?;
+                    }
+                    ObjectSelection::Boundary(id) => {
+                        doc.edit_sheet("Delete Boundary", |s| s.remove_boundary(id))?;
+                    }
+                    ObjectSelection::Summary(id) => {
+                        doc.edit_sheet("Delete Summary", |s| s.remove_summary(id))?;
+                    }
+                }
+                view.selected_object = None;
                 return Ok(true);
             }
             let next = doc.edit_sheet("Delete", |s| s.remove_topics(&sel))?;
@@ -246,6 +260,7 @@ pub fn apply_action(
             doc.edit_sheet("Move Topic", |s| s.reorder(p, d))?;
         }
         Action::SelectAll => {
+            view.selected_object = None;
             let sheet = doc.sheet();
             view.selection = sheet
                 .all_ids_ordered()
@@ -260,7 +275,7 @@ pub fn apply_action(
         }
         Action::SelectNone => {
             view.selection.clear();
-            view.selected_relationship = None;
+            view.selected_object = None;
             view.relationship_from = None;
         }
         Action::StartRelationship => {
@@ -363,6 +378,59 @@ mod tests {
         assert_eq!(doc.sheet().topic(sub).unwrap().title, "Subtopic");
         apply_action(&mut doc, &mut view, Action::InsertSibling).unwrap();
         assert_eq!(doc.sheet().parent(view.selection[0]), Some(new));
+    }
+
+    #[test]
+    fn structural_objects_delete_without_topic_selection_and_undo_in_one_step() {
+        for kind in 0..3 {
+            let (mut doc, mut view) = setup();
+            let children = doc.sheet().children(doc.sheet().root).to_vec();
+            let object = doc
+                .edit_sheet("Annotation", |s| {
+                    Ok(match kind {
+                        0 => ObjectSelection::Relationship(
+                            s.add_relationship(children[0], children[1])?,
+                        ),
+                        1 => ObjectSelection::Boundary(s.add_boundary(&children[..2])?),
+                        _ => {
+                            let topic = s.add_summary(&children[..2], "Summary")?;
+                            s.add_child(topic, None, "Summary child");
+                            ObjectSelection::Summary(s.summaries[0].id)
+                        }
+                    })
+                })
+                .unwrap();
+            let before = doc.sheet().clone();
+            view.select_object(object);
+            assert!(view.selection.is_empty());
+            assert!(apply_action(&mut doc, &mut view, Action::Delete).unwrap());
+            assert!(!object.exists(doc.sheet()));
+            assert!(view.selected_object.is_none());
+            for topic in &children {
+                assert_eq!(doc.sheet().topic(*topic), before.topic(*topic));
+            }
+            doc.sheet().validate().unwrap();
+            assert!(apply_action(&mut doc, &mut view, Action::Undo).unwrap());
+            assert_eq!(doc.sheet(), &before);
+            assert!(apply_action(&mut doc, &mut view, Action::Redo).unwrap());
+            assert!(!object.exists(doc.sheet()));
+            doc.sheet().validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn stale_object_selection_cannot_delete_topics_or_another_sheet_object() {
+        let (mut doc, mut view) = setup();
+        let object = doc
+            .edit_sheet("Boundary", |s| s.add_boundary(&[s.children(s.root)[0]]))
+            .unwrap();
+        view.select_object(ObjectSelection::Boundary(object));
+        doc.add_sheet(ymind_core::Sheet::new("Other", "Root"));
+        doc.set_active(1);
+        let before = doc.sheet().clone();
+        assert!(!apply_action(&mut doc, &mut view, Action::Delete).unwrap());
+        assert!(view.selected_object.is_none());
+        assert_eq!(doc.sheet(), &before);
     }
 
     #[test]

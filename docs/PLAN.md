@@ -48,7 +48,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ Settings › AI with connection test; live-tested against LM Studio (CUDA)
 
 ## Phase 5 — Testing & packaging 🟡
-- ✅ Unit/integration tests and 43 headless app e2e tests plus an isolated German UI test
+- ✅ Unit/integration tests and 44 headless app e2e tests plus an isolated German UI test
   (egui_kittest), incl. AI against a mock server,
   live LM Studio integration test (skips when no server is reachable)
 - ✅ cargo-packager config: NSIS (Windows x64/ARM64), `.app` + DMG (macOS arm64/x64),
@@ -457,6 +457,27 @@ First slice implemented (Windows x64 source verification):
   remains the previous build until the user closes it and launches the new binary.
   Native macOS/Linux/ARM validation and signing/notarization credentials remain
   external prerequisites.
+- Structural-object deletion delivered: a typed object selection now handles
+  relationships, boundaries and Summary braces consistently. Fixed the old
+  relationship Delete guard (it incorrectly required topic selection), added
+  boundary/brace hit testing and highlight state, and wired named EN/DE context
+  actions. Summary removal reuses model subtree cleanup, including nested owned
+  annotations, while preserving covered branches; the context menu explains scope.
+  Topic selection, Escape, rubber selection and sheet reset clear object selection.
+- Corrected the canvas zoom cap to 500%, matching the existing preset and persisted
+  initial-zoom range; exact 10%/500% interactions are regression-covered.
+- Current verification: 183 workspace library tests and 42 non-CLI app e2e tests
+  plus the German UI test pass; workspace clippy passes. Full CI encountered
+  Windows Application Control error 4551 in the CLI version/help subprocess;
+  CLI conversion passed. The earlier full green run remains a prior baseline,
+  not a claim that this latest full CI run passed. No policy bypass attempted.
+- Final non-CLI workspace run: 246 tests pass, including exact zoom limits,
+  structural pointer/context actions and persistence. The two CLI tests were
+  explicitly excluded because of the application-control blocker above, not
+  marked passed. After the user closed yMind, refreshed the standard
+  `target\release\ymind.exe` and `target\packages\ymind_0.1.0_x64-setup.exe`
+  with this slice. Original foundation tasks are marked complete; this does not
+  close the remaining R0–R12 parity/release work.
 
 Continue R1 command-availability consistency and remaining R2 preferences/bottom controls,
 alongside reference verification. Sticker/Illustration/Pitch panes and persistent

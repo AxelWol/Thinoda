@@ -11,6 +11,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
+- Select relationship lines, boundary outlines or Summary braces to delete them with
+  Delete or a context action, with undo/redo. Covered branches remain intact; deleting
+  a Summary removes its own summary topic and children.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.
