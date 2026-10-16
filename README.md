@@ -18,6 +18,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Help > Quick Start / User Guide provides searchable offline EN/DE guidance
+  for editing, styles, file recovery, interchange and privacy. It works without an
+  open map and does not edit the canvas behind it. Send Feedback opens GitHub's
+  public issue chooser without uploading files; Project News opens commit history.
 - Home offers rendered previews of 35 original templates across eight categories.
   Select a card, then Create; Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately

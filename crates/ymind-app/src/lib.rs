@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod app;
 pub mod doc;
+mod help;
 pub mod i18n;
 mod labels;
 mod map_shot;

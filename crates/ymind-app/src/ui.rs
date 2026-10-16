@@ -201,6 +201,7 @@ impl YMindApp {
                 if self.label_editor.is_some()
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
+                    || self.dialogs.guide.open
                 {
                     ui.disable();
                 }
@@ -250,6 +251,7 @@ impl YMindApp {
         self.labels_popup(&ctx);
         self.quick_style_dialog(&ctx);
         self.theme_editor_dialog(&ctx);
+        self.guide_dialog(&ctx);
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -271,6 +273,7 @@ impl YMindApp {
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
+            || self.dialogs.guide.open
         {
             return true;
         }
@@ -661,6 +664,17 @@ impl YMindApp {
             *cmd = Some(Cmd::Settings);
         }
         ui.menu_button(t("Help"), |ui| {
+            for (label, command) in [
+                ("Quick Start", Cmd::QuickStart),
+                ("User Guide", Cmd::UserGuide),
+                ("Send Feedback…", Cmd::Feedback),
+                ("Project News…", Cmd::ProjectNews),
+            ] {
+                if ui.button(t(label)).clicked() {
+                    *cmd = Some(command);
+                }
+            }
+            ui.separator();
             if item(ui, t("Keyboard Shortcuts"), "F1").clicked() {
                 *cmd = Some(Cmd::Shortcuts);
             }
@@ -790,6 +804,7 @@ impl YMindApp {
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
+            || self.dialogs.guide.open
         {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);

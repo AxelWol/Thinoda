@@ -150,7 +150,8 @@ unknown needed by the next package. Never bypass OS application-control policy.
 5. Deliver searchable/category-filtered shortcut editing, unassigned bindings,
    conflicts, reserved keys and reset-all. Preserve current bindings by default;
    offer an XMind-compatible preset only after approval of conflicting mappings.
-6. Add Help/User guide/Quick start/About and explicit feedback/news links. Research
+6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
+   Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
    unless separately requested; updater actions arrive with R11.
 
@@ -400,6 +401,16 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R1 offline help delivered: searchable EN/DE User Guide and Quick Start are wired
+through Help and the command palette, with six offline sections and accurate
+interchange, recovery, cloud and AI privacy limitations. Home and narrow windows
+are covered. Modal input isolation preserves map/outliner edits and selection;
+search resets scroll, Escape closes the guide and popup Escape closes the popup
+first. Feedback opens the public issue chooser without document/log uploads;
+Project News opens repository history rather than claiming an updater or releases.
+All 384 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with offline help.
 
 R5 original-template expansion: 18 scenario maps expand the gallery from 17 to 35,
 covering knowledge frameworks/architecture/problem solving, business/workshops,

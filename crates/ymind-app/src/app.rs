@@ -48,6 +48,10 @@ pub enum Cmd {
     Settings,
     About,
     Shortcuts,
+    UserGuide,
+    QuickStart,
+    Feedback,
+    ProjectNews,
     Quit,
     ToggleOutliner,
     ToggleZen,
@@ -151,6 +155,7 @@ pub struct Services {
 
 #[derive(Default)]
 pub struct Dialogs {
+    pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
     pub about: bool,
@@ -477,6 +482,14 @@ impl YMindApp {
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => self.dialogs.shortcuts = true,
+            Cmd::UserGuide => self.open_guide(false),
+            Cmd::QuickStart => self.open_guide(true),
+            Cmd::Feedback => ctx.open_url(egui::OpenUrl::new_tab(
+                "https://github.com/AxelWol/yMind/issues/new/choose",
+            )),
+            Cmd::ProjectNews => ctx.open_url(egui::OpenUrl::new_tab(
+                "https://github.com/AxelWol/yMind/commits",
+            )),
             Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             Cmd::ToggleOutliner => {
                 self.mode = if self.mode == CenterMode::Map {
@@ -1833,6 +1846,10 @@ impl YMindApp {
             ),
             (Cmd::SetTheme(SettingsTheme::Dark), "Dark", "", "Appearance"),
             (Cmd::Shortcuts, "Keyboard Shortcuts", "F1", "Help"),
+            (Cmd::UserGuide, "User Guide", "", "Help"),
+            (Cmd::QuickStart, "Quick Start", "", "Help"),
+            (Cmd::Feedback, "Send Feedback…", "", "Help"),
+            (Cmd::ProjectNews, "Project News…", "", "Help"),
             (Cmd::About, "About yMind", "", "Help"),
         ];
         for f in EXPORT_MENU {

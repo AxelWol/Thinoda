@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Offline Help: Quick Start and searchable User Guide are available from Help
+  and the command palette in EN/DE, including on Home. Six sections explain
+  supported workflows and explicit cloud/export/recovery/privacy limitations.
+  Guide modals isolate canvas/outliner input and retain a visible keyboard-
+  accessible Close control at narrow sizes. Send Feedback opens the public
+  GitHub issue chooser; Project News opens commit history, with no document,
+  settings or log upload. These are not updater/release-announcement services.
+  All 384 workspace cases and all-target clippy pass with live AI disabled.
 - Original template expansion: 18 new scenario maps bring the gallery to 35.
   Problem Solving, Concept Framework, Software Architecture, Business Plan,
   Workshop, Dissertation Plan, School Timetable, Reading Notes, Language Learning,

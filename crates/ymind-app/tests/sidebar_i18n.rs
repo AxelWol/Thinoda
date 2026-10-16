@@ -427,4 +427,24 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             "{label}: {rect:?}"
         );
     }
+    h.state_mut().exec(&ctx, Cmd::QuickStart);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Label, "Schnellstart");
+    h.get_by_label("Handbuch durchsuchen");
+    h.get_by_role_and_label(Role::Button, "Alle Abschnitte")
+        .click();
+    h.run_steps(3);
+    h.get_by_label("Handbuch durchsuchen").click();
+    h.run_steps(2);
+    h.get_by_label("Handbuch durchsuchen")
+        .type_text("Zwischenablage");
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Label, "Import und Export");
+    assert!(
+        h.query_by_role_and_label(Role::Label, "Schnellstart")
+            .is_none()
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!h.state().dialogs.guide.open);
 }

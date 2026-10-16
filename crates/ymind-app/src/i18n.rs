@@ -163,6 +163,126 @@ const DE: &[(&str, &str)] = &[
     ("Social Media Plan", "Social-Media-Plan"),
     ("Recipe", "Rezept"),
     ("Film Production", "Filmproduktion"),
+    ("User Guide", "Benutzerhandbuch"),
+    ("Quick Start", "Schnellstart"),
+    ("Send Feedback…", "Feedback senden…"),
+    ("Project News…", "Projektneuigkeiten…"),
+    ("Guide section", "Handbuchabschnitt"),
+    ("All sections", "Alle Abschnitte"),
+    ("Search the guide", "Handbuch durchsuchen"),
+    (
+        "No matching guide sections",
+        "Keine passenden Handbuchabschnitte",
+    ),
+    ("Editing and Navigation", "Bearbeitung und Navigation"),
+    ("Styles and Themes", "Stile und Designs"),
+    ("Files and Recovery", "Dateien und Wiederherstellung"),
+    ("Import and Export", "Import und Export"),
+    ("Platform and Privacy", "Plattform und Datenschutz"),
+    (
+        "Create a blank map with Ctrl+N, or open Home, select a template and choose Create. Cancel returns without creating a document.",
+        "Mit Strg+N eine leere Map erstellen oder auf der Startseite eine Vorlage auswählen und Erstellen wählen. Abbrechen kehrt ohne neues Dokument zurück.",
+    ),
+    (
+        "Select a topic. Tab adds a child; Enter adds a sibling. Space or F2 edits its title. Escape cancels an edit or clears selection.",
+        "Ein Thema auswählen. Tab fügt ein Unterthema hinzu, Enter ein Geschwisterthema. Leertaste oder F2 bearbeitet den Titel. Escape bricht die Bearbeitung ab oder hebt die Auswahl auf.",
+    ),
+    (
+        "Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.",
+        "Die Stil-Seitenleiste steuert das Aussehen eines Themas, die Map-Seitenleiste Layout und Design. Ein Thema auswählen, um seine aktuellen Eigenschaften zu sehen.",
+    ),
+    (
+        "Save with Ctrl+S to a .ymind file. Use .xmind for interchange. Save As creates a separate destination; export formats may omit unsupported features.",
+        "Mit Strg+S als .ymind speichern. Für den Austausch .xmind verwenden. Speichern unter wählt ein separates Ziel; Exportformate können nicht unterstützte Funktionen auslassen.",
+    ),
+    (
+        "Use Ctrl+Z to undo map edits. On macOS, use Command instead of Ctrl for command shortcuts. Help > Keyboard Shortcuts lists the available bindings.",
+        "Strg+Z macht Map-Änderungen rückgängig. Unter macOS für Befehlstastenkürzel Command statt Strg verwenden. Hilfe > Tastenkürzel zeigt die verfügbaren Belegungen.",
+    ),
+    (
+        "Drag a topic onto a parent or sibling insertion slot to move its branch. The preview shows the proposed placement; Escape cancels the drag.",
+        "Ein Thema auf ein übergeordnetes Thema oder einen Einfügeplatz zwischen Geschwistern ziehen, um den Zweig zu verschieben. Die Vorschau zeigt das Ziel; Escape bricht das Ziehen ab.",
+    ),
+    (
+        "Relationships connect topics. Boundaries group siblings; summaries attach a separate summary topic to a sibling range. Select their line or outline to edit or delete the object.",
+        "Beziehungen verbinden Themen. Umrandungen gruppieren Geschwister; Zusammenfassungen verknüpfen einen Geschwisterbereich mit einem eigenen Thema. Linie oder Umriss auswählen, um das Objekt zu bearbeiten oder zu löschen.",
+    ),
+    (
+        "Labels organize topics without changing their titles. Notes and hyperlinks are available in the sidebar. Ctrl+F searches; Ctrl+H opens replacement, with optional all-sheet scope.",
+        "Labels ordnen Themen ohne Titeländerung. Notizen und Hyperlinks sind in der Seitenleiste verfügbar. Strg+F sucht; Strg+H öffnet das Ersetzen, wahlweise über alle Blätter.",
+    ),
+    (
+        "Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.",
+        "Blattregister erlauben Umbenennen, Duplizieren, Kopieren, Einfügen, Löschen und separates Speichern. Neues Blatt aus Thema kopiert einen Zweig; externe Beziehungen bleiben im Ursprungsblatt.",
+    ),
+    (
+        "Topic styles override map and theme defaults. Reset Style removes explicit topic overrides. Copy/Paste Style transfers appearance, not text or hierarchy.",
+        "Themenstile haben Vorrang vor Map- und Designvorgaben. Stil zurücksetzen entfernt explizite Themenvorgaben. Stil kopieren/einfügen überträgt Aussehen, nicht Text oder Hierarchie.",
+    ),
+    (
+        "Quick Styles offers original presets and named local styles captured from resolved appearance. Applying a style to several selected topics is one undo step.",
+        "Schnellstile bieten eigene Vorlagen und benannte lokale Stile aus dem aufgelösten Aussehen. Ein Stil für mehrere ausgewählte Themen wird in einem Schritt rückgängig gemacht.",
+    ),
+    (
+        "Map > Custom Themes opens a staged editor. Apply Theme embeds the theme in the sheet; Save to Library stores a separate local copy without changing the map.",
+        "Map > Eigene Designs öffnet einen Entwurfseditor. Design übernehmen bettet das Design im Blatt ein; In Bibliothek speichern legt eine separate lokale Kopie ohne Map-Änderung ab.",
+    ),
+    (
+        "Custom themes provide palette, light/dark backgrounds, fonts and role defaults. Explicit map and topic overrides take precedence. Removing a library theme does not change existing maps.",
+        "Eigene Designs enthalten Palette, helle/dunkle Hintergründe, Schriften und Rollenvorgaben. Explizite Map- und Themenvorgaben haben Vorrang. Das Entfernen eines Bibliotheksdesigns ändert keine bestehenden Maps.",
+    ),
+    (
+        "Select a built-in theme to remove custom defaults. Optional recent-theme reuse affects new blank maps, not named templates. Missing local fonts keep their names and show a warning.",
+        "Ein integriertes Design auswählen, um eigene Designvorgaben zu entfernen. Die optionale Wiederverwendung des letzten Designs gilt für neue leere Maps, nicht benannte Vorlagen. Fehlende lokale Schriften behalten ihren Namen und zeigen eine Warnung.",
+    ),
+    (
+        "Use .ymind for full-fidelity native storage. Crash-recovery snapshots are stored locally; available recovery copies are offered at startup. Recovery is not a substitute for saving or backups.",
+        "Für vollständige native Speicherung .ymind verwenden. Wiederherstellungskopien werden lokal gespeichert und beim Start angeboten. Wiederherstellung ersetzt weder Speichern noch Sicherungen.",
+    ),
+    (
+        "When an open file changes externally, yMind offers conflict handling rather than silently replacing your edits. Inspect both versions before deciding which to keep.",
+        "Wird eine geöffnete Datei extern geändert, bietet yMind eine Konfliktbehandlung statt Ihre Änderungen still zu ersetzen. Beide Versionen prüfen, bevor Sie eine behalten.",
+    ),
+    (
+        "Cloud-folder support uses locally synchronized folders supplied by your cloud client. OAuth sharing and live collaboration are not implemented.",
+        "Cloud-Ordner verwenden lokal synchronisierte Verzeichnisse Ihres Cloud-Clients. OAuth-Freigaben und Live-Zusammenarbeit sind nicht implementiert.",
+    ),
+    (
+        "Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.",
+        "Map-Dateien zusammenführen hängt Blätter erst nach erfolgreichem Laden aller Eingaben an. Maskierte Kopie erstellen öffnet eine ungespeicherte Vorschau ohne identifizierende Texte; vor dem Teilen jedes Blatt prüfen, da die Struktur weiterhin Informationen verraten kann.",
+    ),
+    (
+        "The Open and Export menus list supported formats. Native and unchanged yMind-exported XMind files preserve yMind-specific data. Other applications may not understand those extensions.",
+        "Öffnen und Exportieren zeigen unterstützte Formate. Native und unveränderte von yMind exportierte XMind-Dateien erhalten yMind-spezifische Daten. Andere Anwendungen verstehen diese Erweiterungen möglicherweise nicht.",
+    ),
+    (
+        "Public XMind export materializes supported topic styles. Editable custom-theme registries, native curve interchange and exact XMind visual parity are not verified.",
+        "Der öffentliche XMind-Export schreibt unterstützte Themenstile aus. Bearbeitbare eigene Designregister, nativer Kurvenaustausch und exakte visuelle XMind-Parität sind nicht verifiziert.",
+    ),
+    (
+        "Map Shot (F7) captures the visible GPU-rendered canvas, with a crop preview and PNG or clipboard output. Export renders the complete sheet, including offscreen topics.",
+        "Map Shot (F7) erfasst die sichtbare GPU-gerenderte Zeichenfläche mit Zuschnittvorschau und PNG- oder Zwischenablageausgabe. Export rendert das gesamte Blatt einschließlich nicht sichtbarer Themen.",
+    ),
+    (
+        "External image references are not embedded attachments. Check imported content and exported files before relying on them in another application.",
+        "Externe Bildverweise sind keine eingebetteten Anhänge. Importierte Inhalte und exportierte Dateien vor der Verwendung in einer anderen Anwendung prüfen.",
+    ),
+    (
+        "Settings controls system/light/dark appearance, language, scaling and editor preferences. Installed fonts are local to each machine; companion devices may need the same fonts.",
+        "Einstellungen steuern System-/Hell-/Dunkelmodus, Sprache, Skalierung und Editoroptionen. Installierte Schriften sind lokal; andere Geräte benötigen möglicherweise dieselben Schriften.",
+    ),
+    (
+        "AI commands require a configured provider and may send selected topic content to that provider. Review provider settings and do not submit confidential content without permission.",
+        "KI-Befehle benötigen einen konfigurierten Anbieter und können ausgewählte Themeninhalte an ihn senden. Anbietereinstellungen prüfen und vertrauliche Inhalte nicht ohne Erlaubnis übermitteln.",
+    ),
+    (
+        "Send Feedback opens the public GitHub issue chooser in your browser. It does not upload maps, settings or logs. Review anything you include before submitting an issue.",
+        "Feedback senden öffnet die öffentliche GitHub-Issue-Auswahl im Browser. Maps, Einstellungen und Protokolle werden nicht hochgeladen. Alle Angaben vor dem Absenden prüfen.",
+    ),
+    (
+        "Project News opens the repository commit history, not an automatic updater. Signing, native platform installation checks and additional cloud services remain under development.",
+        "Projektneuigkeiten öffnet den Commit-Verlauf des Repositorys, keinen automatischen Updater. Signierung, native Installationsprüfungen und zusätzliche Cloud-Dienste sind noch in Entwicklung.",
+    ),
     ("Choose Structure", "Struktur auswählen"),
     ("Mind maps", "Mindmaps"),
     ("Logic charts", "Logikdiagramme"),
