@@ -74,6 +74,30 @@ impl Default for CloudSettings {
     }
 }
 
+/// AI assistant preferences (any OpenAI-compatible server such as LM Studio or Ollama).
+/// The API key may instead be supplied via the `YMIND_AI_API_KEY` environment variable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    /// Empty = first chat model offered by the server.
+    pub model: String,
+    pub api_key: String,
+    pub temperature: f32,
+}
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            base_url: "http://127.0.0.1:1234/v1".into(),
+            model: String::new(),
+            api_key: String::new(),
+            temperature: 0.7,
+        }
+    }
+}
+
 /// Persisted preferences. Unknown fields are ignored and missing fields default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -100,6 +124,7 @@ pub struct Settings {
     pub last_open_dir: Option<PathBuf>,
     pub last_export_format: Option<String>,
     pub cloud: CloudSettings,
+    pub ai: AiSettings,
     pub shortcuts_overrides: BTreeMap<String, String>,
 }
 impl Default for Settings {
@@ -126,6 +151,7 @@ impl Default for Settings {
             last_open_dir: None,
             last_export_format: None,
             cloud: CloudSettings::default(),
+            ai: AiSettings::default(),
             shortcuts_overrides: BTreeMap::new(),
         }
     }

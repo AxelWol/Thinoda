@@ -321,3 +321,120 @@ fn ctrl_b_adds_boundary() {
     h.run_steps(2);
     assert_eq!(h.state().doc().unwrap().doc.sheet().boundaries.len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// AI assistant (against an in-process OpenAI-compatible mock server)
+// ---------------------------------------------------------------------------
+
+fn ai_harness(reply: &str) -> (Harness<'static, YMindApp>, ymind_ai::mock::MockServer) {
+    let server = ymind_ai::mock::MockServer::start(&["text-embedding-x", "mock-llm"], reply);
+    let mut app = YMindApp::headless();
+    app.settings.ai.base_url = server.base_url.clone();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::SelectRoot));
+    (h, server)
+}
+
+fn wait_for_ai(h: &mut Harness<'static, YMindApp>) {
+    let start = std::time::Instant::now();
+    while h.state().ai.pending.is_some() {
+        assert!(start.elapsed().as_secs() < 20, "AI job did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.run_steps(1);
+    }
+    h.run_steps(1);
+}
+
+#[test]
+fn ai_brainstorm_adds_subtopics_in_one_undo_step() {
+    let (mut h, server) = ai_harness("- Alpha\n- Beta\n  - Beta one\n- Gamma");
+    let before = root_children(h.state());
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::I,
+    );
+    h.run_steps(1);
+    assert!(
+        h.state().ai.pending.is_some() || root_children(h.state()) > before,
+        "Ctrl+Shift+I starts brainstorm"
+    );
+    wait_for_ai(&mut h);
+    assert_eq!(root_children(h.state()), before + 3);
+    let req = server.requests.lock().unwrap();
+    let chat = req
+        .iter()
+        .find(|r| r.path.ends_with("/chat/completions"))
+        .unwrap();
+    assert!(
+        chat.body.contains("mock-llm"),
+        "embedding model must be skipped"
+    );
+    drop(req);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(root_children(h.state()), before);
+}
+
+#[test]
+fn ai_breakdown_creates_todos_and_explain_sets_notes() {
+    let (mut h, _server) = ai_harness("1. Plan\n2. Build");
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(ymind_app::ai::AiCommand::Breakdown));
+    wait_for_ai(&mut h);
+    let s = h.state().doc().unwrap().doc.sheet();
+    let kids = s.children(s.root);
+    let todos = kids
+        .iter()
+        .filter(|id| s.topic(**id).unwrap().todo.is_some())
+        .count();
+    assert_eq!(todos, 2);
+
+    let (mut h, _server) = ai_harness("A short explanation.");
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(ymind_app::ai::AiCommand::Explain));
+    wait_for_ai(&mut h);
+    let s = h.state().doc().unwrap().doc.sheet();
+    let notes = s.topic(s.root).unwrap().notes.clone().unwrap_or_default();
+    assert!(notes.contains("A short explanation."), "{notes}");
+}
+
+#[test]
+fn ai_generate_map_opens_new_document() {
+    let (mut h, _server) = ai_harness("# Trip\n## Packing\n- Clothes\n## Route\n## Budget");
+    let docs = h.state().docs.len();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(ymind_app::ai::AiCommand::GenerateMap));
+    h.run_steps(2);
+    assert!(h.state().ai.prompt.is_some(), "prompt dialog opens");
+    h.state_mut().start_generate_map("Trip".into());
+    h.state_mut().ai.prompt = None;
+    wait_for_ai(&mut h);
+    assert_eq!(h.state().docs.len(), docs + 1);
+    assert_eq!(root_children(h.state()), 3);
+}
+
+#[test]
+fn ai_unreachable_server_shows_error_and_keeps_map() {
+    let mut app = YMindApp::headless();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    app.settings.ai.base_url = format!("http://127.0.0.1:{port}/v1");
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::SelectRoot));
+    let before = root_children(h.state());
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(ymind_app::ai::AiCommand::Brainstorm));
+    wait_for_ai(&mut h);
+    assert_eq!(root_children(h.state()), before);
+}

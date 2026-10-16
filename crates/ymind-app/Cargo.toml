@@ -25,6 +25,7 @@ ymind-io.workspace = true
 ymind-platform.workspace = true
 ymind-ui.workspace = true
 ymind-canvas.workspace = true
+ymind-ai.workspace = true
 egui.workspace = true
 eframe.workspace = true
 rfd.workspace = true

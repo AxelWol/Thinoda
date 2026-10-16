@@ -61,6 +61,7 @@ pub enum Cmd {
     SetTheme(SettingsTheme),
     /// Focus a topic property field in the Format panel (Ctrl+K / Ctrl+Shift+N).
     EditField(FocusField),
+    Ai(crate::ai::AiCommand),
 }
 
 /// Format panel fields that commands can focus.
@@ -144,6 +145,7 @@ pub struct YMindApp {
     pub(crate) paste_requested: bool,
     /// Format panel field to focus on the next frame.
     pub focus_field: Option<FocusField>,
+    pub ai: crate::ai::AiState,
     last_title: String,
 }
 
@@ -195,6 +197,7 @@ impl YMindApp {
             last_frame: Instant::now(),
             paste_requested: false,
             focus_field: None,
+            ai: Default::default(),
             last_title: String::new(),
         };
         for f in files {
@@ -418,6 +421,7 @@ impl YMindApp {
                 self.paste_requested = true;
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
             }
+            Cmd::Ai(a) => self.start_ai(a),
             Cmd::EditField(f) => {
                 if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
                     self.mode = CenterMode::Map;
@@ -615,6 +619,7 @@ impl YMindApp {
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         self.toasts.tick(dt);
+        self.poll_ai(ctx);
 
         for d in &mut self.docs {
             d.tick();
@@ -764,6 +769,10 @@ impl YMindApp {
             (KeyboardShortcut::new(cs, Key::S), Cmd::SaveAs),
             (KeyboardShortcut::new(cmd, Key::S), Cmd::Save),
             (KeyboardShortcut::new(cs, Key::P), Cmd::Palette),
+            (
+                KeyboardShortcut::new(cs, Key::I),
+                Cmd::Ai(crate::ai::AiCommand::Brainstorm),
+            ),
             (
                 KeyboardShortcut::new(cs, Key::N),
                 Cmd::EditField(FocusField::Notes),
@@ -1016,6 +1025,36 @@ impl YMindApp {
                 "Edit",
             ),
             (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Brainstorm),
+                "AI: Brainstorm Subtopics",
+                "Ctrl+Shift+I",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Breakdown),
+                "AI: Break Down into To-Dos",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Explain),
+                "AI: Explain Topic",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Summarize),
+                "AI: Summarize Branch",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::GenerateMap),
+                "AI: Generate Map…",
+                "",
+                "AI",
+            ),
             (Cmd::ToggleOutliner, "Outliner", "Ctrl+Shift+O", "View"),
             (Cmd::ToggleZen, "Zen Mode", "F11", "View"),
             (
