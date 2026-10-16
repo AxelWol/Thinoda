@@ -64,6 +64,17 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   shortcut conflict/reset behavior.
 
 ## Canvas visual and interaction parity (user screenshots, 2026-10-16)
+- P1 Drag-and-drop hierarchy refinement: extend existing topic reparent/floating
+  drag support to match the supplied interaction reference. Show a translucent
+  dragged subtree, dim its original location and preview the proposed parent,
+  connector and sibling insertion slot in blue before release. Support changing
+  parent, sibling order and main-branch side, not just moving a card visually.
+  Preserve subtree contents and cross-topic relationships; distinguish hierarchy
+  changes from independent dashed relationships ("associations").
+  Verify exact target/ordering rules against XMind rather than inferring them from
+  the static screenshots. Cover invalid self/descendant drops, root protection,
+  cancellation, undo/redo, zoom/pan coordinates and viewport-edge auto-pan, plus
+  a keyboard alternative. Confirm detach-to-floating gestures before changing them.
 - P1 Reference styling: plain bold central topic, rounded colored main topics,
   pale rounded first-level subtopics, deeper underlined topics, thin colored curved
   main branches and compact rounded sub-branch junctions. Clarity theme now provides
