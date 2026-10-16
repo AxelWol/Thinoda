@@ -1433,6 +1433,161 @@ fn symbols_disable_without_selection_and_explain_availability_on_home() {
 }
 
 #[test]
+fn template_chooser_filters_selects_before_creating_and_cancels_without_touching_sources() {
+    let mut app = YMindApp::headless();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::Home);
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Create")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Mind Map").click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().template_choice, Some("mind-map"));
+    assert!(h.state().settings.recent_templates.is_empty());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().active, 0);
+    assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Mind Map").click();
+    h.run_steps(3);
+    h.get_by_label("Template Category").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Analysis and decision")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Analysis and decision")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().template_category,
+        Some(ymind_core::templates::TemplateCategory::Analysis)
+    );
+    assert!(h.state().template_choice.is_none());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mind Map")
+            .is_none()
+    );
+    h.get_by_role_and_label(Role::Button, "SWOT Analysis")
+        .click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().template_choice, Some("swot"));
+    h.get_by_role_and_label(Role::Button, "Create").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook(),
+        &ymind_core::templates::instantiate("swot")
+    );
+    assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    assert_eq!(h.state().settings.recent_templates, ["swot"]);
+    assert!(h.state().settings.recent_files.is_empty());
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Recent template: SWOT Analysis");
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().active, 1);
+    let count = h.state().docs.len();
+    h.state_mut()
+        .exec(&ctx, Cmd::NewFromTemplate("missing-template"));
+    assert_eq!(h.state().docs.len(), count);
+    assert_eq!(h.state().settings.recent_templates, ["swot"]);
+    let expected_key = h.state().docs[1].key.clone();
+    h.state_mut()
+        .new_doc(ymind_core::templates::instantiate("meeting"));
+    h.state_mut().active = 1;
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.state_mut().close_tab_now(0);
+    h.run_steps(3);
+    assert!(h.state().doc().is_none());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().key, expected_key);
+}
+
+#[test]
+fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let mut app = YMindApp::new(
+        english(),
+        Services {
+            paths: Some(paths.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
+    app.settings.reuse_last_theme = true;
+    app.settings.default_theme = "ocean".into();
+    app.settings.reuse_last_structure = true;
+    app.settings.default_structure = ymind_core::Structure::FishboneLeft.xmind_class().into();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    for template in ymind_core::templates::TEMPLATES {
+        h.state_mut().exec(&ctx, Cmd::Home);
+        h.state_mut().template_category = Some(template.category);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, template.name)
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, template.name).focus();
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(h.state().template_choice, Some(template.id));
+        assert_eq!(h.state().active, h.state().docs.len());
+        h.get_by_role_and_label(Role::Button, "Create").click();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &ymind_core::templates::instantiate(template.id)
+        );
+        assert!(h.state().doc().unwrap().path.is_none());
+        for extension in ["ymind", "xmind"] {
+            let path = dir.path().join(format!("{}.{extension}", template.id));
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .save_to(&path, false)
+                .unwrap();
+            assert_eq!(
+                ymind_io::import_file(&path).unwrap(),
+                ymind_core::templates::instantiate(template.id)
+            );
+        }
+    }
+    let settings = Settings::load(&paths).unwrap();
+    assert_eq!(
+        settings.recent_templates,
+        h.state().settings.recent_templates
+    );
+    assert_eq!(settings.recent_templates.len(), 8);
+    assert!(settings.recent_files.is_empty());
+    let mut restarted = harness(YMindApp::new(settings, Services::default(), &[]));
+    restarted.run_steps(3);
+    restarted.get_by_role_and_label(Role::Button, "Recent template: Creative Workflow");
+    let count = restarted.state().docs.len();
+    restarted
+        .get_by_role_and_label(Role::Button, "Cancel")
+        .click();
+    restarted.run_steps(3);
+    assert_eq!(restarted.state().docs.len(), count);
+    assert!(restarted.state().doc().is_none());
+}
+
+#[test]
 fn home_templates_wrap_within_the_window() {
     for width in [480.0, 800.0, 1280.0, 2400.0] {
         let mut app = YMindApp::headless();
@@ -1444,7 +1599,7 @@ fn home_templates_wrap_within_the_window() {
             .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
         h.run_steps(4);
         let first = h.get_by_role_and_label(Role::Button, "Mind Map").rect();
-        let last = h.get_by_role_and_label(Role::Button, "Project Plan").rect();
+        let last = h.get_by_role_and_label(Role::Button, "Tree Table").rect();
         for template in ymind_core::templates::TEMPLATES {
             let rect = h.get_by_role_and_label(Role::Button, template.name).rect();
             assert!(
@@ -1457,7 +1612,15 @@ fn home_templates_wrap_within_the_window() {
             assert!(last.min.y > first.min.y, "templates must wrap at {width}");
         }
         h.get_by_role_and_label(Role::Button, "Project Plan")
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, "Project Plan")
             .click();
+        h.run_steps(3);
+        assert!(h.state().doc().is_none());
+        let create = h.get_by_role_and_label(Role::Button, "Create").rect();
+        assert!(create.min.y >= 0.0 && create.max.y <= 1600.0);
+        h.get_by_role_and_label(Role::Button, "Create").click();
         h.run_steps(3);
         assert!(h.state().doc().is_some());
     }

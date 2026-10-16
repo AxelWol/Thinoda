@@ -110,6 +110,7 @@ pub struct Settings {
     pub recovery_interval_secs: u64,
     pub backup_on_save: bool,
     pub recent_files: Vec<RecentFile>,
+    pub recent_templates: Vec<String>,
     pub default_structure: String,
     pub default_theme: String,
     pub ui_scale: f32,
@@ -143,6 +144,7 @@ impl Default for Settings {
             recovery_interval_secs: 1,
             backup_on_save: true,
             recent_files: Vec::new(),
+            recent_templates: Vec::new(),
             default_structure: "mind_map".into(),
             default_theme: "default".into(),
             ui_scale: 1.0,
@@ -244,6 +246,17 @@ impl Settings {
     }
 
     fn normalize(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.recent_templates.retain(|id| {
+            let known = ymind_core::templates::TEMPLATES
+                .iter()
+                .any(|template| template.id == id);
+            if !known {
+                log::warn!("Ignoring unknown recent template ID: {id}");
+            }
+            known && seen.insert(id.clone())
+        });
+        self.recent_templates.truncate(8);
         let mut merged: Vec<RecentFile> = Vec::with_capacity(self.recent_files.len());
         let mut indices = std::collections::HashMap::new();
         for recent in self.recent_files.drain(..) {
@@ -273,6 +286,13 @@ impl Settings {
         } else {
             1.0
         };
+    }
+
+    /// Remember the most recently used built-in templates, independently of files.
+    pub fn add_recent_template(&mut self, id: &str) {
+        self.recent_templates.retain(|previous| previous != id);
+        self.recent_templates.insert(0, id.to_string());
+        self.normalize();
     }
 
     /// Add or bump a path without losing its pinned state.

@@ -1032,53 +1032,71 @@ impl YMindApp {
             .inner_margin(Margin::same(32))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
-                    ui.add_space(12.0);
-                    let gap = 8.0;
-                    let columns = ((ui.available_width() + gap) / (164.0 + gap))
-                        .floor()
-                        .max(1.0) as usize;
-                    egui::Grid::new("ymind_templates")
-                        .num_columns(columns)
-                        .spacing(vec2(gap, gap))
-                        .show(ui, |ui| {
-                            for (index, tpl) in templates::TEMPLATES.iter().enumerate() {
-                                let r = widgets::card(ui).show(ui, |ui| {
-                                    ui.set_width(150.0);
-                                    ui.set_height(90.0);
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(14.0);
-                                        ui.label(
-                                            RichText::new(icons::MAP).size(26.0).color(p.accent),
-                                        );
-                                        ui.label(RichText::new(tpl.name).strong());
-                                    });
-                                });
-                                let r = ui.interact(
-                                    r.response.rect,
-                                    ui.scope_id().with(tpl.id),
-                                    Sense::click(),
-                                );
-                                r.widget_info(|| {
-                                    egui::WidgetInfo::labeled(egui::Role::Button, true, tpl.name)
-                                });
-                                if r.hovered() {
-                                    ui.painter().rect_stroke(
-                                        r.rect,
-                                        CornerRadius::same(Tokens::RADIUS_M),
-                                        Stroke::new(2.0, p.accent),
-                                        egui::StrokeKind::Outside,
-                                    );
-                                }
-                                if r.clicked() {
-                                    cmd = Some(Cmd::NewFromTemplate(tpl.id));
-                                }
-                                if (index + 1) % columns == 0 {
-                                    ui.end_row();
+                ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
+                let previous = self.template_category;
+                egui::ComboBox::from_id_salt("template_category")
+                    .selected_text(
+                        self.template_category
+                            .map_or(t("All"), |category| t(category.label())),
+                    )
+                    .width(ui.available_width().min(360.0))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.template_category, None, t("All"));
+                        for category in templates::TemplateCategory::ALL {
+                            ui.selectable_value(
+                                &mut self.template_category,
+                                Some(category),
+                                t(category.label()),
+                            );
+                        }
+                    })
+                    .response
+                    .accessible_name(t("Template Category"));
+                if previous != self.template_category {
+                    self.template_choice = None;
+                }
+                ui.add_space(12.0);
+                egui::Panel::bottom("template_actions")
+                    .exact_size(64.0)
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .add_enabled(
+                                    self.template_choice.is_some(),
+                                    egui::Button::new(t("Create")),
+                                )
+                                .clicked()
+                            {
+                                cmd = self.template_choice.map(Cmd::NewFromTemplate);
+                            }
+                            if ui.button(t("Cancel")).clicked() {
+                                self.template_choice = None;
+                                if let Some(index) = self.home_return_to.as_ref().and_then(|key| {
+                                    self.docs.iter().position(|doc| &doc.key == key)
+                                }) {
+                                    self.active = index;
                                 }
                             }
+                            if let Some(template) = self.template_choice.and_then(|id| {
+                                templates::TEMPLATES
+                                    .iter()
+                                    .find(|template| template.id == id)
+                            }) {
+                                ui.label(t(template.name));
+                            } else {
+                                widgets::caption(ui, t("Select a template, then choose Create."));
+                            }
                         });
+                    });
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    crate::template_gallery::show(
+                        ui,
+                        self.template_category,
+                        &mut self.template_choice,
+                        &self.settings.recent_templates,
+                    );
                     ui.add_space(24.0);
                     ui.horizontal(|ui| {
                         ui.heading(RichText::new(t("Recent")).size(18.0).strong());

@@ -5,6 +5,7 @@ pub mod app;
 pub mod doc;
 pub mod i18n;
 mod structure_picker;
+mod template_gallery;
 pub mod ui;
 
 pub use app::{Startup, YMindApp, start_services};

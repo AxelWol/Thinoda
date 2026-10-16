@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use egui::{Color32, Response, Sense, Ui, vec2};
-use ymind_canvas::{PaintOptions, Xf, paint_map};
+use ymind_canvas::paint_thumbnail;
 use ymind_core::{
     Layout, Sheet, Structure,
     layout::{ApproxMeasure, layout_sheet},
@@ -67,71 +67,7 @@ fn paint_preview(ui: &Ui, rect: egui::Rect, structure: Structure) {
         .iter()
         .find(|(sheet, _)| sheet.structure == structure)
         .unwrap();
-    let rect = rect.shrink(5.0);
-    let zoom = (rect.width() / layout.bounds.size.x).min(rect.height() / layout.bounds.size.y);
-    let center = layout.bounds.center();
-    let xf = Xf {
-        origin: rect.center() - vec2(center.x, center.y) * zoom,
-        zoom,
-    };
-    let painter = ui.painter().with_clip_rect(rect);
-    paint_map(
-        &painter,
-        sheet,
-        layout,
-        xf,
-        &PaintOptions {
-            dark,
-            accent: ui.visuals().selection.stroke.color,
-            ..Default::default()
-        },
-    );
-}
-
-fn card(ui: &mut Ui, structure: Structure, selected: bool, width: f32) -> Response {
-    let label = t(structure_label(structure));
-    let galley = ui.painter().layout(
-        label.to_string(),
-        egui::FontId::proportional(11.0),
-        ui.visuals().text_color(),
-        (width - 10.0).max(1.0),
-    );
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(width, (80.0 + galley.size().y).max(108.0)),
-        Sense::click(),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label)
-    });
-    if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact_selectable(&response, selected);
-        ui.painter().rect(
-            rect,
-            6,
-            visuals.bg_fill,
-            visuals.bg_stroke,
-            egui::StrokeKind::Inside,
-        );
-        if response.has_focus() || selected {
-            ui.painter().rect_stroke(
-                rect,
-                6,
-                ui.visuals().selection.stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
-        paint_preview(
-            ui,
-            egui::Rect::from_min_size(rect.min, vec2(width, 72.0)),
-            structure,
-        );
-        ui.painter().galley(
-            egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 76.0),
-            galley,
-            Color32::PLACEHOLDER,
-        );
-    }
-    response.on_hover_text(label)
+    paint_thumbnail(ui.painter(), sheet, layout, rect, dark);
 }
 
 pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structure>) {
@@ -162,7 +98,7 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
     }
     paint_preview(
         ui,
-        egui::Rect::from_min_size(rect.min, vec2(70.0, rect.height())),
+        egui::Rect::from_min_size(rect.min, vec2(70.0, rect.height())).shrink(2.0),
         current,
     );
     let label = ui.painter().layout(
@@ -199,19 +135,15 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
                                 .spacing(vec2(8.0, 8.0))
                                 .show(ui, |ui| {
                                     for (index, &structure) in structures.iter().enumerate() {
-                                        let response =
-                                            card(ui, structure, structure == current, card_width);
-                                        let keyboard = response.has_focus()
-                                            && ui.input_mut(|input| {
-                                                input.consume_key(
-                                                    egui::Modifiers::NONE,
-                                                    egui::Key::Enter,
-                                                ) || input.consume_key(
-                                                    egui::Modifiers::NONE,
-                                                    egui::Key::Space,
-                                                )
-                                            });
-                                        if response.clicked() || keyboard {
+                                        let (_, activated) = ymind_ui::widgets::preview_card(
+                                            ui,
+                                            t(structure_label(structure)),
+                                            structure == current,
+                                            card_width,
+                                            72.0,
+                                            |ui, rect| paint_preview(ui, rect, structure),
+                                        );
+                                        if activated {
                                             chosen = Some(structure);
                                             ui.close_kind(egui::UiKind::Menu);
                                         }

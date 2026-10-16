@@ -391,6 +391,34 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 home-template slice delivered: 17 actual built-in documents now supply cached
+light/dark thumbnails. A shared reusable preview card provides wrapped labels,
+selection/focus feedback, disabled state and consumed Enter/Space activation;
+both the structure popup and home chooser reuse it and the canvas thumbnail painter.
+The fixed category header and Create/Cancel footer surround scrollable grouped
+sections. Eight categories plus All filter the catalog; filter changes clear the
+selection, and card selection alone never creates a document. Cancel returns to
+the prior document by stable key even after tab indices shift. Closing an unrelated
+tab no longer changes the active document or exits Home.
+
+Recently used template IDs are independent of recent files, locally persisted,
+deduplicated and capped at eight; unknown IDs are logged and excluded. Five original
+knowledge/study/life/analysis/creative maps expand the catalog without copying XMind
+assets or changing Ctrl+N/blank-map default behavior.
+Every template is checked against its preview and native/XMind save/reopen results;
+filters, selection-before-create, cancellation, persistence/restart, EN/DE controls,
+narrow/wide bounds and reusable keyboard semantics are covered.
+
+Validation: formatting/workspace clippy pass. All 62 main app cases, 14 app unit
+cases, isolated German UI, 76 core cases and standalone IO/canvas/platform/UI
+suites pass. The latest full `cargo xtask ci` attempt passed its app/core stages
+but Windows Application Control blocked its IO unit-test executable (4551).
+The normal standalone IO suite subsequently passed; system policy was not changed.
+Live AI is explicitly disabled. The earlier full-gallery CI success below is
+historical and is not a claim that this latest full invocation finished.
+Reference-specific template expansion, section navigation, richer assets and theme
+authoring remain open; R5 is not complete.
+
 R5 structure-gallery slice delivered: the Map selector shows the current layout
 thumbnail/name and a bounded, anchored scrollable popup with nine collapsible families
 covering all 17 existing arrangements. One-to-three columns adapt to viewport width.

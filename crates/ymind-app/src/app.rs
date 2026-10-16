@@ -165,6 +165,9 @@ pub struct YMindApp {
     pub zen: bool,
     pub format_tab: FormatTab,
     pub sidebar_family: SidebarFamily,
+    pub template_choice: Option<&'static str>,
+    pub template_category: Option<templates::TemplateCategory>,
+    pub home_return_to: Option<String>,
     /// Explicit topic-style overrides, shared by documents for this app session.
     pub style_clipboard: Option<ymind_core::TopicStyle>,
     pub sheet_paste_request: Option<(Instant, String)>,
@@ -224,6 +227,9 @@ impl YMindApp {
             zen: false,
             format_tab: FormatTab::Style,
             sidebar_family: SidebarFamily::Format,
+            template_choice: None,
+            template_category: None,
+            home_return_to: None,
             style_clipboard: None,
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
@@ -340,8 +346,24 @@ impl YMindApp {
                 }
                 self.new_doc(workbook);
             }
-            Cmd::NewFromTemplate(id) => self.new_doc(templates::instantiate(id)),
+            Cmd::NewFromTemplate(id) => {
+                if !templates::TEMPLATES
+                    .iter()
+                    .any(|template| template.id == id)
+                {
+                    self.toasts.error(t("Unknown template"));
+                    return;
+                }
+                self.new_doc(templates::instantiate(id));
+                self.settings.add_recent_template(id);
+                self.save_settings();
+                self.template_choice = None;
+            }
             Cmd::Home => {
+                if self.doc().is_some() {
+                    self.home_return_to = self.doc().map(|doc| doc.key.clone());
+                }
+                self.template_choice = None;
                 // The home screen is shown when no document is open; offer it as a "new" tab.
                 self.active = self.docs.len();
             }
@@ -1087,11 +1109,16 @@ impl YMindApp {
         if i >= self.docs.len() {
             return;
         }
+        let home = self.active >= self.docs.len();
         let d = self.docs.remove(i);
         if let Some(r) = &self.services.recovery {
             let _ = r.remove(&d.key);
         }
-        if self.active >= self.docs.len() {
+        if home {
+            self.active = self.docs.len();
+        } else if i < self.active {
+            self.active -= 1;
+        } else if self.active >= self.docs.len() {
             self.active = self.docs.len().saturating_sub(1);
         }
     }
@@ -1909,6 +1936,23 @@ mod tests {
         let d = app.doc().unwrap();
         assert_eq!(d.view.selection, vec![id]);
         assert!(!d.doc.sheet().topic(first).unwrap().collapsed);
+    }
+
+    #[test]
+    fn closing_other_tabs_preserves_active_document_and_home_chooser() {
+        let ctx = egui::Context::default();
+        let mut app = YMindApp::headless();
+        app.new_doc(templates::instantiate("meeting"));
+        let expected = app.doc().unwrap().key.clone();
+        app.new_doc(templates::instantiate("swot"));
+        app.active = 1;
+        app.close_tab_now(0);
+        assert_eq!(app.doc().unwrap().key, expected);
+        app.exec(&ctx, Cmd::Home);
+        app.close_tab_now(1);
+        assert!(app.doc().is_none());
+        assert_eq!(app.active, app.docs.len());
+        assert_eq!(app.home_return_to.as_deref(), Some(expected.as_str()));
     }
 
     #[test]

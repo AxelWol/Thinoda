@@ -140,4 +140,25 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Button, "Abbrechen").click();
     h.run_steps(2);
     assert!(!h.state().dialogs.masked_copy);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_label("Vorlagenkategorie").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Lernen und Bildung")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Lernen und Bildung")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Lernplan").click();
+    h.run_steps(3);
+    assert!(h.state().doc().is_none());
+    h.get_by_role_and_label(Role::Button, "Erstellen").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook(),
+        &ymind_core::templates::instantiate("study-plan")
+    );
+    assert_eq!(h.state().settings.recent_templates, ["study-plan"]);
 }

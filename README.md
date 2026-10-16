@@ -9,6 +9,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Home offers rendered previews of 17 original templates across eight categories.
+  Select a card, then Create; Cancel returns to the previous document without
+  changing it. The last eight used template IDs are stored locally, separately
+  from recent files. Ctrl+N still creates a blank map directly.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.

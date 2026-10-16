@@ -65,6 +65,29 @@ pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
     color32(Theme::builtin(&sheet.theme.theme_id).background(&sheet.theme, dark))
 }
 
+/// Fits a noninteractive sample into a thumbnail, without changing any canvas camera.
+pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: Rect, dark: bool) {
+    painter.rect_filled(rect, 4, sheet_background(sheet, dark));
+    let rect = rect.shrink(5.0);
+    let zoom = (rect.width() / layout.bounds.size.x.max(1.0))
+        .min(rect.height() / layout.bounds.size.y.max(1.0));
+    let center = layout.bounds.center();
+    let xf = Xf {
+        origin: rect.center() - vec2(center.x, center.y) * zoom,
+        zoom,
+    };
+    paint_map(
+        &painter.with_clip_rect(rect),
+        sheet,
+        layout,
+        xf,
+        &PaintOptions {
+            dark,
+            ..Default::default()
+        },
+    );
+}
+
 /// Paints the whole map.
 pub fn paint_map(
     painter: &Painter,

@@ -6,6 +6,19 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Home template chooser uses rendered, appearance-aware previews of the exact
+  documents Create opens, rather than generic map icons. Eight category filters
+  plus All, grouped sections, selected-card feedback and a fixed Create/Cancel
+  footer are implemented. Selecting a card does not create a document; changing
+  the filter clears that selection. Cancel returns by document key, not stale tab
+  index. Closing another tab preserves the current document or Home.
+  Recent template IDs are persisted locally, deduplicated and capped at eight,
+  independently of recent files. Five original Knowledge Base/Learning Plan/
+  Weekly Plan/Decision Review/Creative Workflow maps bring the catalog to 17.
+  Previews and keyboard activation are shared reusable UI/canvas helpers.
+  Native/XMind round trips cover every template; English/German selection,
+  cancellation, category filtering, restart persistence and narrow/wide bounds
+  are covered. Further reference-specific content and section navigation remain open.
 - Map structure preview gallery: current-layout thumbnail/name opens an anchored,
   bounded scrollable popup with nine collapsible families and responsive one-to-three
   column cards for all 17 supported structures. Original samples use the real core
@@ -318,13 +331,13 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   text and Gantt window lifecycle. Icon-only references are not verified behavior.
 
 ## Template gallery parity (user screenshots, 2026-10-16)
-- P1 Replace generic template icons with generated map previews; retain a responsive
-  grid and vertical scrolling. Reference chooser has a fixed header/category filter,
-  scrollable category sections, Recently used, section navigation chevrons and a fixed
-  Cancel/Create footer. Selecting a card enables Create; do not assume immediate creation.
-- P2 Category filter: All, Basic, Knowledge management, Meeting and planning,
+- Implemented generated previews, responsive grids, scrolling, fixed header/category
+  filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
+  Selection enables Create without immediate creation. Section navigation chevrons
+  and additional reference-specific content still need verified implementation.
+- Implemented category filters: All, Basic, Knowledge management, Meeting and planning,
   Study and education, Project management, Entertainment and life, Analysis and
-  decision, Creativity. Keep recent templates separate from recent documents.
+  decision, Creativity. Recent templates are separate from recent documents.
 - P2 Expand original template content: basic Mind map/Logic/Brace/Org; problem solving,
   framework and architecture maps; business plans, workshops and dissertation plans;
   school timetable, note-taking, language learning and AR applications; project
@@ -333,6 +346,8 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   media marketing; creative workflows, recipes and film production.
   Several reference titles are truncated: verify full names/content before specifying
   exact equivalents. Do not copy proprietary template text, thumbnails or paid assets.
+  Five original maps now cover Knowledge Base, Learning Plan, Weekly Plan,
+  Decision Review and Creative Workflow; this does not complete the expansion inventory.
 - P2 Verify category filtering, recent-template persistence, keyboard selection,
   Cancel without document creation and creation from each template; cover narrow
   windows, display scaling and long localized names.
