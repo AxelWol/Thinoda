@@ -14,7 +14,8 @@ use ymind_ui::{DialogButton, Palette, Tokens, confirm_dialog, icons, widgets};
 
 use crate::{
     app::{
-        CenterMode, CloseIntent, Cmd, EXPORT_MENU, FocusField, FormatTab, SidebarFamily, YMindApp,
+        CenterMode, CloseIntent, Cmd, EXPORT_MENU, FocusField, FormatTab, SettingsTab,
+        SidebarFamily, YMindApp,
     },
     i18n::{self, t},
 };
@@ -573,6 +574,7 @@ impl YMindApp {
         };
         d.view.add_control_labels.child = t("Add child topic").into();
         d.view.add_control_labels.sibling = t("Add sibling topic").into();
+        d.view.show_add_controls = self.settings.show_topic_add_buttons;
         if paste {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
             ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
@@ -596,6 +598,9 @@ impl YMindApp {
     }
 
     fn topic_toolbar(&mut self, ctx: &Context) {
+        if !self.settings.show_topic_toolbar {
+            return;
+        }
         let Some(d) = self.doc() else { return };
         if d.view.selection.len() != 1
             || d.view.editing_topic().is_some()
@@ -1217,13 +1222,30 @@ impl YMindApp {
                 if ui.small_button("+").on_hover_text(t("Zoom In")).clicked() {
                     cmd = Some(Cmd::Canvas(Action::ZoomIn));
                 }
-                if ui
-                    .small_button(format!("{}%", d.view.zoom_percent()))
-                    .on_hover_text(t("Actual Size"))
-                    .clicked()
-                {
-                    cmd = Some(Cmd::Canvas(Action::ZoomReset));
-                }
+                let current = d.view.zoom_percent();
+                ui.menu_button(format!("{current}%"), |ui| {
+                    let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
+                    if !presets.contains(&current) {
+                        presets.push(current);
+                        presets.sort_unstable_by(|a, b| b.cmp(a));
+                    }
+                    for percent in presets {
+                        if ui
+                            .selectable_label(current == percent, format!("{percent}%"))
+                            .clicked()
+                        {
+                            d.view.set_zoom(percent as f32 / 100.0);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button(t("Fit Map")).clicked() {
+                        cmd = Some(Cmd::Canvas(Action::Fit));
+                        ui.close();
+                    }
+                })
+                .response
+                .accessible_name(t("Zoom"));
                 if ui.small_button("−").on_hover_text(t("Zoom Out")).clicked() {
                     cmd = Some(Cmd::Canvas(Action::ZoomOut));
                 }
@@ -1233,7 +1255,34 @@ impl YMindApp {
                     ui,
                     format!("{}: {}", t("Words"), ymind_core::search::word_count(sheet)),
                 );
-                widgets::caption(ui, format!("{}: {}", t("Topics"), sheet.topics.len()));
+                ui.menu_button(format!("{}: {}", t("Topics"), sheet.topics.len()), |ui| {
+                    ui.strong(t("Current sheet"));
+                    for (label, value) in [
+                        ("Topics", sheet.topics.len()),
+                        ("Words", ymind_core::search::word_count(sheet)),
+                        (
+                            "Characters",
+                            sheet
+                                .topics
+                                .values()
+                                .map(|topic| topic.title.chars().count())
+                                .sum(),
+                        ),
+                    ] {
+                        ui.label(format!("{}: {value}", t(label)));
+                    }
+                    ui.separator();
+                    widgets::caption(
+                        ui,
+                        t("Topic titles only, including collapsed and floating topics."),
+                    );
+                    widgets::caption(
+                        ui,
+                        t("Words split at whitespace; characters count Unicode scalar values."),
+                    );
+                })
+                .response
+                .accessible_name(t("Statistics"));
                 widgets::vdivider(ui);
                 if let Some(c) = d
                     .path
@@ -1825,14 +1874,25 @@ impl YMindApp {
                             format!("{}/{} {}", self.search.current + 1, n, t("results"))
                         },
                     );
+                    if self.search.all_sheets
+                        && let Some(hit) = self.search.hits.get(self.search.current)
+                        && let Some(sheet) = self
+                            .doc()
+                            .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
+                    {
+                        widgets::caption(ui, format!("{}: {}", t("Sheet"), sheet.title));
+                    }
                     ui.horizontal_wrapped(|ui| {
+                        ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
                         ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
                         ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
                         ui.checkbox(&mut self.search.opts.include_notes, t("Include notes"));
+                        ui.checkbox(&mut self.search.opts.include_labels, t("Include labels"));
                         ui.checkbox(&mut self.search.dim, t("Dim others"));
                         ui.checkbox(&mut self.search.show_replace, t("Replace"));
                     });
                     if self.search.show_replace {
+                        widgets::caption(ui, t("Replaces topic titles only."));
                         ui.horizontal(|ui| {
                             ui.add(
                                 TextEdit::singleline(&mut self.search.replace)
@@ -2026,6 +2086,11 @@ impl YMindApp {
                 .show(ctx, |ui| {
                     ui.heading(RichText::new("yMind").size(26.0).strong());
                     ui.label(t("A fast, open mind mapping app."));
+                    ui.label(format!("{} Axel Wolters", t("Written by")));
+                    ui.hyperlink_to(
+                        format!("{}: axelwolters@hotmail.com", t("Contact")),
+                        "mailto:axelwolters@hotmail.com",
+                    );
                     ui.label(format!(
                         "{} {} · {} {}",
                         t("Version"),
@@ -2079,110 +2144,182 @@ impl YMindApp {
             .open(&mut open)
             .default_width(440.0)
             .collapsible(false)
+            .vscroll(true)
             .show(ctx, |ui| {
-                widgets::section(ui, t("Appearance"), true, |ui| {
-                    widgets::property_row(ui, t("Theme"), |ui| {
-                        widgets::segmented(
-                            ui,
-                            &mut self.settings.theme,
-                            &[
-                                (SettingsTheme::System, t("System")),
-                                (SettingsTheme::Light, t("Light")),
-                                (SettingsTheme::Dark, t("Dark")),
-                            ],
-                        );
-                    });
-                    widgets::property_row(ui, t("Accent Color"), |ui| {
-                        if let Some(c) =
-                            widgets::color_swatches(ui, &SWATCHES[..8], Some(self.accent))
-                        {
-                            self.accent = c;
-                        }
-                    });
-                    widgets::property_row(ui, t("Language"), |ui| {
-                        let mut l = self.settings.language;
-                        widgets::segmented(
-                            ui,
-                            &mut l,
-                            &[
-                                (Language::Auto, t("Auto")),
-                                (Language::English, "English"),
-                                (Language::German, "Deutsch"),
-                            ],
-                        );
-                        if l != self.settings.language {
-                            self.settings.language = l;
-                            i18n::set_lang(i18n::resolve(l));
-                            let titles = crate::app::new_topic_titles();
-                            for d in &mut self.docs {
-                                d.view.titles = titles.clone();
-                            }
-                        }
-                    });
-                    widgets::property_field(ui, t("UI Scale"), |ui| {
-                        ui.add(
-                            egui::Slider::new(&mut self.settings.ui_scale, 0.75..=2.0)
-                                .step_by(0.05),
-                        )
-                    });
-                });
-                widgets::section(ui, t("Files"), true, |ui| {
-                    widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"));
-                    widgets::property_field(ui, t("Autosave interval (s)"), |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut self.settings.autosave_interval_secs)
-                                .range(5..=3600),
-                        )
-                    });
-                    widgets::toggle(
-                        ui,
-                        &mut self.settings.backup_on_save,
-                        t("Keep backup on save"),
-                    );
-                    widgets::toggle(
-                        ui,
-                        &mut self.settings.confirm_on_delete,
-                        t("Confirm before deleting"),
-                    );
-                    if let Some(p) = &self.services.paths
-                        && ui.button(t("Open settings folder")).clicked()
-                    {
-                        let _ = ymind_platform::system::reveal_in_file_manager(&p.config_dir);
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, label) in [
+                        (SettingsTab::General, "General"),
+                        (SettingsTab::Editor, "Editor"),
+                        (SettingsTab::Ai, "AI Assistant"),
+                        (SettingsTab::Cloud, "Cloud"),
+                    ] {
+                        ui.selectable_value(&mut self.dialogs.settings_tab, tab, t(label));
                     }
                 });
-                self.ai_settings_section(ui);
-                widgets::section(ui, t("Cloud"), true, |ui| {
-                    ui.label(RichText::new(t("Detected cloud folders")).strong());
-                    if self.services.cloud.is_empty() {
-                        widgets::caption(ui, t("No cloud folders detected"));
-                    }
-                    for f in self.services.cloud.clone() {
-                        ui.horizontal(|ui| {
-                            let sel =
-                                self.settings.cloud.preferred_folder.as_ref() == Some(&f.path);
-                            ui.label(format!("{} {}", icons::CLOUD, f.name));
-                            widgets::caption(ui, f.path.display().to_string());
-                            if ui.add_enabled(!sel, egui::Button::new(t("Use"))).clicked() {
-                                self.settings.cloud.preferred_folder = Some(f.path.clone());
+                ui.separator();
+                if self.dialogs.settings_tab == SettingsTab::General {
+                    widgets::section(ui, t("Appearance"), true, |ui| {
+                        widgets::property_row(ui, t("Theme"), |ui| {
+                            widgets::segmented(
+                                ui,
+                                &mut self.settings.theme,
+                                &[
+                                    (SettingsTheme::System, t("System")),
+                                    (SettingsTheme::Light, t("Light")),
+                                    (SettingsTheme::Dark, t("Dark")),
+                                ],
+                            );
+                        });
+                        widgets::property_row(ui, t("Accent Color"), |ui| {
+                            if let Some(c) =
+                                widgets::color_swatches(ui, &SWATCHES[..8], Some(self.accent))
+                            {
+                                self.accent = c;
                             }
                         });
-                    }
-                    widgets::property_row(ui, t("Default save folder"), |ui| {
-                        let label = self
-                            .settings
-                            .cloud
-                            .preferred_folder
-                            .as_ref()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_else(|| "—".into());
-                        widgets::caption(ui, label);
-                        if ui.button(t("Choose…")).clicked()
-                            && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                        widgets::property_row(ui, t("Language"), |ui| {
+                            let mut l = self.settings.language;
+                            widgets::segmented(
+                                ui,
+                                &mut l,
+                                &[
+                                    (Language::Auto, t("Auto")),
+                                    (Language::English, "English"),
+                                    (Language::German, "Deutsch"),
+                                ],
+                            );
+                            if l != self.settings.language {
+                                self.settings.language = l;
+                                i18n::set_lang(i18n::resolve(l));
+                                let titles = crate::app::new_topic_titles();
+                                for d in &mut self.docs {
+                                    d.view.titles = titles.clone();
+                                }
+                            }
+                        });
+                        widgets::property_field(ui, t("UI Scale"), |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut self.settings.ui_scale, 0.75..=2.0)
+                                    .step_by(0.05),
+                            )
+                        });
+                    });
+                    widgets::section(ui, t("Files"), true, |ui| {
+                        widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"));
+                        widgets::property_field(ui, t("Autosave interval (s)"), |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.settings.autosave_interval_secs)
+                                    .range(5..=3600),
+                            )
+                        });
+                        widgets::toggle(
+                            ui,
+                            &mut self.settings.backup_on_save,
+                            t("Keep backup on save"),
+                        );
+                        widgets::toggle(
+                            ui,
+                            &mut self.settings.confirm_on_delete,
+                            t("Confirm before deleting"),
+                        );
+                        if let Some(p) = &self.services.paths
+                            && ui.button(t("Open settings folder")).clicked()
                         {
-                            self.settings.cloud.preferred_folder = Some(dir);
+                            let _ = ymind_platform::system::reveal_in_file_manager(&p.config_dir);
                         }
                     });
-                });
+                }
+                if self.dialogs.settings_tab == SettingsTab::Editor {
+                    widgets::section(ui, t("Editor"), true, |ui| {
+                        widgets::property_field(ui, t("Show topic toolbar"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.show_topic_toolbar,
+                                t("Show topic toolbar"),
+                            )
+                        });
+                        widgets::property_field(ui, t("Show topic add buttons"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.show_topic_add_buttons,
+                                t("Show topic add buttons"),
+                            )
+                        });
+                        widgets::property_field(ui, t("Initial canvas zoom"), |ui| {
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut self.settings.initial_canvas_zoom,
+                                    0.1..=5.0,
+                                )
+                                .step_by(0.1)
+                                .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+                            )
+                        });
+                        widgets::caption(
+                            ui,
+                            t("Applies to new and newly opened maps, not current views."),
+                        );
+                        widgets::property_field(
+                            ui,
+                            t("Reuse last structure for new blank maps"),
+                            |ui| {
+                                widgets::toggle(
+                                    ui,
+                                    &mut self.settings.reuse_last_structure,
+                                    t("Reuse last structure for new blank maps"),
+                                )
+                            },
+                        );
+                        widgets::property_field(
+                            ui,
+                            t("Reuse last theme for new blank maps"),
+                            |ui| {
+                                widgets::toggle(
+                                    ui,
+                                    &mut self.settings.reuse_last_theme,
+                                    t("Reuse last theme for new blank maps"),
+                                )
+                            },
+                        );
+                    });
+                }
+                if self.dialogs.settings_tab == SettingsTab::Ai {
+                    self.ai_settings_section(ui);
+                }
+                if self.dialogs.settings_tab == SettingsTab::Cloud {
+                    widgets::section(ui, t("Cloud"), true, |ui| {
+                        ui.label(RichText::new(t("Detected cloud folders")).strong());
+                        if self.services.cloud.is_empty() {
+                            widgets::caption(ui, t("No cloud folders detected"));
+                        }
+                        for f in self.services.cloud.clone() {
+                            ui.horizontal(|ui| {
+                                let sel =
+                                    self.settings.cloud.preferred_folder.as_ref() == Some(&f.path);
+                                ui.label(format!("{} {}", icons::CLOUD, f.name));
+                                widgets::caption(ui, f.path.display().to_string());
+                                if ui.add_enabled(!sel, egui::Button::new(t("Use"))).clicked() {
+                                    self.settings.cloud.preferred_folder = Some(f.path.clone());
+                                }
+                            });
+                        }
+                        widgets::property_row(ui, t("Default save folder"), |ui| {
+                            let label = self
+                                .settings
+                                .cloud
+                                .preferred_folder
+                                .as_ref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "—".into());
+                            widgets::caption(ui, label);
+                            if ui.button(t("Choose…")).clicked()
+                                && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                            {
+                                self.settings.cloud.preferred_folder = Some(dir);
+                            }
+                        });
+                    });
+                }
             });
         if self.settings != before {
             self.save_settings();

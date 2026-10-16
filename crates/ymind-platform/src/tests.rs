@@ -79,6 +79,11 @@ fn settings_roundtrip_every_field() {
         ui_scale: 1.5,
         show_status_bar: false,
         show_format_panel: false,
+        show_topic_toolbar: false,
+        show_topic_add_buttons: false,
+        initial_canvas_zoom: 0.8,
+        reuse_last_structure: true,
+        reuse_last_theme: true,
         snap_to_grid: true,
         smooth_zoom: false,
         spell_check: true,
@@ -152,6 +157,26 @@ fn settings_unknown_fields_and_nested_defaults() {
     assert!(settings.cloud.show_cloud_badges);
     assert!(settings.window.unwrap().maximized);
     assert_eq!(settings.language, Language::Auto);
+    assert!(settings.show_topic_toolbar && settings.show_topic_add_buttons);
+    assert_eq!(settings.initial_canvas_zoom, 1.0);
+    assert!(!settings.reuse_last_structure && !settings.reuse_last_theme);
+}
+
+#[test]
+fn initial_canvas_zoom_is_normalized_without_affecting_ui_scale() {
+    let dir = directory();
+    let paths = paths(&dir);
+    for (value, expected) in [(0.0, 0.1), (8.0, 5.0), (f32::NAN, 1.0)] {
+        let settings = Settings {
+            initial_canvas_zoom: value,
+            ui_scale: 1.5,
+            ..Settings::default()
+        };
+        settings.save(&paths).unwrap();
+        let loaded = Settings::load(&paths).unwrap();
+        assert_eq!(loaded.initial_canvas_zoom, expected);
+        assert_eq!(loaded.ui_scale, 1.5);
+    }
 }
 
 #[test]

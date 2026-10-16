@@ -100,6 +100,8 @@ pub struct MapView {
     pub relationship_from: Option<TopicId>,
     pub titles: NewTopicTitles,
     pub add_control_labels: AddControlLabels,
+    /// Whether the canvas exposes connector add buttons (keyboard actions remain available).
+    pub show_add_controls: bool,
     /// Internal clipboard (keeps full fidelity when pasting inside yMind).
     pub clipboard: Option<ClipboardPayload>,
     /// Text the host should place on the OS clipboard.
@@ -114,6 +116,7 @@ pub struct MapView {
     pending_fit: bool,
     pending_reveal: Option<TopicId>,
     initialized: bool,
+    explicit_initial_zoom: bool,
     canvas_rect: Rect,
 }
 
@@ -127,6 +130,7 @@ impl Default for MapView {
             relationship_from: None,
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
+            show_add_controls: true,
             clipboard: None,
             clipboard_out: None,
             filter: None,
@@ -138,6 +142,7 @@ impl Default for MapView {
             pending_fit: false,
             pending_reveal: None,
             initialized: false,
+            explicit_initial_zoom: false,
             canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
         }
     }
@@ -217,6 +222,7 @@ impl MapView {
         self.drag = Drag::None;
         self.cache = None;
         self.initialized = false;
+        self.explicit_initial_zoom = false;
         self.zoom = 1.0;
         self.offset = EVec2::ZERO;
     }
@@ -281,6 +287,15 @@ impl MapView {
         let c = self.canvas_rect.center();
         let factor = zoom.clamp(MIN_ZOOM, MAX_ZOOM) / self.zoom;
         self.zoom_by(factor, Some(c));
+    }
+
+    /// Sets the zoom preference before the first frame of a new/reset view.
+    /// A non-default value keeps initial centering but opts out of automatic fit.
+    /// `1.0` preserves the default fit-on-overflow behavior; explicit Fit still works.
+    pub fn set_initial_zoom(&mut self, zoom: f32) {
+        let zoom = if zoom.is_finite() { zoom } else { 1.0 };
+        self.set_zoom(zoom);
+        self.explicit_initial_zoom = self.zoom != 1.0;
     }
 
     /// Zooms by `factor` keeping `anchor` (screen position) fixed. `None` uses the center.
@@ -442,7 +457,8 @@ impl AddHandle {
 }
 
 fn add_handles(view: &MapView, sheet: &Sheet, layout: &Layout) -> Vec<AddHandle> {
-    if view.selection.len() != 1
+    if !view.show_add_controls
+        || view.selection.len() != 1
         || view.selected_relationship.is_some()
         || view.editing.is_some()
         || view.relationship_from.is_some()
@@ -466,6 +482,9 @@ fn topic_add_handles(
     layout: &Layout,
     id: TopicId,
 ) -> Vec<AddHandle> {
+    if !view.show_add_controls {
+        return Vec::new();
+    }
     let Some(topic) = layout.topics.get(&id) else {
         return Vec::new();
     };
@@ -547,7 +566,9 @@ impl MapCanvas {
         if !view.initialized {
             view.initialized = true;
             let b = layout.bounds;
-            if b.size.x * view.zoom > rect.width() || b.size.y * view.zoom > rect.height() {
+            if !view.explicit_initial_zoom
+                && (b.size.x * view.zoom > rect.width() || b.size.y * view.zoom > rect.height())
+            {
                 view.fit(&layout);
             } else {
                 let c = b.center();
@@ -1245,6 +1266,135 @@ mod tests {
     fn canvas_is_accessible() {
         let h = harness();
         h.get_by_label("Mind map canvas");
+    }
+
+    #[test]
+    fn hidden_add_controls_are_absent_but_keyboard_insert_still_works() {
+        let mut h = harness();
+        let first = h.state().doc.sheet().children(h.state().doc.sheet().root)[0];
+        h.state_mut().view.select_only(first);
+        h.run();
+        h.get_by_label("Add child topic");
+        h.get_by_label("Add sibling topic");
+        h.state_mut().view.show_add_controls = false;
+        h.run();
+        assert!(h.query_by_label("Add child topic").is_none());
+        assert!(h.query_by_label("Add sibling topic").is_none());
+        {
+            let s = h.state_mut();
+            let layout = s.view.layout_for(&s.doc);
+            assert!(add_handles(&s.view, s.doc.sheet(), &layout).is_empty());
+            assert!(topic_add_handles(&s.view, s.doc.sheet(), &layout, first).is_empty());
+        }
+        h.key_press(Key::Tab);
+        h.run();
+        let inserted = h.state().view.primary().unwrap();
+        assert_eq!(h.state().doc.sheet().parent(inserted), Some(first));
+    }
+
+    #[test]
+    fn initial_zoom_preference_survives_first_frame_and_reset() {
+        for requested in [2.5, MAX_ZOOM * 2.0, 1.0] {
+            let mut doc = Document::new(Workbook::default());
+            doc.edit_sheet("Wide map", |sheet| {
+                for i in 0..30 {
+                    sheet.insert_child(sheet.root, &format!("Branch {i}"))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+            let mut view = MapView::default();
+            view.set_initial_zoom(requested);
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, s: &mut State| {
+                        MapCanvas::show(ui, &mut s.doc, &mut s.view);
+                    },
+                    State { doc, view },
+                );
+            h.run();
+            let s = h.state();
+            if requested == 1.0 {
+                assert!(s.view.zoom < 1.0);
+            } else {
+                assert_eq!(s.view.zoom, requested.clamp(MIN_ZOOM, MAX_ZOOM));
+            }
+            let center = s.view.cache.as_ref().unwrap().layout.bounds.center();
+            assert!((s.view.offset - vec2(-center.x, -center.y) * s.view.zoom).length() < 0.01);
+            {
+                let s = h.state_mut();
+                s.view.request_fit();
+            }
+            h.run();
+            assert!(h.state().view.zoom < 1.0);
+            h.state_mut().view.reset();
+            h.state_mut().view.set_initial_zoom(2.5);
+            h.run();
+            assert_eq!(h.state().view.zoom, 2.5);
+        }
+    }
+
+    #[test]
+    fn summary_topic_edit_child_and_undo_are_independent_of_source_topics() {
+        let mut h = harness();
+        let root = h.state().doc.sheet().root;
+        let sources = h.state().doc.sheet().children(root)[..2].to_vec();
+        let original_titles: Vec<_> = sources
+            .iter()
+            .map(|id| h.state().doc.sheet().topic(*id).unwrap().title.clone())
+            .collect();
+        {
+            let s = h.state_mut();
+            s.view.selection = sources.clone();
+            apply_action(&mut s.doc, &mut s.view, Action::AddSummary).unwrap();
+        }
+        h.run();
+        let summary = h.state().view.primary().unwrap();
+        assert_eq!(h.state().view.editing_topic(), Some(summary));
+        h.get_by_label("Topic title")
+            .type_text("Independent conclusion");
+        h.run();
+        h.key_press(Key::Enter);
+        h.run();
+        assert_eq!(
+            h.state().doc.sheet().topic(summary).unwrap().title,
+            "Independent conclusion"
+        );
+        assert!(h.query_by_label("Add sibling topic").is_none());
+        h.get_by_label("Add child topic").click();
+        h.run();
+        let child = h.state().view.primary().unwrap();
+        assert_eq!(h.state().doc.sheet().parent(child), Some(summary));
+        h.key_press(Key::Escape);
+        h.run();
+        {
+            let s = h.state_mut();
+            assert!(s.doc.undo());
+            assert!(s.doc.sheet().topic(child).is_none());
+            assert!(s.doc.undo());
+            assert_eq!(s.doc.sheet().topic(summary).unwrap().title, "Summary");
+            assert!(s.doc.redo());
+            assert_eq!(
+                s.doc.sheet().topic(summary).unwrap().title,
+                "Independent conclusion"
+            );
+            assert!(s.doc.redo());
+            assert_eq!(s.doc.sheet().parent(child), Some(summary));
+            s.doc.sheet().validate().unwrap();
+            for (id, title) in sources.iter().zip(&original_titles) {
+                assert_eq!(&s.doc.sheet().topic(*id).unwrap().title, title);
+            }
+            assert_eq!(s.doc.sheet().summaries.len(), 1);
+            assert!(s.doc.sheet().boundaries.is_empty());
+            assert!(s.doc.undo()); // child insertion
+            assert!(s.doc.undo()); // title edit
+            assert!(s.doc.undo()); // summary creation
+            assert!(s.doc.sheet().summaries.is_empty());
+            assert!(s.doc.sheet().topic(summary).is_none());
+            assert_eq!(s.doc.sheet().children(root)[..2], sources);
+            s.doc.sheet().validate().unwrap();
+        }
     }
 
     fn click_at(h: &mut Harness<'_, State>, pos: Pos2, button: PointerButton) {

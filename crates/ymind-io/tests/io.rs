@@ -1,6 +1,7 @@
 use std::io::{Cursor, Write};
 use ymind_core::{
-    Boundary, ChildRange, Color, Relationship, Sheet, Summary, Topic, TopicShape, Vec2, Workbook,
+    Boundary, ChildRange, Color, LineShape, Relationship, Sheet, Summary, TextAlign, Topic,
+    TopicShape, Vec2, Workbook,
 };
 use ymind_io::{ExportOptions, Format, detect_format, export_bytes, import_bytes};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -20,6 +21,18 @@ fn sample() -> Workbook {
         t.style.fill = Some(Color::rgb(10, 20, 30));
         t.style.shape = Some(TopicShape::Diamond);
         t.style.bold = Some(true);
+        t.style.text_color = Some(Color::rgb(40, 50, 60));
+        t.style.border_color = Some(Color::rgb(70, 80, 90));
+        t.style.border_width = Some(2.0);
+        t.style.font_family = Some("Noto Sans".into());
+        t.style.font_size = Some(14.0);
+        t.style.italic = Some(false);
+        t.style.underline = Some(true);
+        t.style.strikethrough = Some(true);
+        t.style.align = Some(TextAlign::Left);
+        t.style.line_color = Some(Color::rgb(100, 110, 120));
+        t.style.line_shape = Some(LineShape::RoundedElbow);
+        t.style.line_width = Some(1.5);
     }
     s.topic_mut(child).unwrap().style.font_size = Some(18.0);
     let floating = s.add_floating("Floating", Vec2::new(200.0, -30.0));
@@ -67,6 +80,14 @@ fn zip_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
     c.into_inner()
 }
 
+fn public_xmind_content(bytes: Vec<u8>) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut content = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("content.json").unwrap(), &mut content)
+        .unwrap();
+    zip_with(&[("content.json", &content)])
+}
+
 #[test]
 fn native_archive_roundtrips_every_model_field() {
     let w = sample();
@@ -87,8 +108,32 @@ fn native_rejects_newer_major_version() {
 fn xmind_export_import_roundtrips_model() {
     let w = sample();
     let bytes = export_bytes(&w, Format::XMind, &Default::default()).unwrap();
-    let restored = import_bytes(Format::XMind, &bytes).unwrap();
-    assert_eq!(restored, w);
+    // Only content.json is retained: metadata.ymindWorkbook is a private shortcut and
+    // must not hide mistakes in the public XMind representation or parser.
+    let public_archive = public_xmind_content(bytes);
+    let restored = import_bytes(Format::XMind, &public_archive).unwrap();
+    assert_eq!(restored.sheets.len(), 2);
+    let sheet = &restored.sheets[0];
+    assert_eq!(sheet.root_topic().title, "Central & topic");
+    let branch = sheet.topic(sheet.root_topic().children[0]).unwrap();
+    assert_eq!(branch.title, "Branch <A>");
+    assert_eq!(branch.style.shape, Some(TopicShape::Diamond));
+    assert_eq!(branch.style.line_shape, Some(LineShape::RoundedElbow));
+    assert_eq!(branch.style.font_family.as_deref(), Some("Noto Sans"));
+    assert_eq!(branch.style.font_size, Some(14.0));
+    assert_eq!(branch.style.border_width, Some(2.0));
+    assert_eq!(branch.style.text_color, Some(Color::rgb(40, 50, 60)));
+    assert_eq!(branch.style.border_color, Some(Color::rgb(70, 80, 90)));
+    assert_eq!(branch.style.bold, Some(true));
+    assert_eq!(branch.style.italic, Some(false));
+    assert_eq!(branch.style.underline, Some(true));
+    assert_eq!(branch.style.strikethrough, Some(true));
+    assert_eq!(branch.style.align, Some(TextAlign::Left));
+    assert_eq!(branch.style.line_color, Some(Color::rgb(100, 110, 120)));
+    assert_eq!(branch.style.line_width, Some(1.5));
+    assert_eq!(sheet.relationships[0].color, Some(Color::rgb(1, 2, 3)));
+    assert_eq!(sheet.boundaries[0].color, Some(Color::rgb(3, 4, 5)));
+    assert_eq!(sheet.topics[&sheet.summaries[0].topic].title, "Summary");
 }
 
 #[test]
@@ -124,6 +169,34 @@ fn xmind_export_uses_xmind_metadata_and_public_content() {
     assert_eq!(sheet.relationships.len(), 1);
     assert_eq!(sheet.boundaries.len(), 1);
     assert_eq!(sheet.summaries.len(), 1);
+}
+
+#[test]
+fn xmind_export_uses_public_shape_style_and_element_classes() {
+    let bytes = export_bytes(&sample(), Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_reader(archive.by_name("content.json").unwrap()).unwrap();
+    let sheet = &content[0];
+    let branch = &sheet["rootTopic"]["children"]["attached"][0];
+    let props = &branch["style"]["properties"];
+    assert_eq!(props["shape-class"], "org.xmind.topicShape.diamond");
+    assert_eq!(
+        props["line-class"],
+        "org.xmind.branchConnection.roundedElbow"
+    );
+    assert_eq!(props["fo:font-family"], "Noto Sans");
+    assert_eq!(props["fo:font-size"], "14pt");
+    assert_eq!(props["fo:text-align"], "left");
+    assert_eq!(props["fo:text-decoration"], "underline line-through");
+    assert_eq!(props["border-line-width"], "2");
+    assert_eq!(sheet["relationships"][0]["class"], "relationship");
+    assert_eq!(
+        sheet["relationships"][0]["style"]["properties"]["line-color"],
+        "#010203"
+    );
+    assert_eq!(sheet["rootTopic"]["boundaries"][0]["class"], "boundary");
+    assert_eq!(sheet["rootTopic"]["summaries"][0]["class"], "summary");
 }
 
 #[test]

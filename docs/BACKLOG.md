@@ -6,10 +6,34 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Working General, Editor, AI and Cloud settings categories with scrolling.
+  Editor has independently persisted topic-toolbar/add-button visibility, initial
+  canvas zoom and opt-in last structure/theme defaults for new blank maps.
+  Explicit templates retain their own structure/theme. Calendar, Sharing,
+  Shortcuts, smart guides and font preferences remain below; no inactive shells added.
+- Zoom dropdown with the reference presets, one selected current/non-preset value
+  and Fit Map; map zoom remains separate from UI scale.
+- Topic-count statistics popover for the current sheet: all topic titles, including
+  collapsed/floating/summary topics; words split on whitespace, characters count
+  Unicode scalar values. Notes/labels are excluded and the counting scope is explicit.
+- Find across the active sheet or all sheets with sheet-aware navigation, optional
+  notes/labels and sheet-scoped dimming. Replace All changes topic titles atomically
+  across the chosen scope with one undo/redo step; notes/labels remain search-only.
+- Summary braces connect to their independent editable topic, highlight the selected
+  source range including visible descendants, and follow left/right split-map sides.
+  Editing/children, sibling edits and undo/redo are covered. Range resizing and
+  mixed-side ranges still need verified reference semantics.
+- About yMind includes Axel Wolters' author credit and contact email in EN/DE.
 - Fixed XMind rejecting exports: archive metadata now uses a creator object and
   data-structure version 2, matching XMind's expected format. Confirmed the old
   failure and successful corrected-file opening in the installed Windows XMind app.
   Added public archive contract/content coverage independent of the private workbook.
+- Improved public XMind topic/line style class mappings, font/alignment/decorations/
+  border/connector properties, relationship/boundary colors and structural element
+  classes, including legacy topic-style parsing. Coverage imports public content
+  without the private workbook payload. Theme references, fixed widths, image/to-do
+  export and legacy relationships/boundaries/summaries/floating topics remain gaps;
+  these style changes do not imply verified native visual fidelity.
 - Style shows the selected topic's resolved colors, including inherited/custom
   values outside the preset palette, with a checked swatch and hexadecimal readout.
   Missing fill/border colors are explicit. Map shows the effective sheet background
@@ -25,9 +49,16 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Floating topic toolbar for AI expansion, subtopics, relationships, links, notes, to-dos and style.
 - Floating main editing toolbar with a compact insert popover, keeping the title bar uncluttered.
 - Direction-aware child/sibling plus connectors; root-safe contextual menus and blank-canvas selection handling.
-- Active-sheet Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
+- Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
 
 ## XMind parity (from the user guide)
+- P1 Delete structural objects: relationships (Beziehungen), boundaries (Umrandung)
+  and summaries (Zusammenfassung) must be individually selectable and deletable
+  through Delete and a contextual action, with undo/redo. Deleting a relationship
+  or boundary must preserve its topics and their content. Verify Summary deletion
+  semantics for its independent summary topic/children before implementing them;
+  never silently delete the covered sibling branches. Cover selection feedback,
+  keyboard/context-menu parity and save/import/export after deletion.
 - P1 Summary ("Zusammenfassung") interaction/visual parity, clarified by the
   supplied screenshot: a brace spans a range of sibling branches, including their
   descendant extents, and connects to a separate editable summary topic outside
@@ -85,7 +116,8 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   - Cover no printer, unavailable printer, driver capability changes, invalid copy
     counts, multi-page navigation, cancellation and spool errors; never send a real
     print job as an automated smoke check without explicit user approval.
-- P1 Extend Find & Replace to search across all sheets (active-sheet search/replacement is implemented)
+- Cross-sheet Find and title replacement are implemented; notes/labels are explicitly
+  search-only. Rich-field replacement needs separately specified behavior.
 - P1 Pitch mode (presentation from branches, F5) and slide export
 - P1 Map Shot (F7): region capture to clipboard/PNG
 - P2 Zone (Ctrl+Alt+Z) and callouts editing UI polish
@@ -177,10 +209,11 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   groups. Use accessible tooltips/names and responsive placement without covering
   scrollbars or editable topics. Verify the four-corner action (fit/fullscreen) and
   presentation action behavior before assigning commands based only on their icons.
-- P2 Statistics popover anchored above the topic count: topic, word and character
-  totals. Verify active-sheet versus selection scope, inclusion of notes/labels and
-  Unicode counting rules; reuse the existing statistics calculation where possible.
-- P1 Zoom dropdown: reference presets 500%, 400%, 300%, 200%, 150%, 120%, 100%, 80%,
+- Implemented statistics popover at the topic count: current-sheet topic, word and
+  character totals using topic titles only, whitespace-separated words and Unicode
+  scalar values. Selection-scoped statistics and alternative counting conventions
+  are not implied; the popover explains its scope.
+- Implemented zoom dropdown: reference presets 500%, 400%, 300%, 200%, 150%, 120%, 100%, 80%,
   50%, 20% and 10%, plus the current non-preset value (112% in the screenshot) with
   a checkmark, followed by Fit map. Keep map zoom distinct from UI scaling and
   preserve an intentional zoom anchor; test clamping and current-value deduplication.
@@ -224,19 +257,19 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
-- P1 Organize Preferences into General, Editor, Calendar, Sharing and Shortcuts tabs,
-  with icon navigation, rounded grouped cards, consistent spacing and accessible focus.
-- P1 Editor: configurable selected-topic floating toolbar visibility and a separate
-  switch for the topic-add connector buttons. The reference shows "Always" for the
-  toolbar; verify other modes before defining their behavior.
+- P1 Extend the working General/Editor/AI/Cloud Preferences categories with Calendar,
+  Sharing and Shortcuts as their features ship; refine icon navigation and grouped
+  cards. Topic-toolbar and add-button visibility are independently configurable.
+  The reference shows "Always" for the toolbar; verify additional modes before defining them.
 - P2 General: retain system/light/dark appearance and language selection; add
   locale-aware first weekday with a system-following choice.
 - P2 General: wire spelling-as-you-type to actual dictionaries and suggestions;
   distinguish automatic update installation from checking for updates.
 - P2 General: optional usage statistics with explicit consent, a documented data
   inventory and no document contents; no telemetry is authorized by these screenshots.
-- P2 Editor: initial canvas zoom (distinct from UI scaling), opt-in reuse of the
-  last structure/skeleton and color theme for new blank maps, and smart-guide visibility.
+- P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
+  the last structure/theme for new blank maps are implemented; skeleton-specific
+  variants still need the layout-gallery research.
 - P2 Editor: default CJK font and mixed-script fallback for all open documents,
   with layout remeasurement and Windows/macOS/Linux font availability checks.
 - P2 Calendar: selectable base/work calendars, month navigation, working-weekday

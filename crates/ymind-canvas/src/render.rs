@@ -132,16 +132,43 @@ pub fn paint_map(
 
     // Summaries (brace + connector to summary topic).
     for s in &layout.summaries {
-        let color = layout
+        let selected = opts.selection.contains(&s.topic);
+        let mut color = layout
             .topics
             .get(&s.topic)
             .map(|t| color32(t.style.line_color))
             .unwrap_or(Color32::GRAY);
+        if selected {
+            color = opts.accent;
+        } else if dim(s.topic) {
+            color = color.gamma_multiply(0.25);
+        }
+        let stroke = Stroke::new(1.5 * z.max(0.5), color);
         let pts = brace_path(s.start, s.end, s.tip, s.dir);
         painter.add(Shape::line(
             pts.into_iter().map(|p| xf.pos(p)).collect(),
-            Stroke::new(1.5 * z.max(0.5), color),
+            stroke,
         ));
+        if let Some(topic) = layout.rect(s.topic) {
+            let end = match s.dir {
+                Dir::Right => topic.left_center(),
+                Dir::Left => topic.right_center(),
+                Dir::Down => topic.top_center(),
+                Dir::Up => topic.bottom_center(),
+            };
+            painter.line_segment([xf.pos(s.tip), xf.pos(end)], stroke);
+        }
+        if selected {
+            // Selection feedback only: resizing a sibling range has no defined
+            // interaction contract yet, so do not imply draggable handles.
+            dashed_rect(
+                painter,
+                xf.rect(s.range_rect.expand(4.0)),
+                Stroke::new(1.0, opts.accent),
+                5.0 * z,
+                3.0 * z,
+            );
+        }
     }
 
     // Topics.
@@ -762,6 +789,82 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_summary_paints_descendant_range_frame_and_topic_connector() {
+        for (structure, dir) in [
+            (ymind_core::Structure::LogicRight, Dir::Right),
+            (ymind_core::Structure::LogicLeft, Dir::Left),
+            (ymind_core::Structure::OrgDown, Dir::Down),
+            (ymind_core::Structure::OrgUp, Dir::Up),
+        ] {
+            let mut sheet = Sheet::new("S", "Root");
+            sheet.structure = structure;
+            let a = sheet.add_child(sheet.root, None, "A");
+            let b = sheet.add_child(sheet.root, None, "B");
+            let child = sheet.add_child(a, None, "Descendant");
+            let summary = sheet.add_summary(&[a, b], "Conclusion").unwrap();
+            let layout = ymind_core::layout_sheet(&sheet, &ymind_core::ApproxMeasure, false);
+            let sl = &layout.summaries[0];
+            assert!(sl.range_rect.contains(layout.rect(child).unwrap().center()));
+            let topic = layout.rect(summary).unwrap();
+            let end = match dir {
+                Dir::Right => topic.left_center(),
+                Dir::Left => topic.right_center(),
+                Dir::Down => topic.top_center(),
+                Dir::Up => topic.bottom_center(),
+            };
+            for zoom in [0.25, 1.0, 2.0] {
+                let xf = Xf {
+                    origin: pos2(400.0, 300.0),
+                    zoom,
+                };
+                let accent = Color32::from_rgb(255, 0, 200);
+                let paint = |selection: &[TopicId]| {
+                    let ctx = egui::Context::default();
+                    let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        paint_map(
+                            &painter,
+                            &sheet,
+                            &layout,
+                            xf,
+                            &PaintOptions {
+                                selection,
+                                accent,
+                                ..Default::default()
+                            },
+                        );
+                    });
+                    // This test inspects paint commands without a GPU backend.
+                    output.textures_delta.clear();
+                    output.shapes
+                };
+                let selected = paint(&[summary]);
+                assert!(selected.iter().any(|s| matches!(&s.shape,
+                    Shape::LineSegment { points, stroke }
+                        if *points == [xf.pos(sl.tip), xf.pos(end)] && stroke.color == accent
+                )));
+                let frame = xf.rect(sl.range_rect.expand(4.0));
+                let is_frame = |s: &egui::epaint::ClippedShape| match &s.shape {
+                    Shape::LineSegment { points, stroke } => {
+                        stroke.color == accent
+                            && stroke.width == 1.0
+                            && points.iter().all(|p| {
+                                (p.x == frame.left()
+                                    || p.x == frame.right()
+                                    || p.y == frame.top()
+                                    || p.y == frame.bottom())
+                                    && frame.expand(0.01).contains(*p)
+                            })
+                    }
+                    _ => false,
+                };
+                assert!(selected.iter().any(is_frame), "{dir:?} zoom {zoom}");
+                assert!(!paint(&[]).iter().any(is_frame));
+            }
+        }
+    }
 
     #[test]
     fn xf_roundtrip() {

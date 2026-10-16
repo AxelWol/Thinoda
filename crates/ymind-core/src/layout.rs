@@ -222,6 +222,8 @@ pub struct SummaryLayout {
     pub id: SummaryId,
     pub topic: TopicId,
     pub dir: Dir,
+    /// Bounds of the summarised sibling range, including visible descendants.
+    pub range_rect: Rect,
     /// Bracket end points and tip.
     pub start: Vec2,
     pub end: Vec2,
@@ -388,7 +390,7 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
                 return false;
             }
             let kids = sheet.children(s.parent);
-            if s.range.end >= kids.len() {
+            if s.range.start > s.range.end || s.range.end >= kids.len() {
                 return false;
             }
             let mut r: Option<Rect> = None;
@@ -398,7 +400,41 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
                 }
             }
             let Some(r) = r else { return false };
-            let dir = parent.grow;
+            // Split maps can place the selected siblings on the opposite side of
+            // their parent. Use their attachment side, not their own growth
+            // direction (a child may override its structure). Mixed-side ranges
+            // keep the parent's direction rather than inventing a new range.
+            let attachment_dir = |id: &TopicId| {
+                let child = layout.rect(*id)?.center();
+                let center = parent.rect.center();
+                Some(if child.x < center.x {
+                    Dir::Left
+                } else {
+                    Dir::Right
+                })
+            };
+            let structure = sheet
+                .topic(s.parent)
+                .and_then(|t| t.structure)
+                .or((s.parent == sheet.root).then_some(sheet.structure));
+            let dir = if matches!(
+                structure,
+                Some(
+                    Structure::MapClockwise
+                        | Structure::MapAnticlockwise
+                        | Structure::MapUnbalanced
+                )
+            ) {
+                attachment_dir(&kids[s.range.start])
+                    .filter(|dir| {
+                        kids[s.range.start..=s.range.end]
+                            .iter()
+                            .all(|id| attachment_dir(id) == Some(*dir))
+                    })
+                    .unwrap_or(parent.grow)
+            } else {
+                parent.grow
+            };
             let (start, end, tip) = match dir {
                 Dir::Right => (
                     Vec2::new(r.max().x + 8.0, r.min.y),
@@ -442,6 +478,7 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
                 id: s.id,
                 topic: s.topic,
                 dir,
+                range_rect: r,
                 start,
                 end,
                 tip,
@@ -1259,6 +1296,130 @@ mod tests {
         assert_eq!(l.summaries.len(), 1);
         assert!(l.topics[&st].rect.min.x > l.topics[&k[0]].rect.max().x);
         assert_eq!(l.relationships.len(), 1);
+    }
+
+    #[test]
+    fn summary_bounds_include_visible_descendants_in_each_direction() {
+        for (structure, dir) in [
+            (Structure::LogicRight, Dir::Right),
+            (Structure::LogicLeft, Dir::Left),
+            (Structure::OrgDown, Dir::Down),
+            (Structure::OrgUp, Dir::Up),
+        ] {
+            let (mut s, k) = sheet(3);
+            s.structure = structure;
+            let child = s.add_child(k[0], None, "A wide descendant with independent text");
+            let deep = s.add_child(child, None, "Deep");
+            s.add_child(k[1], None, "Other descendant");
+            let summary = s.add_summary(&[k[1], k[0]], "Conclusion").unwrap();
+            let summary_child = s.insert_child(summary, "Next step").unwrap();
+            let l = layout_sheet(&s, &ApproxMeasure, false);
+            let sl = &l.summaries[0];
+            let expected = l
+                .subtree_rect(&s, k[0])
+                .unwrap()
+                .union(&l.subtree_rect(&s, k[1]).unwrap());
+            assert_eq!(sl.range_rect, expected);
+            assert_eq!(sl.dir, dir);
+            assert!(sl.range_rect.contains(l.rect(deep).unwrap().max()));
+            assert!(!sl.range_rect.intersects(&l.rect(summary).unwrap()));
+            assert!(l.rect(summary_child).is_some());
+            match dir {
+                Dir::Right => {
+                    assert_eq!(sl.start, Vec2::new(expected.max().x + 8.0, expected.min.y));
+                    assert_eq!(sl.end.y, expected.max().y);
+                    assert!(l.rect(summary).unwrap().min.x > sl.tip.x);
+                }
+                Dir::Left => {
+                    assert_eq!(sl.start, Vec2::new(expected.min.x - 8.0, expected.min.y));
+                    assert_eq!(sl.end.y, expected.max().y);
+                    assert!(l.rect(summary).unwrap().max().x < sl.tip.x);
+                }
+                Dir::Down => {
+                    assert_eq!(sl.start, Vec2::new(expected.min.x, expected.max().y + 8.0));
+                    assert_eq!(sl.end.x, expected.max().x);
+                    assert!(l.rect(summary).unwrap().min.y > sl.tip.y);
+                }
+                Dir::Up => {
+                    assert_eq!(sl.start, Vec2::new(expected.min.x, expected.min.y - 8.0));
+                    assert_eq!(sl.end.x, expected.max().x);
+                    assert!(l.rect(summary).unwrap().max().y < sl.tip.y);
+                }
+            }
+            s.set_collapsed(k[0], true).unwrap();
+            let collapsed = layout_sheet(&s, &ApproxMeasure, false);
+            assert!(collapsed.rect(deep).is_none());
+            assert_eq!(
+                collapsed.summaries[0].range_rect,
+                collapsed
+                    .rect(k[0])
+                    .unwrap()
+                    .union(&collapsed.subtree_rect(&s, k[1]).unwrap())
+            );
+            s.set_collapsed(s.root, true).unwrap();
+            let hidden = layout_sheet(&s, &ApproxMeasure, false);
+            assert!(hidden.summaries.is_empty());
+            assert!(hidden.rect(summary).is_none());
+            assert!(hidden.rect(summary_child).is_none());
+        }
+    }
+
+    #[test]
+    fn summary_uses_selected_map_side_even_with_child_structure_override() {
+        for structure in [
+            Structure::MapClockwise,
+            Structure::MapAnticlockwise,
+            Structure::MapUnbalanced,
+        ] {
+            let (mut s, k) = sheet(6);
+            s.structure = structure;
+            let base = layout_sheet(&s, &ApproxMeasure, false);
+            let left: Vec<_> = k
+                .iter()
+                .copied()
+                .filter(|id| base.rect(*id).unwrap().center().x < 0.0)
+                .collect();
+            assert!(!left.is_empty());
+            // A left-side topic may grow its children rightward; its summary
+            // still belongs on the outside of the left-side sibling range.
+            s.topic_mut(left[0]).unwrap().structure = Some(Structure::LogicRight);
+            let summary = s.add_summary(&left, "Left conclusion").unwrap();
+            let l = layout_sheet(&s, &ApproxMeasure, false);
+            assert_eq!(l.summaries[0].dir, Dir::Left, "{structure:?}");
+            assert!(l.rect(summary).unwrap().max().x < l.summaries[0].range_rect.min.x);
+        }
+    }
+
+    #[test]
+    fn summary_preserves_non_split_structure_direction() {
+        for structure in Structure::ALL {
+            if matches!(
+                structure,
+                Structure::MapClockwise | Structure::MapAnticlockwise | Structure::MapUnbalanced
+            ) {
+                continue;
+            }
+            let (mut s, k) = sheet(3);
+            s.structure = structure;
+            s.set_title(s.root, "A very wide central topic compared to the children")
+                .unwrap();
+            s.add_summary(&k[..2], "Conclusion").unwrap();
+            let l = layout_sheet(&s, &ApproxMeasure, false);
+            assert_eq!(l.summaries[0].dir, l.topics[&s.root].grow, "{structure:?}");
+        }
+    }
+
+    #[test]
+    fn summary_uses_nested_map_side_under_vertical_layout() {
+        let (mut s, k) = sheet(1);
+        s.structure = Structure::OrgDown;
+        s.topic_mut(k[0]).unwrap().structure = Some(Structure::MapClockwise);
+        let kids: Vec<_> = (0..4).map(|_| s.add_child(k[0], None, "Branch")).collect();
+        let summary = s.add_summary(&kids[2..], "Left conclusion").unwrap();
+        let l = layout_sheet(&s, &ApproxMeasure, false);
+        assert_eq!(l.topics[&k[0]].grow, Dir::Down);
+        assert_eq!(l.summaries[0].dir, Dir::Left);
+        assert!(l.rect(summary).unwrap().max().x < l.summaries[0].range_rect.min.x);
     }
 
     #[test]

@@ -115,6 +115,12 @@ pub struct Settings {
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub show_format_panel: bool,
+    pub show_topic_toolbar: bool,
+    pub show_topic_add_buttons: bool,
+    /// Initial canvas zoom for newly created/opened documents, independent of UI scaling.
+    pub initial_canvas_zoom: f32,
+    pub reuse_last_structure: bool,
+    pub reuse_last_theme: bool,
     pub snap_to_grid: bool,
     pub smooth_zoom: bool,
     pub spell_check: bool,
@@ -142,6 +148,11 @@ impl Default for Settings {
             ui_scale: 1.0,
             show_status_bar: true,
             show_format_panel: true,
+            show_topic_toolbar: true,
+            show_topic_add_buttons: true,
+            initial_canvas_zoom: 1.0,
+            reuse_last_structure: false,
+            reuse_last_theme: false,
             snap_to_grid: false,
             smooth_zoom: true,
             spell_check: false,
@@ -257,6 +268,11 @@ impl Settings {
         if !self.ui_scale.is_finite() || self.ui_scale <= 0.0 {
             self.ui_scale = 1.0;
         }
+        self.initial_canvas_zoom = if self.initial_canvas_zoom.is_finite() {
+            self.initial_canvas_zoom.clamp(0.1, 5.0)
+        } else {
+            1.0
+        };
     }
 
     /// Add or bump a path without losing its pinned state.
