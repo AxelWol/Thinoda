@@ -1,6 +1,9 @@
 # yMind backlog
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
+Execution order, dependencies, acceptance criteria and release gates are defined in
+[PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
+are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
 - Entering Zen mode displays a localized toast explaining that F11 exits it.
@@ -12,6 +15,18 @@ Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
 
 ## XMind parity (from the user guide)
 - P1 Print (Ctrl+P) with page setup and fit-to-page
+  - Reference dialog: left live page preview with page count; right scrollable,
+    grouped settings; fixed Cancel/Print footer.
+  - Printer selection, copies, content scope (Current map shown), printer-supported
+    paper sizes, landscape/portrait and scaling (Fit page shown). Verify other
+    scope/scaling options rather than guessing from closed dropdowns.
+  - Background-color and monochrome toggles, reflected in the preview and output.
+    The displayed paper size is a selection, not a required default.
+  - XMind's attribution toggle is product branding, not a requirement to print its
+    name or add a watermark to yMind. Decide any yMind attribution separately.
+  - Cover no printer, unavailable printer, driver capability changes, invalid copy
+    counts, multi-page navigation, cancellation and spool errors; never send a real
+    print job as an automated smoke check without explicit user approval.
 - P1 Extend Find & Replace to search across all sheets (active-sheet search/replacement is implemented)
 - P1 Pitch mode (presentation from branches, F5) and slide export
 - P1 Map Shot (F7): region capture to clipboard/PNG
