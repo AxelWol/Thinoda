@@ -1,1 +1,28 @@
+//! # ymind-ui
+//!
+//! A small, reusable design system on top of [`egui`] used by yMind and intended for
+//! companion apps. It provides:
+//!
+//! * [`tokens`] – semantic color palettes (light/dark), radii and spacing.
+//! * [`theme`] – installs the yMind look into an `egui::Context` and follows the OS
+//!   light/dark preference.
+//! * [`widgets`] – icon buttons, toolbar buttons, segmented tabs, toggles, color swatches,
+//!   property rows, sections, chips and search fields.
+//! * [`toast`] – non-blocking notifications.
+//! * [`palette`] – a fuzzy command palette.
+//! * [`dialog`] – modal confirm dialogs.
+//! * [`icons`] – glyph constants available in egui's built-in fonts.
 
+pub mod dialog;
+pub mod icons;
+pub mod palette;
+pub mod theme;
+pub mod toast;
+pub mod tokens;
+pub mod widgets;
+
+pub use dialog::{DialogButton, confirm_dialog};
+pub use palette::{Command, CommandPalette, fuzzy_score};
+pub use theme::{ThemeMode, install};
+pub use toast::{ToastKind, Toasts};
+pub use tokens::{Palette, Tokens};
