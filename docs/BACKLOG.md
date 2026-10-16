@@ -115,6 +115,18 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   explicitly. Keep stickers distinct from semantic markers. Provide licensed/original
   vector assets, accessible names, scalable rendering and persistence/export support;
   test asset loading failures, removal/replacement, undo and switching selected topics.
+- P2 Illustration pane: a dedicated Illustration tab alongside Symbol and Sticker,
+  with a search field and scrollable collection previews for attaching illustrations
+  to the selected topic. Each collection has a heading, item count, navigation chevron
+  and a three-thumbnail preview row in the reference.
+  Observed collection styles include minimalist, dreamy, botanical, futuristic city,
+  gradient stationery, black-and-white pixel art, watercolor animals and 3D animals.
+  These guide original/licensed asset selection, not copying XMind's artwork or
+  requiring its exact collection sizes or paid-content badges.
+  Reuse shared asset loading, accessibility, undo and packaged-file storage where
+  appropriate, while keeping illustration and sticker content types distinct.
+  Collection-detail navigation, search matching, placement, resizing and
+  multiple-selection behavior still need verification or a product decision.
 
 ## AI
 - P1 Streaming responses (SSE) with live preview and cancel button
