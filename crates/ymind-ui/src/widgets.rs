@@ -209,7 +209,8 @@ pub fn section<R>(
         .body_returned
 }
 
-/// A row of color swatches. Returns the clicked color.
+/// A row of color swatches, including the current color if it is not a preset.
+/// Returns the clicked color.
 pub fn color_swatches(
     ui: &mut Ui,
     colors: &[Color32],
@@ -217,31 +218,57 @@ pub fn color_swatches(
 ) -> Option<Color32> {
     let p = Palette::of_ui(ui);
     let mut picked = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-        for &c in colors {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
-            let is_sel = selected == Some(c);
-            let label = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
-            resp.widget_info(|| WidgetInfo::selected(Role::ColorWell, true, is_sel, &label));
-            ui.painter()
-                .rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
-            let stroke = if is_sel {
-                Stroke::new(2.0, p.accent)
-            } else if resp.hovered() {
-                Stroke::new(1.0, p.text_muted)
-            } else {
-                Stroke::new(1.0, p.border)
-            };
-            ui.painter().rect_stroke(
-                rect.shrink(1.0),
-                CornerRadius::same(Tokens::RADIUS_S),
-                stroke,
-                StrokeKind::Inside,
-            );
-            if resp.on_hover_text(label).clicked() {
-                picked = Some(c);
+    ui.vertical(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            let custom = selected.filter(|c| !colors.contains(c));
+            for c in custom.into_iter().chain(colors.iter().copied()) {
+                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+                let is_sel = selected == Some(c);
+                let label = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
+                resp.widget_info(|| WidgetInfo::selected(Role::ColorWell, true, is_sel, &label));
+                ui.painter()
+                    .rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
+                let stroke = if is_sel {
+                    Stroke::new(2.0, p.accent)
+                } else if resp.hovered() {
+                    Stroke::new(1.0, p.text_muted)
+                } else {
+                    Stroke::new(1.0, p.border)
+                };
+                ui.painter().rect_stroke(
+                    rect.shrink(1.0),
+                    CornerRadius::same(Tokens::RADIUS_S),
+                    stroke,
+                    StrokeKind::Inside,
+                );
+                if is_sel {
+                    let contrast = if c.intensity() > 0.5 {
+                        Color32::BLACK
+                    } else {
+                        Color32::WHITE
+                    };
+                    ui.painter().line_segment(
+                        [rect.min + vec2(5.0, 10.0), rect.min + vec2(9.0, 14.0)],
+                        Stroke::new(2.0, contrast),
+                    );
+                    ui.painter().line_segment(
+                        [rect.min + vec2(9.0, 14.0), rect.min + vec2(15.0, 6.0)],
+                        Stroke::new(2.0, contrast),
+                    );
+                }
+                if resp.on_hover_text(label).clicked() {
+                    picked = Some(c);
+                }
             }
+        });
+        if let Some(c) = selected {
+            let hex = if c.a() == 255 {
+                format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
+            } else {
+                format!("#{:02X}{:02X}{:02X}{:02X}", c.r(), c.g(), c.b(), c.a())
+            };
+            ui.label(egui::RichText::new(hex).small().color(p.text_muted));
         }
     });
     picked
@@ -393,6 +420,49 @@ mod tests {
         harness.get_by_label("#0000FF").click();
         harness.run();
         assert_eq!(*harness.state(), Some(Color32::BLUE));
+    }
+
+    #[test]
+    fn swatches_show_and_refresh_colors_outside_the_palette() {
+        use egui_kittest::kittest::NodeT;
+        let mut h = Harness::new_ui_state(
+            |ui, c: &mut Option<Color32>| {
+                color_swatches(ui, &[Color32::RED, Color32::BLUE], *c);
+            },
+            Some(Color32::from_rgb(0xFF, 0xA3, 0x66)),
+        );
+        assert_eq!(
+            h.get_by_role_and_label(Role::ColorWell, "#FFA366")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        h.get_by_role_and_label(Role::Label, "#FFA366");
+        *h.state_mut() = Some(Color32::from_rgb(0x12, 0x34, 0x56));
+        h.run_steps(3);
+        assert!(
+            h.query_by_role_and_label(Role::ColorWell, "#FFA366")
+                .is_none()
+        );
+        assert_eq!(
+            h.get_by_role_and_label(Role::ColorWell, "#123456")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        *h.state_mut() = Some(Color32::BLUE);
+        h.run_steps(3);
+        assert_eq!(
+            h.query_all_by_role_and_label(Role::ColorWell, "#0000FF")
+                .count(),
+            1
+        );
+        *h.state_mut() = None;
+        h.run_steps(3);
+        assert!(
+            h.query_by_role_and_label(Role::ColorWell, "#123456")
+                .is_none()
+        );
     }
 
     #[test]

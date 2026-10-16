@@ -70,6 +70,22 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("None", "Keine"),
+    ("Bold", "Fett"),
+    ("Italic", "Kursiv"),
+    ("Underline", "Unterstrichen"),
+    ("Strikethrough", "Durchgestrichen"),
+    ("Align Left", "Linksbündig"),
+    ("Align Center", "Zentriert"),
+    ("Align Right", "Rechtsbündig"),
+    (
+        "Map settings apply to the entire sheet.",
+        "Map-Einstellungen gelten für das gesamte Blatt.",
+    ),
+    (
+        "Showing the primary topic; edits apply to all selected topics.",
+        "Eigenschaften des Hauptauswahlthemas; Änderungen gelten für alle ausgewählten Themen.",
+    ),
     ("Symbols", "Symbole"),
     (
         "Open or select a map to show Symbols",
