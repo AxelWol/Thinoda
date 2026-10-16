@@ -8,6 +8,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
+- Map > Theme > Global Font and Style > Text > Font Family use installed system
+  font faces, not just stored names. Per-topic Auto inherits the map font.
+  Canvas layout, painting, inline editing and Map Shot share the selected face;
+  unavailable families warn and keep their requested names. Native files retain
+  the settings, and public XMind JSON/XML receive the effective font names.
+  Fonts are not embedded or redistributed; install them on each target machine.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - Home offers rendered previews of 17 original templates across eight categories.
   Select a card, then Create; Cancel returns to the previous document without

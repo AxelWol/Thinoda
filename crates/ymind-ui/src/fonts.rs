@@ -4,6 +4,91 @@ use std::sync::Arc;
 
 use egui::{Context, FontData, FontDefinitions, FontFamily};
 
+/// Installed font names, with face data loaded only for families used by a document.
+#[derive(Default)]
+pub struct SystemFonts {
+    database: Option<fontdb::Database>,
+    names: Vec<String>,
+    attempted: std::collections::BTreeSet<String>,
+}
+
+impl SystemFonts {
+    fn database(&mut self) -> &fontdb::Database {
+        self.database.get_or_insert_with(|| {
+            let mut db = fontdb::Database::new();
+            db.load_system_fonts();
+            self.names = db
+                .faces()
+                .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+                .collect();
+            self.names.sort_by_key(|name| name.to_lowercase());
+            self.names.dedup();
+            db
+        })
+    }
+
+    pub fn names(&mut self) -> &[String] {
+        self.database();
+        &self.names
+    }
+
+    /// Register selected system faces without replacing the application's fallback fonts.
+    /// Unavailable families are reported once; the document's requested name is unchanged.
+    pub fn ensure(
+        &mut self,
+        ctx: &Context,
+        names: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        let mut defs = ctx.fonts(|fonts| fonts.definitions().clone());
+        let mut changed = false;
+        let mut errors = Vec::new();
+        for name in names {
+            if matches!(name.as_str(), "" | "sans-serif" | "monospace")
+                || defs
+                    .families
+                    .contains_key(&FontFamily::Name(name.clone().into()))
+                || !self.attempted.insert(name.clone())
+            {
+                continue;
+            }
+            let db = self.database();
+            let family = match name.as_str() {
+                "serif" => fontdb::Family::Serif,
+                "cursive" => fontdb::Family::Cursive,
+                "fantasy" => fontdb::Family::Fantasy,
+                _ => fontdb::Family::Name(&name),
+            };
+            let face = db.query(&fontdb::Query {
+                families: &[family],
+                ..Default::default()
+            });
+            let data = face.and_then(|id| {
+                db.with_face_data(id, |bytes, index| {
+                    let mut data = FontData::from_owned(bytes.to_vec());
+                    data.index = index;
+                    data
+                })
+            });
+            if let Some(data) = data {
+                let mut fallback = defs.families[&FontFamily::Proportional].clone();
+                let key = format!("ymind-system:{name}");
+                defs.font_data.insert(key.clone(), Arc::new(data));
+                fallback.insert(0, key);
+                defs.families
+                    .insert(FontFamily::Name(name.into()), fallback);
+                changed = true;
+            } else {
+                errors.push(name);
+            }
+        }
+        if changed {
+            ctx.set_fonts(defs);
+            ctx.request_repaint();
+        }
+        errors
+    }
+}
+
 /// Symbol/emoji fonts shipped with the operating systems (first existing file per entry wins).
 const CANDIDATES: &[&[&str]] = &[
     // Windows
@@ -62,6 +147,59 @@ pub fn install_fallbacks(ctx: &Context) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn named_faces_register_once_with_existing_fallbacks_and_report_missing_names() {
+        let ctx = Context::default();
+        let mut db = fontdb::Database::new();
+        db.load_font_data(
+            FontDefinitions::default().font_data["Hack"]
+                .bytes()
+                .to_vec(),
+        );
+        let name = db.faces().next().unwrap().families[0].0.clone();
+        let mut fonts = SystemFonts {
+            database: Some(db),
+            ..Default::default()
+        };
+        ctx.begin_pass(Default::default());
+        let original = ctx.fonts(|f| f.definitions().clone());
+        assert!(fonts.ensure(&ctx, [name.clone()]).is_empty());
+        ctx.end_pass().textures_delta.clear();
+        ctx.begin_pass(Default::default());
+        let installed = ctx.fonts(|f| f.definitions().clone());
+        assert_eq!(
+            installed.families[&FontFamily::Proportional],
+            original.families[&FontFamily::Proportional]
+        );
+        let family = FontFamily::Name(name.clone().into());
+        let primary = &installed.families[&family][0];
+        assert_eq!(
+            installed.font_data[primary].bytes(),
+            FontDefinitions::default().font_data["Hack"].bytes()
+        );
+        assert_eq!(
+            &installed.families[&family][1..],
+            &original.families[&FontFamily::Proportional]
+        );
+        assert!(fonts.ensure(&ctx, [name]).is_empty());
+        assert_eq!(
+            fonts.ensure(&ctx, ["yMind Missing Family".into()]),
+            ["yMind Missing Family"]
+        );
+        assert!(
+            fonts
+                .ensure(&ctx, ["yMind Missing Family".into()])
+                .is_empty()
+        );
+        assert_eq!(
+            ctx.fonts(|f| f.definitions().font_data.len()),
+            installed.font_data.len()
+        );
+        ctx.end_pass().textures_delta.clear();
+    }
+
     #[test]
     fn fallbacks_are_existing_files() {
         for p in super::system_fallbacks() {

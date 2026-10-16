@@ -13,6 +13,8 @@
 //! * XMind keyboard shortcuts via [`Action`]
 
 mod actions;
+#[cfg(test)]
+mod font_tests;
 mod measure;
 mod relationship_editing;
 mod render;

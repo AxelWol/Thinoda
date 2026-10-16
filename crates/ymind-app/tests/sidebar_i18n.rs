@@ -299,4 +299,21 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             .theme
             .flexible_floating_topics
     );
+    h.get_by_label("Globale Schriftart").scroll_to_me();
+    h.run_steps(6);
+    h.get_by_label("Globale Schriftart").click();
+    h.run_steps(2);
+    h.get_by_label("Nichtproportional").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .theme
+            .font_family
+            .as_deref(),
+        Some("monospace")
+    );
 }

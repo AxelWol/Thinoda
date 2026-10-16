@@ -9,6 +9,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn sample() -> Workbook {
     let mut s = Sheet::new("First sheet", "Central & topic");
     s.theme.flexible_floating_topics = true;
+    s.theme.font_family = Some("serif".into());
     let a = s.add_child(s.root, None, "Branch <A>");
     let b = s.add_child(s.root, None, "Branch B");
     let child = s.add_child(a, None, "Nested");
@@ -214,6 +215,19 @@ fn xmind_export_import_roundtrips_model() {
     assert_eq!(restored.sheets.len(), 2);
     let sheet = &restored.sheets[0];
     assert_eq!(sheet.root_topic().title, "Central & topic");
+    assert_eq!(
+        sheet.root_topic().style.font_family.as_deref(),
+        Some("serif")
+    );
+    assert_eq!(
+        sheet
+            .topic(sheet.root_topic().children[1])
+            .unwrap()
+            .style
+            .font_family
+            .as_deref(),
+        Some("serif")
+    );
     let branch = sheet.topic(sheet.root_topic().children[0]).unwrap();
     assert_eq!(branch.title, "Branch <A>");
     assert_eq!(branch.style.shape, Some(TopicShape::Diamond));

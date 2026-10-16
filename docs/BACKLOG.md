@@ -6,6 +6,16 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Real font-family support: Map > Theme > Global Font and Style > Text > Font
+  Family select local installed faces (including user-installed fonts); Auto
+  inherits the map setting. Reusable UI font registration loads only requested
+  faces and preserves symbol fallbacks. Canvas measurement, painting, inline
+  editing and Map Shot share the face; font-definition changes invalidate layout.
+  Missing names warn once without dirtying maps or erasing requests. Native
+  persistence and public XMind JSON/XML effective names are covered, as are EN/DE
+  controls, undo and actual glyph-width changes. Fonts are not embedded or
+  redistributed; exact vector-export metrics, CJK fallback/IME and other native
+  hosts remain separate release work.
 - Flexible Floating Topics: undoable per-sheet Map > Advanced Layout switch
   (EN/DE). Floating roots move freely over topics without attaching; attached
   topics still reparent/reorder, but blank-space detachment requires switching it
@@ -247,7 +257,8 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Equations (LaTeX → rendered topic content)
 - P2 Attachments and pictures embedded in the `.ymind`/`.xmind` package
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
-- P2 Quick styles, global font, custom theme editor. Copy/Paste style and Reset
+- P2 Quick styles and custom theme editor. Global/topic font selection and actual
+  canvas rendering are implemented (see Recently completed). Copy/Paste style and Reset
   Style are implemented session-wide (Ctrl+Alt+C/V, menu/context/palette); see
   Recently completed.
 - P2 Skeleton/structure picker gallery (map-file merging and masked copies are

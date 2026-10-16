@@ -137,7 +137,11 @@ fn public_content(book: &Workbook) -> Value {
         if let Some(line_shape) = style.line_shape {
             properties.insert("line-class".into(), json!(line_class(line_shape)));
         }
-        if let Some(font_family) = &style.font_family {
+        if let Some(font_family) = style
+            .font_family
+            .as_ref()
+            .or(sheet.theme.font_family.as_ref())
+        {
             properties.insert("fo:font-family".into(), json!(font_family));
         }
         if let Some(align) = style.align {
@@ -332,7 +336,11 @@ fn legacy_compatibility(book: &Workbook) -> String {
         if let Some(size) = style.font_size {
             properties.push(format!("fo:font-size=\"{size}pt\""));
         }
-        if let Some(family) = &style.font_family {
+        if let Some(family) = style
+            .font_family
+            .as_ref()
+            .or(sheet.theme.font_family.as_ref())
+        {
             properties.push(format!("fo:font-family=\"{}\"", xml_escape(family)));
         }
         if let Some(bold) = style.bold {
@@ -1070,6 +1078,7 @@ mod tests {
     #[test]
     fn legacy_xml_export_preserves_topic_style_and_content() {
         let mut w = Workbook::new(Sheet::new("S", "Root & title"));
+        w.active_mut().theme.font_family = Some("monospace".into());
         let root = w.active().root;
         let child = w.active_mut().add_child(root, None, "Child");
         w.active_mut().topic_mut(child).unwrap().style = ymind_core::TopicStyle {
@@ -1088,6 +1097,10 @@ mod tests {
         assert!(xml.contains("Child"));
         assert!(xml.contains("shape-class=\"org.xmind.topicShape.diamond\""));
         let imported = import_legacy_xml(xml.as_bytes()).unwrap();
+        assert_eq!(
+            imported.active().root_topic().style.font_family.as_deref(),
+            Some("monospace")
+        );
         let imported_child = imported
             .active()
             .topic(imported.active().root_topic().children[0])

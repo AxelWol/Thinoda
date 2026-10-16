@@ -23,6 +23,29 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+fn font_selector(
+    ui: &mut Ui,
+    fonts: &mut ymind_ui::fonts::SystemFonts,
+    value: &mut Option<String>,
+    default_label: &str,
+) -> egui::Response {
+    egui::ComboBox::from_id_salt("font_family")
+        .selected_text(match value.as_deref() {
+            None => default_label,
+            Some("monospace") => t("Monospace"),
+            Some(name) => name,
+        })
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, None, default_label);
+            ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+            for name in fonts.names() {
+                ui.selectable_value(value, Some(name.clone()), name);
+            }
+        })
+        .response
+}
+
 /// Swatch colors offered in the format panel (XMind-like palette).
 pub const SWATCHES: [Color32; 12] = [
     Color32::from_rgb(0x2E, 0x7C, 0xF6),
@@ -78,6 +101,32 @@ impl YMindApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
+        if font_source != self.font_source {
+            let families: std::collections::BTreeSet<_> = self
+                .doc()
+                .into_iter()
+                .flat_map(|doc| doc.doc.workbook().sheets.iter())
+                .flat_map(|sheet| {
+                    sheet.theme.font_family.iter().chain(
+                        sheet
+                            .topics
+                            .values()
+                            .filter_map(|topic| topic.style.font_family.as_ref()),
+                    )
+                })
+                .cloned()
+                .collect();
+            for name in self.fonts.ensure(&ctx, families) {
+                log::warn!("Font unavailable: {name}");
+                self.toasts.warning(format!(
+                    "{}: {name}. {}",
+                    t("Font unavailable"),
+                    t("Using the default font; the requested name is preserved.")
+                ));
+            }
+            self.font_source = font_source;
+        }
         self.apply_appearance(&ctx);
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
@@ -1837,6 +1886,16 @@ impl YMindApp {
         });
 
         widgets::section(ui, t("Text"), true, |ui| {
+            let mut family = topic.style.font_family.clone();
+            widgets::property_field(ui, t("Font Family"), |ui| {
+                font_selector(ui, &mut self.fonts, &mut family, t("Auto"))
+            });
+            if family != topic.style.font_family {
+                change = Some((
+                    "Font Family",
+                    Box::new(move |st| st.font_family = family.clone()),
+                ));
+            }
             let mut size = resolved.font_size;
             widgets::property_field(ui, t("Font Size"), |ui| {
                 let r = ui.add(egui::DragValue::new(&mut size).range(6.0..=96.0).speed(0.5));
@@ -2180,6 +2239,9 @@ impl YMindApp {
         });
 
         widgets::section(ui, t("Theme"), true, |ui| {
+            widgets::property_field(ui, t("Global Font"), |ui| {
+                font_selector(ui, &mut self.fonts, &mut ts.font_family, t("Default"))
+            });
             let columns = ((ui.available_width() + 8.0) / 126.0).floor().max(1.0) as usize;
             egui::Grid::new("sheet_themes")
                 .num_columns(columns)

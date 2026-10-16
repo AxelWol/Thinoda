@@ -16,6 +16,16 @@ use std::collections::HashMap;
 pub trait TextMeasure {
     /// Size of `text` wrapped at `max_width`.
     fn measure(&self, text: &str, font_size: f32, bold: bool, max_width: f32) -> Vec2;
+    fn measure_with_family(
+        &self,
+        text: &str,
+        font_size: f32,
+        bold: bool,
+        max_width: f32,
+        _family: Option<&str>,
+    ) -> Vec2 {
+        self.measure(text, font_size, bold, max_width)
+    }
 }
 
 /// Font-independent approximation of text metrics.
@@ -646,7 +656,13 @@ impl Engine<'_> {
         } else {
             t.title.as_str()
         };
-        let mut ts = self.measure.measure(title, fs, style.bold, max_w);
+        let mut ts = self.measure.measure_with_family(
+            title,
+            fs,
+            style.bold,
+            max_w,
+            style.font_family.as_deref(),
+        );
         if let Some(w) = style.width {
             ts.x = w;
         }

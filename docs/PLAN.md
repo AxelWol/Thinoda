@@ -238,7 +238,8 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
 2. Cover all eight categories in the backlog with original useful examples, starting
    with Basic and existing SWOT/meeting/project templates. Verify truncated reference
    titles rather than claiming exact equivalents.
-3. Add skeleton/structure gallery, quick styles, global font and custom theme editor;
+3. Skeleton/structure gallery and real global/topic font selection are delivered.
+   Add quick styles and custom theme editor;
    maintain per-topic override precedence and opt-in reuse of recent choices.
    Use the Map-tab anchored preview selector for changing existing sheets as well as
    choosing new-map defaults. Group Mind map, Logic, Brace, Org, Tree, Timeline,
@@ -399,6 +400,21 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R2/R5 real global/topic fonts delivered: selectors enumerate installed system and
+user fonts, registering requested faces lazily in the reusable UI crate. Canvas
+measurement, painting, inline editing and Map Shot use the same family; font
+changes invalidate cached geometry even when the number of registered faces is
+unchanged. Missing fonts produce visible warnings, preserve names and do not
+dirty maps. Public XMind JSON/XML receives effective names, while native files
+retain inheritance. All 348 workspace cases and all-target clippy pass with live
+AI disabled. Fonts are not embedded; CJK fallback/IME, exact vector-export text
+metrics and non-Windows font-host QA remain open.
+Windows EXE/NSIS rebuilt with real font support.
+
+Native XMind geometry verification is currently blocked: both a new basic map
+and the previously repaired local sample remain on loading screens in the
+installed XMind app. No public branch-side/curve-control fields were inferred.
 
 R3 Flexible Floating Topics delivered: the undoable per-sheet Advanced Layout
 switch defaults off for old maps. Enabled floating roots can overlap topics

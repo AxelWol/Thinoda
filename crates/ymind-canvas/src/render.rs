@@ -3,8 +3,7 @@
 use crate::measure::BOLD_WIDTH;
 use crate::view::ObjectSelection;
 use egui::{
-    Align, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke,
-    StrokeKind, pos2,
+    Align, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2,
     text::{LayoutJob, TextFormat},
     vec2,
 };
@@ -496,7 +495,10 @@ fn paint_topic(
     // Title.
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
-        let font = FontId::new(st.font_size * z, FontFamily::Proportional);
+        let font = FontId::new(
+            st.font_size * z,
+            crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
+        );
         let mut job = LayoutJob::default();
         job.wrap.max_width = tr.width() / if st.bold { BOLD_WIDTH } else { 1.0 } + 1.0;
         job.halign = match st.align {

@@ -190,6 +190,8 @@ pub struct YMindApp {
     pub ai: crate::ai::AiState,
     pub(crate) map_shot: crate::map_shot::MapShot,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
+    pub(crate) fonts: ymind_ui::fonts::SystemFonts,
+    pub(crate) font_source: Option<(String, u64)>,
     last_title: String,
 }
 
@@ -251,6 +253,8 @@ impl YMindApp {
             ai: Default::default(),
             map_shot: Default::default(),
             label_editor: None,
+            fonts: Default::default(),
+            font_source: None,
             last_title: String::new(),
         };
         for f in files {

@@ -108,6 +108,7 @@ enum Drag {
 #[derive(Clone)]
 struct LayoutCache {
     key: (u64, usize, bool, u64),
+    font_key: u64,
     layout: Arc<Layout>,
 }
 
@@ -383,12 +384,24 @@ impl MapView {
         let layout = Arc::new(layout_sheet(doc.sheet(), &ApproxMeasure, self.dark));
         self.cache = Some(LayoutCache {
             key,
+            font_key: 0,
             layout: layout.clone(),
         });
         layout
     }
 
     fn layout_with(&mut self, ctx: &egui::Context, doc: &Document) -> Arc<Layout> {
+        let font_key = ctx.fonts(|fonts| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let defs = fonts.definitions();
+            defs.families.hash(&mut hasher);
+            for (name, data) in &defs.font_data {
+                name.hash(&mut hasher);
+                Arc::as_ptr(data).hash(&mut hasher);
+            }
+            hasher.finish()
+        });
         let edit_hash = self.editing.as_ref().map_or(0, |e| {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -399,6 +412,7 @@ impl MapView {
         let key = (doc.state_id(), doc.active_index(), self.dark, edit_hash);
         if let Some(c) = &self.cache
             && c.key == key
+            && c.font_key == font_key
         {
             return c.layout.clone();
         }
@@ -420,6 +434,7 @@ impl MapView {
         let layout = Arc::new(layout);
         self.cache = Some(LayoutCache {
             key,
+            font_key,
             layout: layout.clone(),
         });
         layout
@@ -1195,7 +1210,10 @@ fn show_editor(
     let xf = view.xf();
     let r = xf.rect(tl.title_rect).expand(2.0);
     let style = &tl.style;
-    let font = FontId::proportional((style.font_size * view.zoom).max(4.0));
+    let font = FontId::new(
+        (style.font_size * view.zoom).max(4.0),
+        crate::measure::font_family(ui.ctx(), style.font_family.as_deref()),
+    );
     let color = color32(style.text_color);
     let edit_id = MapCanvas::id().with("edit");
 
