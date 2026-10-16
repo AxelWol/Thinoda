@@ -150,7 +150,11 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         })
         .collect();
     let content = serde_json::to_vec(&sheets)?;
-    let metadata = serde_json::to_vec(&json!({"creator":"yMind","ymindWorkbook":stable}))?;
+    let metadata = serde_json::to_vec(&json!({
+        "creator": {"name": "yMind", "version": env!("CARGO_PKG_VERSION")},
+        "dataStructureVersion": "2",
+        "ymindWorkbook": stable
+    }))?;
     let manifest =
         serde_json::to_vec(&json!({"file-entries":{"content.json":{},"metadata.json":{}}}))?;
     let xml = legacy_compatibility(book).into_bytes();
