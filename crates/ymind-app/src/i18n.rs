@@ -27,8 +27,14 @@ pub fn resolve(lang: Language) -> Lang {
         Language::English => Lang::En,
         Language::German => Lang::De,
         Language::Auto => {
-            let loc = sys_locale::get_locale().unwrap_or_default().to_ascii_lowercase();
-            if loc.starts_with("de") { Lang::De } else { Lang::En }
+            let loc = sys_locale::get_locale()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if loc.starts_with("de") {
+                Lang::De
+            } else {
+                Lang::En
+            }
         }
     }
 }
@@ -38,7 +44,11 @@ pub fn set_lang(lang: Lang) {
 }
 
 pub fn lang() -> Lang {
-    if CURRENT.load(Ordering::Relaxed) == 1 { Lang::De } else { Lang::En }
+    if CURRENT.load(Ordering::Relaxed) == 1 {
+        Lang::De
+    } else {
+        Lang::En
+    }
 }
 
 /// Translates an English UI string into the current language.
@@ -106,6 +116,8 @@ const DE: &[(&str, &str)] = &[
     ("Expand All", "Alle aufklappen"),
     ("Collapse All", "Alle zuklappen"),
     ("Collapse / Expand", "Zu-/Aufklappen"),
+    ("Collapse / Expand All", "Alle zu-/aufklappen"),
+    ("Go to Central Topic", "Zum Hauptthema"),
     // Topic insertion
     ("Topic", "Thema"),
     ("Subtopic", "Unterthema"),
@@ -155,7 +167,10 @@ const DE: &[(&str, &str)] = &[
     ("Tapered Lines", "Verjüngte Linien"),
     ("Balanced Map", "Ausgewogene Map"),
     ("Topic Properties", "Themeneigenschaften"),
-    ("Select a topic to edit its style.", "Wähle ein Thema, um seinen Stil zu bearbeiten."),
+    (
+        "Select a topic to edit its style.",
+        "Wähle ein Thema, um seinen Stil zu bearbeiten.",
+    ),
     ("comma separated", "durch Komma getrennt"),
     // Sheets / status
     ("Sheet", "Blatt"),
@@ -196,7 +211,10 @@ const DE: &[(&str, &str)] = &[
     ("Restore", "Wiederherstellen"),
     ("Restore All", "Alle wiederherstellen"),
     ("Discard All", "Alle verwerfen"),
-    ("Recover Unsaved Work", "Ungespeicherte Arbeit wiederherstellen"),
+    (
+        "Recover Unsaved Work",
+        "Ungespeicherte Arbeit wiederherstellen",
+    ),
     (
         "yMind was not closed properly. The following documents can be restored:",
         "yMind wurde nicht ordnungsgemäß beendet. Folgende Dokumente können wiederhergestellt werden:",
@@ -245,10 +263,16 @@ const DE: &[(&str, &str)] = &[
     ("Autosaved", "Automatisch gespeichert"),
     ("Copied", "Kopiert"),
     ("Not possible here", "Hier nicht möglich"),
-    ("Pick the target topic for the relationship", "Zielthema für die Beziehung wählen"),
+    (
+        "Pick the target topic for the relationship",
+        "Zielthema für die Beziehung wählen",
+    ),
     // About
     ("Version", "Version"),
-    ("A fast, open mind mapping app.", "Eine schnelle, offene Mindmapping-App."),
+    (
+        "A fast, open mind mapping app.",
+        "Eine schnelle, offene Mindmapping-App.",
+    ),
     ("Close Tab", "Tab schließen"),
     ("New Tab", "Neuer Tab"),
     ("Next Document", "Nächstes Dokument"),
@@ -262,7 +286,10 @@ mod tests {
     #[test]
     fn translation_fallback() {
         assert_eq!(t_in(Lang::De, "Save"), "Speichern");
-        assert_eq!(t_in(Lang::De, "Something untranslated"), "Something untranslated");
+        assert_eq!(
+            t_in(Lang::De, "Something untranslated"),
+            "Something untranslated"
+        );
         assert_eq!(t_in(Lang::En, "Save"), "Save");
     }
 

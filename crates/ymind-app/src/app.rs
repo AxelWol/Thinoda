@@ -59,6 +59,15 @@ pub enum Cmd {
     ShowInFolder,
     MenuPaste,
     SetTheme(SettingsTheme),
+    /// Focus a topic property field in the Format panel (Ctrl+K / Ctrl+Shift+N).
+    EditField(FocusField),
+}
+
+/// Format panel fields that commands can focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusField {
+    Hyperlink,
+    Notes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +142,8 @@ pub struct YMindApp {
     last_frame: Instant,
     /// Ask the OS clipboard for text on the next frame (menu "Paste").
     pub(crate) paste_requested: bool,
+    /// Format panel field to focus on the next frame.
+    pub focus_field: Option<FocusField>,
     last_title: String,
 }
 
@@ -183,6 +194,7 @@ impl YMindApp {
             last_poll: Instant::now(),
             last_frame: Instant::now(),
             paste_requested: false,
+            focus_field: None,
             last_title: String::new(),
         };
         for f in files {
@@ -193,7 +205,10 @@ impl YMindApp {
 
     /// App for tests: no OS services, English UI, one new document.
     pub fn headless() -> Self {
-        let settings = Settings { language: ymind_platform::settings::Language::English, ..Settings::default() };
+        let settings = Settings {
+            language: ymind_platform::settings::Language::English,
+            ..Settings::default()
+        };
         let mut app = Self::new(settings, Services::default(), &[]);
         app.new_doc(templates::instantiate("mind-map"));
         app
@@ -216,7 +231,11 @@ impl YMindApp {
     }
 
     pub fn open_path(&mut self, path: &Path) {
-        if let Some(i) = self.docs.iter().position(|d| d.path.as_deref() == Some(path)) {
+        if let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.path.as_deref() == Some(path))
+        {
             self.active = i;
             return;
         }
@@ -224,7 +243,11 @@ impl YMindApp {
             Ok(mut d) => {
                 d.view.titles = new_topic_titles();
                 // Replace a pristine, untouched "Untitled" tab like most editors do.
-                if self.docs.len() == 1 && self.docs[0].path.is_none() && !self.docs[0].is_dirty() && !self.docs[0].doc.can_undo() {
+                if self.docs.len() == 1
+                    && self.docs[0].path.is_none()
+                    && !self.docs[0].is_dirty()
+                    && !self.docs[0].doc.can_undo()
+                {
                     self.docs.clear();
                 }
                 self.docs.push(d);
@@ -235,7 +258,8 @@ impl YMindApp {
                 }
             }
             Err(e) => {
-                self.toasts.error(format!("{} {}: {e}", t("Could not open"), path.display()));
+                self.toasts
+                    .error(format!("{} {}: {e}", t("Could not open"), path.display()));
             }
         }
     }
@@ -262,7 +286,10 @@ impl YMindApp {
             Cmd::Open => {
                 let mut dlg = rfd::FileDialog::new().add_filter(
                     "Mind maps",
-                    &Format::IMPORTABLE.iter().flat_map(|f| f.extensions().iter().copied()).collect::<Vec<_>>(),
+                    &Format::IMPORTABLE
+                        .iter()
+                        .flat_map(|f| f.extensions().iter().copied())
+                        .collect::<Vec<_>>(),
                 );
                 if let Some(dir) = &self.settings.last_open_dir {
                     dlg = dlg.set_directory(dir);
@@ -300,8 +327,14 @@ impl YMindApp {
                 }
             }
             Cmd::Import => {
-                let exts: Vec<&str> = Format::IMPORTABLE.iter().flat_map(|f| f.extensions().iter().copied()).collect();
-                if let Some(f) = rfd::FileDialog::new().add_filter("Import", &exts).pick_file() {
+                let exts: Vec<&str> = Format::IMPORTABLE
+                    .iter()
+                    .flat_map(|f| f.extensions().iter().copied())
+                    .collect();
+                if let Some(f) = rfd::FileDialog::new()
+                    .add_filter("Import", &exts)
+                    .pick_file()
+                {
                     self.open_path(&f);
                 }
             }
@@ -311,7 +344,11 @@ impl YMindApp {
             Cmd::Shortcuts => self.dialogs.shortcuts = true,
             Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             Cmd::ToggleOutliner => {
-                self.mode = if self.mode == CenterMode::Map { CenterMode::Outliner } else { CenterMode::Map };
+                self.mode = if self.mode == CenterMode::Map {
+                    CenterMode::Outliner
+                } else {
+                    CenterMode::Map
+                };
             }
             Cmd::ToggleZen => self.zen = !self.zen,
             Cmd::ToggleFormatPanel => {
@@ -359,7 +396,8 @@ impl YMindApp {
             }
             Cmd::RenameSheet => {
                 if let Some(d) = self.doc() {
-                    self.dialogs.rename_sheet = Some((d.doc.active_index(), d.doc.sheet().title.clone()));
+                    self.dialogs.rename_sheet =
+                        Some((d.doc.active_index(), d.doc.sheet().title.clone()));
                 }
             }
             Cmd::OpenLink => {
@@ -380,6 +418,15 @@ impl YMindApp {
                 self.paste_requested = true;
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
             }
+            Cmd::EditField(f) => {
+                if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
+                    self.mode = CenterMode::Map;
+                    self.zen = false;
+                    self.settings.show_format_panel = true;
+                    self.format_tab = FormatTab::Style;
+                    self.focus_field = Some(f);
+                }
+            }
             Cmd::SetTheme(th) => {
                 self.settings.theme = th;
                 self.save_settings();
@@ -388,9 +435,12 @@ impl YMindApp {
     }
 
     fn canvas_action(&mut self, ctx: &Context, action: Action) {
-        let Some(d) = self.docs.get_mut(self.active) else { return };
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
         if action == Action::StartRelationship {
-            self.toasts.info(t("Pick the target topic for the relationship"));
+            self.toasts
+                .info(t("Pick the target topic for the relationship"));
         }
         d.view.commit_edit(&mut d.doc);
         match apply_action(&mut d.doc, &mut d.view, action) {
@@ -414,8 +464,15 @@ impl YMindApp {
     /// Saves the active document. Returns `false` if the user cancelled or saving failed.
     pub fn save_active(&mut self, save_as: bool) -> bool {
         let backup = self.settings.backup_on_save;
-        let default_dir = self.settings.cloud.preferred_folder.clone().or(self.settings.last_open_dir.clone());
-        let Some(d) = self.docs.get_mut(self.active) else { return false };
+        let default_dir = self
+            .settings
+            .cloud
+            .preferred_folder
+            .clone()
+            .or(self.settings.last_open_dir.clone());
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return false;
+        };
         d.view.commit_edit(&mut d.doc);
         let target = match (&d.path, save_as) {
             (Some(p), false) if is_native(d.format) => {
@@ -430,7 +487,12 @@ impl YMindApp {
                     .add_filter("yMind", &["ymind"])
                     .add_filter("XMind", &["xmind"])
                     .set_file_name(format!("{}.ymind", sanitize(&d.title())));
-                if let Some(dir) = d.path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)).or(default_dir) {
+                if let Some(dir) = d
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.parent().map(Path::to_path_buf))
+                    .or(default_dir)
+                {
                     dlg = dlg.set_directory(dir);
                 }
                 match dlg.save_file() {
@@ -446,7 +508,8 @@ impl YMindApp {
                 }
                 self.settings.add_recent(&target);
                 self.save_settings();
-                self.toasts.success(format!("{} {}", t("Saved to"), target.display()));
+                self.toasts
+                    .success(format!("{} {}", t("Saved to"), target.display()));
                 true
             }
             Err(e) => {
@@ -457,8 +520,12 @@ impl YMindApp {
     }
 
     fn export(&mut self, format: Format) {
-        let dark = self.applied.is_some_and(|(th, ..)| th == SettingsTheme::Dark);
-        let Some(d) = self.docs.get_mut(self.active) else { return };
+        let dark = self
+            .applied
+            .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
         d.view.commit_edit(&mut d.doc);
         let ext = format.extensions()[0];
         let mut dlg = rfd::FileDialog::new()
@@ -468,14 +535,25 @@ impl YMindApp {
             dlg = dlg.set_directory(dir);
         }
         let Some(path) = dlg.save_file() else { return };
-        let opts = ExportOptions { dark: dark && matches!(format, Format::Png | Format::Jpeg | Format::Svg | Format::Pdf), scale: 2.0, ..Default::default() };
+        let opts = ExportOptions {
+            dark: dark
+                && matches!(
+                    format,
+                    Format::Png | Format::Jpeg | Format::Svg | Format::Pdf
+                ),
+            scale: 2.0,
+            ..Default::default()
+        };
         let res = ymind_io::export_bytes(d.doc.workbook(), format, &opts)
             .map_err(|e| e.to_string())
-            .and_then(|b| ymind_platform::fs::atomic_write(&path, &b, false).map_err(|e| e.to_string()));
+            .and_then(|b| {
+                ymind_platform::fs::atomic_write(&path, &b, false).map_err(|e| e.to_string())
+            });
         match res {
             Ok(()) => {
                 self.settings.last_export_format = Some(format.label().to_string());
-                self.toasts.success(format!("{} {}", t("Exported to"), path.display()));
+                self.toasts
+                    .success(format!("{} {}", t("Exported to"), path.display()));
             }
             Err(e) => {
                 self.toasts.error(format!("{}: {e}", t("Export failed")));
@@ -574,7 +652,12 @@ impl YMindApp {
         // Files forwarded from secondary instances (e.g. double-click in Explorer/Finder).
         if self.last_poll.elapsed() > Duration::from_millis(500) {
             self.last_poll = Instant::now();
-            let paths = self.services.instance.as_ref().and_then(|i| i.poll().ok()).unwrap_or_default();
+            let paths = self
+                .services
+                .instance
+                .as_ref()
+                .and_then(|i| i.poll().ok())
+                .unwrap_or_default();
             if !paths.is_empty() {
                 for p in paths {
                     self.open_path(&p);
@@ -585,7 +668,11 @@ impl YMindApp {
 
         // Window title.
         let title = match self.doc() {
-            Some(d) => format!("{}{} — yMind", if d.is_dirty() { "• " } else { "" }, d.title()),
+            Some(d) => format!(
+                "{}{} — yMind",
+                if d.is_dirty() { "• " } else { "" },
+                d.title()
+            ),
             None => "yMind".to_string(),
         };
         if title != self.last_title {
@@ -645,10 +732,15 @@ impl YMindApp {
                         d.doc.mark_dirty();
                         self.docs.push(d);
                         self.active = self.docs.len() - 1;
-                        self.toasts.success(format!("{}: {}", t("Restored"), doc.meta.title));
+                        self.toasts
+                            .success(format!("{}: {}", t("Restored"), doc.meta.title));
                     }
                     Err(e) => {
-                        self.toasts.error(format!("{} {}: {e}", t("Could not open"), doc.meta.title));
+                        self.toasts.error(format!(
+                            "{} {}: {e}",
+                            t("Could not open"),
+                            doc.meta.title
+                        ));
                     }
                 }
             }
@@ -672,17 +764,33 @@ impl YMindApp {
             (KeyboardShortcut::new(cs, Key::S), Cmd::SaveAs),
             (KeyboardShortcut::new(cmd, Key::S), Cmd::Save),
             (KeyboardShortcut::new(cs, Key::P), Cmd::Palette),
-            (KeyboardShortcut::new(cmd, Key::K), Cmd::Palette),
+            (
+                KeyboardShortcut::new(cs, Key::N),
+                Cmd::EditField(FocusField::Notes),
+            ),
+            (
+                KeyboardShortcut::new(cmd, Key::K),
+                Cmd::EditField(FocusField::Hyperlink),
+            ),
             (KeyboardShortcut::new(cmd, Key::N), Cmd::New),
             (KeyboardShortcut::new(cs, Key::O), Cmd::ToggleOutliner),
             (KeyboardShortcut::new(cmd, Key::O), Cmd::Open),
-            (KeyboardShortcut::new(cmd, Key::W), Cmd::CloseTab(self.active)),
+            (
+                KeyboardShortcut::new(cmd, Key::W),
+                Cmd::CloseTab(self.active),
+            ),
             (KeyboardShortcut::new(cmd, Key::F), Cmd::Find),
             (KeyboardShortcut::new(cmd, Key::Comma), Cmd::Settings),
             (KeyboardShortcut::new(cmd, Key::Tab), Cmd::NextDoc),
-            (KeyboardShortcut::new(Modifiers::NONE, Key::F11), Cmd::ToggleZen),
+            (
+                KeyboardShortcut::new(Modifiers::NONE, Key::F11),
+                Cmd::ToggleZen,
+            ),
             (KeyboardShortcut::new(cs, Key::R), Cmd::ToggleFormatPanel),
-            (KeyboardShortcut::new(Modifiers::NONE, Key::F1), Cmd::Shortcuts),
+            (
+                KeyboardShortcut::new(Modifiers::NONE, Key::F1),
+                Cmd::Shortcuts,
+            ),
         ];
         for (sc, c) in table {
             if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
@@ -690,11 +798,20 @@ impl YMindApp {
                 return;
             }
         }
-        if self.zen && ctx.memory(|m| m.focused()).is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        if self.zen
+            && ctx.memory(|m| m.focused()).is_none()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
             self.zen = false;
         }
         // Drag & drop of files onto the window.
-        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
         for p in dropped {
             self.open_path(&p);
         }
@@ -702,9 +819,17 @@ impl YMindApp {
 
     /// Recomputes search hits when the query or document changed.
     pub fn update_search(&mut self) {
-        let Some(d) = self.docs.get_mut(self.active) else { return };
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
         let o = &self.search.opts;
-        let key = (self.search.query.clone(), d.doc.state_id(), o.case_sensitive, o.whole_word, o.include_notes);
+        let key = (
+            self.search.query.clone(),
+            d.doc.state_id(),
+            o.case_sensitive,
+            o.whole_word,
+            o.include_notes,
+        );
         if key == self.search.last_key {
             return;
         }
@@ -712,10 +837,15 @@ impl YMindApp {
         let hits: Vec<_> = if self.search.query.is_empty() {
             Vec::new()
         } else {
-            ymind_core::search::search_sheet(d.doc.sheet(), d.doc.active_index(), &self.search.query, &self.search.opts)
-                .into_iter()
-                .map(|h| h.topic)
-                .collect()
+            ymind_core::search::search_sheet(
+                d.doc.sheet(),
+                d.doc.active_index(),
+                &self.search.query,
+                &self.search.opts,
+            )
+            .into_iter()
+            .map(|h| h.topic)
+            .collect()
         };
         let mut uniq = Vec::new();
         for h in hits {
@@ -729,7 +859,8 @@ impl YMindApp {
     }
 
     pub fn apply_search_filter(&mut self) {
-        let filter = (self.search.open && self.search.dim && !self.search.query.is_empty()).then(|| self.search.hits.clone());
+        let filter = (self.search.open && self.search.dim && !self.search.query.is_empty())
+            .then(|| self.search.hits.clone());
         if let Some(d) = self.docs.get_mut(self.active) {
             d.view.filter = filter;
         }
@@ -741,9 +872,12 @@ impl YMindApp {
         if n == 0 {
             return;
         }
-        self.search.current = ((self.search.current as isize + delta).rem_euclid(n as isize)) as usize;
+        self.search.current =
+            ((self.search.current as isize + delta).rem_euclid(n as isize)) as usize;
         let id = self.search.hits[self.search.current];
-        let Some(d) = self.docs.get_mut(self.active) else { return };
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
         let mut hidden = Vec::new();
         let mut p = d.doc.sheet().parent(id);
         while let Some(x) = p {
@@ -765,10 +899,18 @@ impl YMindApp {
     }
 
     pub fn replace_all(&mut self) {
-        let Some(d) = self.docs.get_mut(self.active) else { return };
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
         let hits = self.search.hits.clone();
-        let (q, r, o) = (self.search.query.clone(), self.search.replace.clone(), self.search.opts.clone());
-        let res = d.doc.edit_sheet("Replace", |s| Ok(ymind_core::search::replace_in_titles(s, &hits, &q, &r, &o)));
+        let (q, r, o) = (
+            self.search.query.clone(),
+            self.search.replace.clone(),
+            self.search.opts.clone(),
+        );
+        let res = d.doc.edit_sheet("Replace", |s| {
+            Ok(ymind_core::search::replace_in_titles(s, &hits, &q, &r, &o))
+        });
         if let Ok(n) = res {
             self.toasts.info(format!("{} × {n}", t("Replace")));
         }
@@ -785,39 +927,143 @@ impl YMindApp {
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
             (Cmd::Settings, "Settings…", "Ctrl+,", "File"),
-            (Cmd::Canvas(Action::InsertChild), "Subtopic", "Tab", "Insert"),
-            (Cmd::Canvas(Action::InsertSibling), "Topic", "Enter", "Insert"),
-            (Cmd::Canvas(Action::InsertSiblingBefore), "Topic Before", "Shift+Enter", "Insert"),
-            (Cmd::Canvas(Action::InsertParent), "Parent Topic", "Ctrl+Enter", "Insert"),
-            (Cmd::Canvas(Action::InsertFloating(ymind_core::Vec2::new(0.0, -260.0))), "Floating Topic", "", "Insert"),
-            (Cmd::Canvas(Action::StartRelationship), "Relationship", "Ctrl+Shift+L", "Insert"),
-            (Cmd::Canvas(Action::AddSummary), "Summary", "Ctrl+]", "Insert"),
-            (Cmd::Canvas(Action::AddBoundary), "Boundary", "Ctrl+Shift+B", "Insert"),
+            (
+                Cmd::Canvas(Action::InsertChild),
+                "Subtopic",
+                "Tab",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::InsertSibling),
+                "Topic",
+                "Enter",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::InsertSiblingBefore),
+                "Topic Before",
+                "Shift+Enter",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::InsertParent),
+                "Parent Topic",
+                "Ctrl+Enter",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::InsertFloating(ymind_core::Vec2::new(0.0, -260.0))),
+                "Floating Topic",
+                "",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::StartRelationship),
+                "Relationship",
+                "Ctrl+Shift+L",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::AddSummary),
+                "Summary",
+                "Ctrl+]",
+                "Insert",
+            ),
+            (
+                Cmd::Canvas(Action::AddBoundary),
+                "Boundary",
+                "Ctrl+B",
+                "Insert",
+            ),
+            (
+                Cmd::EditField(FocusField::Hyperlink),
+                "Hyperlink",
+                "Ctrl+K",
+                "Insert",
+            ),
+            (
+                Cmd::EditField(FocusField::Notes),
+                "Notes",
+                "Ctrl+Shift+N",
+                "Insert",
+            ),
             (Cmd::Canvas(Action::ToggleTodo), "To-Do", "", "Insert"),
             (Cmd::Canvas(Action::Undo), "Undo", "Ctrl+Z", "Edit"),
-            (Cmd::Canvas(Action::Redo), "Redo", "Ctrl+Y", "Edit"),
+            (Cmd::Canvas(Action::Redo), "Redo", "Ctrl+Shift+Z", "Edit"),
             (Cmd::Canvas(Action::Delete), "Delete", "Del", "Edit"),
-            (Cmd::Canvas(Action::DeleteKeepChildren), "Delete Topic Only", "Ctrl+Shift+Del", "Edit"),
-            (Cmd::Canvas(Action::Duplicate), "Duplicate", "Ctrl+D", "Edit"),
-            (Cmd::Canvas(Action::SelectAll), "Select All", "Ctrl+A", "Edit"),
+            (
+                Cmd::Canvas(Action::DeleteKeepChildren),
+                "Delete Topic Only",
+                "Ctrl+Del",
+                "Edit",
+            ),
+            (
+                Cmd::Canvas(Action::SelectRoot),
+                "Go to Central Topic",
+                "Ctrl+R",
+                "Edit",
+            ),
+            (
+                Cmd::Canvas(Action::Duplicate),
+                "Duplicate",
+                "Ctrl+D",
+                "Edit",
+            ),
+            (
+                Cmd::Canvas(Action::SelectAll),
+                "Select All",
+                "Ctrl+A",
+                "Edit",
+            ),
             (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
             (Cmd::ToggleOutliner, "Outliner", "Ctrl+Shift+O", "View"),
             (Cmd::ToggleZen, "Zen Mode", "F11", "View"),
-            (Cmd::ToggleFormatPanel, "Format Panel", "Ctrl+Shift+R", "View"),
+            (
+                Cmd::ToggleFormatPanel,
+                "Format Panel",
+                "Ctrl+Shift+R",
+                "View",
+            ),
             (Cmd::ToggleStatusBar, "Status Bar", "", "View"),
             (Cmd::Canvas(Action::ZoomIn), "Zoom In", "Ctrl++", "View"),
             (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "Ctrl+-", "View"),
-            (Cmd::Canvas(Action::ZoomReset), "Actual Size", "Ctrl+0", "View"),
+            (
+                Cmd::Canvas(Action::ZoomReset),
+                "Actual Size",
+                "Ctrl+0",
+                "View",
+            ),
             (Cmd::Canvas(Action::Fit), "Fit Map", "Ctrl+Shift+H", "View"),
             (Cmd::Canvas(Action::ExpandAll), "Expand All", "", "View"),
             (Cmd::Canvas(Action::CollapseAll), "Collapse All", "", "View"),
-            (Cmd::Canvas(Action::ToggleCollapse), "Collapse / Expand", "Ctrl+/", "View"),
+            (
+                Cmd::Canvas(Action::ToggleCollapse),
+                "Collapse / Expand",
+                "Ctrl+/",
+                "View",
+            ),
+            (
+                Cmd::Canvas(Action::ToggleCollapseAll),
+                "Collapse / Expand All",
+                "Ctrl+Alt+/",
+                "View",
+            ),
             (Cmd::NewSheet, "New Sheet", "", "Sheet"),
             (Cmd::DuplicateSheet, "Duplicate Sheet", "", "Sheet"),
             (Cmd::RenameSheet, "Rename Sheet", "", "Sheet"),
             (Cmd::DeleteSheet, "Delete Sheet", "", "Sheet"),
-            (Cmd::SetTheme(SettingsTheme::System), "System", "", "Appearance"),
-            (Cmd::SetTheme(SettingsTheme::Light), "Light", "", "Appearance"),
+            (
+                Cmd::SetTheme(SettingsTheme::System),
+                "System",
+                "",
+                "Appearance",
+            ),
+            (
+                Cmd::SetTheme(SettingsTheme::Light),
+                "Light",
+                "",
+                "Appearance",
+            ),
             (Cmd::SetTheme(SettingsTheme::Dark), "Dark", "", "Appearance"),
             (Cmd::Shortcuts, "Keyboard Shortcuts", "F1", "Help"),
             (Cmd::About, "About yMind", "", "Help"),
@@ -828,7 +1074,11 @@ impl YMindApp {
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {
-                let title = if cat == "Export" { format!("{} → {title}", t("Export")) } else { t(title).to_string() };
+                let title = if cat == "Export" {
+                    format!("{} → {title}", t("Export"))
+                } else {
+                    t(title).to_string()
+                };
                 let mut c = C::new(i.to_string(), title).category(t(cat));
                 if !sc.is_empty() {
                     c = c.shortcut(sc);
@@ -840,17 +1090,35 @@ impl YMindApp {
 
     /// Additional canvas shortcuts not handled by the canvas widget itself.
     pub fn insert_shortcuts(&mut self, ctx: &Context) {
-        if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.egui_wants_keyboard_input() {
+        if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.text_edit_focused() {
             return;
         }
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         let table = [
             (cs, Key::L, Action::StartRelationship),
             (cs, Key::B, Action::AddBoundary),
+            (Modifiers::COMMAND, Key::B, Action::AddBoundary),
+            (
+                Modifiers::COMMAND.plus(Modifiers::ALT),
+                Key::Slash,
+                Action::ToggleCollapseAll,
+            ),
             (Modifiers::COMMAND, Key::CloseBracket, Action::AddSummary),
-            (Modifiers::COMMAND, Key::Num1, Action::ToggleMarker("priority-1".into())),
-            (Modifiers::COMMAND, Key::Num2, Action::ToggleMarker("priority-2".into())),
-            (Modifiers::COMMAND, Key::Num3, Action::ToggleMarker("priority-3".into())),
+            (
+                Modifiers::COMMAND,
+                Key::Num1,
+                Action::ToggleMarker("priority-1".into()),
+            ),
+            (
+                Modifiers::COMMAND,
+                Key::Num2,
+                Action::ToggleMarker("priority-2".into()),
+            ),
+            (
+                Modifiers::COMMAND,
+                Key::Num3,
+                Action::ToggleMarker("priority-3".into()),
+            ),
         ];
         for (m, k, a) in table {
             if ctx.input_mut(|i| i.consume_key(m, k)) {
@@ -875,10 +1143,20 @@ pub fn new_topic_titles() -> ymind_canvas::NewTopicTitles {
 pub fn sanitize(s: &str) -> String {
     let cleaned: String = s
         .chars()
-        .map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || r#"<>:"/\|?*"#.contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let cleaned = cleaned.trim().trim_end_matches('.').to_string();
-    if cleaned.is_empty() { "Untitled".into() } else { cleaned.chars().take(120).collect() }
+    if cleaned.is_empty() {
+        "Untitled".into()
+    } else {
+        cleaned.chars().take(120).collect()
+    }
 }
 
 /// Services of the real application plus startup information.
@@ -928,7 +1206,12 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
         recovery,
         paths: Some(paths),
     };
-    Startup { settings, services, warning, orphans }
+    Startup {
+        settings,
+        services,
+        warning,
+        orphans,
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -956,8 +1239,13 @@ mod tests {
         let d = app.doc_mut().unwrap();
         let root = d.doc.sheet().root;
         let first = d.doc.sheet().children(root)[0];
-        let id = d.doc.edit_sheet("x", |s| s.insert_child(first, "Needle here")).unwrap();
-        d.doc.edit_sheet("c", |s| s.set_collapsed(first, true)).unwrap();
+        let id = d
+            .doc
+            .edit_sheet("x", |s| s.insert_child(first, "Needle here"))
+            .unwrap();
+        d.doc
+            .edit_sheet("c", |s| s.set_collapsed(first, true))
+            .unwrap();
         app.search.open = true;
         app.search.query = "needle".into();
         app.update_search();

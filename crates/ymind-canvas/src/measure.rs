@@ -21,8 +21,18 @@ impl EguiMeasure {
 impl TextMeasure for EguiMeasure {
     fn measure(&self, text: &str, font_size: f32, bold: bool, max_width: f32) -> Vec2 {
         let font = FontId::new(font_size, FontFamily::Proportional);
-        let g = self.ctx.fonts_mut(|f| f.layout(text.to_owned(), font, Color32::BLACK, max_width / if bold { BOLD_WIDTH } else { 1.0 }));
+        let g = self.ctx.fonts_mut(|f| {
+            f.layout(
+                text.to_owned(),
+                font,
+                Color32::BLACK,
+                max_width / if bold { BOLD_WIDTH } else { 1.0 },
+            )
+        });
         let s = g.size();
-        Vec2::new((s.x * if bold { BOLD_WIDTH } else { 1.0 }).ceil(), s.y.ceil())
+        Vec2::new(
+            (s.x * if bold { BOLD_WIDTH } else { 1.0 }).ceil(),
+            s.y.ceil(),
+        )
     }
 }

@@ -1,7 +1,10 @@
 //! Installs the yMind visual style into an egui context.
 
 use crate::tokens::{Palette, Tokens, accent_id};
-use egui::{Color32, Context, CornerRadius, FontId, Margin, Shadow, Stroke, TextStyle, Theme, ThemePreference, Visuals};
+use egui::{
+    Color32, Context, CornerRadius, FontId, Margin, Shadow, Stroke, TextStyle, Theme,
+    ThemePreference, Visuals,
+};
 use serde::{Deserialize, Serialize};
 
 /// User preference for light/dark appearance.
@@ -36,26 +39,53 @@ pub fn install(ctx: &Context, mode: ThemeMode, accent: Color32) {
             style.spacing.interact_size.y = 26.0;
             style.spacing.menu_margin = Margin::same(6);
             style.spacing.window_margin = Margin::same(12);
-            style.text_styles.insert(TextStyle::Body, FontId::proportional(Tokens::FONT_BODY));
-            style.text_styles.insert(TextStyle::Button, FontId::proportional(Tokens::FONT_BODY));
-            style.text_styles.insert(TextStyle::Small, FontId::proportional(Tokens::FONT_SMALL));
-            style.text_styles.insert(TextStyle::Heading, FontId::proportional(Tokens::FONT_HEADING + 3.0));
+            style
+                .text_styles
+                .insert(TextStyle::Body, FontId::proportional(Tokens::FONT_BODY));
+            style
+                .text_styles
+                .insert(TextStyle::Button, FontId::proportional(Tokens::FONT_BODY));
+            style
+                .text_styles
+                .insert(TextStyle::Small, FontId::proportional(Tokens::FONT_SMALL));
+            style.text_styles.insert(
+                TextStyle::Heading,
+                FontId::proportional(Tokens::FONT_HEADING + 3.0),
+            );
         });
     }
     ctx.set_theme(mode.preference());
 }
 
 fn visuals(p: &Palette) -> Visuals {
-    let mut v = if p.dark { Visuals::dark() } else { Visuals::light() };
+    let mut v = if p.dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
     let r = CornerRadius::same(Tokens::RADIUS_M);
     v.panel_fill = p.bg;
     v.window_fill = p.surface;
     v.window_stroke = Stroke::new(1.0, p.border);
     v.window_corner_radius = CornerRadius::same(Tokens::RADIUS_L);
     v.menu_corner_radius = CornerRadius::same(Tokens::RADIUS_L);
-    v.window_shadow = Shadow { offset: [0, 6], blur: 24, spread: 0, color: p.shadow };
-    v.popup_shadow = Shadow { offset: [0, 4], blur: 16, spread: 0, color: p.shadow };
-    v.extreme_bg_color = if p.dark { Color32::from_rgb(0x1B, 0x1B, 0x1F) } else { Color32::WHITE };
+    v.window_shadow = Shadow {
+        offset: [0, 6],
+        blur: 24,
+        spread: 0,
+        color: p.shadow,
+    };
+    v.popup_shadow = Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: p.shadow,
+    };
+    v.extreme_bg_color = if p.dark {
+        Color32::from_rgb(0x1B, 0x1B, 0x1F)
+    } else {
+        Color32::WHITE
+    };
     v.faint_bg_color = p.surface_alt;
     v.hyperlink_color = p.accent;
     v.selection.bg_fill = p.accent_soft;

@@ -30,12 +30,21 @@ fn main() -> anyhow::Result<()> {
             let (Some(i), Some(o)) = (args.get(1), args.get(2)) else {
                 anyhow::bail!("usage: ymind --convert <INPUT> <OUTPUT>");
             };
-            doc::convert(&PathBuf::from(i), &PathBuf::from(o), &ymind_io::ExportOptions::default()).map_err(anyhow::Error::msg)?;
+            doc::convert(
+                &PathBuf::from(i),
+                &PathBuf::from(o),
+                &ymind_io::ExportOptions::default(),
+            )
+            .map_err(anyhow::Error::msg)?;
             return Ok(());
         }
         _ => {}
     }
-    let files: Vec<PathBuf> = args.iter().filter(|a| !a.starts_with('-')).map(PathBuf::from).collect();
+    let files: Vec<PathBuf> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(PathBuf::from)
+        .collect();
 
     let paths = Paths::new()?;
     // Hand files to an already running instance.
@@ -47,8 +56,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let startup = start_services(paths, instance);
-    let (w, h) = startup.settings.window.as_ref().map_or((1280.0, 800.0), |w| (w.width, w.height));
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-256.png")).ok();
+    let (w, h) = startup
+        .settings
+        .window
+        .as_ref()
+        .map_or((1280.0, 800.0), |w| (w.width, w.height));
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-256.png")).ok();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("yMind")
         .with_inner_size([w, h])

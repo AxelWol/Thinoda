@@ -35,7 +35,10 @@ pub const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="
 pub const ICON_SIZES: [u32; 7] = [16, 32, 48, 64, 128, 256, 512];
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 /// Rasterizes the logo at `size`×`size`.
@@ -43,7 +46,11 @@ pub fn render_icon(size: u32) -> anyhow::Result<image::RgbaImage> {
     let tree = resvg::usvg::Tree::from_str(ICON_SVG, &resvg::usvg::Options::default())?;
     let mut pix = resvg::tiny_skia::Pixmap::new(size, size).context("pixmap")?;
     let s = size as f32 / tree.size().width();
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(s, s), &mut pix.as_mut());
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(s, s),
+        &mut pix.as_mut(),
+    );
     // tiny-skia stores premultiplied RGBA.
     let mut data = pix.take();
     for px in data.as_chunks_mut::<4>().0 {
@@ -70,7 +77,12 @@ fn icons() -> anyhow::Result<()> {
         .into_iter()
         .map(|s| {
             let img = render_icon(s)?;
-            Ok(image::codecs::ico::IcoFrame::as_png(img.as_raw(), s, s, image::ExtendedColorType::Rgba8)?)
+            Ok(image::codecs::ico::IcoFrame::as_png(
+                img.as_raw(),
+                s,
+                s,
+                image::ExtendedColorType::Rgba8,
+            )?)
         })
         .collect::<anyhow::Result<_>>()?;
     image::codecs::ico::IcoEncoder::new(&mut ico).encode_images(&frames)?;
@@ -80,7 +92,10 @@ fn icons() -> anyhow::Result<()> {
 
 fn run(cmd: &mut Command) -> anyhow::Result<()> {
     eprintln!("> {cmd:?}");
-    let st = cmd.current_dir(root()).status().with_context(|| format!("failed to run {cmd:?}"))?;
+    let st = cmd
+        .current_dir(root())
+        .status()
+        .with_context(|| format!("failed to run {cmd:?}"))?;
     if !st.success() {
         bail!("command failed: {cmd:?}");
     }
@@ -105,7 +120,10 @@ fn package(args: &[String]) -> anyhow::Result<()> {
     if !root().join("assets/icon.ico").exists() {
         icons()?;
     }
-    let has_packager = Command::new("cargo-packager").arg("--version").output().is_ok_and(|o| o.status.success());
+    let has_packager = Command::new("cargo-packager")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
     if !has_packager {
         run(cargo().args(["install", "cargo-packager", "--locked"]))?;
     }
@@ -124,13 +142,23 @@ fn package(args: &[String]) -> anyhow::Result<()> {
         pack.args(["--formats", f]);
     }
     run(&mut pack)?;
-    println!("packages written to {}", root().join("target/packages").display());
+    println!(
+        "packages written to {}",
+        root().join("target/packages").display()
+    );
     Ok(())
 }
 
 fn ci() -> anyhow::Result<()> {
     run(cargo().args(["fmt", "--all", "--check"]))?;
-    run(cargo().args(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))?;
+    run(cargo().args([
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ]))?;
     run(cargo().args(["test", "--workspace"]))?;
     Ok(())
 }

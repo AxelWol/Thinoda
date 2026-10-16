@@ -2,8 +2,8 @@
 
 use crate::tokens::{Palette, Tokens};
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Frame, Margin, Response, Role, Sense, Stroke, StrokeKind, Ui, Vec2,
-    WidgetInfo, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Frame, Margin, Response, Role, Sense, Stroke,
+    StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
 /// A square, frameless icon button with a tooltip. `selected` draws an accent background.
@@ -20,7 +20,8 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
         } else {
             Color32::TRANSPARENT
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), bg);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), bg);
         let color = if !ui.is_enabled() {
             p.text_muted.gamma_multiply(0.5)
         } else if selected {
@@ -28,7 +29,13 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
         } else {
             p.text
         };
-        ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), color);
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::proportional(16.0),
+            color,
+        );
     }
     resp.on_hover_text(tooltip)
 }
@@ -37,17 +44,45 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
 pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
     let p = Palette::of_ui(ui);
     let font = FontId::proportional(Tokens::FONT_SMALL);
-    let label_w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), p.text).size().x);
+    let label_w = ui.fonts_mut(|f| {
+        f.layout_no_wrap(label.to_owned(), font.clone(), p.text)
+            .size()
+            .x
+    });
     let size = vec2((label_w + 12.0).max(44.0), 40.0);
-    let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
+    let (rect, resp) = ui.allocate_exact_size(
+        size,
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
     resp.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
     if ui.is_rect_visible(rect) {
         if enabled && resp.hovered() {
-            ui.painter().rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
         }
-        let c = if enabled { p.text } else { p.text_muted.gamma_multiply(0.5) };
-        ui.painter().text(pos2(rect.center().x, rect.top() + 13.0), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), c);
-        ui.painter().text(pos2(rect.center().x, rect.bottom() - 9.0), Align2::CENTER_CENTER, label, font, if enabled { p.text_muted } else { c });
+        let c = if enabled {
+            p.text
+        } else {
+            p.text_muted.gamma_multiply(0.5)
+        };
+        ui.painter().text(
+            pos2(rect.center().x, rect.top() + 13.0),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::proportional(16.0),
+            c,
+        );
+        ui.painter().text(
+            pos2(rect.center().x, rect.bottom() - 9.0),
+            Align2::CENTER_CENTER,
+            label,
+            font,
+            if enabled { p.text_muted } else { c },
+        );
     }
     resp
 }
@@ -59,21 +94,41 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
     let height = 28.0;
     let width = ui.available_width();
     let (outer, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    ui.painter().rect_filled(outer, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
+    ui.painter()
+        .rect_filled(outer, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
     let n = options.len().max(1) as f32;
     let seg_w = (width - 4.0) / n;
     for (i, (opt, label)) in options.iter().enumerate() {
-        let r = egui::Rect::from_min_size(pos2(outer.left() + 2.0 + i as f32 * seg_w, outer.top() + 2.0), vec2(seg_w, height - 4.0));
+        let r = egui::Rect::from_min_size(
+            pos2(outer.left() + 2.0 + i as f32 * seg_w, outer.top() + 2.0),
+            vec2(seg_w, height - 4.0),
+        );
         let resp = ui.interact(r, ui.scope_id().with(("seg", i)), Sense::click());
         let selected = *value == *opt;
         resp.widget_info(|| WidgetInfo::selected(Role::Tab, true, selected, *label));
         if selected {
-            ui.painter().rect_filled(r, CornerRadius::same(Tokens::RADIUS_M - 2), p.surface);
-            ui.painter().rect_stroke(r, CornerRadius::same(Tokens::RADIUS_M - 2), Stroke::new(1.0, p.border), StrokeKind::Inside);
+            ui.painter()
+                .rect_filled(r, CornerRadius::same(Tokens::RADIUS_M - 2), p.surface);
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::same(Tokens::RADIUS_M - 2),
+                Stroke::new(1.0, p.border),
+                StrokeKind::Inside,
+            );
         } else if resp.hovered() {
-            ui.painter().rect_filled(r, CornerRadius::same(Tokens::RADIUS_M - 2), p.border.gamma_multiply(0.5));
+            ui.painter().rect_filled(
+                r,
+                CornerRadius::same(Tokens::RADIUS_M - 2),
+                p.border.gamma_multiply(0.5),
+            );
         }
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, FontId::proportional(Tokens::FONT_BODY), if selected { p.text } else { p.text_muted });
+        ui.painter().text(
+            r.center(),
+            Align2::CENTER_CENTER,
+            *label,
+            FontId::proportional(Tokens::FONT_BODY),
+            if selected { p.text } else { p.text_muted },
+        );
         if resp.clicked() && !selected {
             *value = *opt;
             changed = true;
@@ -97,16 +152,23 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.12);
         let track = lerp_color(p.border, p.accent, t);
         let r = rect.height() / 2.0;
-        ui.painter().rect_filled(rect, CornerRadius::same(r as u8), track);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(r as u8), track);
         let x = egui::lerp((rect.left() + r)..=(rect.right() - r), t);
-        ui.painter().circle_filled(pos2(x, rect.center().y), r - 2.0, Color32::WHITE);
+        ui.painter()
+            .circle_filled(pos2(x, rect.center().y), r - 2.0, Color32::WHITE);
     }
     resp
 }
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
+    Color32::from_rgba_unmultiplied(
+        l(a.r(), b.r()),
+        l(a.g(), b.g()),
+        l(a.b(), b.b()),
+        l(a.a(), b.a()),
+    )
 }
 
 /// A labelled row: label on the left, content right-aligned.
@@ -114,7 +176,8 @@ pub fn property_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R)
     let p = Palette::of_ui(ui);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(label).color(p.text_muted));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add).inner
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add)
+            .inner
     })
     .inner
 }
@@ -125,13 +188,20 @@ pub fn property_field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> Res
     let p = Palette::of_ui(ui);
     ui.horizontal(|ui| {
         let l = ui.label(egui::RichText::new(label).color(p.text_muted));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add).inner.labelled_by(l.id)
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add)
+            .inner
+            .labelled_by(l.id)
     })
     .inner
 }
 
 /// A collapsible section with a heading (used in side panels).
-pub fn section<R>(ui: &mut Ui, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+pub fn section<R>(
+    ui: &mut Ui,
+    title: &str,
+    default_open: bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
     let p = Palette::of_ui(ui);
     egui::CollapsingHeader::new(egui::RichText::new(title).strong().color(p.text))
         .default_open(default_open)
@@ -140,7 +210,11 @@ pub fn section<R>(ui: &mut Ui, title: &str, default_open: bool, add: impl FnOnce
 }
 
 /// A row of color swatches. Returns the clicked color.
-pub fn color_swatches(ui: &mut Ui, colors: &[Color32], selected: Option<Color32>) -> Option<Color32> {
+pub fn color_swatches(
+    ui: &mut Ui,
+    colors: &[Color32],
+    selected: Option<Color32>,
+) -> Option<Color32> {
     let p = Palette::of_ui(ui);
     let mut picked = None;
     ui.horizontal_wrapped(|ui| {
@@ -150,7 +224,8 @@ pub fn color_swatches(ui: &mut Ui, colors: &[Color32], selected: Option<Color32>
             let is_sel = selected == Some(c);
             let label = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
             resp.widget_info(|| WidgetInfo::selected(Role::ColorWell, true, is_sel, &label));
-            ui.painter().rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
+            ui.painter()
+                .rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
             let stroke = if is_sel {
                 Stroke::new(2.0, p.accent)
             } else if resp.hovered() {
@@ -158,7 +233,12 @@ pub fn color_swatches(ui: &mut Ui, colors: &[Color32], selected: Option<Color32>
             } else {
                 Stroke::new(1.0, p.border)
             };
-            ui.painter().rect_stroke(rect.shrink(1.0), CornerRadius::same(Tokens::RADIUS_S), stroke, StrokeKind::Inside);
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                CornerRadius::same(Tokens::RADIUS_S),
+                stroke,
+                StrokeKind::Inside,
+            );
             if resp.on_hover_text(label).clicked() {
                 picked = Some(c);
             }
@@ -174,8 +254,10 @@ pub fn chip(ui: &mut Ui, text: &str, color: Color32) -> Response {
     let size = galley.size() + vec2(12.0, 6.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, text));
-    ui.painter().rect_filled(rect, CornerRadius::same((size.y / 2.0) as u8), color);
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same((size.y / 2.0) as u8), color);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
     resp
 }
 
@@ -210,20 +292,32 @@ pub fn card(ui: &Ui) -> Frame {
         .stroke(Stroke::new(1.0, p.border))
         .corner_radius(CornerRadius::same(Tokens::RADIUS_L))
         .inner_margin(Margin::symmetric(6, 4))
-        .shadow(egui::Shadow { offset: [0, 2], blur: 12, spread: 0, color: p.shadow })
+        .shadow(egui::Shadow {
+            offset: [0, 2],
+            blur: 12,
+            spread: 0,
+            color: p.shadow,
+        })
 }
 
 /// Muted caption text.
 pub fn caption(ui: &mut Ui, text: impl Into<String>) -> Response {
     let p = Palette::of_ui(ui);
-    ui.label(egui::RichText::new(text.into()).size(Tokens::FONT_SMALL).color(p.text_muted))
+    ui.label(
+        egui::RichText::new(text.into())
+            .size(Tokens::FONT_SMALL)
+            .color(p.text_muted),
+    )
 }
 
 /// A thin vertical divider for toolbars.
 pub fn vdivider(ui: &mut Ui) {
     let p = Palette::of_ui(ui);
     let (rect, _) = ui.allocate_exact_size(vec2(9.0, 24.0), Sense::hover());
-    ui.painter().line_segment([rect.center_top(), rect.center_bottom()], Stroke::new(1.0, p.border));
+    ui.painter().line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        Stroke::new(1.0, p.border),
+    );
 }
 
 /// Primary (accent filled) button.
@@ -239,7 +333,11 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
 
 /// Secondary button.
 pub fn secondary_button(ui: &mut Ui, text: &str) -> Response {
-    ui.add(egui::Button::new(text).corner_radius(CornerRadius::same(Tokens::RADIUS_M)).min_size(vec2(80.0, 28.0)))
+    ui.add(
+        egui::Button::new(text)
+            .corner_radius(CornerRadius::same(Tokens::RADIUS_M))
+            .min_size(vec2(80.0, 28.0)),
+    )
 }
 
 #[cfg(test)]

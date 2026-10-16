@@ -55,7 +55,12 @@ impl Toasts {
 
     fn push(&mut self, kind: ToastKind, text: String, remaining: Option<f32>) -> u64 {
         self.next += 1;
-        self.items.push(Toast { id: self.next, kind, text, remaining });
+        self.items.push(Toast {
+            id: self.next,
+            kind,
+            text,
+            remaining,
+        });
         if self.items.len() > 5 {
             self.items.remove(0);
         }
@@ -116,7 +121,11 @@ impl Toasts {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon).color(color));
                                 ui.label(RichText::new(&t.text).color(p.text));
-                                if ui.small_button(crate::icons::CLOSE).on_hover_text("Dismiss").clicked() {
+                                if ui
+                                    .small_button(crate::icons::CLOSE)
+                                    .on_hover_text("Dismiss")
+                                    .clicked()
+                                {
                                     dismiss = Some(t.id);
                                 }
                             });
