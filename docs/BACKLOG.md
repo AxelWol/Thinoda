@@ -6,6 +6,19 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets atomically,
+  preserving source files, destination metadata and all current model fields.
+  Invalid/missing inputs abort before merging; one undo removes all appended
+  sheets. Public XMind boundary/Summary/relationship IDs are now globally unique
+  across duplicated/merged sheets. External images remain references until R4
+  embedded-asset support; source workbook metadata is not merged.
+- Tools > Create Masked Copy produces a separate unsaved preview, with generic
+  sheet/topic/relationship titles and no notes, labels, links, images, markers,
+  custom font names, boundary titles or source metadata. Original documents retain
+  their paths, content and history. Cancel leaves the original alone; the preview
+  uses ordinary Save/Export and prompts on unsaved close. Structure, colors and
+  task states remain visible, so this is not a guarantee of anonymity.
+  Tests inspect decompressed native/XMind public and private archive payloads.
 - Select/Arrange submenus in Edit and topic context menus, with localized palette
   entries and shared canvas command availability: visible sibling/descendant
   selection, inversion, select none/central topic, Move Up/Down, natural ascending/
@@ -177,8 +190,8 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Quick styles, global font, custom theme editor. Copy/Paste style and Reset
   Style are implemented session-wide (Ctrl+Alt+C/V, menu/context/palette); see
   Recently completed.
-- P2 Mask data (anonymize topic text before sharing)
-- P2 Merge XMind files, skeleton/structure picker gallery
+- P2 Skeleton/structure picker gallery (map-file merging and masked copies are
+  implemented; see Recently completed)
   - Map-tab layout selector: current layout thumbnail/name opens an anchored,
     scrollable gallery with collapsible families and a three-column preview grid
     in the reference. Highlight the current choice and constrain the popup to the
@@ -231,7 +244,8 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   To-do and Task commands rather than assuming they are synonyms. New sheet from
   topic is implemented as a non-destructive single-branch copy; see Recently completed.
 - P2 Tools inventory: Map Shot (F7), Merge XMind files and Create/customize theme.
-  Share implementation with the existing capture, merge and theme backlog items.
+  Merge Map Files is implemented for current model fields; embedded assets remain
+  with R4. Share implementation with the existing capture and theme backlog items.
 - P1 View inventory: mutually exclusive Mind map/Outline views, Zoom in/out, Actual
   size, Fit map, Show branch only, Zen, Gantt, Pitch submenu, Navigation pane submenu,
   Format panel submenu, Toolbar submenu, Show tab bar, Hide sheet bar and Merge all

@@ -391,6 +391,28 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R6 file-tool slice delivered: Merge Map Files parses every selected native/XMind
+source before appending complete sheets in one transaction, retaining destination
+metadata and leaving source files untouched. Empty/invalid inputs do not partially
+merge. Global public XMind annotation IDs are namespaced by owning topic/sheet,
+with reference-resolution coverage independent of private workbook metadata.
+Embedded-asset merging remains dependent on R4; current images are references.
+
+Create Masked Copy opens a new unsaved document for review and ordinary Save/Export,
+without retargeting or editing the source. It replaces sheet/topic/relationship
+titles and removes notes, labels, links, images, markers, boundary titles, custom
+font names and metadata, retaining hierarchy, colors and task states. A localized
+review dialog explains that structural information can remain identifying.
+Decoded native/XMind archive tests check public and private payloads; source
+immutability, cancel, dirty-copy lifecycle and native reopening are covered.
+
+This slice passes workspace formatting/clippy, all 58 main app cases, app unit
+tests, isolated German UI tests and the core/IO/canvas/platform/UI suites. The
+full `cargo xtask ci` attempt stopped at a Windows Application Control block
+(4551) of its German UI test executable, after the preceding app/AI tests passed.
+The isolated German executable subsequently passed without changing system policy.
+Live AI was explicitly disabled. This does not close the remaining R0–R12 work.
+
 R1 Select/Arrange delivery: shared action availability now drives menus and palette,
 with visible sibling/descendant/inverted selection, central-topic navigation,
 natural child-title sorting and floating-topic edge/center alignment or equal-center

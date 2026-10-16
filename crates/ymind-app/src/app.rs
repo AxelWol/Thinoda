@@ -40,6 +40,8 @@ pub enum Cmd {
     CloseTab(usize),
     NextDoc,
     Import,
+    MergeFiles,
+    MaskedCopy,
     Export(Format),
     Settings,
     About,
@@ -147,6 +149,7 @@ pub struct Dialogs {
     pub settings_tab: SettingsTab,
     pub about: bool,
     pub shortcuts: bool,
+    pub masked_copy: bool,
     pub close: Option<CloseIntent>,
     pub conflict: Option<usize>,
     pub rename_sheet: Option<(usize, String)>,
@@ -395,6 +398,26 @@ impl YMindApp {
                     .pick_file()
                 {
                     self.open_path(&f);
+                }
+            }
+            Cmd::MergeFiles => {
+                if self.doc().is_none() {
+                    self.toasts.warning(t("Not possible here"));
+                    return;
+                }
+                if let Some(paths) = rfd::FileDialog::new()
+                    .set_title(t("Merge Map Files…"))
+                    .add_filter("yMind / XMind", &["ymind", "xmind"])
+                    .pick_files()
+                {
+                    self.merge_files(&paths);
+                }
+            }
+            Cmd::MaskedCopy => {
+                if self.doc().is_some() {
+                    self.dialogs.masked_copy = true;
+                } else {
+                    self.toasts.warning(t("Not possible here"));
                 }
             }
             Cmd::Export(format) => self.export(format),
@@ -677,7 +700,9 @@ impl YMindApp {
             | Cmd::DuplicateSheet
             | Cmd::CopySheet
             | Cmd::PasteSheet
-            | Cmd::SaveSheetAs => self.doc().is_some(),
+            | Cmd::SaveSheetAs
+            | Cmd::MergeFiles
+            | Cmd::MaskedCopy => self.doc().is_some(),
             _ => true,
         }
     }
@@ -721,6 +746,66 @@ impl YMindApp {
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
         }
+    }
+
+    pub fn merge_files(&mut self, paths: &[PathBuf]) -> bool {
+        if self.doc().is_none() || paths.is_empty() {
+            self.toasts
+                .warning(t("Select map files and open a destination document first"));
+            return false;
+        }
+        let mut sheets = Vec::new();
+        for path in paths {
+            if !Format::from_path(path).is_some_and(is_native) {
+                self.toasts.error(format!(
+                    "{}: {}",
+                    t("Choose .ymind or .xmind files"),
+                    path.display()
+                ));
+                return false;
+            }
+            match ymind_io::import_file(path) {
+                Ok(workbook) => sheets.extend(workbook.sheets),
+                Err(error) => {
+                    self.toasts.error(format!(
+                        "{}: {}: {error}",
+                        t("Could not merge map files"),
+                        path.display()
+                    ));
+                    return false;
+                }
+            }
+        }
+        let d = self.doc_mut().unwrap();
+        d.view.commit_edit(&mut d.doc);
+        match d.doc.merge_sheets(sheets) {
+            Ok(_) => {
+                d.view.reset();
+                self.toasts
+                    .success(t("Merged sheets; original files are unchanged"));
+                true
+            }
+            Err(error) => {
+                self.toasts
+                    .error(format!("{}: {error}", t("Could not merge map files")));
+                false
+            }
+        }
+    }
+
+    pub fn create_masked_copy(&mut self) {
+        let Some(d) = self.doc_mut() else {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        };
+        d.view.commit_edit(&mut d.doc);
+        let workbook = d.doc.workbook().masked_copy();
+        self.new_doc(workbook);
+        self.doc_mut().unwrap().doc.mark_dirty();
+        self.dialogs.masked_copy = false;
+        self.toasts.info(t(
+            "Masked copy created; inspect it before saving or sharing",
+        ));
     }
 
     pub fn selection_commands() -> Vec<(Action, &'static str)> {
@@ -1540,6 +1625,8 @@ impl YMindApp {
             (Cmd::CopySheet, "Copy Sheet", "", "File"),
             (Cmd::PasteSheet, "Paste Sheet", "", "File"),
             (Cmd::SaveSheetAs, "Save Sheet As…", "", "File"),
+            (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
+            (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),

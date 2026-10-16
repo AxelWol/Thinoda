@@ -89,6 +89,102 @@ fn public_xmind_content(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
+fn masked_native_archives_contain_only_masked_public_and_private_payloads() {
+    let mut source = sample();
+    source.metadata.description = Some("PRIVATE42 metadata".into());
+    for sheet in &mut source.sheets {
+        sheet.title = "PRIVATE42 sheet".into();
+        sheet.theme.font_family = Some("PRIVATE42 font".into());
+        for topic in sheet.topics.values_mut() {
+            topic.title = "PRIVATE42 title".into();
+            topic.notes = Some("PRIVATE42 notes".into());
+            topic.image = Some("PRIVATE42 image".into());
+            topic.hyperlink = Some("https://example.test/PRIVATE42".into());
+            topic.labels = vec!["PRIVATE42 label".into()];
+            topic.markers = vec!["PRIVATE42 marker".into()];
+            topic.style.font_family = Some("PRIVATE42 topic font".into());
+        }
+        for boundary in &mut sheet.boundaries {
+            boundary.title = Some("PRIVATE42 boundary".into());
+        }
+        for relationship in &mut sheet.relationships {
+            relationship.title = "PRIVATE42 relationship".into();
+        }
+    }
+    let original = source.clone();
+    let masked = source.masked_copy();
+    for format in [Format::YMind, Format::XMind] {
+        let bytes = export_bytes(&masked, format, &Default::default()).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            assert!(!entry.name().unwrap().contains("PRIVATE42"));
+            let mut contents = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+            assert!(
+                !contents.contains("PRIVATE42"),
+                "leaked into {}",
+                entry.name().unwrap()
+            );
+        }
+        assert_eq!(import_bytes(format, &bytes).unwrap(), masked);
+        if format == Format::XMind {
+            let public = import_bytes(format, &public_xmind_content(bytes)).unwrap();
+            assert!(
+                !serde_json::to_string(&public)
+                    .unwrap()
+                    .contains("PRIVATE42")
+            );
+            assert_eq!(public.sheets.len(), masked.sheets.len());
+        }
+    }
+    assert_eq!(source, original);
+}
+
+#[test]
+fn multisheet_xmind_annotation_ids_are_globally_unique_and_references_resolve() {
+    let mut book = sample();
+    book.sheets.push(book.sheets[0].clone());
+    let bytes = export_bytes(&book, Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_reader(archive.by_name("content.json").unwrap()).unwrap();
+    fn walk(
+        value: &serde_json::Value,
+        ids: &mut std::collections::HashSet<String>,
+        references: &mut Vec<String>,
+    ) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(id) = object.get("id").and_then(|id| id.as_str()) {
+                    assert!(ids.insert(id.to_string()), "duplicate XMind ID {id}");
+                }
+                for (key, value) in object {
+                    if matches!(key.as_str(), "topicId" | "end1Id" | "end2Id") {
+                        references.push(value.as_str().unwrap().to_string());
+                    }
+                    walk(value, ids, references);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for value in array {
+                    walk(value, ids, references);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut references = Vec::new();
+    walk(&content, &mut ids, &mut references);
+    assert_eq!(references.len(), 6);
+    assert!(references.iter().all(|reference| ids.contains(reference)));
+    let restored = import_bytes(Format::XMind, &public_xmind_content(bytes)).unwrap();
+    assert_eq!(restored.sheets.len(), 3);
+    assert_eq!(restored.sheets[0], restored.sheets[2]);
+}
+
+#[test]
 fn native_archive_roundtrips_every_model_field() {
     let w = sample();
     let bytes = export_bytes(&w, Format::YMind, &Default::default()).unwrap();

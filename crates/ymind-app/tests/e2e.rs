@@ -269,6 +269,112 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
 }
 
 #[test]
+fn masked_copy_preview_is_cancelable_and_exports_only_derived_content() {
+    let mut app = YMindApp::headless();
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_book("Sensitive data", |book| {
+            book.metadata.description = Some("CONFIDENTIAL description".into());
+            for sheet in &mut book.sheets {
+                sheet.title = "CONFIDENTIAL sheet".into();
+                for topic in sheet.topics.values_mut() {
+                    topic.title = "CONFIDENTIAL title".into();
+                    topic.notes = Some("CONFIDENTIAL notes".into());
+                    topic.hyperlink = Some("https://example.test/CONFIDENTIAL".into());
+                    topic.image = Some("CONFIDENTIAL/image.png".into());
+                    topic.labels = vec!["CONFIDENTIAL label".into()];
+                    topic.markers = vec!["CONFIDENTIAL marker".into()];
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    let source = app.doc().unwrap().doc.workbook().clone();
+    let revision = app.doc().unwrap().doc.state_id();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &source);
+    h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Create Preview")
+        .click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 2);
+    let copy = h.state().doc().unwrap();
+    assert!(copy.is_dirty());
+    assert!(copy.path.is_none());
+    assert_eq!(copy.doc.workbook(), &source.masked_copy());
+    assert_eq!(h.state().docs[0].doc.workbook(), &source);
+    assert_eq!(h.state().docs[0].doc.state_id(), revision);
+    let dir = tempfile::tempdir().unwrap();
+    for extension in ["ymind", "xmind"] {
+        let path = dir.path().join(format!("masked.{extension}"));
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        let reopened = ymind_io::import_file(&path).unwrap();
+        assert_eq!(reopened, source.masked_copy());
+    }
+}
+
+#[test]
+fn merge_map_files_is_atomic_rich_and_preserves_sources_and_destination_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = YMindApp::headless();
+    let source_book = Workbook::new(rich_sheet());
+    let paths: Vec<_> = ["source.ymind", "source.xmind"]
+        .iter()
+        .map(|name| dir.path().join(name))
+        .collect();
+    for path in &paths {
+        ymind_io::export_file(
+            &source_book,
+            path,
+            Format::from_path(path).unwrap(),
+            &Default::default(),
+        )
+        .unwrap();
+    }
+    let originals: Vec<_> = paths
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let revision = app.doc().unwrap().doc.state_id();
+    let mut bad_paths = paths.clone();
+    bad_paths.push(dir.path().join("missing.xmind"));
+    assert!(!app.merge_files(&bad_paths));
+    assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert!(!app.merge_files(&[dir.path().join("text.txt")]));
+    assert!(!app.merge_files(&[]));
+    assert!(app.merge_files(&paths));
+    let merged = app.doc().unwrap().doc.workbook().clone();
+    assert_eq!(merged.sheets.len(), 3);
+    assert_eq!(merged.active_sheet, 1);
+    assert_eq!(merged.sheets[0], before.sheets[0]);
+    assert_eq!(merged.sheets[1], source_book.sheets[0]);
+    assert_eq!(merged.sheets[2], source_book.sheets[0]);
+    assert_eq!(merged.metadata, before.metadata);
+    for (path, bytes) in paths.iter().zip(originals) {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert!(app.doc_mut().unwrap().doc.redo());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &merged);
+}
+
+#[test]
 fn arrange_menu_aligns_floating_topics_and_persists_with_single_undo() {
     let mut app = YMindApp::headless();
     app.settings.show_format_panel = false;

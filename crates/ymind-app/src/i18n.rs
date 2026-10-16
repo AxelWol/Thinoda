@@ -73,6 +73,46 @@ const DE: &[(&str, &str)] = &[
     ("Editor", "Editor"),
     ("Indent", "Einrücken"),
     ("Outdent", "Ausrücken"),
+    ("Tools", "Werkzeuge"),
+    ("Create Masked Copy…", "Maskierte Kopie erstellen…"),
+    ("Create Preview", "Vorschau erstellen"),
+    (
+        "Masked copy created; inspect it before saving or sharing",
+        "Maskierte Kopie erstellt; vor dem Speichern oder Teilen prüfen",
+    ),
+    (
+        "Creates a new unsaved document. The original is not changed.",
+        "Erstellt ein neues ungespeichertes Dokument. Das Original bleibt unverändert.",
+    ),
+    (
+        "Replaces all topic, sheet and relationship titles. Removes notes, labels, links, images, markers, custom font names, boundary titles and document metadata.",
+        "Ersetzt alle Themen-, Blatt- und Beziehungstitel. Entfernt Notizen, Labels, Links, Bilder, Symbole, eigene Schriftnamen, Umrandungstitel und Dokumentmetadaten.",
+    ),
+    (
+        "Structure, colors and task states remain visible. This does not guarantee anonymity; inspect every sheet before sharing.",
+        "Struktur, Farben und Aufgabenstatus bleiben sichtbar. Dies garantiert keine Anonymität; vor dem Teilen jedes Blatt prüfen.",
+    ),
+    ("Merge Map Files…", "Map-Dateien zusammenführen…"),
+    (
+        "Select map files and open a destination document first",
+        "Zuerst Map-Dateien auswählen und ein Zieldokument öffnen",
+    ),
+    (
+        "Choose .ymind or .xmind files",
+        ".ymind- oder .xmind-Dateien auswählen",
+    ),
+    (
+        "Could not merge map files",
+        "Map-Dateien konnten nicht zusammengeführt werden",
+    ),
+    (
+        "Merged sheets; original files are unchanged",
+        "Blätter zusammengeführt; Originaldateien sind unverändert",
+    ),
+    (
+        "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
+        "Fügt vollständige Blätter an. Metadaten des Ziels bleiben erhalten; externe Bildreferenzen werden nicht eingebettet.",
+    ),
     ("Select", "Auswählen"),
     ("Select None", "Nichts auswählen"),
     ("Invert Selection", "Auswahl umkehren"),

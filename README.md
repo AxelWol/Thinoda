@@ -24,6 +24,14 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   navigation. Arrange offers natural child-title sorting and floating-topic edge/
   center alignment or equal center spacing, each in one undo step.
   Sorting is rejected if it would split a Summary/boundary's source membership.
+- Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets in one undo step.
+  All inputs must load successfully; source files stay untouched and destination
+  metadata is retained. External image references are not embedded.
+- Tools > Create Masked Copy opens a separate unsaved preview with generic sheet,
+  topic and relationship names, removing notes, labels, links, images, markers,
+  custom font names, boundary titles and metadata. Inspect every sheet before
+  saving/exporting; structure, colors and task states remain, so anonymity is not
+  guaranteed. The original document and its save destination are retained.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Select relationship lines, boundary outlines or Summary braces to delete them with

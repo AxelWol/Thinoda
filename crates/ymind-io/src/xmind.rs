@@ -184,7 +184,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         }
         let boundaries: Vec<_> = sheet.boundaries.iter().filter(|boundary| boundary.parent == id).map(|boundary| {
             json!({
-                "id": format!("boundary-{}", boundary.id.0),
+                "id": format!("{}-boundary-{}", ids[&id], boundary.id.0),
                 "class": "boundary",
                 "range": boundary.range.map(|range| format!("({}, {})", range.start, range.end)).unwrap_or_else(|| "master".into()),
                 "title": boundary.title,
@@ -204,7 +204,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 sheet_summaries
                     .iter()
                     .map(|summary| json!({
-                        "id": format!("summary-{}", summary.id.0),
+                        "id": format!("{}-summary-{}", ids[&id], summary.id.0),
                         "class": "summary",
                         "range": format!("({}, {})", summary.range.start, summary.range.end),
                         "topicId": ids.get(&summary.topic)
@@ -235,7 +235,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 "id": format!("sheet-{sheet_index}"), "class": "sheet", "title": sheet.title,
                 "rootTopic": topic(sheet, sheet.root, &ids),
                 "relationships": sheet.relationships.iter().map(|relationship| json!({
-                    "id": format!("rel-{}", relationship.id.0),
+                    "id": format!("rel-{sheet_index}-{}", relationship.id.0),
                     "class": "relationship",
                     "end1Id": ids.get(&relationship.from), "end2Id": ids.get(&relationship.to),
                     "title": relationship.title,

@@ -173,6 +173,9 @@ impl YMindApp {
     }
 
     pub(crate) fn any_modal_open(&self) -> bool {
+        if self.dialogs.masked_copy {
+            return true;
+        }
         let d = &self.dialogs;
         d.close.is_some()
             || d.conflict.is_some()
@@ -504,6 +507,15 @@ impl YMindApp {
                     *cmd = Some(Cmd::Ai(a));
                 }
             }
+        });
+        ui.menu_button(t("Tools"), |ui| {
+            if ui.add_enabled(self.command_available(&Cmd::MaskedCopy), egui::Button::new(t("Create Masked Copy…"))).clicked() {
+                *cmd = Some(Cmd::MaskedCopy);
+            }
+            if ui.add_enabled(self.command_available(&Cmd::MergeFiles), egui::Button::new(t("Merge Map Files…"))).clicked() {
+                *cmd = Some(Cmd::MergeFiles);
+            }
+            widgets::caption(ui, t("Appends complete sheets. Destination metadata is kept; external image references are not embedded."));
         });
         ui.menu_button(t("View"), |ui| {
             let e = [
@@ -2288,6 +2300,28 @@ impl YMindApp {
                     ui.hyperlink("https://github.com/AxelWol/yMind");
                 });
             self.dialogs.about = open;
+        }
+        if self.dialogs.masked_copy {
+            let mut open = true;
+            let mut create = false;
+            let mut cancel = false;
+            egui::Window::new(t("Create Masked Copy…"))
+                .open(&mut open)
+                .collapsible(false)
+                .default_width(460.0)
+                .show(ctx, |ui| {
+                    ui.label(t("Creates a new unsaved document. The original is not changed."));
+                    ui.label(t("Replaces all topic, sheet and relationship titles. Removes notes, labels, links, images, markers, custom font names, boundary titles and document metadata."));
+                    ui.label(t("Structure, colors and task states remain visible. This does not guarantee anonymity; inspect every sheet before sharing."));
+                    ui.horizontal(|ui| {
+                        if ui.button(t("Cancel")).clicked() { cancel = true; }
+                        if ui.button(t("Create Preview")).clicked() { create = true; }
+                    });
+                });
+            self.dialogs.masked_copy = open && !cancel;
+            if create {
+                self.create_masked_copy();
+            }
         }
         if self.dialogs.shortcuts {
             let mut open = true;

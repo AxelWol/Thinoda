@@ -248,6 +248,22 @@ impl Document {
         .expect("adding a sheet cannot fail")
     }
 
+    /// Appends complete sheets in a single transaction; topic IDs are sheet-scoped.
+    pub fn merge_sheets(&mut self, sheets: Vec<Sheet>) -> EditResult<usize> {
+        if sheets.is_empty() {
+            return Err(EditError::Empty);
+        }
+        for sheet in &sheets {
+            sheet.validate().map_err(EditError::Invalid)?;
+        }
+        self.edit_book("Merge Map Files", |workbook| {
+            let first = workbook.sheets.len();
+            workbook.sheets.extend(sheets);
+            workbook.active_sheet = first;
+            Ok(first)
+        })
+    }
+
     pub fn remove_sheet(&mut self, index: usize) -> EditResult<()> {
         self.edit_book("Delete sheet", |wb| {
             if index >= wb.sheets.len() {
@@ -287,6 +303,32 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_validates_every_sheet_before_mutation_and_undoes_once() {
+        let mut doc = Document::default();
+        let before = doc.workbook().clone();
+        let state = doc.state_id();
+        let mut invalid = Sheet::new("Invalid", "Root");
+        invalid.topics.clear();
+        assert!(
+            doc.merge_sheets(vec![Sheet::new("Valid", "Root"), invalid])
+                .is_err()
+        );
+        assert!(doc.merge_sheets(vec![]).is_err());
+        assert_eq!(doc.state_id(), state);
+        assert_eq!(doc.workbook(), &before);
+        let sheet = Sheet::new("Duplicate title", "Root");
+        doc.merge_sheets(vec![sheet.clone(), sheet.clone()])
+            .unwrap();
+        assert_eq!(doc.active_index(), 1);
+        assert_eq!(doc.workbook().sheets[1..], [sheet.clone(), sheet]);
+        let merged = doc.workbook().clone();
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &before);
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &merged);
+    }
 
     #[test]
     fn edit_undo_redo_and_dirty() {
