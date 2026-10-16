@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Map structure preview gallery: current-layout thumbnail/name opens an anchored,
+  bounded scrollable popup with nine collapsible families and responsive one-to-three
+  column cards for all 17 supported structures. Original samples use the real core
+  layout and canvas painter, cached separately for light/dark. Selection is highlighted;
+  keyboard/accessibility activation, cancellation, family collapsing, narrow/high-scale
+  bounds, all-layout rich reopening and atomic undo/redo are covered in EN/DE.
+  Popup keys no longer insert/change topics in the underlying map or outliner;
+  outliner leaf placeholders are noninteractive and branch controls have names.
 - Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets atomically,
   preserving source files, destination metadata and all current model fields.
   Invalid/missing inputs abort before merging; one undo removes all appended
@@ -192,10 +200,12 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   Recently completed.
 - P2 Skeleton/structure picker gallery (map-file merging and masked copies are
   implemented; see Recently completed)
+  The structural gallery is implemented for the 17 existing structures; unverified
+  visual skeleton presets and the distinct Grid family remain open below.
   - Map-tab layout selector: current layout thumbnail/name opens an anchored,
     scrollable gallery with collapsible families and a three-column preview grid
-    in the reference. Highlight the current choice and constrain the popup to the
-    available viewport; adapt column count at narrow widths.
+    in the reference. Implemented for existing structures with selected-state feedback
+    and viewport-adaptive columns; additional presets still require reference research.
   - Observed families: Mind map, Logic chart, Brace map, Org chart, Tree chart,
     Timeline, Fishbone, Tree table, Matrix and Grid. Audit existing structures first;
     Grid is an additional family to investigate, not a synonym for Matrix.

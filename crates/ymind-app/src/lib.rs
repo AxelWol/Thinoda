@@ -4,6 +4,7 @@ pub mod ai;
 pub mod app;
 pub mod doc;
 pub mod i18n;
+mod structure_picker;
 pub mod ui;
 
 pub use app::{Startup, YMindApp, start_services};

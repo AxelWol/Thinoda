@@ -391,6 +391,23 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 structure-gallery slice delivered: the Map selector shows the current layout
+thumbnail/name and a bounded, anchored scrollable popup with nine collapsible families
+covering all 17 existing arrangements. One-to-three columns adapt to viewport width.
+Previews use original sample maps and the same core layout/canvas renderer, cached
+separately for light/dark; no copied XMind artwork or invented visual presets.
+Choosing a different layout preserves content/styles/annotations and selection in
+one undo step and fits the resulting view. Popup keyboard input is isolated from
+underlying map/outliner edits, including Escape on the closing frame.
+Outliner leaf spacers no longer expose unnamed empty buttons.
+
+Full `cargo xtask ci` passes for the integrated gallery and previous merge/masked-copy
+slices, including 60 main app cases, German UI, 76 core cases, canvas/IO/platform/UI
+and CLI checks. Live AI is explicitly disabled. The earlier policy-blocked invocation
+below remains historical; this later integrated invocation completed normally.
+Grid-family semantics, visual skeleton variants, custom themes and home-template
+gallery work remain open; no full R5/R6 completion is claimed.
+
 R6 file-tool slice delivered: Merge Map Files parses every selected native/XMind
 source before appending complete sheets in one transaction, retaining destination
 metadata and leaving source files untouched. Empty/invalid inputs do not partially

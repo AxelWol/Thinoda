@@ -45,6 +45,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   and Style/Map tabs stay visible while their contents scroll independently.
   Style reflects the selected topic's resolved properties, including inherited/custom
   colors with checked swatches and hex values; Map controls apply to the entire sheet.
+- The Map structure selector opens a viewport-bounded, scrollable preview gallery
+  with nine collapsible families covering all 17 existing structures. Original sample
+  maps use the actual canvas renderer in light/dark mode; layout changes preserve rich
+  content and selection, fit the view and undo in one step.
 - New-map Clarity theme: plain bold center, colored main topics, pale subtopics and
   thin connectors inspired by the supplied visual references; existing saved themes
   and per-topic style overrides remain unchanged.

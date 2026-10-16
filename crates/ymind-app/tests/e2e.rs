@@ -1048,6 +1048,180 @@ fn map_sidebar_shows_sheet_values_not_selected_topic_overrides() {
 }
 
 #[test]
+fn structure_gallery_preserves_rich_content_selection_and_undo_for_every_layout() {
+    use ymind_core::Structure;
+    let mut app = YMindApp::headless();
+    let sheet = rich_sheet();
+    app.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    let selected = sheet.children(sheet.root)[1];
+    app.doc_mut().unwrap().view.select_only(selected);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+        .click();
+    h.run_steps(3);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    h.get_by_role_and_label(Role::DisclosureTriangle, "Mind maps")
+        .click();
+    h.run_steps(8);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mind Map")
+            .is_none()
+    );
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    h.get_by_role_and_label(Role::DisclosureTriangle, "Mind maps")
+        .click();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Mind Map");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let labels = [
+        "Mind Map",
+        "Mind Map (anticlockwise)",
+        "Mind Map (one side)",
+        "Logic Chart (right)",
+        "Logic Chart (left)",
+        "Brace Map (right)",
+        "Brace Map (left)",
+        "Org Chart (down)",
+        "Org Chart (up)",
+        "Tree Chart (right)",
+        "Tree Chart (left)",
+        "Timeline (horizontal)",
+        "Timeline (vertical)",
+        "Fishbone (right)",
+        "Fishbone (left)",
+        "Matrix",
+        "Tree Table",
+    ];
+    for (structure, label) in Structure::ALL.into_iter().zip(labels) {
+        h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+            .click();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, label).click();
+        h.run_steps(4);
+        assert!(!egui::Popup::is_any_open(&h.ctx), "{label}");
+        let mut expected = before.clone();
+        expected.active_mut().structure = structure;
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &expected,
+            "{label}"
+        );
+        assert_eq!(h.state().doc().unwrap().view.primary(), Some(selected));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("layout.ymind");
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        assert_eq!(ymind_io::import_file(&path).unwrap(), expected);
+        if structure != Structure::MapClockwise {
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+            h.run_steps(3);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before, "{label}");
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+            h.run_steps(3);
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &expected,
+                "{label}"
+            );
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+            h.run_steps(3);
+        }
+    }
+}
+
+#[test]
+fn structure_gallery_is_bounded_and_keyboard_does_not_edit_the_map() {
+    use egui::accesskit::Toggled;
+    for (width, scale, dark) in [
+        (480.0, 1.0, false),
+        (640.0, 1.5, true),
+        (1280.0, 1.0, false),
+    ] {
+        let mut app = YMindApp::headless();
+        if width < 500.0 {
+            app.mode = ymind_app::app::CenterMode::Outliner;
+        }
+        app.settings.theme = if dark { Theme::Dark } else { Theme::Light };
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let selection = app.doc().unwrap().view.selection.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 800.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.ctx.set_pixels_per_point(scale);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Tab, "Map").click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+            .focus();
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(4);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Mind Map")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        for label in [
+            "Mind Map",
+            "Mind Map (anticlockwise)",
+            "Mind Map (one side)",
+            "Logic Chart (right)",
+            "Tree Table",
+        ] {
+            let rect = h.get_by_role_and_label(Role::Button, label).rect();
+            assert!(
+                rect.left() >= 0.0 && rect.right() <= h.ctx.content_rect().right(),
+                "{width}/{scale}: {label} {rect:?}"
+            );
+        }
+        h.key_press(egui::Key::Tab);
+        h.key_press(egui::Key::ArrowDown);
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+        h.get_by_role_and_label(Role::Button, "Tree Table").focus();
+        h.get_by_role_and_label(Role::Button, "Tree Table")
+            .scroll_to_me();
+        h.run_steps(8);
+        let card = h.get_by_role_and_label(Role::Button, "Tree Table").rect();
+        assert!(
+            card.top() >= 0.0 && card.bottom() <= h.ctx.content_rect().bottom(),
+            "{card:?}"
+        );
+        assert!(
+            h.get_by_role_and_label(Role::Button, "Tree Table")
+                .is_focused()
+        );
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+        let mut expected = before;
+        expected.active_mut().structure = ymind_core::Structure::TreeTable;
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &expected);
+        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+    }
+}
+
+#[test]
 fn map_panel_themes_fit_and_can_be_selected() {
     let mut h = harness(YMindApp::headless());
     h.get_by_role_and_label(Role::Tab, "Map").click();

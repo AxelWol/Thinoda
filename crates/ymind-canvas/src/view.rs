@@ -821,7 +821,9 @@ impl MapCanvas {
         if let Some(action) = handle_action {
             run(doc, view, action, &mut out);
         }
-        if view.editing.is_none() && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
+        if view.editing.is_none()
+            && !egui::Popup::is_any_open(&ctx)
+            && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
         {
             handle_keys(&ctx, doc, view, &mut out);
         }

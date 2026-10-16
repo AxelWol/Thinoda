@@ -52,7 +52,7 @@ pub fn from_color(c: Color) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
-fn structure_label(s: Structure) -> &'static str {
+pub(crate) fn structure_label(s: Structure) -> &'static str {
     match s {
         Structure::MapClockwise => "Mind Map",
         Structure::MapAnticlockwise => "Mind Map (anticlockwise)",
@@ -81,7 +81,7 @@ impl YMindApp {
         self.apply_appearance(&ctx);
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
-        if !self.palette.open && !self.any_modal_open() {
+        if !self.palette.open && !self.any_modal_open() && !egui::Popup::is_any_open(&ctx) {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
         }
@@ -1185,24 +1185,30 @@ impl YMindApp {
                             ui.horizontal(|ui| {
                                 ui.add_space(depth as f32 * 22.0);
                                 let has_kids = !sheet.children(id).is_empty();
-                                let chevron = if !has_kids {
-                                    " "
-                                } else if topic.collapsed {
+                                let chevron = if topic.collapsed {
                                     icons::CHEVRON_RIGHT
                                 } else {
                                     icons::CHEVRON_DOWN
                                 };
-                                if ui
-                                    .add(
-                                        egui::Button::new(chevron)
-                                            .frame(false)
-                                            .min_size(vec2(16.0, 16.0)),
-                                    )
-                                    .clicked()
-                                    && has_kids
-                                {
-                                    d.view.select_only(id);
-                                    action = Some(Action::ToggleCollapse);
+                                if has_kids {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(chevron)
+                                                .frame(false)
+                                                .min_size(vec2(16.0, 16.0)),
+                                        )
+                                        .accessible_name(format!(
+                                            "{}: {}",
+                                            t("Collapse / Expand"),
+                                            topic.title
+                                        ))
+                                        .clicked()
+                                    {
+                                        d.view.select_only(id);
+                                        action = Some(Action::ToggleCollapse);
+                                    }
+                                } else {
+                                    ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                                 }
                                 if let Some(todo) = topic.todo {
                                     ui.label(if todo { "☑" } else { "☐" });
@@ -1267,7 +1273,10 @@ impl YMindApp {
                     });
             });
         // Keyboard in outliner when not editing.
-        if d.view.editing_topic().is_none() && !ctx.text_edit_focused() {
+        if d.view.editing_topic().is_none()
+            && !ctx.text_edit_focused()
+            && !egui::Popup::is_any_open(&ctx)
+        {
             let keys = [
                 (Modifiers::NONE, Key::Enter, Action::InsertSibling),
                 (Modifiers::NONE, Key::Tab, Action::InsertChild),
@@ -1621,7 +1630,7 @@ impl YMindApp {
             let mut chosen = None;
             widgets::property_field(ui, t("Structure"), |ui| {
                 egui::ComboBox::from_id_salt("topic_structure")
-                    .selected_text(cur.map_or(t("Auto"), |s| structure_label(s)))
+                    .selected_text(cur.map_or(t("Auto"), |s| t(structure_label(s))))
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         if ui.selectable_label(cur.is_none(), t("Auto")).clicked() {
@@ -1629,7 +1638,7 @@ impl YMindApp {
                         }
                         for s in Structure::ALL {
                             if ui
-                                .selectable_label(cur == Some(s), structure_label(s))
+                                .selectable_label(cur == Some(s), t(structure_label(s)))
                                 .clicked()
                             {
                                 chosen = Some(Some(s));
@@ -1867,27 +1876,18 @@ impl YMindApp {
         widgets::caption(ui, t("Map settings apply to the entire sheet."));
 
         widgets::section(ui, t("Structure"), true, |ui| {
-            let mut chosen = None;
-            widgets::property_field(ui, t("Structure"), |ui| {
-                egui::ComboBox::from_id_salt("sheet_structure")
-                    .selected_text(structure_label(structure))
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for s in Structure::ALL {
-                            if ui
-                                .selectable_label(structure == s, structure_label(s))
-                                .clicked()
-                            {
-                                chosen = Some(s);
-                            }
-                        }
-                    })
-                    .response
-            });
-            if let Some(s) = chosen {
-                let _ = d
+            let (_, chosen) = crate::structure_picker::show(ui, structure);
+            if let Some(s) = chosen.filter(|&s| s != structure) {
+                d.view.commit_edit(&mut d.doc);
+                match d
                     .doc
-                    .edit_sheet("Structure", |sh| sh.set_structure(None, Some(s)));
+                    .edit_sheet("Structure", |sh| sh.set_structure(None, Some(s)))
+                {
+                    Ok(()) => d.view.request_fit(),
+                    Err(error) => {
+                        self.toasts.error(error.to_string());
+                    }
+                }
             }
         });
 

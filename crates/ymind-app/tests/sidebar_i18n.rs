@@ -21,6 +21,20 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.run_steps(4);
     h.get_by_role_and_label(Role::Tab, "Map").click();
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Struktur auswählen: Mindmap")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::DisclosureTriangle, "Mindmaps");
+    h.get_by_role_and_label(Role::Button, "Logikdiagramm (links)")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Logikdiagramm (links)")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().structure,
+        ymind_core::Structure::LogicLeft
+    );
     h.get_by_role_and_label(Role::Button, "Classic").click();
     h.run_steps(3);
     assert_eq!(
