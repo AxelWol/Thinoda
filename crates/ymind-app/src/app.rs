@@ -362,8 +362,13 @@ impl YMindApp {
                 }
             }
             Cmd::ToggleFormatPanel => {
-                self.settings.show_format_panel = !self.settings.show_format_panel;
-                self.save_settings();
+                if self.doc().is_none() {
+                    self.toasts
+                        .info(t("Open or select a map to show the Format Panel"));
+                } else {
+                    self.settings.show_format_panel = !self.settings.show_format_panel;
+                    self.save_settings();
+                }
             }
             Cmd::ToggleStatusBar => {
                 self.settings.show_status_bar = !self.settings.show_status_bar;

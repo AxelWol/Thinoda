@@ -242,7 +242,7 @@ impl YMindApp {
                     ui,
                     icons::FORMAT,
                     t("Format Panel"),
-                    self.settings.show_format_panel,
+                    self.doc().is_some() && self.settings.show_format_panel,
                 )
                 .clicked()
                 {
@@ -844,38 +844,50 @@ impl YMindApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
                     ui.add_space(12.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for tpl in templates::TEMPLATES {
-                            let r = widgets::card(ui).show(ui, |ui| {
-                                ui.set_width(150.0);
-                                ui.set_height(90.0);
-                                ui.vertical_centered(|ui| {
-                                    ui.add_space(14.0);
-                                    ui.label(RichText::new(icons::MAP).size(26.0).color(p.accent));
-                                    ui.label(RichText::new(tpl.name).strong());
+                    let gap = 8.0;
+                    let columns = ((ui.available_width() + gap) / (164.0 + gap))
+                        .floor()
+                        .max(1.0) as usize;
+                    egui::Grid::new("ymind_templates")
+                        .num_columns(columns)
+                        .spacing(vec2(gap, gap))
+                        .show(ui, |ui| {
+                            for (index, tpl) in templates::TEMPLATES.iter().enumerate() {
+                                let r = widgets::card(ui).show(ui, |ui| {
+                                    ui.set_width(150.0);
+                                    ui.set_height(90.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(14.0);
+                                        ui.label(
+                                            RichText::new(icons::MAP).size(26.0).color(p.accent),
+                                        );
+                                        ui.label(RichText::new(tpl.name).strong());
+                                    });
                                 });
-                            });
-                            let r = ui.interact(
-                                r.response.rect,
-                                ui.scope_id().with(tpl.id),
-                                Sense::click(),
-                            );
-                            r.widget_info(|| {
-                                egui::WidgetInfo::labeled(egui::Role::Button, true, tpl.name)
-                            });
-                            if r.hovered() {
-                                ui.painter().rect_stroke(
-                                    r.rect,
-                                    CornerRadius::same(Tokens::RADIUS_M),
-                                    Stroke::new(2.0, p.accent),
-                                    egui::StrokeKind::Outside,
+                                let r = ui.interact(
+                                    r.response.rect,
+                                    ui.scope_id().with(tpl.id),
+                                    Sense::click(),
                                 );
+                                r.widget_info(|| {
+                                    egui::WidgetInfo::labeled(egui::Role::Button, true, tpl.name)
+                                });
+                                if r.hovered() {
+                                    ui.painter().rect_stroke(
+                                        r.rect,
+                                        CornerRadius::same(Tokens::RADIUS_M),
+                                        Stroke::new(2.0, p.accent),
+                                        egui::StrokeKind::Outside,
+                                    );
+                                }
+                                if r.clicked() {
+                                    cmd = Some(Cmd::NewFromTemplate(tpl.id));
+                                }
+                                if (index + 1) % columns == 0 {
+                                    ui.end_row();
+                                }
                             }
-                            if r.clicked() {
-                                cmd = Some(Cmd::NewFromTemplate(tpl.id));
-                            }
-                        }
-                    });
+                        });
                     ui.add_space(24.0);
                     ui.horizontal(|ui| {
                         ui.heading(RichText::new(t("Recent")).size(18.0).strong());
