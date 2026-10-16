@@ -6,14 +6,25 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Reusable quick styles: four original rendered presets plus up to 32 named
+  local styles captured from resolved topic appearance, including inherited
+  colors, font, branch geometry and automatic/fixed wrapping. Applying across
+  roles/documents replaces appearance only in one multi-selection undo step.
+  Save is available in Style/Edit/context/palette; applying is available in
+  Style/palette. EN/DE controls, keyboard activation, cancellation and confirmed
+  removal are implemented. Unique printable names (1-80 characters) are required;
+  saving a duplicate is rejected rather than overwriting. Profile writes are
+  atomic and failed saves/removals leave the library and map unchanged with a
+  visible error. Legacy settings default to an empty library; invalid libraries
+  use the existing preserved-file/warning recovery path. Applied styles persist
+  in native and unchanged XMind snapshots. Full custom-theme authoring stays open.
 - Map-wide branch stroke width: Map > Branches offers Automatic or an explicit
   0.5-16 width in EN/DE. Topic overrides take precedence; restoring Automatic
   returns the theme's level-specific defaults. Buffered numeric drafts commit
   once, reject malformed/nonfinite/out-of-range values visibly and cancel with
   Escape. Confirming sidebar fields consumes Enter rather than inserting topics.
   Native/unchanged yMind XMind snapshots preserve inheritance; public JSON/XML
-  exports include effective widths. Full custom-theme authoring and quick styles
-  remain open.
+  exports include effective widths. Full custom-theme authoring remains open.
 - Real font-family support: Map > Theme > Global Font and Style > Text > Font
   Family select local installed faces (including user-installed fonts); Auto
   inherits the map setting. Reusable UI font registration loads only requested
@@ -265,7 +276,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Equations (LaTeX → rendered topic content)
 - P2 Attachments and pictures embedded in the `.ymind`/`.xmind` package
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
-- P2 Quick styles and custom theme editor. Global/topic font selection and actual
+- P2 Custom theme editor. Quick-style libraries, global/topic font selection and actual
   canvas rendering are implemented (see Recently completed). Copy/Paste style and Reset
   Style are implemented session-wide (Ctrl+Alt+C/V, menu/context/palette); see
   Recently completed.

@@ -67,6 +67,8 @@ pub enum Cmd {
     CopyStyle,
     PasteStyle,
     ResetStyle,
+    SaveQuickStyle,
+    ApplyQuickStyle(ymind_core::TopicStyle),
     CopySheet,
     PasteSheet,
     SaveSheetAs,
@@ -192,6 +194,7 @@ pub struct YMindApp {
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) fonts: ymind_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
+    pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     last_title: String,
 }
 
@@ -255,6 +258,7 @@ impl YMindApp {
             label_editor: None,
             fonts: Default::default(),
             font_source: None,
+            quick_style_dialog: None,
             last_title: String::new(),
         };
         for f in files {
@@ -576,6 +580,8 @@ impl YMindApp {
                 }
             }
             Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle => self.edit_style(cmd),
+            Cmd::SaveQuickStyle => self.begin_quick_style(),
+            Cmd::ApplyQuickStyle(style) => self.apply_quick_style(style),
             Cmd::CopySheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
@@ -745,6 +751,27 @@ impl YMindApp {
             Cmd::Canvas(action) => self
                 .doc()
                 .is_some_and(|d| action.available(&d.doc, &d.view)),
+            Cmd::SaveQuickStyle => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|d| {
+                        d.view.selected_object.is_none()
+                            && d.view.selection.len() == 1
+                            && d.view
+                                .primary()
+                                .is_some_and(|id| d.doc.sheet().contains(id))
+                    })
+            }
+            Cmd::ApplyQuickStyle(_) => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|d| {
+                        d.view.selected_object.is_none()
+                            && !d.view.selection.is_empty()
+                            && d.view
+                                .selection
+                                .iter()
+                                .all(|id| d.doc.sheet().contains(*id))
+                    })
+            }
             Cmd::CopyStyle | Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
                     && d.view
@@ -1694,6 +1721,7 @@ impl YMindApp {
             (Cmd::CopyStyle, "Copy Style", "Ctrl+Alt+C", "Edit"),
             (Cmd::PasteStyle, "Paste Style", "Ctrl+Alt+V", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
+            (Cmd::SaveQuickStyle, "Save Quick Style…", "", "Style"),
             (Cmd::Canvas(Action::Indent), "Indent", "", "Edit"),
             (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
             (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),

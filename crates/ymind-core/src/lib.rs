@@ -20,6 +20,7 @@ pub mod markers;
 pub mod model;
 pub mod navigation;
 pub mod outline;
+pub mod quick_styles;
 pub mod search;
 pub mod templates;
 pub mod theme;

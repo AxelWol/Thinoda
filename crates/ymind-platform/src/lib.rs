@@ -64,6 +64,8 @@ pub use settings::Settings;
 /// Platform persistence failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid quick style library: {0}")]
+    InvalidQuickStyles(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

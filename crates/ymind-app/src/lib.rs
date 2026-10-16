@@ -6,6 +6,7 @@ pub mod doc;
 pub mod i18n;
 mod labels;
 mod map_shot;
+mod quick_styles;
 mod structure_picker;
 mod template_gallery;
 pub mod ui;

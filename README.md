@@ -25,6 +25,13 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.
+- Style > Quick Styles previews four original presets and named styles saved from
+  a topic's resolved appearance. Saved colors and typography stay fixed across
+  themes; content and hierarchy are never copied. Apply to multiple selected
+  topics in one undo step, or use the command palette. Save from Style, Edit or
+  the topic context menu; Remove requires confirmation. The local profile holds
+  up to 32 unique names (1-80 characters); duplicate names are rejected, not
+  silently replaced. Reset Style restores automatic theme inheritance.
 - Indent/Outdent in Edit, the topic context menu and command palette moves one topic
   under its previous sibling or after its parent while retaining its annotations.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.

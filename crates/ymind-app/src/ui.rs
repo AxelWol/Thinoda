@@ -115,6 +115,12 @@ impl YMindApp {
                             .filter_map(|topic| topic.style.font_family.as_ref()),
                     )
                 })
+                .chain(
+                    self.settings
+                        .quick_styles
+                        .iter()
+                        .filter_map(|style| style.style.font_family.as_ref()),
+                )
                 .cloned()
                 .collect();
             for name in self.fonts.ensure(&ctx, families) {
@@ -187,7 +193,7 @@ impl YMindApp {
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                if self.label_editor.is_some() {
+                if self.label_editor.is_some() || self.quick_style_dialog.is_some() {
                     ui.disable();
                 }
                 if !show_doc {
@@ -219,7 +225,8 @@ impl YMindApp {
         self.update_search();
 
         // Command palette.
-        let cmds = Self::palette_commands();
+        let mut cmds = Self::palette_commands();
+        self.add_quick_style_commands(&mut cmds);
         let list: Vec<ymind_ui::Command> = cmds
             .iter()
             .filter(|(cmd, _)| self.command_available(cmd))
@@ -232,6 +239,7 @@ impl YMindApp {
         }
 
         self.labels_popup(&ctx);
+        self.quick_style_dialog(&ctx);
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -248,7 +256,11 @@ impl YMindApp {
     }
 
     pub(crate) fn any_modal_open(&self) -> bool {
-        if self.dialogs.masked_copy || self.map_shot.active() || self.label_editor.is_some() {
+        if self.dialogs.masked_copy
+            || self.map_shot.active()
+            || self.label_editor.is_some()
+            || self.quick_style_dialog.is_some()
+        {
             return true;
         }
         let d = &self.dialogs;
@@ -498,6 +510,7 @@ impl YMindApp {
                 ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
                 ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
                 ("Reset Style", "", Cmd::ResetStyle),
+                ("Save Quick Style…", "", Cmd::SaveQuickStyle),
                 ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
             ] {
                 let button = egui::Button::new(t(label));
@@ -762,7 +775,10 @@ impl YMindApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if self.map_shot.active() || self.label_editor.is_some() {
+        if self.map_shot.active()
+            || self.label_editor.is_some()
+            || self.quick_style_dialog.is_some()
+        {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
             }
@@ -1033,6 +1049,7 @@ impl YMindApp {
             ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
             ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
             ("Reset Style", "", Cmd::ResetStyle),
+            ("Save Quick Style…", "", Cmd::SaveQuickStyle),
             ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
         ] {
             let available = self.command_available(&command);
@@ -1349,7 +1366,7 @@ impl YMindApp {
                                 for m in &topic.markers {
                                     ui.label(markers::glyph(m));
                                 }
-                                if d.view.editing_topic() == Some(id) {
+                                if ui.is_enabled() && d.view.editing_topic() == Some(id) {
                                     let mut text =
                                         d.view.editing_text().unwrap_or_default().to_string();
                                     let te_id = egui::Id::unique(("outliner_edit", id));
@@ -1406,7 +1423,8 @@ impl YMindApp {
                     });
             });
         // Keyboard in outliner when not editing.
-        if d.view.editing_topic().is_none()
+        if ui.is_enabled()
+            && d.view.editing_topic().is_none()
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
         {
@@ -1742,6 +1760,7 @@ impl YMindApp {
             self.relationship_style(ui, id);
             return;
         }
+        self.quick_styles(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };

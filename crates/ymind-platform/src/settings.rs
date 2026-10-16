@@ -111,6 +111,7 @@ pub struct Settings {
     pub backup_on_save: bool,
     pub recent_files: Vec<RecentFile>,
     pub recent_templates: Vec<String>,
+    pub quick_styles: Vec<ymind_core::quick_styles::QuickStyle>,
     pub default_structure: String,
     pub default_theme: String,
     pub ui_scale: f32,
@@ -147,6 +148,7 @@ impl Default for Settings {
             backup_on_save: true,
             recent_files: Vec::new(),
             recent_templates: Vec::new(),
+            quick_styles: Vec::new(),
             default_structure: "mind_map".into(),
             default_theme: "default".into(),
             ui_scale: 1.0,
@@ -181,6 +183,22 @@ pub struct SettingsLoad {
 }
 
 impl Settings {
+    pub fn validate_quick_styles(
+        styles: &[ymind_core::quick_styles::QuickStyle],
+    ) -> std::result::Result<(), String> {
+        if styles.len() > 32 {
+            return Err("at most 32 saved quick styles are supported".into());
+        }
+        let mut names = std::collections::HashSet::new();
+        for style in styles {
+            style.validate()?;
+            if !names.insert(style.name.trim().to_lowercase()) {
+                return Err("quick style names must be unique".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Load preferences, logging any broken-file warning. I/O errors remain errors.
     pub fn load(paths: &Paths) -> Result<Self> {
         Ok(Self::load_with_warning(paths)?.settings)
@@ -201,7 +219,11 @@ impl Settings {
         };
         let parsed = std::str::from_utf8(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()));
+            .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()))
+            .and_then(|settings| {
+                Self::validate_quick_styles(&settings.quick_styles)?;
+                Ok(settings)
+            });
         match parsed {
             Ok(mut settings) => {
                 settings.normalize();
@@ -237,6 +259,8 @@ impl Settings {
 
     /// Atomically persist preferences, normalizing recents and invalid numeric values.
     pub fn save(&self, paths: &Paths) -> Result<()> {
+        Self::validate_quick_styles(&self.quick_styles)
+            .map_err(crate::Error::InvalidQuickStyles)?;
         let mut normalized = self.clone();
         normalized.normalize();
         let text = toml::to_string_pretty(&normalized)?;

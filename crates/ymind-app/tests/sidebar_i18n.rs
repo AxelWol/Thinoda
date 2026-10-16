@@ -326,4 +326,27 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             .as_deref(),
         Some("monospace")
     );
+    h.get_by_role_and_label(Role::Tab, "Stil").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Schnellstil: Hervorhebung")
+        .scroll_to_me();
+    h.run_steps(6);
+    h.get_by_role_and_label(Role::Button, "Schnellstil: Hervorhebung")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Schnellstil speichern…")
+        .click();
+    h.run_steps(3);
+    h.get_by_label("Stilname").click();
+    h.run_steps(1);
+    h.get_by_label("Stilname").type_text("Prüfung");
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Speichern").click();
+    h.run_steps(3);
+    assert_eq!(h.state().settings.quick_styles[0].name, "Prüfung");
+    h.get_by_role_and_label(Role::Button, "Entfernen…").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Abbrechen").click();
+    h.run_steps(3);
+    assert_eq!(h.state().settings.quick_styles.len(), 1);
 }
