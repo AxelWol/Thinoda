@@ -25,6 +25,18 @@ pub enum EditError {
 
 pub type EditResult<T> = Result<T, EditError>;
 
+/// Trims and deduplicates labels case-sensitively, retaining their original order.
+pub fn normalize_labels(labels: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut clean = Vec::new();
+    for label in labels {
+        let label = label.trim();
+        if !label.is_empty() && !clean.iter().any(|existing| existing == label) {
+            clean.push(label.to_string());
+        }
+    }
+    clean
+}
+
 impl Sheet {
     fn require(&self, id: TopicId) -> EditResult<()> {
         if self.contains(id) {
@@ -385,17 +397,7 @@ impl Sheet {
 
     pub fn set_labels(&mut self, id: TopicId, labels: Vec<String>) -> EditResult<()> {
         self.require(id)?;
-        let mut clean: Vec<String> = Vec::new();
-        for l in labels
-            .into_iter()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-        {
-            if !clean.contains(&l) {
-                clean.push(l);
-            }
-        }
-        self.topic_mut(id).unwrap().labels = clean;
+        self.topic_mut(id).unwrap().labels = normalize_labels(labels);
         Ok(())
     }
 

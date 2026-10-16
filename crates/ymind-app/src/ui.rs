@@ -138,6 +138,9 @@ impl YMindApp {
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.label_editor.is_some() {
+                    ui.disable();
+                }
                 if !show_doc {
                     self.home(ui);
                 } else if self.mode == CenterMode::Outliner {
@@ -179,6 +182,7 @@ impl YMindApp {
             self.exec(&ctx, cmd.clone());
         }
 
+        self.labels_popup(&ctx);
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -195,7 +199,7 @@ impl YMindApp {
     }
 
     pub(crate) fn any_modal_open(&self) -> bool {
-        if self.dialogs.masked_copy || self.map_shot.active() {
+        if self.dialogs.masked_copy || self.map_shot.active() || self.label_editor.is_some() {
             return true;
         }
         let d = &self.dialogs;
@@ -517,6 +521,15 @@ impl YMindApp {
                     *cmd = Some(command);
                 }
             }
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::Labels),
+                    egui::Button::new(t("Labels")),
+                )
+                .clicked()
+            {
+                *cmd = Some(Cmd::Labels);
+            }
         });
         ui.menu_button(t("AI"), |ui| {
             for a in crate::ai::AiCommand::ALL {
@@ -656,6 +669,12 @@ impl YMindApp {
                                     Cmd::EditField(FocusField::Hyperlink),
                                 ),
                                 (
+                                    icons::LABEL,
+                                    "Labels",
+                                    self.command_available(&Cmd::Labels),
+                                    Cmd::Labels,
+                                ),
+                                (
                                     icons::TODO,
                                     "To-Do",
                                     has_selection,
@@ -694,7 +713,7 @@ impl YMindApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if self.map_shot.active() {
+        if self.map_shot.active() || self.label_editor.is_some() {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
             }
@@ -801,6 +820,7 @@ impl YMindApp {
                                 false,
                                 Cmd::EditField(FocusField::Notes),
                             ),
+                            (icons::LABEL, "Edit labels", false, Cmd::Labels),
                             (
                                 icons::TODO,
                                 "Toggle to-do",
@@ -942,6 +962,13 @@ impl YMindApp {
                 true,
             );
             item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
+            item(
+                ui,
+                t("Labels"),
+                "",
+                Cmd::Labels,
+                self.command_available(&Cmd::Labels),
+            );
         }
         for (label, shortcut, command) in [
             ("Indent", "", Cmd::Canvas(Action::Indent)),
@@ -1851,6 +1878,7 @@ impl YMindApp {
         }
 
         let focus = self.focus_field.take();
+        let mut edit_labels = false;
         widgets::section(ui, t("Topic Properties"), true, |ui| {
             let l = ui.label(t("Hyperlink"));
             let current = topic.hyperlink.clone().unwrap_or_default();
@@ -1866,19 +1894,15 @@ impl YMindApp {
                     .doc
                     .edit_sheet("Hyperlink", |s| s.set_hyperlink(primary, v));
             }
-            let l = ui.label(format!("{} ({})", t("Labels"), t("comma separated")));
-            let (r, done) = buffered_text(ui, ("labels", primary), &topic.labels.join(", "), 0, "");
-            r.labelled_by(l.id);
-            if let Some(labels) = done {
-                let v: Vec<String> = labels
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if v != topic.labels {
-                    let _ = d.doc.edit_sheet("Labels", |s| s.set_labels(primary, v));
+            ui.label(t("Labels"));
+            ui.horizontal_wrapped(|ui| {
+                for label in &topic.labels {
+                    ui.label(label);
                 }
-            }
+            });
+            edit_labels = ui
+                .add_enabled(sel.len() == 1, egui::Button::new(t("Edit labels")))
+                .clicked();
             let l = ui.label(t("Notes"));
             let current = topic.notes.clone().unwrap_or_default();
             let (r, done) = buffered_text(ui, ("notes", primary), &current, 5, "");
@@ -1911,6 +1935,9 @@ impl YMindApp {
             let _ = d
                 .doc
                 .edit_sheet(label, |s| s.update_style(&sel, |st| f(st)));
+        }
+        if edit_labels {
+            self.exec(ui.ctx(), Cmd::Labels);
         }
     }
 

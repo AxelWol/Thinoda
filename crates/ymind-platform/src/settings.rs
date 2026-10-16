@@ -118,6 +118,8 @@ pub struct Settings {
     pub show_format_panel: bool,
     pub show_topic_toolbar: bool,
     pub show_topic_add_buttons: bool,
+    /// Sort label drafts by Unicode code-point order; disabled to preserve insertion order.
+    pub label_auto_sort: bool,
     /// Initial canvas zoom for newly created/opened documents, independent of UI scaling.
     pub initial_canvas_zoom: f32,
     pub reuse_last_structure: bool,
@@ -152,6 +154,7 @@ impl Default for Settings {
             show_format_panel: true,
             show_topic_toolbar: true,
             show_topic_add_buttons: true,
+            label_auto_sort: false,
             initial_canvas_zoom: 1.0,
             reuse_last_structure: false,
             reuse_last_theme: false,

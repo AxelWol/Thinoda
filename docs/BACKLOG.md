@@ -454,11 +454,17 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   the reference; do not conflate a document boundary with a transient selection outline.
 - P2 Visual fixtures: light/dark reference maps covering deep branches, floating topics,
   selected relationships, boundaries, narrow viewports and mixed-script text.
-- P2 Labels: anchored topic popover with a pointer, heading, comma-separated entry
-  and an "Auto sort" toggle, matching the supplied reference. Reuse existing topic
-  labels and the format-panel editor; specify sort order, duplicate/whitespace handling
-  and persistence before implementation. Cover focus, dismiss/commit, undo, keyboard
-  access and placement near viewport edges; verify actual tag rendering separately.
+- Implemented Labels: shared anchored popover with a pointer, heading, comma-separated
+  entry, removable chips, current-sheet suggestions and Auto sort. Insert, palette,
+  topic/context/insert toolbars and Style > Edit labels share one document-bound
+  draft. Apply commits once; Cancel/Escape/outside dismissal leaves source labels
+  unchanged. Empty/duplicate labels are removed case-sensitively after trimming,
+  with original order by default; opt-in sorting uses Unicode code-point order.
+  The local sort preference is saved on Apply only. Existing comma-containing
+  labels remain single chips. Changed/closed/switched documents, sheets, selection
+  or content invalidate the draft visibly. Keyboard focus, undo/redo, native/XMind
+  reopening, EN/DE controls, narrow/high-DPI bounds, long labels and large suggestion
+  inventories are covered. Exact on-map tag rendering/reference polish remains open.
 - P2 Expand the floating "+" content menu to match the reference grouping: Note,
   To-do and a Link submenu; Attachments and Audio note; Stickers, Illustrations,
   Local image and Equation. Reuse existing note/task/link actions. Verify Link

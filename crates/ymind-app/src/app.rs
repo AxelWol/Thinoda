@@ -43,6 +43,7 @@ pub enum Cmd {
     MergeFiles,
     MaskedCopy,
     MapShot,
+    Labels,
     Export(Format),
     Settings,
     About,
@@ -188,6 +189,7 @@ pub struct YMindApp {
     pub focus_field: Option<FocusField>,
     pub ai: crate::ai::AiState,
     pub(crate) map_shot: crate::map_shot::MapShot,
+    pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     last_title: String,
 }
 
@@ -248,6 +250,7 @@ impl YMindApp {
             focus_field: None,
             ai: Default::default(),
             map_shot: Default::default(),
+            label_editor: None,
             last_title: String::new(),
         };
         for f in files {
@@ -456,6 +459,7 @@ impl YMindApp {
                 self.map_shot.requested = true;
                 ctx.request_repaint();
             }
+            Cmd::Labels => self.begin_labels(ctx),
             Cmd::Export(format) => self.export(format),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
@@ -711,6 +715,19 @@ impl YMindApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
+            Cmd::Labels => {
+                !self.any_modal_open()
+                    && !self.dialogs.settings
+                    && !self.dialogs.about
+                    && !self.dialogs.shortcuts
+                    && self.doc().is_some_and(|d| {
+                        d.view.selection.len() == 1
+                            && d.view.selected_object.is_none()
+                            && d.view
+                                .primary()
+                                .is_some_and(|id| d.doc.sheet().contains(id))
+                    })
+            }
             Cmd::MapShot => {
                 self.doc().is_some()
                     && self.mode == CenterMode::Map
@@ -1682,6 +1699,7 @@ impl YMindApp {
             (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
             (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
             (Cmd::MapShot, "Map Shot", "F7", "Tools"),
+            (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),

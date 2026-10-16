@@ -192,8 +192,9 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
    relationship colors with selection color. Preserve links across tree moves.
 3. Polish floating topics, independent boundaries and callouts; distinguish each
    from transient selection outlines and later presentation zones.
-4. Add the anchored Labels popover and shared label editor, defining trimming,
-   deduplication, autosort and commit/cancel semantics.
+4. Delivered the shared anchored Labels popover with trimming, case-sensitive
+   deduplication, opt-in Unicode sorting, suggestions and explicit Apply/Cancel.
+   Exact on-map tag rendering/reference polish remains part of visual completion.
 5. Match reference typography, spacing, rounded sub-branch junctions and theme
    hierarchy, extending Clarity without rewriting saved styles.
 
@@ -391,6 +392,23 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R3 Labels delivered: every label-editing entry point uses a single-topic anchored
+draft with a pointer, removable chips, comma-separated additions, sheet-local
+suggestions and optional Unicode code-point sorting. Apply commits once and saves
+the local sort preference; Escape/Cancel/outside dismissal does not change labels
+or preferences. The original document key, sheet index, selection and document
+revision are checked before rendering/applying, so drafts cannot overwrite another
+tab/sheet or newer edits. Comma-containing imported labels remain intact.
+Seven targeted interaction cases cover normalization, one-step undo/redo, native/
+XMind round trips, source-binding invalidation, EN-independent popup entry points,
+sorting persistence and viewport/long-content limits; the isolated German case
+also exercises the editor. Actual native keyboard/IME and exact on-map tag
+rendering still need their parity audits.
+The standalone app library (28), non-CLI editing e2e (60), German UI (1) and
+core/platform (113) cases pass, as do workspace formatting/clippy. Windows EXE/
+NSIS were rebuilt. The two CLI subprocess cases were deliberately excluded from
+that e2e invocation and remain subject to the application-control limitation below.
+
 R6 interoperability coherence delivered: canonical-public-content SHA-256 binds
 the optional lossless yMind snapshot to the map it represents. External edits now
 win over stale metadata; whitespace-only JSON changes preserve lossless reopening.
@@ -402,9 +420,10 @@ editable imported theme registries and full content fidelity remain open.
 Verification: four new IO regressions cover external structural edits/deletions,
 old/current/corrupt snapshots, lossless/pretty-printed reopening and all supported
 topic theme roles. All 191 core/canvas/IO/platform/UI cases and isolated German UI
-pass. Workspace formatting/clippy pass; the latest integrated CI was blocked by
-Windows Application Control in the CLI version/conversion subprocesses after
-60 non-CLI app cases passed. Those two subprocess cases are not marked passed.
+pass. Workspace formatting/clippy pass. The subsequent Labels integrated CI was
+blocked by Windows Application Control before launching the app unit-test binary
+(4551); the standalone targeted cases passed. Earlier CLI subprocess policy blocks
+are not reclassified as passing. Do not change/bypass application-control policy.
 
 R6 Map Shot delivered: Tools/palette/F7 requests a fresh clean canvas frame and
 native GPU readback. The preview keeps only visible canvas pixels, with fractional

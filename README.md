@@ -43,6 +43,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   guaranteed. The original document and its save destination are retained.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
+- Insert > Labels, the topic/context menus and Style > Edit labels open the same
+  anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
+  remove chips; Apply commits once, while Escape/Cancel/outside click discards the
+  draft. Labels are trimmed and deduplicated case-sensitively, retaining order by
+  default. Optional Auto sort uses Unicode code-point order; its local preference
+  is remembered only on Apply. Existing labels containing commas remain intact.
 - Select relationship lines, boundary outlines or Summary braces to delete them with
   Delete or a context action, with undo/redo. Covered branches remain intact; deleting
   a Summary removes its own summary topic and children.

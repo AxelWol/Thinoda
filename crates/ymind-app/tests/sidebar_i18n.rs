@@ -188,4 +188,26 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Button, "Abbrechen").click();
     h.run_steps(2);
     assert!(h.state().command_available(&Cmd::MapShot));
+    h.state_mut().exec(&ctx, Cmd::Labels);
+    h.run_steps(4);
+    h.get_by_label("Neue Labels")
+        .type_text("Prüfung, Prüfung, erledigt");
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Übernehmen").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert_eq!(
+        d.doc
+            .sheet()
+            .topic(d.view.primary().unwrap())
+            .unwrap()
+            .labels,
+        ["Prüfung", "erledigt"]
+    );
+    h.state_mut().exec(&ctx, Cmd::Labels);
+    h.run_steps(3);
+    h.get_by_label("Label entfernen: Prüfung");
+    h.get_by_role_and_label(Role::Button, "Abbrechen").click();
+    h.run_steps(2);
+    assert!(h.state().command_available(&Cmd::Labels));
 }
