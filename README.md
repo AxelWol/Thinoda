@@ -191,6 +191,12 @@ measurement without a GPU or viewport and is **not** a 60-fps claim. CI uploads
 per-platform reports; see [the plan](docs/PLAN.md) for the measured Windows baseline
 and remaining GPU profiling work.
 
+`cargo test -p ymind-io --test import_mutations` runs deterministic truncation,
+byte-mutation, structured XML/JSON and oversized-ZIP-entry smoke checks. Every
+accepted import must validate and round-trip through native storage. These
+bounded tests run with the workspace suite; they do not replace long-running,
+coverage-guided fuzzing.
+
 ## Packages
 | Platform | Formats | Command |
 |---|---|---|

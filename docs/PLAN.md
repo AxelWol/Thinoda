@@ -405,6 +405,20 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R0 importer robustness slice: eight valid seeds across all seven import formats
+(native ZIP and raw JSON both included) receive systematic boundary truncations
+and 128 deterministic byte mutations per seed. Every accepted workbook validates
+and round-trips through native storage; unexpected panics fail normally. Structured
+XML entities/attributes/depth through 64 and malformed XMind JSON receive the same
+invariant checks. Forged declared ZIP entry lengths above 200 MiB exercise the
+existing decompression guard without large allocations. These bounded smoke
+checks run in normal workspace CI; dedicated coverage-guided fuzz targets, long
+campaigns and deeper resource-limit exploration remain open. No new dependencies
+or production parser behavior changes are introduced.
+Formatting, all-target clippy, 391 workspace cases and three benchmark correctness
+tests pass with live AI disabled. The last Windows installer remains the app-feature
+build from `125c0a4`; the benchmark and importer-smoke slices do not change app behavior.
+
 R0 CPU performance baseline delivered: deterministic 10,000-topic six-way and
 wide maps report nearest-rank p50/p95/max layout, undoable leaf-rename transaction
 and undo times as JSON. One layout warm-up is excluded; fixture construction and

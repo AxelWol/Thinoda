@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Importer mutation smoke: valid native ZIP/raw JSON, XMind, FreeMind, OPML,
+  Markdown, plain text and MindManager seeds undergo systematic truncation and
+  128 deterministic byte mutations each. Accepted imports must validate and
+  round-trip through native storage. Structured XML depth/entity/attribute cases
+  and malformed XMind JSON are covered. Oversized declared ZIP entries are
+  rejected explicitly before decompression without allocating a large fixture.
+  This is bounded regression coverage, not coverage-guided fuzzing or proof that
+  arbitrary inputs are safe; longer campaigns and dedicated fuzz targets stay open.
 - CPU layout benchmark: `ymind-core` release example measures 10,000-topic balanced/
   wide maps with JSON p50/p95/max layout, undoable leaf rename and undo latency.
   Optional p95 budgets fail explicitly after preserving the report; CLI input
