@@ -254,4 +254,32 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             .control_points
             .is_none()
     );
+    let d = h.state_mut().doc_mut().unwrap();
+    let root = d.doc.sheet().root;
+    let branch = d
+        .doc
+        .edit_sheet("Zweigseite", |s| {
+            s.set_structure(None, Some(ymind_core::Structure::MapClockwise))?;
+            s.insert_child(root, "Zweig")
+        })
+        .unwrap();
+    d.view.select_only(branch);
+    h.run_steps(3);
+    h.get_by_label("Zweigseite").scroll_to_me();
+    h.run_steps(5);
+    h.get_by_label("Zweigseite").click();
+    h.run_steps(2);
+    h.get_by_label("Links").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(branch)
+            .unwrap()
+            .branch_side,
+        Some(ymind_core::BranchSide::Left)
+    );
 }

@@ -188,8 +188,10 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
 1. Delivered visible-subtree ghosts/dimmed origins, parent highlighting, cancellation,
    stale-source protection, bounded edge auto-pan and atomic protected drops.
    Existing detach gestures are retained and supported by the official guides.
-   Remaining: target connector/insertion-slot previews, sibling ordering, manual
-   main-branch sides, Flexible Floating Topics parity and native reference comparison.
+   Delivered shared insertion-slot/connector previews, atomic sibling ordering and
+   persistent manual main-branch sides with Style Auto/Left/Right alternatives.
+   Remaining: Flexible Floating Topics parity, public XMind side interchange and
+   native reference comparison.
 2. Delivered relationship endpoint reconnect, Bezier handles/guides and a dedicated
    Style editor without replacing relationship colors with selection color.
    Relative controls persist with one-step undo; keyboard alternatives exist.
@@ -396,6 +398,22 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R3 hierarchy insertion/side delivery: attached-topic outer quarters choose sibling
+slots along the connector axis and centers retain reparenting. Shared target data
+drives the accent insertion line, proposed connector and atomic multi-topic move;
+reverse split-map sides and same-parent index adjustments retain requested order.
+No-op slots preserve Summary/boundary ownership without adding undo history.
+Split-map root drops set a persistent left/right main-branch side from pointer X.
+Style offers Auto/Left/Right for selected main topics, localized in EN/DE. Explicit
+sides override balancing and survive additional siblings; old automatic maps and
+non-split structures retain their layouts. Native and unchanged yMind XMind snapshot
+round trips preserve sides; no speculative public XMind direction field was added.
+All 340 workspace cases and all-target clippy pass with live AI disabled. Coverage
+includes every structure's slot axis, multi-topic insert positions, exact pointer
+commit at multiple zooms, side persistence/reset, old serde defaults, native/XMind
+reopening and German UI. Flexible floating settings and native gesture QA remain open.
+Windows EXE/NSIS rebuilt with insertion ordering and branch-side persistence.
 
 R3 relationship creation parity delivered from the official Floating Topic guide:
 two selected topics connect immediately; a single selected source can connect to an

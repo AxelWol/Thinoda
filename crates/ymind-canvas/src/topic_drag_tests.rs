@@ -294,6 +294,83 @@ fn blank_drop_detaches_regular_branches_and_reparenting_expands_collapsed_target
 }
 
 #[test]
+fn sibling_slot_preview_commits_at_the_highlighted_index_and_undoes_once() {
+    for zoom in [0.5, 1.0, 2.0] {
+        let mut h = harness(zoom);
+        let (source, parent) = (h.state().source, h.state().target);
+        let target = h
+            .state_mut()
+            .doc
+            .edit_sheet("Fixture", |s| {
+                s.insert_child(parent, "Before")?;
+                let target = s.insert_child(parent, "Slot target")?;
+                s.insert_child(parent, "After")?;
+                Ok(target)
+            })
+            .unwrap();
+        h.run_steps(2);
+        let s = h.state_mut();
+        let layout = s.view.layout_for(&s.doc);
+        let rect = layout.topics[&target].rect;
+        let end = s
+            .view
+            .xf()
+            .pos(Vec2::new(rect.center().x, rect.min.y + 1.0));
+        let before = h.state().doc.workbook().clone();
+        start_drag(&mut h, source, end);
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.output().shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::LineSegment { stroke, .. } if stroke.width == 3.0 && stroke.color == h.state().view.accent
+        )), "missing insertion slot at zoom {zoom}");
+        h.drop_at(end);
+        h.run_steps(2);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        assert_eq!(h.state().doc.sheet().children(parent)[1], source);
+        assert_eq!(h.state().doc.sheet().children(parent)[2], target);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn root_drop_chooses_and_persists_the_pointer_side() {
+    for left in [false, true] {
+        let mut h = harness(1.0);
+        let source = h.state().source;
+        let root = h.state().doc.sheet().root;
+        let s = h.state_mut();
+        let layout = s.view.layout_for(&s.doc);
+        let rect = layout.topics[&root].rect;
+        let end = s
+            .view
+            .xf()
+            .pos(rect.center() + Vec2::new(if left { -15.0 } else { 15.0 }, 0.0));
+        let before = h.state().doc.workbook().clone();
+        start_drag(&mut h, source, end);
+        h.drop_at(end);
+        h.run_steps(2);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        let s = h.state_mut();
+        let layout = s.view.layout_for(&s.doc);
+        assert_eq!(s.doc.sheet().parent(source), Some(root));
+        assert_eq!(
+            s.doc.sheet().topic(source).unwrap().branch_side,
+            Some(if left {
+                ymind_core::BranchSide::Left
+            } else {
+                ymind_core::BranchSide::Right
+            })
+        );
+        assert_eq!(
+            layout.topics[&source].rect.center().x < layout.topics[&root].rect.center().x,
+            left
+        );
+        assert!(s.doc.undo());
+        assert_eq!(s.doc.workbook(), &before);
+    }
+}
+
+#[test]
 fn edge_autopan_is_bounded_and_keeps_ghost_under_stationary_pointer() {
     let mut h = harness(1.0);
     let source = h.state().source;

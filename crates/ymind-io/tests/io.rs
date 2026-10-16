@@ -13,6 +13,7 @@ fn sample() -> Workbook {
     let child = s.add_child(a, None, "Nested");
     {
         let t = s.topic_mut(a).unwrap();
+        t.branch_side = Some(ymind_core::BranchSide::Left);
         t.notes = Some("Notes & details".into());
         t.hyperlink = Some("https://example.com/?a=1&b=2".into());
         t.labels = vec!["work".into(), "important".into()];

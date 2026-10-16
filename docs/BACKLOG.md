@@ -432,9 +432,15 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   per second with a 50 ms frame cap. Top-most movable roots commit atomically,
   retain external relationships and expand an accepted parent. Eight new cases
   cover actual ghost content, collapsed subtrees, ownership, one-step undo/redo,
-  cancellation, invalid drops and zoom/pan. Remaining: exact reference comparison,
-  proposed connector and sibling insertion-slot previews in blue. Support changing
-  parent, sibling order and main-branch side, not just moving a card visually.
+  cancellation, invalid drops and zoom/pan. Implemented sibling insertion slots:
+  the outer quarters of an attached topic choose before/after in its connector axis;
+  the center reparents. Reverse split-map ordering is respected. The shared target
+  paints the slot/proposed connector and commits multi-topic order atomically.
+  Main-topic drops on a split-map root choose left/right from the pointer, and
+  Style > Branch side provides Auto/Left/Right. Explicit sides persist and override
+  balancing without changing old automatic maps or other structures. Dropping into
+  an unchanged slot is a no-op that preserves Summary/boundary ownership and history.
+  Remaining: exact native reference comparison and public XMind side interchange.
   Preserve subtree contents and cross-topic relationships; distinguish hierarchy
   changes from independent dashed relationships ("associations").
   Verify exact target/ordering rules against XMind rather than inferring them from

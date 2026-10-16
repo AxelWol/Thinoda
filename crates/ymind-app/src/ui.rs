@@ -1706,6 +1706,11 @@ impl YMindApp {
             return;
         };
         let resolved = ymind_core::theme::resolve_style(sheet, primary, d.view.dark);
+        let can_set_branch_side = sel.iter().all(|id| sheet.parent(*id) == Some(sheet.root))
+            && matches!(
+                sheet.structure,
+                Structure::MapClockwise | Structure::MapAnticlockwise | Structure::MapUnbalanced
+            );
         let mut change: Option<StyleChange> = None;
         ui.label(RichText::new(&topic.title).strong());
         if sel.len() > 1 {
@@ -1716,6 +1721,39 @@ impl YMindApp {
         }
 
         widgets::section(ui, t("Structure"), true, |ui| {
+            if can_set_branch_side {
+                let mut side = topic.branch_side;
+                widgets::property_field(ui, t("Branch side"), |ui| {
+                    egui::ComboBox::from_id_salt(("branch_side", primary))
+                        .selected_text(t(match side {
+                            None => "Auto",
+                            Some(ymind_core::BranchSide::Left) => "Left",
+                            Some(ymind_core::BranchSide::Right) => "Right",
+                        }))
+                        .show_ui(ui, |ui| {
+                            for (value, label) in [
+                                (None, "Auto"),
+                                (Some(ymind_core::BranchSide::Left), "Left"),
+                                (Some(ymind_core::BranchSide::Right), "Right"),
+                            ] {
+                                ui.selectable_value(&mut side, value, t(label));
+                            }
+                        })
+                        .response
+                });
+                if side != topic.branch_side {
+                    let result = d.doc.edit_sheet("Branch side", |s| {
+                        for id in &sel {
+                            s.set_branch_side(*id, side)?;
+                        }
+                        Ok(())
+                    });
+                    if let Err(error) = result {
+                        self.toasts
+                            .warning(format!("{}: {error}", t("Not possible here")));
+                    }
+                }
+            }
             let cur = topic.structure;
             let mut chosen = None;
             widgets::property_field(ui, t("Structure"), |ui| {

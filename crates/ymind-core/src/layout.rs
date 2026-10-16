@@ -891,6 +891,32 @@ impl Engine<'_> {
     }
 
     fn split_sides(&mut self, kids: &[TopicId], st: Structure) -> (Vec<TopicId>, Vec<TopicId>) {
+        let (automatic_right, automatic_left) = self.automatic_split_sides(kids, st);
+        if kids
+            .iter()
+            .all(|id| self.sheet.topics[id].branch_side.is_none())
+        {
+            return (automatic_right, automatic_left);
+        }
+        let (mut right, mut left): (Vec<_>, Vec<_>) = kids.iter().copied().partition(|id| {
+            self.sheet.topics[id].branch_side.map_or_else(
+                || automatic_right.contains(id),
+                |side| side == crate::BranchSide::Right,
+            )
+        });
+        if st == Structure::MapAnticlockwise && !self.sheet.theme.balanced {
+            right.reverse();
+        } else {
+            left.reverse();
+        }
+        (right, left)
+    }
+
+    fn automatic_split_sides(
+        &mut self,
+        kids: &[TopicId],
+        st: Structure,
+    ) -> (Vec<TopicId>, Vec<TopicId>) {
         let n = kids.len();
         if self.sheet.theme.balanced && n > 1 {
             let heights: Vec<f32> = kids

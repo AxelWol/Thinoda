@@ -49,7 +49,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   Escape, popups and stale document/selection changes cancel without edits.
   Viewport-edge auto-pan keeps the ghost under the pointer. Dropping on a parent
   appends once and expands it; blank drops retain the existing detach-to-floating
-  behavior. Sibling insertion previews and manual branch-side placement remain open.
+  behavior. Outer quarters of attached topics select before/after sibling slots,
+  with a highlighted insertion line and proposed connector. Split-map root drops
+  choose the pointer's left/right side; Style > Branch side offers Auto/Left/Right
+  for main topics. Explicit sides survive balancing and sibling additions. Native
+  files and unchanged yMind XMind snapshots retain them; public XMind side interchange
+  and exact native gesture/visual comparison remain open.
 - Insert > Labels, the topic/context menus and Style > Edit labels open the same
   anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
   remove chips; Apply commits once, while Escape/Cancel/outside click discards the

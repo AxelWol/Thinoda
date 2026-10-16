@@ -236,6 +236,9 @@ impl Sheet {
             if cur < index {
                 index -= 1;
             }
+            if index.min(self.children(new_parent).len() - 1) == cur {
+                return Ok(());
+            }
         }
         let sub = self.detach_subtree_keep_refs(id)?;
         self.attach_child(new_parent, index, sub);
@@ -435,6 +438,19 @@ impl Sheet {
             self.require(*id)?;
             f(&mut self.topic_mut(*id).unwrap().style);
         }
+        Ok(())
+    }
+
+    pub fn set_branch_side(
+        &mut self,
+        id: TopicId,
+        side: Option<crate::BranchSide>,
+    ) -> EditResult<()> {
+        self.require(id)?;
+        if self.parent(id).is_none() {
+            return Err(EditError::RootNotAllowed);
+        }
+        self.topic_mut(id).unwrap().branch_side = side;
         Ok(())
     }
 

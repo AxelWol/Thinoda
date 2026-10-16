@@ -1045,7 +1045,7 @@ impl MapCanvas {
                     ref members,
                     current,
                     ..
-                } if crate::topic_drag::target(&layout, members, current).is_err() => {
+                } if crate::topic_drag::target(doc.sheet(), &layout, members, current).is_err() => {
                     egui::CursorIcon::NotAllowed
                 }
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
@@ -1290,6 +1290,7 @@ fn drop_topics(
         return;
     }
     let target = match crate::topic_drag::target(
+        doc.sheet(),
         layout,
         &crate::topic_drag::members(doc.sheet(), &ids),
         current,
@@ -1301,19 +1302,17 @@ fn drop_topics(
         }
     };
     let res = doc.edit_sheet("Move Topic", |s| {
-        for id in &ids {
-            let center = layout.rect(*id).map(|r| r.center() + d).unwrap_or(current);
-            match target {
-                Some(t) => {
-                    let n = s.children(t).len();
-                    s.move_topic(*id, t, n)?;
+        if let Some(target) = &target {
+            crate::topic_drag::apply(s, &ids, target)?;
+        } else {
+            for id in &ids {
+                let center = layout.rect(*id).map(|r| r.center() + d).unwrap_or(current);
+                if s.is_floating(*id) {
+                    s.set_position(*id, center)?;
+                } else {
+                    s.detach_to_floating(*id, center)?;
                 }
-                None if s.is_floating(*id) => s.set_position(*id, center)?,
-                None => s.detach_to_floating(*id, center)?,
             }
-        }
-        if let Some(target) = target {
-            s.set_collapsed(target, false)?;
         }
         Ok(())
     });

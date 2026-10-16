@@ -29,7 +29,8 @@ pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
 pub use layout::{ApproxMeasure, Layout, TextMeasure, TopicLayout, layout_sheet};
 pub use model::{
-    Boundary, BoundaryId, ChildRange, LineShape, Relationship, RelationshipId, Sheet, Structure,
-    Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle, Workbook,
+    Boundary, BoundaryId, BranchSide, ChildRange, LineShape, Relationship, RelationshipId, Sheet,
+    Structure, Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle,
+    Workbook,
 };
 pub use outline::OutlineNode;

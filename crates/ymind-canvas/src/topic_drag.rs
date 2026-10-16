@@ -3,9 +3,34 @@
 use std::collections::BTreeSet;
 
 use egui::{Color32, Painter, Stroke};
-use ymind_core::{EditError, Layout, Sheet, TopicId, Vec2};
+use ymind_core::{
+    BranchSide, EditError, Layout, Sheet, Structure, TopicId, Vec2, layout::ConnectorKind,
+};
 
-use crate::{MapView, PaintOptions, Xf, paint_map};
+use crate::{MapView, PaintOptions, Xf, paint_map, render::connector_path};
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DropTarget {
+    pub parent: TopicId,
+    pub index: usize,
+    pub slot: Option<[Vec2; 2]>,
+    pub side: Option<BranchSide>,
+}
+
+fn main_side(sheet: &Sheet, layout: &Layout, parent: TopicId, at: Vec2) -> Option<BranchSide> {
+    (parent == sheet.root
+        && matches!(
+            sheet.structure,
+            Structure::MapClockwise | Structure::MapAnticlockwise | Structure::MapUnbalanced
+        ))
+    .then(|| {
+        if at.x < layout.topics[&parent].rect.center().x {
+            BranchSide::Left
+        } else {
+            BranchSide::Right
+        }
+    })
+}
 
 pub(crate) fn roots(sheet: &Sheet, ids: &[TopicId]) -> Vec<TopicId> {
     ids.iter()
@@ -29,16 +54,112 @@ pub(crate) fn members(sheet: &Sheet, ids: &[TopicId]) -> BTreeSet<TopicId> {
 }
 
 pub(crate) fn target(
+    sheet: &Sheet,
     layout: &Layout,
     members: &BTreeSet<TopicId>,
     at: Vec2,
-) -> Result<Option<TopicId>, EditError> {
-    let target = layout.hit_test(at);
-    if target.is_some_and(|id| members.contains(&id)) {
-        Err(EditError::Cycle)
-    } else {
-        Ok(target)
+) -> Result<Option<DropTarget>, EditError> {
+    let Some(topic) = layout.hit_test(at) else {
+        return Ok(None);
+    };
+    if members.contains(&topic) {
+        return Err(EditError::Cycle);
     }
+    let rect = layout.topics[&topic].rect;
+    if let Some(parent) = sheet.parent(topic) {
+        let index = sheet.index_in_parent(topic).ok_or(EditError::NotFound)?;
+        let horizontal = layout
+            .connectors
+            .iter()
+            .find(|c| c.child == topic && c.parent == parent)
+            .is_some_and(|c| c.vertical);
+        let coordinate = |p: Vec2| if horizontal { p.x } else { p.y };
+        let low = coordinate(rect.min);
+        let high = coordinate(rect.max());
+        let pointer = coordinate(at);
+        let edge = (high - low) * 0.25;
+        if pointer < low + edge || pointer > high - edge {
+            // Some split-map sides run in reverse document order.
+            let parent_center = layout.topics[&parent].rect.center();
+            let side = |id| {
+                let center = layout.topics[&id].rect.center();
+                if horizontal {
+                    center.y >= parent_center.y
+                } else {
+                    center.x >= parent_center.x
+                }
+            };
+            let neighbor = sheet
+                .children(parent)
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| {
+                    **id != topic && layout.topics.contains_key(id) && side(**id) == side(topic)
+                })
+                .min_by_key(|(i, _)| i.abs_diff(index));
+            let fallback_reversed = parent == sheet.root
+                && !horizontal
+                && matches!(
+                    sheet.structure,
+                    Structure::MapClockwise
+                        | Structure::MapAnticlockwise
+                        | Structure::MapUnbalanced
+                )
+                && if sheet.structure == Structure::MapAnticlockwise && !sheet.theme.balanced {
+                    side(topic)
+                } else {
+                    !side(topic)
+                };
+            let reversed = neighbor.map_or(fallback_reversed, |(i, id)| {
+                let ascending =
+                    coordinate(layout.topics[id].rect.center()) > coordinate(rect.center());
+                ascending != (i > index)
+            });
+            let high_edge = pointer > high - edge;
+            let after = high_edge != reversed;
+            let line = if horizontal {
+                let x = if high_edge { rect.max().x } else { rect.min.x };
+                [
+                    Vec2::new(x, rect.min.y - 4.0),
+                    Vec2::new(x, rect.max().y + 4.0),
+                ]
+            } else {
+                let y = if high_edge { rect.max().y } else { rect.min.y };
+                [
+                    Vec2::new(rect.min.x - 4.0, y),
+                    Vec2::new(rect.max().x + 4.0, y),
+                ]
+            };
+            return Ok(Some(DropTarget {
+                parent,
+                index: index + usize::from(after),
+                slot: Some(line),
+                side: main_side(sheet, layout, parent, rect.center()),
+            }));
+        }
+    }
+    Ok(Some(DropTarget {
+        parent: topic,
+        index: sheet.children(topic).len(),
+        slot: None,
+        side: main_side(sheet, layout, topic, at),
+    }))
+}
+
+pub(crate) fn apply(
+    sheet: &mut Sheet,
+    ids: &[TopicId],
+    target: &DropTarget,
+) -> Result<(), EditError> {
+    let mut index = target.index;
+    for id in ids {
+        sheet.move_topic(*id, target.parent, index)?;
+        if let Some(side) = target.side {
+            sheet.set_branch_side(*id, Some(side))?;
+        }
+        index = sheet.index_in_parent(*id).ok_or(EditError::NotFound)? + 1;
+    }
+    sheet.set_collapsed(target.parent, false)
 }
 
 pub(crate) fn edge_pan(ctx: &egui::Context, view: &mut MapView, pointer: egui::Pos2) {
@@ -138,7 +259,7 @@ pub(crate) fn paint(
             ..Default::default()
         },
     );
-    let target = target(layout, members, current);
+    let target = target(sheet, layout, members, current);
     let Some(topic) = layout.hit_test(current) else {
         return;
     };
@@ -154,6 +275,28 @@ pub(crate) fn paint(
         Stroke::new(2.5, color),
         egui::StrokeKind::Outside,
     );
+    if let Ok(Some(target)) = target {
+        if let Some(slot) = target.slot {
+            painter.line_segment(slot.map(|p| xf.pos(p)), Stroke::new(3.0, view.accent));
+        }
+        let parent = layout.topics[&target.parent].rect;
+        for id in members.iter().filter(|id| {
+            sheet
+                .parent(**id)
+                .is_none_or(|parent| !members.contains(&parent))
+                && sheet.summary_for_topic(**id).is_none()
+        }) {
+            if let Some(source) = layout.rect(*id) {
+                let end = source.center() + delta;
+                let vertical = !layout.topics[&target.parent].grow.is_horizontal();
+                let points = connector_path(ConnectorKind::Curve, vertical, parent.center(), end);
+                painter.add(egui::Shape::line(
+                    points.into_iter().map(|p| xf.pos(p)).collect(),
+                    Stroke::new(2.0, view.accent),
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

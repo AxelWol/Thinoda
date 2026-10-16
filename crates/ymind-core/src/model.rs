@@ -302,6 +302,14 @@ impl TopicStyle {
     }
 }
 
+/// Explicit side of a branch attached to a split-map parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchSide {
+    Left,
+    Right,
+}
+
 /// A topic (node) of the map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Topic {
@@ -330,6 +338,9 @@ pub struct Topic {
     /// Structure override for this subtree (mixed structures).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure: Option<Structure>,
+    /// Explicit attachment side when the parent uses a split-map structure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_side: Option<BranchSide>,
     /// To-Do checkbox state (`None` = no checkbox).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo: Option<bool>,
@@ -353,6 +364,7 @@ impl Topic {
             style: TopicStyle::default(),
             position: None,
             structure: None,
+            branch_side: None,
             todo: None,
             image: None,
         }

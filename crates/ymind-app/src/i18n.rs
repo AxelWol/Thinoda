@@ -560,6 +560,7 @@ const DE: &[(&str, &str)] = &[
     ("Parent Topic", "Übergeordnetes Thema"),
     ("Floating Topic", "Freies Thema"),
     ("Relationship", "Beziehung"),
+    ("Branch side", "Zweigseite"),
     ("Relationship start", "Beziehungsanfang"),
     ("Relationship end", "Beziehungsende"),
     ("First curve control", "Erster Kurvengriff"),

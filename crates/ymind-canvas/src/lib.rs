@@ -17,6 +17,8 @@ mod measure;
 mod relationship_editing;
 mod render;
 mod topic_drag;
+#[cfg(test)]
+mod topic_ordering_tests;
 mod view;
 
 pub use actions::{Action, FloatingArrangement, apply_action};
