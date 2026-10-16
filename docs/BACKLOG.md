@@ -25,6 +25,53 @@ Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
 - P3 Audio notes (record/play)
 - P3 Customizable shortcuts (Preferences > Shortcuts); detailed requirements below.
 
+## Main menu parity (user-supplied XMind screenshots, 2026-10-16)
+Reference inventory, not an implementation-status checklist. Reuse existing commands
+and the feature backlogs below; do not duplicate actions or expose nonfunctional items.
+Disabled entries in the screenshots are contextual states, not evidence of missing features.
+
+- P1 Menu layout: rounded hamburger popup with separators, shortcut hints, hover
+  highlighting and cascading submenus. Top-level quick actions: Undo, Redo, New blank
+  map, Home, Open local file, Save, Save As, Export, Print and Settings; followed by
+  File, Edit, Insert, Tools, View and Help submenus.
+- P1 File inventory: New blank map, New, New tab, Home, Open local file, Recent
+  documents, Save, Save As, File cache, Set file password, Import, Export, Share,
+  Print, Close window and Quit. Verify what File cache manages and preserve recovery
+  data until its lifecycle is understood. Treat tab/window closure and application
+  exit distinctly, retaining unsaved-work prompts.
+- P1 Edit inventory: Undo/Redo, Cut/Copy/Paste, Duplicate, Delete, Delete single topic,
+  Indent/Outdent, Copy/Paste/Reset style, Go to central topic, Select submenu,
+  Expand subtopics, Fold all sub-branches, Arrange submenu, Align floating topics
+  submenu and Find & Replace. Verify nested choices and expand/fold scope.
+- P1 Insert inventory: Child topic, Topic after/before, Parent topic, Floating topic,
+  Callout, Relationship, Summary, Boundary, Note, Label, To-do, Task, Link submenu,
+  Attachment, Audio note, Symbol, Sticker, Illustration, Local image, Equation,
+  New sheet and New sheet from topic. Research the distinction between the displayed
+  To-do and Task commands rather than assuming they are synonyms.
+- P2 Tools inventory: Map Shot (F7), Merge XMind files and Create/customize theme.
+  Share implementation with the existing capture, merge and theme backlog items.
+- P1 View inventory: mutually exclusive Mind map/Outline views, Zoom in/out, Actual
+  size, Fit map, Show branch only, Zen, Gantt, Pitch submenu, Navigation pane submenu,
+  Format panel submenu, Toolbar submenu, Show tab bar, Hide sheet bar and Merge all
+  windows. Verify submenu contents and multi-window behavior before implementation.
+- P2 Help inventory: News, User guide, Feedback, Update and restart, Keyboard shortcuts,
+  Quick start and About. Sign-in and Redeem gift card are observed XMind account/
+  commerce actions, not requirements to add accounts or monetization to yMind.
+  Never trigger updates/restarts, feedback transmission or authentication merely
+  by reproducing the menu.
+- P1 Command consistency: menus, context menus, toolbars, palette and shortcuts must
+  dispatch the same commands with the same selection/document availability rules.
+  Cover keyboard submenu traversal, Escape, focus restoration, viewport-edge
+  placement/scrolling and EN/DE labels in both appearances.
+- P2 Reference shortcut audit: record Windows mappings without silently replacing
+  yMind bindings. The screenshots show Ctrl+H for Home, Ctrl+F for Find & Replace,
+  Ctrl+Shift+P for Settings, Ctrl+R for the central topic, Ctrl+Shift+R for Relationship,
+  Ctrl+Shift+B for Boundary, Ctrl+Shift+N for Note, Ctrl+Shift+L for Label,
+  Ctrl+Shift+I for Local image and Ctrl+Alt+N for New sheet.
+  Layout-dependent keys (# and umlaut keys in the reference) need physical/logical
+  key and macOS/Linux verification. Preserve current shortcuts pending an explicit
+  compatibility-keymap decision.
+
 ## Settings parity (user-supplied XMind screenshots, 2026-10-16)
 These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
