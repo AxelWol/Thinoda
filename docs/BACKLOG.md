@@ -79,6 +79,34 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   when saving. Protect the last sheet, preserve active-sheet selection and support
   undo for document changes; cover keyboard access and menu placement near screen edges.
 
+## Bottom-right controls and alternate views (user screenshots, 2026-10-16)
+- P1 Compact floating bottom-right action bar: topic count, zoom dropdown, Gantt,
+  Map/Outline toggle, four-corner view action and presentation action, separated into
+  groups. Use accessible tooltips/names and responsive placement without covering
+  scrollbars or editable topics. Verify the four-corner action (fit/fullscreen) and
+  presentation action behavior before assigning commands based only on their icons.
+- P2 Statistics popover anchored above the topic count: topic, word and character
+  totals. Verify active-sheet versus selection scope, inclusion of notes/labels and
+  Unicode counting rules; reuse the existing statistics calculation where possible.
+- P1 Zoom dropdown: reference presets 500%, 400%, 300%, 200%, 150%, 120%, 100%, 80%,
+  50%, 20% and 10%, plus the current non-preset value (112% in the screenshot) with
+  a checkmark, followed by Fit map. Keep map zoom distinct from UI scaling and
+  preserve an intentional zoom anchor; test clamping and current-value deduplication.
+- P2 Gantt action opens a separate window. Reference shows a left task table
+  (Task name, Start date, Duration), a right dated timeline grid, zoom minus/slider/plus,
+  and export/print icons. Empty state explains selecting a topic to add a task.
+  Reuse the task/calendar model and existing Gantt backlog; verify unlabeled toolbar
+  actions, date scale, task editing, dependency controls and cross-window synchronization.
+  Closing the Gantt window must not close or lose the map.
+- P2 Outline parity: prominent root heading, bold main topics, indented descendants,
+  disclosure triangles for branches and bullets for leaves, plus a separated section
+  for floating-topic trees. Bottom-right controls adapt to Outline, including return
+  to Map, zoom, Gantt and presentation. Preserve hierarchy, selection and edits between
+  views; verify floating-tree ordering and whether outline folding is shared with Map.
+- P2 Coverage: live statistics after edits, both view-toggle directions, keyboard
+  navigation, popup placement, light/dark appearances, narrow windows, mixed-script
+  text and Gantt window lifecycle. Icon-only references are not verified behavior.
+
 ## Template gallery parity (user screenshots, 2026-10-16)
 - P1 Replace generic template icons with generated map previews; retain a responsive
   grid and vertical scrolling. Reference chooser has a fixed header/category filter,
