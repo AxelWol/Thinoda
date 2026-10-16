@@ -38,6 +38,25 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Quick styles, copy/paste style, global font, custom theme editor
 - P2 Mask data (anonymize topic text before sharing)
 - P2 Merge XMind files, skeleton/structure picker gallery
+  - Map-tab layout selector: current layout thumbnail/name opens an anchored,
+    scrollable gallery with collapsible families and a three-column preview grid
+    in the reference. Highlight the current choice and constrain the popup to the
+    available viewport; adapt column count at narrow widths.
+  - Observed families: Mind map, Logic chart, Brace map, Org chart, Tree chart,
+    Timeline, Fishbone, Tree table, Matrix and Grid. Audit existing structures first;
+    Grid is an additional family to investigate, not a synonym for Matrix.
+  - Distinguish structural arrangements from visual skeleton variants (topic shapes,
+    connector geometry and borders). Determine each preset's changes before applying
+    it; do not infer model semantics from thumbnails alone.
+  - Changing an existing sheet layout must preserve topics, hierarchy, relationships,
+    rich content and explicit styles unless a documented preset intentionally changes
+    them. Apply as one undoable edit, re-layout and keep selection/camera usable.
+  - Map-tab reference also shows theme palette selection/add, multicolor and single-
+    color variant previews, background color, global font and branch-line width.
+    Reuse existing theme settings and verify partially visible controls.
+  - Generate previews from original sample maps, not copied XMind thumbnails;
+    commercial badges do not establish yMind feature restrictions. Test every preset,
+    undo/redo, saved-file round trips, large/deep trees and keyboard popup navigation.
 - P3 Audio notes (record/play)
 - P3 Customizable shortcuts (Preferences > Shortcuts); detailed requirements below.
 
