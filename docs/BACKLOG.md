@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- CPU layout benchmark: `ymind-core` release example measures 10,000-topic balanced/
+  wide maps with JSON p50/p95/max layout, undoable leaf rename and undo latency.
+  Optional p95 budgets fail explicitly after preserving the report; CLI input
+  bounds and nearest-rank statistics are covered. CI is configured to retain
+  per-platform reports; execution outside this Windows x64 host is not claimed.
+  Initial local layout p95 was 23.68/28.71 ms; a 50 ms local-only regression
+  envelope passed on repeat (see PLAN for hardware and exact methodology).
+  ApproxMeasure CPU layout is not GPU rendering, frame latency or a 60-fps result.
 - Shortcut reference: F1/Help opens an EN/DE searchable, category-filtered
   command browser, including unassigned commands and navigation aliases.
   Scroll resets on filter changes; the fixed Close control and modal isolation

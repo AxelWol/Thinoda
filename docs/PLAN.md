@@ -405,6 +405,30 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R0 CPU performance baseline delivered: deterministic 10,000-topic six-way and
+wide maps report nearest-rank p50/p95/max layout, undoable leaf-rename transaction
+and undo times as JSON. One layout warm-up is excluded; fixture construction and
+validation, serialization and file I/O are outside timed operations. Layouts are
+checked for complete topic counts/finite overall bounds, and every undo restores
+the leaf title/history. Optional positive finite p95 layout budgets fail explicitly
+after the report is written. CLI bounds and percentile/fixture tests accompany the
+benchmark; CI is configured to upload each runner's report without imposing one
+hardware budget on heterogeneous hosts. Those native CI runs are not claimed here.
+
+Local Windows x64 baseline, 2026-10-16: AMD Ryzen 7 PRO 9755, 8 cores/16 threads,
+rustc 1.99.1, release build, ApproxMeasure, light mode, 30 samples. Initial p95:
+balanced layout 23.68 ms / rename 3.81 ms / undo 0.0015 ms; wide layout 28.71 ms /
+rename 3.34 ms / undo 0.0013 ms. A repeat with a local-only 50 ms layout budget
+passed at 24.46/34.93 ms layout p95. This sets an initial regression envelope on
+this machine, not a portable performance guarantee or the 16.7 ms frame target.
+There is no GPU backend, viewport, real font shaping, pan/zoom frame sampling or
+IME measurement in this benchmark. Native frame-p95/60-fps profiling and deeper
+mixed-content/structural-edit workloads remain open.
+`cargo xtask ci` passes formatting, all-target clippy, 387 workspace cases and
+three benchmark correctness tests. A deliberately impossible budget was checked:
+the process failed and still wrote both complete case results with
+`passed_budget: false`. This developer-only slice does not change the packaged app.
+
 R1 shortcut-reference slice delivered: F1/Help opens a searchable EN/DE browser
 from the palette catalog with category/unassigned filters and navigation aliases.
 Fixed footer, scroll reset and modal isolation cover narrow windows, Map/Outliner

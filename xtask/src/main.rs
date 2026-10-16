@@ -160,6 +160,7 @@ fn ci() -> anyhow::Result<()> {
         "warnings",
     ]))?;
     run(cargo().args(["test", "--workspace"]))?;
+    run(cargo().args(["test", "-p", "ymind-core", "--example", "layout_benchmark"]))?;
     Ok(())
 }
 

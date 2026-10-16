@@ -26,6 +26,7 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   filters, including navigation aliases. It is read-only; custom rebinding and
   conflict editing are not yet available. Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
+
 - Home offers rendered previews of 35 original templates across eight categories.
   Select a card, then Create; Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
@@ -177,6 +178,18 @@ libxcb-xfixes0-dev libwayland-dev`.
 
 The live AI test uses `YMIND_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
 server answers or when `YMIND_AI_SKIP_LIVE=1`.
+
+CPU performance baseline:
+```sh
+cargo run --release -p ymind-core --example layout_benchmark -- --topics 10000 --samples 30
+cargo test -p ymind-core --example layout_benchmark
+```
+The benchmark reports JSON p50/p95/max layout, undoable leaf-rename and undo times
+for balanced and wide maps. Use `--output` to save a report and
+`--layout-budget-ms` to fail on a chosen p95 limit. This uses approximate text
+measurement without a GPU or viewport and is **not** a 60-fps claim. CI uploads
+per-platform reports; see [the plan](docs/PLAN.md) for the measured Windows baseline
+and remaining GPU profiling work.
 
 ## Packages
 | Platform | Formats | Command |
