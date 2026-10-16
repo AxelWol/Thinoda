@@ -150,6 +150,9 @@ unknown needed by the next package. Never bypass OS application-control policy.
 5. Deliver searchable/category-filtered shortcut editing, unassigned bindings,
    conflicts, reserved keys and reset-all. Preserve current bindings by default;
    offer an XMind-compatible preset only after approval of conflicting mappings.
+   The searchable/category-filtered read-only reference, unassigned-command
+   visibility and navigation aliases are delivered. Rebinding/conflict editing
+   and native keyboard-layout audits remain open.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -401,6 +404,15 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R1 shortcut-reference slice delivered: F1/Help opens a searchable EN/DE browser
+from the palette catalog with category/unassigned filters and navigation aliases.
+Fixed footer, scroll reset and modal isolation cover narrow windows, Map/Outliner
+and Home. The UI explicitly states rebinding is not available; conflict/reserved
+key editing and reset-all remain open. Advertised Ctrl+Q now requests native
+window close, with the existing unsaved-document prompt preserved. All 387
+workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with the shortcut reference and Quit fix.
 
 R1 offline help delivered: searchable EN/DE User Guide and Quick Start are wired
 through Help and the command palette, with six offline sections and accurate

@@ -160,6 +160,7 @@ pub struct Dialogs {
     pub settings_tab: SettingsTab,
     pub about: bool,
     pub shortcuts: bool,
+    pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
     pub masked_copy: bool,
     pub close: Option<CloseIntent>,
     pub conflict: Option<usize>,
@@ -481,7 +482,13 @@ impl YMindApp {
             Cmd::Export(format) => self.export(format),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
-            Cmd::Shortcuts => self.dialogs.shortcuts = true,
+            Cmd::Shortcuts => {
+                if let Some(doc) = self.doc_mut() {
+                    doc.view.commit_edit(&mut doc.doc);
+                }
+                self.dialogs.shortcut_browser = Default::default();
+                self.dialogs.shortcuts = true;
+            }
             Cmd::UserGuide => self.open_guide(false),
             Cmd::QuickStart => self.open_guide(true),
             Cmd::Feedback => ctx.open_url(egui::OpenUrl::new_tab(
@@ -1448,6 +1455,7 @@ impl YMindApp {
                 KeyboardShortcut::new(cmd, Key::W),
                 Cmd::CloseTab(self.active),
             ),
+            (KeyboardShortcut::new(cmd, Key::Q), Cmd::Quit),
             (KeyboardShortcut::new(cmd, Key::F), Cmd::Find),
             (KeyboardShortcut::new(cmd, Key::H), Cmd::FindReplace),
             (KeyboardShortcut::new(cmd, Key::Comma), Cmd::Settings),
@@ -1653,6 +1661,7 @@ impl YMindApp {
         let mut v: Vec<(Cmd, &str, &str, &str)> = vec![
             (Cmd::New, "New", "Ctrl+N", "File"),
             (Cmd::Open, "Open…", "Ctrl+O", "File"),
+            (Cmd::Quit, "Quit", "Ctrl+Q", "File"),
             (Cmd::Save, "Save", "Ctrl+S", "File"),
             (Cmd::SaveAs, "Save As…", "Ctrl+Shift+S", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),

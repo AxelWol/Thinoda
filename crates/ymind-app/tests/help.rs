@@ -89,6 +89,11 @@ fn quick_start_opens_only_intro_and_can_navigate_to_all_sections() {
     h.get_by_role_and_label(Role::Label, "Files and Recovery");
     h.get_by_label("Guide section").click();
     h.run_steps(3);
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(h.state().dialogs.guide.open);
+    h.get_by_label("Guide section").click();
+    h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Styles and Themes")
         .click();
     h.run_steps(4);

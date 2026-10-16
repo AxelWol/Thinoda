@@ -447,4 +447,18 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(!h.state().dialogs.guide.open);
+    h.state_mut().exec(&ctx, Cmd::Shortcuts);
+    h.run_steps(4);
+    h.get_by_label("Befehle oder Tastenkürzel suchen").click();
+    h.run_steps(2);
+    h.get_by_label("Befehle oder Tastenkürzel suchen")
+        .type_text("Schnellstil");
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::CheckBox, "Nur unbelegte")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Label, "Schnellstil speichern…");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!h.state().dialogs.shortcuts);
 }

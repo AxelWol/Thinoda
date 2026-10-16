@@ -6,6 +6,14 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Shortcut reference: F1/Help opens an EN/DE searchable, category-filtered
+  command browser, including unassigned commands and navigation aliases.
+  Scroll resets on filter changes; the fixed Close control and modal isolation
+  work on narrow windows without editing the map/outliner behind the reference.
+  The reference is explicitly read-only: rebinding, reserved keys, conflict
+  editing and reset-all remain open. Fixed advertised Ctrl+Q dispatch; it now
+  requests the normal native close path and retains dirty-document save prompts.
+  All 387 workspace cases and all-target clippy pass with live AI disabled.
 - Offline Help: Quick Start and searchable User Guide are available from Help
   and the command palette in EN/DE, including on Home. Six sections explain
   supported workflows and explicit cloud/export/recovery/privacy limitations.

@@ -202,6 +202,7 @@ impl YMindApp {
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
                     || self.dialogs.guide.open
+                    || self.dialogs.shortcuts
                 {
                     ui.disable();
                 }
@@ -252,6 +253,7 @@ impl YMindApp {
         self.quick_style_dialog(&ctx);
         self.theme_editor_dialog(&ctx);
         self.guide_dialog(&ctx);
+        self.shortcuts_dialog(&ctx);
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -274,6 +276,7 @@ impl YMindApp {
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
             || self.dialogs.guide.open
+            || self.dialogs.shortcuts
         {
             return true;
         }
@@ -805,6 +808,7 @@ impl YMindApp {
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
             || self.dialogs.guide.open
+            || self.dialogs.shortcuts
         {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
@@ -2791,39 +2795,6 @@ impl YMindApp {
             if create {
                 self.create_masked_copy();
             }
-        }
-        if self.dialogs.shortcuts {
-            let mut open = true;
-            egui::Window::new(t("Keyboard Shortcuts"))
-                .open(&mut open)
-                .default_width(420.0)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(480.0)
-                        .show(ui, |ui| {
-                            egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
-                                for (_, c) in Self::palette_commands() {
-                                    if let Some(sc) = &c.shortcut {
-                                        ui.label(&c.title);
-                                        ui.label(RichText::new(sc).monospace());
-                                        ui.end_row();
-                                    }
-                                }
-                                for (k, v) in [
-                                    ("Space / F2", "Edit"),
-                                    ("Arrows", "Navigate"),
-                                    ("Alt+↑/↓", "Move"),
-                                    ("Esc", "Select none"),
-                                    ("Home", "Central Topic"),
-                                ] {
-                                    ui.label(t(v));
-                                    ui.label(RichText::new(k).monospace());
-                                    ui.end_row();
-                                }
-                            });
-                        });
-                });
-            self.dialogs.shortcuts = open;
         }
     }
 

@@ -22,6 +22,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   for editing, styles, file recovery, interchange and privacy. It works without an
   open map and does not edit the canvas behind it. Send Feedback opens GitHub's
   public issue chooser without uploading files; Project News opens commit history.
+- F1 opens a searchable keyboard reference with category and unassigned-command
+  filters, including navigation aliases. It is read-only; custom rebinding and
+  conflict editing are not yet available. Ctrl+Q requests normal window closing,
+  retaining the save prompt for unsaved documents.
 - Home offers rendered previews of 35 original templates across eight categories.
   Select a card, then Create; Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
