@@ -44,11 +44,11 @@ quick-xml = "0.42"
 toml = "1"
 directories = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
-egui = "0.37"
+egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "persistence", "wayland", "x11"] }
 egui_kittest = "0.37"
 rfd = "0.17"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 resvg = "0.48"
 tempfile = "3"
 env_logger = "0.11"
