@@ -81,6 +81,7 @@ impl YMindApp {
         self.apply_appearance(&ctx);
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
+        self.poll_map_shot(&ctx);
         if !self.palette.open && !self.any_modal_open() && !egui::Popup::is_any_open(&ctx) {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
@@ -95,7 +96,12 @@ impl YMindApp {
                         .fill(Palette::of(&ctx).surface)
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
-                .show(ui, |ui| self.top_bar(ui));
+                .show(ui, |ui| {
+                    if self.map_shot.active() {
+                        ui.disable();
+                    }
+                    self.top_bar(ui);
+                });
             if show_doc {
                 egui::Panel::bottom("ymind_statusbar")
                     .exact_size(30.0)
@@ -104,7 +110,12 @@ impl YMindApp {
                             .fill(Palette::of(&ctx).surface)
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
-                    .show(ui, |ui| self.bottom_bar(ui));
+                    .show(ui, |ui| {
+                        if self.map_shot.active() {
+                            ui.disable();
+                        }
+                        self.bottom_bar(ui);
+                    });
                 if self.settings.show_format_panel {
                     egui::Panel::right("ymind_format")
                         .default_size(280.0)
@@ -115,6 +126,9 @@ impl YMindApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
+                            if self.map_shot.active() {
+                                ui.disable();
+                            }
                             self.sidebar(ui);
                         });
                 }
@@ -147,7 +161,7 @@ impl YMindApp {
             self.topic_toolbar(&ctx);
         }
 
-        if show_doc && self.search.open {
+        if show_doc && self.search.open && !self.map_shot.active() {
             self.search_bar(&ctx);
         }
         self.update_search();
@@ -165,15 +179,23 @@ impl YMindApp {
             self.exec(&ctx, cmd.clone());
         }
 
-        self.dialogs_ui(&ctx);
-        self.ai_prompt_dialog(&ctx);
-        self.ai_busy_overlay(&ctx);
-        self.toasts.show(&ctx);
+        if !self.map_shot.active() {
+            self.dialogs_ui(&ctx);
+            self.ai_prompt_dialog(&ctx);
+            self.ai_busy_overlay(&ctx);
+        }
+        self.map_shot_dialog(&ctx);
+        if !self.map_shot.requested && !self.map_shot.capturing {
+            self.toasts.show(&ctx);
+        }
+        if let Some(d) = self.doc() {
+            self.capture_map_shot(&ctx, d.view.canvas_rect());
+        }
         self.housekeeping(&ctx);
     }
 
     pub(crate) fn any_modal_open(&self) -> bool {
-        if self.dialogs.masked_copy {
+        if self.dialogs.masked_copy || self.map_shot.active() {
             return true;
         }
         let d = &self.dialogs;
@@ -509,6 +531,9 @@ impl YMindApp {
             }
         });
         ui.menu_button(t("Tools"), |ui| {
+            if ui.add_enabled(self.command_available(&Cmd::MapShot), egui::Button::new(t("Map Shot")).shortcut_text("F7")).clicked() {
+                *cmd = Some(Cmd::MapShot);
+            }
             if ui.add_enabled(self.command_available(&Cmd::MaskedCopy), egui::Button::new(t("Create Masked Copy…"))).clicked() {
                 *cmd = Some(Cmd::MaskedCopy);
             }
@@ -669,6 +694,12 @@ impl YMindApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if self.map_shot.active() {
+            if let Some(d) = self.docs.get_mut(self.active) {
+                MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
+            }
+            return;
+        }
         let paste = std::mem::take(&mut self.paste_requested);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;

@@ -70,6 +70,44 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    (
+        "Map Shot must be saved with a .png extension",
+        "Map Shot muss mit der Dateiendung .png gespeichert werden",
+    ),
+    ("Map Shot", "Map Shot"),
+    ("Map Shot preview", "Map-Shot-Vorschau"),
+    ("Capturing visible map…", "Sichtbare Map wird aufgenommen…"),
+    (
+        "Visible map only. Drag a region or edit pixel coordinates. Use Export for the complete sheet.",
+        "Nur die sichtbare Map. Bereich ziehen oder Pixelkoordinaten bearbeiten. Für das vollständige Blatt den Export verwenden.",
+    ),
+    ("Square (1:1)", "Quadratisch (1:1)"),
+    ("Reset region", "Bereich zurücksetzen"),
+    ("Region X", "Bereich X"),
+    ("Region Y", "Bereich Y"),
+    ("Region width", "Bereichsbreite"),
+    ("Region height", "Bereichshöhe"),
+    ("Frame thickness", "Rahmenstärke"),
+    ("Frame color", "Rahmenfarbe"),
+    ("Copy image", "Bild kopieren"),
+    ("Save PNG…", "PNG speichern…"),
+    (
+        "Image sent to system clipboard",
+        "Bild an die System-Zwischenablage gesendet",
+    ),
+    (
+        "Map Shot capture failed",
+        "Map-Shot-Aufnahme fehlgeschlagen",
+    ),
+    (
+        "Map Shot capture timed out; this renderer may not support screenshots",
+        "Zeitüberschreitung bei Map Shot; dieser Renderer unterstützt möglicherweise keine Bildschirmaufnahmen",
+    ),
+    ("Invalid Map Shot region", "Ungültiger Map-Shot-Bereich"),
+    (
+        "Map Shot image exceeds limits or has invalid dimensions",
+        "Map-Shot-Bild überschreitet Grenzwerte oder hat ungültige Abmessungen",
+    ),
     ("Editor", "Editor"),
     ("Indent", "Einrücken"),
     ("Outdent", "Ausrücken"),

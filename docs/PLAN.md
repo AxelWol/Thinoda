@@ -391,6 +391,22 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R6 Map Shot delivered: Tools/palette/F7 requests a fresh clean canvas frame and
+native GPU readback. The preview keeps only visible canvas pixels, with fractional
+DPI conversion, drag/numeric region controls, square cropping, frame settings,
+native image clipboard output, PNG save and Escape/Cancel. Pending captures are
+bounded, time out visibly and discard late callbacks after cancellation. The map,
+selection, camera and source path are retained; an inline title is committed before
+capture. Full-sheet export remains a separate workflow and its existing renderer
+fidelity limitations are not hidden by this screen-capture implementation.
+
+Map Shot verification: seven focused unit/UI cases, isolated German UI and an
+opt-in actual wgpu readback test pass. Formatting/workspace clippy and all app,
+canvas/core and IO-unit stages pass. The full `cargo xtask ci` attempt was blocked
+by Windows Application Control (4551) before its IO integration binary executed;
+the normal standalone IO/platform/UI run then passed 73 tests. No system policy
+was changed. This does not finish native Print or R6's richer output work.
+
 R5 home-template slice delivered: 17 actual built-in documents now supply cached
 light/dark thumbnails. A shared reusable preview card provides wrapped labels,
 selection/focus feedback, disabled state and consumed Enter/Space activation;

@@ -42,6 +42,7 @@ pub enum Cmd {
     Import,
     MergeFiles,
     MaskedCopy,
+    MapShot,
     Export(Format),
     Settings,
     About,
@@ -186,6 +187,7 @@ pub struct YMindApp {
     /// Format panel field to focus on the next frame.
     pub focus_field: Option<FocusField>,
     pub ai: crate::ai::AiState,
+    pub(crate) map_shot: crate::map_shot::MapShot,
     last_title: String,
 }
 
@@ -245,6 +247,7 @@ impl YMindApp {
             paste_requested: false,
             focus_field: None,
             ai: Default::default(),
+            map_shot: Default::default(),
             last_title: String::new(),
         };
         for f in files {
@@ -441,6 +444,17 @@ impl YMindApp {
                 } else {
                     self.toasts.warning(t("Not possible here"));
                 }
+            }
+            Cmd::MapShot => {
+                if !self.command_available(&Cmd::MapShot) {
+                    self.toasts.warning(t("Not possible here"));
+                    return;
+                }
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
+                }
+                self.map_shot.requested = true;
+                ctx.request_repaint();
             }
             Cmd::Export(format) => self.export(format),
             Cmd::Settings => self.dialogs.settings = true,
@@ -697,6 +711,15 @@ impl YMindApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
+            Cmd::MapShot => {
+                self.doc().is_some()
+                    && self.mode == CenterMode::Map
+                    && !self.map_shot.active()
+                    && !self.any_modal_open()
+                    && !self.dialogs.settings
+                    && !self.dialogs.about
+                    && !self.dialogs.shortcuts
+            }
             Cmd::Canvas(action) => self
                 .doc()
                 .is_some_and(|d| action.available(&d.doc, &d.view)),
@@ -1320,6 +1343,10 @@ impl YMindApp {
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         let table: Vec<(KeyboardShortcut, Cmd)> = vec![
+            (
+                KeyboardShortcut::new(Modifiers::NONE, Key::F7),
+                Cmd::MapShot,
+            ),
             (KeyboardShortcut::new(cs, Key::S), Cmd::SaveAs),
             (KeyboardShortcut::new(cmd, Key::S), Cmd::Save),
             (KeyboardShortcut::new(cs, Key::P), Cmd::Palette),
@@ -1654,6 +1681,7 @@ impl YMindApp {
             (Cmd::SaveSheetAs, "Save Sheet As…", "", "File"),
             (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
             (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
+            (Cmd::MapShot, "Map Shot", "F7", "Tools"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),

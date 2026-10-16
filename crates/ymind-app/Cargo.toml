@@ -11,6 +11,9 @@ homepage.workspace = true
 publish = false
 default-run = "ymind"
 
+[features]
+gpu-tests = ["egui_kittest/wgpu"]
+
 [lib]
 name = "ymind_app"
 path = "src/lib.rs"

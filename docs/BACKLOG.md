@@ -6,6 +6,21 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Tools > Map Shot (F7) uses native GPU canvas readback, not the approximate
+  export renderer. A clean frame omits menus, toolbars, selection and search
+  dimming; DPI-aware cropping retains only the canvas. The frozen review supports
+  pointer-region selection, accessible pixel coordinates, square crops, frame
+  color/thickness, PNG save and native image clipboard output. Escape/Cancel
+  discards the capture, including pending/late callbacks; timeout/unsupported
+  renderer, invalid dimensions and output failures are explicit. Captures are
+  limited to 32 Mi pixels. The document, selection, camera and save destination
+  are unchanged (pending title edits commit before capture). This captures the
+  visible map only; use Export for a complete sheet. F7 is used on every platform;
+  the conflicting macOS reference shortcut remains assigned to the command palette.
+  Unit/UI coverage includes exact pixels/alpha/PNG, fractional DPI, bounds,
+  cancellation/timeouts, numeric and drag controls, narrow footer and German UI;
+  an opt-in wgpu test verifies actual GPU readback. Native macOS/Linux clipboard
+  verification and broader rich-content export fidelity remain open.
 - Home template chooser uses rendered, appearance-aware previews of the exact
   documents Create opens, rather than generic map icons. Eight category filters
   plus All, grouped sections, selected-card feedback and a fixed Create/Cancel
@@ -202,7 +217,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Cross-sheet Find and title replacement are implemented; notes/labels are explicitly
   search-only. Rich-field replacement needs separately specified behavior.
 - P1 Pitch mode (presentation from branches, F5) and slide export
-- P1 Map Shot (F7): region capture to clipboard/PNG
+- Delivered Map Shot (F7): visible-canvas region capture to clipboard/PNG (see above).
 - P2 Zone (Ctrl+Alt+Z) and callouts editing UI polish
 - P2 Gantt view for to-dos with start/end dates, progress and export
 - P2 Equations (LaTeX → rendered topic content)
@@ -266,7 +281,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   New sheet and New sheet from topic. Research the distinction between the displayed
   To-do and Task commands rather than assuming they are synonyms. New sheet from
   topic is implemented as a non-destructive single-branch copy; see Recently completed.
-- P2 Tools inventory: Map Shot (F7), Merge XMind files and Create/customize theme.
+- P2 Tools inventory: Map Shot (F7) and Merge Map Files are delivered; Create/customize theme remains.
   Merge Map Files is implemented for current model fields; embedded assets remain
   with R4. Share implementation with the existing capture and theme backlog items.
 - P1 View inventory: mutually exclusive Mind map/Outline views, Zoom in/out, Actual

@@ -31,6 +31,11 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets in one undo step.
   All inputs must load successfully; source files stay untouched and destination
   metadata is retained. External image references are not embedded.
+- Tools > Map Shot (F7) captures the visible map using native GPU readback, without
+  app chrome, selection outlines or search dimming. Drag a crop or enter pixel
+  coordinates; square crops and a configurable frame are available. Copy an image
+  to the system clipboard or save PNG; Escape/Cancel discards the capture without
+  changing the map. Use Export for the complete sheet, including offscreen topics.
 - Tools > Create Masked Copy opens a separate unsaved preview with generic sheet,
   topic and relationship names, removing notes, labels, links, images, markers,
   custom font names, boundary titles and metadata. Inspect every sheet before
@@ -83,6 +88,7 @@ Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + A
 ```sh
 cargo run -p ymind-app            # start the app
 cargo xtask ci                    # fmt + clippy + all tests
+cargo test -p ymind-app --features gpu-tests --lib map_shot_gpu_readback # requires a GPU adapter
 cargo xtask package               # installers in target/packages
 ymind --convert map.xmind map.md  # CLI conversion
 ```

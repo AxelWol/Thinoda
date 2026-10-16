@@ -161,4 +161,31 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
         &ymind_core::templates::instantiate("study-plan")
     );
     assert_eq!(h.state().settings.recent_templates, ["study-plan"]);
+    h.state_mut().exec(&ctx, Cmd::MapShot);
+    h.run_steps(1);
+    let callback = h
+        .output()
+        .viewport_output
+        .values()
+        .flat_map(|v| &v.commands)
+        .find_map(|cmd| match cmd {
+            egui::ViewportCommand::Screenshot(callback) => Some(callback.clone()),
+            _ => None,
+        })
+        .unwrap();
+    callback.complete(std::sync::Arc::new(egui::ColorImage::filled(
+        [1280, 800],
+        egui::Color32::WHITE,
+    )));
+    h.run_steps(4);
+    h.get_by_label("Bild kopieren");
+    h.get_by_label("PNG speichern…");
+    h.get_by_label("Bereichsbreite");
+    h.get_by_label("Rahmenstärke");
+    h.get_by_role_and_label(Role::Button, "Abbrechen")
+        .scroll_to_me();
+    h.run_steps(6);
+    h.get_by_role_and_label(Role::Button, "Abbrechen").click();
+    h.run_steps(2);
+    assert!(h.state().command_available(&Cmd::MapShot));
 }

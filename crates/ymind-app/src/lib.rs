@@ -4,6 +4,7 @@ pub mod ai;
 pub mod app;
 pub mod doc;
 pub mod i18n;
+mod map_shot;
 mod structure_picker;
 mod template_gallery;
 pub mod ui;

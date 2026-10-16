@@ -548,6 +548,27 @@ impl MapCanvas {
         Id::unique("ymind_map_canvas")
     }
 
+    /// Paints the current camera without interaction, selection, search dimming or editing chrome.
+    pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
+        let rect = ui.available_rect_before_wrap();
+        ui.advance_cursor_after_rect(rect);
+        view.canvas_rect = rect;
+        let layout = view.layout_with(ui.ctx(), doc);
+        let painter = ui.painter().with_clip_rect(rect);
+        painter.rect_filled(rect, 0, sheet_background(doc.sheet(), view.dark));
+        paint_map(
+            &painter,
+            doc.sheet(),
+            &layout,
+            view.xf(),
+            &PaintOptions {
+                dark: view.dark,
+                ..Default::default()
+            },
+        );
+        rect
+    }
+
     pub fn show(ui: &mut Ui, doc: &mut Document, view: &mut MapView) -> CanvasOutput {
         let id = Self::id();
         let rect = ui.available_rect_before_wrap();
