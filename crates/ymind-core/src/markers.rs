@@ -99,7 +99,7 @@ pub const GROUPS: &[MarkerGroup] = &[
             m("symbol-exclam", "❗", "Exclamation"),
             m("symbol-info", "ℹ", "Info"),
             m("symbol-wrong", "✖", "Wrong"),
-            m("symbol-right", "✔", "Right"),
+            m("symbol-right", "✔", "Correct"),
             m("symbol-like", "👍", "Like"),
             m("symbol-dislike", "👎", "Dislike"),
             m("symbol-idea", "💡", "Idea"),

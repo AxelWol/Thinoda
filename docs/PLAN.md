@@ -388,7 +388,25 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
-Start R0 with a clean CI/native baseline and focused Format Panel state investigation.
-Then deliver R1 command consistency and R2 shared sidebar navigation/visibility as
-the first implementation slice. Complete reference verification alongside that slice;
-do not launch implementation of all packages at once.
+First slice implemented (Windows x64 source verification):
+- R0 baseline: full `cargo xtask ci` passes, including canvas execution. Native
+  macOS/Linux/ARM64, screenshot fixtures and performance measurements remain.
+- Map-panel regression reproduced: theme cards extended beyond the sidebar.
+  A width-aware grid fixes the overflow; fixed Style/Map tabs and independent
+  scroll states prevent scrolling away the navigation or inheriting another tab's offset.
+- R2 foundation: one shared sidebar with Format and Symbols selectors. Existing
+  repeated-click hide/reopen behavior is retained, the Style/Map tab is remembered
+  within the session, and selection survives switching. Symbols use existing marker
+  groups and undo transactions; no-selection actions are disabled.
+- R1 integration for this slice: Symbols is wired through toolbar, View and command
+  palette; topic-style/property commands restore the formatting family.
+- Coverage: 32 main app e2e cases plus an isolated German-sidebar e2e case, including
+  theme click/undo, horizontal bounds, narrow/high-scale scrolling, repeated
+  hide/reopen and multi-topic marker replacement/removal/undo.
+- Rebuilt the Windows x64 release executable and NSIS installer. This slice has
+  headless UI verification; native verification of the new binary remains.
+
+Continue R1 command-availability consistency and R2 preferences/bottom controls,
+alongside reference verification. Sticker/Illustration/Pitch panes and persistent
+family/tab preferences are not implemented; assets/legend/custom groups/task-marker
+synchronization stay with R4/R7. No entire R0/R1/R2 package is complete.

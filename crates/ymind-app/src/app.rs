@@ -48,6 +48,7 @@ pub enum Cmd {
     ToggleOutliner,
     ToggleZen,
     ToggleFormatPanel,
+    ToggleSymbolsPanel,
     ToggleStatusBar,
     Find,
     FindReplace,
@@ -83,6 +84,12 @@ pub enum CenterMode {
 pub enum FormatTab {
     Style,
     Map,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarFamily {
+    Format,
+    Symbols,
 }
 
 /// What to do after the "save changes?" dialog.
@@ -134,6 +141,7 @@ pub struct YMindApp {
     pub mode: CenterMode,
     pub zen: bool,
     pub format_tab: FormatTab,
+    pub sidebar_family: SidebarFamily,
     pub toasts: Toasts,
     pub palette: CommandPalette,
     pub search: SearchState,
@@ -188,6 +196,7 @@ impl YMindApp {
             mode: CenterMode::Map,
             zen: false,
             format_tab: FormatTab::Style,
+            sidebar_family: SidebarFamily::Format,
             toasts: Toasts::default(),
             palette: CommandPalette::default(),
             search: SearchState::default(),
@@ -366,7 +375,19 @@ impl YMindApp {
                     self.toasts
                         .info(t("Open or select a map to show the Format Panel"));
                 } else {
-                    self.settings.show_format_panel = !self.settings.show_format_panel;
+                    self.settings.show_format_panel = !self.settings.show_format_panel
+                        || self.sidebar_family != SidebarFamily::Format;
+                    self.sidebar_family = SidebarFamily::Format;
+                    self.save_settings();
+                }
+            }
+            Cmd::ToggleSymbolsPanel => {
+                if self.doc().is_none() {
+                    self.toasts.info(t("Open or select a map to show Symbols"));
+                } else {
+                    self.settings.show_format_panel = !self.settings.show_format_panel
+                        || self.sidebar_family != SidebarFamily::Symbols;
+                    self.sidebar_family = SidebarFamily::Symbols;
                     self.save_settings();
                 }
             }
@@ -444,6 +465,7 @@ impl YMindApp {
                     self.mode = CenterMode::Map;
                     self.zen = false;
                     self.settings.show_format_panel = true;
+                    self.sidebar_family = SidebarFamily::Format;
                     self.format_tab = FormatTab::Style;
                     self.focus_field = Some(f);
                 }
@@ -452,6 +474,7 @@ impl YMindApp {
                 if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
                     self.zen = false;
                     self.settings.show_format_panel = true;
+                    self.sidebar_family = SidebarFamily::Format;
                     self.format_tab = FormatTab::Style;
                 }
             }
@@ -1092,6 +1115,7 @@ impl YMindApp {
                 "View",
             ),
             (Cmd::ToggleStatusBar, "Status Bar", "", "View"),
+            (Cmd::ToggleSymbolsPanel, "Symbols", "", "View"),
             (Cmd::Canvas(Action::ZoomIn), "Zoom In", "Ctrl++", "View"),
             (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "Ctrl+-", "View"),
             (

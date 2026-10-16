@@ -12,6 +12,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Find (Ctrl+F) and replace (Ctrl+H) in the active sheet, with undoable replacement
+- Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
+  click the active selector again to hide/reopen it. Map theme previews wrap to fit,
+  and Style/Map tabs stay visible while their contents scroll independently.
 - New-map Clarity theme: plain bold center, colored main topics, pale subtopics and
   thin connectors inspired by the supplied visual references; existing saved themes
   and per-topic style overrides remain unchanged.

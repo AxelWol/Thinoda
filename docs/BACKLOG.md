@@ -6,6 +6,12 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Fixed Map-panel theme cards overflowing outside the sidebar. Style/Map navigation
+  now stays above the scroll area, with separate scroll positions for each tab.
+- Shared Format/Symbol sidebar selectors, with remembered Style/Map tab and preserved
+  topic selection. Symbols reuse the existing catalog and undoable marker edits;
+  multiple selected topics, per-group replacement and removal are supported.
+  Sticker/Illustration/Pitch panes, legend/custom groups and task synchronization remain.
 - Entering Zen mode displays a localized toast explaining that F11 exits it.
 - Fixed the Windows Search crash caused by a dangling accessibility label reference.
 - Floating topic toolbar for AI expansion, subtopics, relationships, links, notes, to-dos and style.
@@ -248,8 +254,10 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   icon selects the Style ("Stil") / Pitch / Map family. Show the active family
   and active tab distinctly, using one shared sidebar region rather than six
   unrelated panes. Preserve topic selection while switching families/tabs.
-  Repeated-click collapse behavior and whether each family remembers its last tab
-  still need verification. Test both families, tab navigation and accessible names.
+  yMind retains its existing repeated-click hide/reopen behavior and remembers the
+  Style/Map tab within the session; switching families shows the target immediately.
+  Reference parity for these gestures still needs verification. Symbol content is
+  implemented; Sticker/Illustration/Pitch and their tab navigation remain.
 - P1 Style pane reference: topic-style preview/preset selector followed by grouped
   Shape (fill, border and width/fit), Text (font family, size, weight, color,
   emphasis and alignment), Structure, Branch (geometry, line/end style, thickness

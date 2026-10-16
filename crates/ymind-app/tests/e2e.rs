@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
-use ymind_app::app::{CloseIntent, Cmd, FocusField, Services, YMindApp};
+use egui_kittest::kittest::{NodeT, Queryable};
+use ymind_app::app::{CloseIntent, Cmd, FocusField, FormatTab, Services, SidebarFamily, YMindApp};
 use ymind_core::Workbook;
 use ymind_io::Format;
 use ymind_platform::paths::Paths;
@@ -48,6 +48,217 @@ fn rename_root(app: &mut YMindApp, title: &str) {
 fn root_title(wb: &Workbook) -> String {
     let s = &wb.sheets[0];
     s.topic(s.root).unwrap().title.clone()
+}
+
+#[test]
+fn map_panel_themes_fit_and_can_be_selected() {
+    let mut h = harness(YMindApp::headless());
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(4);
+    assert_eq!(h.state().format_tab, FormatTab::Map);
+    let map_tab = h.get_by_role_and_label(Role::Tab, "Map").rect();
+    assert!(h.state().doc().unwrap().view.canvas_rect().max.x <= map_tab.min.x);
+    for id in ymind_core::theme::Theme::IDS {
+        let theme = ymind_core::theme::Theme::builtin(id);
+        let rect = h.get_by_role_and_label(Role::Button, theme.name).rect();
+        assert!(
+            rect.min.x >= map_tab.min.x - map_tab.width(),
+            "{} left sidebar",
+            theme.name
+        );
+        assert!(rect.max.x <= 1280.0, "{} overflowed: {rect:?}", theme.name);
+    }
+    let ctx = h.ctx.clone();
+    let before = h.state().doc().unwrap().doc.sheet().theme.clone();
+    h.get_by_role_and_label(Role::Button, "Classic").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().theme.theme_id,
+        "classic"
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().theme, before);
+}
+
+#[test]
+fn map_tab_stays_reachable_after_scrolling_style_at_different_scales() {
+    for (width, scale) in [(640.0, 1.0), (1280.0, 1.0), (1280.0, 1.5)] {
+        let app = YMindApp::headless();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 800.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.ctx.set_pixels_per_point(scale);
+        h.run_steps(4);
+        let style = h.get_by_role_and_label(Role::Tab, "Style").rect();
+        h.event(egui::Event::PointerMoved(
+            style.center() + egui::vec2(0.0, 100.0),
+        ));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -1200.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(12);
+        let tab = h.get_by_role_and_label(Role::Tab, "Map").rect();
+        assert!(tab.min.y > 0.0 && tab.max.y < 800.0);
+        h.get_by_role_and_label(Role::Tab, "Map").click();
+        h.run_steps(4);
+        let tab = h.get_by_role_and_label(Role::Tab, "Map").rect();
+        let clarity = h.get_by_role_and_label(Role::Button, "Clarity").rect();
+        assert!(clarity.min.y >= tab.max.y && clarity.max.y < 800.0);
+        for id in ymind_core::theme::Theme::IDS {
+            let theme = ymind_core::theme::Theme::builtin(id);
+            let rect = h.get_by_role_and_label(Role::Button, theme.name).rect();
+            assert!(
+                rect.min.x >= tab.min.x - tab.width() && rect.max.x <= h.ctx.content_rect().right(),
+                "{width}/{scale}: {} overflowed: {rect:?}",
+                theme.name
+            );
+        }
+    }
+}
+
+#[test]
+fn sidebar_families_switch_hide_and_reopen_without_losing_selection() {
+    let mut h = harness(YMindApp::headless());
+    let selected = h.state().doc().unwrap().view.selection.clone();
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(3);
+    let ctx = h.ctx.clone();
+    for iteration in 0..3 {
+        if iteration == 1 {
+            h.state_mut().exec(&ctx, Cmd::ToggleOutliner);
+            h.run_steps(3);
+        }
+        let mode = h.state().mode;
+        h.get_by_role_and_label(Role::Button, "Symbols").click();
+        h.run_steps(3);
+        assert_eq!(h.state().sidebar_family, SidebarFamily::Symbols);
+        assert!(h.query_by_role_and_label(Role::Tab, "Map").is_none());
+        h.get_by_role_and_label(Role::Button, "Priority 1");
+        h.get_by_role_and_label(Role::Button, "Symbols").click();
+        h.run_steps(3);
+        assert!(!h.state().settings.show_format_panel);
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Priority 1")
+                .is_none()
+        );
+        h.get_by_role_and_label(Role::Button, "Symbols").click();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, "Priority 1");
+        h.get_by_role_and_label(Role::Button, "Format Panel")
+            .click();
+        h.run_steps(3);
+        assert_eq!(h.state().sidebar_family, SidebarFamily::Format);
+        assert!(h.state().settings.show_format_panel);
+        assert_eq!(h.state().format_tab, FormatTab::Map);
+        h.get_by_role_and_label(Role::Button, "Clarity");
+        assert_eq!(h.state().doc().unwrap().view.selection, selected);
+        assert_eq!(h.state().mode, mode);
+    }
+}
+
+#[test]
+fn symbols_insert_replace_remove_and_undo_for_selected_topics() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    let root = h.state().doc().unwrap().doc.sheet().root;
+    let child = h.state().doc().unwrap().doc.sheet().children(root)[0];
+    h.state_mut().doc_mut().unwrap().view.selection = vec![root, child];
+    h.get_by_role_and_label(Role::Button, "Symbols").click();
+    h.run_steps(3);
+    for (name, expected) in [
+        ("Priority 1", vec!["priority-1"]),
+        ("Priority 2", vec!["priority-2"]),
+        ("Priority 2", vec![]),
+    ] {
+        h.get_by_role_and_label(Role::Button, name).click();
+        h.run_steps(3);
+        for id in [root, child] {
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .topic(id)
+                    .unwrap()
+                    .markers,
+                expected
+            );
+        }
+    }
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    h.run_steps(3);
+    for id in [root, child] {
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(id)
+                .unwrap()
+                .markers,
+            vec!["priority-2"]
+        );
+    }
+    assert_eq!(h.state().doc().unwrap().view.selection, vec![root, child]);
+    h.state_mut().exec(&ctx, Cmd::TopicStyle);
+    h.run_steps(3);
+    assert_eq!(h.state().sidebar_family, SidebarFamily::Format);
+    assert_eq!(h.state().format_tab, FormatTab::Style);
+    h.state_mut().doc_mut().unwrap().view.selection = vec![root];
+    h.get_by_role_and_label(Role::Button, "Symbols").click();
+    h.run_steps(3);
+    h.state_mut()
+        .exec(&ctx, Cmd::EditField(FocusField::Hyperlink));
+    h.run_steps(4);
+    assert_eq!(h.state().sidebar_family, SidebarFamily::Format);
+    assert!(h.get_by_label("Hyperlink").is_focused());
+}
+
+#[test]
+fn symbols_disable_without_selection_and_explain_availability_on_home() {
+    let mut h = harness(YMindApp::headless());
+    h.get_by_role_and_label(Role::Button, "Symbols").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Priority 1").click();
+    h.run_steps(3);
+    let root = h.state().doc().unwrap().doc.sheet().root;
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(root)
+            .unwrap()
+            .markers,
+        vec!["priority-1"]
+    );
+    h.state_mut().doc_mut().unwrap().view.selection.clear();
+    h.run_steps(3);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Priority 1")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_label("Select a topic to add symbols.");
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Symbols").click();
+    h.run_steps(3);
+    h.get_by_label("Open or select a map to show Symbols");
+    assert!(h.state().settings.show_format_panel);
 }
 
 #[test]

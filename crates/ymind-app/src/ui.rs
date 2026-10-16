@@ -13,7 +13,9 @@ use ymind_platform::settings::{Language, ThemeMode as SettingsTheme};
 use ymind_ui::{DialogButton, Palette, Tokens, confirm_dialog, icons, widgets};
 
 use crate::{
-    app::{CenterMode, CloseIntent, Cmd, EXPORT_MENU, FocusField, FormatTab, YMindApp},
+    app::{
+        CenterMode, CloseIntent, Cmd, EXPORT_MENU, FocusField, FormatTab, SidebarFamily, YMindApp,
+    },
     i18n::{self, t},
 };
 
@@ -111,7 +113,7 @@ impl YMindApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| self.format_panel(ui));
+                            self.sidebar(ui);
                         });
                 }
             }
@@ -242,11 +244,25 @@ impl YMindApp {
                     ui,
                     icons::FORMAT,
                     t("Format Panel"),
-                    self.doc().is_some() && self.settings.show_format_panel,
+                    self.doc().is_some()
+                        && self.settings.show_format_panel
+                        && self.sidebar_family == SidebarFamily::Format,
                 )
                 .clicked()
                 {
                     cmd = Some(Cmd::ToggleFormatPanel);
+                }
+                if widgets::icon_button(
+                    ui,
+                    icons::MARKER,
+                    t("Symbols"),
+                    self.doc().is_some()
+                        && self.settings.show_format_panel
+                        && self.sidebar_family == SidebarFamily::Symbols,
+                )
+                .clicked()
+                {
+                    cmd = Some(Cmd::ToggleSymbolsPanel);
                 }
                 ui.menu_button(RichText::new(icons::EXPORT), |ui| {
                     for f in EXPORT_MENU {
@@ -412,6 +428,7 @@ impl YMindApp {
                 ("Outliner", "Ctrl+Shift+O", Cmd::ToggleOutliner),
                 ("Zen Mode", "F11", Cmd::ToggleZen),
                 ("Format Panel", "Ctrl+Shift+R", Cmd::ToggleFormatPanel),
+                ("Symbols", "", Cmd::ToggleSymbolsPanel),
                 ("Status Bar", "", Cmd::ToggleStatusBar),
                 ("Zoom In", "Ctrl++", Cmd::Canvas(Action::ZoomIn)),
                 ("Zoom Out", "Ctrl+-", Cmd::Canvas(Action::ZoomOut)),
@@ -1242,6 +1259,64 @@ impl YMindApp {
 
     // ----- format panel -------------------------------------------------------------------------
 
+    fn sidebar(&mut self, ui: &mut Ui) {
+        match self.sidebar_family {
+            SidebarFamily::Format => self.format_panel(ui),
+            SidebarFamily::Symbols => {
+                ui.heading(t("Symbols"));
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("symbols_scroll")
+                    .show(ui, |ui| self.symbols_panel(ui));
+            }
+        }
+    }
+
+    fn symbols_panel(&mut self, ui: &mut Ui) {
+        let selection = self
+            .doc()
+            .map(|d| d.view.selection.clone())
+            .unwrap_or_default();
+        if selection.is_empty() {
+            widgets::caption(ui, t("Select a topic to add symbols."));
+        } else {
+            widgets::caption(ui, t("Click a symbol to add or remove it. One per group."));
+        }
+        let mut command = None;
+        for group in markers::GROUPS {
+            widgets::section(ui, t(group.name), true, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for marker in group.markers {
+                        let selected = !selection.is_empty()
+                            && self.doc().is_some_and(|d| {
+                                selection.iter().all(|id| {
+                                    d.doc.sheet().topic(*id).is_some_and(|topic| {
+                                        topic.markers.iter().any(|m| m == marker.id)
+                                    })
+                                })
+                            });
+                        let response = ui
+                            .add_enabled(
+                                !selection.is_empty(),
+                                egui::Button::new(RichText::new(marker.glyph).size(20.0))
+                                    .selected(selected)
+                                    .min_size(vec2(32.0, 32.0)),
+                            )
+                            .accessible_name(t(marker.name))
+                            .on_hover_text(t(marker.name));
+                        if response.clicked() {
+                            command = Some(Cmd::Canvas(Action::ToggleMarker(marker.id.into())));
+                        }
+                    }
+                });
+            });
+        }
+        if let Some(command) = command {
+            let ctx = ui.ctx().clone();
+            self.exec(&ctx, command);
+        }
+    }
+
     fn format_panel(&mut self, ui: &mut Ui) {
         let mut tab = self.format_tab;
         widgets::segmented(
@@ -1251,10 +1326,23 @@ impl YMindApp {
         );
         self.format_tab = tab;
         ui.add_space(8.0);
-        match tab {
-            FormatTab::Style => self.style_tab(ui),
-            FormatTab::Map => self.map_tab(ui),
-        }
+        egui::ScrollArea::vertical()
+            .id_salt(match tab {
+                FormatTab::Style => "style_scroll",
+                FormatTab::Map => "map_scroll",
+            })
+            .show(ui, |ui| {
+                ui.push_id(
+                    match tab {
+                        FormatTab::Style => "style_content",
+                        FormatTab::Map => "map_content",
+                    },
+                    |ui| match tab {
+                        FormatTab::Style => self.style_tab(ui),
+                        FormatTab::Map => self.map_tab(ui),
+                    },
+                );
+            });
     }
 
     fn style_tab(&mut self, ui: &mut Ui) {
@@ -1537,55 +1625,71 @@ impl YMindApp {
         });
 
         widgets::section(ui, t("Theme"), true, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for id in Theme::IDS {
-                    let th = Theme::builtin(id);
-                    let selected = ts.theme_id == id;
-                    let r = widgets::card(ui).show(ui, |ui| {
-                        ui.set_width(104.0);
-                        let (rect, _) = ui.allocate_exact_size(vec2(100.0, 34.0), Sense::hover());
-                        let painter = ui.painter();
-                        painter.rect_filled(rect, CornerRadius::same(4), from_color(th.light_bg));
-                        let c = rect.center();
-                        painter.rect_filled(
-                            egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
-                            CornerRadius::same(3),
-                            from_color(th.central_fill),
-                        );
-                        for (k, col) in th.palette.iter().take(4).enumerate() {
-                            let x = if k % 2 == 0 {
-                                rect.left() + 14.0
-                            } else {
-                                rect.right() - 14.0
-                            };
-                            let y = if k < 2 {
-                                rect.top() + 9.0
-                            } else {
-                                rect.bottom() - 9.0
-                            };
+            let columns = ((ui.available_width() + 8.0) / 126.0).floor().max(1.0) as usize;
+            egui::Grid::new("sheet_themes")
+                .num_columns(columns)
+                .spacing(vec2(8.0, 8.0))
+                .show(ui, |ui| {
+                    for (index, id) in Theme::IDS.into_iter().enumerate() {
+                        let th = Theme::builtin(id);
+                        let selected = ts.theme_id == id;
+                        let r = widgets::card(ui).show(ui, |ui| {
+                            ui.set_width(104.0);
+                            let (rect, _) =
+                                ui.allocate_exact_size(vec2(100.0, 34.0), Sense::hover());
+                            let painter = ui.painter();
                             painter.rect_filled(
-                                egui::Rect::from_center_size(egui::pos2(x, y), vec2(18.0, 7.0)),
-                                CornerRadius::same(2),
-                                from_color(*col),
+                                rect,
+                                CornerRadius::same(4),
+                                from_color(th.light_bg),
+                            );
+                            let c = rect.center();
+                            painter.rect_filled(
+                                egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
+                                CornerRadius::same(3),
+                                from_color(th.central_fill),
+                            );
+                            for (k, col) in th.palette.iter().take(4).enumerate() {
+                                let x = if k % 2 == 0 {
+                                    rect.left() + 14.0
+                                } else {
+                                    rect.right() - 14.0
+                                };
+                                let y = if k < 2 {
+                                    rect.top() + 9.0
+                                } else {
+                                    rect.bottom() - 9.0
+                                };
+                                painter.rect_filled(
+                                    egui::Rect::from_center_size(egui::pos2(x, y), vec2(18.0, 7.0)),
+                                    CornerRadius::same(2),
+                                    from_color(*col),
+                                );
+                            }
+                            ui.label(RichText::new(th.name).small());
+                        });
+                        let r =
+                            ui.interact(r.response.rect, ui.scope_id().with(id), Sense::click());
+                        r.widget_info(|| {
+                            egui::WidgetInfo::selected(egui::Role::Button, true, selected, th.name)
+                        });
+                        if selected {
+                            ui.painter().rect_stroke(
+                                r.rect,
+                                CornerRadius::same(8),
+                                Stroke::new(2.0, d.view.accent),
+                                egui::StrokeKind::Outside,
                             );
                         }
-                        ui.label(RichText::new(th.name).small());
-                    });
-                    let r = ui.interact(r.response.rect, ui.scope_id().with(id), Sense::click());
-                    if selected {
-                        ui.painter().rect_stroke(
-                            r.rect,
-                            CornerRadius::same(8),
-                            Stroke::new(2.0, d.view.accent),
-                            egui::StrokeKind::Outside,
-                        );
+                        if r.clicked() {
+                            ts.theme_id = id.to_string();
+                            ts.variant = 0;
+                        }
+                        if (index + 1) % columns == 0 {
+                            ui.end_row();
+                        }
                     }
-                    if r.clicked() {
-                        ts.theme_id = id.to_string();
-                        ts.variant = 0;
-                    }
-                }
-            });
+                });
             let th = Theme::builtin(&ts.theme_id);
             widgets::property_field(ui, t("Color Variant"), |ui| {
                 egui::ComboBox::from_id_salt("variant")
