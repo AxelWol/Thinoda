@@ -190,7 +190,8 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
    Existing detach gestures are retained and supported by the official guides.
    Delivered shared insertion-slot/connector previews, atomic sibling ordering and
    persistent manual main-branch sides with Style Auto/Left/Right alternatives.
-   Remaining: Flexible Floating Topics parity, public XMind side interchange and
+   Delivered per-sheet Flexible Floating Topics with safe free placement and
+   conversion gating. Remaining: public XMind side interchange and
    native reference comparison.
 2. Delivered relationship endpoint reconnect, Bezier handles/guides and a dedicated
    Style editor without replacing relationship colors with selection color.
@@ -399,6 +400,16 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R3 Flexible Floating Topics delivered: the undoable per-sheet Advanced Layout
+switch defaults off for old maps. Enabled floating roots can overlap topics
+without attaching; attached roots retain reparent/reorder but cannot detach onto
+blank space. Mixed floating/attached selections fail explicitly without partial
+moves. EN/DE control, per-sheet isolation, native/XMind snapshot persistence,
+zoom/pointer behavior, one-step undo and stale-setting cancellation are covered.
+This is not collision avoidance or Branch Free-Positioning; those remain open.
+All 344 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with the setting and drag behavior.
+
 R3 hierarchy insertion/side delivery: attached-topic outer quarters choose sibling
 slots along the connector axis and centers retain reparenting. Shared target data
 drives the accent insertion line, proposed connector and atomic multi-topic move;
@@ -412,7 +423,7 @@ round trips preserve sides; no speculative public XMind direction field was adde
 All 340 workspace cases and all-target clippy pass with live AI disabled. Coverage
 includes every structure's slot axis, multi-topic insert positions, exact pointer
 commit at multiple zooms, side persistence/reset, old serde defaults, native/XMind
-reopening and German UI. Flexible floating settings and native gesture QA remain open.
+reopening and German UI. Native gesture QA remains open.
 Windows EXE/NSIS rebuilt with insertion ordering and branch-side persistence.
 
 R3 relationship creation parity delivered from the official Floating Topic guide:

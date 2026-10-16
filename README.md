@@ -48,8 +48,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   are highlighted; self/descendant and outside-canvas drops are rejected visibly.
   Escape, popups and stale document/selection changes cancel without edits.
   Viewport-edge auto-pan keeps the ghost under the pointer. Dropping on a parent
-  appends once and expands it; blank drops retain the existing detach-to-floating
-  behavior. Outer quarters of attached topics select before/after sibling slots,
+  appends once and expands it; blank drops detach to floating by default.
+  Map > Advanced Layout > Flexible Floating Topics lets floating roots overlap
+  topics without attaching, and prevents attached topics from detaching into blank
+  space. Move mixed floating/attached selections separately in this mode. The
+  per-sheet setting is undoable and defaults off for existing maps.
+  Outer quarters of attached topics select before/after sibling slots,
   with a highlighted insertion line and proposed connector. Split-map root drops
   choose the pointer's left/right side; Style > Branch side offers Auto/Left/Right
   for main topics. Explicit sides survive balancing and sibling additions. Native

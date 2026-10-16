@@ -282,4 +282,21 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
             .branch_side,
         Some(ymind_core::BranchSide::Left)
     );
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Switch, "Flexible freie Themen")
+        .scroll_to_me();
+    h.run_steps(6);
+    h.get_by_role_and_label(Role::Switch, "Flexible freie Themen")
+        .click();
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .theme
+            .flexible_floating_topics
+    );
 }

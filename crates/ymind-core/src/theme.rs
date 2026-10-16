@@ -21,6 +21,9 @@ pub struct ThemeSettings {
     pub rainbow: bool,
     /// Use the subtree heights to balance left/right in map structures.
     pub balanced: bool,
+    /// Floating roots move freely without attaching; attached topics do not detach on blank drops.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flexible_floating_topics: bool,
     /// Taper branch lines (thicker near the center).
     pub tapered_lines: bool,
     /// Override global font family.
@@ -37,6 +40,7 @@ impl Default for ThemeSettings {
             background: None,
             rainbow: true,
             balanced: false,
+            flexible_floating_topics: false,
             tapered_lines: true,
             font_family: None,
             spacing: 1.0,

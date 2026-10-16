@@ -6,6 +6,16 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Flexible Floating Topics: undoable per-sheet Map > Advanced Layout switch
+  (EN/DE). Floating roots move freely over topics without attaching; attached
+  topics still reparent/reorder, but blank-space detachment requires switching it
+  off. Mixed floating/attached moves report an error without partial changes.
+  Defaults off for old maps; native and unchanged yMind XMind snapshots preserve
+  the setting. Pointer/zoom, undo, sheet isolation, stale-drag cancellation and
+  German controls are covered. Separate Topic Overlap/collision behavior and
+  Branch Free-Positioning remain open.
+  Sources: https://xmind.com/user-guide/advanced-layout-new ,
+  https://xmind.com/user-guide/floating-topic
 - XMind external-edit coherence: lossless private snapshots are bound to canonical
   public `content.json` with SHA-256. Changed public maps take precedence over stale
   metadata, including topic/sheet deletion and replacement; JSON formatting changes
@@ -448,7 +458,8 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   cancellation, undo/redo, zoom/pan coordinates and viewport-edge auto-pan, plus
   a keyboard alternative. Official Topic/Floating Topic guides confirm dragging
   regular topics to blank space and floating topics back into branches; existing
-  yMind gestures are retained. Flexible Floating Topics setting parity remains open.
+  yMind gestures are retained, with the optional Flexible Floating Topics setting
+  now controlling free floating placement and conversion (see Recently completed).
   Sources: https://xmind.com/user-guide/topic-editing-new ,
   https://xmind.com/user-guide/floating-topic
 - P1 Reference styling: plain bold central topic, rounded colored main topics,

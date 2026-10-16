@@ -2272,6 +2272,22 @@ impl YMindApp {
             });
         });
 
+        widgets::section(ui, t("Advanced Layout"), true, |ui| {
+            widgets::property_field(ui, t("Flexible Floating Topics"), |ui| {
+                widgets::toggle(
+                    ui,
+                    &mut ts.flexible_floating_topics,
+                    t("Flexible Floating Topics"),
+                )
+            });
+            widgets::caption(
+                ui,
+                t(
+                    "Place floating topics without attaching. Turn off to convert between attached and floating topics.",
+                ),
+            );
+        });
+
         widgets::section(ui, t("Background"), true, |ui| {
             ui.horizontal(|ui| {
                 if ui

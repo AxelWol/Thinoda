@@ -52,6 +52,8 @@ fn manual_sides_override_automatic_balancing_and_preserve_controls() {
 
 #[test]
 fn side_reset_undo_and_legacy_serialization_are_compatible() {
+    let legacy_theme: ymind_core::theme::ThemeSettings = serde_json::from_str("{}").unwrap();
+    assert!(!legacy_theme.flexible_floating_topics);
     let mut sheet = Sheet::new("Sides", "Center");
     let root = sheet.root;
     let child = sheet.insert_child(root, "Main").unwrap();

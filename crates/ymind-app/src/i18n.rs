@@ -561,6 +561,12 @@ const DE: &[(&str, &str)] = &[
     ("Floating Topic", "Freies Thema"),
     ("Relationship", "Beziehung"),
     ("Branch side", "Zweigseite"),
+    ("Advanced Layout", "Erweitertes Layout"),
+    ("Flexible Floating Topics", "Flexible freie Themen"),
+    (
+        "Place floating topics without attaching. Turn off to convert between attached and floating topics.",
+        "Freie Themen ohne Verknüpfung platzieren. Zum Umwandeln zwischen angehängten und freien Themen ausschalten.",
+    ),
     ("Relationship start", "Beziehungsanfang"),
     ("Relationship end", "Beziehungsende"),
     ("First curve control", "Erster Kurvengriff"),

@@ -401,3 +401,103 @@ fn edge_autopan_is_bounded_and_keeps_ghost_under_stationary_pointer() {
     h.run_steps(2);
     assert_eq!(h.state().doc.workbook(), &before);
 }
+
+#[test]
+fn flexible_floating_topics_overlap_targets_without_attachment_at_each_zoom() {
+    for zoom in [0.5, 1.0, 2.0] {
+        let mut h = harness(zoom);
+        h.state_mut()
+            .doc
+            .edit_sheet("Flexible", |s| {
+                s.theme.flexible_floating_topics = true;
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(2);
+        let (source, target) = (h.state().source, h.state().target);
+        let end = center(&mut h, target);
+        let before = h.state().doc.workbook().clone();
+        start_drag(&mut h, source, end);
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(!h.output().shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::LineSegment { stroke, .. } if stroke.width == 3.0 && stroke.color == h.state().view.accent
+        )));
+        h.drop_at(end);
+        h.run_steps(2);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        let s = h.state_mut();
+        assert!(s.doc.sheet().is_floating(source));
+        assert_eq!(s.doc.sheet().relationships, before.sheets[0].relationships);
+        let actual = s
+            .view
+            .xf()
+            .pos(s.doc.sheet().topic(source).unwrap().position.unwrap());
+        assert!((actual - end).length() < 0.01);
+        assert!(s.doc.undo());
+        assert_eq!(s.doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn flexible_mode_rejects_detach_and_mixed_root_moves_but_allows_regular_reparenting() {
+    for how in 0..3 {
+        let mut h = harness(1.0);
+        let (source, child, target) = (h.state().source, h.state().child, h.state().target);
+        h.state_mut()
+            .doc
+            .edit_sheet("Flexible", |s| {
+                s.theme.flexible_floating_topics = true;
+                Ok(())
+            })
+            .unwrap();
+        if how == 1 {
+            h.state_mut().view.selection = vec![child, target];
+        } else {
+            h.state_mut().view.select_only(child);
+        }
+        h.run_steps(2);
+        let start = center(&mut h, child);
+        let end = if how == 0 {
+            start + vec2(-100.0, -100.0)
+        } else {
+            center(&mut h, target)
+        };
+        let before = h.state().doc.workbook().clone();
+        start_drag(&mut h, child, end);
+        h.drop_at(end);
+        h.run_steps(2);
+        if how == 2 {
+            assert_eq!(h.state().doc.sheet().parent(child), Some(target));
+            assert!(h.state().doc.sheet().is_floating(source));
+            assert!(h.state().errors.is_empty());
+            assert!(h.state_mut().doc.undo());
+        } else {
+            assert!(
+                !h.state().errors.is_empty(),
+                "mode {how} needs a visible error"
+            );
+        }
+        assert_eq!(h.state().doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn changing_flexible_setting_during_drag_cancels_without_committing_stale_target() {
+    let mut h = harness(1.0);
+    let (source, target) = (h.state().source, h.state().target);
+    let end = center(&mut h, target);
+    start_drag(&mut h, source, end);
+    h.state_mut()
+        .doc
+        .edit_sheet("Flexible", |s| {
+            s.theme.flexible_floating_topics = true;
+            Ok(())
+        })
+        .unwrap();
+    let before = h.state().doc.workbook().clone();
+    h.drop_at(end);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(matches!(h.state().view.drag, Drag::None));
+    assert!(!h.state().errors.is_empty());
+}

@@ -59,7 +59,33 @@ pub(crate) fn target(
     members: &BTreeSet<TopicId>,
     at: Vec2,
 ) -> Result<Option<DropTarget>, EditError> {
+    if sheet.theme.flexible_floating_topics {
+        let roots: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|id| {
+                sheet
+                    .parent(*id)
+                    .is_none_or(|parent| !members.contains(&parent))
+                    && sheet.summary_for_topic(*id).is_none()
+            })
+            .collect();
+        let floating = roots.iter().filter(|id| sheet.is_floating(**id)).count();
+        if floating > 0 && floating < roots.len() {
+            return Err(EditError::Invalid(
+                "move floating and attached topics separately while Flexible Floating Topics is enabled".into(),
+            ));
+        }
+        if floating > 0 {
+            return Ok(None);
+        }
+    }
     let Some(topic) = layout.hit_test(at) else {
+        if sheet.theme.flexible_floating_topics {
+            return Err(EditError::Invalid(
+                "disable Flexible Floating Topics to detach a topic into blank space".into(),
+            ));
+        }
         return Ok(None);
     };
     if members.contains(&topic) {
@@ -260,6 +286,9 @@ pub(crate) fn paint(
         },
     );
     let target = target(sheet, layout, members, current);
+    if matches!(target, Ok(None)) {
+        return;
+    }
     let Some(topic) = layout.hit_test(current) else {
         return;
     };

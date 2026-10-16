@@ -8,6 +8,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 fn sample() -> Workbook {
     let mut s = Sheet::new("First sheet", "Central & topic");
+    s.theme.flexible_floating_topics = true;
     let a = s.add_child(s.root, None, "Branch <A>");
     let b = s.add_child(s.root, None, "Branch B");
     let child = s.add_child(a, None, "Nested");
