@@ -397,6 +397,25 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R3 relationship creation parity delivered from the official Floating Topic guide:
+two selected topics connect immediately; a single selected source can connect to an
+existing target or create a floating target by clicking blank canvas. The latter
+opens localized title editing and commits creation/connection in one transaction.
+Invalid sources roll back both operations; self-target errors are visible. Escape,
+outside clicks and rapid double-clicks do not create unintended extra topics.
+The EN/DE hint describes both target choices and is omitted for immediate two-topic
+connections. Six canvas cases plus two app integration cases cover creation, exact
+camera coordinates, undo/redo, errors and toolbar/command wiring.
+
+Latest release-candidate checks pass: workspace formatting, all-target clippy and
+all 330 workspace cases, including both CLI subprocess cases and isolated German UI.
+Live AI tests are disabled with `YMIND_AI_SKIP_LIVE=1`; service authorization and
+native installation/accessibility QA are not implied by these results. Earlier
+Application Control blocks below are historical, not a failure of this latest run;
+no system policy was changed or bypassed.
+Windows EXE/NSIS were rebuilt with relationship editing, subtree drag feedback and
+the completed relationship-creation flows.
+
 R3 hierarchy-drag feedback delivered: the complete visible owned subtree is painted
 at 55% opacity while its source is dimmed, including Summary trees, boundaries and
 internal relationships. External relationships stay on the original sheet and

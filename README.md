@@ -67,6 +67,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   control coordinates, with Reset curve restoring automatic routing. Native files
   and unchanged yMind-exported XMind files preserve custom routing; public XMind
   curve-control interoperability remains unfinished.
+- Relationship creation connects exactly two selected topics immediately. With one
+  source selected, pick an existing target or click blank canvas to create a connected
+  floating topic and edit its title. Creation and connection undo together; Escape
+  cancels picking, and failed connections leave no orphan topic.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.

@@ -132,3 +132,82 @@ fn invalid_curve_text_non_finite_and_out_of_range_values_surface_errors_without_
         }
     }
 }
+
+#[test]
+fn relationship_command_connects_two_selected_topics_without_target_picking() {
+    let mut h = harness();
+    let d = h.state_mut().doc_mut().unwrap();
+    let source = d.doc.sheet().root;
+    let target = d
+        .doc
+        .sheet()
+        .topics
+        .values()
+        .find(|t| t.title == "Alternative")
+        .unwrap()
+        .id;
+    d.view.selected_object = None;
+    d.view.selection = vec![source, target];
+    let before = d.doc.workbook().clone();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(Action::StartRelationship));
+    h.run_steps(2);
+    let d = h.state().doc().unwrap();
+    assert_eq!(
+        d.doc.sheet().relationships.len(),
+        before.sheets[0].relationships.len() + 1
+    );
+    let relationship = d.doc.sheet().relationships.last().unwrap();
+    assert_eq!((relationship.from, relationship.to), (source, target));
+    assert!(d.view.relationship_from.is_none());
+    assert_eq!(
+        d.view.selected_object,
+        Some(ObjectSelection::Relationship(relationship.id))
+    );
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+}
+
+#[test]
+fn relationship_toolbar_creates_connected_floating_targets_on_blank_canvas() {
+    let mut h = harness();
+    let source = h.state().doc().unwrap().doc.sheet().root;
+    h.state_mut().doc_mut().unwrap().view.select_only(source);
+    h.run_steps(3);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.get_by_label("Connect topics").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().view.relationship_from,
+        Some(source)
+    );
+    let point = h.state().doc().unwrap().view.canvas_rect().left_top() + egui::vec2(120.0, 100.0);
+    h.hover_at(point);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    let d = h.state().doc().unwrap();
+    assert_eq!(
+        d.doc.sheet().floating.len(),
+        before.sheets[0].floating.len() + 1
+    );
+    assert_eq!(
+        d.doc.sheet().relationships.len(),
+        before.sheets[0].relationships.len() + 1
+    );
+    let relationship = d.doc.sheet().relationships.last().unwrap();
+    assert_eq!(relationship.from, source);
+    assert_eq!(d.view.editing_topic(), Some(relationship.to));
+    assert!(d.doc.sheet().is_floating(relationship.to));
+    assert!(d.view.relationship_from.is_none());
+    assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+}

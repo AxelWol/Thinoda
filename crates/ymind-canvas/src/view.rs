@@ -780,6 +780,7 @@ impl MapCanvas {
         }
 
         // ---- clicks --------------------------------------------------------------------
+        let editing_before_click = view.editing.is_some();
         let mods = ctx.input(|i| i.modifiers);
         if response.clicked()
             && !over_handle
@@ -793,13 +794,11 @@ impl MapCanvas {
             } else if let Some(t) = layout.hit_test(sp) {
                 let tl = &layout.topics[&t];
                 if let Some(from) = view.relationship_from.take() {
-                    if from != t {
-                        match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
-                            Ok(r) => {
-                                view.select_object(ObjectSelection::Relationship(r));
-                            }
-                            Err(e) => out.error = Some(e),
+                    match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
+                        Ok(r) => {
+                            view.select_object(ObjectSelection::Relationship(r));
                         }
+                        Err(e) => out.error = Some(e),
                     }
                 } else if tl.todo_rect.is_some_and(|r| r.expand(2.0).contains(sp)) {
                     let cur = doc.sheet().topic(t).and_then(|x| x.todo);
@@ -826,14 +825,27 @@ impl MapCanvas {
                 view.select_object(object);
             } else {
                 view.commit_edit(doc);
-                view.relationship_from = None;
-                if !(mods.command || mods.shift) {
+                if let Some(from) = view.relationship_from.take() {
+                    let title = view.titles.floating.clone();
+                    match doc.edit_sheet("Add Connected Floating Topic", |s| {
+                        let target = s.add_floating(title, sp);
+                        s.add_relationship(from, target)?;
+                        Ok(target)
+                    }) {
+                        Ok(target) => {
+                            view.select_only(target);
+                            view.begin_edit(doc.sheet(), target, true);
+                        }
+                        Err(e) => out.error = Some(e),
+                    }
+                } else if !(mods.command || mods.shift) {
                     view.selection.clear();
                     view.selected_object = None;
                 }
             }
         }
         if response.double_clicked()
+            && !editing_before_click
             && !over_handle
             && !press_on_handle
             && let Some(p) = response.interact_pointer_pos()
@@ -1397,6 +1409,10 @@ fn screen_pos(view: &MapView, p: Vec2) -> Pos2 {
 #[cfg(test)]
 #[path = "topic_drag_tests.rs"]
 mod topic_drag_tests;
+
+#[cfg(test)]
+#[path = "relationship_creation_tests.rs"]
+mod relationship_creation_tests;
 
 #[cfg(test)]
 mod tests {

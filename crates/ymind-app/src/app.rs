@@ -683,12 +683,13 @@ impl YMindApp {
             self.toasts.warning(t("Not possible here"));
             return;
         }
-        if action == Action::StartRelationship {
-            self.toasts
-                .info(t("Pick the target topic for the relationship"));
-        }
+        let starting_relationship = action == Action::StartRelationship;
         match apply_action(&mut d.doc, &mut d.view, action) {
-            Ok(_) => {}
+            Ok(_) => {
+                if starting_relationship && d.view.relationship_from.is_some() {
+                    self.toasts.info(t("Pick a target topic, or click blank space to create a connected floating topic"));
+                }
+            }
             Err(e) => {
                 log::debug!("action failed: {e}");
                 self.toasts.warning(t("Not possible here"));

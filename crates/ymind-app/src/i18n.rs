@@ -749,8 +749,8 @@ const DE: &[(&str, &str)] = &[
     ("Copied", "Kopiert"),
     ("Not possible here", "Hier nicht möglich"),
     (
-        "Pick the target topic for the relationship",
-        "Zielthema für die Beziehung wählen",
+        "Pick a target topic, or click blank space to create a connected floating topic",
+        "Zielthema wählen oder auf eine freie Stelle klicken, um ein verbundenes freies Thema zu erstellen",
     ),
     // About
     ("Version", "Version"),

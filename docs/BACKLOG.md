@@ -455,7 +455,11 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   Support create/rename/move/resize/delete with undo; define presentation ordering,
   framing/zoom and Pitch navigation. Keep zones distinct from topic boundaries and
   test relationships crossing zone edges. The screenshot establishes appearance;
-  clipping, membership and navigation semantics still need verification.
+  clipping and navigation semantics still need verification. The official Floating
+  Topic guide restricts topic grouping into Zones to floating topics; central topics
+  and their subtopics cannot be included. Preserve that distinction when defining
+  membership, rather than treating Zones as ordinary boundaries.
+  Source: https://xmind.com/user-guide/floating-topic
 - Implemented Relationships: retain the branch/custom color when selected; use a separate
   selection overlay with circular endpoint anchors, square Bezier control handles
   and thin guide lines. Endpoint reconnection and relative Bezier reshaping preview
@@ -468,6 +472,14 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   zoom/pan settings, including large curves. Native files and unchanged yMind XMind
   exports preserve routing through the validated snapshot. Public XMind control-point
   interchange and actual native keyboard/accessibility QA remain open.
+- Implemented relationship creation parity from the official Floating Topic guide:
+  exactly two selected topics connect immediately; one selected source starts picking
+  an existing topic or a blank canvas location. Blank locations create a localized
+  floating topic and its relationship atomically, then open title editing. Escape/
+  outside clicks do not create targets; missing sources and self-targets fail visibly without
+  orphan topics, and rapid double-clicks do not create a second topic. Six canvas
+  cases and two app cases cover these flows, camera coordinates and one-step undo.
+  Source: https://xmind.com/user-guide/floating-topic
 - P2 Floating topics: match rounded colored cards and dashed colored relationships.
   Match the separate dashed gray rounded boundary around a floating topic shown in
   the reference; do not conflate a document boundary with a transient selection outline.

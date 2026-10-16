@@ -521,7 +521,12 @@ pub fn apply_action(
             })?;
         }
         Action::StartRelationship => {
-            view.relationship_from = primary;
+            if let [from, to] = sel.as_slice() {
+                let id = doc.edit_sheet("Add Relationship", |s| s.add_relationship(*from, *to))?;
+                view.select_object(ObjectSelection::Relationship(id));
+            } else {
+                view.relationship_from = primary;
+            }
         }
         Action::AddBoundary => {
             doc.edit_sheet("Add Boundary", |s| s.add_boundary(&sel))?;
