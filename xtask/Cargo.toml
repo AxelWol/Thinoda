@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[dependencies]
+anyhow.workspace = true
+image = { workspace = true, features = ["ico"] }
+resvg.workspace = true

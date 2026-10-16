@@ -119,3 +119,77 @@ work breakdown, chat), MCP server / CLI.
 | Settings | Ctrl+Shift+P (⌘,) |
 | Next / previous sheet | Ctrl+Tab / Ctrl+Shift+Tab |
 | Navigate | Arrow keys |
+
+## 9. Website feature pages (xmind.com screenshots, Oct 2026)
+
+### Structure page ("Built for thinkers, not just drawers")
+* Structures showcased: **Zone** (focused areas for exploration, mixes structures), Mind Map, **Matrix** (rows × columns),
+  Logic Chart, **Timeline** (horizontal/vertical), **Tree Table**, Tree Chart, Org Chart.
+* **Skeleton**: pick logic + look up-front (structure presets with visual skeleton previews).
+* **Smart Color Theme**: palette tabs (Favorite/My Colors/Colorful/Classic), auto-contrast between text and background.
+* **Custom Theme** (user-defined theme: structure, shape, colors) and **Quick Style** (one-click polished presets).
+* Toolbox: **To-Do (Task)** with progress, **Topic Link** (jump to another topic/sheet), Summary, Boundary,
+  Relationship, **Marker and Sticker**, Label, Note.
+
+### Project management page
+* **AI Work Breakdown** (split a topic into actionable tasks), **Task** panel (assignee, start/due date, progress,
+  priority, duration), **Project working days / non-working days** calendar, **Gantt chart** view synced with the map,
+  Pitch mode for status updates, Spaces to organize projects.
+
+### Integration page
+* AI tools: ChatGPT plugin, **Xmind MCP server** (create/read/update maps from AI agents), **Skills & CLI**.
+* Import: Markdown, OPML, TextBundle, other mind-map apps (drag & drop a file to import).
+* **Web clipper** (capture web pages/Google Docs into maps).
+* Collaboration integrations: Slack, Zoom, Notion embed (share links).
+* **Cloud storage**: Google Drive, Dropbox, OneDrive, Box... via an "External Storage" dialog.
+* Export & sharing: Word, PDF, PowerPoint, images; share to email, Facebook, Twitter, Pinterest, blogs.
+
+### Collaboration page
+* Real-time co-editing with live cursors, cross-device sync (desktop, web, iOS, Android), share links with
+  view/edit permissions and optional password, **comments** on topics (threads, resolve), team workspaces & spaces.
+
+### Security page
+* AES-128 file encryption (password-protected files), ISO 27001 / SOC 2 Type II (cloud service), SAML SSO for teams.
+
+**yMind implications:** Zone, Matrix, Tree Table, Gantt, Task panel, comments, topic links, stickers, password
+encryption, an MCP server/CLI and cloud-provider folders are tracked in `docs/PLAN.md` / `docs/BACKLOG.md`.
+Server-side features (real-time collaboration, SSO, compliance certifications) are out of scope for the desktop
+MVP and live in the backlog.
+
+## 10. Solutions pages (use cases)
+
+* **Time management**: Eisenhower matrix (urgent/important quadrants), priority markers, labels and colors to group
+  tasks, "Generate as to-dos" (AI converts branches into tasks), templates (Personal SWOT, Eisenhower, Ansoff).
+* **Presentations**: Pitch Mode turns the map into slides automatically (one branch per slide), with pitch themes
+  and aspect ratios, transitions, and export to PowerPoint, PDF or video. The structure picker drives the slide layout.
+* **Education/learning**: curriculum maps, study plans as to-dos, notes alongside structured topics, and shared
+  maps for research groups.
+* **Brainstorming**: AI-assisted idea expansion, "Brainstorm" boards (cards grouped in columns) organized into a
+  mind map in one click, and shared co-ideation.
+* **Collaboration**: team workspaces, share links, comments, and co-editing.
+* **Strategic planning**: goal → strategy → action breakdown, to-dos, and fishbone/SWOT templates.
+* Common flow on every page: start blank or from a template (or AI prompt) → structure → style → share → export
+  (PDF/PNG/PowerPoint).
+
+**yMind implications:** a template gallery with Eisenhower, SWOT, Ansoff, fishbone and study-plan templates;
+Pitch mode with slide export (PowerPoint/PDF); a brainstorm card board; to-do generation (rule-based now, optional
+AI provider later). All of these are tracked in PLAN/BACKLOG.
+
+## 11. Role pages (xmind.com "Xmind for …")
+
+| Role | Pain points named by XMind | Features highlighted | Templates offered |
+|---|---|---|---|
+| Marketers | cross-functional campaigns, fast strategy changes, scattered assets | Matrix/tables for campaign plans, marker panel (Color, Priority, Progress, Flag, Star, People), strategic-planning maps, AI map generation, comments | Customer journey map, Competitive analysis, Marketing calendar |
+| Software engineers | large-system complexity, SDLC orchestration, cross-team alignment | Architecture diagrams (org/tree structures + boundaries), dark themes, monospace "code" look, SDLC timelines, async comments | Flowchart for debugging, Architecture diagram, Code review checklist |
+| Consultants | scope creep, communicating value, risk management | Benchmark matrix with colored shape cells (High/Medium/Low), generate as to-dos, live sharing, attachments/links to external resources | Six Sigma (DMAIC) process map, SWOT analysis, BCG matrix |
+| Students | organizing study planning, group work, heavy workloads | Structure picker (Mind Map, Brace, Logic, Tree, Org, Timeline, Fishbone, Tree Table, Matrix, Grid), PowerPoint export, AI study plans | Annual learning plan, Lecture note-taking, Thesis outline |
+| Teachers | different learning styles, online engagement, lesson-prep workload | Daily planner (tables), comments, "Following" (presenter follow mode), AI lesson outlines | Lesson planner, Teacher planner, Curriculum flow |
+| Project managers | unclear scope, fragmented communication, remote teams | Tree Table with Start/End date and Duration columns, Task info (start/due, progress), Gantt, stage timelines, context menu "Mark as Completed" | Project kickoff map, Agile project workflow, Project manager resume |
+
+**yMind implications:**
+* Role-oriented **template gallery categories** (Business, Engineering, Education, Project Management, Personal).
+* **Marker panel tabs**: Marker / Sticker / Illustration.
+* **Tree Table columns** for task fields.
+* **"Mark as Completed"** in the context menu.
+* A **presenter "follow" mode** (backlog: needs collaboration).
+* The dark "engineering" theme (`neon`/monochrome) already exists.
