@@ -26,6 +26,9 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ `ymind-canvas`: GPU-rendered mind map view, pan/zoom, multi-selection, drag & drop,
   inline editing, keyboard navigation, XMind-guide shortcuts (Tab, Enter, Ctrl+B, Ctrl+K, …)
 - ✅ App shell: tabs, toolbar, format panel (Style/Map), outliner, Zen mode, settings, EN/DE i18n
+- ✅ Selection-aware topic toolbar, direction-aware child/sibling connectors, root-safe context menus
+- ✅ Floating main editing toolbar and `+` insert popover for notes, links, tasks and style
+- ✅ Accessible Find (Ctrl+F) and Replace (Ctrl+H) in the active sheet; cross-sheet scope remains in the backlog
 
 ## Phase 3 — Files, interop, platform ✅
 - ✅ Native `.ymind`, XMind (`.xmind` Zen/2020+ JSON and legacy XML), FreeMind/Freeplane, OPML,
@@ -44,7 +47,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ Settings › AI with connection test; live-tested against LM Studio (CUDA)
 
 ## Phase 5 — Testing & packaging 🟡
-- ✅ ~165 unit/integration tests, 17 headless e2e tests (egui_kittest) incl. AI against a mock server,
+- ✅ Unit/integration tests and 24 headless e2e tests (egui_kittest) incl. AI against a mock server,
   live LM Studio integration test (skips when no server is reachable)
 - ✅ cargo-packager config: NSIS (Windows x64/ARM64), `.app` + DMG (macOS arm64/x64),
   `.deb` + AppImage (Ubuntu LTS); file associations for `.ymind/.xmind/.mm/.opml`
@@ -54,4 +57,4 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Phase 6 — XMind parity extras ⬜
 See [BACKLOG.md](BACKLOG.md): Pitch mode, Gantt view, Map Shot, Zone, equations, audio notes,
-attachments, password-protected files, print, find & replace, quick styles, custom themes, …
+attachments, password-protected files, print, cross-sheet find & replace, quick styles, custom themes, …

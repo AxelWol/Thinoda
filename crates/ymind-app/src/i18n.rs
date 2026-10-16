@@ -70,6 +70,21 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Expand ideas", "Ideen ausbauen"),
+    ("Add subtopic", "Unterthema hinzufügen"),
+    ("Add child topic", "Unterthema am Anschluss hinzufügen"),
+    ("Add sibling topic", "Nachbarthema am Anschluss hinzufügen"),
+    ("Connect topics", "Themen verbinden"),
+    ("Edit hyperlink", "Hyperlink bearbeiten"),
+    ("Edit notes", "Notizen bearbeiten"),
+    ("Toggle to-do", "Aufgabe umschalten"),
+    ("Topic style", "Themenstil"),
+    ("More insert actions", "Weitere Einfügeaktionen"),
+    ("Find and Replace…", "Suchen und Ersetzen…"),
+    ("Previous result", "Vorheriges Ergebnis"),
+    ("Next result", "Nächstes Ergebnis"),
+    ("Close search", "Suche schließen"),
+    ("Replace with", "Ersetzen durch"),
     // Menu / file
     ("File", "Datei"),
     ("New", "Neu"),

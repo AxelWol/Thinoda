@@ -50,6 +50,8 @@ pub enum Cmd {
     ToggleFormatPanel,
     ToggleStatusBar,
     Find,
+    FindReplace,
+    TopicStyle,
     Palette,
     NewSheet,
     DuplicateSheet,
@@ -101,7 +103,7 @@ pub struct SearchState {
     pub hits: Vec<ymind_core::TopicId>,
     pub current: usize,
     pub dim: bool,
-    pub last_key: (String, u64, bool, bool, bool),
+    pub last_key: (String, usize, String, u64, bool, bool, bool),
 }
 
 /// Optional OS integrations (absent in tests and when the profile is unavailable).
@@ -366,6 +368,11 @@ impl YMindApp {
                 self.search.open = true;
                 self.search.focus = true;
             }
+            Cmd::FindReplace => {
+                self.search.open = true;
+                self.search.show_replace = true;
+                self.search.focus = true;
+            }
             Cmd::Palette => self.palette.toggle(),
             Cmd::NewSheet => {
                 if let Some(d) = self.doc_mut() {
@@ -429,6 +436,13 @@ impl YMindApp {
                     self.settings.show_format_panel = true;
                     self.format_tab = FormatTab::Style;
                     self.focus_field = Some(f);
+                }
+            }
+            Cmd::TopicStyle => {
+                if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
+                    self.zen = false;
+                    self.settings.show_format_panel = true;
+                    self.format_tab = FormatTab::Style;
                 }
             }
             Cmd::SetTheme(th) => {
@@ -789,6 +803,7 @@ impl YMindApp {
                 Cmd::CloseTab(self.active),
             ),
             (KeyboardShortcut::new(cmd, Key::F), Cmd::Find),
+            (KeyboardShortcut::new(cmd, Key::H), Cmd::FindReplace),
             (KeyboardShortcut::new(cmd, Key::Comma), Cmd::Settings),
             (KeyboardShortcut::new(cmd, Key::Tab), Cmd::NextDoc),
             (
@@ -833,6 +848,8 @@ impl YMindApp {
         };
         let o = &self.search.opts;
         let key = (
+            d.key.clone(),
+            d.doc.active_index(),
             self.search.query.clone(),
             d.doc.state_id(),
             o.case_sensitive,
@@ -1025,6 +1042,7 @@ impl YMindApp {
                 "Edit",
             ),
             (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
+            (Cmd::FindReplace, "Find and Replace…", "Ctrl+H", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",

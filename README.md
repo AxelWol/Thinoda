@@ -9,6 +9,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
+  and contextual right-click actions
+- Find (Ctrl+F) and replace (Ctrl+H) in the active sheet, with undoable replacement
 - Light/dark theme following the system, English and German UI, personal settings
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
 - Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle

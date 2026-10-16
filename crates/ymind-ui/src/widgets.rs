@@ -277,7 +277,7 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
                         .frame(egui::Frame::NONE)
                         .desired_width(f32::INFINITY),
                 )
-                .labelled_by(ui.scope_id())
+                .accessible_name(hint)
             })
             .inner
         })
@@ -408,5 +408,20 @@ mod tests {
         harness.get_by_label("Undo").click();
         harness.run();
         assert_eq!(*harness.state(), 1);
+    }
+
+    #[test]
+    fn search_field_has_a_resolvable_accessible_name() {
+        let mut harness = Harness::new_ui_state(
+            |ui, query: &mut String| {
+                search_field(ui, query, "Search topics");
+            },
+            String::new(),
+        );
+        harness.get_by_label("Search topics").click();
+        harness.run();
+        harness.get_by_label("Search topics").type_text("roadmap");
+        harness.run();
+        assert_eq!(harness.state(), "roadmap");
     }
 }

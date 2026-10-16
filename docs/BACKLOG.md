@@ -2,9 +2,16 @@
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
 
+## Recently completed
+- Fixed the Windows Search crash caused by a dangling accessibility label reference.
+- Floating topic toolbar for AI expansion, subtopics, relationships, links, notes, to-dos and style.
+- Floating main editing toolbar with a compact insert popover, keeping the title bar uncluttered.
+- Direction-aware child/sibling plus connectors; root-safe contextual menus and blank-canvas selection handling.
+- Active-sheet Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
+
 ## XMind parity (from the user guide)
 - P1 Print (Ctrl+P) with page setup and fit-to-page
-- P1 Find & Replace across sheets (Ctrl+F / Ctrl+H)
+- P1 Extend Find & Replace to search across all sheets (active-sheet search/replacement is implemented)
 - P1 Pitch mode (presentation from branches, F5) and slide export
 - P1 Map Shot (F7): region capture to clipboard/PNG
 - P2 Zone (Ctrl+Alt+Z) and callouts editing UI polish

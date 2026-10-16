@@ -7,8 +7,12 @@ use egui::{
     Response, Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2 as EVec2, pos2, vec2,
 };
 use ymind_core::{
-    ApproxMeasure, Document, Layout, RelationshipId, Sheet, TopicId, clipboard::ClipboardPayload,
-    geometry::Vec2, layout::Icon, layout_sheet, navigation::Direction,
+    ApproxMeasure, Document, Layout, RelationshipId, Sheet, TopicId,
+    clipboard::ClipboardPayload,
+    geometry::Vec2,
+    layout::{Dir, Icon},
+    layout_sheet,
+    navigation::Direction,
 };
 
 use crate::{
@@ -36,6 +40,22 @@ impl Default for NewTopicTitles {
             sub: "Subtopic".into(),
             floating: "Floating Topic".into(),
             summary: "Summary".into(),
+        }
+    }
+}
+
+/// Localizable accessible names and tooltips for the canvas add controls.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddControlLabels {
+    pub child: String,
+    pub sibling: String,
+}
+
+impl Default for AddControlLabels {
+    fn default() -> Self {
+        Self {
+            child: "Add child topic".into(),
+            sibling: "Add sibling topic".into(),
         }
     }
 }
@@ -79,6 +99,7 @@ pub struct MapView {
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
     pub titles: NewTopicTitles,
+    pub add_control_labels: AddControlLabels,
     /// Internal clipboard (keeps full fidelity when pasting inside yMind).
     pub clipboard: Option<ClipboardPayload>,
     /// Text the host should place on the OS clipboard.
@@ -105,6 +126,7 @@ impl Default for MapView {
             selected_relationship: None,
             relationship_from: None,
             titles: NewTopicTitles::default(),
+            add_control_labels: AddControlLabels::default(),
             clipboard: None,
             clipboard_out: None,
             filter: None,
@@ -123,6 +145,9 @@ impl Default for MapView {
 
 impl MapView {
     pub fn select_only(&mut self, id: TopicId) {
+        if self.selection != [id] {
+            self.pending_reveal = Some(id);
+        }
         self.selection = vec![id];
         self.selected_relationship = None;
     }
@@ -137,6 +162,33 @@ impl MapView {
 
     pub fn primary(&self) -> Option<TopicId> {
         self.selection.last().copied()
+    }
+
+    /// Screen-space bounds of the primary selected topic in the last rendered layout.
+    /// Returns `None` before layout, after document changes, during dragging, for
+    /// multi-selection, or for hidden/deleted topics.
+    /// The current camera transform is applied, so callers can anchor overlay controls.
+    pub fn selected_topic_rect(&self, doc: &Document) -> Option<Rect> {
+        if self.selection.len() != 1 || !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let cache = self.cache.as_ref()?;
+        if cache.key.0 != doc.state_id()
+            || cache.key.1 != doc.active_index()
+            || cache.key.2 != self.dark
+        {
+            return None;
+        }
+        let topic = self.primary()?;
+        if doc.sheet().topic(topic).is_none() || !doc.sheet().is_visible(topic) {
+            return None;
+        }
+        cache.layout.rect(topic).map(|r| self.xf().rect(r))
+    }
+
+    /// Screen-space canvas bounds from the latest frame.
+    pub fn canvas_rect(&self) -> Rect {
+        self.canvas_rect
     }
 
     /// Removes deleted/hidden topics from the selection.
@@ -210,6 +262,8 @@ impl MapView {
         let Some(e) = self.editing.take() else {
             return false;
         };
+        // The final title can be much wider than it was when editing started.
+        self.pending_reveal = Some(e.topic);
         if e.text == e.original || doc.sheet().topic(e.topic).is_none() {
             return false;
         }
@@ -330,9 +384,14 @@ impl MapView {
         self.offset = vec2(-c.x * z, -c.y * z);
     }
 
-    fn do_reveal(&mut self, layout: &Layout, id: TopicId) {
+    fn do_reveal(&mut self, sheet: &Sheet, layout: &Layout, id: TopicId) {
         let Some(r) = layout.rect(id) else { return };
-        let r = self.xf().rect(r);
+        let mut r = self.xf().rect(r);
+        // Reserve the actual screen-space controls, including while editing hides
+        // them. Never clamp a plus onto the topic's text at a viewport edge.
+        for handle in topic_add_handles(self, sheet, layout, id) {
+            r = r.union(handle.rect().expand(2.0));
+        }
         let area = self.canvas_rect.shrink(40.0);
         let mut d = EVec2::ZERO;
         if r.width() < area.width() {
@@ -367,6 +426,78 @@ pub struct CanvasOutput {
 
 /// The canvas widget.
 pub struct MapCanvas;
+
+/// Fixed-size screen-space targets remain usable at any map zoom.
+struct AddHandle {
+    action: Action,
+    anchor: Pos2,
+    center: Pos2,
+    label: String,
+}
+
+impl AddHandle {
+    fn rect(&self) -> Rect {
+        Rect::from_center_size(self.center, vec2(28.0, 28.0))
+    }
+}
+
+fn add_handles(view: &MapView, sheet: &Sheet, layout: &Layout) -> Vec<AddHandle> {
+    if view.selection.len() != 1
+        || view.selected_relationship.is_some()
+        || view.editing.is_some()
+        || view.relationship_from.is_some()
+        || !matches!(view.drag, Drag::None)
+    {
+        return Vec::new();
+    }
+    let Some(id) = view.primary() else {
+        return Vec::new();
+    };
+    let mut handles = topic_add_handles(view, sheet, layout, id);
+    // Never expose a target outside the canvas or partially clipped by a panel.
+    handles.retain(|h| view.canvas_rect.contains_rect(h.rect()));
+    handles
+}
+
+/// Unclipped geometry is shared by rendering, hit testing, and camera reveal.
+fn topic_add_handles(
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+    id: TopicId,
+) -> Vec<AddHandle> {
+    let Some(topic) = layout.topics.get(&id) else {
+        return Vec::new();
+    };
+    let r = view.xf().rect(topic.rect);
+    let (anchor, outward) = match topic.grow {
+        Dir::Right => (r.right_center(), vec2(1.0, 0.0)),
+        Dir::Left => (r.left_center(), vec2(-1.0, 0.0)),
+        Dir::Down => (r.center_bottom(), vec2(0.0, 1.0)),
+        Dir::Up => (r.center_top(), vec2(0.0, -1.0)),
+    };
+    // Leave room for the existing collapsed-descendant badge, even when zoomed in.
+    let mut handles = vec![AddHandle {
+        action: Action::InsertChild,
+        anchor,
+        center: anchor + outward * (20.0 * view.zoom + 18.0),
+        label: view.add_control_labels.child.clone(),
+    }];
+    if sheet.parent(topic.id).is_some() {
+        let (anchor, direction) = if topic.grow.is_horizontal() {
+            (r.center_bottom(), vec2(0.0, 1.0))
+        } else {
+            (r.right_center(), vec2(1.0, 0.0))
+        };
+        handles.push(AddHandle {
+            action: Action::InsertSibling,
+            anchor,
+            center: anchor + direction * 28.0,
+            label: view.add_control_labels.sibling.clone(),
+        });
+    }
+    handles
+}
 
 impl MapCanvas {
     pub fn id() -> Id {
@@ -427,7 +558,7 @@ impl MapCanvas {
             view.fit(&layout);
         }
         if let Some(r) = view.pending_reveal.take() {
-            view.do_reveal(&layout, r);
+            view.do_reveal(doc.sheet(), &layout, r);
         }
 
         // ---- pointer -------------------------------------------------------------------
@@ -446,8 +577,43 @@ impl MapCanvas {
             }
         }
 
-        let space = ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none();
-        if response.drag_started() {
+        let space =
+            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
+        let handles = if space {
+            Vec::new()
+        } else {
+            add_handles(view, doc.sheet(), &layout)
+        };
+        let over_handle = pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let press_on_handle = ctx
+            .input(|i| i.pointer.press_origin())
+            .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let mut handle_action = None;
+        for handle in &handles {
+            let target = ui.interact(
+                handle.rect(),
+                id.with((view.primary(), handle.action == Action::InsertChild)),
+                Sense::click(),
+            );
+            target
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &handle.label));
+            let keyboard_click = target.has_focus()
+                && ctx.input_mut(|i| {
+                    i.consume_key(Modifiers::NONE, Key::Enter)
+                        || i.consume_key(Modifiers::NONE, Key::Space)
+                });
+            if target.clicked() || keyboard_click {
+                handle_action = Some(handle.action.clone());
+            }
+            target
+                .on_hover_text(&handle.label)
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
+        if response.drag_started()
+            && (!press_on_handle
+                || response.dragged_by(PointerButton::Middle)
+                || response.dragged_by(PointerButton::Secondary))
+        {
             let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or_default();
             let mods = ctx.input(|i| i.modifiers);
             let sp = view.xf().sheet(origin);
@@ -491,6 +657,8 @@ impl MapCanvas {
         // ---- clicks --------------------------------------------------------------------
         let mods = ctx.input(|i| i.modifiers);
         if response.clicked()
+            && !over_handle
+            && !press_on_handle
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
@@ -543,6 +711,8 @@ impl MapCanvas {
             }
         }
         if response.double_clicked()
+            && !over_handle
+            && !press_on_handle
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
@@ -554,6 +724,7 @@ impl MapCanvas {
             }
         }
         if response.secondary_clicked()
+            && !over_handle
             && let Some(p) = response.interact_pointer_pos()
         {
             view.commit_edit(doc);
@@ -562,6 +733,12 @@ impl MapCanvas {
                     view.select_only(t);
                 }
                 out.context_topic = Some(t);
+            } else if let Some(r) = hit_relationship(&layout, view.xf().sheet(p), 6.0 / view.zoom) {
+                view.selection.clear();
+                view.selected_relationship = Some(r);
+            } else {
+                view.selection.clear();
+                view.selected_relationship = None;
             }
         }
 
@@ -594,6 +771,9 @@ impl MapCanvas {
         }
 
         // ---- keyboard ------------------------------------------------------------------
+        if let Some(action) = handle_action {
+            run(doc, view, action, &mut out);
+        }
         if view.editing.is_none() && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
         {
             handle_keys(&ctx, doc, view, &mut out);
@@ -602,8 +782,10 @@ impl MapCanvas {
         if doc.state_id() != view.cache.as_ref().map_or(0, |c| c.key.0) || view.editing.is_some() {
             layout = view.layout_with(&ctx, doc);
         }
-        if let Some(r) = view.pending_reveal.take() {
-            view.do_reveal(&layout, r);
+        if let Some(r) = view.pending_reveal.take()
+            && matches!(view.drag, Drag::None)
+        {
+            view.do_reveal(doc.sheet(), &layout, r);
         }
 
         // ---- paint ---------------------------------------------------------------------
@@ -622,6 +804,37 @@ impl MapCanvas {
             selected_relationship: view.selected_relationship,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
+        if !space {
+            for handle in add_handles(view, sheet, &layout) {
+                let hot = pointer.is_some_and(|p| handle.rect().contains(p));
+                painter.line_segment(
+                    [handle.anchor, handle.center],
+                    Stroke::new(1.5, view.accent),
+                );
+                painter.circle_filled(handle.anchor, 2.5, view.accent);
+                painter.circle_filled(handle.center, if hot { 13.0 } else { 11.0 }, view.accent);
+                if ctx.memory(|m| {
+                    m.has_focus(id.with((view.primary(), handle.action == Action::InsertChild)))
+                }) {
+                    painter.circle_stroke(handle.center, 15.0, Stroke::new(2.0, view.accent));
+                }
+                let stroke = Stroke::new(2.0, Color32::WHITE);
+                painter.line_segment(
+                    [
+                        handle.center - vec2(4.0, 0.0),
+                        handle.center + vec2(4.0, 0.0),
+                    ],
+                    stroke,
+                );
+                painter.line_segment(
+                    [
+                        handle.center - vec2(0.0, 4.0),
+                        handle.center + vec2(0.0, 4.0),
+                    ],
+                    stroke,
+                );
+            }
+        }
 
         match &view.drag {
             Drag::Rubber { start, .. } => {
@@ -683,7 +896,7 @@ impl MapCanvas {
                 Drag::Pan => egui::CursorIcon::Grabbing,
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
                 _ if space => egui::CursorIcon::Grab,
-                _ if hovered.is_some() => egui::CursorIcon::PointingHand,
+                _ if hovered.is_some() || over_handle => egui::CursorIcon::PointingHand,
                 _ => egui::CursorIcon::Default,
             };
             ctx.set_cursor_icon(icon);
@@ -873,6 +1086,9 @@ fn show_editor(
         .lock_focus(true);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let output = te.show(&mut child);
+    if output.response.changed() {
+        view.pending_reveal = Some(edit.topic);
+    }
     output.response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title")
     });
@@ -1029,6 +1245,338 @@ mod tests {
     fn canvas_is_accessible() {
         let h = harness();
         h.get_by_label("Mind map canvas");
+    }
+
+    fn click_at(h: &mut Harness<'_, State>, pos: Pos2, button: PointerButton) {
+        h.hover_at(pos);
+        h.run();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.run();
+        }
+    }
+
+    #[test]
+    fn child_handle_pointer_click_is_localized_and_undoable() {
+        for zoom in [0.25, 1.0, 2.0] {
+            let mut h = harness();
+            let root = h.state().doc.sheet().root;
+            let n = h.state().doc.sheet().topics.len();
+            {
+                let s = h.state_mut();
+                s.view.set_zoom(zoom);
+                s.view.add_control_labels.child = "Unterthema hinzufügen".into();
+                s.view.titles.main = "Neues Thema".into();
+            }
+            h.run();
+            assert!(h.query_by_label("Add sibling topic").is_none());
+            let handle = h.get_by_label("Unterthema hinzufügen").rect();
+            assert_eq!(handle.size(), vec2(28.0, 28.0));
+            click_at(&mut h, handle.center(), PointerButton::Primary);
+            let s = h.state();
+            let inserted = s.view.primary().unwrap();
+            assert_ne!(inserted, root);
+            assert_eq!(s.view.selection, vec![inserted]);
+            assert_eq!(s.doc.sheet().parent(inserted), Some(root));
+            assert_eq!(s.doc.sheet().topics.len(), n + 1);
+            assert_eq!(s.doc.sheet().topic(inserted).unwrap().title, "Neues Thema");
+            assert_eq!(s.view.editing_topic(), Some(inserted));
+            assert!(h.query_by_label("Unterthema hinzufügen").is_none());
+            h.key_press(Key::Escape);
+            h.run();
+            h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+            h.run();
+            assert!(h.state().doc.sheet().topic(inserted).is_none());
+            assert_eq!(h.state().doc.sheet().topics.len(), n);
+        }
+    }
+
+    #[test]
+    fn sibling_handle_pointer_click_preserves_parent_and_order() {
+        let mut h = harness();
+        let root = h.state().doc.sheet().root;
+        let first = h.state().doc.sheet().children(root)[0];
+        h.state_mut().view.select_only(first);
+        h.state_mut().view.titles.main = "Sibling".into();
+        h.run();
+        h.get_by_label("Add sibling topic").click();
+        h.run();
+        let s = h.state();
+        let new = s.view.primary().unwrap();
+        assert_eq!(s.doc.sheet().children(root)[1], new);
+        assert_eq!(s.doc.sheet().parent(new), Some(root));
+        assert_eq!(s.doc.sheet().topic(new).unwrap().title, "Sibling");
+        assert_eq!(s.view.editing_topic(), Some(new));
+        assert_eq!(s.doc.sheet().floating.len(), 0);
+    }
+
+    #[test]
+    fn edge_selection_reserves_child_handle_space_after_insert_and_rename() {
+        for structure in [
+            ymind_core::Structure::LogicRight,
+            ymind_core::Structure::LogicLeft,
+        ] {
+            for zoom in [0.25, 1.0, 2.0] {
+                let mut h = harness();
+                {
+                    let s = h.state_mut();
+                    s.doc
+                        .edit_sheet("Structure", |sheet| {
+                            sheet.set_structure(None, Some(structure))
+                        })
+                        .unwrap();
+                }
+                h.run();
+                let first = h.state().doc.sheet().children(h.state().doc.sheet().root)[0];
+                {
+                    let s = h.state_mut();
+                    s.view.set_zoom(zoom);
+                    let layout = s.view.layout_for(&s.doc);
+                    let topic = s.view.xf().rect(layout.rect(first).unwrap());
+                    let canvas = s.view.canvas_rect();
+                    let dx = if structure == ymind_core::Structure::LogicRight {
+                        canvas.right() - 5.0 - topic.right()
+                    } else {
+                        canvas.left() + 5.0 - topic.left()
+                    };
+                    s.view.offset += vec2(dx, canvas.center().y - topic.center().y);
+                    s.view.select_only(first);
+                    // Without revealing, the outward target would be clipped.
+                    assert!(!canvas.contains_rect(
+                        topic_add_handles(&s.view, s.doc.sheet(), &layout, first)[0].rect()
+                    ));
+                }
+                h.run();
+                let child = h.get_by_label("Add child topic").rect();
+                let sibling = h.get_by_label("Add sibling topic").rect();
+                {
+                    let s = h.state();
+                    let topic = s.view.selected_topic_rect(&s.doc).unwrap();
+                    assert!(s.view.canvas_rect().contains_rect(child));
+                    assert!(s.view.canvas_rect().contains_rect(sibling));
+                    assert!(!topic.intersects(child));
+                    assert!(!topic.intersects(sibling));
+                }
+                click_at(&mut h, child.center(), PointerButton::Primary);
+                let inserted = h.state().view.primary().unwrap();
+                assert_eq!(h.state().doc.sheet().parent(inserted), Some(first));
+                h.get_by_label("Topic title")
+                    .type_text("A longer renamed child");
+                h.run();
+                h.key_press(Key::Enter);
+                h.run();
+                assert_eq!(
+                    h.state().doc.sheet().topic(inserted).unwrap().title,
+                    "A longer renamed child"
+                );
+                let next_child = h.get_by_label("Add child topic").rect();
+                let s = h.state();
+                assert!(s.view.canvas_rect().contains_rect(next_child));
+                assert!(
+                    !s.view
+                        .selected_topic_rect(&s.doc)
+                        .unwrap()
+                        .intersects(next_child)
+                );
+                click_at(&mut h, next_child.center(), PointerButton::Primary);
+                let s = h.state();
+                assert_eq!(
+                    s.doc.sheet().parent(s.view.primary().unwrap()),
+                    Some(inserted)
+                );
+                assert!(s.doc.sheet().floating.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn handle_reveal_does_not_snap_back_after_deliberate_panning() {
+        let mut h = harness();
+        let first = h.state().doc.sheet().children(h.state().doc.sheet().root)[0];
+        h.state_mut().view.select_only(first);
+        h.run();
+        h.state_mut().view.offset += vec2(900.0, 0.0);
+        let offset = h.state().view.offset;
+        h.run();
+        assert_eq!(h.state().view.offset, offset);
+    }
+
+    #[test]
+    fn double_clicking_handle_never_creates_a_floating_topic() {
+        let mut h = harness();
+        let n = h.state().doc.sheet().topics.len();
+        let center = h.get_by_label("Add child topic").rect().center();
+        click_at(&mut h, center, PointerButton::Primary);
+        click_at(&mut h, center, PointerButton::Primary);
+        assert_eq!(h.state().doc.sheet().topics.len(), n + 1);
+        assert!(h.state().doc.sheet().floating.is_empty());
+    }
+
+    #[test]
+    fn dragging_from_handle_does_not_start_topic_or_rubber_drag() {
+        let mut h = harness();
+        let selected = h.state().view.selection.clone();
+        let n = h.state().doc.sheet().topics.len();
+        let center = h.get_by_label("Add child topic").rect().center();
+        h.hover_at(center);
+        h.run();
+        h.event(egui::Event::PointerButton {
+            pos: center,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        h.run();
+        h.hover_at(center + vec2(50.0, 50.0));
+        h.run();
+        assert!(matches!(h.state().view.drag, Drag::None));
+        h.event(egui::Event::PointerButton {
+            pos: center + vec2(50.0, 50.0),
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run();
+        assert_eq!(h.state().view.selection, selected);
+        assert_eq!(h.state().doc.sheet().topics.len(), n);
+    }
+
+    #[test]
+    fn focused_handle_supports_keyboard_activation() {
+        for key in [Key::Enter, Key::Space] {
+            let mut h = harness();
+            let root = h.state().doc.sheet().root;
+            let n = h.state().doc.sheet().children(root).len();
+            h.get_by_label("Add child topic").focus();
+            h.run();
+            h.key_press(key);
+            h.run();
+            assert_eq!(h.state().doc.sheet().children(root).len(), n + 1);
+            assert_eq!(h.state().view.editing_topic(), h.state().view.primary());
+        }
+    }
+
+    #[test]
+    fn child_handle_unfolds_branch_in_one_undo_transaction() {
+        let mut h = harness();
+        let first = h.state().doc.sheet().children(h.state().doc.sheet().root)[0];
+        {
+            let s = h.state_mut();
+            s.doc
+                .edit_sheet("Branch", |sheet| {
+                    sheet.insert_child(first, "Existing child")?;
+                    sheet.set_collapsed(first, true)
+                })
+                .unwrap();
+            s.view.select_only(first);
+        }
+        h.run();
+        h.get_by_label("Add child topic").click();
+        h.run();
+        let new = h.state().view.primary().unwrap();
+        assert!(!h.state().doc.sheet().topic(first).unwrap().collapsed);
+        assert_eq!(h.state().doc.sheet().parent(new), Some(first));
+        h.key_press(Key::Escape);
+        h.run();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert!(h.state().doc.sheet().topic(first).unwrap().collapsed);
+        assert!(h.state().doc.sheet().topic(new).is_none());
+    }
+
+    #[test]
+    fn handles_follow_layout_direction_and_hide_in_conflicting_modes() {
+        let mut h = harness();
+        let first = h.state().doc.sheet().children(h.state().doc.sheet().root)[0];
+        h.state_mut().view.select_only(first);
+        h.run();
+        for dir in [Dir::Right, Dir::Left, Dir::Down, Dir::Up] {
+            let s = h.state_mut();
+            let mut layout = (*s.view.layout_for(&s.doc)).clone();
+            layout.topics.get_mut(&first).unwrap().grow = dir;
+            let handles = add_handles(&s.view, s.doc.sheet(), &layout);
+            assert_eq!(handles.len(), 2);
+            let child = &handles[0];
+            let d = child.center - child.anchor;
+            match dir {
+                Dir::Right => assert!(d.x > 0.0 && d.y == 0.0),
+                Dir::Left => assert!(d.x < 0.0 && d.y == 0.0),
+                Dir::Down => assert!(d.y > 0.0 && d.x == 0.0),
+                Dir::Up => assert!(d.y < 0.0 && d.x == 0.0),
+            }
+        }
+        h.state_mut().view.relationship_from = Some(first);
+        h.run();
+        assert!(h.query_by_label("Add child topic").is_none());
+        h.state_mut().view.relationship_from = None;
+        let root = h.state().doc.sheet().root;
+        h.state_mut().view.selection.push(root);
+        h.run();
+        assert!(h.query_by_label("Add child topic").is_none());
+        h.state_mut().view.select_only(first);
+        {
+            let s = h.state_mut();
+            s.view.begin_edit(s.doc.sheet(), first, true);
+        }
+        h.run();
+        assert!(h.query_by_label("Add child topic").is_none());
+    }
+
+    #[test]
+    fn selected_geometry_uses_camera_and_rejects_stale_or_dragged_layout() {
+        let mut h = harness();
+        let s = h.state_mut();
+        let before = s.view.selected_topic_rect(&s.doc).unwrap();
+        assert!(s.view.canvas_rect().contains(before.center()));
+        s.view.offset += vec2(25.0, -10.0);
+        assert_eq!(
+            s.view.selected_topic_rect(&s.doc).unwrap(),
+            before.translate(vec2(25.0, -10.0))
+        );
+        s.view
+            .zoom_by(2.0, Some(before.center() + vec2(25.0, -10.0)));
+        let zoomed = s.view.selected_topic_rect(&s.doc).unwrap();
+        assert!((zoomed.width() - before.width() * 2.0).abs() < 0.01);
+        s.view.drag = Drag::Pan;
+        assert!(s.view.selected_topic_rect(&s.doc).is_none());
+        s.view.drag = Drag::None;
+        let root = s.doc.sheet().root;
+        s.doc
+            .edit_sheet("Rename", |sheet| sheet.set_title(root, "Changed"))
+            .unwrap();
+        assert!(s.view.selected_topic_rect(&s.doc).is_none());
+    }
+
+    #[test]
+    fn blank_secondary_click_clears_stale_selection() {
+        let mut h = harness();
+        let blank = h.state().view.canvas_rect().left_top() + vec2(10.0, 10.0);
+        click_at(&mut h, blank, PointerButton::Secondary);
+        assert!(h.state().view.selection.is_empty());
+        assert!(h.state().view.selected_relationship.is_none());
+    }
+
+    #[test]
+    fn topic_secondary_click_preserves_existing_multiselection() {
+        let mut h = harness();
+        let root = h.state().doc.sheet().root;
+        let first = h.state().doc.sheet().children(root)[0];
+        h.state_mut().view.selection = vec![first, root];
+        h.run();
+        let pos = {
+            let s = h.state();
+            s.view
+                .xf()
+                .rect(s.view.cache.as_ref().unwrap().layout.rect(first).unwrap())
+                .center()
+        };
+        click_at(&mut h, pos, PointerButton::Secondary);
+        assert_eq!(h.state().view.selection, vec![first, root]);
     }
 
     #[test]

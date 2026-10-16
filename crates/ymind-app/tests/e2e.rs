@@ -131,6 +131,196 @@ fn search_bar_finds_topics() {
 }
 
 #[test]
+fn search_icon_opens_accessible_search_and_can_reopen() {
+    let mut app = YMindApp::headless();
+    rename_root(&mut app, "Quarterly Roadmap");
+    let mut h = harness(app);
+    for _ in 0..3 {
+        h.get_by_role_and_label(Role::Button, "Find…").click();
+        h.run_steps(3);
+        assert!(h.get_by_label("Search").is_focused());
+        h.get_by_label("Search").type_text("roadmap");
+        h.run_steps(2);
+        let root = h.state().doc().unwrap().doc.sheet().root;
+        assert_eq!(h.state().search.hits, vec![root]);
+        h.get_by_label("Next result").click();
+        h.run_steps(2);
+        assert_eq!(h.state().doc().unwrap().view.primary(), Some(root));
+        h.get_by_label("Close search").click();
+        h.run_steps(2);
+        assert!(!h.state().search.open);
+        h.state_mut().search.query.clear();
+    }
+}
+
+#[test]
+fn ctrl_h_replaces_and_undo_restores_the_topic() {
+    let mut app = YMindApp::headless();
+    rename_root(&mut app, "Quarterly Roadmap");
+    let mut h = harness(app);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::H);
+    h.run_steps(3);
+    h.get_by_label("Search").type_text("Roadmap");
+    h.run_steps(2);
+    h.get_by_label("Replace with").click();
+    h.run_steps(2);
+    h.get_by_label("Replace with").type_text("Plan");
+    h.run_steps(2);
+    h.get_by_label("Replace All").click();
+    h.run_steps(2);
+    assert_eq!(
+        root_title(h.state().doc().unwrap().doc.workbook()),
+        "Quarterly Plan"
+    );
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(
+        root_title(h.state().doc().unwrap().doc.workbook()),
+        "Quarterly Roadmap"
+    );
+}
+
+#[test]
+fn search_refreshes_when_switching_between_documents_at_the_same_revision() {
+    let mut app = YMindApp::headless();
+    rename_root(&mut app, "Roadmap");
+    let mut h = harness(app);
+    h.state_mut().search.query = "Roadmap".into();
+    h.run_steps(2);
+    let old_root = h.state().doc().unwrap().doc.sheet().root;
+    assert_eq!(h.state().search.hits, vec![old_root]);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::New);
+    rename_root(h.state_mut(), "Different document");
+    h.run_steps(2);
+    assert!(h.state().search.hits.is_empty());
+}
+
+#[test]
+fn search_refreshes_when_switching_sheets_without_an_edit() {
+    let mut app = YMindApp::headless();
+    rename_root(&mut app, "Roadmap");
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::NewSheet);
+    rename_root(&mut app, "Meeting");
+    app.doc_mut().unwrap().doc.set_active(0);
+    let mut h = harness(app);
+    h.state_mut().search.query = "Roadmap".into();
+    h.run_steps(2);
+    assert_eq!(h.state().search.hits.len(), 1);
+    let d = h.state_mut().doc_mut().unwrap();
+    let revision = d.doc.state_id();
+    d.doc.set_active(1);
+    d.view.reset();
+    assert_eq!(d.doc.state_id(), revision);
+    h.run_steps(2);
+    assert!(h.state().search.hits.is_empty());
+}
+
+#[test]
+fn contextual_toolbar_follows_selection_and_edits_topic_properties() {
+    let mut h = harness(YMindApp::headless());
+    let before = root_children(h.state());
+    h.get_by_label("Add subtopic").click();
+    h.run_steps(2);
+    assert_eq!(root_children(h.state()), before + 1);
+    assert!(
+        h.query_by_label("Edit notes").is_none(),
+        "hidden during title editing"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    h.get_by_label("Toggle to-do").click();
+    h.run_steps(2);
+    let d = h.state().doc().unwrap();
+    let id = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().topic(id).unwrap().todo, Some(false));
+    h.get_by_label("Edit notes").click();
+    h.run_steps(3);
+    assert!(h.get_by_label("Notes").is_focused());
+    h.get_by_label("Notes").type_text("Contextual editing");
+    h.run_steps(2);
+    // Moving focus commits the buffered property.
+    h.get_by_label("Connect topics").click();
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().view.relationship_from, Some(id));
+    assert!(
+        h.query_by_label("Toggle to-do").is_none(),
+        "hidden while connecting"
+    );
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .notes
+            .as_deref(),
+        Some("Contextual editing")
+    );
+}
+
+#[test]
+fn floating_insert_menu_opens_notes_and_preserves_selection() {
+    let mut h = harness(YMindApp::headless());
+    let selected = h.state().doc().unwrap().view.primary();
+    h.get_by_label("More insert actions").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Notes").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.primary(), selected);
+    assert!(
+        h.get_by_role_and_label(Role::MultilineTextInput, "Notes")
+            .is_focused()
+    );
+}
+
+fn right_click_at(h: &mut Harness<'static, YMindApp>, pos: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+}
+
+#[test]
+fn contextual_menu_disables_root_parent_and_blank_canvas_topic_actions() {
+    let mut h = harness(YMindApp::headless());
+    let d = h.state().doc().unwrap();
+    let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
+    let before = d.doc.sheet().all_ids_ordered().len();
+    right_click_at(&mut h, root_rect.center());
+    h.get_by_label("Parent Topic").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().all_ids_ordered().len(),
+        before
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    let canvas = h.state().doc().unwrap().view.canvas_rect();
+    right_click_at(&mut h, canvas.left_top() + egui::vec2(16.0, 80.0));
+    assert!(h.state().doc().unwrap().view.selection.is_empty());
+    h.query_all_by_role_and_label(Role::Button, "Subtopic")
+        .last()
+        .unwrap()
+        .click();
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().all_ids_ordered().len(),
+        before
+    );
+}
+
+#[test]
 fn dark_theme_is_applied() {
     let mut h = harness(YMindApp::headless());
     let ctx = h.ctx.clone();
