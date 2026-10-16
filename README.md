@@ -1,2 +1,57 @@
 # yMind
-A free mindmap app created with Rust
+
+A free, fast, cross-platform mind mapping app written in Rust — an XMind-style editor with a
+GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional local AI assistant.
+
+Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) and **Linux** (Ubuntu LTS).
+
+## Features
+- Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
+  relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
+- Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Light/dark theme following the system, English and German UI, personal settings
+- Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
+- Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle
+- Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
+- Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders
+- AI assistant (optional): brainstorm subtopics, break down into to-dos, explain, summarize,
+  generate a whole map — with any OpenAI-compatible server
+
+## AI setup (LM Studio)
+1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.
+2. In yMind open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
+   (or a LAN server such as `http://192.168.1.216:1234/v1`), leave *Model* empty for automatic
+   selection and click **Test Connection**.
+3. Select a topic and press **Ctrl+Shift+I** or use the **AI** menu.
+
+Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + API key, or env
+`YMIND_AI_API_KEY`) work the same way.
+
+## Build & test
+```sh
+cargo run -p ymind-app            # start the app
+cargo xtask ci                    # fmt + clippy + all tests
+cargo xtask package               # installers in target/packages
+ymind --convert map.xmind map.md  # CLI conversion
+```
+Linux build dependencies: `libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
+libxcb-xfixes0-dev libwayland-dev`.
+
+The live AI test uses `YMIND_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
+server answers or when `YMIND_AI_SKIP_LIVE=1`.
+
+## Packages
+| Platform | Formats | Command |
+|---|---|---|
+| Windows x64 / ARM64 | NSIS installer (`.exe`) | `cargo xtask package --target aarch64-pc-windows-msvc` |
+| macOS | `.app`, `.dmg` | `cargo xtask package --formats app,dmg` |
+| Ubuntu LTS | `.deb`, AppImage | `cargo xtask package --formats deb,appimage` |
+
+Tagging `v*` runs the release workflow, which builds every package and drafts a GitHub release.
+
+## Docs
+[Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[XMind research](docs/XMIND-RESEARCH.md) · [User-guide checklist](docs/XMIND-USER-GUIDE.md)
+
+## License
+MIT OR Apache-2.0
