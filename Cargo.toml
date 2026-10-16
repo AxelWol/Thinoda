@@ -1,0 +1,63 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ymind-core",
+    "crates/ymind-io",
+    "crates/ymind-platform",
+    "crates/ymind-ui",
+    "crates/ymind-canvas",
+    "crates/ymind-app",
+    "xtask",
+]
+default-members = [
+    "crates/ymind-core",
+    "crates/ymind-io",
+    "crates/ymind-platform",
+    "crates/ymind-ui",
+    "crates/ymind-canvas",
+    "crates/ymind-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AxelWol/yMind"
+authors = ["yMind contributors"]
+homepage = "https://github.com/AxelWol/yMind"
+
+[workspace.dependencies]
+ymind-core = { path = "crates/ymind-core", version = "0.1.0" }
+ymind-io = { path = "crates/ymind-io", version = "0.1.0" }
+ymind-platform = { path = "crates/ymind-platform", version = "0.1.0" }
+ymind-ui = { path = "crates/ymind-ui", version = "0.1.0" }
+ymind-canvas = { path = "crates/ymind-canvas", version = "0.1.0" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+log = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+toml = "1"
+directories = "6"
+uuid = { version = "1", features = ["v4", "serde"] }
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "persistence", "wayland", "x11"] }
+egui_kittest = "0.37"
+rfd = "0.17"
+image = { version = "0.25", default-features = false, features = ["png"] }
+resvg = "0.48"
+tempfile = "3"
+env_logger = "0.11"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind" # needed so the crash handler can write recovery data
+
+[profile.dev.package."*"]
+opt-level = 2
