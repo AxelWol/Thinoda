@@ -6,6 +6,17 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Original template expansion: 18 new scenario maps bring the gallery to 35.
+  Problem Solving, Concept Framework, Software Architecture, Business Plan,
+  Workshop, Dissertation Plan, School Timetable, Reading Notes, Language Learning,
+  Project Retrospective, Shopping List, Mood Journal, Service Comparison,
+  Cause and Effect, Comparison, Social Media Plan, Recipe and Film Production
+  contain original editable prompts and scenario-specific branches. EN/DE gallery
+  titles, actual preview/Create agreement, keyboard selection, bounded recents,
+  native/XMind round trips and responsive layouts cover every registered template.
+  Starter document text remains English. School Timetable is a topic hierarchy,
+  not a calendar; no native XMind template equivalence is claimed. AR, organization/
+  nine-box/BCG matrix semantics and truncated reference titles remain open.
 - Template-section navigation: EN/DE category chevrons and counts open each of
   the eight sections; fixed All templates returns to the overview. Each view
   retains its own scroll position, selections clear on navigation, and Create/
@@ -438,8 +449,10 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   media marketing; creative workflows, recipes and film production.
   Several reference titles are truncated: verify full names/content before specifying
   exact equivalents. Do not copy proprietary template text, thumbnails or paid assets.
-  Five original maps now cover Knowledge Base, Learning Plan, Weekly Plan,
-  Decision Review and Creative Workflow; this does not complete the expansion inventory.
+  The original 17 templates plus the 18 scenario maps above cover the verified
+  general-purpose inventory without copying reference content. AR application maps,
+  BCG/organization/nine-box matrices and truncated reference titles remain open;
+  exact XMind equivalence is not claimed.
 - P2 Verify category filtering, recent-template persistence, keyboard selection,
   Cancel without document creation and creation from each template; cover narrow
   windows, display scaling and long localized names.

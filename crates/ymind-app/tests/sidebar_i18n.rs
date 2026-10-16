@@ -401,4 +401,30 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
         .click();
     h.run_steps(4);
     assert!(h.state().template_category.is_none());
+    for label in [
+        "Problemlösung",
+        "Begriffsrahmen",
+        "Softwarearchitektur",
+        "Geschäftsplan",
+        "Workshop",
+        "Dissertationsplan",
+        "Stundenplan",
+        "Lesenotizen",
+        "Sprachenlernen",
+        "Projektrückblick",
+        "Einkaufsliste",
+        "Stimmungstagebuch",
+        "Dienstleistungsvergleich",
+        "Ursache und Wirkung",
+        "Vergleich",
+        "Social-Media-Plan",
+        "Rezept",
+        "Filmproduktion",
+    ] {
+        let rect = h.get_by_role_and_label(Role::Button, label).rect();
+        assert!(
+            rect.min.x >= 0.0 && rect.max.x <= 1280.0,
+            "{label}: {rect:?}"
+        );
+    }
 }

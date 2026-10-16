@@ -401,6 +401,19 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 original-template expansion: 18 scenario maps expand the gallery from 17 to 35,
+covering knowledge frameworks/architecture/problem solving, business/workshops,
+research/timetables/notes/languages, retrospectives, shopping/reflection/services,
+cause/effect/comparison/social-media planning and recipes/film production.
+Scenario-specific branches and editable prompts are original yMind content.
+Gallery names are EN/DE; document starter content remains English. Every registered
+template participates in actual preview/Create, keyboard selection, native/XMind
+round-trip and responsive layout checks. Timetable is a topic hierarchy, not a
+calendar. AR, BCG/organization/nine-box matrix semantics, truncated reference
+titles and native reference equivalence remain open; R5 is not finished.
+All 379 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with all 35 templates.
+
 R5 template-section navigation delivered: eight accessible EN/DE chevrons/counts
 open category views, and fixed All templates returns to the overview. Per-view
 scroll state restores the overview position rather than inheriting a deep offset

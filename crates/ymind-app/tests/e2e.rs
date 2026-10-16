@@ -1639,7 +1639,8 @@ fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
     assert!(settings.recent_files.is_empty());
     let mut restarted = harness(YMindApp::new(settings, Services::default(), &[]));
     restarted.run_steps(3);
-    restarted.get_by_role_and_label(Role::Button, "Recent template: Creative Workflow");
+    let latest = ymind_core::templates::TEMPLATES.last().unwrap();
+    restarted.get_by_role_and_label(Role::Button, &format!("Recent template: {}", latest.name));
     let count = restarted.state().docs.len();
     restarted
         .get_by_role_and_label(Role::Button, "Cancel")

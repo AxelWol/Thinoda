@@ -152,6 +152,114 @@ pub const TEMPLATES: &[TemplateInfo] = &[
         structure: Structure::LogicRight,
         category: TemplateCategory::Creativity,
     },
+    TemplateInfo {
+        id: "problem-solving",
+        name: "Problem Solving",
+        structure: Structure::LogicRight,
+        category: TemplateCategory::Knowledge,
+    },
+    TemplateInfo {
+        id: "concept-framework",
+        name: "Concept Framework",
+        structure: Structure::BraceRight,
+        category: TemplateCategory::Knowledge,
+    },
+    TemplateInfo {
+        id: "software-architecture",
+        name: "Software Architecture",
+        structure: Structure::OrgDown,
+        category: TemplateCategory::Knowledge,
+    },
+    TemplateInfo {
+        id: "business-plan",
+        name: "Business Plan",
+        structure: Structure::MapClockwise,
+        category: TemplateCategory::Meeting,
+    },
+    TemplateInfo {
+        id: "workshop",
+        name: "Workshop",
+        structure: Structure::TimelineHorizontal,
+        category: TemplateCategory::Meeting,
+    },
+    TemplateInfo {
+        id: "dissertation",
+        name: "Dissertation Plan",
+        structure: Structure::TreeRight,
+        category: TemplateCategory::Study,
+    },
+    TemplateInfo {
+        id: "school-timetable",
+        name: "School Timetable",
+        structure: Structure::TreeTable,
+        category: TemplateCategory::Study,
+    },
+    TemplateInfo {
+        id: "reading-notes",
+        name: "Reading Notes",
+        structure: Structure::LogicRight,
+        category: TemplateCategory::Study,
+    },
+    TemplateInfo {
+        id: "language-learning",
+        name: "Language Learning",
+        structure: Structure::MapClockwise,
+        category: TemplateCategory::Study,
+    },
+    TemplateInfo {
+        id: "project-retrospective",
+        name: "Project Retrospective",
+        structure: Structure::LogicRight,
+        category: TemplateCategory::Project,
+    },
+    TemplateInfo {
+        id: "shopping-list",
+        name: "Shopping List",
+        structure: Structure::TreeRight,
+        category: TemplateCategory::Life,
+    },
+    TemplateInfo {
+        id: "mood-journal",
+        name: "Mood Journal",
+        structure: Structure::TimelineHorizontal,
+        category: TemplateCategory::Life,
+    },
+    TemplateInfo {
+        id: "service-comparison",
+        name: "Service Comparison",
+        structure: Structure::TreeTable,
+        category: TemplateCategory::Life,
+    },
+    TemplateInfo {
+        id: "cause-effect",
+        name: "Cause and Effect",
+        structure: Structure::FishboneRight,
+        category: TemplateCategory::Analysis,
+    },
+    TemplateInfo {
+        id: "comparison",
+        name: "Comparison",
+        structure: Structure::TreeTable,
+        category: TemplateCategory::Analysis,
+    },
+    TemplateInfo {
+        id: "social-media-plan",
+        name: "Social Media Plan",
+        structure: Structure::LogicRight,
+        category: TemplateCategory::Analysis,
+    },
+    TemplateInfo {
+        id: "recipe",
+        name: "Recipe",
+        structure: Structure::TreeRight,
+        category: TemplateCategory::Creativity,
+    },
+    TemplateInfo {
+        id: "film-production",
+        name: "Film Production",
+        structure: Structure::TimelineHorizontal,
+        category: TemplateCategory::Creativity,
+    },
 ];
 
 /// Blank workbook: central topic plus `main_count` main topics.
@@ -171,6 +279,254 @@ pub fn instantiate(id: &str) -> Workbook {
         .copied()
         .unwrap_or(TEMPLATES[0]);
     let mut wb = match info.id {
+        "problem-solving" => with_children(
+            "Problem to Solve",
+            &[
+                (
+                    "Define",
+                    &["Observed situation", "Desired outcome", "Constraints"][..],
+                ),
+                ("Investigate", &["Evidence", "Possible causes", "Unknowns"]),
+                ("Explore", &["Option A", "Option B", "Trade-offs"]),
+                ("Act", &["Small experiment", "Owner", "Success measure"]),
+                ("Review", &["Result", "Lessons", "Next adjustment"]),
+            ],
+        ),
+        "concept-framework" => with_children(
+            "Concept Framework",
+            &[
+                ("Purpose", &["Question", "Scope"][..]),
+                ("Building Blocks", &["Term", "Definition", "Example"]),
+                ("Connections", &["Dependency", "Feedback"]),
+                ("Assumptions", &["Supporting evidence", "Limitations"]),
+                ("Application", &["Use case", "Counterexample"]),
+            ],
+        ),
+        "software-architecture" => with_children(
+            "System",
+            &[
+                ("Clients", &["User interface", "Accessibility"][..]),
+                ("Services", &["Responsibilities", "Interfaces"]),
+                ("Data", &["Storage", "Retention", "Recovery"]),
+                ("Integration", &["External systems", "Failure handling"]),
+                ("Quality", &["Security", "Performance", "Observability"]),
+                (
+                    "Delivery",
+                    &["Deployment", "Compatibility", "Open decisions"],
+                ),
+            ],
+        ),
+        "business-plan" => with_children(
+            "Business Idea",
+            &[
+                ("Customers", &["Audience", "Need", "Research"][..]),
+                ("Value", &["Offer", "Differentiation"]),
+                ("Delivery", &["Activities", "Partners", "Resources"]),
+                ("Economics", &["Revenue assumptions", "Costs", "Runway"]),
+                ("Go to Market", &["Channels", "First experiment"]),
+                ("Risks", &["Assumptions to test", "Review date"]),
+            ],
+        ),
+        "workshop" => with_children(
+            "Workshop",
+            &[
+                ("Prepare", &["Outcome", "Participants", "Materials"][..]),
+                ("Open", &["Check-in", "Working agreements"]),
+                ("Explore", &["Individual ideas", "Group discussion"]),
+                ("Decide", &["Criteria", "Selected direction"]),
+                ("Close", &["Actions and owners", "Feedback", "Follow-up"]),
+            ],
+        ),
+        "dissertation" => with_children(
+            "Research Project",
+            &[
+                (
+                    "Question",
+                    &["Motivation", "Scope", "Research question"][..],
+                ),
+                (
+                    "Literature",
+                    &["Search strategy", "Key sources", "Research gap"],
+                ),
+                ("Method", &["Design", "Ethics review", "Data collection"]),
+                ("Analysis", &["Approach", "Findings", "Limitations"]),
+                (
+                    "Writing",
+                    &["Chapter outline", "Citations", "Supervisor feedback"],
+                ),
+                (
+                    "Submission",
+                    &["Milestones", "Proofreading", "Defense preparation"],
+                ),
+            ],
+        ),
+        "school-timetable" => with_children(
+            "School Week",
+            &[
+                (
+                    "Monday",
+                    &["Morning subject", "Afternoon subject", "Homework"][..],
+                ),
+                (
+                    "Tuesday",
+                    &["Morning subject", "Afternoon subject", "Homework"],
+                ),
+                (
+                    "Wednesday",
+                    &["Morning subject", "Afternoon subject", "Homework"],
+                ),
+                (
+                    "Thursday",
+                    &["Morning subject", "Afternoon subject", "Homework"],
+                ),
+                (
+                    "Friday",
+                    &["Morning subject", "Afternoon subject", "Homework"],
+                ),
+            ],
+        ),
+        "reading-notes" => with_children(
+            "Reading",
+            &[
+                (
+                    "Source",
+                    &["Title and author", "Date", "Location or link"][..],
+                ),
+                ("Main Ideas", &["Claim", "Supporting evidence"]),
+                ("My Notes", &["Paraphrase", "Connection", "Question"]),
+                ("Evaluation", &["Strengths", "Limitations"]),
+                ("Follow-up", &["Further reading", "Action"]),
+            ],
+        ),
+        "language-learning" => with_children(
+            "Language Practice",
+            &[
+                ("Goal", &["Situation", "Weekly target"][..]),
+                ("Vocabulary", &["Word", "Meaning", "Example sentence"]),
+                ("Patterns", &["Grammar point", "Practice example"]),
+                ("Input", &["Listening", "Reading"]),
+                ("Output", &["Speaking", "Writing"]),
+                ("Review", &["Recall practice", "Feedback", "Next session"]),
+            ],
+        ),
+        "project-retrospective" => with_children(
+            "Project Retrospective",
+            &[
+                ("Context", &["Goal", "Time period", "Participants"][..]),
+                ("Keep", &["What worked", "Evidence"]),
+                ("Change", &["Friction", "Contributing factors"]),
+                ("Try", &["Experiment", "Owner", "Expected outcome"]),
+                ("Follow-up", &["Review date", "Result"]),
+            ],
+        ),
+        "shopping-list" => with_children(
+            "Shopping",
+            &[
+                ("Produce", &["Fruit", "Vegetables"][..]),
+                ("Pantry", &["Grains", "Staples"]),
+                ("Chilled", &["Item", "Quantity"]),
+                ("Household", &["Supplies"]),
+                (
+                    "Before Leaving",
+                    &["Check cupboards", "Budget", "Reusable bags"],
+                ),
+            ],
+        ),
+        "mood-journal" => with_children(
+            "Daily Reflection",
+            &[
+                ("Morning", &["Feeling", "Energy", "Intention"][..]),
+                ("Afternoon", &["Moment to notice", "What helped"]),
+                ("Evening", &["Feeling", "Something appreciated"]),
+                ("Tomorrow", &["Small next step", "Time to rest"]),
+            ],
+        ),
+        "service-comparison" => with_children(
+            "Choose a Service",
+            &[
+                ("Requirements", &["Must have", "Nice to have"][..]),
+                (
+                    "Service A",
+                    &["Features", "Total cost", "Support", "Limitations"],
+                ),
+                (
+                    "Service B",
+                    &["Features", "Total cost", "Support", "Limitations"],
+                ),
+                (
+                    "Verification",
+                    &["Trial result", "Contract terms", "Data portability"],
+                ),
+                ("Decision", &["Rationale", "Review date"]),
+            ],
+        ),
+        "cause-effect" => with_children(
+            "Observed Effect",
+            &[
+                ("People", &["Possible cause", "Evidence to check"][..]),
+                ("Process", &["Possible cause", "Evidence to check"]),
+                ("Tools", &["Possible cause", "Evidence to check"]),
+                ("Environment", &["Possible cause", "Evidence to check"]),
+                ("Measurement", &["Possible cause", "Evidence to check"]),
+            ],
+        ),
+        "comparison" => with_children(
+            "Compare Alternatives",
+            &[
+                ("Criteria", &["Purpose", "Constraints", "Weighting"][..]),
+                ("Alternative A", &["Benefits", "Costs", "Risks", "Evidence"]),
+                ("Alternative B", &["Benefits", "Costs", "Risks", "Evidence"]),
+                (
+                    "Conclusion",
+                    &["Similarities", "Differences", "Open questions"],
+                ),
+            ],
+        ),
+        "social-media-plan" => with_children(
+            "Social Media Plan",
+            &[
+                ("Purpose", &["Audience", "Outcome", "Success measure"][..]),
+                ("Content", &["Theme", "Format", "Source permissions"]),
+                ("Channels", &["Channel", "Posting schedule"]),
+                ("Production", &["Draft", "Review", "Accessible media"]),
+                ("Learn", &["Results", "Feedback", "Next experiment"]),
+            ],
+        ),
+        "recipe" => with_children(
+            "Recipe",
+            &[
+                (
+                    "Overview",
+                    &["Servings", "Preparation time", "Equipment"][..],
+                ),
+                ("Ingredients", &["Ingredient and quantity", "Substitutions"]),
+                ("Preparation", &["Step 1", "Step 2"]),
+                ("Cooking", &["Method", "Time and temperature"]),
+                ("Serving", &["Finish", "Notes for next time"]),
+            ],
+        ),
+        "film-production" => with_children(
+            "Film Project",
+            &[
+                ("Development", &["Premise", "Audience", "Script"][..]),
+                (
+                    "Pre-production",
+                    &["Budget", "Crew", "Locations and permissions"],
+                ),
+                (
+                    "Production",
+                    &["Shot list", "Schedule", "Sound", "Media backups"],
+                ),
+                (
+                    "Post-production",
+                    &["Edit", "Sound mix", "Captions", "Credits"],
+                ),
+                (
+                    "Release",
+                    &["Rights check", "Delivery formats", "Screening"],
+                ),
+            ],
+        ),
         "knowledge-base" => with_children(
             "Knowledge",
             &[
@@ -303,6 +659,51 @@ mod tests {
                     .iter()
                     .any(|template| template.category == category)
             );
+        }
+    }
+
+    #[test]
+    fn scenario_templates_have_original_actionable_content_instead_of_blank_fallbacks() {
+        for (id, central, branch) in [
+            ("problem-solving", "Problem to Solve", "Investigate"),
+            ("concept-framework", "Concept Framework", "Assumptions"),
+            ("software-architecture", "System", "Integration"),
+            ("business-plan", "Business Idea", "Economics"),
+            ("workshop", "Workshop", "Decide"),
+            ("dissertation", "Research Project", "Method"),
+            ("school-timetable", "School Week", "Wednesday"),
+            ("reading-notes", "Reading", "Evaluation"),
+            ("language-learning", "Language Practice", "Output"),
+            ("project-retrospective", "Project Retrospective", "Try"),
+            ("shopping-list", "Shopping", "Before Leaving"),
+            ("mood-journal", "Daily Reflection", "Evening"),
+            ("service-comparison", "Choose a Service", "Verification"),
+            ("cause-effect", "Observed Effect", "Measurement"),
+            ("comparison", "Compare Alternatives", "Criteria"),
+            ("social-media-plan", "Social Media Plan", "Production"),
+            ("recipe", "Recipe", "Ingredients"),
+            ("film-production", "Film Project", "Post-production"),
+        ] {
+            assert!(TEMPLATES.iter().any(|info| info.id == id));
+            let workbook = instantiate(id);
+            let sheet = workbook.active();
+            assert_eq!(sheet.topic(sheet.root).unwrap().title, central, "{id}");
+            let main = sheet.children(sheet.root);
+            assert!(main.len() >= 4, "{id}");
+            assert!(
+                main.iter()
+                    .any(|id| sheet.topic(*id).unwrap().title == branch)
+            );
+            for main in main {
+                assert!(!sheet.children(*main).is_empty(), "{id}");
+            }
+            assert!(
+                sheet
+                    .topics
+                    .values()
+                    .all(|topic| !topic.title.starts_with("Main Topic"))
+            );
+            workbook.validate().unwrap();
         }
     }
 }
