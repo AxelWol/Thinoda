@@ -66,7 +66,8 @@ fn c(hex: &str) -> Color {
 }
 
 impl Theme {
-    pub const IDS: [&'static str; 7] = [
+    pub const IDS: [&'static str; 8] = [
+        "clarity",
         "twilight",
         "ocean",
         "forest",
@@ -92,6 +93,17 @@ impl Theme {
             line_shape: LineShape::Curve,
         };
         match id {
+            "clarity" => Theme {
+                central_shape: TopicShape::None,
+                ..base(
+                    "clarity",
+                    "Clarity",
+                    &[
+                        "#FF656B", "#FFA366", "#98D3B8", "#87E0D8", "#6EC4F5", "#D58BF0",
+                    ],
+                    "#FFFFFF",
+                )
+            },
             "ocean" => base(
                 "ocean",
                 "Ocean",
@@ -247,8 +259,17 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
         .unwrap_or(0);
     let branch = theme.branch_color(settings, branch_index);
     let topic = sheet.topic(id);
+    let clarity = theme.id == "clarity";
+    let depth = sheet.depth(id);
 
     let (fill, shape, size, bold) = match level {
+        Level::Central if clarity => (None, theme.central_shape, 30.0, true),
+        Level::Sub if clarity && depth == 2 => (
+            Some(branch.lerp(bg, if dark { 0.65 } else { 0.8 })),
+            TopicShape::RoundedRect,
+            14.0,
+            false,
+        ),
         Level::Central => (Some(theme.central_fill), theme.central_shape, 30.0, true),
         Level::Main => (Some(branch), theme.main_shape, 18.0, false),
         Level::Floating | Level::Summary => (
@@ -271,7 +292,11 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
             break;
         }
     }
-    let mut line_shape = theme.line_shape;
+    let mut line_shape = if clarity && level == Level::Sub {
+        LineShape::RoundedElbow
+    } else {
+        theme.line_shape
+    };
     for a in std::iter::once(id).chain(sheet.ancestors(id)) {
         if let Some(ls) = sheet.topic(a).and_then(|t| t.style.line_shape) {
             line_shape = ls;
@@ -301,8 +326,11 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
         },
         width: None,
     };
-    if level == Level::Sub {
+    if level == Level::Sub && !(clarity && depth == 2) {
         r.border_color = Some(branch);
+    }
+    if clarity {
+        r.line_width = 1.5;
     }
     if let Some(t) = topic {
         let s = &t.style;
@@ -335,10 +363,14 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
         r.width = s.width;
     }
     let behind = r.fill.unwrap_or(bg);
-    r.text_color = topic
-        .and_then(|t| t.style.text_color)
-        .unwrap_or_else(|| behind.contrasting_text());
-    if level == Level::Central {
+    r.text_color = topic.and_then(|t| t.style.text_color).unwrap_or_else(|| {
+        if clarity && level == Level::Main && topic.is_none_or(|t| t.style.fill.is_none()) {
+            c("#1F2328")
+        } else {
+            behind.contrasting_text()
+        }
+    });
+    if level == Level::Central && !clarity {
         r.text_color = topic
             .and_then(|t| t.style.text_color)
             .unwrap_or(theme.central_text);
@@ -398,5 +430,64 @@ mod tests {
         assert_ne!(t.branch_color(&st, 0), t.branch_color(&st, 1));
         st.variant = 2;
         assert_eq!(t.branch_color(&st, 0), t.branch_color(&st, 3));
+    }
+
+    #[test]
+    fn clarity_matches_reference_hierarchy_in_both_appearances() {
+        let mut s = Sheet::new("S", "R");
+        s.theme.theme_id = "clarity".into();
+        let main = s.add_child(s.root, None, "M");
+        let sub = s.add_child(main, None, "S");
+        let deep = s.add_child(sub, None, "D");
+        for dark in [false, true] {
+            let root = resolve_style(&s, s.root, dark);
+            assert_eq!(root.fill, None);
+            assert_eq!(root.shape, TopicShape::None);
+            assert!(root.bold);
+            assert_eq!(
+                root.text_color,
+                if dark { Color::WHITE } else { c("#1F2328") }
+            );
+            let main_style = resolve_style(&s, main, dark);
+            assert_eq!(main_style.fill, Some(c("#FF656B")));
+            assert_eq!(main_style.text_color, c("#1F2328"));
+            assert_eq!(main_style.line_width, 1.5);
+            assert_eq!(main_style.line_shape, LineShape::Curve);
+            let sub_style = resolve_style(&s, sub, dark);
+            assert_eq!(sub_style.shape, TopicShape::RoundedRect);
+            assert_eq!(
+                sub_style.fill,
+                Some(c("#FF656B").lerp(
+                    Theme::builtin("clarity").background(&s.theme, dark),
+                    if dark { 0.65 } else { 0.8 },
+                ))
+            );
+            assert_eq!(sub_style.border_color, None);
+            assert_eq!(sub_style.line_shape, LineShape::RoundedElbow);
+            let deep_style = resolve_style(&s, deep, dark);
+            assert_eq!(deep_style.fill, None);
+            assert_eq!(deep_style.shape, TopicShape::Underline);
+            assert_eq!(deep_style.border_color, Some(c("#FF656B")));
+        }
+    }
+
+    #[test]
+    fn clarity_preserves_explicit_styles_and_inherited_connectors() {
+        let mut s = Sheet::new("S", "R");
+        s.theme.theme_id = "clarity".into();
+        let main = s.add_child(s.root, None, "M");
+        let sub = s.add_child(main, None, "S");
+        s.topic_mut(main).unwrap().style.line_shape = Some(LineShape::Curve);
+        let style = &mut s.topic_mut(sub).unwrap().style;
+        style.fill = Some(c("#123456"));
+        style.text_color = Some(Color::WHITE);
+        style.shape = Some(TopicShape::Ellipse);
+        style.line_width = Some(4.0);
+        let resolved = resolve_style(&s, sub, false);
+        assert_eq!(resolved.fill, Some(c("#123456")));
+        assert_eq!(resolved.text_color, Color::WHITE);
+        assert_eq!(resolved.shape, TopicShape::Ellipse);
+        assert_eq!(resolved.line_width, 4.0);
+        assert_eq!(resolved.line_shape, LineShape::Curve);
     }
 }

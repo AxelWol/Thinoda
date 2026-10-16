@@ -12,6 +12,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Find (Ctrl+F) and replace (Ctrl+H) in the active sheet, with undoable replacement
+- New-map Clarity theme: plain bold center, colored main topics, pale subtopics and
+  thin connectors inspired by the supplied visual references; existing saved themes
+  and per-topic style overrides remain unchanged.
 - Light/dark theme following the system, English and German UI, personal settings
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
 - Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle

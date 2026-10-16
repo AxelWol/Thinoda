@@ -131,6 +131,8 @@ pub fn instantiate(id: &str) -> Workbook {
         _ => blank("Map 1", "Central Topic", "Main Topic", 4),
     };
     wb.active_mut().structure = info.structure;
+    wb.active_mut().theme.theme_id = "clarity".into();
+    wb.active_mut().theme.tapered_lines = false;
     wb
 }
 
@@ -162,6 +164,8 @@ mod tests {
             let wb = instantiate(t.id);
             wb.validate().unwrap();
             assert_eq!(wb.active().structure, t.structure);
+            assert_eq!(wb.active().theme.theme_id, "clarity");
+            assert!(!wb.active().theme.tapered_lines);
         }
     }
 }
