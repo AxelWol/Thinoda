@@ -14,7 +14,12 @@ pub struct Command {
 
 impl Command {
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
-        Self { id: id.into(), title: title.into(), shortcut: None, category: None }
+        Self {
+            id: id.into(),
+            title: title.into(),
+            shortcut: None,
+            category: None,
+        }
     }
 
     pub fn shortcut(mut self, s: impl Into<String>) -> Self {
@@ -93,7 +98,9 @@ impl CommandPalette {
                     Some(cat) => format!("{cat}: {}", c.title),
                     None => c.title.clone(),
                 };
-                fuzzy_score(&self.query, &c.title).or_else(|| fuzzy_score(&self.query, &hay).map(|s| s - 50)).map(|s| (s, c))
+                fuzzy_score(&self.query, &c.title)
+                    .or_else(|| fuzzy_score(&self.query, &hay).map(|s| s - 50))
+                    .map(|s| (s, c))
             })
             .collect();
         v.sort_by_key(|e| std::cmp::Reverse(e.0));
@@ -101,14 +108,29 @@ impl CommandPalette {
     }
 
     /// Shows the palette; returns the chosen command id.
-    pub fn show(&mut self, ctx: &Context, commands: &[Command], placeholder: &str) -> Option<String> {
+    pub fn show(
+        &mut self,
+        ctx: &Context,
+        commands: &[Command],
+        placeholder: &str,
+    ) -> Option<String> {
         if !self.open {
             return None;
         }
         let p = Palette::of(ctx);
-        let matches: Vec<Command> = self.filter(commands).into_iter().take(12).cloned().collect();
-        let (up, down, enter) =
-            ctx.input(|i| (i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown), i.key_pressed(Key::Enter)));
+        let matches: Vec<Command> = self
+            .filter(commands)
+            .into_iter()
+            .take(12)
+            .cloned()
+            .collect();
+        let (up, down, enter) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::ArrowUp),
+                i.key_pressed(Key::ArrowDown),
+                i.key_pressed(Key::Enter),
+            )
+        });
         if down {
             self.selected = (self.selected + 1).min(matches.len().saturating_sub(1));
         }
@@ -134,7 +156,10 @@ impl CommandPalette {
                 let r = ui
                     .add(
                         egui::Button::selectable(sel, RichText::new(&c.title).color(p.text))
-                            .right_text(RichText::new(c.shortcut.clone().unwrap_or_default()).color(p.text_muted))
+                            .right_text(
+                                RichText::new(c.shortcut.clone().unwrap_or_default())
+                                    .color(p.text_muted),
+                            )
                             .min_size(egui::vec2(ui.available_width(), 26.0)),
                     )
                     .on_hover_text(c.category.clone().unwrap_or_default());
@@ -161,7 +186,10 @@ mod tests {
     fn fuzzy_basics() {
         assert!(fuzzy_score("ins", "Insert Topic").is_some());
         assert!(fuzzy_score("xyz", "Insert Topic").is_none());
-        assert!(fuzzy_score("it", "Insert Topic").unwrap() > fuzzy_score("it", "Edit Notes").unwrap_or(i32::MIN));
+        assert!(
+            fuzzy_score("it", "Insert Topic").unwrap()
+                > fuzzy_score("it", "Edit Notes").unwrap_or(i32::MIN)
+        );
         assert_eq!(fuzzy_score("", "abc"), Some(0));
     }
 

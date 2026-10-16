@@ -7,7 +7,7 @@ use std::sync::Arc;
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use ymind_app::app::{CloseIntent, Cmd, Services, YMindApp};
+use ymind_app::app::{CloseIntent, Cmd, FocusField, Services, YMindApp};
 use ymind_core::Workbook;
 use ymind_io::Format;
 use ymind_platform::paths::Paths;
@@ -15,9 +15,12 @@ use ymind_platform::recovery::RecoveryManager;
 use ymind_platform::settings::{Language, Settings, ThemeMode as Theme};
 
 fn harness(app: YMindApp) -> Harness<'static, YMindApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
     // Symbol coverage depends on installed system fonts; render tofu instead of panicking.
-    h.ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
     h.run_steps(3);
     h
 }
@@ -28,13 +31,18 @@ fn root_children(app: &YMindApp) -> usize {
 }
 
 fn english() -> Settings {
-    Settings { language: Language::English, ..Settings::default() }
+    Settings {
+        language: Language::English,
+        ..Settings::default()
+    }
 }
 
 fn rename_root(app: &mut YMindApp, title: &str) {
     let d = app.doc_mut().unwrap();
     let root = d.doc.sheet().root;
-    d.doc.edit_sheet("Rename", |s| s.set_title(root, title)).unwrap();
+    d.doc
+        .edit_sheet("Rename", |s| s.set_title(root, title))
+        .unwrap();
 }
 
 fn root_title(wb: &Workbook) -> String {
@@ -48,7 +56,11 @@ fn toolbar_inserts_subtopic_and_topic() {
     let before = root_children(h.state());
     h.get_by_role_and_label(Role::Button, "Subtopic").click();
     h.run_steps(2);
-    assert_eq!(root_children(h.state()), before + 1, "Subtopic adds a child to the selected root");
+    assert_eq!(
+        root_children(h.state()),
+        before + 1,
+        "Subtopic adds a child to the selected root"
+    );
     assert!(h.state().doc().unwrap().is_dirty());
 
     // The new topic is selected, so "Topic" inserts a sibling under the root.
@@ -62,11 +74,14 @@ fn undo_redo_via_commands() {
     let mut h = harness(YMindApp::headless());
     let before = root_children(h.state());
     let ctx = h.ctx.clone();
-    h.state_mut().exec(&ctx, Cmd::Canvas(ymind_canvas::Action::InsertChild));
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::InsertChild));
     assert_eq!(root_children(h.state()), before + 1);
-    h.state_mut().exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
     assert_eq!(root_children(h.state()), before);
-    h.state_mut().exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
     assert_eq!(root_children(h.state()), before + 1);
 }
 
@@ -95,7 +110,11 @@ fn outliner_and_zen_toggle() {
     h.get_by_role_and_label(Role::Button, "Zen Mode").click();
     h.run_steps(2);
     assert!(h.state().zen);
-    assert!(h.query_by_role_and_label(Role::Button, "Outliner").is_none(), "chrome hidden in Zen mode");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Outliner")
+            .is_none(),
+        "chrome hidden in Zen mode"
+    );
 }
 
 #[test]
@@ -147,7 +166,12 @@ fn xmind_export_reimports_and_foreign_import_is_dirty() {
     let mut app = YMindApp::headless();
     rename_root(&mut app, "Interop");
     let wb = app.doc().unwrap().doc.workbook().clone();
-    for format in [Format::XMind, Format::FreeMind, Format::Opml, Format::Markdown] {
+    for format in [
+        Format::XMind,
+        Format::FreeMind,
+        Format::Opml,
+        Format::Markdown,
+    ] {
         let p = dir.path().join(format!("map.{}", format.extensions()[0]));
         let bytes = ymind_io::export_bytes(&wb, format, &Default::default()).unwrap();
         std::fs::write(&p, bytes).unwrap();
@@ -168,7 +192,10 @@ fn crash_recovery_restores_unsaved_work() {
 
     {
         let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
-        let services = Services { recovery: Some(recovery.clone()), ..Default::default() };
+        let services = Services {
+            recovery: Some(recovery.clone()),
+            ..Default::default()
+        };
         let mut app = YMindApp::new(english(), services, &[]);
         app.new_doc(ymind_core::templates::instantiate("mind-map"));
         rename_root(&mut app, "Unsaved Idea");
@@ -188,10 +215,16 @@ fn crash_recovery_restores_unsaved_work() {
     let app = h.state();
     assert!(app.dialogs.recovery.is_empty());
     let d = app.doc().expect("restored document is open");
-    assert!(d.is_dirty(), "restored work stays unsaved until the user saves");
+    assert!(
+        d.is_dirty(),
+        "restored work stays unsaved until the user saves"
+    );
     assert_eq!(root_title(d.doc.workbook()), "Unsaved Idea");
     drop(h);
-    assert!(RecoveryManager::find_orphans(&paths).is_empty(), "restored session is cleaned up");
+    assert!(
+        RecoveryManager::find_orphans(&paths).is_empty(),
+        "restored session is cleaned up"
+    );
 }
 
 fn ymind_bin() -> &'static str {
@@ -200,10 +233,16 @@ fn ymind_bin() -> &'static str {
 
 #[test]
 fn cli_version_and_help() {
-    let out = std::process::Command::new(ymind_bin()).arg("--version").output().unwrap();
+    let out = std::process::Command::new(ymind_bin())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains(env!("CARGO_PKG_VERSION")));
-    let out = std::process::Command::new(ymind_bin()).arg("--help").output().unwrap();
+    let out = std::process::Command::new(ymind_bin())
+        .arg("--help")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("--convert"));
 }
@@ -215,9 +254,17 @@ fn cli_converts_between_formats() {
     std::fs::write(&input, "# Project\n\n- Scope\n- Budget\n  - Q1\n").unwrap();
     for ext in ["xmind", "opml", "pdf", "png", "svg", "docx"] {
         let output = dir.path().join(format!("out.{ext}"));
-        let st = std::process::Command::new(ymind_bin()).arg("--convert").arg(&input).arg(&output).status().unwrap();
+        let st = std::process::Command::new(ymind_bin())
+            .arg("--convert")
+            .arg(&input)
+            .arg(&output)
+            .status()
+            .unwrap();
         assert!(st.success(), "convert to {ext}");
-        assert!(std::fs::metadata(&output).unwrap().len() > 0, "{ext} written");
+        assert!(
+            std::fs::metadata(&output).unwrap().len() > 0,
+            "{ext} written"
+        );
     }
     let wb = ymind_io::import_file(Path::new(&dir.path().join("out.xmind"))).unwrap();
     assert_eq!(root_title(&wb), "Project");
@@ -229,4 +276,48 @@ fn cli_converts_between_formats() {
         .status()
         .unwrap();
     assert!(!st.success(), "missing input fails with non-zero exit code");
+}
+
+#[test]
+fn ctrl_k_and_ctrl_shift_n_focus_hyperlink_and_notes() {
+    let mut h = harness(YMindApp::headless());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    h.run_steps(3);
+    assert!(
+        h.state().settings.show_format_panel,
+        "Ctrl+K opens the format panel"
+    );
+    let link = h.get_by_label("Hyperlink");
+    assert!(link.is_focused(), "Ctrl+K focuses the hyperlink field");
+    link.type_text("https://example.com");
+    h.run_steps(2);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::N,
+    );
+    h.run_steps(3);
+    assert!(
+        h.get_by_label("Notes").is_focused(),
+        "Ctrl+Shift+N focuses the notes field"
+    );
+    let d = h.state().doc().unwrap();
+    let s = d.doc.sheet();
+    assert_eq!(
+        s.topic(s.root).unwrap().hyperlink.as_deref(),
+        Some("https://example.com")
+    );
+    assert_eq!(h.state().focus_field, None::<FocusField>);
+}
+
+#[test]
+fn ctrl_b_adds_boundary() {
+    let mut h = harness(YMindApp::headless());
+    let first = {
+        let s = h.state().doc().unwrap().doc.sheet();
+        s.children(s.root)[0]
+    };
+    h.state_mut().doc_mut().unwrap().view.select_only(first);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().doc.sheet().boundaries.len(), 1);
 }

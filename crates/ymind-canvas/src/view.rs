@@ -53,8 +53,15 @@ struct EditState {
 enum Drag {
     None,
     Pan,
-    Rubber { start: Pos2, additive: bool },
-    Topics { ids: Vec<TopicId>, grab: Vec2, current: Vec2 },
+    Rubber {
+        start: Pos2,
+        additive: bool,
+    },
+    Topics {
+        ids: Vec<TopicId>,
+        grab: Vec2,
+        current: Vec2,
+    },
 }
 
 #[derive(Clone)]
@@ -134,8 +141,12 @@ impl MapView {
 
     /// Removes deleted/hidden topics from the selection.
     pub fn prune_selection(&mut self, sheet: &Sheet) {
-        self.selection.retain(|id| sheet.topic(*id).is_some() && sheet.is_visible(*id));
-        if self.selected_relationship.is_some_and(|r| !sheet.relationships.iter().any(|x| x.id == r)) {
+        self.selection
+            .retain(|id| sheet.topic(*id).is_some() && sheet.is_visible(*id));
+        if self
+            .selected_relationship
+            .is_some_and(|r| !sheet.relationships.iter().any(|x| x.id == r))
+        {
             self.selected_relationship = None;
         }
         if let Some(e) = &self.editing
@@ -196,11 +207,14 @@ impl MapView {
 
     /// Writes the edited title into the document. Returns whether a change was made.
     pub fn commit_edit(&mut self, doc: &mut Document) -> bool {
-        let Some(e) = self.editing.take() else { return false };
+        let Some(e) = self.editing.take() else {
+            return false;
+        };
         if e.text == e.original || doc.sheet().topic(e.topic).is_none() {
             return false;
         }
-        doc.edit_sheet("Edit Title", |s| s.set_title(e.topic, &e.text)).is_ok()
+        doc.edit_sheet("Edit Title", |s| s.set_title(e.topic, &e.text))
+            .is_ok()
     }
 
     pub fn cancel_edit(&mut self) {
@@ -241,7 +255,10 @@ impl MapView {
     }
 
     fn xf(&self) -> Xf {
-        Xf { origin: self.canvas_rect.center() + self.offset, zoom: self.zoom }
+        Xf {
+            origin: self.canvas_rect.center() + self.offset,
+            zoom: self.zoom,
+        }
     }
 
     /// Layout of the active sheet (cached; uses approximate metrics before the first frame).
@@ -255,7 +272,10 @@ impl MapView {
             return c.layout.clone();
         }
         let layout = Arc::new(layout_sheet(doc.sheet(), &ApproxMeasure, self.dark));
-        self.cache = Some(LayoutCache { key, layout: layout.clone() });
+        self.cache = Some(LayoutCache {
+            key,
+            layout: layout.clone(),
+        });
         layout
     }
 
@@ -278,14 +298,21 @@ impl MapView {
             Some(e) => {
                 let mut sheet = doc.sheet().clone();
                 if let Some(t) = sheet.topic_mut(e.topic) {
-                    t.title = if e.text.is_empty() { " ".into() } else { e.text.clone() };
+                    t.title = if e.text.is_empty() {
+                        " ".into()
+                    } else {
+                        e.text.clone()
+                    };
                 }
                 layout_sheet(&sheet, &measure, self.dark)
             }
             None => layout_sheet(doc.sheet(), &measure, self.dark),
         };
         let layout = Arc::new(layout);
-        self.cache = Some(LayoutCache { key, layout: layout.clone() });
+        self.cache = Some(LayoutCache {
+            key,
+            layout: layout.clone(),
+        });
         layout
     }
 
@@ -295,7 +322,9 @@ impl MapView {
             return;
         }
         let avail = self.canvas_rect.size() - vec2(80.0, 80.0);
-        let z = (avail.x / b.size.x).min(avail.y / b.size.y).clamp(MIN_ZOOM, 1.0);
+        let z = (avail.x / b.size.x)
+            .min(avail.y / b.size.y)
+            .clamp(MIN_ZOOM, 1.0);
         self.zoom = z;
         let c = b.center();
         self.offset = vec2(-c.x * z, -c.y * z);
@@ -348,7 +377,8 @@ impl MapCanvas {
         let id = Self::id();
         let rect = ui.available_rect_before_wrap();
         let response = ui.interact(rect, id, Sense::click_and_drag() | Sense::FOCUSABLE);
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Mind map canvas"));
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Mind map canvas"));
         ui.advance_cursor_after_rect(rect);
         let ctx = ui.ctx().clone();
         view.canvas_rect = rect;
@@ -372,7 +402,12 @@ impl MapCanvas {
             ctx.memory_mut(|m| {
                 m.set_focus_lock_filter(
                     id,
-                    EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true },
+                    EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
                 )
             });
         }
@@ -416,7 +451,10 @@ impl MapCanvas {
             let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or_default();
             let mods = ctx.input(|i| i.modifiers);
             let sp = view.xf().sheet(origin);
-            if response.dragged_by(PointerButton::Middle) || response.dragged_by(PointerButton::Secondary) || space {
+            if response.dragged_by(PointerButton::Middle)
+                || response.dragged_by(PointerButton::Secondary)
+                || space
+            {
                 view.drag = Drag::Pan;
             } else if let Some(t) = layout.hit_test(sp) {
                 if !view.selection.contains(&t) {
@@ -424,9 +462,16 @@ impl MapCanvas {
                 }
                 let ids: Vec<TopicId> = view.selection.clone();
                 view.commit_edit(doc);
-                view.drag = Drag::Topics { ids, grab: sp, current: sp };
+                view.drag = Drag::Topics {
+                    ids,
+                    grab: sp,
+                    current: sp,
+                };
             } else {
-                view.drag = Drag::Rubber { start: origin, additive: mods.command || mods.shift };
+                view.drag = Drag::Rubber {
+                    start: origin,
+                    additive: mods.command || mods.shift,
+                };
             }
         }
         if response.dragged() {
@@ -470,7 +515,9 @@ impl MapCanvas {
                     if let Err(e) = doc.edit_sheet("To-Do", |s| s.set_todo(t, next)) {
                         out.error = Some(e);
                     }
-                } else if let Some((Icon::Link, _)) = tl.icons.iter().find(|(_, r)| r.expand(2.0).contains(sp)) {
+                } else if let Some((Icon::Link, _)) =
+                    tl.icons.iter().find(|(_, r)| r.expand(2.0).contains(sp))
+                {
                     out.open_link = doc.sheet().topic(t).and_then(|x| x.hyperlink.clone());
                 } else {
                     if view.editing_topic() != Some(t) {
@@ -547,7 +594,8 @@ impl MapCanvas {
         }
 
         // ---- keyboard ------------------------------------------------------------------
-        if view.editing.is_none() && (response.has_focus() || ctx.memory(|m| m.focused()).is_none()) {
+        if view.editing.is_none() && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
+        {
             handle_keys(&ctx, doc, view, &mut out);
         }
 
@@ -605,7 +653,12 @@ impl MapCanvas {
                 if let Some(target) = drop_target(sheet, &layout, ids, *current)
                     && let Some(r) = layout.rect(target)
                 {
-                    painter.rect_stroke(xf.rect(r).expand(4.0), CornerRadius::same(8), Stroke::new(2.5, view.accent), StrokeKind::Outside);
+                    painter.rect_stroke(
+                        xf.rect(r).expand(4.0),
+                        CornerRadius::same(8),
+                        Stroke::new(2.5, view.accent),
+                        StrokeKind::Outside,
+                    );
                 }
             }
             _ => {}
@@ -614,7 +667,12 @@ impl MapCanvas {
             && let Some(r) = layout.rect(from)
         {
             let s = xf.pos(r.center());
-            painter.add(egui::Shape::dashed_line(&[s, p], Stroke::new(1.5, view.accent), 6.0, 4.0));
+            painter.add(egui::Shape::dashed_line(
+                &[s, p],
+                Stroke::new(1.5, view.accent),
+                6.0,
+                4.0,
+            ));
         }
 
         // ---- inline editor ---------------------------------------------------------------
@@ -642,7 +700,12 @@ fn run(doc: &mut Document, view: &mut MapView, action: Action, out: &mut CanvasO
     }
 }
 
-fn handle_keys(ctx: &egui::Context, doc: &mut Document, view: &mut MapView, out: &mut CanvasOutput) {
+fn handle_keys(
+    ctx: &egui::Context,
+    doc: &mut Document,
+    view: &mut MapView,
+    out: &mut CanvasOutput,
+) {
     const CMD: Modifiers = Modifiers::COMMAND;
     let shift_cmd = Modifiers::COMMAND.plus(Modifiers::SHIFT);
     let shortcuts: &[(Modifiers, Key, Action)] = &[
@@ -654,16 +717,42 @@ fn handle_keys(ctx: &egui::Context, doc: &mut Document, view: &mut MapView, out:
         (Modifiers::NONE, Key::Enter, Action::InsertSibling),
         (Modifiers::NONE, Key::Tab, Action::InsertChild),
         (Modifiers::NONE, Key::Insert, Action::InsertChild),
+        // XMind: Ctrl+Delete (Windows) / Cmd+Backspace (macOS) deletes only the topic.
+        (CMD, Key::Delete, Action::DeleteKeepChildren),
+        (CMD, Key::Backspace, Action::DeleteKeepChildren),
         (shift_cmd, Key::Delete, Action::DeleteKeepChildren),
         (Modifiers::NONE, Key::Delete, Action::Delete),
         (Modifiers::NONE, Key::Backspace, Action::Delete),
         (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
         (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
-        (Modifiers::NONE, Key::ArrowUp, Action::Navigate(Direction::Up)),
-        (Modifiers::NONE, Key::ArrowDown, Action::Navigate(Direction::Down)),
-        (Modifiers::NONE, Key::ArrowLeft, Action::Navigate(Direction::Left)),
-        (Modifiers::NONE, Key::ArrowRight, Action::Navigate(Direction::Right)),
+        (
+            Modifiers::NONE,
+            Key::ArrowUp,
+            Action::Navigate(Direction::Up),
+        ),
+        (
+            Modifiers::NONE,
+            Key::ArrowDown,
+            Action::Navigate(Direction::Down),
+        ),
+        (
+            Modifiers::NONE,
+            Key::ArrowLeft,
+            Action::Navigate(Direction::Left),
+        ),
+        (
+            Modifiers::NONE,
+            Key::ArrowRight,
+            Action::Navigate(Direction::Right),
+        ),
+        (
+            Modifiers::COMMAND.plus(Modifiers::ALT),
+            Key::Slash,
+            Action::ToggleCollapseAll,
+        ),
+        (shift_cmd, Key::Slash, Action::ToggleCollapseAll),
         (CMD, Key::Slash, Action::ToggleCollapse),
+        (CMD, Key::R, Action::SelectRoot),
         (shift_cmd, Key::A, Action::SelectNone),
         (CMD, Key::A, Action::SelectAll),
         (Modifiers::NONE, Key::Home, Action::SelectRoot),
@@ -709,7 +798,8 @@ fn handle_keys(ctx: &egui::Context, doc: &mut Document, view: &mut MapView, out:
             }
             egui::Event::Paste(text) => run(doc, view, Action::Paste(Some(text)), out),
             egui::Event::Text(text) => {
-                let ok = !text.trim().is_empty() && !ctx.input(|i| i.modifiers.command || i.modifiers.alt);
+                let ok = !text.trim().is_empty()
+                    && !ctx.input(|i| i.modifiers.command || i.modifiers.alt);
                 if ok
                     && view.selection.len() == 1
                     && let Some(t) = view.primary()
@@ -723,8 +813,16 @@ fn handle_keys(ctx: &egui::Context, doc: &mut Document, view: &mut MapView, out:
     }
 }
 
-fn show_editor(ui: &mut Ui, doc: &mut Document, view: &mut MapView, layout: &Layout, out: &mut CanvasOutput) {
-    let Some(edit) = view.editing.as_ref() else { return };
+fn show_editor(
+    ui: &mut Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    layout: &Layout,
+    out: &mut CanvasOutput,
+) {
+    let Some(edit) = view.editing.as_ref() else {
+        return;
+    };
     let Some(tl) = layout.topics.get(&edit.topic) else {
         view.editing = None;
         return;
@@ -768,26 +866,37 @@ fn show_editor(ui: &mut Ui, doc: &mut Document, view: &mut MapView, layout: &Lay
         .desired_width(r.width())
         .desired_rows(1)
         .align(egui::Align2([align, egui::Align::Min]))
-        .return_key(Some(egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
+        .return_key(Some(egui::KeyboardShortcut::new(
+            Modifiers::SHIFT,
+            Key::Enter,
+        )))
         .lock_focus(true);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let output = te.show(&mut child);
-    output.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title"));
+    output.response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title")
+    });
     if !edit.focus_requested {
         edit.focus_requested = true;
         ui.memory_mut(|m| m.request_focus(edit_id));
         if edit.select_all {
             let n = edit.text.chars().count();
             let mut state = output.state.clone();
-            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(n),
-            )));
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(n),
+                )));
             state.store(ui.ctx(), edit_id);
         } else {
             let n = edit.text.chars().count();
             let mut state = output.state.clone();
-            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(n))));
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(n),
+                )));
             state.store(ui.ctx(), edit_id);
         }
     } else if output.response.lost_focus() {
@@ -797,7 +906,10 @@ fn show_editor(ui: &mut Ui, doc: &mut Document, view: &mut MapView, layout: &Lay
 
 fn drop_target(sheet: &Sheet, layout: &Layout, ids: &[TopicId], at: Vec2) -> Option<TopicId> {
     let t = layout.hit_test(at)?;
-    if ids.iter().any(|id| *id == t || sheet.subtree_ids(*id).contains(&t)) {
+    if ids
+        .iter()
+        .any(|id| *id == t || sheet.subtree_ids(*id).contains(&t))
+    {
         return None;
     }
     Some(t)
@@ -821,7 +933,12 @@ fn drop_topics(
     let ids: Vec<TopicId> = ids
         .iter()
         .copied()
-        .filter(|id| *id != sheet.root && !ids.iter().any(|o| o != id && sheet.subtree_ids(*o).contains(id)))
+        .filter(|id| {
+            *id != sheet.root
+                && !ids
+                    .iter()
+                    .any(|o| o != id && sheet.subtree_ids(*o).contains(id))
+        })
         .collect();
     if ids.is_empty() {
         return;
@@ -869,7 +986,11 @@ fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId
 fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len2 = ab.x * ab.x + ab.y * ab.y;
-    let t = if len2 == 0.0 { 0.0 } else { (((p - a).x * ab.x + (p - a).y * ab.y) / len2).clamp(0.0, 1.0) };
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((p - a).x * ab.x + (p - a).y * ab.y) / len2).clamp(0.0, 1.0)
+    };
     (p - (a + ab * t)).length()
 }
 
@@ -894,12 +1015,14 @@ mod tests {
         let doc = Document::new(Workbook::default());
         let mut view = MapView::default();
         view.select_only(doc.sheet().root);
-        Harness::builder().with_size(vec2(900.0, 600.0)).build_ui_state(
-            |ui, s: &mut State| {
-                MapCanvas::show(ui, &mut s.doc, &mut s.view);
-            },
-            State { doc, view },
-        )
+        Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, s: &mut State| {
+                    MapCanvas::show(ui, &mut s.doc, &mut s.view);
+                },
+                State { doc, view },
+            )
     }
 
     #[test]
@@ -945,8 +1068,55 @@ mod tests {
     }
 
     #[test]
+    fn xmind_guide_shortcuts() {
+        let mut h = harness();
+        let root = h.state().doc.sheet().root;
+        let first = h.state().doc.sheet().children(root)[0];
+        // Ctrl+Enter inserts a parent; Ctrl+Delete removes only that topic again.
+        h.state_mut().view.select_only(first);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Enter);
+        h.run();
+        let parent = h.state().doc.sheet().parent(first).unwrap();
+        assert_ne!(parent, root);
+        h.state_mut().view.cancel_edit();
+        h.state_mut().view.select_only(parent);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Delete);
+        h.run();
+        assert!(h.state().doc.sheet().topic(parent).is_none());
+        assert_eq!(h.state().doc.sheet().parent(first), Some(root));
+        // Ctrl+R jumps to the central topic.
+        h.key_press_modifiers(Modifiers::COMMAND, Key::R);
+        h.run();
+        assert_eq!(h.state().view.selection, vec![root]);
+        // Ctrl+Alt+/ folds all branches, pressing again unfolds them.
+        {
+            let s = h.state_mut();
+            s.view.select_only(first);
+            crate::apply_action(&mut s.doc, &mut s.view, Action::InsertChild).unwrap();
+            s.view.commit_edit(&mut s.doc);
+        }
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::Slash);
+        h.run();
+        {
+            let s = h.state().doc.sheet();
+            assert!(s.all_ids_ordered().iter().any(|id| s.topic(*id).unwrap().collapsed));
+        }
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::Slash);
+        h.run();
+        let s = h.state().doc.sheet();
+        assert!(
+            s.all_ids_ordered()
+                .iter()
+                .all(|id| !s.topic(*id).unwrap().collapsed)
+        );
+    }
+
+    #[test]
     fn zoom_keeps_anchor() {
-        let mut v = MapView { canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), ..Default::default() };
+        let mut v = MapView {
+            canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
+            ..Default::default()
+        };
         let anchor = pos2(100.0, 100.0);
         let before = v.xf().sheet(anchor);
         v.zoom_by(2.0, Some(anchor));
@@ -961,7 +1131,8 @@ mod tests {
         let mut doc = doc;
         let root = doc.sheet().root;
         let kids = doc.sheet().children(root).to_vec();
-        doc.edit_sheet("rel", |s| s.add_relationship(kids[0], kids[1])).unwrap();
+        doc.edit_sheet("rel", |s| s.add_relationship(kids[0], kids[1]))
+            .unwrap();
         let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
         let r = &layout.relationships[0];
         assert_eq!(hit_relationship(&layout, r.mid, 6.0), Some(r.id));

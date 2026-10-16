@@ -79,7 +79,9 @@ impl Palette {
 
     /// Palette of the context's current theme (uses the accent stored by [`crate::install`]).
     pub fn of(ctx: &Context) -> Self {
-        let accent = ctx.data(|d| d.get_temp::<Color32>(accent_id())).unwrap_or(DEFAULT_ACCENT);
+        let accent = ctx
+            .data(|d| d.get_temp::<Color32>(accent_id()))
+            .unwrap_or(DEFAULT_ACCENT);
         Self::for_theme(ctx.theme(), accent)
     }
 
@@ -117,9 +119,17 @@ mod tests {
 
     #[test]
     fn palettes_have_contrast() {
-        for p in [Palette::light(DEFAULT_ACCENT), Palette::dark(DEFAULT_ACCENT)] {
-            let lum = |c: Color32| (c.r() as f32 * 0.299 + c.g() as f32 * 0.587 + c.b() as f32 * 0.114) / 255.0;
-            assert!((lum(p.text) - lum(p.bg)).abs() > 0.6, "text/bg contrast too low");
+        for p in [
+            Palette::light(DEFAULT_ACCENT),
+            Palette::dark(DEFAULT_ACCENT),
+        ] {
+            let lum = |c: Color32| {
+                (c.r() as f32 * 0.299 + c.g() as f32 * 0.587 + c.b() as f32 * 0.114) / 255.0
+            };
+            assert!(
+                (lum(p.text) - lum(p.bg)).abs() > 0.6,
+                "text/bg contrast too low"
+            );
             assert!((lum(p.text_muted) - lum(p.bg)).abs() > 0.3);
         }
     }

@@ -2,8 +2,10 @@
 
 use crate::measure::BOLD_WIDTH;
 use egui::{
-    Align, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2,
+    Align, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke,
+    StrokeKind, pos2,
     text::{LayoutJob, TextFormat},
+    vec2,
 };
 use ymind_core::{
     Layout, Sheet, TextAlign, TopicId, TopicShape,
@@ -26,7 +28,10 @@ pub struct Xf {
 
 impl Xf {
     pub fn pos(&self, v: Vec2) -> Pos2 {
-        pos2(self.origin.x + v.x * self.zoom, self.origin.y + v.y * self.zoom)
+        pos2(
+            self.origin.x + v.x * self.zoom,
+            self.origin.y + v.y * self.zoom,
+        )
     }
 
     pub fn rect(&self, r: ymind_core::Rect) -> Rect {
@@ -34,7 +39,10 @@ impl Xf {
     }
 
     pub fn sheet(&self, p: Pos2) -> Vec2 {
-        Vec2::new((p.x - self.origin.x) / self.zoom, (p.y - self.origin.y) / self.zoom)
+        Vec2::new(
+            (p.x - self.origin.x) / self.zoom,
+            (p.y - self.origin.y) / self.zoom,
+        )
     }
 }
 
@@ -57,7 +65,13 @@ pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
 }
 
 /// Paints the whole map.
-pub fn paint_map(painter: &Painter, sheet: &Sheet, layout: &Layout, xf: Xf, opts: &PaintOptions<'_>) {
+pub fn paint_map(
+    painter: &Painter,
+    sheet: &Sheet,
+    layout: &Layout,
+    xf: Xf,
+    opts: &PaintOptions<'_>,
+) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
     let dim = |id: TopicId| opts.filter.is_some_and(|f| !f.contains(&id));
@@ -65,14 +79,30 @@ pub fn paint_map(painter: &Painter, sheet: &Sheet, layout: &Layout, xf: Xf, opts
     // Boundaries.
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
-        let color = bd.and_then(|x| x.color).map(color32).unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0));
+        let color = bd
+            .and_then(|x| x.color)
+            .map(color32)
+            .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0));
         let r = xf.rect(b.rect);
-        painter.rect_filled(r, CornerRadius::same((10.0 * z).min(255.0) as u8), color.gamma_multiply(0.12));
-        dashed_rect(painter, r, Stroke::new(1.5 * z.max(0.5), color), 6.0 * z, 4.0 * z);
+        painter.rect_filled(
+            r,
+            CornerRadius::same((10.0 * z).min(255.0) as u8),
+            color.gamma_multiply(0.12),
+        );
+        dashed_rect(
+            painter,
+            r,
+            Stroke::new(1.5 * z.max(0.5), color),
+            6.0 * z,
+            4.0 * z,
+        );
         if let Some(t) = bd.and_then(|x| x.title.as_ref()) {
             let font = FontId::proportional(12.0 * z);
             let g = painter.layout_no_wrap(t.clone(), font, Color32::WHITE);
-            let tr = Rect::from_min_size(r.left_top() + vec2(8.0 * z, -g.size().y - 2.0 * z), g.size() + vec2(10.0 * z, 4.0 * z));
+            let tr = Rect::from_min_size(
+                r.left_top() + vec2(8.0 * z, -g.size().y - 2.0 * z),
+                g.size() + vec2(10.0 * z, 4.0 * z),
+            );
             painter.rect_filled(tr, CornerRadius::same((4.0 * z) as u8), color);
             painter.galley(tr.min + vec2(5.0 * z, 2.0 * z), g, Color32::WHITE);
         }
@@ -88,7 +118,13 @@ pub fn paint_map(painter: &Painter, sheet: &Sheet, layout: &Layout, xf: Xf, opts
         let pts: Vec<Pos2> = pts.into_iter().map(|p| xf.pos(p)).collect();
         let tapered = sheet.theme.tapered_lines && c.parent == sheet.root;
         if tapered {
-            tapered_line(painter, &pts, (c.width * 3.0 * z).max(1.0), (c.width * z).max(0.5), color);
+            tapered_line(
+                painter,
+                &pts,
+                (c.width * 3.0 * z).max(1.0),
+                (c.width * z).max(0.5),
+                color,
+            );
         } else {
             painter.add(Shape::line(pts, Stroke::new((c.width * z).max(0.5), color)));
         }
@@ -102,31 +138,58 @@ pub fn paint_map(painter: &Painter, sheet: &Sheet, layout: &Layout, xf: Xf, opts
             .map(|t| color32(t.style.line_color))
             .unwrap_or(Color32::GRAY);
         let pts = brace_path(s.start, s.end, s.tip, s.dir);
-        painter.add(Shape::line(pts.into_iter().map(|p| xf.pos(p)).collect(), Stroke::new(1.5 * z.max(0.5), color)));
+        painter.add(Shape::line(
+            pts.into_iter().map(|p| xf.pos(p)).collect(),
+            Stroke::new(1.5 * z.max(0.5), color),
+        ));
     }
 
     // Topics.
     for id in &layout.order {
-        let Some(t) = layout.topics.get(id) else { continue };
+        let Some(t) = layout.topics.get(id) else {
+            continue;
+        };
         let topic = sheet.topic(*id);
-        paint_topic(painter, t, topic, xf, bg, dim(*id), opts.editing == Some(*id));
+        paint_topic(
+            painter,
+            t,
+            topic,
+            xf,
+            bg,
+            dim(*id),
+            opts.editing == Some(*id),
+        );
     }
 
     // Relationships (on top of topics, like XMind).
     for r in &layout.relationships {
         let rel = sheet.relationships.iter().find(|x| x.id == r.id);
-        let color = rel.and_then(|x| x.color).map(color32).unwrap_or(if opts.dark {
-            Color32::from_rgb(0xB0, 0xB8, 0xC4)
-        } else {
-            Color32::from_rgb(0x5A, 0x6A, 0x80)
-        });
-        let pts: Vec<Pos2> = (0..=32).map(|i| xf.pos(cubic(r.start, r.c1, r.c2, r.end, i as f32 / 32.0))).collect();
+        let color = rel
+            .and_then(|x| x.color)
+            .map(color32)
+            .unwrap_or(if opts.dark {
+                Color32::from_rgb(0xB0, 0xB8, 0xC4)
+            } else {
+                Color32::from_rgb(0x5A, 0x6A, 0x80)
+            });
+        let pts: Vec<Pos2> = (0..=32)
+            .map(|i| xf.pos(cubic(r.start, r.c1, r.c2, r.end, i as f32 / 32.0)))
+            .collect();
         let selected = opts.selected_relationship == Some(r.id);
-        let stroke = Stroke::new(if selected { 2.5 } else { 1.5 } * z.max(0.5), if selected { opts.accent } else { color });
+        let stroke = Stroke::new(
+            if selected { 2.5 } else { 1.5 } * z.max(0.5),
+            if selected { opts.accent } else { color },
+        );
         for s in Shape::dashed_line(&pts, stroke, 6.0 * z, 4.0 * z) {
             painter.add(s);
         }
-        arrow_head(painter, xf.pos(cubic(r.start, r.c1, r.c2, r.end, 0.97)), xf.pos(r.end), 9.0 * z, stroke.color);
+        arrow_head(
+            painter,
+            xf.pos(cubic(r.start, r.c1, r.c2, r.end, 0.97)),
+            xf.pos(r.end),
+            9.0 * z,
+            stroke.color,
+        );
         if let Some(title) = rel.map(|x| x.title.as_str()).filter(|t| !t.is_empty()) {
             let font = FontId::proportional(12.0 * z);
             let g = painter.layout_no_wrap(title.to_owned(), font, color);
@@ -141,22 +204,35 @@ pub fn paint_map(painter: &Painter, sheet: &Sheet, layout: &Layout, xf: Xf, opts
     for id in opts.selection {
         if let Some(t) = layout.topics.get(id) {
             let r = xf.rect(t.rect).expand(3.0 * z.max(0.6));
-            painter.rect_stroke(r, CornerRadius::same((8.0 * z).min(255.0) as u8), Stroke::new(2.0, opts.accent), StrokeKind::Outside);
+            painter.rect_stroke(
+                r,
+                CornerRadius::same((8.0 * z).min(255.0) as u8),
+                Stroke::new(2.0, opts.accent),
+                StrokeKind::Outside,
+            );
         }
     }
     if let Some(h) = opts.hovered.filter(|h| !opts.selection.contains(h))
         && let Some(t) = layout.topics.get(&h)
     {
         let r = xf.rect(t.rect).expand(3.0 * z.max(0.6));
-        painter.rect_stroke(r, CornerRadius::same((8.0 * z).min(255.0) as u8), Stroke::new(1.5, opts.accent.gamma_multiply(0.5)), StrokeKind::Outside);
+        painter.rect_stroke(
+            r,
+            CornerRadius::same((8.0 * z).min(255.0) as u8),
+            Stroke::new(1.5, opts.accent.gamma_multiply(0.5)),
+            StrokeKind::Outside,
+        );
     }
     for id in &layout.order {
-        let Some(t) = layout.topics.get(id) else { continue };
+        let Some(t) = layout.topics.get(id) else {
+            continue;
+        };
         let has_children = sheet.topic(*id).is_some_and(|x| !x.children.is_empty());
         if !has_children {
             continue;
         }
-        let show = t.hidden_children > 0 || opts.hovered == Some(*id) || opts.selection.contains(id);
+        let show =
+            t.hidden_children > 0 || opts.hovered == Some(*id) || opts.selection.contains(id);
         if show {
             paint_badge(painter, t, xf, opts.accent, bg);
         }
@@ -168,7 +244,11 @@ fn paint_badge(painter: &Painter, t: &TopicLayout, xf: Xf, accent: Color32, bg: 
     let c = xf.pos(t.badge_center());
     let line = color32(t.style.line_color);
     if t.hidden_children > 0 {
-        let text = if t.hidden_children > 99 { "99+".to_owned() } else { t.hidden_children.to_string() };
+        let text = if t.hidden_children > 99 {
+            "99+".to_owned()
+        } else {
+            t.hidden_children.to_string()
+        };
         let g = painter.layout_no_wrap(text, FontId::proportional(10.0 * z), Color32::WHITE);
         let w = (g.size().x + 8.0 * z).max(16.0 * z);
         let r = Rect::from_center_size(c, vec2(w, 16.0 * z));
@@ -176,7 +256,10 @@ fn paint_badge(painter: &Painter, t: &TopicLayout, xf: Xf, accent: Color32, bg: 
         painter.galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
     } else {
         painter.circle(c, 7.0 * z, bg, Stroke::new(1.2, accent));
-        painter.line_segment([c - vec2(3.5 * z, 0.0), c + vec2(3.5 * z, 0.0)], Stroke::new(1.5, accent));
+        painter.line_segment(
+            [c - vec2(3.5 * z, 0.0), c + vec2(3.5 * z, 0.0)],
+            Stroke::new(1.5, accent),
+        );
     }
 }
 
@@ -200,13 +283,31 @@ fn paint_topic(
     match st.shape {
         TopicShape::RoundedRect => {
             let rad = (6.0 * z).min(r.height() / 2.0).min(255.0) as u8;
-            painter.rect(r, CornerRadius::same(rad), fill.unwrap_or(Color32::TRANSPARENT), stroke, StrokeKind::Inside);
+            painter.rect(
+                r,
+                CornerRadius::same(rad),
+                fill.unwrap_or(Color32::TRANSPARENT),
+                stroke,
+                StrokeKind::Inside,
+            );
         }
         TopicShape::Rect => {
-            painter.rect(r, CornerRadius::ZERO, fill.unwrap_or(Color32::TRANSPARENT), stroke, StrokeKind::Inside);
+            painter.rect(
+                r,
+                CornerRadius::ZERO,
+                fill.unwrap_or(Color32::TRANSPARENT),
+                stroke,
+                StrokeKind::Inside,
+            );
         }
         TopicShape::Capsule => {
-            painter.rect(r, CornerRadius::same((r.height() / 2.0).min(255.0) as u8), fill.unwrap_or(Color32::TRANSPARENT), stroke, StrokeKind::Inside);
+            painter.rect(
+                r,
+                CornerRadius::same((r.height() / 2.0).min(255.0) as u8),
+                fill.unwrap_or(Color32::TRANSPARENT),
+                stroke,
+                StrokeKind::Inside,
+            );
         }
         TopicShape::Ellipse => {
             if let Some(f) = fill {
@@ -217,15 +318,27 @@ fn paint_topic(
             }
         }
         TopicShape::Diamond => {
-            let pts = vec![r.center_top(), r.right_center(), r.center_bottom(), r.left_center()];
-            painter.add(Shape::convex_polygon(pts, fill.unwrap_or(Color32::TRANSPARENT), stroke));
+            let pts = vec![
+                r.center_top(),
+                r.right_center(),
+                r.center_bottom(),
+                r.left_center(),
+            ];
+            painter.add(Shape::convex_polygon(
+                pts,
+                fill.unwrap_or(Color32::TRANSPARENT),
+                stroke,
+            ));
         }
         TopicShape::Underline => {
             if let Some(f) = fill {
                 painter.rect_filled(r, CornerRadius::same((4.0 * z) as u8), f);
             }
             let w = (st.line_width * z).max(0.75);
-            painter.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(w, a(color32(st.line_color))));
+            painter.line_segment(
+                [r.left_bottom(), r.right_bottom()],
+                Stroke::new(w, a(color32(st.line_color))),
+            );
         }
         TopicShape::None => {
             if let Some(f) = fill {
@@ -238,8 +351,20 @@ fn paint_topic(
     // Image placeholder.
     if let Some(ir) = t.image_rect {
         let ir = xf.rect(ir);
-        painter.rect(ir, CornerRadius::same((4.0 * z) as u8), text_color.gamma_multiply(0.08), Stroke::new(1.0, text_color.gamma_multiply(0.3)), StrokeKind::Inside);
-        painter.text(ir.center(), egui::Align2::CENTER_CENTER, "🖼", FontId::proportional(24.0 * z), text_color.gamma_multiply(0.6));
+        painter.rect(
+            ir,
+            CornerRadius::same((4.0 * z) as u8),
+            text_color.gamma_multiply(0.08),
+            Stroke::new(1.0, text_color.gamma_multiply(0.3)),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            ir.center(),
+            egui::Align2::CENTER_CENTER,
+            "🖼",
+            FontId::proportional(24.0 * z),
+            text_color.gamma_multiply(0.6),
+        );
     }
 
     // To-Do checkbox.
@@ -249,9 +374,17 @@ fn paint_topic(
         if done {
             painter.rect_filled(tr, rad, a(Color32::from_rgb(0x2D, 0xA4, 0x4E)));
             let p = |x: f32, y: f32| pos2(tr.left() + tr.width() * x, tr.top() + tr.height() * y);
-            painter.add(Shape::line(vec![p(0.22, 0.52), p(0.42, 0.72), p(0.78, 0.3)], Stroke::new(1.8 * z, Color32::WHITE)));
+            painter.add(Shape::line(
+                vec![p(0.22, 0.52), p(0.42, 0.72), p(0.78, 0.3)],
+                Stroke::new(1.8 * z, Color32::WHITE),
+            ));
         } else {
-            painter.rect_stroke(tr, rad, Stroke::new(1.5 * z, text_color), StrokeKind::Inside);
+            painter.rect_stroke(
+                tr,
+                rad,
+                Stroke::new(1.5 * z, text_color),
+                StrokeKind::Inside,
+            );
         }
     }
 
@@ -304,16 +437,40 @@ fn paint_topic(
             Icon::Notes => "📝",
         };
         let ir = xf.rect(*ir);
-        painter.text(ir.center(), egui::Align2::CENTER_CENTER, glyph, FontId::proportional(ir.height() * 0.9), text_color.gamma_multiply(0.8));
+        painter.text(
+            ir.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            FontId::proportional(ir.height() * 0.9),
+            text_color.gamma_multiply(0.8),
+        );
     }
 
     // Labels.
     for (l, lr) in &t.labels {
         let lr = xf.rect(*lr);
-        let chip = if bg.r() < 128 { Color32::from_gray(70) } else { Color32::from_rgb(0xE6, 0xEA, 0xF0) };
-        let fg = if bg.r() < 128 { Color32::from_gray(225) } else { Color32::from_rgb(0x44, 0x4C, 0x58) };
-        painter.rect_filled(lr, CornerRadius::same((lr.height() / 2.0).min(255.0) as u8), a(chip));
-        painter.text(lr.center(), egui::Align2::CENTER_CENTER, l, FontId::proportional((st.font_size * 0.72).max(9.0) * z), a(fg));
+        let chip = if bg.r() < 128 {
+            Color32::from_gray(70)
+        } else {
+            Color32::from_rgb(0xE6, 0xEA, 0xF0)
+        };
+        let fg = if bg.r() < 128 {
+            Color32::from_gray(225)
+        } else {
+            Color32::from_rgb(0x44, 0x4C, 0x58)
+        };
+        painter.rect_filled(
+            lr,
+            CornerRadius::same((lr.height() / 2.0).min(255.0) as u8),
+            a(chip),
+        );
+        painter.text(
+            lr.center(),
+            egui::Align2::CENTER_CENTER,
+            l,
+            FontId::proportional((st.font_size * 0.72).max(9.0) * z),
+            a(fg),
+        );
     }
 }
 
@@ -343,7 +500,13 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
             ];
             let n: usize = rest.parse().unwrap_or(1);
             painter.circle_filled(c, rad, a(colors[(n.saturating_sub(1)) % colors.len()]));
-            painter.text(c, egui::Align2::CENTER_CENTER, rest, FontId::proportional(rad * 1.3), a(Color32::WHITE));
+            painter.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                rest,
+                FontId::proportional(rad * 1.3),
+                a(Color32::WHITE),
+            );
         }
         "task" => {
             let frac = match rest {
@@ -362,25 +525,42 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
             if frac >= 1.0 {
                 painter.circle_filled(c, rad - 0.5, green);
                 painter.add(Shape::line(
-                    vec![c + vec2(-rad * 0.45, 0.0), c + vec2(-rad * 0.1, rad * 0.35), c + vec2(rad * 0.5, -rad * 0.35)],
+                    vec![
+                        c + vec2(-rad * 0.45, 0.0),
+                        c + vec2(-rad * 0.1, rad * 0.35),
+                        c + vec2(rad * 0.5, -rad * 0.35),
+                    ],
                     Stroke::new(1.5, Color32::WHITE),
                 ));
             } else if frac > 0.0 {
                 let mut pts = vec![c];
                 let steps = (24.0_f32 * frac).ceil() as usize + 1;
                 for i in 0..=steps {
-                    let ang = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * frac * i as f32 / steps as f32;
+                    let ang = -std::f32::consts::FRAC_PI_2
+                        + std::f32::consts::TAU * frac * i as f32 / steps as f32;
                     pts.push(c + vec2(ang.cos(), ang.sin()) * (rad - 1.5));
                 }
-                painter.add(Shape::Path(egui::epaint::PathShape { points: pts, closed: true, fill: green, stroke: Stroke::NONE.into() }));
+                painter.add(Shape::Path(egui::epaint::PathShape {
+                    points: pts,
+                    closed: true,
+                    fill: green,
+                    stroke: Stroke::NONE.into(),
+                }));
             }
         }
         "flag" => {
             let col = a(named(rest));
             let x0 = r.left() + r.width() * 0.25;
-            painter.line_segment([pos2(x0, r.top() + 1.0), pos2(x0, r.bottom() - 1.0)], Stroke::new(1.4, a(Color32::from_gray(90))));
+            painter.line_segment(
+                [pos2(x0, r.top() + 1.0), pos2(x0, r.bottom() - 1.0)],
+                Stroke::new(1.4, a(Color32::from_gray(90))),
+            );
             painter.add(Shape::convex_polygon(
-                vec![pos2(x0, r.top() + 1.5), pos2(r.right() - 1.0, r.top() + r.height() * 0.3), pos2(x0, r.top() + r.height() * 0.6)],
+                vec![
+                    pos2(x0, r.top() + 1.5),
+                    pos2(r.right() - 1.0, r.top() + r.height() * 0.3),
+                    pos2(x0, r.top() + r.height() * 0.6),
+                ],
                 col,
                 Stroke::NONE,
             ));
@@ -393,17 +573,36 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
                 let rr = if i % 2 == 0 { rad } else { rad * 0.45 };
                 pts.push(c + vec2(ang.cos(), ang.sin()) * rr);
             }
-            painter.add(Shape::Path(egui::epaint::PathShape { points: pts, closed: true, fill: col, stroke: Stroke::NONE.into() }));
+            painter.add(Shape::Path(egui::epaint::PathShape {
+                points: pts,
+                closed: true,
+                fill: col,
+                stroke: Stroke::NONE.into(),
+            }));
         }
         _ => {
             let glyph = ymind_core::markers::glyph(id);
-            let has = painter.ctx().fonts_mut(|f| f.has_glyphs(&FontId::proportional(rad * 1.6), glyph));
+            let has = painter
+                .ctx()
+                .fonts_mut(|f| f.has_glyphs(&FontId::proportional(rad * 1.6), glyph));
             if has && !glyph.is_empty() {
-                painter.text(c, egui::Align2::CENTER_CENTER, glyph, FontId::proportional(rad * 1.6), a(Color32::from_rgb(0x44, 0x4C, 0x58)));
+                painter.text(
+                    c,
+                    egui::Align2::CENTER_CENTER,
+                    glyph,
+                    FontId::proportional(rad * 1.6),
+                    a(Color32::from_rgb(0x44, 0x4C, 0x58)),
+                );
             } else {
                 painter.circle_filled(c, rad, a(Color32::from_rgb(0x8A, 0x8F, 0x98)));
                 let initial: String = id.chars().take(1).collect::<String>().to_uppercase();
-                painter.text(c, egui::Align2::CENTER_CENTER, initial, FontId::proportional(rad * 1.2), a(Color32::WHITE));
+                painter.text(
+                    c,
+                    egui::Align2::CENTER_CENTER,
+                    initial,
+                    FontId::proportional(rad * 1.2),
+                    a(Color32::WHITE),
+                );
             }
         }
     }
@@ -413,17 +612,30 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
 pub fn connector_path(kind: ConnectorKind, vertical: bool, s: Vec2, e: Vec2) -> Vec<Vec2> {
     let dx = e.x - s.x;
     let dy = e.y - s.y;
-    let sample = |c1: Vec2, c2: Vec2| (0..=20).map(|i| cubic(s, c1, c2, e, i as f32 / 20.0)).collect::<Vec<_>>();
+    let sample = |c1: Vec2, c2: Vec2| {
+        (0..=20)
+            .map(|i| cubic(s, c1, c2, e, i as f32 / 20.0))
+            .collect::<Vec<_>>()
+    };
     match kind {
         ConnectorKind::Straight => vec![s, e],
         ConnectorKind::Curve => {
             if vertical {
-                sample(Vec2::new(s.x, s.y + dy * 0.5), Vec2::new(e.x, s.y + dy * 0.5))
+                sample(
+                    Vec2::new(s.x, s.y + dy * 0.5),
+                    Vec2::new(e.x, s.y + dy * 0.5),
+                )
             } else {
-                sample(Vec2::new(s.x + dx * 0.5, s.y), Vec2::new(s.x + dx * 0.5, e.y))
+                sample(
+                    Vec2::new(s.x + dx * 0.5, s.y),
+                    Vec2::new(s.x + dx * 0.5, e.y),
+                )
             }
         }
-        ConnectorKind::Brace => sample(Vec2::new(s.x + dx * 0.9, s.y), Vec2::new(s.x + dx * 0.1, e.y)),
+        ConnectorKind::Brace => sample(
+            Vec2::new(s.x + dx * 0.9, s.y),
+            Vec2::new(s.x + dx * 0.1, e.y),
+        ),
         ConnectorKind::Elbow | ConnectorKind::RoundedElbow => {
             let (a, b) = if vertical {
                 let my = s.y + dy * 0.5;
@@ -488,9 +700,19 @@ pub fn brace_path(s: Vec2, e: Vec2, tip: Vec2, dir: Dir) -> Vec<Vec2> {
     let s_mid = Vec2::new((s.x + out_mid.x) / 2.0, (s.y + out_mid.y) / 2.0);
     let e_mid = Vec2::new((e.x + out_mid.x) / 2.0, (e.y + out_mid.y) / 2.0);
     let (c1, c2, c3, c4) = if horizontal {
-        (Vec2::new(s_mid.x, s.y), Vec2::new(s_mid.x, out_mid.y), Vec2::new(e_mid.x, out_mid.y), Vec2::new(e_mid.x, e.y))
+        (
+            Vec2::new(s_mid.x, s.y),
+            Vec2::new(s_mid.x, out_mid.y),
+            Vec2::new(e_mid.x, out_mid.y),
+            Vec2::new(e_mid.x, e.y),
+        )
     } else {
-        (Vec2::new(s.x, s_mid.y), Vec2::new(out_mid.x, s_mid.y), Vec2::new(out_mid.x, e_mid.y), Vec2::new(e.x, e_mid.y))
+        (
+            Vec2::new(s.x, s_mid.y),
+            Vec2::new(out_mid.x, s_mid.y),
+            Vec2::new(out_mid.x, e_mid.y),
+            Vec2::new(e.x, e_mid.y),
+        )
     };
     let _ = out_s;
     q(s, c1, s_mid, &mut v);
@@ -517,11 +739,21 @@ fn arrow_head(painter: &Painter, from: Pos2, to: Pos2, size: f32, color: Color32
     }
     let n = vec2(-d.y, d.x);
     let base = to - d * size;
-    painter.add(Shape::convex_polygon(vec![to, base + n * size * 0.45, base - n * size * 0.45], color, Stroke::NONE));
+    painter.add(Shape::convex_polygon(
+        vec![to, base + n * size * 0.45, base - n * size * 0.45],
+        color,
+        Stroke::NONE,
+    ));
 }
 
 fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) {
-    let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    let pts = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
     for s in Shape::dashed_line(&pts, stroke, dash, gap) {
         painter.add(s);
     }
@@ -533,7 +765,10 @@ mod tests {
 
     #[test]
     fn xf_roundtrip() {
-        let xf = Xf { origin: pos2(100.0, 50.0), zoom: 2.0 };
+        let xf = Xf {
+            origin: pos2(100.0, 50.0),
+            zoom: 2.0,
+        };
         let v = Vec2::new(10.0, -5.0);
         let p = xf.pos(v);
         assert_eq!(p, pos2(120.0, 40.0));
@@ -563,7 +798,12 @@ mod tests {
 
     #[test]
     fn brace_ends() {
-        let p = brace_path(Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0), Vec2::new(20.0, 50.0), Dir::Right);
+        let p = brace_path(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.0, 100.0),
+            Vec2::new(20.0, 50.0),
+            Dir::Right,
+        );
         assert_eq!(p[0], Vec2::new(0.0, 0.0));
         assert!((*p.last().unwrap() - Vec2::new(0.0, 100.0)).length() < 0.01);
         assert!(p.iter().any(|q| (q.x - 20.0).abs() < 0.01));

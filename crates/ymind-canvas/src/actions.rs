@@ -22,6 +22,8 @@ pub enum Action {
     ToggleCollapse,
     ExpandAll,
     CollapseAll,
+    /// Expands everything if any branch is folded, otherwise folds all branches (Ctrl+Alt+/).
+    ToggleCollapseAll,
     Navigate(Direction),
     MoveUp,
     MoveDown,
@@ -63,12 +65,17 @@ impl Action {
                 | Action::Paste(_)
                 | Action::ExpandAll
                 | Action::CollapseAll
+                | Action::ToggleCollapseAll
         )
     }
 }
 
 /// Applies `action`. Returns `Ok(true)` when something happened.
-pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> Result<bool, EditError> {
+pub fn apply_action(
+    doc: &mut Document,
+    view: &mut MapView,
+    action: Action,
+) -> Result<bool, EditError> {
     view.prune_selection(doc.sheet());
     if action.needs_selection() && view.selection.is_empty() {
         if matches!(action, Action::Navigate(_)) {
@@ -81,7 +88,11 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
     let sel = view.selection.clone();
     let titles = view.titles.clone();
     let child_title = |sheet: &ymind_core::Sheet, parent: TopicId| {
-        if parent == sheet.root { titles.main.clone() } else { titles.sub.clone() }
+        if parent == sheet.root {
+            titles.main.clone()
+        } else {
+            titles.sub.clone()
+        }
     };
     match action {
         Action::InsertChild => {
@@ -106,7 +117,11 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
             let title = child_title(sheet, parent);
             let before = action == Action::InsertSiblingBefore;
             let id = doc.edit_sheet("Insert Topic", |s| {
-                if before { s.insert_sibling_before(p, &title) } else { s.insert_sibling_after(p, &title) }
+                if before {
+                    s.insert_sibling_before(p, &title)
+                } else {
+                    s.insert_sibling_after(p, &title)
+                }
             })?;
             view.select_only(id);
             view.begin_edit(doc.sheet(), id, true);
@@ -148,7 +163,11 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
             view.begin_edit(doc.sheet(), p, true);
         }
         Action::ToggleCollapse => {
-            let ids: Vec<TopicId> = sel.iter().copied().filter(|id| !doc.sheet().children(*id).is_empty()).collect();
+            let ids: Vec<TopicId> = sel
+                .iter()
+                .copied()
+                .filter(|id| !doc.sheet().children(*id).is_empty())
+                .collect();
             if ids.is_empty() {
                 return Ok(false);
             }
@@ -160,15 +179,51 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
                 Ok(())
             })?;
         }
+        Action::ToggleCollapseAll => {
+            let sheet = doc.sheet();
+            let any_folded = sheet
+                .all_ids_ordered()
+                .iter()
+                .any(|id| sheet.topic(*id).is_some_and(|t| t.collapsed));
+            let targets = sheet.top_level_ids();
+            doc.edit_sheet(
+                if any_folded {
+                    "Expand All"
+                } else {
+                    "Collapse All"
+                },
+                |s| {
+                    for id in &targets {
+                        s.set_collapsed_all(*id, !any_folded)?;
+                    }
+                    Ok(())
+                },
+            )?;
+            if !any_folded {
+                let sheet = doc.sheet();
+                view.selection.retain(|id| sheet.is_visible(*id));
+            }
+        }
         Action::ExpandAll | Action::CollapseAll => {
             let collapse = action == Action::CollapseAll;
-            let targets: Vec<TopicId> = if sel.is_empty() { doc.sheet().top_level_ids() } else { sel.clone() };
-            doc.edit_sheet(if collapse { "Collapse All" } else { "Expand All" }, |s| {
-                for id in &targets {
-                    s.set_collapsed_all(*id, collapse)?;
-                }
-                Ok(())
-            })?;
+            let targets: Vec<TopicId> = if sel.is_empty() {
+                doc.sheet().top_level_ids()
+            } else {
+                sel.clone()
+            };
+            doc.edit_sheet(
+                if collapse {
+                    "Collapse All"
+                } else {
+                    "Expand All"
+                },
+                |s| {
+                    for id in &targets {
+                        s.set_collapsed_all(*id, collapse)?;
+                    }
+                    Ok(())
+                },
+            )?;
             if collapse {
                 // Keep the selection on visible topics.
                 let sheet = doc.sheet();
@@ -192,7 +247,11 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
         }
         Action::SelectAll => {
             let sheet = doc.sheet();
-            view.selection = sheet.all_ids_ordered().into_iter().filter(|id| sheet.is_visible(*id)).collect();
+            view.selection = sheet
+                .all_ids_ordered()
+                .into_iter()
+                .filter(|id| sheet.is_visible(*id))
+                .collect();
         }
         Action::SelectRoot => {
             let r = doc.sheet().root;
@@ -246,11 +305,17 @@ pub fn apply_action(doc: &mut Document, view: &mut MapView, action: Action) -> R
             return Ok(doc.redo());
         }
         Action::Copy | Action::Cut => {
-            let Some(payload) = clipboard::copy_topics(doc.sheet(), &sel) else { return Ok(false) };
+            let Some(payload) = clipboard::copy_topics(doc.sheet(), &sel) else {
+                return Ok(false);
+            };
             view.clipboard_out = Some(payload.text.clone());
             view.clipboard = Some(payload);
             if action == Action::Cut {
-                let roots: Vec<TopicId> = sel.iter().copied().filter(|id| *id != doc.sheet().root).collect();
+                let roots: Vec<TopicId> = sel
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != doc.sheet().root)
+                    .collect();
                 if !roots.is_empty() {
                     let next = doc.edit_sheet("Cut", |s| s.remove_topics(&roots))?;
                     view.selection = next.into_iter().collect();
@@ -356,14 +421,27 @@ mod tests {
             apply_action(&mut doc, &mut view, Action::ToggleTodo).unwrap();
             assert_eq!(doc.sheet().topic(root).unwrap().todo, expected);
         }
-        apply_action(&mut doc, &mut view, Action::ToggleMarker("priority-1".into())).unwrap();
-        assert_eq!(doc.sheet().topic(root).unwrap().markers, vec!["priority-1".to_string()]);
+        apply_action(
+            &mut doc,
+            &mut view,
+            Action::ToggleMarker("priority-1".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            doc.sheet().topic(root).unwrap().markers,
+            vec!["priority-1".to_string()]
+        );
     }
 
     #[test]
     fn floating_and_relationship_actions() {
         let (mut doc, mut view) = setup();
-        apply_action(&mut doc, &mut view, Action::InsertFloating(Vec2::new(400.0, 300.0))).unwrap();
+        apply_action(
+            &mut doc,
+            &mut view,
+            Action::InsertFloating(Vec2::new(400.0, 300.0)),
+        )
+        .unwrap();
         let f = view.selection[0];
         assert!(doc.sheet().is_floating(f));
         view.commit_edit(&mut doc);

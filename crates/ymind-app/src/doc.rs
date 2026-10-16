@@ -75,7 +75,10 @@ impl OpenDoc {
 
     pub fn title(&self) -> String {
         match &self.path {
-            Some(p) => p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            Some(p) => p
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             None => {
                 let root = self.doc.workbook().sheets[0].root;
                 self.doc.workbook().sheets[0]
@@ -114,9 +117,11 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
-        let format = Format::from_path(path).filter(|f| is_native(*f)).unwrap_or(Format::YMind);
-        let bytes =
-            ymind_io::export_bytes(self.doc.workbook(), format, &ExportOptions::default()).map_err(|e| e.to_string())?;
+        let format = Format::from_path(path)
+            .filter(|f| is_native(*f))
+            .unwrap_or(Format::YMind);
+        let bytes = ymind_io::export_bytes(self.doc.workbook(), format, &ExportOptions::default())
+            .map_err(|e| e.to_string())?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
         self.path = Some(path.to_path_buf());
         self.format = format;
@@ -157,7 +162,8 @@ impl OpenDoc {
 /// Converts a file between formats (used by the `--convert` CLI).
 pub fn convert(input: &Path, output: &Path, opts: &ExportOptions) -> Result<(), String> {
     let workbook = ymind_io::import_file(input).map_err(|e| format!("{}: {e}", input.display()))?;
-    let format = Format::from_path(output).ok_or_else(|| format!("unknown output format: {}", output.display()))?;
+    let format = Format::from_path(output)
+        .ok_or_else(|| format!("unknown output format: {}", output.display()))?;
     if !format.can_export() {
         return Err(format!("{} cannot be exported", format.label()));
     }
@@ -175,13 +181,18 @@ mod tests {
         let path = dir.path().join("a.ymind");
         let mut d = OpenDoc::new(Workbook::default());
         let root = d.doc.sheet().root;
-        d.doc.edit_sheet("t", |s| s.set_title(root, "Hello")).unwrap();
+        d.doc
+            .edit_sheet("t", |s| s.set_title(root, "Hello"))
+            .unwrap();
         assert!(d.is_dirty());
         d.save_to(&path, false).unwrap();
         assert!(!d.is_dirty());
         assert_eq!(d.title(), "a");
         let e = OpenDoc::open(&path).unwrap();
-        assert_eq!(e.doc.sheet().topic(e.doc.sheet().root).unwrap().title, "Hello");
+        assert_eq!(
+            e.doc.sheet().topic(e.doc.sheet().root).unwrap().title,
+            "Hello"
+        );
         assert!(!e.is_dirty());
         assert!(!e.changed_on_disk());
     }
@@ -190,7 +201,9 @@ mod tests {
     fn untitled_uses_central_topic() {
         let mut d = OpenDoc::new(Workbook::default());
         let root = d.doc.sheet().root;
-        d.doc.edit_sheet("t", |s| s.set_title(root, "Project X\nsecond line")).unwrap();
+        d.doc
+            .edit_sheet("t", |s| s.set_title(root, "Project X\nsecond line"))
+            .unwrap();
         assert_eq!(d.title(), "Project X");
     }
 

@@ -57,7 +57,62 @@ pub const STRIKE: &str = "S";
 pub const UNDERLINE: &str = "U";
 
 /// All icons with their names (used to verify that every glyph is renderable).
-pub const ALL: &[(&str, &str)] = &[("MENU", MENU), ("UNDO", UNDO), ("REDO", REDO), ("SEARCH", SEARCH), ("ADD", ADD), ("CLOSE", CLOSE), ("CHECK", CHECK), ("SETTINGS", SETTINGS), ("NEW_FILE", NEW_FILE), ("OPEN", OPEN), ("SAVE", SAVE), ("EXPORT", EXPORT), ("PRINT", PRINT), ("TOPIC", TOPIC), ("SUBTOPIC", SUBTOPIC), ("RELATIONSHIP", RELATIONSHIP), ("BOUNDARY", BOUNDARY), ("SUMMARY", SUMMARY), ("NOTE", NOTE), ("LINK", LINK), ("LABEL", LABEL), ("IMAGE", IMAGE), ("MARKER", MARKER), ("TODO", TODO), ("OUTLINER", OUTLINER), ("MAP", MAP), ("ZEN", ZEN), ("PITCH", PITCH), ("FORMAT", FORMAT), ("ZOOM_IN", ZOOM_IN), ("ZOOM_OUT", ZOOM_OUT), ("FIT", FIT), ("SHARE", SHARE), ("CLOUD", CLOUD), ("INFO", INFO), ("WARNING", WARNING), ("ERROR", ERROR), ("CHEVRON_RIGHT", CHEVRON_RIGHT), ("CHEVRON_DOWN", CHEVRON_DOWN), ("COLLAPSE", COLLAPSE), ("EXPAND", EXPAND), ("FILTER", FILTER), ("SHEET", SHEET), ("KEYBOARD", KEYBOARD), ("HELP", HELP), ("RECENT", RECENT), ("PIN", PIN), ("TRASH", TRASH), ("STAR", STAR), ("COPY", COPY), ("BOLD", BOLD), ("ITALIC", ITALIC), ("STRIKE", STRIKE), ("UNDERLINE", UNDERLINE)];
+pub const ALL: &[(&str, &str)] = &[
+    ("MENU", MENU),
+    ("UNDO", UNDO),
+    ("REDO", REDO),
+    ("SEARCH", SEARCH),
+    ("ADD", ADD),
+    ("CLOSE", CLOSE),
+    ("CHECK", CHECK),
+    ("SETTINGS", SETTINGS),
+    ("NEW_FILE", NEW_FILE),
+    ("OPEN", OPEN),
+    ("SAVE", SAVE),
+    ("EXPORT", EXPORT),
+    ("PRINT", PRINT),
+    ("TOPIC", TOPIC),
+    ("SUBTOPIC", SUBTOPIC),
+    ("RELATIONSHIP", RELATIONSHIP),
+    ("BOUNDARY", BOUNDARY),
+    ("SUMMARY", SUMMARY),
+    ("NOTE", NOTE),
+    ("LINK", LINK),
+    ("LABEL", LABEL),
+    ("IMAGE", IMAGE),
+    ("MARKER", MARKER),
+    ("TODO", TODO),
+    ("OUTLINER", OUTLINER),
+    ("MAP", MAP),
+    ("ZEN", ZEN),
+    ("PITCH", PITCH),
+    ("FORMAT", FORMAT),
+    ("ZOOM_IN", ZOOM_IN),
+    ("ZOOM_OUT", ZOOM_OUT),
+    ("FIT", FIT),
+    ("SHARE", SHARE),
+    ("CLOUD", CLOUD),
+    ("INFO", INFO),
+    ("WARNING", WARNING),
+    ("ERROR", ERROR),
+    ("CHEVRON_RIGHT", CHEVRON_RIGHT),
+    ("CHEVRON_DOWN", CHEVRON_DOWN),
+    ("COLLAPSE", COLLAPSE),
+    ("EXPAND", EXPAND),
+    ("FILTER", FILTER),
+    ("SHEET", SHEET),
+    ("KEYBOARD", KEYBOARD),
+    ("HELP", HELP),
+    ("RECENT", RECENT),
+    ("PIN", PIN),
+    ("TRASH", TRASH),
+    ("STAR", STAR),
+    ("COPY", COPY),
+    ("BOLD", BOLD),
+    ("ITALIC", ITALIC),
+    ("STRIKE", STRIKE),
+    ("UNDERLINE", UNDERLINE),
+];
 
 #[cfg(test)]
 mod tests {
@@ -74,6 +129,10 @@ mod tests {
             },
             Vec::new(),
         );
-        assert!(harness.state().is_empty(), "missing glyphs: {:?}", harness.state());
+        assert!(
+            harness.state().is_empty(),
+            "missing glyphs: {:?}",
+            harness.state()
+        );
     }
 }
