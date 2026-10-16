@@ -1099,7 +1099,11 @@ mod tests {
         h.run();
         {
             let s = h.state().doc.sheet();
-            assert!(s.all_ids_ordered().iter().any(|id| s.topic(*id).unwrap().collapsed));
+            assert!(
+                s.all_ids_ordered()
+                    .iter()
+                    .any(|id| s.topic(*id).unwrap().collapsed)
+            );
         }
         h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::Slash);
         h.run();

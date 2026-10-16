@@ -144,6 +144,8 @@ impl YMindApp {
         }
 
         self.dialogs_ui(&ctx);
+        self.ai_prompt_dialog(&ctx);
+        self.ai_busy_overlay(&ctx);
         self.toasts.show(&ctx);
         self.housekeeping(&ctx);
     }
@@ -154,6 +156,7 @@ impl YMindApp {
             || d.conflict.is_some()
             || d.rename_sheet.is_some()
             || !d.recovery.is_empty()
+            || self.ai.prompt.is_some()
     }
 
     // ----- top bar ----------------------------------------------------------------------------
@@ -363,7 +366,7 @@ impl YMindApp {
         ui.menu_button(t("Edit"), |ui| {
             let e = [
                 ("Undo", "Ctrl+Z", Cmd::Canvas(Action::Undo)),
-                ("Redo", "Ctrl+Y", Cmd::Canvas(Action::Redo)),
+                ("Redo", "Ctrl+Shift+Z", Cmd::Canvas(Action::Redo)),
                 ("Cut", "Ctrl+X", Cmd::Canvas(Action::Cut)),
                 ("Copy", "Ctrl+C", Cmd::Canvas(Action::Copy)),
                 ("Paste", "Ctrl+V", Cmd::MenuPaste),
@@ -392,12 +395,24 @@ impl YMindApp {
                 ),
                 ("Relationship", "Ctrl+Shift+L", Action::StartRelationship),
                 ("Summary", "Ctrl+]", Action::AddSummary),
-                ("Boundary", "Ctrl+Shift+B", Action::AddBoundary),
+                ("Boundary", "Ctrl+B", Action::AddBoundary),
                 ("To-Do", "", Action::ToggleTodo),
             ];
             for (l, sc, a) in e {
                 if item(ui, t(l), sc).clicked() {
                     *cmd = Some(Cmd::Canvas(a));
+                }
+            }
+        });
+        ui.menu_button(t("AI"), |ui| {
+            for a in crate::ai::AiCommand::ALL {
+                let sc = if a == crate::ai::AiCommand::Brainstorm {
+                    "Ctrl+Shift+I"
+                } else {
+                    ""
+                };
+                if item(ui, t(a.label()), sc).clicked() {
+                    *cmd = Some(Cmd::Ai(a));
                 }
             }
         });
@@ -538,11 +553,29 @@ impl YMindApp {
         item(
             ui,
             t("Boundary"),
-            "Ctrl+Shift+B",
+            "Ctrl+B",
             Cmd::Canvas(Action::AddBoundary),
             has_sel,
         );
         item(ui, t("To-Do"), "", Cmd::Canvas(Action::ToggleTodo), has_sel);
+        if self.settings.ai.enabled {
+            ui.menu_button(format!("✨ {}", t("AI")), |ui| {
+                for a in crate::ai::AiCommand::ALL {
+                    let sc = if a == crate::ai::AiCommand::Brainstorm {
+                        "Ctrl+Shift+I"
+                    } else {
+                        ""
+                    };
+                    item(
+                        ui,
+                        t(a.label()),
+                        sc,
+                        Cmd::Ai(a),
+                        has_sel || !a.needs_topic(),
+                    );
+                }
+            });
+        }
         if has_link {
             item(ui, t("Open Link"), "", Cmd::OpenLink, true);
         }
@@ -561,7 +594,7 @@ impl YMindApp {
         item(
             ui,
             t("Delete Topic Only"),
-            "Ctrl+Shift+Del",
+            "Ctrl+Del",
             Cmd::Canvas(Action::DeleteKeepChildren),
             has_sel,
         );
@@ -1754,6 +1787,7 @@ impl YMindApp {
                         let _ = ymind_platform::system::reveal_in_file_manager(&p.config_dir);
                     }
                 });
+                self.ai_settings_section(ui);
                 widgets::section(ui, t("Cloud"), true, |ui| {
                     ui.label(RichText::new(t("Detected cloud folders")).strong());
                     if self.services.cloud.is_empty() {

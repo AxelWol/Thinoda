@@ -1,5 +1,6 @@
 //! yMind application: document management, chrome and OS integration on top of the reusable crates.
 
+pub mod ai;
 pub mod app;
 pub mod doc;
 pub mod i18n;
