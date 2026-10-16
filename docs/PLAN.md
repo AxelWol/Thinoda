@@ -391,6 +391,26 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+Latest R1 editing slice delivered:
+- Session-wide explicit topic-style Copy/Paste (Ctrl+Alt+C/V) and Reset Style,
+  shared availability across menus/context/palette, atomic multi-topic undo and
+  EN/DE labels. Automatic theme inheritance is not baked into the clipboard;
+  text fields retain their keyboard input.
+- Single-topic Indent under the previous sibling and Outdent after the parent,
+  with menu/context/palette actions. Reparenting retains owned boundaries,
+  relationships and recursively owned Summary trees, rejects annotation cycles
+  before mutation, and cleans annotations when their last source is removed.
+  No unverified XMind shortcut or multi-selection semantics are implied.
+- Previous/Next Sheet wraps with Ctrl+PageUp/Down; inline topic edits commit before
+  new/duplicate/delete/rename/switch/move operations. Last-sheet deletion remains
+  prohibited, view state resets on switching and duplicate/move failures are surfaced.
+- Full `cargo xtask ci` passes, including CLI tests that were policy-blocked in a
+  previous run. Live AI is explicitly disabled for deterministic verification.
+  Broader R1 command audits, sheet clipboard/separate-save and window lifecycle
+  work remain open.
+- Official manual gap research added ten source-cited, nonduplicate requirements
+  to the backlog, separating desktop gaps from future companion/research-only ideas.
+
 First slice implemented (Windows x64 source verification):
 - R0 baseline: full `cargo xtask ci` passes, including canvas execution. Native
   macOS/Linux/ARM64, screenshot fixtures and performance measurements remain.

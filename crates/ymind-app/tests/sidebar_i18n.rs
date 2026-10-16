@@ -60,4 +60,29 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.run_steps(3);
     h.get_by_label("Geschrieben von Axel Wolters");
     h.get_by_role_and_label(Role::Link, "Kontakt: axelwolters@hotmail.com");
+    h.state_mut().dialogs.about = false;
+    h.run_steps(2);
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Bearbeiten").click();
+    h.run_steps(2);
+    for label in [
+        "Stil kopieren Ctrl+Alt+C",
+        "Stil einfügen Ctrl+Alt+V",
+        "Stil zurücksetzen",
+        "Einrücken",
+        "Ausrücken",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    h.get_by_role_and_label(Role::Button, "Stil kopieren Ctrl+Alt+C")
+        .click();
+    h.run_steps(2);
+    assert!(h.state().style_clipboard.is_some());
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Ansicht").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Vorheriges Blatt Ctrl+PageUp");
+    h.get_by_role_and_label(Role::Button, "Nächstes Blatt Ctrl+PageDown");
 }

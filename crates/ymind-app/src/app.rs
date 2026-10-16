@@ -58,6 +58,11 @@ pub enum Cmd {
     DuplicateSheet,
     DeleteSheet,
     RenameSheet,
+    PreviousSheet,
+    NextSheet,
+    CopyStyle,
+    PasteStyle,
+    ResetStyle,
     OpenLink,
     ShowInFolder,
     MenuPaste,
@@ -153,6 +158,8 @@ pub struct YMindApp {
     pub zen: bool,
     pub format_tab: FormatTab,
     pub sidebar_family: SidebarFamily,
+    /// Explicit topic-style overrides, shared by documents for this app session.
+    pub style_clipboard: Option<ymind_core::TopicStyle>,
     pub toasts: Toasts,
     pub palette: CommandPalette,
     pub search: SearchState,
@@ -208,6 +215,7 @@ impl YMindApp {
             zen: false,
             format_tab: FormatTab::Style,
             sidebar_family: SidebarFamily::Format,
+            style_clipboard: None,
             toasts: Toasts::default(),
             palette: CommandPalette::default(),
             search: SearchState::default(),
@@ -436,6 +444,7 @@ impl YMindApp {
             Cmd::Palette => self.palette.toggle(),
             Cmd::NewSheet => {
                 if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
                     let n = d.doc.workbook().sheets.len() + 1;
                     let mut wb = templates::instantiate("mind-map");
                     let mut sheet = wb.sheets.remove(0);
@@ -447,15 +456,23 @@ impl YMindApp {
             }
             Cmd::DuplicateSheet => {
                 if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
                     let a = d.doc.active_index();
-                    if let Ok(i) = d.doc.duplicate_sheet(a) {
-                        d.doc.set_active(i);
-                        d.view.reset();
+                    match d.doc.duplicate_sheet(a) {
+                        Ok(i) => {
+                            d.doc.set_active(i);
+                            d.view.reset();
+                        }
+                        Err(e) => {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Not possible here")));
+                        }
                     }
                 }
             }
             Cmd::DeleteSheet => {
                 if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
                     let a = d.doc.active_index();
                     if d.doc.remove_sheet(a).is_ok() {
                         d.view.reset();
@@ -465,11 +482,25 @@ impl YMindApp {
                 }
             }
             Cmd::RenameSheet => {
-                if let Some(d) = self.doc() {
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
                     self.dialogs.rename_sheet =
                         Some((d.doc.active_index(), d.doc.sheet().title.clone()));
                 }
             }
+            Cmd::PreviousSheet | Cmd::NextSheet => {
+                if let Some(d) = self.doc() {
+                    let n = d.doc.workbook().sheets.len();
+                    let current = d.doc.active_index();
+                    let index = if cmd == Cmd::NextSheet {
+                        (current + 1) % n
+                    } else {
+                        (current + n - 1) % n
+                    };
+                    self.switch_sheet(index);
+                }
+            }
+            Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle => self.edit_style(cmd),
             Cmd::OpenLink => {
                 let link = self.doc().and_then(|d| {
                     let id = d.view.primary()?;
@@ -535,6 +566,93 @@ impl YMindApp {
         }
     }
 
+    pub fn switch_sheet(&mut self, index: usize) {
+        let Some(d) = self.doc_mut() else { return };
+        if index >= d.doc.workbook().sheets.len() {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if index == d.doc.active_index() {
+            return;
+        }
+        d.view.commit_edit(&mut d.doc);
+        d.doc.set_active(index);
+        d.view.reset();
+    }
+
+    pub fn command_available(&self, cmd: &Cmd) -> bool {
+        match cmd {
+            Cmd::Canvas(Action::Indent) => self.doc().is_some_and(|d| {
+                d.view.selection.len() == 1
+                    && d.view
+                        .primary()
+                        .and_then(|id| d.doc.sheet().index_in_parent(id))
+                        .is_some_and(|i| i > 0)
+            }),
+            Cmd::Canvas(Action::Outdent) => self.doc().is_some_and(|d| {
+                d.view.selection.len() == 1
+                    && d.view
+                        .primary()
+                        .and_then(|id| d.doc.sheet().parent(id))
+                        .and_then(|parent| d.doc.sheet().parent(parent))
+                        .is_some()
+            }),
+            Cmd::CopyStyle => self.doc().is_some_and(|d| {
+                d.view.selection.len() == 1
+                    && d.view
+                        .primary()
+                        .is_some_and(|id| d.doc.sheet().contains(id))
+            }),
+            Cmd::PasteStyle | Cmd::ResetStyle => self.doc().is_some_and(|d| {
+                !d.view.selection.is_empty()
+                    && d.view
+                        .selection
+                        .iter()
+                        .all(|id| d.doc.sheet().contains(*id))
+                    && (*cmd != Cmd::PasteStyle || self.style_clipboard.is_some())
+            }),
+            Cmd::NextSheet | Cmd::PreviousSheet | Cmd::DeleteSheet => self
+                .doc()
+                .is_some_and(|d| d.doc.workbook().sheets.len() > 1),
+            _ => true,
+        }
+    }
+
+    fn edit_style(&mut self, cmd: Cmd) {
+        if !self.command_available(&cmd) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if cmd == Cmd::CopyStyle {
+            let d = self.doc().unwrap();
+            self.style_clipboard = d
+                .view
+                .primary()
+                .and_then(|id| d.doc.sheet().topic(id))
+                .map(|topic| topic.style.clone());
+            self.toasts.info(t("Copied topic style overrides"));
+            return;
+        }
+        let style = if cmd == Cmd::PasteStyle {
+            self.style_clipboard.clone().unwrap()
+        } else {
+            ymind_core::TopicStyle::default()
+        };
+        let label = if cmd == Cmd::PasteStyle {
+            "Paste Style"
+        } else {
+            "Reset Style"
+        };
+        let d = self.doc_mut().unwrap();
+        d.view.commit_edit(&mut d.doc);
+        let selection = d.view.selection.clone();
+        if let Err(e) = d.doc.edit_sheet(label, |sheet| {
+            sheet.update_style(&selection, |target| *target = style.clone())
+        }) {
+            self.toasts
+                .error(format!("{}: {e}", t("Not possible here")));
+        }
+    }
     pub fn open_link(&mut self, link: &str) {
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
@@ -889,6 +1007,16 @@ impl YMindApp {
             (KeyboardShortcut::new(cmd, Key::H), Cmd::FindReplace),
             (KeyboardShortcut::new(cmd, Key::Comma), Cmd::Settings),
             (KeyboardShortcut::new(cmd, Key::Tab), Cmd::NextDoc),
+            (KeyboardShortcut::new(cmd, Key::PageUp), Cmd::PreviousSheet),
+            (KeyboardShortcut::new(cmd, Key::PageDown), Cmd::NextSheet),
+            (
+                KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::C),
+                Cmd::CopyStyle,
+            ),
+            (
+                KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::V),
+                Cmd::PasteStyle,
+            ),
             (
                 KeyboardShortcut::new(Modifiers::NONE, Key::F11),
                 Cmd::ToggleZen,
@@ -900,6 +1028,9 @@ impl YMindApp {
             ),
         ];
         for (sc, c) in table {
+            if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
+                continue;
+            }
             if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
                 self.exec(ctx, c);
                 return;
@@ -1172,6 +1303,13 @@ impl YMindApp {
             ),
             (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
             (Cmd::FindReplace, "Find and Replace…", "Ctrl+H", "Edit"),
+            (Cmd::CopyStyle, "Copy Style", "Ctrl+Alt+C", "Edit"),
+            (Cmd::PasteStyle, "Paste Style", "Ctrl+Alt+V", "Edit"),
+            (Cmd::ResetStyle, "Reset Style", "", "Edit"),
+            (Cmd::Canvas(Action::Indent), "Indent", "", "Edit"),
+            (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
+            (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),
+            (Cmd::NextSheet, "Next Sheet", "Ctrl+PageDown", "View"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",

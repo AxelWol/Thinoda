@@ -51,6 +51,270 @@ fn root_title(wb: &Workbook) -> String {
 }
 
 #[test]
+fn style_clipboard_is_session_wide_and_multitopic_edits_undo_atomically() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let source = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Source style", |s| {
+            s.update_style(&[source], |style| {
+                style.fill = ymind_core::Color::from_hex("#123456");
+                style.font_size = Some(24.0);
+                style.italic = Some(true);
+                style.line_width = Some(3.0);
+                style.width = Some(150.0);
+            })
+        })
+        .unwrap();
+    let source_style = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .topic(source)
+        .unwrap()
+        .style
+        .clone();
+    let source_revision = app.doc().unwrap().doc.state_id();
+    app.exec(&ctx, Cmd::CopyStyle);
+    assert_eq!(app.doc().unwrap().doc.state_id(), source_revision);
+    app.exec(&ctx, Cmd::New);
+    let topics = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(app.doc().unwrap().doc.sheet().root)[..2]
+        .to_vec();
+    app.doc_mut().unwrap().view.selection = topics.clone();
+    let before = app.doc().unwrap().doc.sheet().clone();
+    app.exec(&ctx, Cmd::PasteStyle);
+    let pasted = app.doc().unwrap().doc.sheet().clone();
+    for topic in &topics {
+        assert_eq!(pasted.topic(*topic).unwrap().style, source_style);
+        assert_eq!(
+            pasted.topic(*topic).unwrap().title,
+            before.topic(*topic).unwrap().title
+        );
+    }
+    assert!(!app.command_available(&Cmd::CopyStyle));
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &before);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &pasted);
+    app.exec(&ctx, Cmd::ResetStyle);
+    for topic in &topics {
+        assert!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(*topic)
+                .unwrap()
+                .style
+                .is_default()
+        );
+    }
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &pasted);
+    // An empty override style is a valid clipboard, not a missing clipboard.
+    app.doc_mut().unwrap().view.select_only(before.root);
+    app.exec(&ctx, Cmd::CopyStyle);
+    assert!(app.style_clipboard.as_ref().unwrap().is_default());
+    assert!(app.command_available(&Cmd::PasteStyle));
+}
+
+#[test]
+fn style_shortcuts_and_context_actions_share_availability() {
+    let mut h = harness(YMindApp::headless());
+    let d = h.state().doc().unwrap();
+    let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
+    right_click_at(&mut h, root_rect.center());
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Paste Style")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Copy Style")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Copy Style").click();
+    h.run_steps(3);
+    assert!(h.state().style_clipboard.is_some());
+    let first = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(h.state().doc().unwrap().doc.sheet().root)[0];
+    h.state_mut().doc_mut().unwrap().view.select_only(first);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::ALT),
+        egui::Key::V,
+    );
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(first)
+            .unwrap()
+            .style
+            .is_default()
+    );
+    let d = h.state().doc().unwrap();
+    let rect = d.view.selected_topic_rect(&d.doc).unwrap();
+    right_click_at(&mut h, rect.center());
+    h.get_by_role_and_label(Role::Button, "Reset Style").click();
+    h.run_steps(3);
+    h.state_mut().doc_mut().unwrap().view.selection.clear();
+    assert!(!h.state().command_available(&Cmd::ResetStyle));
+    assert!(!h.state().command_available(&Cmd::CopyStyle));
+    assert!(!h.state().command_available(&Cmd::PasteStyle));
+}
+
+#[test]
+fn sheet_shortcuts_commit_title_edits_wrap_and_preserve_last_sheet() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    assert!(!h.state().command_available(&Cmd::NextSheet));
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.get_by_label("Topic title")
+        .type_text("Committed before new sheet");
+    h.run_steps(2);
+    h.state_mut().exec(&ctx, Cmd::NewSheet);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 1);
+    assert_eq!(
+        root_title(h.state().doc().unwrap().doc.workbook()),
+        "Committed before new sheet"
+    );
+    assert!(h.state().doc().unwrap().view.selection.is_empty());
+    let revision = h.state().doc().unwrap().doc.state_id();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::PageDown);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::PageUp);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 1);
+    h.state_mut().exec(&ctx, Cmd::DeleteSheet);
+    h.state_mut().exec(&ctx, Cmd::DeleteSheet);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .contains(h.state().doc().unwrap().doc.sheet().root)
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 2);
+}
+
+#[test]
+fn style_shortcuts_do_not_intercept_topic_text_input() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::ALT),
+        egui::Key::C,
+    );
+    h.run_steps(3);
+    assert!(h.state().style_clipboard.is_none());
+    h.get_by_label("Topic title").type_text("Still editing");
+    h.run_steps(3);
+    h.state_mut().exec(&ctx, Cmd::DuplicateSheet);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 2);
+    for sheet in &h.state().doc().unwrap().doc.workbook().sheets {
+        assert_eq!(sheet.root_topic().title, "Still editing");
+    }
+}
+
+#[test]
+fn indent_outdent_context_commands_are_single_undo_steps() {
+    let mut h = harness(YMindApp::headless());
+    let children = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(h.state().doc().unwrap().doc.sheet().root)
+        .to_vec();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .select_only(children[1]);
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Indent))
+    );
+    assert!(
+        !h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Outdent))
+    );
+    let d = h.state().doc().unwrap();
+    let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Indent").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(children[1]),
+        Some(children[0])
+    );
+    assert!(
+        h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Outdent))
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Outdent));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root),
+        children
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(children[1]),
+        Some(children[0])
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root),
+        children
+    );
+}
+
+#[test]
 fn about_dialog_shows_author_and_contact() {
     let mut h = harness(YMindApp::headless());
     h.state_mut().dialogs.about = true;

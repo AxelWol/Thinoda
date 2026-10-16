@@ -836,16 +836,7 @@ impl Sheet {
             keep
         });
         for st in dead_topics {
-            for t in self.subtree_ids(st) {
-                self.topics.remove(&t);
-            }
-            let rels: Vec<_> = self
-                .relationships
-                .iter()
-                .filter(|r| self.topics.contains_key(&r.from) && self.topics.contains_key(&r.to))
-                .cloned()
-                .collect();
-            self.relationships = rels;
+            self.detach_subtree(st);
         }
     }
 

@@ -56,6 +56,24 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Floating main editing toolbar with a compact insert popover, keeping the title bar uncluttered.
 - Direction-aware child/sibling plus connectors; root-safe contextual menus and blank-canvas selection handling.
 - Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
+- Session-wide explicit topic-style Copy (Ctrl+Alt+C) and Paste (Ctrl+Alt+V), plus
+  Reset Style back to inherited/default styling, including atomic multi-selection
+  paste and reset with one undo/redo step each. Available from the Edit menu,
+  topic context menu and command palette, with EN/DE labels; the command-palette/
+  menu availability rules match selection state.
+- Indent (moves a single selected tree topic under its previous sibling) and Outdent
+  (moves it after its former parent), restricted to one selected non-root tree topic
+  with no new shortcuts assigned yet. Owned nested Summary/boundary/relationship
+  annotations move with the topic; a move that would create an annotation cycle
+  (e.g. into its own owned summary/boundary range) is rejected, and the vacated
+  source range's boundary/summary membership is cleaned up correctly.
+- Ctrl+PageUp / Ctrl+PageDown switch to the previous/next sheet with wraparound at
+  the first/last sheet. An in-progress inline sheet-title edit is committed before
+  creating, duplicating, deleting, renaming, switching to, or reordering a sheet.
+- The three items above are wired consistently through menus, context menus and the
+  command palette, with regression test coverage. `cargo xtask ci` now passes in
+  full, including the canvas/CLI tests previously blocked by Windows Application
+  Control; live AI integration remains deliberately skipped/disabled in CI.
 
 ## XMind parity (from the user guide)
 - Implemented structural-object deletion for relationships (Beziehungen), boundaries
@@ -129,7 +147,9 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Equations (LaTeX → rendered topic content)
 - P2 Attachments and pictures embedded in the `.ymind`/`.xmind` package
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
-- P2 Quick styles, copy/paste style, global font, custom theme editor
+- P2 Quick styles, global font, custom theme editor. Copy/Paste style and Reset
+  Style are implemented session-wide (Ctrl+Alt+C/V, menu/context/palette); see
+  Recently completed.
 - P2 Mask data (anonymize topic text before sharing)
 - P2 Merge XMind files, skeleton/structure picker gallery
   - Map-tab layout selector: current layout thumbnail/name opens an anchored,
@@ -169,9 +189,13 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   data until its lifecycle is understood. Treat tab/window closure and application
   exit distinctly, retaining unsaved-work prompts.
 - P1 Edit inventory: Undo/Redo, Cut/Copy/Paste, Duplicate, Delete, Delete single topic,
-  Indent/Outdent, Copy/Paste/Reset style, Go to central topic, Select submenu,
-  Expand subtopics, Fold all sub-branches, Arrange submenu, Align floating topics
-  submenu and Find & Replace. Verify nested choices and expand/fold scope.
+  Go to central topic, Select submenu, Expand subtopics, Fold all sub-branches,
+  Arrange submenu, Align floating topics submenu and Find & Replace remain open or
+  only partially audited; verify nested choices and expand/fold scope. Indent/Outdent
+  (single selected tree topic, no new shortcuts) and Copy/Paste/Reset style
+  (session-wide, Ctrl+Alt+C/V) are implemented with matching menu/context-menu/
+  palette availability; the rest of this inventory, and command-consistency parity
+  generally, is not fully done.
 - P1 Insert inventory: Child topic, Topic after/before, Parent topic, Floating topic,
   Callout, Relationship, Summary, Boundary, Note, Label, To-do, Task, Link submenu,
   Attachment, Audio note, Symbol, Sticker, Illustration, Local image, Equation,
@@ -206,6 +230,9 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   representation and whether relationships/assets outside the sheet are included
   when saving. Protect the last sheet, preserve active-sheet selection and support
   undo for document changes; cover keyboard access and menu placement near screen edges.
+  Previous/next sheet navigation (Ctrl+PageUp/Ctrl+PageDown, with wraparound and
+  commit of an in-progress inline title edit before switching) is implemented
+  separately from this context-menu inventory, which otherwise remains open.
 
 ## Bottom-right controls and alternate views (user screenshots, 2026-10-16)
 - P1 Compact floating bottom-right action bar: topic count, zoom dropdown, Gantt,
@@ -286,8 +313,11 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   and reset-all. Validate conflicts and reserved platform keys; update menu hints and
   the command palette from the same bindings.
 - P3 Shortcut command coverage from the reference: home, new blank map, new/template,
-  merge windows, new sheet, sheet from topic, previous/next sheet, copy/paste/reset
-  style and delete a single topic while retaining children.
+  merge windows, new sheet, sheet from topic, and delete a single topic while
+  retaining children still need this customizable-shortcuts UI row. Previous/next
+  sheet (implemented with fixed Ctrl+PageUp/Ctrl+PageDown) and copy/paste/reset
+  style (implemented with fixed Ctrl+Alt+C/V; Reset has no shortcut) now exist as
+  commands but still need an editable-binding row in Preferences > Shortcuts.
   The screenshot assigns Ctrl+H to Home, conflicting with yMind's existing Find &
   Replace binding; preserve current behavior until an explicit keymap choice is made.
 - P2 Tests: settings persistence/migration, immediate application across open tabs,
@@ -395,7 +425,80 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 - P2 "Rewrite topic", translate branch, AI-assisted Pitch outline
 - P3 Prompt library editable by the user
 
+## AI — user-guide research addendum (2026-10-16)
+Verified against xmind.com/user-guide pages not previously digested in
+XMIND-USER-GUIDE.md/XMIND-RESEARCH.md; each item cites its source page. yMind's AI
+is local/OpenAI-compatible only (LM Studio, Ollama, llama.cpp, OpenAI); treat every
+item below as a capability gap to design for that transport, not as a requirement
+to add XMind's own cloud account, billing or hosted AI service.
+
+- P2 Confirmed absent: a persistent AI chat panel beside the map (opened from a
+  toolbar button next to the title) with three selectable response-depth modes
+  (Quick / Balanced / Deep) for simple edits vs. everyday mapping vs. multi-step
+  research, operating on the active sheet or a topic selection. yMind's existing
+  AI actions (brainstorm, breakdown, explain, summarize, generate map) are
+  command-triggered one-shots without a chat surface or depth selector.
+  Source: https://xmind.com/user-guide/xmind-ai-chatbot
+- P2 Confirmed partial: "Grow Ideas" expands a selected topic/subtopic with Auto or
+  On-Demand (prompted) modes, matching yMind's existing brainstorm-subtopics action,
+  but XMind also documents an optional online-search mode that cites a source link
+  for web-grounded suggestions. yMind has no live web-search-augmented generation;
+  treat external web search as an explicit, user-visible, opt-in data egress if added.
+  Source: https://xmind.com/user-guide/grow-ideas
+- P2 Confirmed absent: AI "Reorganize" restructures an existing map/branch in one
+  click (Auto or On-Demand with typed guidance), distinct from the deterministic,
+  non-AI Map Style actions (Auto Balance Map, Compact Map, Justify Topic Alignment)
+  already tracked. Source: https://xmind.com/user-guide/reorganize
+- P2 Confirmed absent: AI "Map Refine" adds related content across an entire map and
+  reorganizes it for completeness (Auto or On-Demand), with an explicit Apply/View-Now
+  review step before changes are kept. This is a superset of Reorganize (content
+  addition, not just layout) and of the existing to-do/summarize actions; implement
+  as a reviewable, undoable batch edit, never silently applied.
+  Source: https://xmind.com/user-guide/map-refine
+- P3 Confirmed absent: "Image to Mind Map" generates a structured map from an
+  uploaded photo (JPG/PNG, documented 10 MB limit), using OCR for text-bearing
+  images and visual-content analysis for images without text, with an output-
+  language choice. yMind's AI only accepts text prompts today; this needs a
+  vision-capable model and explicit scope/privacy decision before implementation.
+  Source: https://xmind.com/user-guide/image-to-mind-map
+- P3 Confirmed absent: AI-generated topic images ("Make Image": prompt + selectable
+  image-generation model + style presets + "Inspire" prompt regeneration, inserted
+  as a topic illustration with automatic background removal for preset styles) and
+  a standalone "Remove Image Background" action for any already-embedded image.
+  Both need an image-generation-capable backend distinct from yMind's current
+  text-only OpenAI-compatible client; scope and cost/privacy implications need an
+  explicit product decision before implementation.
+  Sources: https://xmind.com/user-guide/make-image ,
+  https://xmind.com/user-guide/remove-image-background
+- P3 Confirmed absent: "Pitch Video" renders a mind map as an AI-generated video
+  (theme, aspect ratio, duration and background-music choices, downloadable and
+  shareable) beyond the already-tracked static Pitch-mode slide/PDF export.
+  Needs a video-generation backend and explicit scope decision; do not conflate
+  with the existing P1 Pitch mode/slide-export backlog item.
+  Source: https://xmind.com/user-guide/pitch-video
+- P3 Research reference, not adopted: the "Xmind ChatGPT App" is a hosted,
+  OAuth-connected ChatGPT plugin that creates/lists/reads/edits Xmind maps from a
+  chat conversation. It depends on XMind's own account/cloud service; track only
+  as prior art for yMind's own MCP-server backlog item above (XMind SDK/ecosystem
+  review), not as a requirement to integrate with a third-party chat product or account.
+  Source: https://xmind.com/user-guide/chatgpt-apps
+- P3 Platform-specific, future companion-app scope only: "Draw to Map" (iPad + Apple
+  Pencil sketch digitized into an editable map, original sketch kept as the central
+  topic's image) and "Record to Map" (iOS/iPadOS 26 "Apple Intelligence" voice
+  recording with live transcription saved as the central topic's note, then
+  converted to a structured map) are undocumented in yMind's desktop-first scope.
+  Track as future companion-app research only; no current application change.
+  Sources: https://xmind.com/user-guide/draw-to-map ,
+  https://xmind.com/user-guide/record-to-map
+
 ## Platform & collaboration
+- P3 Quick Entry-equivalent background capture (XMind "Quick Entry", documented
+  macOS-only): a menu-bar-resident popup, launchable without opening the main
+  window, with a single text field and a "Create Map" action that converts the
+  note into a new map, plus an optional "start at system login" preference.
+  yMind has no background/menu-bar quick-capture surface on any platform; verify
+  a cross-platform equivalent (tray icon on Windows/Linux) before committing to
+  parity with the macOS-only original. Source: https://xmind.com/user-guide/quick-entry-for-mac-new
 - P1 Code signing + notarization; auto-update via `cargo-packager-updater`
 - P2 macOS universal binary; Flatpak and `.rpm` packages; winget/Homebrew manifests
 - P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI

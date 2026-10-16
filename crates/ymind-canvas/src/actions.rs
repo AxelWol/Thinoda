@@ -27,6 +27,8 @@ pub enum Action {
     Navigate(Direction),
     MoveUp,
     MoveDown,
+    Indent,
+    Outdent,
     SelectAll,
     SelectRoot,
     SelectNone,
@@ -258,6 +260,29 @@ pub fn apply_action(
             let p = primary.unwrap();
             let d = if action == Action::MoveUp { -1 } else { 1 };
             doc.edit_sheet("Move Topic", |s| s.reorder(p, d))?;
+        }
+        Action::Indent | Action::Outdent => {
+            if sel.len() != 1 {
+                return Err(EditError::Invalid(
+                    "select one topic to indent or outdent".into(),
+                ));
+            }
+            let topic = primary.unwrap();
+            doc.edit_sheet(
+                if action == Action::Indent {
+                    "Indent"
+                } else {
+                    "Outdent"
+                },
+                |s| {
+                    if action == Action::Indent {
+                        s.indent(topic)
+                    } else {
+                        s.outdent(topic)
+                    }
+                },
+            )?;
+            view.reveal(topic);
         }
         Action::SelectAll => {
             view.selected_object = None;

@@ -9,6 +9,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
+  documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
+  is one undo step and does not replace text or hierarchy.
+- Indent/Outdent in Edit, the topic context menu and command palette moves one topic
+  under its previous sibling or after its parent while retaining its annotations.
+  Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Select relationship lines, boundary outlines or Summary braces to delete them with

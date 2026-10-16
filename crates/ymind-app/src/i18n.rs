@@ -71,6 +71,20 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 /// English → German.
 const DE: &[(&str, &str)] = &[
     ("Editor", "Editor"),
+    ("Indent", "Einrücken"),
+    ("Outdent", "Ausrücken"),
+    ("Copy Style", "Stil kopieren"),
+    ("Paste Style", "Stil einfügen"),
+    (
+        "Copied topic style overrides",
+        "Themen-Stilanpassungen kopiert",
+    ),
+    (
+        "Copies explicit overrides; inherited theme styles stay automatic.",
+        "Kopiert explizite Anpassungen; geerbte Designstile bleiben automatisch.",
+    ),
+    ("Previous Sheet", "Vorheriges Blatt"),
+    ("Next Sheet", "Nächstes Blatt"),
     ("Written by", "Geschrieben von"),
     ("Delete Relationship", "Beziehung löschen"),
     ("Delete Boundary", "Umrandung löschen"),

@@ -153,7 +153,11 @@ impl YMindApp {
 
         // Command palette.
         let cmds = Self::palette_commands();
-        let list: Vec<ymind_ui::Command> = cmds.iter().map(|(_, c)| c.clone()).collect();
+        let list: Vec<ymind_ui::Command> = cmds
+            .iter()
+            .filter(|(cmd, _)| self.command_available(cmd))
+            .map(|(_, c)| c.clone())
+            .collect();
         if let Some(id) = self.palette.show(&ctx, &list, t("Type a command…"))
             && let Some((cmd, _)) = cmds.iter().find(|(_, c)| c.id == id)
         {
@@ -389,6 +393,31 @@ impl YMindApp {
                     *cmd = Some(c);
                 }
             }
+            ui.separator();
+            for (label, shortcut, command) in [
+                ("Indent", "", Cmd::Canvas(Action::Indent)),
+                ("Outdent", "", Cmd::Canvas(Action::Outdent)),
+                ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
+                ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
+                ("Reset Style", "", Cmd::ResetStyle),
+            ] {
+                let button = egui::Button::new(t(label));
+                let button = if shortcut.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(shortcut)
+                };
+                if ui
+                    .add_enabled(self.command_available(&command), button)
+                    .clicked()
+                {
+                    *cmd = Some(command);
+                }
+            }
+            widgets::caption(
+                ui,
+                t("Copies explicit overrides; inherited theme styles stay automatic."),
+            );
         });
         ui.menu_button(t("Insert"), |ui| {
             let e = [
@@ -426,6 +455,8 @@ impl YMindApp {
         });
         ui.menu_button(t("View"), |ui| {
             let e = [
+                ("Previous Sheet", "Ctrl+PageUp", Cmd::PreviousSheet),
+                ("Next Sheet", "Ctrl+PageDown", Cmd::NextSheet),
                 ("Outliner", "Ctrl+Shift+O", Cmd::ToggleOutliner),
                 ("Zen Mode", "F11", Cmd::ToggleZen),
                 ("Format Panel", "Ctrl+Shift+R", Cmd::ToggleFormatPanel),
@@ -439,7 +470,13 @@ impl YMindApp {
                 ("Collapse All", "", Cmd::Canvas(Action::CollapseAll)),
             ];
             for (l, sc, c) in e {
-                if item(ui, t(l), sc).clicked() {
+                if ui
+                    .add_enabled(
+                        self.command_available(&c),
+                        egui::Button::new(t(l)).shortcut_text(sc),
+                    )
+                    .clicked()
+                {
                     *cmd = Some(c);
                 }
             }
@@ -810,6 +847,16 @@ impl YMindApp {
                 true,
             );
             item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
+        }
+        for (label, shortcut, command) in [
+            ("Indent", "", Cmd::Canvas(Action::Indent)),
+            ("Outdent", "", Cmd::Canvas(Action::Outdent)),
+            ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
+            ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
+            ("Reset Style", "", Cmd::ResetStyle),
+        ] {
+            let available = self.command_available(&command);
+            item(ui, t(label), shortcut, command, available);
         }
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
@@ -1212,9 +1259,19 @@ impl YMindApp {
                     d.view.reset();
                 }
                 if r.double_clicked() {
+                    if i != d.doc.active_index() {
+                        d.view.commit_edit(&mut d.doc);
+                        d.doc.set_active(i);
+                        d.view.reset();
+                    }
                     cmd = Some(Cmd::RenameSheet);
                 }
                 r.context_menu(|ui| {
+                    if i != d.doc.active_index() {
+                        d.view.commit_edit(&mut d.doc);
+                        d.doc.set_active(i);
+                        d.view.reset();
+                    }
                     if ui.button(t("Rename Sheet")).clicked() {
                         d.doc.set_active(i);
                         cmd = Some(Cmd::RenameSheet);
@@ -1227,13 +1284,23 @@ impl YMindApp {
                         .add_enabled(i > 0, egui::Button::new(t("Move Left")))
                         .clicked()
                     {
-                        let _ = d.doc.move_sheet(i, i - 1);
+                        d.view.commit_edit(&mut d.doc);
+                        if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Not possible here")));
+                        }
+                        d.view.reset();
                     }
                     if ui
                         .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
                         .clicked()
                     {
-                        let _ = d.doc.move_sheet(i, i + 1);
+                        d.view.commit_edit(&mut d.doc);
+                        if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Not possible here")));
+                        }
+                        d.view.reset();
                     }
                     if ui
                         .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
