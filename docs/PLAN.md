@@ -406,10 +406,27 @@ Latest R1 editing slice delivered:
   prohibited, view state resets on switching and duplicate/move failures are surfaced.
 - Full `cargo xtask ci` passes, including CLI tests that were policy-blocked in a
   previous run. Live AI is explicitly disabled for deterministic verification.
-  Broader R1 command audits, sheet clipboard/separate-save and window lifecycle
-  work remain open.
+  Broader R1 command audits and window lifecycle work remain open.
 - Official manual gap research added ten source-cited, nonduplicate requirements
   to the backlog, separating desktop gaps from future companion/research-only ideas.
+- R1 sheet workflows now include a full-sheet, versioned OS clipboard payload
+  (16 MiB limit, validated input, cross-instance and ordinary canvas Paste),
+  explicit Paste Sheet, and native separate-sheet saving that protects source
+  files and preserves the source document's dirty/path/history state.
+  Sheet menu, tab context menu and palette share localized commands. Late or
+  invalid clipboard responses cannot silently insert text topics or affect a
+  different active document. Native clipboard OS delivery still needs platform QA.
+- New Sheet from Topic copies a selected branch and recursively owned annotations
+  in one undo step without changing the original. Internal relationships are retained;
+  external ones remain in the source, with explicit notification. Rich reopening,
+  root/Summary/floating extraction and undo are covered. Clipboard and separate
+  save cover current model fields; future embedded assets require R4 integration.
+- Sheet-workflow verification: formatting and workspace clippy pass; 54 main UI
+  cases including CLI plus the German UI case, 73 core tests and the IO/platform/UI
+  suites pass. The latest full-workspace CI attempt stopped when Windows Application
+  Control blocked its core test executable (4551), without executing it; no policy
+  bypass was attempted. The earlier style/navigation slice's full CI result above
+  remains historical, not a claim that this latest full invocation completed.
 
 First slice implemented (Windows x64 source verification):
 - R0 baseline: full `cargo xtask ci` passes, including canvas execution. Native

@@ -63,6 +63,10 @@ pub enum Cmd {
     CopyStyle,
     PasteStyle,
     ResetStyle,
+    CopySheet,
+    PasteSheet,
+    SaveSheetAs,
+    NewSheetFromTopic,
     OpenLink,
     ShowInFolder,
     MenuPaste,
@@ -160,6 +164,8 @@ pub struct YMindApp {
     pub sidebar_family: SidebarFamily,
     /// Explicit topic-style overrides, shared by documents for this app session.
     pub style_clipboard: Option<ymind_core::TopicStyle>,
+    pub sheet_paste_request: Option<(Instant, String)>,
+    pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
     pub palette: CommandPalette,
     pub search: SearchState,
@@ -216,6 +222,8 @@ impl YMindApp {
             format_tab: FormatTab::Style,
             sidebar_family: SidebarFamily::Format,
             style_clipboard: None,
+            sheet_paste_request: None,
+            discard_late_sheet_paste: false,
             toasts: Toasts::default(),
             palette: CommandPalette::default(),
             search: SearchState::default(),
@@ -501,6 +509,63 @@ impl YMindApp {
                 }
             }
             Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle => self.edit_style(cmd),
+            Cmd::CopySheet => {
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
+                    match ymind_core::clipboard::encode_sheet(d.doc.sheet()) {
+                        Ok(text) => {
+                            ctx.copy_text(text);
+                            self.toasts.info(t("Copied sheet to clipboard"));
+                        }
+                        Err(e) => {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Could not copy sheet")));
+                        }
+                    }
+                }
+            }
+            Cmd::PasteSheet => {
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
+                    let key = d.key.clone();
+                    self.paste_requested = false;
+                    self.discard_late_sheet_paste = false;
+                    self.sheet_paste_request = Some((Instant::now(), key));
+                    ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
+                }
+            }
+            Cmd::SaveSheetAs => self.save_sheet_as(),
+            Cmd::NewSheetFromTopic => {
+                if !self.command_available(&cmd) {
+                    self.toasts.warning(t("Not possible here"));
+                    return;
+                }
+                let d = self.doc_mut().unwrap();
+                d.view.commit_edit(&mut d.doc);
+                let topic = d.view.primary().unwrap();
+                match d.doc.sheet().copy_branch_as_sheet(topic) {
+                    Ok(sheet) => {
+                        let external = d
+                            .doc
+                            .sheet()
+                            .relationships
+                            .iter()
+                            .filter(|r| sheet.contains(r.from) != sheet.contains(r.to))
+                            .count();
+                        d.doc.add_sheet(sheet);
+                        d.view.reset();
+                        if external > 0 {
+                            self.toasts.info(t(
+                                "External relationships remain only in the original sheet",
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        self.toasts
+                            .error(format!("{}: {e}", t("Not possible here")));
+                    }
+                }
+            }
             Cmd::OpenLink => {
                 let link = self.doc().and_then(|d| {
                     let id = d.view.primary()?;
@@ -516,6 +581,7 @@ impl YMindApp {
                 }
             }
             Cmd::MenuPaste => {
+                self.discard_late_sheet_paste = false;
                 self.paste_requested = true;
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
             }
@@ -597,7 +663,7 @@ impl YMindApp {
                         .and_then(|parent| d.doc.sheet().parent(parent))
                         .is_some()
             }),
-            Cmd::CopyStyle => self.doc().is_some_and(|d| {
+            Cmd::CopyStyle | Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
                     && d.view
                         .primary()
@@ -614,6 +680,12 @@ impl YMindApp {
             Cmd::NextSheet | Cmd::PreviousSheet | Cmd::DeleteSheet => self
                 .doc()
                 .is_some_and(|d| d.doc.workbook().sheets.len() > 1),
+            Cmd::NewSheet
+            | Cmd::RenameSheet
+            | Cmd::DuplicateSheet
+            | Cmd::CopySheet
+            | Cmd::PasteSheet
+            | Cmd::SaveSheetAs => self.doc().is_some(),
             _ => true,
         }
     }
@@ -656,6 +728,120 @@ impl YMindApp {
     pub fn open_link(&mut self, link: &str) {
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
+        }
+    }
+
+    pub fn handle_sheet_paste(&mut self, ctx: &Context) {
+        if self.discard_late_sheet_paste {
+            let discarded = ctx.input_mut(|input| {
+                if let Some(index) = input
+                    .events
+                    .iter()
+                    .position(|event| matches!(event, egui::Event::Paste(_)))
+                {
+                    input.events.remove(index);
+                    true
+                } else {
+                    false
+                }
+            });
+            if discarded {
+                self.discard_late_sheet_paste = false;
+                self.toasts
+                    .warning(t("Ignored a late sheet paste; paste again to retry"));
+            }
+            return;
+        }
+        if self.sheet_paste_request.is_none()
+            && !ctx.text_edit_focused()
+            && self.doc().is_some_and(|d| d.view.editing_topic().is_none())
+            && !self.any_modal_open()
+            && ctx.input(|input| {
+                input.events.iter().any(|event| {
+                matches!(event, egui::Event::Paste(text) if text.starts_with("YMIND-SHEET-"))
+            })
+            })
+            && let Some(d) = self.doc()
+        {
+            self.sheet_paste_request = Some((Instant::now(), d.key.clone()));
+        }
+        let Some((requested, key)) = self.sheet_paste_request.take() else {
+            return;
+        };
+        let text = ctx.input_mut(|input| {
+            let index = input
+                .events
+                .iter()
+                .position(|event| matches!(event, egui::Event::Paste(_)))?;
+            match input.events.remove(index) {
+                egui::Event::Paste(text) => Some(text),
+                _ => unreachable!(),
+            }
+        });
+        if self.doc().is_none_or(|d| d.key != key) || self.any_modal_open() {
+            self.discard_late_sheet_paste = text.is_none();
+            self.toasts.warning(t(
+                "Sheet paste cancelled because the document changed or a dialog opened",
+            ));
+            return;
+        }
+        let Some(text) = text else {
+            if requested.elapsed() < Duration::from_secs(2) {
+                self.sheet_paste_request = Some((requested, key));
+                ctx.request_repaint_after(Duration::from_millis(100));
+            } else {
+                self.discard_late_sheet_paste = true;
+                self.toasts
+                    .warning(t("Clipboard did not provide sheet data"));
+            }
+            return;
+        };
+        self.paste_requested = false;
+        match ymind_core::clipboard::decode_sheet(&text) {
+            Ok(sheet) => {
+                let d = self.doc_mut().unwrap();
+                d.doc.add_sheet(sheet);
+                d.view.reset();
+            }
+            Err(e) => {
+                self.toasts
+                    .error(format!("{}: {e}", t("Could not paste sheet")));
+            }
+        }
+    }
+
+    fn save_sheet_as(&mut self) {
+        let Some(d) = self.doc_mut() else { return };
+        d.view.commit_edit(&mut d.doc);
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("yMind", &["ymind"])
+            .add_filter("XMind", &["xmind"])
+            .set_file_name(format!("{}.ymind", sanitize(&d.doc.sheet().title)));
+        if let Some(dir) = d.path.as_ref().and_then(|path| path.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(path) = dialog.save_file() {
+            self.save_sheet_to(&path);
+        }
+    }
+
+    pub fn save_sheet_to(&mut self, path: &Path) -> bool {
+        let backup = self.settings.backup_on_save;
+        let Some(d) = self.doc_mut() else {
+            return false;
+        };
+        d.view.commit_edit(&mut d.doc);
+        match d.save_sheet_to(path, backup) {
+            Ok(()) => {
+                self.toasts
+                    .success(format!("{} {}", t("Saved sheet to"), path.display()));
+                true
+            }
+            Err(e) => {
+                self.toasts
+                    .error(format!("{}: {e}", t("Could not save sheet")));
+                false
+            }
         }
     }
 
@@ -1310,6 +1496,10 @@ impl YMindApp {
             (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
             (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),
             (Cmd::NextSheet, "Next Sheet", "Ctrl+PageDown", "View"),
+            (Cmd::CopySheet, "Copy Sheet", "", "File"),
+            (Cmd::PasteSheet, "Paste Sheet", "", "File"),
+            (Cmd::SaveSheetAs, "Save Sheet As…", "", "File"),
+            (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",

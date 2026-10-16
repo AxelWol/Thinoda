@@ -6,6 +6,22 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Complete-sheet Copy/Paste through a versioned OS text clipboard payload, including
+  floating topics, styles, notes and nested structural annotations. Works across
+  yMind instances; canvas Paste recognizes the payload, while Paste Sheet explicitly
+  rejects unrelated/invalid data. Payloads are validated and capped at 16 MiB;
+  late responses, document switches and empty clipboard responses are handled.
+  Pasting adds a sheet in one undo step. This is yMind clipboard interoperability,
+  not compatibility with XMind's private clipboard format.
+- Save Sheet As writes only the active sheet to `.ymind` or `.xmind`, retaining
+  workbook metadata without retargeting or marking the source document saved.
+  The source path and its canonical aliases are protected from accidental overwrite.
+  Sheet menu, tab context menu and palette expose these actions with EN/DE labels;
+  rich-content reopen, invalid-input, cancellation and error regressions are covered.
+- New Sheet from Topic copies one selected topic's subtree, its recursively owned
+  summaries/boundaries and internal relationships without changing the source.
+  Unrelated floating trees and external relationships stay in the original sheet;
+  a toast explains external relationship exclusion. Creation is one undo step.
 - Individual relationship/boundary/Summary selection and deletion via canvas
   outlines/braces, Delete/Backspace and named contextual actions, with undo/redo.
   Covered branches are preserved. Summary deletion removes its owned topic/children
@@ -65,15 +81,17 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   (moves it after its former parent), restricted to one selected non-root tree topic
   with no new shortcuts assigned yet. Owned nested Summary/boundary/relationship
   annotations move with the topic; a move that would create an annotation cycle
-  (e.g. into its own owned summary/boundary range) is rejected, and the vacated
+  (e.g. into its own owned summary topic) is rejected, and the vacated
   source range's boundary/summary membership is cleaned up correctly.
 - Ctrl+PageUp / Ctrl+PageDown switch to the previous/next sheet with wraparound at
-  the first/last sheet. An in-progress inline sheet-title edit is committed before
+  the first/last sheet. An in-progress inline topic-title edit is committed before
   creating, duplicating, deleting, renaming, switching to, or reordering a sheet.
-- The three items above are wired consistently through menus, context menus and the
-  command palette, with regression test coverage. `cargo xtask ci` now passes in
-  full, including the canvas/CLI tests previously blocked by Windows Application
-  Control; live AI integration remains deliberately skipped/disabled in CI.
+- These commands have localized menus and command-palette entries; topic commands
+  also have context actions, with regression test coverage. The style/navigation
+  slice passed full `cargo xtask ci`. The later sheet-workflow slice passes targeted
+  core/app/IO/platform/UI suites and workspace clippy; its full-workspace attempt
+  stopped on a Windows Application Control block of the core test executable.
+  See PLAN.md for the exact scope. Live AI remains deliberately disabled.
 
 ## XMind parity (from the user guide)
 - Implemented structural-object deletion for relationships (Beziehungen), boundaries
@@ -200,7 +218,8 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   Callout, Relationship, Summary, Boundary, Note, Label, To-do, Task, Link submenu,
   Attachment, Audio note, Symbol, Sticker, Illustration, Local image, Equation,
   New sheet and New sheet from topic. Research the distinction between the displayed
-  To-do and Task commands rather than assuming they are synonyms.
+  To-do and Task commands rather than assuming they are synonyms. New sheet from
+  topic is implemented as a non-destructive single-branch copy; see Recently completed.
 - P2 Tools inventory: Map Shot (F7), Merge XMind files and Create/customize theme.
   Share implementation with the existing capture, merge and theme backlog items.
 - P1 View inventory: mutually exclusive Mind map/Outline views, Zoom in/out, Actual
@@ -224,15 +243,16 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   Layout-dependent keys (# and umlaut keys in the reference) need physical/logical
   key and macOS/Linux verification. Preserve current shortcuts pending an explicit
   compatibility-keymap decision.
-- P2 Bottom-left sheet-tab context menu: Rename; Copy, Paste, Duplicate, Delete;
-  New sheet; Save sheet as a separate file. Match the reference separators and
-  contextual availability, reusing existing sheet commands. Verify clipboard
-  representation and whether relationships/assets outside the sheet are included
-  when saving. Protect the last sheet, preserve active-sheet selection and support
-  undo for document changes; cover keyboard access and menu placement near screen edges.
+- P2 Bottom-left sheet-tab context menu: Rename, Copy, Paste, Duplicate, Delete,
+  New sheet and Save sheet as a separate file are implemented, with last-sheet
+  protection and undo for document changes. Copy uses a validated, versioned yMind
+  OS text payload; separate saving retains all current sheet-model fields, not other
+  sheets. Future embedded assets need integration when their storage contract exists.
+  Reference separator polish, native keyboard access and viewport-edge placement
+  still need auditing.
   Previous/next sheet navigation (Ctrl+PageUp/Ctrl+PageDown, with wraparound and
   commit of an in-progress inline title edit before switching) is implemented
-  separately from this context-menu inventory, which otherwise remains open.
+  separately from this context-menu inventory; remaining audits stay open.
 
 ## Bottom-right controls and alternate views (user screenshots, 2026-10-16)
 - P1 Compact floating bottom-right action bar: topic count, zoom dropdown, Gantt,

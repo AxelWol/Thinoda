@@ -4,6 +4,33 @@ use crate::model::{Sheet, Subtree, TopicId};
 use crate::outline::{OutlineNode, parse_indented_text, to_indented_text, to_outline};
 use serde::{Deserialize, Serialize};
 
+const SHEET_PREFIX: &str = "YMIND-SHEET-1\n";
+const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
+
+/// A versioned OS text payload retaining every persisted sheet field.
+pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
+    sheet.validate()?;
+    let json = serde_json::to_string(sheet).map_err(|e| e.to_string())?;
+    if json.len() + SHEET_PREFIX.len() > MAX_SHEET_CLIPBOARD_BYTES {
+        return Err("sheet clipboard payload exceeds 16 MiB".into());
+    }
+    Ok(format!("{SHEET_PREFIX}{json}"))
+}
+
+pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
+    if text.len() > MAX_SHEET_CLIPBOARD_BYTES {
+        return Err("sheet clipboard payload exceeds 16 MiB".into());
+    }
+    // Windows clipboard APIs may normalize line endings.
+    let json = text
+        .strip_prefix(SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("YMIND-SHEET-1\r\n"))
+        .ok_or("clipboard does not contain a supported yMind sheet")?;
+    let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    sheet.validate()?;
+    Ok(sheet)
+}
+
 /// Content copied from the map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClipboardPayload {
@@ -72,6 +99,55 @@ fn normalize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_sheet_clipboard_roundtrips_and_rejects_invalid_input() {
+        let mut sheet = Sheet::new("Sheet \u{00fc}", "Root");
+        let a = sheet.add_child(sheet.root, None, "A");
+        let b = sheet.add_child(sheet.root, None, "B");
+        let summary = sheet.add_summary(&[a, b], "Summary").unwrap();
+        let child = sheet.add_child(summary, None, "Summary child");
+        sheet.add_summary(&[child], "Nested").unwrap();
+        sheet.add_boundary(&[a, b]).unwrap();
+        let floating = sheet.add_floating("Floating", crate::Vec2::new(20.0, 30.0));
+        sheet.add_relationship(child, floating).unwrap();
+        sheet.topic_mut(a).unwrap().notes = Some("Notes".into());
+        sheet.topic_mut(b).unwrap().style.bold = Some(true);
+        let payload = encode_sheet(&sheet).unwrap();
+        assert_eq!(decode_sheet(&payload).unwrap(), sheet);
+        assert_eq!(
+            decode_sheet(&payload.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        for text in ["plain text", "YMIND-SHEET-2\n{}", "YMIND-SHEET-1\n{"] {
+            assert!(decode_sheet(text).is_err());
+        }
+        let mut invalid = sheet.clone();
+        invalid.topics.remove(&invalid.root);
+        assert!(encode_sheet(&invalid).is_err());
+        assert!(
+            decode_sheet(&format!(
+                "{SHEET_PREFIX}{}",
+                serde_json::to_string(&invalid).unwrap()
+            ))
+            .is_err()
+        );
+        assert!(decode_sheet(&"x".repeat(MAX_SHEET_CLIPBOARD_BYTES + 1)).is_err());
+        let mut exact_limit = payload.clone();
+        exact_limit.extend(std::iter::repeat_n(
+            ' ',
+            MAX_SHEET_CLIPBOARD_BYTES - payload.len(),
+        ));
+        assert_eq!(decode_sheet(&exact_limit).unwrap(), sheet);
+        exact_limit.push(' ');
+        assert!(
+            decode_sheet(&exact_limit)
+                .unwrap_err()
+                .contains("exceeds 16 MiB")
+        );
+        sheet.topic_mut(a).unwrap().notes = Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES));
+        assert!(encode_sheet(&sheet).is_err());
+    }
 
     #[test]
     fn copy_skips_nested_selection() {

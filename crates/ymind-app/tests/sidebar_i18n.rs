@@ -85,4 +85,14 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.run_steps(2);
     h.get_by_role_and_label(Role::Button, "Vorheriges Blatt Ctrl+PageUp");
     h.get_by_role_and_label(Role::Button, "Nächstes Blatt Ctrl+PageDown");
+    h.key_press(egui::Key::Escape);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Blatt").click();
+    h.run_steps(2);
+    for label in ["Blatt kopieren", "Blatt einfügen", "Blatt speichern unter…"] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
 }

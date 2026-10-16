@@ -80,6 +80,7 @@ impl YMindApp {
         let ctx = ui.ctx().clone();
         self.apply_appearance(&ctx);
         self.handle_close_request(&ctx);
+        self.handle_sheet_paste(&ctx);
         if !self.palette.open && !self.any_modal_open() {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
@@ -171,7 +172,7 @@ impl YMindApp {
         self.housekeeping(&ctx);
     }
 
-    fn any_modal_open(&self) -> bool {
+    pub(crate) fn any_modal_open(&self) -> bool {
         let d = &self.dialogs;
         d.close.is_some()
             || d.conflict.is_some()
@@ -400,6 +401,7 @@ impl YMindApp {
                 ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
                 ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
                 ("Reset Style", "", Cmd::ResetStyle),
+                ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
             ] {
                 let button = egui::Button::new(t(label));
                 let button = if shortcut.is_empty() {
@@ -418,6 +420,27 @@ impl YMindApp {
                 ui,
                 t("Copies explicit overrides; inherited theme styles stay automatic."),
             );
+        });
+        ui.menu_button(t("Sheet"), |ui| {
+            for (label, command) in [
+                ("New Sheet", Cmd::NewSheet),
+                ("Rename Sheet", Cmd::RenameSheet),
+                ("Copy Sheet", Cmd::CopySheet),
+                ("Paste Sheet", Cmd::PasteSheet),
+                ("Duplicate Sheet", Cmd::DuplicateSheet),
+                ("Save Sheet As…", Cmd::SaveSheetAs),
+                ("Delete Sheet", Cmd::DeleteSheet),
+            ] {
+                if ui
+                    .add_enabled(
+                        self.command_available(&command),
+                        egui::Button::new(t(label)),
+                    )
+                    .clicked()
+                {
+                    *cmd = Some(command);
+                }
+            }
         });
         ui.menu_button(t("Insert"), |ui| {
             let e = [
@@ -854,6 +877,7 @@ impl YMindApp {
             ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
             ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
             ("Reset Style", "", Cmd::ResetStyle),
+            ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
         ] {
             let available = self.command_available(&command);
             item(ui, t(label), shortcut, command, available);
@@ -1279,6 +1303,16 @@ impl YMindApp {
                     if ui.button(t("Duplicate Sheet")).clicked() {
                         d.doc.set_active(i);
                         cmd = Some(Cmd::DuplicateSheet);
+                    }
+                    for (label, command) in [
+                        ("Copy Sheet", Cmd::CopySheet),
+                        ("Paste Sheet", Cmd::PasteSheet),
+                        ("Save Sheet As…", Cmd::SaveSheetAs),
+                        ("New Sheet", Cmd::NewSheet),
+                    ] {
+                        if ui.button(t(label)).clicked() {
+                            cmd = Some(command);
+                        }
                     }
                     if ui
                         .add_enabled(i > 0, egui::Button::new(t("Move Left")))

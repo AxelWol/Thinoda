@@ -248,6 +248,30 @@ impl Sheet {
         self.move_topic(id, grandparent, index)
     }
 
+    /// Copies a branch with its owned annotations; unrelated floating trees and
+    /// relationships to topics outside the branch remain only in the source.
+    pub fn copy_branch_as_sheet(&self, id: TopicId) -> EditResult<Sheet> {
+        self.require(id)?;
+        let owned = self.owned_subtree_ids(id);
+        let mut sheet = self.clone();
+        sheet.root = id;
+        sheet.title = self.topic(id).unwrap().title.clone();
+        sheet.topics.retain(|id, _| owned.contains(id));
+        let root = sheet.topic_mut(id).unwrap();
+        root.parent = None;
+        root.position = None;
+        sheet.floating.clear();
+        sheet.boundaries.retain(|b| owned.contains(&b.parent));
+        sheet
+            .summaries
+            .retain(|s| owned.contains(&s.parent) && s.topic != id);
+        sheet
+            .relationships
+            .retain(|r| owned.contains(&r.from) && owned.contains(&r.to));
+        sheet.validate().map_err(EditError::Invalid)?;
+        Ok(sheet)
+    }
+
     /// Moves `id` to be a floating topic at `pos`.
     pub fn detach_to_floating(&mut self, id: TopicId, pos: Vec2) -> EditResult<()> {
         self.require(id)?;
@@ -711,6 +735,37 @@ mod tests {
         assert!(s.contains(own_summary));
         assert!(s.contains(own_child));
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn copy_branch_to_sheet_handles_tree_summary_and_floating_roots() {
+        let (mut s, kids) = sheet();
+        let child = s.add_child(kids[1], None, "child");
+        let summary = s.add_summary(&[child], "summary").unwrap();
+        s.add_child(summary, None, "summary child");
+        let floating = s.add_floating("Floating", Vec2::new(10.0, 20.0));
+        s.add_boundary(&[child]).unwrap();
+        s.add_relationship(child, summary).unwrap();
+        s.add_relationship(child, kids[0]).unwrap();
+        let before = s.clone();
+        for id in [s.root, kids[1], summary, floating] {
+            let copied = s.copy_branch_as_sheet(id).unwrap();
+            copied.validate().unwrap();
+            assert_eq!(copied.root, id);
+            assert_eq!(copied.root_topic().parent, None);
+            assert_eq!(copied.root_topic().position, None);
+            assert_eq!(copied.title, s.topic(id).unwrap().title);
+            assert!(copied.floating.is_empty());
+            assert_eq!(copied.theme, s.theme);
+            assert_eq!(copied.structure, s.structure);
+            if id == kids[1] {
+                assert_eq!(copied.topic_count(), 4);
+                assert_eq!(copied.summaries.len(), 1);
+                assert_eq!(copied.boundaries.len(), 1);
+                assert_eq!(copied.relationships.len(), 1);
+            }
+        }
+        assert_eq!(s, before);
     }
 
     #[test]

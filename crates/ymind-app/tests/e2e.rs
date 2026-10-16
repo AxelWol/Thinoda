@@ -50,6 +50,224 @@ fn root_title(wb: &Workbook) -> String {
     s.topic(s.root).unwrap().title.clone()
 }
 
+fn rich_sheet() -> ymind_core::Sheet {
+    let mut sheet = Workbook::default().sheets.remove(0);
+    sheet.title = "Rich sheet".into();
+    let children = sheet.children(sheet.root).to_vec();
+    let summary = sheet.add_summary(&children[..2], "Summary").unwrap();
+    let child = sheet.add_child(summary, None, "Summary child");
+    sheet.add_summary(&[child], "Nested Summary").unwrap();
+    sheet.add_boundary(&children[..2]).unwrap();
+    let floating = sheet.add_floating("Floating", ymind_core::Vec2::new(100.0, 200.0));
+    sheet.add_relationship(child, floating).unwrap();
+    sheet.topic_mut(children[0]).unwrap().notes = Some("Keep notes".into());
+    sheet.topic_mut(children[1]).unwrap().style.italic = Some(true);
+    sheet
+}
+
+#[test]
+fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
+    let mut source = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let sheet = rich_sheet();
+    source.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    let source_state = source.doc().unwrap().doc.state_id();
+    source.exec(&ctx, Cmd::CopySheet);
+    assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
+    let payload = ctx
+        .output(|output| {
+            output.commands.iter().find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+        })
+        .unwrap();
+    let mut target = harness(YMindApp::headless());
+    let before = target.state().doc().unwrap().doc.workbook().clone();
+    let ctx = target.ctx.clone();
+    target.state_mut().exec(&ctx, Cmd::PasteSheet);
+    target.event(egui::Event::Paste(payload.clone()));
+    target.run_steps(3);
+    let d = target.state().doc().unwrap();
+    assert_eq!(d.doc.workbook().sheets.len(), 2);
+    assert_eq!(d.doc.sheet(), &sheet);
+    assert!(target.state().sheet_paste_request.is_none());
+    target
+        .state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(target.state().doc().unwrap().doc.workbook(), &before);
+    target
+        .state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(target.state().doc().unwrap().doc.sheet(), &sheet);
+    // A normal paste event on the canvas also recognizes our versioned sheet payload.
+    target.event(egui::Event::Paste(payload));
+    target.run_steps(3);
+    assert_eq!(target.state().doc().unwrap().doc.workbook().sheets.len(), 3);
+    assert_eq!(target.state().doc().unwrap().doc.sheet(), &sheet);
+}
+
+#[test]
+fn sheet_context_menu_exposes_complete_clipboard_and_separate_save_actions() {
+    let mut h = harness(YMindApp::headless());
+    let title = h.state().doc().unwrap().doc.sheet().title.clone();
+    let point = h.get_by_label(&title).rect().center();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Paste Sheet");
+    h.get_by_role_and_label(Role::Button, "Save Sheet As…");
+    h.get_by_role_and_label(Role::Button, "New Sheet");
+    h.get_by_role_and_label(Role::Button, "Copy Sheet").click();
+    h.run_steps(3);
+    h.get_by_label("Copied sheet to clipboard");
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+}
+
+#[test]
+fn new_sheet_from_topic_copies_owned_annotations_without_changing_the_source() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let mut sheet = rich_sheet();
+    let summary = sheet.summaries[0].topic;
+    let child = sheet.children(summary)[0];
+    let nested = sheet.summaries[1].topic;
+    sheet.add_boundary(&[child]).unwrap();
+    sheet.add_relationship(child, nested).unwrap();
+    let expected = sheet.copy_branch_as_sheet(summary).unwrap();
+    assert_eq!(expected.root, summary);
+    assert!(expected.floating.is_empty());
+    assert_eq!(expected.summaries.len(), 1);
+    assert_eq!(expected.boundaries.len(), 1);
+    assert_eq!(expected.relationships.len(), 1);
+    assert_eq!(expected.topic_count(), 3);
+    app.doc_mut().unwrap().doc.add_sheet(sheet);
+    app.doc_mut().unwrap().view.select_only(summary);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    app.exec(&ctx, Cmd::NewSheetFromTopic);
+    assert_eq!(app.doc().unwrap().doc.workbook().sheets[..2], before.sheets);
+    assert_eq!(app.doc().unwrap().doc.sheet(), &expected);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &expected);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("branch.ymind");
+    assert!(app.save_sheet_to(&path));
+    assert_eq!(ymind_io::import_file(&path).unwrap().sheets[0], expected);
+    let d = app.doc_mut().unwrap();
+    d.view.selection = vec![expected.root, child];
+    assert!(!app.command_available(&Cmd::NewSheetFromTopic));
+    let before_invalid = app.doc().unwrap().doc.workbook().clone();
+    app.exec(&ctx, Cmd::NewSheetFromTopic);
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before_invalid);
+}
+
+#[test]
+fn sheet_paste_rejects_invalid_data_document_switches_and_timeouts() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    for text in ["ordinary text", "YMIND-SHEET-2\n{}", "YMIND-SHEET-1\n{"] {
+        h.state_mut().exec(&ctx, Cmd::PasteSheet);
+        h.event(egui::Event::Paste(text.into()));
+        h.run_steps(3);
+        assert!(h.state().sheet_paste_request.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    h.state_mut().exec(&ctx, Cmd::PasteSheet);
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert!(h.state().sheet_paste_request.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    let key = h.state().doc().unwrap().key.clone();
+    h.state_mut().sheet_paste_request = Some((
+        std::time::Instant::now() - std::time::Duration::from_secs(3),
+        key,
+    ));
+    h.run_steps(3);
+    assert!(h.state().sheet_paste_request.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(h.state().discard_late_sheet_paste);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(!h.state().discard_late_sheet_paste);
+    h.state_mut().exec(&ctx, Cmd::PasteSheet);
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.run_steps(3);
+    assert!(h.state().discard_late_sheet_paste);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(h.state().sheet_paste_request.is_none());
+}
+
+#[test]
+fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("original.ymind");
+    let mut app = YMindApp::headless();
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_book("Metadata", |book| {
+            book.metadata.creator = "Sheet author".into();
+            book.metadata.description = Some("Workbook description".into());
+            Ok(())
+        })
+        .unwrap();
+    app.doc_mut().unwrap().save_to(&original, false).unwrap();
+    let original_bytes = std::fs::read(&original).unwrap();
+    let d = app.doc_mut().unwrap();
+    let root = d.doc.sheet().root;
+    d.doc
+        .edit_sheet("Rename active root", |s| {
+            s.set_title(root, "Unsaved change")
+        })
+        .unwrap();
+    let state = app.doc().unwrap().doc.state_id();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    for extension in ["ymind", "xmind"] {
+        let path = dir.path().join(format!("sheet.{extension}"));
+        assert!(app.save_sheet_to(&path));
+        let imported = ymind_io::import_file(&path).unwrap();
+        assert_eq!(imported.sheets.len(), 1);
+        assert_eq!(imported.active_sheet, 0);
+        assert_eq!(imported.metadata, before.metadata);
+        assert_eq!(imported.sheets[0], *before.active());
+        assert_eq!(app.doc().unwrap().path.as_ref(), Some(&original));
+        assert!(app.doc().unwrap().is_dirty());
+        assert_eq!(app.doc().unwrap().doc.state_id(), state);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+    for path in [
+        original.clone(),
+        dir.path().join(".").join("original.ymind"),
+        dir.path().join("sheet.md"),
+    ] {
+        assert!(!app.save_sheet_to(&path));
+    }
+    assert!(!dir.path().join("sheet.md").exists());
+    assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
+    assert!(!app.save_sheet_to(&original.join("sheet.ymind")));
+    assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
 #[test]
 fn style_clipboard_is_session_wide_and_multitopic_edits_undo_atomically() {
     let mut app = YMindApp::headless();

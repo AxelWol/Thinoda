@@ -73,6 +73,40 @@ const DE: &[(&str, &str)] = &[
     ("Editor", "Editor"),
     ("Indent", "Einrücken"),
     ("Outdent", "Ausrücken"),
+    ("New Sheet from Topic", "Neues Blatt aus Thema"),
+    (
+        "External relationships remain only in the original sheet",
+        "Externe Beziehungen verbleiben nur im ursprünglichen Blatt",
+    ),
+    ("Copy Sheet", "Blatt kopieren"),
+    ("Paste Sheet", "Blatt einfügen"),
+    (
+        "Ignored a late sheet paste; paste again to retry",
+        "Verspätetes Einfügen ignoriert; zum Wiederholen erneut einfügen",
+    ),
+    ("Save Sheet As…", "Blatt speichern unter…"),
+    (
+        "Copied sheet to clipboard",
+        "Blatt in die Zwischenablage kopiert",
+    ),
+    ("Could not copy sheet", "Blatt konnte nicht kopiert werden"),
+    (
+        "Could not paste sheet",
+        "Blatt konnte nicht eingefügt werden",
+    ),
+    ("Saved sheet to", "Blatt gespeichert unter"),
+    (
+        "Could not save sheet",
+        "Blatt konnte nicht gespeichert werden",
+    ),
+    (
+        "Clipboard did not provide sheet data",
+        "Zwischenablage hat keine Blattdaten geliefert",
+    ),
+    (
+        "Sheet paste cancelled because the document changed or a dialog opened",
+        "Einfügen des Blatts abgebrochen, da das Dokument gewechselt oder ein Dialog geöffnet wurde",
+    ),
     ("Copy Style", "Stil kopieren"),
     ("Paste Style", "Stil einfügen"),
     (

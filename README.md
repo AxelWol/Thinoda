@@ -15,6 +15,11 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Indent/Outdent in Edit, the topic context menu and command palette moves one topic
   under its previous sibling or after its parent while retaining its annotations.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
+- Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
+  the OS clipboard (including across yMind instances), and Save Sheet As for a
+  separate `.ymind`/`.xmind` copy without changing the source save state.
+  New Sheet from Topic copies a branch with its owned annotations and internal
+  relationships; relationships to topics outside the branch remain in the original sheet.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Select relationship lines, boundary outlines or Summary braces to delete them with
