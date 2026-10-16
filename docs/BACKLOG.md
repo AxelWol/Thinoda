@@ -445,10 +445,18 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   framing/zoom and Pitch navigation. Keep zones distinct from topic boundaries and
   test relationships crossing zone edges. The screenshot establishes appearance;
   clipping, membership and navigation semantics still need verification.
-- P2 Relationships: retain the branch/custom color when selected; use a separate
+- Implemented Relationships: retain the branch/custom color when selected; use a separate
   selection overlay with circular endpoint anchors, square Bezier control handles
-  and thin guide lines. Drag endpoints to reconnect and handles to reshape; support undo,
-  hit testing at different zoom levels and keyboard-accessible alternatives.
+  and thin guide lines. Endpoint reconnection and relative Bezier reshaping preview
+  without modifying the document and commit in one undo step on release. Escape,
+  invalid targets and stale-document previews cancel without overwriting work.
+  Focused control arrows move by 1 map unit (Shift: 10); endpoint arrows cycle visible
+  topics in layout order, excluding the opposite endpoint. Style provides title,
+  endpoint, color and numeric control editing plus Reset curve. Shared geometry
+  feeds layout/export; hit testing follows the rendered segments at different
+  zoom/pan settings, including large curves. Native files and unchanged yMind XMind
+  exports preserve routing through the validated snapshot. Public XMind control-point
+  interchange and actual native keyboard/accessibility QA remain open.
 - P2 Floating topics: match rounded colored cards and dashed colored relationships.
   Match the separate dashed gray rounded boundary around a floating topic shown in
   the reference; do not conflate a document boundary with a transient selection outline.

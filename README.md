@@ -52,6 +52,14 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Select relationship lines, boundary outlines or Summary braces to delete them with
   Delete or a context action, with undo/redo. Covered branches remain intact; deleting
   a Summary removes its own summary topic and children.
+- Selected relationships retain their line color beneath a selection overlay.
+  Drag round endpoints onto topics to reconnect, or square Bezier controls to reshape.
+  Previews do not change the map until release; Escape cancels, and each change undoes
+  once. Focused controls move by 1 map unit with arrows (Shift: 10); endpoint arrows
+  cycle visible topics. Style also edits the title, endpoints, color and relative
+  control coordinates, with Reset curve restoring automatic routing. Native files
+  and unchanged yMind-exported XMind files preserve custom routing; public XMind
+  curve-control interoperability remains unfinished.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.

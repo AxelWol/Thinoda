@@ -771,6 +771,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                 id: rid,
                                 from: a,
                                 to: b,
+                                control_points: None,
                                 title: r.get("title").and_then(Value::as_str).unwrap_or("").into(),
                                 color: r
                                     .get("style")

@@ -14,6 +14,7 @@
 
 mod actions;
 mod measure;
+mod relationship_editing;
 mod render;
 mod view;
 

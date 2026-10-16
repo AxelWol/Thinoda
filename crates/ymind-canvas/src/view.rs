@@ -10,7 +10,7 @@ use ymind_core::{
     ApproxMeasure, BoundaryId, Document, Layout, RelationshipId, Sheet, SummaryId, TopicId,
     clipboard::ClipboardPayload,
     geometry::Vec2,
-    layout::{Dir, Icon},
+    layout::{Dir, Icon, cubic as bezier},
     layout_sheet,
     navigation::Direction,
 };
@@ -115,6 +115,8 @@ pub struct MapView {
     pub selected_object: Option<ObjectSelection>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
+    pub relationship_handle_labels: [String; 4],
+    pub(crate) relationship_drag: Option<crate::relationship_editing::RelationshipDrag>,
     pub titles: NewTopicTitles,
     pub add_control_labels: AddControlLabels,
     /// Whether the canvas exposes connector add buttons (keyboard actions remain available).
@@ -145,6 +147,14 @@ impl Default for MapView {
             selection: Vec::new(),
             selected_object: None,
             relationship_from: None,
+            relationship_handle_labels: [
+                "Relationship start",
+                "First curve control",
+                "Second curve control",
+                "Relationship end",
+            ]
+            .map(str::to_string),
+            relationship_drag: None,
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
             show_add_controls: true,
@@ -243,6 +253,7 @@ impl MapView {
         self.selection.clear();
         self.selected_object = None;
         self.relationship_from = None;
+        self.relationship_drag = None;
         self.editing = None;
         self.drag = Drag::None;
         self.cache = None;
@@ -348,7 +359,7 @@ impl MapView {
         (self.zoom * 100.0).round() as u32
     }
 
-    fn xf(&self) -> Xf {
+    pub(crate) fn xf(&self) -> Xf {
         Xf {
             origin: self.canvas_rect.center() + self.offset,
             zoom: self.zoom,
@@ -635,7 +646,7 @@ impl MapCanvas {
             .filter(|p| rect.contains(*p))
             .and_then(|p| layout.hit_test(view.xf().sheet(p)));
 
-        if response.hovered() {
+        if response.hovered() && view.relationship_drag.is_none() {
             let (scroll, zoom_delta, pos) =
                 ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
             if zoom_delta != 1.0 {
@@ -647,15 +658,25 @@ impl MapCanvas {
 
         let space =
             ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
+        let relationship_handle = crate::relationship_editing::interact(
+            ui,
+            doc,
+            view,
+            &mut layout,
+            &mut out.error,
+            !space,
+        );
         let handles = if space {
             Vec::new()
         } else {
             add_handles(view, doc.sheet(), &layout)
         };
-        let over_handle = pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
-        let press_on_handle = ctx
-            .input(|i| i.pointer.press_origin())
-            .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let over_handle = relationship_handle
+            || pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let press_on_handle = relationship_handle
+            || ctx
+                .input(|i| i.pointer.press_origin())
+                .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
         let mut handle_action = None;
         for handle in &handles {
             let target = ui.interact(
@@ -874,6 +895,7 @@ impl MapCanvas {
             selected_object: view.selected_object,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
+        crate::relationship_editing::paint_target(&painter, view, &layout);
         if !space {
             for handle in add_handles(view, sheet, &layout) {
                 let hot = pointer.is_some_and(|p| handle.rect().contains(p));
@@ -1248,16 +1270,17 @@ fn drop_topics(
     view.selection = ids;
 }
 
-fn bezier(a: Vec2, b: Vec2, c: Vec2, d: Vec2, t: f32) -> Vec2 {
-    let u = 1.0 - t;
-    a * (u * u * u) + b * (3.0 * u * u * t) + c * (3.0 * u * t * t) + d * (t * t * t)
-}
-
 fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId> {
     layout.relationships.iter().rev().find_map(|r| {
         let mut prev = r.start;
-        for i in 1..=24 {
-            let q = bezier(r.start, r.c1, r.c2, r.end, i as f32 / 24.0);
+        for i in 1..=crate::render::RELATIONSHIP_SEGMENTS {
+            let q = bezier(
+                r.start,
+                r.c1,
+                r.c2,
+                r.end,
+                i as f32 / crate::render::RELATIONSHIP_SEGMENTS as f32,
+            );
             if dist_to_segment(p, prev, q) <= tol {
                 return Some(r.id);
             }

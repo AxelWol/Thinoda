@@ -188,8 +188,11 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
 1. Refine reparenting with subtree ghost/dimmed origin, target connector and insertion
    slot previews; sibling ordering, main-branch sides, cancellation and edge auto-pan.
    Verify detach gestures; reject self/descendant/root-invalid drops atomically.
-2. Add relationship endpoint reconnect and Bezier handles/guides without replacing
-   relationship colors with selection color. Preserve links across tree moves.
+2. Delivered relationship endpoint reconnect, Bezier handles/guides and a dedicated
+   Style editor without replacing relationship colors with selection color.
+   Relative controls persist with one-step undo; keyboard alternatives exist.
+   Public XMind curve controls and native keyboard/accessibility QA remain open.
+   Preserve links across tree moves during the remaining hierarchy-drag work.
 3. Polish floating topics, independent boundaries and callouts; distinguish each
    from transient selection outlines and later presentation zones.
 4. Delivered the shared anchored Labels popover with trimming, case-sensitive
@@ -391,6 +394,28 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R3 relationship editing delivered: selected lines retain their original color
+beneath a separate overlay with endpoint circles, control squares and guide lines.
+Endpoint/control drags preview in view state and commit once on release; Escape,
+invalid targets, popup isolation and stale-document revisions leave source content
+untouched. Focused control arrows move 1 map unit (Shift: 10); endpoint arrows cycle
+visible topics in layout order. Style offers title, endpoints, color, four relative
+coordinates and automatic-routing reset. Non-finite/out-of-range coordinates fail
+visibly without edits. Shared geometry feeds layout/export, and hit testing uses
+the rendered curve segments, including large curves at multiple zoom levels.
+Native and unchanged yMind XMind round trips retain custom controls; public XMind
+control-point interchange is not implemented. Native keyboard/accessibility QA,
+hierarchy drag refinement and the rest of R3 remain open.
+
+Relationship delivery verification: all 202 core/canvas/IO/platform/UI cases pass,
+including three new model cases and eight new canvas cases; both new app interaction
+cases pass. Integrated CI passes formatting/clippy, the app library (28), all editing
+e2e including both CLI cases (62), isolated German UI (1), AI and the core/canvas/IO
+suites, then Windows Application Control blocks the platform unit-test executable
+before launch (4551). The same platform suite passed in the standalone run; this
+does not make integrated CI fully green or justify changing system policy.
+Windows EXE/NSIS were rebuilt with relationship editing.
 
 R3 Labels delivered: every label-editing entry point uses a single-topic anchored
 draft with a pointer, removable chips, comma-separated additions, sheet-local

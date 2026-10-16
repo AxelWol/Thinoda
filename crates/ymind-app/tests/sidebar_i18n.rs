@@ -210,4 +210,48 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Button, "Abbrechen").click();
     h.run_steps(2);
     assert!(h.state().command_available(&Cmd::Labels));
+    let d = h.state_mut().doc_mut().unwrap();
+    let root = d.doc.sheet().root;
+    let relationship = d
+        .doc
+        .edit_sheet("Beziehung", |sheet| {
+            let child = sheet.insert_child(root, "Ziel")?;
+            let id = sheet.add_relationship(root, child)?;
+            sheet.set_relationship_control_points(
+                id,
+                Some([
+                    ymind_core::Vec2::new(40.0, -50.0),
+                    ymind_core::Vec2::new(-40.0, -50.0),
+                ]),
+            )?;
+            Ok(id)
+        })
+        .unwrap();
+    d.view
+        .select_object(ymind_canvas::ObjectSelection::Relationship(relationship));
+    h.run_steps(4);
+    h.get_by_label("Beziehungsanfang");
+    h.get_by_label("Erster Kurvengriff");
+    h.get_by_label("Beziehungstitel");
+    h.get_by_label("Von Thema");
+    h.get_by_label("Erster Kurvengriff X");
+    h.get_by_role_and_label(Role::Button, "Kurve zurücksetzen")
+        .scroll_to_me();
+    h.run_steps(5);
+    h.get_by_role_and_label(Role::Button, "Kurve zurücksetzen")
+        .click();
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .relationships
+            .iter()
+            .find(|r| r.id == relationship)
+            .unwrap()
+            .control_points
+            .is_none()
+    );
 }

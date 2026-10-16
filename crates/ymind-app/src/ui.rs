@@ -725,6 +725,13 @@ impl YMindApp {
         };
         d.view.add_control_labels.child = t("Add child topic").into();
         d.view.add_control_labels.sibling = t("Add sibling topic").into();
+        d.view.relationship_handle_labels = [
+            "Relationship start",
+            "First curve control",
+            "Second curve control",
+            "Relationship end",
+        ]
+        .map(|label| t(label).to_string());
         d.view.show_add_controls = self.settings.show_topic_add_buttons;
         if paste {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
@@ -737,8 +744,9 @@ impl YMindApp {
         if let Some(link) = out.open_link {
             self.open_link(&link);
         }
-        if out.error.is_some() {
-            self.toasts.warning(t("Not possible here"));
+        if let Some(error) = out.error {
+            self.toasts
+                .warning(format!("{}: {error}", t("Not possible here")));
         }
         let mut cmd = None;
         out.response
@@ -1679,6 +1687,12 @@ impl YMindApp {
     }
 
     fn style_tab(&mut self, ui: &mut Ui) {
+        if let Some(ymind_canvas::ObjectSelection::Relationship(id)) =
+            self.doc().and_then(|d| d.view.selected_object)
+        {
+            self.relationship_style(ui, id);
+            return;
+        }
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -1938,6 +1952,166 @@ impl YMindApp {
         }
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
+        }
+    }
+
+    fn relationship_style(&mut self, ui: &mut Ui, id: ymind_core::RelationshipId) {
+        let Some(d) = self.doc_mut() else { return };
+        let Some(rel) = d
+            .doc
+            .sheet()
+            .relationships
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        ui.heading(t("Relationship"));
+        ui.label(t(
+            "Drag the round endpoints to reconnect. Drag square controls to reshape.",
+        ));
+        ui.label(t("Focused handles: arrows move controls by 1 map unit (Shift: 10); endpoint arrows cycle visible topics."));
+        let salt = (d.key.clone(), d.doc.active_index(), id);
+        let label = ui.label(t("Relationship title"));
+        let (response, title) = buffered_text(ui, (&salt, "title"), &rel.title, 0, "");
+        response.labelled_by(label.id);
+        let mut from = rel.from;
+        let mut to = rel.to;
+        for (name, value, other) in [
+            ("From topic", &mut from, rel.to),
+            ("To topic", &mut to, rel.from),
+        ] {
+            widgets::property_field(ui, t(name), |ui| {
+                egui::ComboBox::from_id_salt((&salt, name))
+                    .selected_text(
+                        d.doc
+                            .sheet()
+                            .topic(*value)
+                            .map(|topic| topic.title.as_str())
+                            .unwrap_or(""),
+                    )
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for topic in d
+                            .doc
+                            .sheet()
+                            .topics
+                            .values()
+                            .filter(|topic| topic.id != other)
+                        {
+                            ui.selectable_value(
+                                value,
+                                topic.id,
+                                format!("{} ({})", topic.title, topic.id),
+                            );
+                        }
+                    })
+                    .response
+            });
+        }
+        let mut color = None;
+        widgets::property_row(ui, t("Line Color"), |ui| {
+            color = widgets::color_swatches(ui, &SWATCHES, rel.color.map(from_color))
+                .map(|color| Some(to_color(color)));
+        });
+        if rel.color.is_some() && ui.button(t("Automatic line color")).clicked() {
+            color = Some(None);
+        }
+        let layout = d.view.layout_for(&d.doc);
+        let points = rel.control_points.or_else(|| {
+            let curve = layout.relationships.iter().find(|r| r.id == id)?;
+            Some([
+                curve.c1 - layout.topics[&rel.from].rect.center(),
+                curve.c2 - layout.topics[&rel.to].rect.center(),
+            ])
+        });
+        ui.label(t(
+            "Curve coordinates are offsets from each endpoint topic center.",
+        ));
+        let mut changed_points = None;
+        let mut parse_error = None;
+        if let Some(mut points) = points {
+            let mut edited = false;
+            for (index, name) in [
+                "First control X",
+                "First control Y",
+                "Second control X",
+                "Second control Y",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let point = &mut points[index / 2];
+                let value = if index % 2 == 0 {
+                    &mut point.x
+                } else {
+                    &mut point.y
+                };
+                widgets::property_field(ui, t(name), |ui| {
+                    let (response, done) =
+                        buffered_text(ui, (&salt, index), &value.to_string(), 0, "");
+                    if let Some(done) = done {
+                        match done.trim().parse::<f32>() {
+                            Ok(next) => {
+                                *value = next;
+                                edited = true;
+                            }
+                            Err(e) => parse_error = Some(e.to_string()),
+                        }
+                    }
+                    response
+                });
+            }
+            if edited {
+                changed_points = Some(points);
+            }
+        } else {
+            widgets::caption(
+                ui,
+                t("Expand both endpoints to edit automatic curve controls."),
+            );
+        }
+        let reset = ui
+            .add_enabled(
+                rel.control_points.is_some(),
+                egui::Button::new(t("Reset curve")),
+            )
+            .clicked();
+        let changed = title.is_some()
+            || color.is_some()
+            || reset
+            || changed_points.is_some()
+            || from != rel.from
+            || to != rel.to;
+        let result = if changed {
+            d.doc.edit_sheet("Edit Relationship", |s| {
+                if let Some(title) = title {
+                    s.set_relationship_title(id, &title)?;
+                }
+                if from != rel.from || to != rel.to {
+                    s.reconnect_relationship(id, from, to)?;
+                }
+                if let Some(color) = color {
+                    s.set_relationship_color(id, color)?;
+                }
+                if reset {
+                    s.set_relationship_control_points(id, None)?;
+                } else if let Some(points) = changed_points {
+                    s.set_relationship_control_points(id, Some(points))?;
+                }
+                Ok(())
+            })
+        } else {
+            Ok(())
+        };
+        if let Err(e) = result {
+            self.toasts
+                .warning(format!("{}: {e}", t("Not possible here")));
+        }
+        if let Some(e) = parse_error {
+            self.toasts
+                .warning(format!("{}: {e}", t("Invalid curve coordinate")));
         }
     }
 

@@ -373,6 +373,23 @@ pub struct Relationship {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
+    /// Cubic controls relative to the from/to topic centers; None uses automatic routing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_points: Option<[Vec2; 2]>,
+}
+
+impl Relationship {
+    /// Bounds each finite offset to one million map units to keep curve arithmetic usable.
+    pub fn valid_control_points(points: Option<[Vec2; 2]>) -> bool {
+        points.is_none_or(|points| {
+            points.iter().all(|p| {
+                p.x.is_finite()
+                    && p.y.is_finite()
+                    && p.x.abs() <= 1_000_000.0
+                    && p.y.abs() <= 1_000_000.0
+            })
+        })
+    }
 }
 
 /// Inclusive range of child indices of a parent topic.
@@ -889,6 +906,12 @@ impl Sheet {
             if !self.contains(r.from) || !self.contains(r.to) {
                 return Err(format!("relationship {:?} dangling", r.id));
             }
+            if !Relationship::valid_control_points(r.control_points) {
+                return Err(format!(
+                    "relationship {:?} has invalid curve controls",
+                    r.id
+                ));
+            }
         }
         for b in &self.boundaries {
             let n = self.children(b.parent).len();
@@ -1106,6 +1129,7 @@ mod tests {
             to: b,
             title: String::new(),
             color: None,
+            control_points: None,
         });
         let bid = s.alloc_boundary_id();
         s.boundaries.push(Boundary {

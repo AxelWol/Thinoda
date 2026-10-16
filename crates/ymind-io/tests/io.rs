@@ -44,6 +44,7 @@ fn sample() -> Workbook {
         to: b,
         title: "connects".into(),
         color: Some(Color::rgb(1, 2, 3)),
+        control_points: Some([Vec2::new(35.0, -80.0), Vec2::new(-45.0, 90.0)]),
     });
     let bid = s.alloc_boundary_id();
     s.boundaries.push(Boundary {

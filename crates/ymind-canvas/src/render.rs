@@ -15,6 +15,8 @@ use ymind_core::{
     theme::Theme,
 };
 
+pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
+
 /// Converts a core color into an egui color.
 pub fn color32(c: Color) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -228,14 +230,31 @@ pub fn paint_map(
             } else {
                 Color32::from_rgb(0x5A, 0x6A, 0x80)
             });
-        let pts: Vec<Pos2> = (0..=32)
-            .map(|i| xf.pos(cubic(r.start, r.c1, r.c2, r.end, i as f32 / 32.0)))
+        let pts: Vec<Pos2> = (0..=RELATIONSHIP_SEGMENTS)
+            .map(|i| {
+                xf.pos(cubic(
+                    r.start,
+                    r.c1,
+                    r.c2,
+                    r.end,
+                    i as f32 / RELATIONSHIP_SEGMENTS as f32,
+                ))
+            })
             .collect();
         let selected = opts.selected_object == Some(ObjectSelection::Relationship(r.id));
-        let stroke = Stroke::new(
-            if selected { 2.5 } else { 1.5 } * z.max(0.5),
-            if selected { opts.accent } else { color },
-        );
+        if selected {
+            painter.add(Shape::line(
+                pts.clone(),
+                Stroke::new(5.0, opts.accent.gamma_multiply(0.25)),
+            ));
+            for (anchor, control) in [(r.start, r.c1), (r.end, r.c2)] {
+                painter.line_segment(
+                    [xf.pos(anchor), xf.pos(control)],
+                    Stroke::new(1.0, opts.accent.gamma_multiply(0.6)),
+                );
+            }
+        }
+        let stroke = Stroke::new(1.5 * z.max(0.5), color);
         for s in Shape::dashed_line(&pts, stroke, 6.0 * z, 4.0 * z) {
             painter.add(s);
         }
@@ -246,6 +265,20 @@ pub fn paint_map(
             9.0 * z,
             stroke.color,
         );
+        if selected {
+            for point in [r.c1, r.c2] {
+                painter.rect(
+                    Rect::from_center_size(xf.pos(point), vec2(9.0, 9.0)),
+                    1.0,
+                    bg,
+                    Stroke::new(1.5, opts.accent),
+                    StrokeKind::Inside,
+                );
+            }
+            for point in [r.start, r.end] {
+                painter.circle(xf.pos(point), 5.0, bg, Stroke::new(1.5, opts.accent));
+            }
+        }
         if let Some(title) = rel.map(|x| x.title.as_str()).filter(|t| !t.is_empty()) {
             let font = FontId::proportional(12.0 * z);
             let g = painter.layout_no_wrap(title.to_owned(), font, color);

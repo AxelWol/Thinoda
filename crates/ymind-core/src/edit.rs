@@ -477,6 +477,7 @@ impl Sheet {
             to,
             title: String::new(),
             color: None,
+            control_points: None,
         });
         Ok(id)
     }
@@ -498,6 +499,48 @@ impl Sheet {
             .find(|r| r.id == id)
             .ok_or(EditError::NotFound)?;
         r.title = title.to_string();
+        Ok(())
+    }
+
+    /// Reconnects both endpoints atomically, retaining title, color and relative controls.
+    pub fn reconnect_relationship(
+        &mut self,
+        id: RelationshipId,
+        from: TopicId,
+        to: TopicId,
+    ) -> EditResult<()> {
+        self.require(from)?;
+        self.require(to)?;
+        if from == to {
+            return Err(EditError::Invalid(
+                "relationship needs two different topics".into(),
+            ));
+        }
+        let r = self
+            .relationships
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or(EditError::NotFound)?;
+        r.from = from;
+        r.to = to;
+        Ok(())
+    }
+
+    pub fn set_relationship_control_points(
+        &mut self,
+        id: RelationshipId,
+        points: Option<[Vec2; 2]>,
+    ) -> EditResult<()> {
+        if !Relationship::valid_control_points(points) {
+            return Err(EditError::Invalid(
+                "curve controls must be finite and within +/- 1000000 map units".into(),
+            ));
+        }
+        self.relationships
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or(EditError::NotFound)?
+            .control_points = points;
         Ok(())
     }
 
