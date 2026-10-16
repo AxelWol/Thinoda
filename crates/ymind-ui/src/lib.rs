@@ -11,9 +11,11 @@
 //! * [`toast`] – non-blocking notifications.
 //! * [`palette`] – a fuzzy command palette.
 //! * [`dialog`] – modal confirm dialogs.
+//! * [`fonts`] – system symbol-font fallbacks.
 //! * [`icons`] – glyph constants available in egui's built-in fonts.
 
 pub mod dialog;
+pub mod fonts;
 pub mod icons;
 pub mod palette;
 pub mod theme;

@@ -119,6 +119,17 @@ pub fn property_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R)
     .inner
 }
 
+/// Like [`property_row`] for a single input control: the label becomes the control's
+/// accessible name (screen readers, UI tests).
+pub fn property_field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> Response) -> Response {
+    let p = Palette::of_ui(ui);
+    ui.horizontal(|ui| {
+        let l = ui.label(egui::RichText::new(label).color(p.text_muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add).inner.labelled_by(l.id)
+    })
+    .inner
+}
+
 /// A collapsible section with a heading (used in side panels).
 pub fn section<R>(ui: &mut Ui, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     let p = Palette::of_ui(ui);

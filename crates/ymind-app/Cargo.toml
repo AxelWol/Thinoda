@@ -1,7 +1,40 @@
 [package]
 name = "ymind-app"
+description = "yMind - a fast, cross-platform mind mapping app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
+default-run = "ymind"
 
+[lib]
+name = "ymind_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ymind"
+path = "src/main.rs"
+
+[dependencies]
+ymind-core.workspace = true
+ymind-io.workspace = true
+ymind-platform.workspace = true
+ymind-ui.workspace = true
+ymind-canvas.workspace = true
+egui.workspace = true
+eframe.workspace = true
+rfd.workspace = true
+image.workspace = true
+uuid.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
+sys-locale.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
