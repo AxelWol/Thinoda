@@ -269,6 +269,76 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
 }
 
 #[test]
+fn arrange_menu_aligns_floating_topics_and_persists_with_single_undo() {
+    let mut app = YMindApp::headless();
+    app.settings.show_format_panel = false;
+    let ids = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Floating", |s| {
+            Ok(vec![
+                s.add_floating("First", ymind_core::Vec2::new(100.0, 300.0)),
+                s.add_floating("Second", ymind_core::Vec2::new(400.0, 600.0)),
+            ])
+        })
+        .unwrap();
+    app.doc_mut().unwrap().view.selection = ids.clone();
+    let before = app.doc().unwrap().doc.sheet().clone();
+    let mut h = harness(app);
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Edit").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Distribute Horizontal Centers")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Align Top").click();
+    h.run_steps(3);
+    let aligned = h.state().doc().unwrap().doc.sheet().clone();
+    assert_ne!(aligned, before);
+    let ctx = h.ctx.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("aligned.ymind");
+    assert!(h.state_mut().save_sheet_to(&path));
+    assert_eq!(ymind_io::import_file(&path).unwrap().sheets[0], aligned);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(h.state().doc().unwrap().doc.sheet(), &aligned);
+}
+
+#[test]
+fn select_context_submenu_preserves_content_and_uses_same_availability() {
+    let mut h = harness(YMindApp::headless());
+    let d = h.state().doc().unwrap();
+    let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
+    let before = d.doc.workbook().clone();
+    let state = d.doc.state_id();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Select").click();
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Select Siblings")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Select Descendants")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert_eq!(d.view.selection, d.doc.sheet().children(d.doc.sheet().root));
+    assert_eq!(d.doc.workbook(), &before);
+    assert_eq!(d.doc.state_id(), state);
+}
+
+#[test]
 fn style_clipboard_is_session_wide_and_multitopic_edits_undo_atomically() {
     let mut app = YMindApp::headless();
     let ctx = egui::Context::default();

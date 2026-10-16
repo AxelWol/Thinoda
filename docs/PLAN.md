@@ -391,6 +391,17 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R1 Select/Arrange delivery: shared action availability now drives menus and palette,
+with visible sibling/descendant/inverted selection, central-topic navigation,
+natural child-title sorting and floating-topic edge/center alignment or equal-center
+distribution. Arrangements use measured topic boxes (not screen coordinates), preserve
+subtrees/relationships, and undo atomically. Sorting remaps contiguous annotation
+ranges or rejects a split before mutation. EN/DE menu/context, exact geometry,
+visibility, mixed-selection guards, save/reopen and undo regressions are covered.
+Additional reference choices, custom shortcuts and native accessibility audits remain.
+The integrated `cargo xtask ci` run passes for this slice, including all workspace
+tests and CLI tests with live AI explicitly disabled.
+
 Latest R1 editing slice delivered:
 - Session-wide explicit topic-style Copy/Paste (Ctrl+Alt+C/V) and Reset Style,
   shared availability across menus/context/palette, atomic multi-topic undo and

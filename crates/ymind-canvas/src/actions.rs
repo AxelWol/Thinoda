@@ -32,6 +32,12 @@ pub enum Action {
     SelectAll,
     SelectRoot,
     SelectNone,
+    SelectSiblings,
+    SelectDescendants,
+    InvertSelection,
+    SortAscending,
+    SortDescending,
+    AlignFloating(FloatingArrangement),
     StartRelationship,
     AddBoundary,
     AddSummary,
@@ -49,7 +55,99 @@ pub enum Action {
     Paste(Option<String>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloatingArrangement {
+    Left,
+    HorizontalCenter,
+    Right,
+    Top,
+    VerticalCenter,
+    Bottom,
+    DistributeHorizontal,
+    DistributeVertical,
+}
+
 impl Action {
+    /// Shared contextual availability for commands surfaced by the host.
+    pub fn available(&self, doc: &Document, view: &MapView) -> bool {
+        let sheet = doc.sheet();
+        let valid =
+            !view.selection.is_empty() && view.selection.iter().all(|id| sheet.contains(*id));
+        let primary = view.primary().filter(|id| sheet.contains(*id));
+        match self {
+            Self::Undo => doc.can_undo(),
+            Self::Redo => doc.can_redo(),
+            Self::Delete => {
+                view.selected_object
+                    .is_some_and(|object| object.exists(sheet))
+                    || (valid && view.selection.iter().any(|id| *id != sheet.root))
+            }
+            Self::DeleteKeepChildren | Self::InsertParent => {
+                valid && primary.is_some_and(|id| sheet.parent(id).is_some())
+            }
+            Self::Indent | Self::MoveUp => {
+                valid
+                    && primary
+                        .and_then(|id| sheet.index_in_parent(id))
+                        .is_some_and(|index| index > 0)
+                    && (*self != Self::Indent || view.selection.len() == 1)
+            }
+            Self::Outdent => {
+                valid
+                    && view.selection.len() == 1
+                    && primary
+                        .and_then(|id| sheet.parent(id))
+                        .and_then(|id| sheet.parent(id))
+                        .is_some()
+            }
+            Self::MoveDown => {
+                valid
+                    && primary.is_some_and(|id| {
+                        sheet
+                            .parent(id)
+                            .zip(sheet.index_in_parent(id))
+                            .is_some_and(|(parent, index)| index + 1 < sheet.children(parent).len())
+                    })
+            }
+            Self::SortAscending | Self::SortDescending => {
+                valid
+                    && view.selection.len() == 1
+                    && primary.is_some_and(|id| sheet.children(id).len() > 1)
+            }
+            Self::SelectSiblings => valid && primary.and_then(|id| sheet.parent(id)).is_some(),
+            Self::SelectDescendants | Self::ToggleCollapse => {
+                valid
+                    && view
+                        .selection
+                        .iter()
+                        .any(|id| !sheet.children(*id).is_empty())
+            }
+            Self::AlignFloating(arrangement) => {
+                let minimum = if matches!(
+                    arrangement,
+                    FloatingArrangement::DistributeHorizontal
+                        | FloatingArrangement::DistributeVertical
+                ) {
+                    3
+                } else {
+                    2
+                };
+                valid
+                    && view.selection.len() >= minimum
+                    && view.selection.iter().all(|id| sheet.is_floating(*id))
+            }
+            Self::AddBoundary if valid && view.selection.len() == 1 => true,
+            Self::AddSummary | Self::AddBoundary => {
+                valid && {
+                    let parent = sheet.parent(view.selection[0]);
+                    parent.is_some() && view.selection.iter().all(|id| sheet.parent(*id) == parent)
+                }
+            }
+            Self::Navigate(_) => true,
+            _ => !self.needs_selection() || valid,
+        }
+    }
+
     /// Whether the action requires at least one selected topic.
     pub fn needs_selection(&self) -> bool {
         !matches!(
@@ -58,6 +156,7 @@ impl Action {
                 | Action::SelectAll
                 | Action::SelectRoot
                 | Action::SelectNone
+                | Action::InvertSelection
                 | Action::ZoomIn
                 | Action::ZoomOut
                 | Action::ZoomReset
@@ -303,6 +402,124 @@ pub fn apply_action(
             view.selected_object = None;
             view.relationship_from = None;
         }
+        Action::SelectSiblings | Action::SelectDescendants | Action::InvertSelection => {
+            if !action.available(doc, view) {
+                return Ok(false);
+            }
+            let sheet = doc.sheet();
+            let ids = match action {
+                Action::SelectSiblings => sheet
+                    .children(sheet.parent(primary.unwrap()).unwrap())
+                    .to_vec(),
+                Action::SelectDescendants => sel
+                    .iter()
+                    .flat_map(|id| sheet.subtree_ids(*id).into_iter().skip(1))
+                    .collect(),
+                _ => sheet
+                    .all_ids_ordered()
+                    .into_iter()
+                    .filter(|id| !sel.contains(id))
+                    .collect(),
+            };
+            let mut seen = std::collections::HashSet::new();
+            view.selection = ids
+                .into_iter()
+                .filter(|id| sheet.is_visible(*id) && seen.insert(*id))
+                .collect();
+            view.selected_object = None;
+            view.relationship_from = None;
+        }
+        Action::SortAscending | Action::SortDescending => {
+            if !action.available(doc, view) {
+                return Ok(false);
+            }
+            doc.edit_sheet("Sort Topics", |sheet| {
+                sheet.sort_children(primary.unwrap(), action == Action::SortDescending)
+            })?;
+        }
+        Action::AlignFloating(arrangement) => {
+            if !action.available(doc, view) {
+                return Err(EditError::Invalid(
+                    "select at least two floating topics (three for distribution)".into(),
+                ));
+            }
+            let layout = view.layout_for(doc);
+            let mut rects: Vec<_> = sel
+                .iter()
+                .map(|id| {
+                    layout
+                        .topics
+                        .get(id)
+                        .map(|topic| (*id, topic.rect))
+                        .ok_or(EditError::NoSuchTopic(*id))
+                })
+                .collect::<Result<_, _>>()?;
+            let bounds = rects
+                .iter()
+                .map(|(_, rect)| *rect)
+                .reduce(|a, b| a.union(&b))
+                .unwrap();
+            let horizontal = matches!(arrangement, FloatingArrangement::DistributeHorizontal);
+            let distribute = horizontal || arrangement == FloatingArrangement::DistributeVertical;
+            let coordinate = |rect: &ymind_core::Rect| {
+                if horizontal {
+                    rect.center().x
+                } else {
+                    rect.center().y
+                }
+            };
+            if distribute {
+                rects.sort_by(|a, b| {
+                    coordinate(&a.1)
+                        .total_cmp(&coordinate(&b.1))
+                        .then(a.0.cmp(&b.0))
+                });
+            }
+            let start = coordinate(&rects[0].1);
+            let end = coordinate(&rects.last().unwrap().1);
+            let step = (end - start) / (rects.len() - 1) as f32;
+            let positions: Vec<_> = rects
+                .into_iter()
+                .enumerate()
+                .map(|(index, (id, rect))| {
+                    let mut center = rect.center();
+                    match arrangement {
+                        FloatingArrangement::Left => center.x = bounds.min.x + rect.size.x / 2.0,
+                        FloatingArrangement::HorizontalCenter => center.x = bounds.center().x,
+                        FloatingArrangement::Right => center.x = bounds.max().x - rect.size.x / 2.0,
+                        FloatingArrangement::Top => center.y = bounds.min.y + rect.size.y / 2.0,
+                        FloatingArrangement::VerticalCenter => center.y = bounds.center().y,
+                        FloatingArrangement::Bottom => {
+                            center.y = bounds.max().y - rect.size.y / 2.0
+                        }
+                        _ => {
+                            let target = if index + 1 == sel.len() {
+                                end
+                            } else {
+                                start + index as f32 * step
+                            };
+                            if horizontal {
+                                center.x = target;
+                            } else {
+                                center.y = target;
+                            }
+                        }
+                    }
+                    let position = doc
+                        .sheet()
+                        .topic(id)
+                        .and_then(|topic| topic.position)
+                        .unwrap();
+                    (id, position + (center - rect.center()))
+                })
+                .collect();
+            doc.edit_sheet("Arrange Floating Topics", |sheet| {
+                for (id, position) in positions {
+                    sheet.set_position(id, position)?;
+                }
+                Ok(())
+            })?;
+        }
         Action::StartRelationship => {
             view.relationship_from = primary;
         }
@@ -385,6 +602,136 @@ mod tests {
         let mut view = MapView::default();
         view.select_only(doc.sheet().root);
         (doc, view)
+    }
+
+    #[test]
+    fn selection_commands_respect_visibility_and_do_not_edit_the_document() {
+        let (mut doc, mut view) = setup();
+        let root = doc.sheet().root;
+        let kids = doc.sheet().children(root).to_vec();
+        let (child, hidden, summary, floating) = doc
+            .edit_sheet("Prepare", |s| {
+                let child = s.insert_child(kids[0], "child")?;
+                let hidden = s.insert_child(child, "hidden")?;
+                s.set_collapsed(child, true)?;
+                let summary = s.add_summary(&kids[..2], "Summary")?;
+                let floating = s.add_floating("Floating", Vec2::new(200.0, 400.0));
+                Ok((child, hidden, summary, floating))
+            })
+            .unwrap();
+        let before = doc.workbook().clone();
+        let state = doc.state_id();
+        view.select_only(kids[0]);
+        apply_action(&mut doc, &mut view, Action::SelectDescendants).unwrap();
+        assert_eq!(view.selection, vec![child]);
+        assert!(!view.selection.contains(&hidden));
+        view.select_only(kids[1]);
+        apply_action(&mut doc, &mut view, Action::SelectSiblings).unwrap();
+        assert_eq!(view.selection, kids);
+        apply_action(&mut doc, &mut view, Action::InvertSelection).unwrap();
+        assert!(view.selection.contains(&root));
+        assert!(view.selection.contains(&summary));
+        assert!(view.selection.contains(&floating));
+        assert!(!view.selection.contains(&hidden));
+        assert!(view.selection.iter().all(|id| !kids.contains(id)));
+        apply_action(&mut doc, &mut view, Action::SelectNone).unwrap();
+        assert!(view.selection.is_empty());
+        assert!(!Action::SelectDescendants.available(&doc, &view));
+        assert_eq!(doc.workbook(), &before);
+        assert_eq!(doc.state_id(), state);
+    }
+
+    #[test]
+    fn floating_alignment_and_distribution_match_exact_geometry_and_undo() {
+        use FloatingArrangement::*;
+        for arrangement in [
+            Left,
+            HorizontalCenter,
+            Right,
+            Top,
+            VerticalCenter,
+            Bottom,
+            DistributeHorizontal,
+            DistributeVertical,
+        ] {
+            let (mut doc, mut view) = setup();
+            let ids = doc
+                .edit_sheet("Floating", |s| {
+                    let ids = vec![
+                        s.add_floating("Wide floating topic", Vec2::new(100.0, 500.0)),
+                        s.add_floating("B", Vec2::new(220.0, 180.0)),
+                        s.add_floating("C middle", Vec2::new(800.0, 900.0)),
+                    ];
+                    s.insert_child(ids[0], "child follows")?;
+                    s.add_relationship(ids[0], ids[2])?;
+                    Ok(ids)
+                })
+                .unwrap();
+            view.selection = ids.clone();
+            view.zoom = 3.5;
+            view.offset = egui::vec2(200.0, -700.0);
+            let before = doc.sheet().clone();
+            assert!(Action::AlignFloating(arrangement).available(&doc, &view));
+            apply_action(&mut doc, &mut view, Action::AlignFloating(arrangement)).unwrap();
+            let aligned = doc.sheet().clone();
+            let layout = view.layout_for(&doc);
+            let rects: Vec<_> = ids.iter().map(|id| layout.topics[id].rect).collect();
+            let coordinate = |rect: &ymind_core::Rect| match arrangement {
+                Left => rect.min.x,
+                Right => rect.max().x,
+                Top => rect.min.y,
+                Bottom => rect.max().y,
+                HorizontalCenter | DistributeHorizontal => rect.center().x,
+                _ => rect.center().y,
+            };
+            let mut values: Vec<_> = rects.iter().map(coordinate).collect();
+            if matches!(arrangement, DistributeHorizontal | DistributeVertical) {
+                values.sort_by(f32::total_cmp);
+                assert!(((values[1] - values[0]) - (values[2] - values[1])).abs() < 0.001);
+            } else {
+                assert!(values.iter().all(|value| (value - values[0]).abs() < 0.001));
+            }
+            for (id, topic) in &before.topics {
+                let mut expected = topic.clone();
+                if ids.contains(id) {
+                    expected.position = aligned.topics[id].position;
+                }
+                assert_eq!(aligned.topics[id], expected);
+            }
+            assert_eq!(aligned.relationships, before.relationships);
+            assert_eq!(view.selection, ids);
+            assert!(doc.undo());
+            assert_eq!(doc.sheet(), &before);
+            assert!(doc.redo());
+            assert_eq!(doc.sheet(), &aligned);
+            doc.sheet().validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn floating_arrangement_rejects_mixed_or_small_selection_without_edits() {
+        let (mut doc, mut view) = setup();
+        let root = doc.sheet().root;
+        let ids = doc
+            .edit_sheet("Floating", |s| {
+                Ok(vec![
+                    s.add_floating("A", Vec2::ZERO),
+                    s.add_floating("B", Vec2::new(10.0, 20.0)),
+                ])
+            })
+            .unwrap();
+        let before = doc.sheet().clone();
+        for (selection, arrangement) in [
+            (vec![ids[0]], FloatingArrangement::Left),
+            (vec![ids[0], root], FloatingArrangement::Left),
+            (ids, FloatingArrangement::DistributeHorizontal),
+        ] {
+            view.selection = selection;
+            let action = Action::AlignFloating(arrangement);
+            assert!(!action.available(&doc, &view));
+            assert!(apply_action(&mut doc, &mut view, action).is_err());
+            assert_eq!(doc.sheet(), &before);
+        }
     }
 
     #[test]

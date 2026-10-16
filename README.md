@@ -20,6 +20,10 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   separate `.ymind`/`.xmind` copy without changing the source save state.
   New Sheet from Topic copies a branch with its owned annotations and internal
   relationships; relationships to topics outside the branch remain in the original sheet.
+- Select submenu offers visible siblings, descendants, inversion and central-topic
+  navigation. Arrange offers natural child-title sorting and floating-topic edge/
+  center alignment or equal center spacing, each in one undo step.
+  Sorting is rejected if it would split a Summary/boundary's source membership.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
 - Select relationship lines, boundary outlines or Summary braces to delete them with

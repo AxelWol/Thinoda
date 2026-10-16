@@ -322,6 +322,45 @@ impl Sheet {
             let tb = natural_key(&self.topics[b].title);
             if descending { tb.cmp(&ta) } else { ta.cmp(&tb) }
         });
+        let remap = |range: ChildRange| -> EditResult<ChildRange> {
+            let original = &self.children(parent)[range.start..=range.end];
+            let mut positions: Vec<_> = original
+                .iter()
+                .map(|id| kids.iter().position(|kid| kid == id).unwrap())
+                .collect();
+            positions.sort_unstable();
+            let start = positions[0];
+            let end = *positions.last().unwrap();
+            if end - start + 1 != original.len() {
+                return Err(EditError::Invalid(
+                    "sorting would split a Summary or boundary source range".into(),
+                ));
+            }
+            Ok(ChildRange { start, end })
+        };
+        let boundaries: Vec<_> = self
+            .boundaries
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.parent == parent)
+            .filter_map(|(index, b)| {
+                b.range
+                    .map(|range| remap(range).map(|range| (index, range)))
+            })
+            .collect::<EditResult<_>>()?;
+        let summaries: Vec<_> = self
+            .summaries
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.parent == parent)
+            .map(|(index, s)| remap(s.range).map(|range| (index, range)))
+            .collect::<EditResult<_>>()?;
+        for (index, range) in boundaries {
+            self.boundaries[index].range = Some(range);
+        }
+        for (index, range) in summaries {
+            self.summaries[index].range = range;
+        }
         self.topic_mut(parent).unwrap().children = kids;
         Ok(())
     }
@@ -708,6 +747,34 @@ mod tests {
         assert!(s.outdent(kids[0]).is_err());
         assert!(s.indent(s.root).is_err());
         assert_eq!(s, unchanged);
+    }
+
+    #[test]
+    fn sorting_preserves_annotation_members_and_rejects_split_ranges_atomically() {
+        let (mut s, kids) = sheet();
+        for (id, title) in kids.iter().zip(["C", "B", "A"]) {
+            s.set_title(*id, title).unwrap();
+        }
+        s.add_summary(&kids[..2], "Summary").unwrap();
+        s.add_boundary(&kids[..2]).unwrap();
+        let before = s.clone();
+        s.sort_children(s.root, false).unwrap();
+        assert_eq!(s.children(s.root), &[kids[2], kids[1], kids[0]]);
+        assert_eq!(s.summaries[0].range, ChildRange { start: 1, end: 2 });
+        assert_eq!(s.boundaries[0].range, Some(ChildRange { start: 1, end: 2 }));
+        s.sort_children(s.root, true).unwrap();
+        assert_eq!(s, before);
+        s.set_title(kids[1], "A").unwrap();
+        s.set_title(kids[2], "B").unwrap();
+        let before = s.clone();
+        assert!(
+            s.sort_children(s.root, false)
+                .unwrap_err()
+                .to_string()
+                .contains("split")
+        );
+        assert_eq!(s, before);
+        s.validate().unwrap();
     }
 
     #[test]

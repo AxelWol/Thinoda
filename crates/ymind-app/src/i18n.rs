@@ -73,6 +73,38 @@ const DE: &[(&str, &str)] = &[
     ("Editor", "Editor"),
     ("Indent", "Einrücken"),
     ("Outdent", "Ausrücken"),
+    ("Select", "Auswählen"),
+    ("Select None", "Nichts auswählen"),
+    ("Invert Selection", "Auswahl umkehren"),
+    ("Select Siblings", "Geschwister auswählen"),
+    ("Select Descendants", "Nachkommen auswählen"),
+    ("Arrange", "Anordnen"),
+    ("Move Up", "Nach oben verschieben"),
+    ("Move Down", "Nach unten verschieben"),
+    (
+        "Sort Children Ascending",
+        "Unterthemen aufsteigend sortieren",
+    ),
+    (
+        "Sort Children Descending",
+        "Unterthemen absteigend sortieren",
+    ),
+    ("Align Horizontal Centers", "Horizontal mittig ausrichten"),
+    ("Align Top", "Oben ausrichten"),
+    ("Align Vertical Centers", "Vertikal mittig ausrichten"),
+    ("Align Bottom", "Unten ausrichten"),
+    (
+        "Distribute Horizontal Centers",
+        "Mittelpunkte horizontal verteilen",
+    ),
+    (
+        "Distribute Vertical Centers",
+        "Mittelpunkte vertikal verteilen",
+    ),
+    (
+        "Alignment needs floating topics only; distribution spaces centers, not edges.",
+        "Ausrichten erfordert freie Themen; verteilt werden Mittelpunkte, nicht Kanten.",
+    ),
     ("New Sheet from Topic", "Neues Blatt aus Thema"),
     (
         "External relationships remain only in the original sheet",

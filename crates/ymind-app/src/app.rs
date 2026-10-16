@@ -7,7 +7,7 @@ use std::{
 };
 
 use egui::{Color32, Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
-use ymind_canvas::{Action, apply_action};
+use ymind_canvas::{Action, FloatingArrangement, apply_action};
 use ymind_core::{Workbook, search::SearchOptions, templates};
 use ymind_io::{ExportOptions, Format};
 use ymind_platform::{
@@ -615,11 +615,15 @@ impl YMindApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        d.view.commit_edit(&mut d.doc);
+        if !action.available(&d.doc, &d.view) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
         if action == Action::StartRelationship {
             self.toasts
                 .info(t("Pick the target topic for the relationship"));
         }
-        d.view.commit_edit(&mut d.doc);
         match apply_action(&mut d.doc, &mut d.view, action) {
             Ok(_) => {}
             Err(e) => {
@@ -648,21 +652,9 @@ impl YMindApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
-            Cmd::Canvas(Action::Indent) => self.doc().is_some_and(|d| {
-                d.view.selection.len() == 1
-                    && d.view
-                        .primary()
-                        .and_then(|id| d.doc.sheet().index_in_parent(id))
-                        .is_some_and(|i| i > 0)
-            }),
-            Cmd::Canvas(Action::Outdent) => self.doc().is_some_and(|d| {
-                d.view.selection.len() == 1
-                    && d.view
-                        .primary()
-                        .and_then(|id| d.doc.sheet().parent(id))
-                        .and_then(|parent| d.doc.sheet().parent(parent))
-                        .is_some()
-            }),
+            Cmd::Canvas(action) => self
+                .doc()
+                .is_some_and(|d| action.available(&d.doc, &d.view)),
             Cmd::CopyStyle | Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
                     && d.view
@@ -729,6 +721,55 @@ impl YMindApp {
         if let Err(e) = system::open_url(link) {
             self.toasts.error(format!("{link}: {e}"));
         }
+    }
+
+    pub fn selection_commands() -> Vec<(Action, &'static str)> {
+        vec![
+            (Action::SelectAll, "Select All"),
+            (Action::SelectNone, "Select None"),
+            (Action::InvertSelection, "Invert Selection"),
+            (Action::SelectSiblings, "Select Siblings"),
+            (Action::SelectDescendants, "Select Descendants"),
+            (Action::SelectRoot, "Central Topic"),
+        ]
+    }
+
+    pub fn arrangement_commands() -> Vec<(Action, &'static str)> {
+        vec![
+            (Action::MoveUp, "Move Up"),
+            (Action::MoveDown, "Move Down"),
+            (Action::SortAscending, "Sort Children Ascending"),
+            (Action::SortDescending, "Sort Children Descending"),
+            (
+                Action::AlignFloating(FloatingArrangement::Left),
+                "Align Left",
+            ),
+            (
+                Action::AlignFloating(FloatingArrangement::HorizontalCenter),
+                "Align Horizontal Centers",
+            ),
+            (
+                Action::AlignFloating(FloatingArrangement::Right),
+                "Align Right",
+            ),
+            (Action::AlignFloating(FloatingArrangement::Top), "Align Top"),
+            (
+                Action::AlignFloating(FloatingArrangement::VerticalCenter),
+                "Align Vertical Centers",
+            ),
+            (
+                Action::AlignFloating(FloatingArrangement::Bottom),
+                "Align Bottom",
+            ),
+            (
+                Action::AlignFloating(FloatingArrangement::DistributeHorizontal),
+                "Distribute Horizontal Centers",
+            ),
+            (
+                Action::AlignFloating(FloatingArrangement::DistributeVertical),
+                "Distribute Vertical Centers",
+            ),
+        ]
     }
 
     pub fn handle_sheet_paste(&mut self, ctx: &Context) {
@@ -1585,6 +1626,17 @@ impl YMindApp {
         ];
         for f in EXPORT_MENU {
             v.push((Cmd::Export(*f), f.label(), "", "Export"));
+        }
+        for (action, label) in Self::selection_commands()
+            .into_iter()
+            .chain(Self::arrangement_commands())
+        {
+            if !v
+                .iter()
+                .any(|(command, ..)| *command == Cmd::Canvas(action.clone()))
+            {
+                v.push((Cmd::Canvas(action), label, "", "Edit"));
+            }
         }
         v.into_iter()
             .enumerate()

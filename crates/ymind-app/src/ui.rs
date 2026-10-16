@@ -390,10 +390,29 @@ impl YMindApp {
                 ("Command Palette…", "Ctrl+Shift+P", Cmd::Palette),
             ];
             for (l, sc, c) in e {
-                if item(ui, t(l), sc).clicked() {
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() { button } else { button.shortcut_text(sc) };
+                if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
             }
+            ui.menu_button(t("Select"), |ui| {
+                for (action, label) in Self::selection_commands() {
+                    let command = Cmd::Canvas(action);
+                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                        *cmd = Some(command);
+                    }
+                }
+            });
+            ui.menu_button(t("Arrange"), |ui| {
+                for (action, label) in Self::arrangement_commands() {
+                    let command = Cmd::Canvas(action);
+                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                        *cmd = Some(command);
+                    }
+                }
+                widgets::caption(ui, t("Alignment needs floating topics only; distribution spaces centers, not edges."));
+            });
             ui.separator();
             for (label, shortcut, command) in [
                 ("Indent", "", Cmd::Canvas(Action::Indent)),
@@ -459,8 +478,18 @@ impl YMindApp {
                 ("To-Do", "", Action::ToggleTodo),
             ];
             for (l, sc, a) in e {
-                if item(ui, t(l), sc).clicked() {
-                    *cmd = Some(Cmd::Canvas(a));
+                let command = Cmd::Canvas(a);
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
+                if ui
+                    .add_enabled(self.command_available(&command), button)
+                    .clicked()
+                {
+                    *cmd = Some(command);
                 }
             }
         });
@@ -882,6 +911,20 @@ impl YMindApp {
             let available = self.command_available(&command);
             item(ui, t(label), shortcut, command, available);
         }
+        ui.menu_button(t("Select"), |ui| {
+            for (action, label) in Self::selection_commands() {
+                let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), "", command, available);
+            }
+        });
+        ui.menu_button(t("Arrange"), |ui| {
+            for (action, label) in Self::arrangement_commands() {
+                let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), "", command, available);
+            }
+        });
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
                 for a in crate::ai::AiCommand::ALL {

@@ -95,4 +95,20 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     for label in ["Blatt kopieren", "Blatt einfügen", "Blatt speichern unter…"] {
         h.get_by_role_and_label(Role::Button, label);
     }
+    h.key_press(egui::Key::Escape);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Bearbeiten").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Anordnen").click();
+    h.run_steps(2);
+    for label in [
+        "Unterthemen aufsteigend sortieren",
+        "Mittelpunkte horizontal verteilen",
+        "Oben ausrichten",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
 }

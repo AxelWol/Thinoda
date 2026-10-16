@@ -6,6 +6,15 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Select/Arrange submenus in Edit and topic context menus, with localized palette
+  entries and shared canvas command availability: visible sibling/descendant
+  selection, inversion, select none/central topic, Move Up/Down, natural ascending/
+  descending child-title sorting, six floating-topic edge/center alignments and
+  horizontal/vertical equal-center distribution. Alignment requires at least two
+  floating roots, distribution three; mixed tree/floating selections are disabled.
+  Arrangement is one undo step and independent of camera zoom/pan. Sorting remaps
+  Summary/boundary source ranges to preserve membership, or rejects the edit
+  without mutation if that membership would become noncontiguous.
 - Complete-sheet Copy/Paste through a versioned OS text clipboard payload, including
   floating topics, styles, notes and nested structural annotations. Works across
   yMind instances; canvas Paste recognizes the payload, while Paste Sheet explicitly
@@ -206,10 +215,11 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   Print, Close window and Quit. Verify what File cache manages and preserve recovery
   data until its lifecycle is understood. Treat tab/window closure and application
   exit distinctly, retaining unsaved-work prompts.
-- P1 Edit inventory: Undo/Redo, Cut/Copy/Paste, Duplicate, Delete, Delete single topic,
-  Go to central topic, Select submenu, Expand subtopics, Fold all sub-branches,
-  Arrange submenu, Align floating topics submenu and Find & Replace remain open or
-  only partially audited; verify nested choices and expand/fold scope. Indent/Outdent
+- P1 Edit inventory: existing Undo/Redo, Cut/Copy/Paste, Duplicate, Delete and
+  Delete single topic still need a broader parity audit. Select/Arrange now expose
+  visible sibling/descendant/inverted selection, central-topic navigation, natural
+  title sorting and floating-topic align/distribute (see Recently completed).
+  Verify additional reference choices and expand/fold scope. Indent/Outdent
   (single selected tree topic, no new shortcuts) and Copy/Paste/Reset style
   (session-wide, Ctrl+Alt+C/V) are implemented with matching menu/context-menu/
   palette availability; the rest of this inventory, and command-consistency parity
