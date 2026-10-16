@@ -6,6 +6,20 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Custom-theme authoring: staged EN/DE editor with actual-renderer previews,
+  built-in base, 1-16 palette colors, separate light/dark backgrounds, global
+  font and central/main/sub/floating/Summary role defaults. Apply embeds the
+  theme in one undo step; Save to Library persists a separate profile copy.
+  Up to 32 unique names, edit-as-copy, confirmed removal, atomic profile writes,
+  visible errors, built-in reset and opt-in recent-custom-theme reuse are
+  implemented. Explicit topic/map overrides retain precedence; maps remain
+  independent of the local library. Reset Style inherits custom role defaults;
+  automatic quick-style width inherits a target role's fixed width.
+  Native/private XMind snapshots preserve authoring data. Public JSON/XML exports
+  materialize supported light-mode topic appearance, not editable imported XMind
+  theme registries or verified native visual parity. Modal footers remain stable
+  and notifications no longer intercept their clicks. All 377 workspace cases
+  and all-target clippy pass with live AI disabled.
 - Reusable quick styles: four original rendered presets plus up to 32 named
   local styles captured from resolved topic appearance, including inherited
   colors, font, branch geometry and automatic/fixed wrapping. Applying across
@@ -17,14 +31,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   atomic and failed saves/removals leave the library and map unchanged with a
   visible error. Legacy settings default to an empty library; invalid libraries
   use the existing preserved-file/warning recovery path. Applied styles persist
-  in native and unchanged XMind snapshots. Full custom-theme authoring stays open.
+  in native and unchanged XMind snapshots. Custom-theme authoring is delivered above.
 - Map-wide branch stroke width: Map > Branches offers Automatic or an explicit
   0.5-16 width in EN/DE. Topic overrides take precedence; restoring Automatic
   returns the theme's level-specific defaults. Buffered numeric drafts commit
   once, reject malformed/nonfinite/out-of-range values visibly and cancel with
   Escape. Confirming sidebar fields consumes Enter rather than inserting topics.
   Native/unchanged yMind XMind snapshots preserve inheritance; public JSON/XML
-  exports include effective widths. Full custom-theme authoring remains open.
+  exports include effective widths. Custom-theme authoring is delivered above.
 - Real font-family support: Map > Theme > Global Font and Style > Text > Font
   Family select local installed faces (including user-installed fonts); Auto
   inherits the map setting. Reusable UI font registration loads only requested
@@ -276,10 +290,9 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Equations (LaTeX → rendered topic content)
 - P2 Attachments and pictures embedded in the `.ymind`/`.xmind` package
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
-- P2 Custom theme editor. Quick-style libraries, global/topic font selection and actual
-  canvas rendering are implemented (see Recently completed). Copy/Paste style and Reset
-  Style are implemented session-wide (Ctrl+Alt+C/V, menu/context/palette); see
-  Recently completed.
+- Delivered custom theme editor, quick-style libraries and actual font rendering
+  (see Recently completed). Editable imported XMind theme/style registries and
+  native reference visual parity remain open.
 - P2 Skeleton/structure picker gallery (map-file merging and masked copies are
   implemented; see Recently completed)
   The structural gallery is implemented for the 17 existing structures; unverified

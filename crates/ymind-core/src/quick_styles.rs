@@ -9,27 +9,32 @@ pub struct QuickStyle {
     pub style: TopicStyle,
 }
 
+pub(crate) fn validate_named_style(
+    name: &str,
+    style: &TopicStyle,
+    kind: &str,
+) -> Result<(), String> {
+    if name.trim().is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return Err(format!(
+            "{kind} name must contain 1-80 printable characters"
+        ));
+    }
+    for (name, value, min, max) in [
+        ("font size", style.font_size, 6.0, 96.0),
+        ("border width", style.border_width, 0.0, 16.0),
+        ("line width", style.line_width, 0.0, 16.0),
+        ("topic width", style.width, 1.0, 10000.0),
+    ] {
+        if value.is_some_and(|value| !value.is_finite() || !(min..=max).contains(&value)) {
+            return Err(format!("{kind} {name} must be between {min} and {max}"));
+        }
+    }
+    Ok(())
+}
+
 impl QuickStyle {
     pub fn validate(&self) -> Result<(), String> {
-        if self.name.trim().is_empty()
-            || self.name.chars().count() > 80
-            || self.name.chars().any(char::is_control)
-        {
-            return Err("quick style name must contain 1-80 printable characters".into());
-        }
-        for (name, value, min, max) in [
-            ("font size", self.style.font_size, 6.0, 96.0),
-            ("border width", self.style.border_width, 0.0, 16.0),
-            ("line width", self.style.line_width, 0.0, 16.0),
-            ("topic width", self.style.width, 1.0, 10000.0),
-        ] {
-            if value.is_some_and(|value| !value.is_finite() || !(min..=max).contains(&value)) {
-                return Err(format!(
-                    "quick style {name} must be between {min} and {max}"
-                ));
-            }
-        }
-        Ok(())
+        validate_named_style(&self.name, &self.style, "quick style")
     }
 
     /// Freeze resolved colors/typography, retaining automatic wrapping when no width is set.

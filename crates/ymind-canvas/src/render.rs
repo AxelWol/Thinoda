@@ -65,7 +65,7 @@ pub struct PaintOptions<'a> {
 
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
-    color32(Theme::builtin(&sheet.theme.theme_id).background(&sheet.theme, dark))
+    color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
 }
 
 /// Fits a noninteractive sample into a thumbnail, without changing any canvas camera.

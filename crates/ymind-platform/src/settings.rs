@@ -112,8 +112,10 @@ pub struct Settings {
     pub recent_files: Vec<RecentFile>,
     pub recent_templates: Vec<String>,
     pub quick_styles: Vec<ymind_core::quick_styles::QuickStyle>,
+    pub custom_themes: Vec<ymind_core::custom_theme::CustomTheme>,
     pub default_structure: String,
     pub default_theme: String,
+    pub default_custom_theme: Option<ymind_core::custom_theme::CustomTheme>,
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub show_format_panel: bool,
@@ -149,8 +151,10 @@ impl Default for Settings {
             recent_files: Vec::new(),
             recent_templates: Vec::new(),
             quick_styles: Vec::new(),
+            custom_themes: Vec::new(),
             default_structure: "mind_map".into(),
             default_theme: "default".into(),
+            default_custom_theme: None,
             ui_scale: 1.0,
             show_status_bar: true,
             show_format_panel: true,
@@ -183,6 +187,22 @@ pub struct SettingsLoad {
 }
 
 impl Settings {
+    pub fn validate_custom_themes(
+        themes: &[ymind_core::custom_theme::CustomTheme],
+    ) -> std::result::Result<(), String> {
+        if themes.len() > 32 {
+            return Err("at most 32 saved custom themes are supported".into());
+        }
+        let mut names = std::collections::HashSet::new();
+        for theme in themes {
+            theme.validate()?;
+            if !names.insert(theme.name.trim().to_lowercase()) {
+                return Err("custom theme names must be unique".into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_quick_styles(
         styles: &[ymind_core::quick_styles::QuickStyle],
     ) -> std::result::Result<(), String> {
@@ -222,6 +242,10 @@ impl Settings {
             .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()))
             .and_then(|settings| {
                 Self::validate_quick_styles(&settings.quick_styles)?;
+                Self::validate_custom_themes(&settings.custom_themes)?;
+                if let Some(theme) = &settings.default_custom_theme {
+                    theme.validate()?;
+                }
                 Ok(settings)
             });
         match parsed {
@@ -259,6 +283,13 @@ impl Settings {
 
     /// Atomically persist preferences, normalizing recents and invalid numeric values.
     pub fn save(&self, paths: &Paths) -> Result<()> {
+        Self::validate_custom_themes(&self.custom_themes)
+            .map_err(crate::Error::InvalidCustomThemes)?;
+        if let Some(theme) = &self.default_custom_theme {
+            theme
+                .validate()
+                .map_err(crate::Error::InvalidCustomThemes)?;
+        }
         Self::validate_quick_styles(&self.quick_styles)
             .map_err(crate::Error::InvalidQuickStyles)?;
         let mut normalized = self.clone();

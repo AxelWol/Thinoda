@@ -64,6 +64,8 @@ pub use settings::Settings;
 /// Platform persistence failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid custom theme library: {0}")]
+    InvalidCustomThemes(String),
     #[error("invalid quick style library: {0}")]
     InvalidQuickStyles(String),
     #[error(transparent)]

@@ -32,6 +32,18 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   the topic context menu; Remove requires confirmation. The local profile holds
   up to 32 unique names (1-80 characters); duplicate names are rejected, not
   silently replaced. Reset Style restores automatic theme inheritance.
+- Map > Custom Themes offers a staged editor with actual-renderer previews, a
+  built-in base, 1-16 palette colors, light/dark backgrounds, fonts and defaults
+  for central, main, sub, floating and Summary topics. Apply Theme changes the
+  sheet in one undo step; Save to Library stores a separate named profile copy
+  without changing the map. Up to 32 unique themes can be saved, edited or removed
+  with confirmation. Themes are embedded in documents; library removal does not
+  change existing maps. Explicit topic and map overrides take precedence; Reset
+  Style inherits role defaults, and selecting a built-in theme removes custom
+  defaults. Optional recent-theme reuse also supports custom themes.
+  Native files and unchanged yMind XMind snapshots preserve authoring data.
+  Public XMind export materializes supported light-mode topic properties, not an
+  editable XMind theme registry or verified native visual parity.
 - Indent/Outdent in Edit, the topic context menu and command palette moves one topic
   under its previous sibling or after its parent while retaining its annotations.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.

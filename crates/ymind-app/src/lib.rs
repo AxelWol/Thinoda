@@ -9,6 +9,7 @@ mod map_shot;
 mod quick_styles;
 mod structure_picker;
 mod template_gallery;
+mod theme_editor;
 pub mod ui;
 
 pub use app::{Startup, YMindApp, start_services};

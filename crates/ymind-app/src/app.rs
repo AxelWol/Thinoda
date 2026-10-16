@@ -69,6 +69,8 @@ pub enum Cmd {
     ResetStyle,
     SaveQuickStyle,
     ApplyQuickStyle(ymind_core::TopicStyle),
+    EditCustomTheme,
+    ApplyCustomTheme(Box<ymind_core::custom_theme::CustomTheme>),
     CopySheet,
     PasteSheet,
     SaveSheetAs,
@@ -195,6 +197,7 @@ pub struct YMindApp {
     pub(crate) fonts: ymind_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
+    pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
     last_title: String,
 }
 
@@ -259,6 +262,7 @@ impl YMindApp {
             fonts: Default::default(),
             font_source: None,
             quick_style_dialog: None,
+            theme_dialog: None,
             last_title: String::new(),
         };
         for f in files {
@@ -357,6 +361,7 @@ impl YMindApp {
                     && ymind_core::theme::Theme::IDS.contains(&self.settings.default_theme.as_str())
                 {
                     sheet.theme.theme_id = self.settings.default_theme.clone();
+                    sheet.theme.custom_theme = self.settings.default_custom_theme.clone();
                 }
                 self.new_doc(workbook);
             }
@@ -582,6 +587,10 @@ impl YMindApp {
             Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle => self.edit_style(cmd),
             Cmd::SaveQuickStyle => self.begin_quick_style(),
             Cmd::ApplyQuickStyle(style) => self.apply_quick_style(style),
+            Cmd::EditCustomTheme => self.begin_theme_editor(),
+            Cmd::ApplyCustomTheme(theme) => {
+                self.apply_custom_theme(*theme);
+            }
             Cmd::CopySheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
@@ -747,6 +756,9 @@ impl YMindApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
                     && !self.dialogs.shortcuts
+            }
+            Cmd::EditCustomTheme | Cmd::ApplyCustomTheme(_) => {
+                !self.any_modal_open() && self.doc().is_some()
             }
             Cmd::Canvas(action) => self
                 .doc()
@@ -1299,6 +1311,7 @@ impl YMindApp {
         let sheet = doc.doc.sheet();
         let structure = sheet.structure.xmind_class().to_owned();
         let theme = sheet.theme.theme_id.clone();
+        let custom = sheet.theme.custom_theme.clone();
         let mut changed = false;
         if self.settings.reuse_last_structure && self.settings.default_structure != structure {
             self.settings.default_structure = structure;
@@ -1306,6 +1319,10 @@ impl YMindApp {
         }
         if self.settings.reuse_last_theme && self.settings.default_theme != theme {
             self.settings.default_theme = theme;
+            changed = true;
+        }
+        if self.settings.reuse_last_theme && self.settings.default_custom_theme != custom {
+            self.settings.default_custom_theme = custom;
             changed = true;
         }
         if changed {
@@ -1722,6 +1739,7 @@ impl YMindApp {
             (Cmd::PasteStyle, "Paste Style", "Ctrl+Alt+V", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
             (Cmd::SaveQuickStyle, "Save Quick Style…", "", "Style"),
+            (Cmd::EditCustomTheme, "Edit Custom Theme…", "", "Style"),
             (Cmd::Canvas(Action::Indent), "Indent", "", "Edit"),
             (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
             (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),

@@ -23,7 +23,7 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
-fn font_selector(
+pub(crate) fn font_selector(
     ui: &mut Ui,
     fonts: &mut ymind_ui::fonts::SystemFonts,
     value: &mut Option<String>,
@@ -103,26 +103,31 @@ impl YMindApp {
         let ctx = ui.ctx().clone();
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         if font_source != self.font_source {
-            let families: std::collections::BTreeSet<_> = self
-                .doc()
-                .into_iter()
-                .flat_map(|doc| doc.doc.workbook().sheets.iter())
-                .flat_map(|sheet| {
-                    sheet.theme.font_family.iter().chain(
-                        sheet
-                            .topics
-                            .values()
-                            .filter_map(|topic| topic.style.font_family.as_ref()),
+            let families: std::collections::BTreeSet<_> =
+                self.doc()
+                    .into_iter()
+                    .flat_map(|doc| doc.doc.workbook().sheets.iter())
+                    .flat_map(|sheet| {
+                        sheet.theme.fonts().chain(
+                            sheet
+                                .topics
+                                .values()
+                                .filter_map(|topic| topic.style.font_family.as_ref()),
+                        )
+                    })
+                    .chain(
+                        self.settings
+                            .quick_styles
+                            .iter()
+                            .filter_map(|style| style.style.font_family.as_ref()),
                     )
-                })
-                .chain(
-                    self.settings
-                        .quick_styles
-                        .iter()
-                        .filter_map(|style| style.style.font_family.as_ref()),
-                )
-                .cloned()
-                .collect();
+                    .chain(
+                        self.settings.custom_themes.iter().flat_map(|custom| {
+                            custom.font_family.iter().chain(custom.roles.fonts())
+                        }),
+                    )
+                    .cloned()
+                    .collect();
             for name in self.fonts.ensure(&ctx, families) {
                 log::warn!("Font unavailable: {name}");
                 self.toasts.warning(format!(
@@ -193,7 +198,10 @@ impl YMindApp {
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                if self.label_editor.is_some() || self.quick_style_dialog.is_some() {
+                if self.label_editor.is_some()
+                    || self.quick_style_dialog.is_some()
+                    || self.theme_dialog.is_some()
+                {
                     ui.disable();
                 }
                 if !show_doc {
@@ -227,6 +235,7 @@ impl YMindApp {
         // Command palette.
         let mut cmds = Self::palette_commands();
         self.add_quick_style_commands(&mut cmds);
+        self.add_custom_theme_commands(&mut cmds);
         let list: Vec<ymind_ui::Command> = cmds
             .iter()
             .filter(|(cmd, _)| self.command_available(cmd))
@@ -240,6 +249,7 @@ impl YMindApp {
 
         self.labels_popup(&ctx);
         self.quick_style_dialog(&ctx);
+        self.theme_editor_dialog(&ctx);
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -247,7 +257,7 @@ impl YMindApp {
         }
         self.map_shot_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
-            self.toasts.show(&ctx);
+            self.toasts.show_with_modal(&ctx, self.any_modal_open());
         }
         if let Some(d) = self.doc() {
             self.capture_map_shot(&ctx, d.view.canvas_rect());
@@ -260,6 +270,7 @@ impl YMindApp {
             || self.map_shot.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
+            || self.theme_dialog.is_some()
         {
             return true;
         }
@@ -778,6 +789,7 @@ impl YMindApp {
         if self.map_shot.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
+            || self.theme_dialog.is_some()
         {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
@@ -2232,6 +2244,7 @@ impl YMindApp {
     }
 
     fn map_tab(&mut self, ui: &mut Ui) {
+        self.custom_theme_gallery(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -2268,7 +2281,7 @@ impl YMindApp {
                 .show(ui, |ui| {
                     for (index, id) in Theme::IDS.into_iter().enumerate() {
                         let th = Theme::builtin(id);
-                        let selected = ts.theme_id == id;
+                        let selected = ts.custom_theme.is_none() && ts.theme_id == id;
                         let r = widgets::card(ui).show(ui, |ui| {
                             ui.set_width(104.0);
                             let (rect, _) =
@@ -2319,6 +2332,7 @@ impl YMindApp {
                         }
                         if r.clicked() {
                             ts.theme_id = id.to_string();
+                            ts.custom_theme = None;
                             ts.variant = 0;
                         }
                         if (index + 1) % columns == 0 {
@@ -2326,7 +2340,7 @@ impl YMindApp {
                         }
                     }
                 });
-            let th = Theme::builtin(&ts.theme_id);
+            let th = Theme::for_settings(&ts);
             widgets::property_field(ui, t("Color Variant"), |ui| {
                 egui::ComboBox::from_id_salt("variant")
                     .selected_text(if ts.variant == 0 {
@@ -2415,7 +2429,7 @@ impl YMindApp {
                     ts.background = None;
                 }
             });
-            let background = Theme::builtin(&ts.theme_id).background(&ts, d.view.dark);
+            let background = Theme::for_settings(&ts).background(&ts, d.view.dark);
             if let Some(c) = widgets::color_swatches(ui, &SWATCHES, Some(from_color(background))) {
                 ts.background = Some(to_color(c));
             }
@@ -2984,7 +2998,7 @@ pub fn dot(ui: &mut Ui, color: Color32) {
 /// A text field that edits a private buffer while focused and reports the new value once
 /// focus is lost (so typing is not reset by the model value on every frame).
 /// `rows == 0` renders a single-line field.
-fn buffered_text(
+pub(crate) fn buffered_text(
     ui: &mut Ui,
     salt: impl std::hash::Hash + std::fmt::Debug,
     current: &str,

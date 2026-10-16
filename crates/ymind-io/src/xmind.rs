@@ -9,6 +9,20 @@ use ymind_core::{
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
+fn export_topic_style(sheet: &Sheet, id: TopicId) -> std::borrow::Cow<'_, ymind_core::TopicStyle> {
+    if sheet.theme.custom_theme.is_some() {
+        std::borrow::Cow::Owned(
+            ymind_core::quick_styles::QuickStyle::from_appearance(
+                "Export".into(),
+                &ymind_core::theme::resolve_style(sheet, id, false),
+            )
+            .style,
+        )
+    } else {
+        std::borrow::Cow::Borrowed(&sheet.topics[&id].style)
+    }
+}
+
 fn shape_class(shape: TopicShape) -> &'static str {
     match shape {
         TopicShape::RoundedRect => "org.xmind.topicShape.roundedRect",
@@ -96,7 +110,7 @@ fn public_content(book: &Workbook) -> Value {
                 children.insert("detached".into(), json!(detached));
             }
         }
-        let style = &model.style;
+        let style = export_topic_style(sheet, id);
         let mut properties = serde_json::Map::new();
         if let Some(color) = style.fill {
             properties.insert("svg:fill".into(), json!(color.to_hex()));
@@ -316,7 +330,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
                 .map(|structure| format!(" structure-class=\"{}\"", xml_escape(structure)))
                 .unwrap_or_default()
         ));
-        let style = &t.style;
+        let style = export_topic_style(sheet, id);
         let mut properties = Vec::new();
         if let Some(color) = style.text_color {
             properties.push(format!("fo:color=\"{}\"", color.to_hex()));

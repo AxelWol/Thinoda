@@ -996,6 +996,19 @@ impl Workbook {
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
             sheet.title = format!("Sheet {}", sheet_index + 1);
             sheet.theme.font_family = None;
+            if let Some(custom) = &mut sheet.theme.custom_theme {
+                custom.name = "Custom Theme".into();
+                custom.font_family = None;
+                for role in [
+                    crate::theme::Level::Central,
+                    crate::theme::Level::Main,
+                    crate::theme::Level::Sub,
+                    crate::theme::Level::Floating,
+                    crate::theme::Level::Summary,
+                ] {
+                    custom.roles.get_mut(role).font_family = None;
+                }
+            }
             if !crate::theme::Theme::IDS.contains(&sheet.theme.theme_id.as_str()) {
                 sheet.theme.theme_id = crate::theme::ThemeSettings::default().theme_id;
             }

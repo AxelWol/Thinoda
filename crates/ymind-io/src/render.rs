@@ -32,7 +32,7 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
     let max = b.max();
     let width = max.x - b.min.x;
     let height = max.y - b.min.y;
-    let bg = Theme::builtin(&s.theme.theme_id).background(&s.theme, o.dark);
+    let bg = Theme::for_settings(&s.theme).background(&s.theme, o.dark);
     let mut out = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{width:.2}\" height=\"{height:.2}\" viewBox=\"{:.2} {:.2} {width:.2} {height:.2}\">",
         b.min.x, b.min.y

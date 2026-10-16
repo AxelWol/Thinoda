@@ -239,7 +239,7 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
    with Basic and existing SWOT/meeting/project templates. Verify truncated reference
    titles rather than claiming exact equivalents.
 3. Skeleton/structure gallery, real global/topic font selection and quick-style
-   libraries are delivered. Add the custom theme editor;
+   libraries and embedded custom-theme editor are delivered;
    maintain per-topic override precedence and opt-in reuse of recent choices.
    Use the Map-tab anchored preview selector for changing existing sheets as well as
    choosing new-map defaults. Group Mind map, Logic, Brace, Org, Tree, Timeline,
@@ -401,6 +401,22 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+R5 custom-theme authoring delivered: staged EN/DE editor and actual-renderer
+preview support a built-in base, 1-16 colors, light/dark backgrounds, global font
+and five role defaults. Apply embeds the theme in one undo step; Save to Library
+persists a separate profile copy without changing the sheet. Library edits save
+under a new name; duplicate names are rejected, removal is confirmed, and failed
+profile writes preserve the library and map. Existing documents remain independent
+of library removal. Explicit map/topic overrides, built-in reset and opt-in recent
+custom-theme reuse are covered. Native/private XMind snapshots retain the editor
+data; supported public JSON/XML light-mode topic properties are materialized.
+Editable imported XMind theme registries and native visual parity are not claimed.
+Modal footer geometry is bounded and toast notifications render below modal
+controls, preventing pointer interception. All 377 workspace cases and all-target
+clippy pass with live AI disabled. Reference-specific templates, Grid-family and
+visual skeleton semantics still keep R5 open. Windows EXE/NSIS rebuilt with the
+custom-theme editor and library.
+
 R5 quick-style library delivered: four original actual-renderer presets and
 named snapshots of resolved appearance reuse the existing topic style model.
 Multi-topic application is atomic/undoable across open documents without copying
@@ -415,7 +431,7 @@ partial run and standalone IO/platform/UI suites (live AI disabled). The full
 workspace invocation stops after 290 passing cases because Windows Application
 Control refuses to launch its IO test executable; no policy was changed.
 Windows EXE/NSIS rebuilt with quick styles.
-The full custom-theme editor remains the next R5 slice; this does not finish R5.
+The custom-theme editor was subsequently delivered above; this does not finish R5.
 
 R5 map-wide branch width delivered: Automatic retains theme/level defaults;
 explicit 0.5-16 widths apply across topic roles without replacing per-topic
@@ -426,7 +442,7 @@ does not leak into canvas topic insertion. Native/private snapshots retain the
 setting, and public XMind JSON/XML carries effective widths.
 All 352 workspace cases and all-target clippy pass with live AI disabled.
 Windows EXE/NSIS rebuilt with map-wide width controls and safe numeric editing.
-Quick-style libraries are delivered above; the full custom-theme editor remains open.
+Quick-style libraries and the custom-theme editor are delivered above.
 
 R2/R5 real global/topic fonts delivered: selectors enumerate installed system and
 user fonts, registering requested faces lazily in the reusable UI crate. Canvas

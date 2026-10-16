@@ -349,4 +349,40 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Button, "Abbrechen").click();
     h.run_steps(3);
     assert_eq!(h.state().settings.quick_styles.len(), 1);
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Eigenes Design bearbeiten…")
+        .scroll_to_me();
+    h.run_steps(6);
+    h.get_by_role_and_label(Role::Button, "Eigenes Design bearbeiten…")
+        .click();
+    h.run_steps(3);
+    h.get_by_label("Designname");
+    h.get_by_label("Themenrolle");
+    let save = h
+        .get_by_role_and_label(Role::Button, "In Bibliothek speichern")
+        .rect();
+    assert!(h.ctx.content_rect().contains_rect(save), "{save:?}");
+    h.get_by_role_and_label(Role::Button, "In Bibliothek speichern")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "In Bibliothek speichern")
+            .rect(),
+        save
+    );
+    assert_eq!(h.state().settings.custom_themes.len(), 1);
+    h.get_by_role_and_label(Role::Button, "Design übernehmen")
+        .click();
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .theme
+            .custom_theme
+            .is_some()
+    );
 }

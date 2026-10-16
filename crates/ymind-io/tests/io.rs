@@ -94,6 +94,45 @@ fn public_xmind_content(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
+fn custom_themes_remain_embedded_and_materialize_public_json_and_xml_appearance() {
+    let mut book = Workbook::default();
+    let sheet = book.active_mut();
+    let child = sheet.add_child(sheet.root, None, "Custom child");
+    let mut custom = ymind_core::custom_theme::CustomTheme::from_settings(&sheet.theme);
+    custom.name = "Portable".into();
+    custom.roles.main.fill = Some(Color::rgb(2, 40, 80));
+    custom.roles.main.font_size = Some(24.0);
+    custom.roles.main.font_family = Some("monospace".into());
+    custom.roles.main.bold = Some(true);
+    custom.roles.main.line_width = Some(4.0);
+    sheet.theme.custom_theme = Some(custom);
+    let bytes = export_bytes(&book, Format::XMind, &Default::default()).unwrap();
+    for format in [Format::YMind, Format::XMind] {
+        let data = export_bytes(&book, format, &Default::default()).unwrap();
+        assert_eq!(import_bytes(format, &data).unwrap(), book);
+    }
+    let json_only = public_xmind_content(bytes.clone());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut xml = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("content.xml").unwrap(), &mut xml).unwrap();
+    for public in [json_only, zip_with(&[("content.xml", &xml)])] {
+        let reopened = import_bytes(Format::XMind, &public).unwrap();
+        let topic = reopened
+            .active()
+            .topics
+            .values()
+            .find(|topic| topic.title == "Custom child")
+            .unwrap();
+        let expected = ymind_core::theme::resolve_style(book.active(), child, false);
+        assert_eq!(topic.style.fill, expected.fill);
+        assert_eq!(topic.style.font_size, Some(expected.font_size));
+        assert_eq!(topic.style.font_family, expected.font_family);
+        assert_eq!(topic.style.bold, Some(expected.bold));
+        assert_eq!(topic.style.line_width, Some(expected.line_width));
+    }
+}
+
+#[test]
 fn masked_native_archives_contain_only_masked_public_and_private_payloads() {
     let mut source = sample();
     source.metadata.description = Some("PRIVATE42 metadata".into());
