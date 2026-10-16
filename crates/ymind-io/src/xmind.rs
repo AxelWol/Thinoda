@@ -2,8 +2,70 @@ use crate::{IoError, zip_entry};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
-use ymind_core::{Boundary, ChildRange, Color, Sheet, Structure, Summary, TopicId, Vec2, Workbook};
+use ymind_core::{
+    Boundary, ChildRange, Color, LineShape, Sheet, Structure, Summary, TextAlign, TopicId,
+    TopicShape, Vec2, Workbook,
+};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+fn shape_class(shape: TopicShape) -> &'static str {
+    match shape {
+        TopicShape::RoundedRect => "org.xmind.topicShape.roundedRect",
+        TopicShape::Rect => "org.xmind.topicShape.rect",
+        TopicShape::Ellipse => "org.xmind.topicShape.ellipse",
+        TopicShape::Capsule => "org.xmind.topicShape.capsule",
+        TopicShape::Diamond => "org.xmind.topicShape.diamond",
+        TopicShape::Underline => "org.xmind.topicShape.underline",
+        TopicShape::None => "org.xmind.topicShape.none",
+    }
+}
+
+fn parse_shape_class(class: &str) -> Option<TopicShape> {
+    let suffix = class.rsplit('.').next().unwrap_or(class);
+    match suffix
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '-')
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+        .as_str()
+    {
+        "roundedrect" | "roundedrectangle" => Some(TopicShape::RoundedRect),
+        "rect" | "rectangle" => Some(TopicShape::Rect),
+        "ellipse" | "ellipserect" => Some(TopicShape::Ellipse),
+        "capsule" => Some(TopicShape::Capsule),
+        "diamond" => Some(TopicShape::Diamond),
+        "underline" => Some(TopicShape::Underline),
+        "none" => Some(TopicShape::None),
+        _ => None,
+    }
+}
+
+fn line_class(shape: LineShape) -> &'static str {
+    match shape {
+        LineShape::Curve => "org.xmind.branchConnection.curve",
+        LineShape::Straight => "org.xmind.branchConnection.straight",
+        LineShape::Elbow => "org.xmind.branchConnection.elbow",
+        LineShape::RoundedElbow => "org.xmind.branchConnection.roundedElbow",
+    }
+}
+
+fn parse_line_class(class: &str) -> Option<LineShape> {
+    let suffix = class.rsplit('.').next().unwrap_or(class);
+    match suffix
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '-')
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+        .as_str()
+    {
+        "curve" => Some(LineShape::Curve),
+        "straight" => Some(LineShape::Straight),
+        "elbow" => Some(LineShape::Elbow),
+        "roundedelbow" => Some(LineShape::RoundedElbow),
+        // Earlier yMind builds wrote the UI label to this private property.
+        _ => None,
+    }
+}
 
 pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     fn topic(sheet: &Sheet, id: TopicId, ids: &HashMap<TopicId, String>) -> Value {
@@ -44,32 +106,61 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         if let Some(size) = style.font_size {
             properties.insert("fo:font-size".into(), json!(format!("{size}pt")));
         }
-        if style.bold == Some(true) {
-            properties.insert("fo:font-weight".into(), json!("bold"));
+        if let Some(bold) = style.bold {
+            properties.insert(
+                "fo:font-weight".into(),
+                json!(if bold { "bold" } else { "normal" }),
+            );
         }
-        if style.italic == Some(true) {
-            properties.insert("fo:font-style".into(), json!("italic"));
+        if let Some(italic) = style.italic {
+            properties.insert(
+                "fo:font-style".into(),
+                json!(if italic { "italic" } else { "normal" }),
+            );
         }
         if let Some(color) = style.border_color {
-            properties.insert("svg:stroke".into(), json!(color.to_hex()));
+            properties.insert("border-line-color".into(), json!(color.to_hex()));
         }
         if let Some(width) = style.border_width {
-            properties.insert("svg:stroke-width".into(), json!(width));
+            properties.insert("border-line-width".into(), json!(width.to_string()));
         }
         if let Some(color) = style.line_color {
             properties.insert("line-color".into(), json!(color.to_hex()));
         }
         if let Some(width) = style.line_width {
-            properties.insert("line-width".into(), json!(width));
+            properties.insert("line-width".into(), json!(width.to_string()));
         }
         if let Some(shape) = style.shape {
-            properties.insert(
-                "shape-class".into(),
-                json!(format!("org.xmind.topicShape.{}", shape.label())),
-            );
+            properties.insert("shape-class".into(), json!(shape_class(shape)));
         }
         if let Some(line_shape) = style.line_shape {
-            properties.insert("line-shape".into(), json!(line_shape.label()));
+            properties.insert("line-class".into(), json!(line_class(line_shape)));
+        }
+        if let Some(font_family) = &style.font_family {
+            properties.insert("fo:font-family".into(), json!(font_family));
+        }
+        if let Some(align) = style.align {
+            properties.insert(
+                "fo:text-align".into(),
+                json!(match align {
+                    TextAlign::Left => "left",
+                    TextAlign::Center => "center",
+                    TextAlign::Right => "right",
+                }),
+            );
+        }
+        if style.underline == Some(true) || style.strikethrough == Some(true) {
+            let mut decoration = Vec::new();
+            if style.underline == Some(true) {
+                decoration.push("underline");
+            }
+            if style.strikethrough == Some(true) {
+                decoration.push("line-through");
+            }
+            properties.insert("fo:text-decoration".into(), json!(decoration.join(" ")));
+        }
+        if style.underline == Some(false) && style.strikethrough.is_none() {
+            properties.insert("fo:text-decoration".into(), json!("none"));
         }
         let mut value = json!({
             "id": ids[&id], "class": "topic", "title": model.title, "children": children,
@@ -94,9 +185,10 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         let boundaries: Vec<_> = sheet.boundaries.iter().filter(|boundary| boundary.parent == id).map(|boundary| {
             json!({
                 "id": format!("boundary-{}", boundary.id.0),
+                "class": "boundary",
                 "range": boundary.range.map(|range| format!("({}, {})", range.start, range.end)).unwrap_or_else(|| "master".into()),
                 "title": boundary.title,
-                "style": {"properties": {"svg:fill": boundary.color.map(|color| color.to_hex())}}
+                "style": {"properties": boundary.color.map(|color| json!({"svg:fill": color.to_hex()})).unwrap_or_else(|| json!({}))}
             })
         }).collect();
         if !boundaries.is_empty() {
@@ -113,6 +205,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                     .iter()
                     .map(|summary| json!({
                         "id": format!("summary-{}", summary.id.0),
+                        "class": "summary",
                         "range": format!("({}, {})", summary.range.start, summary.range.end),
                         "topicId": ids.get(&summary.topic)
                     }))
@@ -143,8 +236,10 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 "rootTopic": topic(sheet, sheet.root, &ids),
                 "relationships": sheet.relationships.iter().map(|relationship| json!({
                     "id": format!("rel-{}", relationship.id.0),
+                    "class": "relationship",
                     "end1Id": ids.get(&relationship.from), "end2Id": ids.get(&relationship.to),
-                    "title": relationship.title
+                    "title": relationship.title,
+                    "style": {"properties": relationship.color.map(|color| json!({"line-color": color.to_hex()})).unwrap_or_else(|| json!({}))}
                 })).collect::<Vec<_>>()
             })
         })
@@ -186,15 +281,92 @@ fn legacy_compatibility(book: &Workbook) -> String {
             return;
         }
         let t = &sheet.topics[&id];
+        let structure_attr = if id == sheet.root {
+            Some(t.structure.unwrap_or(sheet.structure).xmind_class())
+        } else {
+            t.structure.map(Structure::xmind_class)
+        };
         out.push_str(&format!(
-            "<topic id=\"{}\"{}>",
+            "<topic id=\"{}\"{}{}>",
             id.0,
             if t.collapsed {
                 " branch=\"folded\""
             } else {
                 ""
-            }
+            },
+            structure_attr
+                .map(|structure| format!(" structure-class=\"{}\"", xml_escape(structure)))
+                .unwrap_or_default()
         ));
+        let style = &t.style;
+        let mut properties = Vec::new();
+        if let Some(color) = style.text_color {
+            properties.push(format!("fo:color=\"{}\"", color.to_hex()));
+        }
+        if let Some(color) = style.fill {
+            properties.push(format!("background-color=\"{}\"", color.to_hex()));
+        }
+        if let Some(color) = style.border_color {
+            properties.push(format!("svg:stroke=\"{}\"", color.to_hex()));
+        }
+        if let Some(width) = style.border_width {
+            properties.push(format!("svg:stroke-width=\"{width}\""));
+        }
+        if let Some(shape) = style.shape {
+            properties.push(format!("shape-class=\"{}\"", shape_class(shape)));
+        }
+        if let Some(size) = style.font_size {
+            properties.push(format!("fo:font-size=\"{size}pt\""));
+        }
+        if let Some(family) = &style.font_family {
+            properties.push(format!("fo:font-family=\"{}\"", xml_escape(family)));
+        }
+        if let Some(bold) = style.bold {
+            properties.push(format!(
+                "fo:font-weight=\"{}\"",
+                if bold { "bold" } else { "normal" }
+            ));
+        }
+        if let Some(italic) = style.italic {
+            properties.push(format!(
+                "fo:font-style=\"{}\"",
+                if italic { "italic" } else { "normal" }
+            ));
+        }
+        let mut decoration = Vec::new();
+        if style.underline == Some(true) {
+            decoration.push("underline");
+        }
+        if style.strikethrough == Some(true) {
+            decoration.push("line-through");
+        }
+        if !decoration.is_empty() {
+            properties.push(format!("fo:text-decoration=\"{}\"", decoration.join(" ")));
+        }
+        if let Some(align) = style.align {
+            properties.push(format!(
+                "fo:text-align=\"{}\"",
+                match align {
+                    TextAlign::Left => "left",
+                    TextAlign::Center => "center",
+                    TextAlign::Right => "right",
+                }
+            ));
+        }
+        if let Some(color) = style.line_color {
+            properties.push(format!("line-color=\"{}\"", color.to_hex()));
+        }
+        if let Some(width) = style.line_width {
+            properties.push(format!("line-width=\"{width}\""));
+        }
+        if let Some(line_shape) = style.line_shape {
+            properties.push(format!("line-class=\"{}\"", line_class(line_shape)));
+        }
+        if !properties.is_empty() {
+            out.push_str("<style><topic-properties ");
+            out.push_str(&properties.join(" "));
+            out.push_str("/></style>");
+        }
         out.push_str("<title>");
         out.push_str(&xml_escape(&t.title));
         out.push_str("</title>");
@@ -224,7 +396,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
         out.push_str("</topic>");
     }
     let mut out = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xmap-content xmlns:xlink=\"http://www.w3.org/1999/xlink\" version=\"2.0\">",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xmap-content xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:fo=\"http://www.w3.org/1999/XSL/Format\" xmlns:svg=\"http://www.w3.org/2000/svg\" version=\"2.0\">",
     );
     for sheet in &book.sheets {
         out.push_str(&format!(
@@ -253,6 +425,15 @@ fn parse_range(value: &Value) -> Option<ChildRange> {
     let end = parts.next()?.trim().parse().ok()?;
     Some(ChildRange { start, end })
 }
+
+fn parse_number(value: &Value) -> Option<f32> {
+    value.as_f64().map(|x| x as f32).or_else(|| {
+        value
+            .as_str()
+            .and_then(|x| x.trim().trim_end_matches("pt").parse().ok())
+    })
+}
+
 fn parse_topic(
     v: &Value,
     s: &mut Sheet,
@@ -322,53 +503,59 @@ fn parse_topic(
             .and_then(Value::as_str)
             .and_then(color);
         style.border_color = props
-            .get("svg:stroke")
+            .get("border-line-color")
+            .or_else(|| props.get("svg:stroke"))
             .and_then(Value::as_str)
             .and_then(color);
         style.border_width = props
-            .get("svg:stroke-width")
-            .and_then(Value::as_f64)
-            .map(|x| x as f32);
+            .get("border-line-width")
+            .or_else(|| props.get("svg:stroke-width"))
+            .and_then(parse_number);
         style.bold = props
             .get("fo:font-weight")
             .and_then(Value::as_str)
-            .map(|v| v == "bold");
+            .map(|v| v == "bold" || v == "600" || v == "700" || v == "800" || v == "900");
         style.italic = props
             .get("fo:font-style")
             .and_then(Value::as_str)
             .map(|v| v == "italic");
-        style.font_size = props
-            .get("fo:font-size")
+        style.font_size = props.get("fo:font-size").and_then(parse_number);
+        style.font_family = props
+            .get("fo:font-family")
             .and_then(Value::as_str)
-            .and_then(|x| x.trim_end_matches("pt").parse().ok());
+            .map(str::to_owned);
+        if let Some(decoration) = props.get("fo:text-decoration").and_then(Value::as_str) {
+            if decoration == "none" {
+                style.underline = Some(false);
+                style.strikethrough = None;
+            } else {
+                style.underline = decoration.contains("underline").then_some(true);
+                style.strikethrough = decoration.contains("line-through").then_some(true);
+            }
+        }
+        style.align = props
+            .get("fo:text-align")
+            .and_then(Value::as_str)
+            .and_then(|value| match value {
+                "left" => Some(TextAlign::Left),
+                "center" => Some(TextAlign::Center),
+                "right" => Some(TextAlign::Right),
+                _ => None,
+            });
         style.line_color = props
             .get("line-color")
             .and_then(Value::as_str)
             .and_then(color);
-        style.line_width = props
-            .get("line-width")
-            .and_then(Value::as_f64)
-            .map(|x| x as f32);
+        style.line_width = props.get("line-width").and_then(parse_number);
         style.shape = props
             .get("shape-class")
             .and_then(Value::as_str)
-            .and_then(|shape| {
-                let shape = shape
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(shape)
-                    .to_ascii_lowercase();
-                match shape.as_str() {
-                    "roundedrect" | "rounded-rect" => Some(ymind_core::TopicShape::RoundedRect),
-                    "rect" => Some(ymind_core::TopicShape::Rect),
-                    "ellipse" => Some(ymind_core::TopicShape::Ellipse),
-                    "capsule" => Some(ymind_core::TopicShape::Capsule),
-                    "diamond" => Some(ymind_core::TopicShape::Diamond),
-                    "underline" => Some(ymind_core::TopicShape::Underline),
-                    "none" => Some(ymind_core::TopicShape::None),
-                    _ => None,
-                }
-            });
+            .and_then(parse_shape_class);
+        style.line_shape = props
+            .get("line-class")
+            .or_else(|| props.get("line-shape"))
+            .and_then(Value::as_str)
+            .and_then(parse_line_class);
     }
     let attached = v
         .get("children")
@@ -394,7 +581,7 @@ fn parse_topic(
                 color: boundary
                     .get("style")
                     .and_then(|x| x.get("properties"))
-                    .and_then(|x| x.get("svg:fill"))
+                    .and_then(|x| x.get("svg:fill").or_else(|| x.get("fill")))
                     .and_then(Value::as_str)
                     .and_then(color),
             });
@@ -518,7 +705,12 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                 from: a,
                                 to: b,
                                 title: r.get("title").and_then(Value::as_str).unwrap_or("").into(),
-                                color: None,
+                                color: r
+                                    .get("style")
+                                    .and_then(|style| style.get("properties"))
+                                    .and_then(|props| props.get("line-color"))
+                                    .and_then(Value::as_str)
+                                    .and_then(color),
                             });
                         }
                     }
@@ -550,6 +742,44 @@ struct LegacyTopic {
     style: ymind_core::TopicStyle,
     children: Vec<LegacyTopic>,
 }
+
+fn parse_legacy_topic_property(topic: &mut LegacyTopic, key: &str, value: &str) {
+    match key {
+        "fo:color" => topic.style.text_color = Color::from_hex(value),
+        "svg:fill" | "background-color" => topic.style.fill = Color::from_hex(value),
+        "svg:stroke" | "border-line-color" => topic.style.border_color = Color::from_hex(value),
+        "svg:stroke-width" | "border-line-width" => {
+            topic.style.border_width = parse_number(&Value::String(value.to_owned()))
+        }
+        "fo:font-size" => topic.style.font_size = parse_number(&Value::String(value.to_owned())),
+        "fo:font-weight" => topic.style.bold = Some(value == "bold" || value == "600"),
+        "fo:font-style" => topic.style.italic = Some(value == "italic"),
+        "fo:font-family" => topic.style.font_family = Some(value.to_owned()),
+        "fo:text-decoration" => {
+            if value == "none" {
+                topic.style.underline = Some(false);
+                topic.style.strikethrough = None;
+            } else {
+                topic.style.underline = value.contains("underline").then_some(true);
+                topic.style.strikethrough = value.contains("line-through").then_some(true);
+            }
+        }
+        "fo:text-align" => {
+            topic.style.align = match value {
+                "left" => Some(TextAlign::Left),
+                "center" => Some(TextAlign::Center),
+                "right" => Some(TextAlign::Right),
+                _ => None,
+            }
+        }
+        "line-color" => topic.style.line_color = Color::from_hex(value),
+        "line-width" => topic.style.line_width = parse_number(&Value::String(value.to_owned())),
+        "line-class" | "line-shape" => topic.style.line_shape = parse_line_class(value),
+        "shape-class" => topic.style.shape = parse_shape_class(value),
+        _ => {}
+    }
+}
+
 fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
     use quick_xml::{Reader, events::Event};
     let mut reader = Reader::from_reader(bytes);
@@ -624,19 +854,7 @@ fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
                             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .unwrap_or_default()
                             .to_string();
-                        match key.as_str() {
-                            "fo:color" => topic.style.text_color = Color::from_hex(&value),
-                            "svg:fill" | "background-color" => {
-                                topic.style.fill = Color::from_hex(&value)
-                            }
-                            "svg:stroke" => topic.style.border_color = Color::from_hex(&value),
-                            "fo:font-size" => {
-                                topic.style.font_size = value.trim_end_matches("pt").parse().ok()
-                            }
-                            "fo:font-weight" => topic.style.bold = Some(value == "bold"),
-                            "fo:font-style" => topic.style.italic = Some(value == "italic"),
-                            _ => {}
-                        }
+                        parse_legacy_topic_property(topic, &key, &value);
                     }
                 }
             }
@@ -653,6 +871,17 @@ fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
                                     .to_string(),
                             );
                         }
+                    }
+                } else if name == "topic-properties"
+                    && let Some(topic) = stack.last_mut()
+                {
+                    for attr in e.attributes().flatten() {
+                        let key = attr.key.as_ref().to_ascii_lowercase();
+                        let value = attr
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .unwrap_or_default()
+                            .to_string();
+                        parse_legacy_topic_property(topic, &key, &value);
                     }
                 }
             }
@@ -739,16 +968,71 @@ fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn legacy_xml_export_has_topic_content() {
+    fn stable_shape_class_mappings_are_explicit() {
+        assert_eq!(
+            shape_class(TopicShape::RoundedRect),
+            "org.xmind.topicShape.roundedRect"
+        );
+        assert_eq!(
+            shape_class(TopicShape::Underline),
+            "org.xmind.topicShape.underline"
+        );
+        assert_eq!(
+            parse_shape_class("org.xmind.topicShape.ellipseRect"),
+            Some(TopicShape::Ellipse)
+        );
+        for shape in TopicShape::ALL {
+            assert_eq!(parse_shape_class(shape_class(shape)), Some(shape));
+        }
+        assert_eq!(
+            line_class(LineShape::RoundedElbow),
+            "org.xmind.branchConnection.roundedElbow"
+        );
+        assert_eq!(
+            parse_line_class("Rounded elbow"),
+            Some(LineShape::RoundedElbow)
+        );
+        for shape in LineShape::ALL {
+            assert_eq!(parse_line_class(line_class(shape)), Some(shape));
+        }
+    }
+
+    #[test]
+    fn legacy_xml_export_preserves_topic_style_and_content() {
         let mut w = Workbook::new(Sheet::new("S", "Root & title"));
         let root = w.active().root;
-        w.active_mut().add_child(root, None, "Child");
+        let child = w.active_mut().add_child(root, None, "Child");
+        w.active_mut().topic_mut(child).unwrap().style = ymind_core::TopicStyle {
+            fill: Some(Color::rgb(10, 20, 30)),
+            shape: Some(TopicShape::Diamond),
+            line_shape: Some(LineShape::RoundedElbow),
+            font_family: Some("Noto Sans".into()),
+            font_size: Some(14.0),
+            ..Default::default()
+        };
         let bytes = export(&w).unwrap();
         let mut z = ZipArchive::new(Cursor::new(bytes)).unwrap();
         let xml = crate::zip_entry(&mut z, "content.xml").unwrap();
         let xml = String::from_utf8(xml).unwrap();
         assert!(xml.contains("Root &amp; title"));
         assert!(xml.contains("Child"));
+        assert!(xml.contains("shape-class=\"org.xmind.topicShape.diamond\""));
+        let imported = import_legacy_xml(xml.as_bytes()).unwrap();
+        let imported_child = imported
+            .active()
+            .topic(imported.active().root_topic().children[0])
+            .unwrap();
+        assert_eq!(imported_child.style.fill, Some(Color::rgb(10, 20, 30)));
+        assert_eq!(imported_child.style.shape, Some(TopicShape::Diamond));
+        assert_eq!(
+            imported_child.style.line_shape,
+            Some(LineShape::RoundedElbow)
+        );
+        assert_eq!(
+            imported_child.style.font_family.as_deref(),
+            Some("Noto Sans")
+        );
     }
 }

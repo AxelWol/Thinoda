@@ -92,6 +92,15 @@ pub enum SidebarFamily {
     Symbols,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    #[default]
+    General,
+    Editor,
+    Ai,
+    Cloud,
+}
+
 /// What to do after the "save changes?" dialog.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloseIntent {
@@ -107,10 +116,11 @@ pub struct SearchState {
     pub replace: String,
     pub show_replace: bool,
     pub opts: SearchOptions,
-    pub hits: Vec<ymind_core::TopicId>,
+    pub hits: Vec<ymind_core::search::SearchHit>,
+    pub all_sheets: bool,
     pub current: usize,
     pub dim: bool,
-    pub last_key: (String, usize, String, u64, bool, bool, bool),
+    pub last_key: (String, usize, String, u64, bool, bool, bool, bool, bool),
 }
 
 /// Optional OS integrations (absent in tests and when the profile is unavailable).
@@ -125,6 +135,7 @@ pub struct Services {
 #[derive(Default)]
 pub struct Dialogs {
     pub settings: bool,
+    pub settings_tab: SettingsTab,
     pub about: bool,
     pub shortcuts: bool,
     pub close: Option<CloseIntent>,
@@ -239,6 +250,7 @@ impl YMindApp {
     pub fn new_doc(&mut self, wb: Workbook) {
         let mut d = OpenDoc::new(wb);
         d.view.titles = new_topic_titles();
+        d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
         self.docs.push(d);
         self.active = self.docs.len() - 1;
         self.mode = CenterMode::Map;
@@ -256,6 +268,7 @@ impl YMindApp {
         match OpenDoc::open(path) {
             Ok(mut d) => {
                 d.view.titles = new_topic_titles();
+                d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
                 // Replace a pristine, untouched "Untitled" tab like most editors do.
                 if self.docs.len() == 1
                     && self.docs[0].path.is_none()
@@ -291,7 +304,23 @@ impl YMindApp {
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
         match cmd {
             Cmd::Canvas(action) => self.canvas_action(ctx, action),
-            Cmd::New => self.new_doc(templates::instantiate("mind-map")),
+            Cmd::New => {
+                self.remember_map_defaults();
+                let mut workbook = templates::instantiate("mind-map");
+                let sheet = workbook.active_mut();
+                if self.settings.reuse_last_structure
+                    && let Some(structure) =
+                        ymind_core::Structure::from_xmind_class(&self.settings.default_structure)
+                {
+                    sheet.structure = structure;
+                }
+                if self.settings.reuse_last_theme
+                    && ymind_core::theme::Theme::IDS.contains(&self.settings.default_theme.as_str())
+                {
+                    sheet.theme.theme_id = self.settings.default_theme.clone();
+                }
+                self.new_doc(workbook);
+            }
             Cmd::NewFromTemplate(id) => self.new_doc(templates::instantiate(id)),
             Cmd::Home => {
                 // The home screen is shown when no document is open; offer it as a "new" tab.
@@ -667,10 +696,12 @@ impl YMindApp {
         self.last_frame = Instant::now();
         self.toasts.tick(dt);
         self.poll_ai(ctx);
+        self.remember_map_defaults();
 
         for d in &mut self.docs {
             d.tick();
         }
+
         // Crash recovery snapshots.
         if let Some(r) = self.services.recovery.clone() {
             let interval = self.settings.recovery_interval_secs.max(1) as f32;
@@ -732,6 +763,25 @@ impl YMindApp {
             self.last_title = title;
         }
         ctx.request_repaint_after(Duration::from_millis(1000));
+    }
+
+    fn remember_map_defaults(&mut self) {
+        let Some(doc) = self.doc() else { return };
+        let sheet = doc.doc.sheet();
+        let structure = sheet.structure.xmind_class().to_owned();
+        let theme = sheet.theme.theme_id.clone();
+        let mut changed = false;
+        if self.settings.reuse_last_structure && self.settings.default_structure != structure {
+            self.settings.default_structure = structure;
+            changed = true;
+        }
+        if self.settings.reuse_last_theme && self.settings.default_theme != theme {
+            self.settings.default_theme = theme;
+            changed = true;
+        }
+        if changed {
+            self.save_settings();
+        }
     }
 
     /// Handles a window close request (asks to save dirty documents).
@@ -877,24 +927,38 @@ impl YMindApp {
     /// Recomputes search hits when the query or document changed.
     pub fn update_search(&mut self) {
         let Some(d) = self.docs.get_mut(self.active) else {
+            self.search.hits.clear();
+            self.search.current = 0;
             return;
         };
         let o = &self.search.opts;
         let key = (
             d.key.clone(),
-            d.doc.active_index(),
+            if self.search.all_sheets {
+                usize::MAX
+            } else {
+                d.doc.active_index()
+            },
             self.search.query.clone(),
             d.doc.state_id(),
             o.case_sensitive,
             o.whole_word,
             o.include_notes,
+            o.include_labels,
+            self.search.all_sheets,
         );
         if key == self.search.last_key {
             return;
         }
         self.search.last_key = key;
-        let hits: Vec<_> = if self.search.query.is_empty() {
+        self.search.hits = if self.search.query.is_empty() {
             Vec::new()
+        } else if self.search.all_sheets {
+            ymind_core::search::search_workbook(
+                d.doc.workbook(),
+                &self.search.query,
+                &self.search.opts,
+            )
         } else {
             ymind_core::search::search_sheet(
                 d.doc.sheet(),
@@ -902,41 +966,49 @@ impl YMindApp {
                 &self.search.query,
                 &self.search.opts,
             )
-            .into_iter()
-            .map(|h| h.topic)
-            .collect()
         };
-        let mut uniq = Vec::new();
-        for h in hits {
-            if !uniq.contains(&h) {
-                uniq.push(h);
-            }
-        }
-        self.search.hits = uniq;
         self.search.current = 0;
         self.apply_search_filter();
     }
 
     pub fn apply_search_filter(&mut self) {
-        let filter = (self.search.open && self.search.dim && !self.search.query.is_empty())
-            .then(|| self.search.hits.clone());
+        for d in &mut self.docs {
+            d.view.filter = None;
+        }
         if let Some(d) = self.docs.get_mut(self.active) {
-            d.view.filter = filter;
+            d.view.filter = (self.search.open && self.search.dim && !self.search.query.is_empty())
+                .then(|| {
+                    self.search
+                        .hits
+                        .iter()
+                        .filter(|h| h.sheet == d.doc.active_index())
+                        .map(|h| h.topic)
+                        .collect()
+                });
         }
     }
 
     /// Selects the next (`+1`) or previous (`-1`) search hit, expanding collapsed ancestors.
     pub fn goto_hit(&mut self, delta: isize) {
+        if let Some(d) = self.doc_mut() {
+            d.view.commit_edit(&mut d.doc);
+        }
+        self.update_search();
         let n = self.search.hits.len();
         if n == 0 {
             return;
         }
         self.search.current =
             ((self.search.current as isize + delta).rem_euclid(n as isize)) as usize;
-        let id = self.search.hits[self.search.current];
+        let hit = &self.search.hits[self.search.current];
+        let (sheet, id) = (hit.sheet, hit.topic);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        if d.doc.active_index() != sheet {
+            d.doc.set_active(sheet);
+            d.view.reset();
+        }
         let mut hidden = Vec::new();
         let mut p = d.doc.sheet().parent(id);
         while let Some(x) = p {
@@ -945,19 +1017,30 @@ impl YMindApp {
             }
             p = d.doc.sheet().parent(x);
         }
-        if !hidden.is_empty() {
-            let _ = d.doc.edit_sheet("Expand", |s| {
+        if !hidden.is_empty()
+            && let Err(e) = d.doc.edit_sheet("Expand", |s| {
                 for h in &hidden {
                     s.set_collapsed(*h, false)?;
                 }
                 Ok(())
-            });
+            })
+        {
+            self.toasts
+                .error(format!("{}: {e}", t("Not possible here")));
+            return;
         }
         d.view.select_only(id);
         d.view.reveal(id);
+        // Expanding a result changes document state, but must not reset result navigation.
+        self.search.last_key.3 = d.doc.state_id();
+        self.apply_search_filter();
     }
 
     pub fn replace_all(&mut self) {
+        if let Some(d) = self.doc_mut() {
+            d.view.commit_edit(&mut d.doc);
+        }
+        self.update_search();
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -967,12 +1050,25 @@ impl YMindApp {
             self.search.replace.clone(),
             self.search.opts.clone(),
         );
-        let res = d.doc.edit_sheet("Replace", |s| {
-            Ok(ymind_core::search::replace_in_titles(s, &hits, &q, &r, &o))
+        let res = d.doc.edit_book("Replace", |wb| {
+            let mut total = 0;
+            for (index, sheet) in wb.sheets.iter_mut().enumerate() {
+                let topics: Vec<_> = hits
+                    .iter()
+                    .filter(|h| h.sheet == index)
+                    .map(|h| h.topic)
+                    .collect();
+                total += ymind_core::search::replace_in_titles(sheet, &topics, &q, &r, &o);
+            }
+            Ok(total)
         });
-        if let Ok(n) = res {
-            self.toasts.info(format!("{} × {n}", t("Replace")));
-        }
+        match res {
+            Ok(n) => self.toasts.info(format!("{} × {n}", t("Replace"))),
+            Err(e) => self
+                .toasts
+                .error(format!("{}: {e}", t("Not possible here"))),
+        };
+        self.update_search();
     }
 
     /// The commands listed in the command palette.
@@ -1340,7 +1436,8 @@ mod tests {
         app.search.open = true;
         app.search.query = "needle".into();
         app.update_search();
-        assert_eq!(app.search.hits, vec![id]);
+        assert_eq!(app.search.hits.len(), 1);
+        assert_eq!(app.search.hits[0].topic, id);
         app.goto_hit(0);
         let d = app.doc().unwrap();
         assert_eq!(d.view.selection, vec![id]);

@@ -42,4 +42,22 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Tab, "Stil").click();
     h.run_steps(3);
     assert_eq!(h.state().format_tab, FormatTab::Style);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Settings);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Allgemein");
+    h.get_by_role_and_label(Role::Button, "Editor").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Switch, "Themen-Symbolleiste anzeigen")
+        .click();
+    h.run_steps(3);
+    assert!(!h.state().settings.show_topic_toolbar);
+    h.get_by_role_and_label(Role::Switch, "Thema-hinzufügen-Buttons anzeigen");
+    h.get_by_label("Letzte Struktur für neue leere Maps verwenden");
+    h.get_by_label("Letztes Design für neue leere Maps verwenden");
+    h.state_mut().dialogs.settings = false;
+    h.state_mut().dialogs.about = true;
+    h.run_steps(3);
+    h.get_by_label("Geschrieben von Axel Wolters");
+    h.get_by_role_and_label(Role::Link, "Kontakt: axelwolters@hotmail.com");
 }

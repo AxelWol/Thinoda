@@ -51,6 +51,171 @@ fn root_title(wb: &Workbook) -> String {
 }
 
 #[test]
+fn about_dialog_shows_author_and_contact() {
+    let mut h = harness(YMindApp::headless());
+    h.state_mut().dialogs.about = true;
+    h.run_steps(3);
+    h.get_by_label("Written by Axel Wolters");
+    h.get_by_role_and_label(Role::Link, "Contact: axelwolters@hotmail.com");
+}
+
+#[test]
+fn editor_preferences_independently_control_toolbar_and_add_handles() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Settings);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Editor").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Switch, "Show topic toolbar")
+        .click();
+    h.run_steps(3);
+    assert!(!h.state().settings.show_topic_toolbar);
+    assert!(h.state().settings.show_topic_add_buttons);
+    h.state_mut().dialogs.settings = false;
+    h.run_steps(3);
+    assert!(h.query_by_label("Edit notes").is_none());
+    h.get_by_label("Add child topic");
+    h.state_mut().settings.show_topic_toolbar = true;
+    h.state_mut().settings.show_topic_add_buttons = false;
+    h.run_steps(3);
+    h.get_by_label("Edit notes");
+    assert!(h.query_by_label("Add child topic").is_none());
+    assert!(h.query_by_label("Add sibling topic").is_none());
+}
+
+#[test]
+fn blank_map_defaults_are_opt_in_and_do_not_override_named_templates() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Map defaults", |s| {
+            s.structure = ymind_core::Structure::LogicLeft;
+            s.theme.theme_id = "ocean".into();
+            Ok(())
+        })
+        .unwrap();
+    app.exec(&ctx, Cmd::New);
+    assert_eq!(
+        app.doc().unwrap().doc.sheet().structure,
+        ymind_core::Structure::MapClockwise
+    );
+    assert_eq!(app.doc().unwrap().doc.sheet().theme.theme_id, "clarity");
+    app.active = 0;
+    app.settings.reuse_last_structure = true;
+    app.settings.reuse_last_theme = true;
+    app.settings.initial_canvas_zoom = 0.8;
+    app.exec(&ctx, Cmd::New);
+    assert_eq!(
+        app.doc().unwrap().doc.sheet().structure,
+        ymind_core::Structure::LogicLeft
+    );
+    assert_eq!(app.doc().unwrap().doc.sheet().theme.theme_id, "ocean");
+    let mut h = harness(app);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 80);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::NewFromTemplate("org-chart"));
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().structure,
+        ymind_core::Structure::OrgDown
+    );
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().theme.theme_id,
+        "clarity"
+    );
+}
+
+#[test]
+fn zoom_menu_has_presets_current_value_and_fit_without_changing_ui_scale() {
+    let mut h = harness(YMindApp::headless());
+    h.state_mut().doc_mut().unwrap().view.set_zoom(1.12);
+    h.run_steps(3);
+    h.get_by_label("Zoom").click();
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("112%").count(), 1);
+    for preset in [
+        "500%", "400%", "300%", "200%", "150%", "120%", "100%", "80%", "50%", "20%", "10%",
+    ] {
+        h.get_by_role_and_label(Role::Button, preset);
+    }
+    h.get_by_role_and_label(Role::Button, "150%").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 150);
+    assert_eq!(h.state().settings.ui_scale, 1.0);
+    h.get_by_label("Zoom").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Fit Map").click();
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().view.zoom > 0.0);
+}
+
+#[test]
+fn statistics_popup_is_live_sheet_scoped_and_counts_unicode_titles() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::NewSheet);
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_book("Statistics sheet", |wb| {
+            wb.sheets[1] = ymind_core::Sheet::new("Counts", "Root");
+            Ok(())
+        })
+        .unwrap();
+    let mut h = harness(app);
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Statistics", |s| {
+            s.set_title(s.root, "Grüße 世界")?;
+            s.topic_mut(s.root).unwrap().notes = Some("Not counted".into());
+            s.add_floating("😀", ymind_core::Vec2::new(100.0, 100.0));
+            Ok(())
+        })
+        .unwrap();
+    h.run_steps(3);
+    h.get_by_label("Statistics").click();
+    h.run_steps(3);
+    h.get_by_label("Current sheet");
+    h.get_by_label("Topics: 2");
+    assert!(h.query_all_by_label("Words: 3").count() >= 1);
+    h.get_by_label("Characters: 9");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    rename_root(h.state_mut(), "A");
+    h.get_by_label("Statistics").click();
+    h.run_steps(3);
+    h.get_by_label("Characters: 2");
+    assert!(h.query_all_by_label("Words: 2").count() >= 1);
+}
+
+#[test]
+fn initial_zoom_applies_to_opened_documents_but_not_existing_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zoom.ymind");
+    let mut app = YMindApp::headless();
+    app.doc_mut().unwrap().save_to(&path, false).unwrap();
+    app.settings.initial_canvas_zoom = 0.5;
+    app.new_doc(ymind_core::templates::instantiate("mind-map"));
+    app.settings.initial_canvas_zoom = 0.8;
+    assert_eq!(app.doc().unwrap().view.zoom_percent(), 50);
+    // Opening an already open document preserves its current view.
+    app.open_path(&path);
+    assert_eq!(app.doc().unwrap().view.zoom_percent(), 100);
+    // Reopening after closing the tab uses the new preference.
+    app.docs.remove(0);
+    app.active = 0;
+    app.open_path(&path);
+    let h = harness(app);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 80);
+    assert_eq!(h.state().settings.ui_scale, 1.0);
+}
+
+#[test]
 fn style_sidebar_tracks_selected_topic_and_undo_without_changing_properties() {
     use egui::accesskit::Toggled;
     use ymind_core::{geometry::Color, model::TextAlign};
@@ -587,7 +752,8 @@ fn search_bar_finds_topics() {
     h.state_mut().search.query = "roadmap".into();
     h.run_steps(2);
     let root = h.state().doc().unwrap().doc.sheet().root;
-    assert_eq!(h.state().search.hits, vec![root]);
+    assert_eq!(h.state().search.hits.len(), 1);
+    assert_eq!(h.state().search.hits[0].topic, root);
 }
 
 #[test]
@@ -602,7 +768,8 @@ fn search_icon_opens_accessible_search_and_can_reopen() {
         h.get_by_label("Search").type_text("roadmap");
         h.run_steps(2);
         let root = h.state().doc().unwrap().doc.sheet().root;
-        assert_eq!(h.state().search.hits, vec![root]);
+        assert_eq!(h.state().search.hits.len(), 1);
+        assert_eq!(h.state().search.hits[0].topic, root);
         h.get_by_label("Next result").click();
         h.run_steps(2);
         assert_eq!(h.state().doc().unwrap().view.primary(), Some(root));
@@ -649,7 +816,8 @@ fn search_refreshes_when_switching_between_documents_at_the_same_revision() {
     h.state_mut().search.query = "Roadmap".into();
     h.run_steps(2);
     let old_root = h.state().doc().unwrap().doc.sheet().root;
-    assert_eq!(h.state().search.hits, vec![old_root]);
+    assert_eq!(h.state().search.hits.len(), 1);
+    assert_eq!(h.state().search.hits[0].topic, old_root);
     let ctx = h.ctx.clone();
     h.state_mut().exec(&ctx, Cmd::New);
     rename_root(h.state_mut(), "Different document");
@@ -676,6 +844,151 @@ fn search_refreshes_when_switching_sheets_without_an_edit() {
     assert_eq!(d.doc.state_id(), revision);
     h.run_steps(2);
     assert!(h.state().search.hits.is_empty());
+}
+
+#[test]
+fn cross_sheet_search_navigates_wraps_and_filters_only_the_current_sheet() {
+    let mut app = YMindApp::headless();
+    rename_root(&mut app, "Roadmap Alpha");
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::NewSheet);
+    rename_root(&mut app, "Roadmap Beta");
+    app.doc_mut().unwrap().doc.set_active(0);
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Find);
+    h.state_mut().search.query = "Roadmap".into();
+    h.run_steps(3);
+    assert_eq!(h.state().search.hits.len(), 1);
+    h.get_by_label("All sheets").click();
+    h.run_steps(3);
+    h.get_by_label("Dim others").click();
+    h.run_steps(3);
+    assert!(h.state().search.dim);
+    assert_eq!(h.state().search.hits.len(), 2);
+    h.get_by_label("Next result").click();
+    h.run_steps(3);
+    assert_eq!(h.state().search.current, 1);
+    let d = h.state().doc().unwrap();
+    assert_eq!(d.doc.active_index(), 1);
+    assert_eq!(d.view.primary(), Some(d.doc.sheet().root));
+    assert_eq!(d.view.filter, Some(vec![d.doc.sheet().root]));
+    // Rendering more frames must not reset the result index on a sheet switch.
+    h.run_steps(3);
+    assert_eq!(h.state().search.current, 1);
+    h.get_by_label("Next result").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().search.current, 0);
+    h.get_by_label("Previous result").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 1);
+    h.get_by_label("Close search").click();
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().view.filter.is_none());
+}
+
+#[test]
+fn cross_sheet_replace_is_one_undo_step_and_keeps_notes_labels_and_other_tabs() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    rename_root(&mut app, "Roadmap Alpha");
+    app.exec(&ctx, Cmd::NewSheet);
+    rename_root(&mut app, "Roadmap Beta");
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Notes", |s| {
+            s.topic_mut(s.root).unwrap().notes = Some("Roadmap in notes".into());
+            s.topic_mut(s.root).unwrap().labels = vec!["Roadmap label".into()];
+            Ok(())
+        })
+        .unwrap();
+    let first_book = app.doc().unwrap().doc.workbook().clone();
+    app.exec(&ctx, Cmd::New);
+    rename_root(&mut app, "Roadmap Other Document");
+    app.active = 0;
+    app.search.query = "Roadmap".into();
+    app.search.replace = "Plan".into();
+    app.search.all_sheets = true;
+    app.search.opts.include_notes = true;
+    app.search.opts.include_labels = true;
+    app.replace_all();
+    assert_eq!(app.doc().unwrap().doc.active_index(), 1);
+    for s in &app.doc().unwrap().doc.workbook().sheets {
+        assert!(s.topic(s.root).unwrap().title.starts_with("Plan"));
+    }
+    let s = app.doc().unwrap().doc.sheet();
+    assert_eq!(
+        s.topic(s.root).unwrap().notes.as_deref(),
+        Some("Roadmap in notes")
+    );
+    assert_eq!(s.topic(s.root).unwrap().labels, vec!["Roadmap label"]);
+    assert_eq!(
+        root_title(app.docs[1].doc.workbook()),
+        "Roadmap Other Document"
+    );
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &first_book);
+    assert!(app.doc_mut().unwrap().doc.redo());
+    assert_eq!(root_title(app.doc().unwrap().doc.workbook()), "Plan Alpha");
+    // Do not apply stale hits after the user changes the query.
+    app.search.query = "Missing".into();
+    app.search.replace = "Wrong".into();
+    let revision = app.doc().unwrap().doc.state_id();
+    app.replace_all();
+    assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+}
+
+#[test]
+fn cross_sheet_search_refreshes_notes_labels_and_reveals_collapsed_results() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::NewSheet);
+    let mut target = None;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Search targets", |s| {
+            let branch = s.add_child(s.root, None, "Branch");
+            let child = s.add_child(branch, None, "Hidden");
+            s.topic_mut(child).unwrap().notes = Some("Needle".into());
+            s.topic_mut(s.root).unwrap().labels = vec!["Needle".into()];
+            s.set_collapsed(branch, true)?;
+            target = Some((branch, child));
+            Ok(())
+        })
+        .unwrap();
+    app.doc_mut().unwrap().doc.set_active(0);
+    app.search.open = true;
+    app.search.all_sheets = true;
+    app.search.query = "Needle".into();
+    app.update_search();
+    assert!(app.search.hits.is_empty());
+    app.search.opts.include_notes = true;
+    app.update_search();
+    assert_eq!(app.search.hits.len(), 1);
+    app.search.opts.include_labels = true;
+    app.update_search();
+    assert_eq!(app.search.hits.len(), 2);
+    app.goto_hit(1);
+    let (branch, child) = target.unwrap();
+    let d = app.doc().unwrap();
+    assert_eq!(d.doc.active_index(), 1);
+    assert_eq!(d.view.primary(), Some(child));
+    assert!(!d.doc.sheet().topic(branch).unwrap().collapsed);
+    assert_eq!(app.search.current, 1);
+    app.update_search();
+    assert_eq!(app.search.current, 1);
+    app.search.dim = true;
+    app.apply_search_filter();
+    assert!(app.doc().unwrap().view.filter.is_some());
+    app.exec(&ctx, Cmd::New);
+    app.update_search();
+    assert!(
+        app.docs[0].view.filter.is_none(),
+        "inactive tabs must not retain stale dimming"
+    );
 }
 
 #[test]

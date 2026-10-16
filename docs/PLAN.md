@@ -28,7 +28,8 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ App shell: tabs, toolbar, format panel (Style/Map), outliner, Zen mode, settings, EN/DE i18n
 - ✅ Selection-aware topic toolbar, direction-aware child/sibling connectors, root-safe context menus
 - ✅ Floating main editing toolbar and `+` insert popover for notes, links, tasks and style
-- ✅ Accessible Find (Ctrl+F) and Replace (Ctrl+H) in the active sheet; cross-sheet scope remains in the backlog
+- ✅ Accessible Find (Ctrl+F) in the active sheet or all sheets, optional notes/labels,
+  and atomic title replacement (Ctrl+H) across the chosen scope
 
 ## Phase 3 — Files, interop, platform ✅
 - ✅ Native `.ymind`, XMind (`.xmind` Zen/2020+ JSON and legacy XML), FreeMind/Freeplane, OPML,
@@ -47,7 +48,8 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ Settings › AI with connection test; live-tested against LM Studio (CUDA)
 
 ## Phase 5 — Testing & packaging 🟡
-- ✅ Unit/integration tests and 27 headless e2e tests (egui_kittest) incl. AI against a mock server,
+- ✅ Unit/integration tests and 43 headless app e2e tests plus an isolated German UI test
+  (egui_kittest), incl. AI against a mock server,
   live LM Studio integration test (skips when no server is reachable)
 - ✅ cargo-packager config: NSIS (Windows x64/ARM64), `.app` + DMG (macOS arm64/x64),
   `.deb` + AppImage (Ubuntu LTS); file associations for `.ymind/.xmind/.mm/.opml`
@@ -57,7 +59,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Phase 6 — XMind parity extras ⬜
 See [BACKLOG.md](BACKLOG.md): Pitch mode, Gantt view, Map Shot, Zone, equations, audio notes,
-attachments, password-protected files, print, cross-sheet find & replace, quick styles, custom themes, …
+attachments, password-protected files, print, quick styles, custom themes, …
 
 ## Remaining-work delivery plan (2026-10-16)
 
@@ -65,7 +67,8 @@ This roadmap expands Phase 6 and the unfinished release work into dependency-ord
 work packages. [BACKLOG.md](BACKLOG.md) remains the detailed requirement inventory;
 repeated entries there are delivered once by their owning package below.
 Existing phase checkmarks describe foundations, not full XMind parity.
-All packages below are planned, not started, unless a baseline is explicitly noted.
+Package descriptions below are acceptance targets, not completion claims; the
+"Immediate next work" section records delivered slices and current gaps.
 No application changes, account connections, publishing or release deployment are
 authorized by this planning document.
 
@@ -420,7 +423,42 @@ First slice implemented (Windows x64 source verification):
   Regression checks validate metadata/manifest and parse public content without
   yMind's private lossless payload. This verifies opening, not full visual fidelity.
 
-Continue R1 command-availability consistency and R2 preferences/bottom controls,
+- Next delivered slice: working General/Editor/AI/Cloud settings navigation with
+  scrolling; independent persisted topic-toolbar and connector-add-button switches;
+  initial canvas zoom including first-frame centering without unwanted auto-fit
+  for non-default values; opt-in last structure/theme for blank maps without
+  overriding explicitly chosen templates. Additional reference toolbar modes,
+  smart guides, calendars, sharing and editable shortcuts remain open.
+- Bottom controls: zoom presets 10–500%, current non-preset value and Fit; a
+  current-sheet statistics popover reuses title word counts and explicitly defines
+  Unicode scalar character counts. No selection/notes/labels statistics implied.
+- Summary parity slice: descendant-aware source-range selection frame, brace-to-topic
+  connector and split-map side handling, with independent topic editing/children.
+  Range-resize handles and mixed-side sibling range rules remain unverified.
+- Cross-sheet Find: optional all-sheet scope, sheet-aware navigation/filtering and
+  optional notes/labels. Replace All changes titles in one workbook transaction;
+  notes and labels are search-only and this is stated in the UI.
+- XMind public-format fidelity: explicit topic-shape/line classes, topic font/border/
+  alignment/decorations/connector styles, relationship/boundary colors and element
+  classes; legacy topic styles and self-closing property elements. Public JSON
+  round trips no longer rely on the private workbook payload. Themes/style references,
+  fixed widths, images/to-dos and legacy structural annotations still have gaps.
+  These new style mappings have format-contract coverage, not new native-XMind
+  visual verification.
+- User follow-ups: tracked individual relationship/boundary/Summary deletion as P1;
+  added Axel Wolters' credit and contact email to About in EN/DE.
+- Integrated verification: `cargo xtask ci` passes with all workspace tests,
+  formatting and warning-free clippy, including 43 main app e2e cases, the isolated
+  German UI case, 31 canvas tests and 19 IO tests. Earlier transient Windows
+  Application Control failures did not recur in this final run; no policy bypass.
+  Built the Windows x64 NSIS installer and a separate executable at
+  `target\x86_64-pc-windows-msvc\release\ymind.exe`, leaving the user's running
+  `target\release\ymind.exe` and open file dialog untouched. The running process
+  remains the previous build until the user closes it and launches the new binary.
+  Native macOS/Linux/ARM validation and signing/notarization credentials remain
+  external prerequisites.
+
+Continue R1 command-availability consistency and remaining R2 preferences/bottom controls,
 alongside reference verification. Sticker/Illustration/Pitch panes and persistent
 family/tab preferences are not implemented; assets/legend/custom groups/task-marker
 synchronization stay with R4/R7. No entire R0/R1/R2 package is complete.

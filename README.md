@@ -11,7 +11,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
-- Find (Ctrl+F) and replace (Ctrl+H) in the active sheet, with undoable replacement
+- Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
+  with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
+  including replacements across all sheets; notes and labels are search-only.
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
   and Style/Map tabs stay visible while their contents scroll independently.
@@ -21,6 +23,11 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   thin connectors inspired by the supplied visual references; existing saved themes
   and per-topic style overrides remain unchanged.
 - Light/dark theme following the system, English and German UI, personal settings
+- Settings categories for General, Editor, AI and Cloud. Editor preferences independently
+  control the topic toolbar and add buttons, set initial map zoom and optionally reuse
+  the last structure/theme for new blank maps without changing named templates.
+  The zoom menu offers 10–500% presets, the current value and Fit Map.
+  The topic-count menu shows current-sheet topic, word and Unicode character statistics.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
 - Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash

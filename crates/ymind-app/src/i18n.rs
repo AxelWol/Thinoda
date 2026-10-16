@@ -70,6 +70,42 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Editor", "Editor"),
+    ("Written by", "Geschrieben von"),
+    ("Contact", "Kontakt"),
+    ("All sheets", "Alle Blätter"),
+    ("Include labels", "Beschriftungen einbeziehen"),
+    ("Replaces topic titles only.", "Ersetzt nur Thementitel."),
+    ("Statistics", "Statistik"),
+    ("Current sheet", "Aktuelles Blatt"),
+    ("Characters", "Zeichen"),
+    (
+        "Topic titles only, including collapsed and floating topics.",
+        "Nur Thementitel, einschließlich eingeklappter und freier Themen.",
+    ),
+    (
+        "Words split at whitespace; characters count Unicode scalar values.",
+        "Wörter sind durch Leerraum getrennt; Zeichen zählen Unicode-Skalarwerte.",
+    ),
+    ("Zoom", "Zoom"),
+    ("Show topic toolbar", "Themen-Symbolleiste anzeigen"),
+    (
+        "Show topic add buttons",
+        "Thema-hinzufügen-Buttons anzeigen",
+    ),
+    ("Initial canvas zoom", "Anfänglicher Map-Zoom"),
+    (
+        "Applies to new and newly opened maps, not current views.",
+        "Gilt für neue und neu geöffnete Maps, nicht für aktuelle Ansichten.",
+    ),
+    (
+        "Reuse last structure for new blank maps",
+        "Letzte Struktur für neue leere Maps verwenden",
+    ),
+    (
+        "Reuse last theme for new blank maps",
+        "Letztes Design für neue leere Maps verwenden",
+    ),
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Italic", "Kursiv"),

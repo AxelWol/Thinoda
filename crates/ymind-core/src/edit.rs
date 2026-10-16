@@ -651,6 +651,40 @@ mod tests {
     }
 
     #[test]
+    fn summary_range_validation_and_sibling_edits_preserve_ownership() {
+        let (mut s, k) = sheet();
+        let before = s.clone();
+        assert_eq!(s.add_summary(&[], "No range"), Err(EditError::Empty));
+        assert_eq!(
+            s.add_summary(&[s.root], "Root"),
+            Err(EditError::RootNotAllowed)
+        );
+        assert_eq!(
+            s.add_summary(&[k[0], s.root], "Mixed"),
+            Err(EditError::NotSiblings)
+        );
+        assert_eq!(s, before);
+        // The existing range contract includes intermediate siblings.
+        let summary = s.add_summary(&[k[2], k[0]], "Conclusion").unwrap();
+        assert_eq!(s.summaries[0].range, ChildRange { start: 0, end: 2 });
+        assert_eq!(s.parent(summary), None);
+        let child = s.insert_child(summary, "Summary child").unwrap();
+        s.set_title(summary, "Edited conclusion").unwrap();
+        let inserted = s.insert_sibling_before(k[1], "Within range").unwrap();
+        assert_eq!(s.summaries[0].range, ChildRange { start: 0, end: 3 });
+        s.remove_topics(&[k[0], inserted]).unwrap();
+        assert_eq!(s.summaries[0].range, ChildRange { start: 0, end: 1 });
+        assert_eq!(s.parent(child), Some(summary));
+        assert_eq!(s.topic(summary).unwrap().title, "Edited conclusion");
+        s.validate().unwrap();
+        s.remove_topics(&[k[1], k[2]]).unwrap();
+        assert!(s.summaries.is_empty());
+        assert!(!s.contains(summary));
+        assert!(!s.contains(child));
+        s.validate().unwrap();
+    }
+
+    #[test]
     fn collapse_all() {
         let (mut s, k) = sheet();
         s.add_child(k[0], None, "c");
