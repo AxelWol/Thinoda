@@ -15,6 +15,8 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
   and Style/Map tabs stay visible while their contents scroll independently.
+  Style reflects the selected topic's resolved properties, including inherited/custom
+  colors with checked swatches and hex values; Map controls apply to the entire sheet.
 - New-map Clarity theme: plain bold center, colored main topics, pale subtopics and
   thin connectors inspired by the supplied visual references; existing saved themes
   and per-topic style overrides remain unchanged.

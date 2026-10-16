@@ -6,6 +6,10 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Style shows the selected topic's resolved colors, including inherited/custom
+  values outside the preset palette, with a checked swatch and hexadecimal readout.
+  Missing fill/border colors are explicit. Map shows the effective sheet background
+  and visible labels for its switches; its sheet-wide scope is clarified.
 - Fixed Map-panel theme cards overflowing outside the sidebar. Style/Map navigation
   now stays above the scroll area, with separate scroll positions for each tab.
 - Shared Format/Symbol sidebar selectors, with remembered Style/Map tab and preserved
@@ -20,6 +24,50 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - Active-sheet Find & Replace with Ctrl+H, accessible search navigation, and refresh on document/sheet changes.
 
 ## XMind parity (from the user guide)
+- P1 Summary ("Zusammenfassung") interaction/visual parity, clarified by the
+  supplied screenshot: a brace spans a range of sibling branches, including their
+  descendant extents, and connects to a separate editable summary topic outside
+  the range. This is a structural annotation, not AI text summarization and not a
+  boundary. The reference shows a range selection frame with handles and a selected
+  summary topic with contextual actions and a plus affordance.
+  Reuse the existing summary range/topic model, insertion action and layout rather
+  than introducing another content type. Verify range-handle behavior before
+  implementing resizing; the screenshot alone does not establish its exact rules.
+  Cover descendant-aware brace bounds, direction/layout changes, editing/children
+  on the summary topic, sibling insertion/reordering/deletion, undo/redo and
+  save/import/export fidelity.
+- P2 XMind SDK interoperability: add support for workflows using
+  [xmindltd/xmind-sdk-python](https://github.com/xmindltd/xmind-sdk-python).
+  Audit the SDK's supported file versions and API coverage against yMind's existing
+  Rust import/export before choosing an optional Python bridge or compatible
+  file-exchange integration. Keep the native editor independent of a Python runtime.
+  Add SDK-generated fixtures and bidirectional round-trip checks for topics,
+  hierarchy, sheets, styles, markers, notes, links and relationships; document
+  unsupported content and fidelity limits explicitly. Verify maintenance/runtime
+  compatibility and preserve the SDK's MIT notices if code is redistributed.
+- P2 Review additional XMind ecosystem sources for interoperability, typography,
+  authoring and companion-app workflows (research references, not adopted dependencies):
+  - [xmindltd/xmind-generator](https://github.com/xmindltd/xmind-generator):
+    evaluate JavaScript-generated `.xmind` fixtures and round-trip compatibility
+    with yMind import/export; compare supported content and style fidelity.
+  - [xmindltd/nevermind](https://github.com/xmindltd/nevermind):
+    assess the font's license/redistribution terms, script coverage, readability,
+    fallback behavior and cross-platform rendering before considering optional use.
+  - [xmindltd/xmindmark](https://github.com/xmindltd/xmindmark):
+    assess the markup format and tools for text-based map authoring, import/export
+    and interoperability with existing Markdown/outline workflows.
+  - [xmindltd/xmind-cli](https://github.com/xmindltd/xmind-cli):
+    inventory commands and supported formats; evaluate useful yMind CLI parity
+    and conversion fixtures without assuming matching behavior.
+  - [xmindltd/xmind-embed-viewer](https://github.com/xmindltd/xmind-embed-viewer):
+    investigate embedding/export options for future companion/web apps, including
+    whether local/offline viewing is supported versus a hosted sharing dependency.
+    Keep document uploads and third-party transmission explicitly user-controlled.
+  - [Xmind Ltd. GitHub organization](https://github.com/xmindltd):
+    track related projects and specifications as additional research sources.
+  Verify each repository's current maintenance, license, runtime requirements and
+  actual supported file versions before integration. Assign implementation to the
+  relevant interoperability, typography, sharing or companion package after review.
 - P1 Print (Ctrl+P) with page setup and fit-to-page
   - Reference dialog: left live page preview with page count; right scrollable,
     grouped settings; fixed Cancel/Print footer.

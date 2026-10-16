@@ -1360,6 +1360,13 @@ impl YMindApp {
         };
         let resolved = ymind_core::theme::resolve_style(sheet, primary, d.view.dark);
         let mut change: Option<StyleChange> = None;
+        ui.label(RichText::new(&topic.title).strong());
+        if sel.len() > 1 {
+            widgets::caption(
+                ui,
+                t("Showing the primary topic; edits apply to all selected topics."),
+            );
+        }
 
         widgets::section(ui, t("Structure"), true, |ui| {
             let cur = topic.structure;
@@ -1407,6 +1414,9 @@ impl YMindApp {
                 change = Some(("Shape", Box::new(move |st| st.shape = Some(shape))));
             }
             widgets::property_row(ui, t("Fill"), |ui| {
+                if resolved.fill.is_none() {
+                    ui.label(t("None"));
+                }
                 if let Some(c) =
                     widgets::color_swatches(ui, &SWATCHES, resolved.fill.map(from_color))
                 {
@@ -1414,6 +1424,9 @@ impl YMindApp {
                 }
             });
             widgets::property_row(ui, t("Border"), |ui| {
+                if resolved.border_color.is_none() {
+                    ui.label(t("None"));
+                }
                 if let Some(c) =
                     widgets::color_swatches(ui, &SWATCHES, resolved.border_color.map(from_color))
                 {
@@ -1448,28 +1461,33 @@ impl YMindApp {
                 r
             });
             ui.horizontal(|ui| {
-                let toggles: [(&str, bool, StyleToggle); 4] = [
-                    (icons::BOLD, resolved.bold, |s, v| s.bold = Some(v)),
-                    (icons::ITALIC, resolved.italic, |s, v| s.italic = Some(v)),
-                    (icons::UNDERLINE, resolved.underline, |s, v| {
+                let toggles: [(&str, &str, bool, StyleToggle); 4] = [
+                    (icons::BOLD, "Bold", resolved.bold, |s, v| s.bold = Some(v)),
+                    (icons::ITALIC, "Italic", resolved.italic, |s, v| {
+                        s.italic = Some(v)
+                    }),
+                    (icons::UNDERLINE, "Underline", resolved.underline, |s, v| {
                         s.underline = Some(v)
                     }),
-                    (icons::STRIKE, resolved.strikethrough, |s, v| {
-                        s.strikethrough = Some(v)
-                    }),
+                    (
+                        icons::STRIKE,
+                        "Strikethrough",
+                        resolved.strikethrough,
+                        |s, v| s.strikethrough = Some(v),
+                    ),
                 ];
-                for (icon, on, set) in toggles {
-                    if widgets::icon_button(ui, icon, icon, on).clicked() {
+                for (icon, label, on, set) in toggles {
+                    if widgets::icon_button(ui, icon, t(label), on).clicked() {
                         change = Some(("Text Style", Box::new(move |st| set(st, !on))));
                     }
                 }
                 widgets::vdivider(ui);
-                for (a, icon) in [
-                    (TextAlign::Left, "⬅"),
-                    (TextAlign::Center, "⬌"),
-                    (TextAlign::Right, "➡"),
+                for (a, icon, label) in [
+                    (TextAlign::Left, "⬅", "Align Left"),
+                    (TextAlign::Center, "⬌", "Align Center"),
+                    (TextAlign::Right, "➡", "Align Right"),
                 ] {
-                    if widgets::icon_button(ui, icon, t("Align"), resolved.align == a).clicked() {
+                    if widgets::icon_button(ui, icon, t(label), resolved.align == a).clicked() {
                         change = Some(("Align", Box::new(move |st| st.align = Some(a))));
                     }
                 }
@@ -1598,6 +1616,7 @@ impl YMindApp {
         let mut ts = sheet.theme.clone();
         let structure = sheet.structure;
         let before = ts.clone();
+        widgets::caption(ui, t("Map settings apply to the entire sheet."));
 
         widgets::section(ui, t("Structure"), true, |ui| {
             let mut chosen = None;
@@ -1706,9 +1725,15 @@ impl YMindApp {
                     })
                     .response
             });
-            widgets::toggle(ui, &mut ts.rainbow, t("Rainbow Branches"));
-            widgets::toggle(ui, &mut ts.tapered_lines, t("Tapered Lines"));
-            widgets::toggle(ui, &mut ts.balanced, t("Balanced Map"));
+            widgets::property_field(ui, t("Rainbow Branches"), |ui| {
+                widgets::toggle(ui, &mut ts.rainbow, t("Rainbow Branches"))
+            });
+            widgets::property_field(ui, t("Tapered Lines"), |ui| {
+                widgets::toggle(ui, &mut ts.tapered_lines, t("Tapered Lines"))
+            });
+            widgets::property_field(ui, t("Balanced Map"), |ui| {
+                widgets::toggle(ui, &mut ts.balanced, t("Balanced Map"))
+            });
         });
 
         widgets::section(ui, t("Background"), true, |ui| {
@@ -1720,7 +1745,8 @@ impl YMindApp {
                     ts.background = None;
                 }
             });
-            if let Some(c) = widgets::color_swatches(ui, &SWATCHES, ts.background.map(from_color)) {
+            let background = Theme::builtin(&ts.theme_id).background(&ts, d.view.dark);
+            if let Some(c) = widgets::color_swatches(ui, &SWATCHES, Some(from_color(background))) {
                 ts.background = Some(to_color(c));
             }
         });

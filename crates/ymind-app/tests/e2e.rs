@@ -51,6 +51,169 @@ fn root_title(wb: &Workbook) -> String {
 }
 
 #[test]
+fn style_sidebar_tracks_selected_topic_and_undo_without_changing_properties() {
+    use egui::accesskit::Toggled;
+    use ymind_core::{geometry::Color, model::TextAlign};
+    let mut app = YMindApp::headless();
+    let d = app.doc_mut().unwrap();
+    let root = d.doc.sheet().root;
+    let child = d.doc.sheet().children(root)[1];
+    d.doc
+        .edit_sheet("Custom style", |s| {
+            s.update_style(&[child], |st| {
+                st.fill = Color::from_hex("#123456");
+                st.text_color = Color::from_hex("#ABCDEF");
+                st.border_color = Color::from_hex("#234567");
+                st.line_color = Color::from_hex("#345678");
+                st.font_size = Some(27.0);
+                st.italic = Some(true);
+                st.align = Some(TextAlign::Right);
+            })
+        })
+        .unwrap();
+    d.view.select_only(child);
+    let before = d.doc.state_id();
+    let mut h = harness(app);
+    let rect = {
+        let d = h.state().doc().unwrap();
+        d.view.selected_topic_rect(&d.doc).unwrap()
+    };
+    for hex in ["#123456", "#ABCDEF", "#234567", "#345678"] {
+        let rect = h.get_by_role_and_label(Role::ColorWell, hex).rect();
+        assert!(rect.min.x >= h.state().doc().unwrap().view.canvas_rect().right());
+        assert!(rect.max.x <= 1280.0);
+        assert_eq!(
+            h.get_by_role_and_label(Role::ColorWell, hex)
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+    }
+    assert_eq!(
+        h.get_by_label("Italic").accesskit_node().toggled(),
+        Some(Toggled::True)
+    );
+    assert_eq!(
+        h.get_by_label("Align Right").accesskit_node().toggled(),
+        Some(Toggled::True)
+    );
+    assert_eq!(h.get_by_label("Font Size").value().as_deref(), Some("27.0"));
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), before);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::SelectRoot));
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_label("Bold").accesskit_node().toggled(),
+        Some(Toggled::True)
+    );
+    assert_eq!(
+        h.get_by_label("Italic").accesskit_node().toggled(),
+        Some(Toggled::False)
+    );
+    assert!(
+        h.query_by_role_and_label(Role::ColorWell, "#123456")
+            .is_none()
+    );
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::Label, "None").count(),
+        2
+    );
+    h.event(egui::Event::PointerMoved(rect.center()));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: rect.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.primary(), Some(child));
+    assert_eq!(
+        h.get_by_role_and_label(Role::ColorWell, "#123456")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    h.run_steps(3);
+    assert!(
+        h.query_by_role_and_label(Role::ColorWell, "#123456")
+            .is_none()
+    );
+    let d = h.state().doc().unwrap();
+    let fill = ymind_core::theme::resolve_style(d.doc.sheet(), child, d.view.dark)
+        .fill
+        .unwrap();
+    let hex = format!("#{:02X}{:02X}{:02X}", fill.r, fill.g, fill.b);
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::ColorWell, &hex)
+            .next()
+            .unwrap()
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+}
+
+#[test]
+fn map_sidebar_shows_sheet_values_not_selected_topic_overrides() {
+    use egui::accesskit::Toggled;
+    let mut app = YMindApp::headless();
+    let d = app.doc_mut().unwrap();
+    d.doc
+        .edit_sheet("Map settings", |s| {
+            s.theme.background = ymind_core::geometry::Color::from_hex("#123456");
+            s.theme.rainbow = false;
+            s.theme.balanced = true;
+            Ok(())
+        })
+        .unwrap();
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(3);
+    h.get_by_label("Map settings apply to the entire sheet.");
+    assert_eq!(
+        h.get_by_role_and_label(Role::ColorWell, "#123456")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::Switch, "Rainbow Branches")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::False)
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::Switch, "Balanced Map")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    h.run_steps(3);
+    assert!(
+        h.query_by_role_and_label(Role::ColorWell, "#123456")
+            .is_none()
+    );
+    let d = h.state().doc().unwrap();
+    let ts = &d.doc.sheet().theme;
+    let bg = ymind_core::theme::Theme::builtin(&ts.theme_id).background(ts, d.view.dark);
+    let hex = format!("#{:02X}{:02X}{:02X}", bg.r, bg.g, bg.b);
+    assert_eq!(
+        h.get_by_role_and_label(Role::ColorWell, &hex)
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+}
+
+#[test]
 fn map_panel_themes_fit_and_can_be_selected() {
     let mut h = harness(YMindApp::headless());
     h.get_by_role_and_label(Role::Tab, "Map").click();

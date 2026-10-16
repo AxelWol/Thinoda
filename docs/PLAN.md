@@ -405,6 +405,13 @@ First slice implemented (Windows x64 source verification):
   hide/reopen and multi-topic marker replacement/removal/undo.
 - Rebuilt the Windows x64 release executable and NSIS installer. This slice has
   headless UI verification; native verification of the new binary remains.
+- Follow-up property inspector fix: resolved topic colors outside the preset palette
+  now have selected swatches and hexadecimal readouts, absent fill/border values are
+  explicit, and Map shows the effective sheet background and labeled switches.
+  Selection/pointer/undo regressions pass (34 main e2e cases, one German-sidebar
+  case, 14 UI unit tests). Formatting and workspace clippy pass; the follow-up full
+  CI run was blocked by Windows Application Control on the app's empty binary test
+  executable. Targeted affected suites and the Windows x64 package build pass.
 
 Continue R1 command-availability consistency and R2 preferences/bottom controls,
 alongside reference verification. Sticker/Illustration/Pitch panes and persistent
