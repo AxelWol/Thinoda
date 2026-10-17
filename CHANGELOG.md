@@ -11,6 +11,14 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.1.2](https://github.com/AxelWol/Thinoda/compare/v0.1.1...v0.1.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **about:** open contact email and project links ([c3fd177](https://github.com/AxelWol/Thinoda/commit/c3fd177c440c2822744a38c663e79809ca44e4a5))
+* **about:** open contact email and project links from the About dialog ([10392be](https://github.com/AxelWol/Thinoda/commit/10392beacacaa7c32794783f1fbc523dfda110fe))
+
 ## [0.1.1](https://github.com/AxelWol/Thinoda/compare/v0.1.0...v0.1.1) (2026-10-17)
 
 
