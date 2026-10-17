@@ -11,6 +11,19 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.1.1](https://github.com/AxelWol/Thinoda/compare/v0.1.0...v0.1.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **linux:** declare all runtime libraries in the .deb package ([25ceea1](https://github.com/AxelWol/Thinoda/commit/25ceea1b006790a530bb2cf3e9c4155739e87513))
+* **linux:** declare all runtime libraries in the .deb package ([87fb0db](https://github.com/AxelWol/Thinoda/commit/87fb0dbbcff446b34e97dc83ee41814bdbcbdb89))
+
+
+### Documentation
+
+* **readme:** Ubuntu installation instructions ([ecbc7a8](https://github.com/AxelWol/Thinoda/commit/ecbc7a88ebaccdf95971415c871fa2827b394fe1))
+
 ## [0.1.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.1.0) (2026-10-17)
 
 First public version of Thinoda — *Give your thoughts shape.*
