@@ -28,6 +28,18 @@ installers are not code-signed or notarized yet. Windows SmartScreen and macOS
 Gatekeeper may therefore warn on first launch. On macOS, right-click the app and
 choose **Open**.
 
+### Installing on Ubuntu
+Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`).
+
+```bash
+# Recommended: .deb (menu entry, icon, clean uninstall with `sudo apt remove thinoda`)
+sudo apt install ./thinoda_<version>_amd64-x86_64-unknown-linux-gnu.deb
+
+# Portable alternative: AppImage (needs FUSE 2: libfuse2t64 on 24.04+, libfuse2 on 22.04)
+chmod +x thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
+./thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
+```
+
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
