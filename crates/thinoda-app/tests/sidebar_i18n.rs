@@ -72,6 +72,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.state_mut().dialogs.settings = false;
     h.state_mut().dialogs.about = true;
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Image, "Thinoda-Logo");
     h.get_by_label("Gib deinen Gedanken Form.");
     h.get_by_label("Geschrieben von Axel Wolters");
     h.get_by_role_and_label(Role::Link, "Kontakt: axelwolters@hotmail.com");

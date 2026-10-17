@@ -2812,8 +2812,15 @@ impl ThinodaApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.heading(RichText::new("Thinoda").size(26.0).strong());
-                    ui.label(RichText::new(t("Give your thoughts shape.")).italics());
+                    ui.horizontal(|ui| {
+                        crate::brand::logo(ui, 72.0);
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.heading(RichText::new("Thinoda").size(26.0).strong());
+                            ui.label(RichText::new(t(crate::brand::TAGLINE)).italics());
+                        });
+                    });
+                    ui.add_space(6.0);
                     ui.label(t("A fast, open mind mapping app."));
                     ui.label(format!("{} Axel Wolters", t("Written by")));
                     ui.hyperlink_to(

@@ -98,7 +98,13 @@ impl ThinodaApp {
         let state = &mut self.dialogs.guide;
         let response = egui::Modal::new(egui::Id::unique("user_guide")).show(ctx, |ui| {
             ui.set_width(620.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
-            ui.heading(t("User Guide"));
+            ui.horizontal(|ui| {
+                crate::brand::logo(ui, 36.0);
+                ui.vertical(|ui| {
+                    ui.heading(t("User Guide"));
+                    ui.weak(format!("Thinoda · {}", t(crate::brand::TAGLINE)));
+                });
+            });
             let previous = state.section;
             ui.horizontal_wrapped(|ui| {
                 egui::ComboBox::from_id_salt("guide_section")

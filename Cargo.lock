@@ -3627,6 +3627,100 @@ dependencies = [
 ]
 
 [[package]]
+name = "thinoda-ai"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ureq",
+]
+
+[[package]]
+name = "thinoda-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eframe",
+ "egui",
+ "egui_kittest",
+ "env_logger",
+ "image",
+ "log",
+ "rfd",
+ "sys-locale",
+ "tempfile",
+ "thinoda-ai",
+ "thinoda-canvas",
+ "thinoda-core",
+ "thinoda-io",
+ "thinoda-platform",
+ "thinoda-ui",
+ "uuid",
+ "winresource",
+]
+
+[[package]]
+name = "thinoda-canvas"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "thinoda-core",
+]
+
+[[package]]
+name = "thinoda-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinoda-io"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "log",
+ "quick-xml 0.42.0",
+ "resvg",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thinoda-core",
+ "thiserror 2.0.21",
+ "zip",
+]
+
+[[package]]
+name = "thinoda-platform"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thinoda-core",
+ "thiserror 2.0.21",
+ "toml",
+ "uuid",
+]
+
+[[package]]
+name = "thinoda-ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "fontdb",
+ "serde",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4875,100 +4969,6 @@ dependencies = [
  "anyhow",
  "image",
  "resvg",
-]
-
-[[package]]
-name = "thinoda-ai"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "ureq",
-]
-
-[[package]]
-name = "thinoda-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "eframe",
- "egui",
- "egui_kittest",
- "env_logger",
- "image",
- "log",
- "rfd",
- "sys-locale",
- "tempfile",
- "uuid",
- "winresource",
- "thinoda-ai",
- "thinoda-canvas",
- "thinoda-core",
- "thinoda-io",
- "thinoda-platform",
- "thinoda-ui",
-]
-
-[[package]]
-name = "thinoda-canvas"
-version = "0.1.0"
-dependencies = [
- "egui",
- "egui_kittest",
- "thinoda-core",
-]
-
-[[package]]
-name = "thinoda-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "thinoda-io"
-version = "0.1.0"
-dependencies = [
- "image",
- "log",
- "quick-xml 0.42.0",
- "resvg",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.21",
- "thinoda-core",
- "zip",
-]
-
-[[package]]
-name = "thinoda-platform"
-version = "0.1.0"
-dependencies = [
- "directories",
- "log",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "toml",
- "uuid",
- "thinoda-core",
-]
-
-[[package]]
-name = "thinoda-ui"
-version = "0.1.0"
-dependencies = [
- "egui",
- "egui_kittest",
- "fontdb",
- "serde",
 ]
 
 [[package]]

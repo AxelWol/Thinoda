@@ -57,7 +57,20 @@ description = "Give your thoughts shape. Fast, cross-platform mind mapping"
 long-description = "Give your thoughts shape. Thinoda is a free, GPU-accelerated mind mapping app with XMind, FreeMind, OPML and Markdown import/export, crash-safe autosave and an optional local AI assistant."
 out-dir = "../../target/packages"
 license-file = "../../LICENSE.md"
-icons = ["../../assets/icon.ico", "../../assets/icon-512.png", "../../assets/icon-256.png", "../../assets/icon-128.png", "../../assets/icon-32.png"]
+# icon.ico: Windows (16–256 px), icon.icns: macOS (16 pt–512 pt @2x), PNGs: Linux hicolor sizes.
+# Regenerate with `cargo xtask icons`.
+icons = [
+    "../../assets/icon.ico",
+    "../../assets/icon.icns",
+    "../../assets/icon-512.png",
+    "../../assets/icon-256.png",
+    "../../assets/icon-128.png",
+    "../../assets/icon-64.png",
+    "../../assets/icon-48.png",
+    "../../assets/icon-32.png",
+    "../../assets/icon-24.png",
+    "../../assets/icon-16.png",
+]
 binaries = [{ path = "thinoda", main = true }]
 
 [[package.metadata.packager.file-associations]]

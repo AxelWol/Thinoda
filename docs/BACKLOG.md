@@ -6,6 +6,7 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- New Thinoda logo (a "T" grown from mind-map nodes whose stem resolves into a solid shape). `cargo xtask icons` generates standard, small-size and Apple-grid variants: `icon.ico` (10 frames, 16–256 px), `icon.icns` (all Retina slots up to 1024 px), Linux hicolor PNGs (16–512 px) and the macOS Dock runtime icon. The logo is shown in the About dialog, User Guide and README.
 - Renamed the app to **Thinoda** ("Give your thoughts shape.") across all crates,
   binaries, file extension (`.thinoda`), bundle identifiers, environment variables,
   installers, workflows, documentation and the GitHub repository. The tagline appears
