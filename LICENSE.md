@@ -2,17 +2,17 @@
 
 Copyright © 2026 Axel Wolters
 
-yMind is licensed under the **European Union Public Licence, version 1.2
+Thinoda is licensed under the **European Union Public Licence, version 1.2
 (EUPL-1.2)**; SPDX identifier `EUPL-1.2`. The full licence text follows below.
 It is officially available in all 23 EU languages at
 <https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12>.
 
 ## What this means (informal summary, not legal advice)
 
-- **Use freely:** you may use yMind for any purpose, privately or commercially.
+- **Use freely:** you may use Thinoda for any purpose, privately or commercially.
 - **Study, change and share:** you may read, modify and redistribute the source
   code and binaries.
-- **Copyleft:** if you distribute yMind or a modified version (a "Derivative
+- **Copyleft:** if you distribute Thinoda or a modified version (a "Derivative
   Work") — or make it available to others over a network — you must provide
   the source code under the EUPL-1.2 (or a compatible licence listed in the
   EUPL appendix, such as GPL, LGPL, MPL-2.0 or CeCILL, when combining works).

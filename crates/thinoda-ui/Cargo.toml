@@ -1,0 +1,16 @@
+[package]
+name = "thinoda-ui"
+description = "Reusable modern egui design system for Thinoda and companion apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+egui = { workspace = true }
+serde = { workspace = true }
+fontdb = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }

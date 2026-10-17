@@ -1,4 +1,4 @@
-# yMind backlog
+# Thinoda backlog
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
 Execution order, dependencies, acceptance criteria and release gates are defined in
@@ -6,6 +6,10 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Renamed the app to **Thinoda** ("Give your thoughts shape.") across all crates,
+  binaries, file extension (`.thinoda`), bundle identifiers, environment variables,
+  installers, workflows, documentation and the GitHub repository. The tagline appears
+  in the About dialog (EN/DE), README, CLI help and package metadata.
 - Publication readiness: added CHANGELOG.md (Keep a Changelog + release-please
   Conventional-Commit semantic versioning), CODE_OF_CONDUCT.md (contribution
   guide and rules of engagement), LICENSE.md (EUPL-1.2 with informal summary;
@@ -18,7 +22,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   installed a process-global hook that captured other tests' panics; it now runs
   in an isolated child process, and single-instance re-election tolerates a
   short lock hand-off window.
-- Windows executable embeds the yMind icon and version info (Explorer/taskbar).
+- Windows executable embeds the Thinoda icon and version info (Explorer/taskbar).
 - The Outliner now surfaces controls for adding siblings/children, editing topics,
   moving and reparenting topics, deleting a subtree or keeping children, with
   availability tied to the shared canvas actions. Edits remain undoable. EN/DE
@@ -36,7 +40,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   rejected explicitly before decompression without allocating a large fixture.
   This is bounded regression coverage, not coverage-guided fuzzing or proof that
   arbitrary inputs are safe; longer campaigns and dedicated fuzz targets stay open.
-- CPU layout benchmark: `ymind-core` release example measures 10,000-topic balanced/
+- CPU layout benchmark: `thinoda-core` release example measures 10,000-topic balanced/
   wide maps with JSON p50/p95/max layout, undoable leaf rename and undo latency.
   Optional p95 budgets fail explicitly after preserving the report; CLI input
   bounds and nearest-rank statistics are covered. CI is configured to retain
@@ -109,7 +113,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   returns the theme's level-specific defaults. Buffered numeric drafts commit
   once, reject malformed/nonfinite/out-of-range values visibly and cancel with
   Escape. Confirming sidebar fields consumes Enter rather than inserting topics.
-  Native/unchanged yMind XMind snapshots preserve inheritance; public JSON/XML
+  Native/unchanged Thinoda XMind snapshots preserve inheritance; public JSON/XML
   exports include effective widths. Custom-theme authoring is delivered above.
 - Real font-family support: Map > Theme > Global Font and Style > Text > Font
   Family select local installed faces (including user-installed fonts); Auto
@@ -125,7 +129,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   (EN/DE). Floating roots move freely over topics without attaching; attached
   topics still reparent/reorder, but blank-space detachment requires switching it
   off. Mixed floating/attached moves report an error without partial changes.
-  Defaults off for old maps; native and unchanged yMind XMind snapshots preserve
+  Defaults off for old maps; native and unchanged Thinoda XMind snapshots preserve
   the setting. Pointer/zoom, undo, sheet isolation, stale-drag cancellation and
   German controls are covered. Separate Topic Overlap/collision behavior and
   Branch Free-Positioning remain open.
@@ -181,7 +185,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   bounds, all-layout rich reopening and atomic undo/redo are covered in EN/DE.
   Popup keys no longer insert/change topics in the underlying map or outliner;
   outliner leaf placeholders are noninteractive and branch controls have names.
-- Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets atomically,
+- Tools > Merge Map Files appends complete `.thinoda`/`.xmind` sheets atomically,
   preserving source files, destination metadata and all current model fields.
   Invalid/missing inputs abort before merging; one undo removes all appended
   sheets. Public XMind boundary/Summary/relationship IDs are now globally unique
@@ -205,12 +209,12 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   without mutation if that membership would become noncontiguous.
 - Complete-sheet Copy/Paste through a versioned OS text clipboard payload, including
   floating topics, styles, notes and nested structural annotations. Works across
-  yMind instances; canvas Paste recognizes the payload, while Paste Sheet explicitly
+  Thinoda instances; canvas Paste recognizes the payload, while Paste Sheet explicitly
   rejects unrelated/invalid data. Payloads are validated and capped at 16 MiB;
   late responses, document switches and empty clipboard responses are handled.
-  Pasting adds a sheet in one undo step. This is yMind clipboard interoperability,
+  Pasting adds a sheet in one undo step. This is Thinoda clipboard interoperability,
   not compatibility with XMind's private clipboard format.
-- Save Sheet As writes only the active sheet to `.ymind` or `.xmind`, retaining
+- Save Sheet As writes only the active sheet to `.thinoda` or `.xmind`, retaining
   workbook metadata without retargeting or marking the source document saved.
   The source path and its canonical aliases are protected from accidental overwrite.
   Sheet menu, tab context menu and palette expose these actions with EN/DE labels;
@@ -242,7 +246,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   source range including visible descendants, and follow left/right split-map sides.
   Editing/children, sibling edits and undo/redo are covered. Range resizing and
   mixed-side ranges still need verified reference semantics.
-- About yMind includes Axel Wolters' author credit and contact email in EN/DE.
+- About Thinoda includes Axel Wolters' author credit and contact email in EN/DE.
 - Fixed XMind rejecting exports: archive metadata now uses a creator object and
   data-structure version 2, matching XMind's expected format. Confirmed the old
   failure and successful corrected-file opening in the installed Windows XMind app.
@@ -310,7 +314,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   save/import/export fidelity.
 - P2 XMind SDK interoperability: add support for workflows using
   [xmindltd/xmind-sdk-python](https://github.com/xmindltd/xmind-sdk-python).
-  Audit the SDK's supported file versions and API coverage against yMind's existing
+  Audit the SDK's supported file versions and API coverage against Thinoda's existing
   Rust import/export before choosing an optional Python bridge or compatible
   file-exchange integration. Keep the native editor independent of a Python runtime.
   Add SDK-generated fixtures and bidirectional round-trip checks for topics,
@@ -321,7 +325,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   authoring and companion-app workflows (research references, not adopted dependencies):
   - [xmindltd/xmind-generator](https://github.com/xmindltd/xmind-generator):
     evaluate JavaScript-generated `.xmind` fixtures and round-trip compatibility
-    with yMind import/export; compare supported content and style fidelity.
+    with Thinoda import/export; compare supported content and style fidelity.
   - [xmindltd/nevermind](https://github.com/xmindltd/nevermind):
     assess the font's license/redistribution terms, script coverage, readability,
     fallback behavior and cross-platform rendering before considering optional use.
@@ -329,7 +333,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
     assess the markup format and tools for text-based map authoring, import/export
     and interoperability with existing Markdown/outline workflows.
   - [xmindltd/xmind-cli](https://github.com/xmindltd/xmind-cli):
-    inventory commands and supported formats; evaluate useful yMind CLI parity
+    inventory commands and supported formats; evaluate useful Thinoda CLI parity
     and conversion fixtures without assuming matching behavior.
   - [xmindltd/xmind-embed-viewer](https://github.com/xmindltd/xmind-embed-viewer):
     investigate embedding/export options for future companion/web apps, including
@@ -349,7 +353,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   - Background-color and monochrome toggles, reflected in the preview and output.
     The displayed paper size is a selection, not a required default.
   - XMind's attribution toggle is product branding, not a requirement to print its
-    name or add a watermark to yMind. Decide any yMind attribution separately.
+    name or add a watermark to Thinoda. Decide any Thinoda attribution separately.
   - Cover no printer, unavailable printer, driver capability changes, invalid copy
     counts, multi-page navigation, cancellation and spool errors; never send a real
     print job as an automated smoke check without explicit user approval.
@@ -360,7 +364,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 - P2 Zone (Ctrl+Alt+Z) and callouts editing UI polish
 - P2 Gantt view for to-dos with start/end dates, progress and export
 - P2 Equations (LaTeX → rendered topic content)
-- P2 Attachments and pictures embedded in the `.ymind`/`.xmind` package
+- P2 Attachments and pictures embedded in the `.thinoda`/`.xmind` package
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
 - Delivered custom theme editor, quick-style libraries and actual font rendering
   (see Recently completed). Editable imported XMind theme/style registries and
@@ -388,7 +392,7 @@ are not lists of wholly missing features; audit and reuse existing implementatio
     exact reference previews still remain. Reuse existing theme settings and
     verify partially visible controls.
   - Generate previews from original sample maps, not copied XMind thumbnails;
-    commercial badges do not establish yMind feature restrictions. Test every preset,
+    commercial badges do not establish Thinoda feature restrictions. Test every preset,
     undo/redo, saved-file round trips, large/deep trees and keyboard popup navigation.
 - P3 Audio notes (record/play)
 - P3 Customizable shortcuts (Preferences > Shortcuts); detailed requirements below.
@@ -431,7 +435,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   windows. Verify submenu contents and multi-window behavior before implementation.
 - P2 Help inventory: News, User guide, Feedback, Update and restart, Keyboard shortcuts,
   Quick start and About. Sign-in and Redeem gift card are observed XMind account/
-  commerce actions, not requirements to add accounts or monetization to yMind.
+  commerce actions, not requirements to add accounts or monetization to Thinoda.
   Never trigger updates/restarts, feedback transmission or authentication merely
   by reproducing the menu.
 - P1 Command consistency: menus, context menus, toolbars, palette and shortcuts must
@@ -439,7 +443,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   Cover keyboard submenu traversal, Escape, focus restoration, viewport-edge
   placement/scrolling and EN/DE labels in both appearances.
 - P2 Reference shortcut audit: record Windows mappings without silently replacing
-  yMind bindings. The screenshots show Ctrl+H for Home, Ctrl+F for Find & Replace,
+  Thinoda bindings. The screenshots show Ctrl+H for Home, Ctrl+F for Find & Replace,
   Ctrl+Shift+P for Settings, Ctrl+R for the central topic, Ctrl+Shift+R for Relationship,
   Ctrl+Shift+B for Boundary, Ctrl+Shift+N for Note, Ctrl+Shift+L for Label,
   Ctrl+Shift+I for Local image and Ctrl+Alt+N for New sheet.
@@ -448,7 +452,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   compatibility-keymap decision.
 - P2 Bottom-left sheet-tab context menu: Rename, Copy, Paste, Duplicate, Delete,
   New sheet and Save sheet as a separate file are implemented, with last-sheet
-  protection and undo for document changes. Copy uses a validated, versioned yMind
+  protection and undo for document changes. Copy uses a validated, versioned Thinoda
   OS text payload; separate saving retains all current sheet-model fields, not other
   sheets. Future embedded assets need integration when their storage contract exists.
   Reference separator polish, native keyboard access and viewport-edge placement
@@ -546,7 +550,7 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   sheet (implemented with fixed Ctrl+PageUp/Ctrl+PageDown) and copy/paste/reset
   style (implemented with fixed Ctrl+Alt+C/V; Reset has no shortcut) now exist as
   commands but still need an editable-binding row in Preferences > Shortcuts.
-  The screenshot assigns Ctrl+H to Home, conflicting with yMind's existing Find &
+  The screenshot assigns Ctrl+H to Home, conflicting with Thinoda's existing Find &
   Replace binding; preserve current behavior until an explicit keymap choice is made.
 - P2 Tests: settings persistence/migration, immediate application across open tabs,
   keyboard navigation, EN/DE layout, light/dark contrast, calendar exceptions and
@@ -578,7 +582,7 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   cancellation, undo/redo, zoom/pan coordinates and viewport-edge auto-pan, plus
   a keyboard alternative. Official Topic/Floating Topic guides confirm dragging
   regular topics to blank space and floating topics back into branches; existing
-  yMind gestures are retained, with the optional Flexible Floating Topics setting
+  Thinoda gestures are retained, with the optional Flexible Floating Topics setting
   now controlling free floating placement and conversion (see Recently completed).
   Sources: https://xmind.com/user-guide/topic-editing-new ,
   https://xmind.com/user-guide/floating-topic
@@ -606,7 +610,7 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   topics in layout order, excluding the opposite endpoint. Style provides title,
   endpoint, color and numeric control editing plus Reset curve. Shared geometry
   feeds layout/export; hit testing follows the rendered segments at different
-  zoom/pan settings, including large curves. Native files and unchanged yMind XMind
+  zoom/pan settings, including large curves. Native files and unchanged Thinoda XMind
   exports preserve routing through the validated snapshot. Public XMind control-point
   interchange and actual native keyboard/accessibility QA remain open.
 - Implemented relationship creation parity from the official Floating Topic guide:
@@ -638,14 +642,14 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   Local image and Equation. Reuse existing note/task/link actions. Verify Link
   submenu destinations rather than guessing; implement missing content types before
   exposing enabled actions. Use licensed/original sticker and illustration assets.
-  XMind's "PRO" badges are product-specific and do not establish yMind licensing.
+  XMind's "PRO" badges are product-specific and do not establish Thinoda licensing.
   Cover menu accessibility, dismissal/focus, insertion undo and packaged-file round trips.
 - P1 Right-sidebar navigation: two adjacent buttons at the top-right of the canvas.
   The smiley selects the Symbol / Sticker / Illustration panel family; the panel
   icon selects the Style ("Stil") / Pitch / Map family. Show the active family
   and active tab distinctly, using one shared sidebar region rather than six
   unrelated panes. Preserve topic selection while switching families/tabs.
-  yMind retains its existing repeated-click hide/reopen behavior and remembers the
+  Thinoda retains its existing repeated-click hide/reopen behavior and remembers the
   Style/Map tab within the session; switching families shows the target immediately.
   Reference parity for these gestures still needs verification. Symbol content is
   implemented; Sticker/Illustration/Pitch and their tab navigation remain.
@@ -669,7 +673,7 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 - P2 Specify per-group replacement versus multiple-symbol behavior, removal,
   custom-group persistence and legend naming. Keep task/progress symbols consistent
   with to-do data; cover undo/redo, selection changes, no-selection disabling and
-  `.ymind`/`.xmind` round trips. The screenshot does not establish these semantics.
+  `.thinoda`/`.xmind` round trips. The screenshot does not establish these semantics.
 - P2 Sticker pane: category dropdown with an All choice, collapsible Business and
   Education sections and a scrollable thumbnail grid (four columns in the reference).
   Insert into the current topic selection; define single/multiple-selection behavior
@@ -699,7 +703,7 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 
 ## AI — user-guide research addendum (2026-10-16)
 Verified against xmind.com/user-guide pages not previously digested in
-XMIND-USER-GUIDE.md/XMIND-RESEARCH.md; each item cites its source page. yMind's AI
+XMIND-USER-GUIDE.md/XMIND-RESEARCH.md; each item cites its source page. Thinoda's AI
 is local/OpenAI-compatible only (LM Studio, Ollama, llama.cpp, OpenAI); treat every
 item below as a capability gap to design for that transport, not as a requirement
 to add XMind's own cloud account, billing or hosted AI service.
@@ -707,14 +711,14 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Confirmed absent: a persistent AI chat panel beside the map (opened from a
   toolbar button next to the title) with three selectable response-depth modes
   (Quick / Balanced / Deep) for simple edits vs. everyday mapping vs. multi-step
-  research, operating on the active sheet or a topic selection. yMind's existing
+  research, operating on the active sheet or a topic selection. Thinoda's existing
   AI actions (brainstorm, breakdown, explain, summarize, generate map) are
   command-triggered one-shots without a chat surface or depth selector.
   Source: https://xmind.com/user-guide/xmind-ai-chatbot
 - P2 Confirmed partial: "Grow Ideas" expands a selected topic/subtopic with Auto or
-  On-Demand (prompted) modes, matching yMind's existing brainstorm-subtopics action,
+  On-Demand (prompted) modes, matching Thinoda's existing brainstorm-subtopics action,
   but XMind also documents an optional online-search mode that cites a source link
-  for web-grounded suggestions. yMind has no live web-search-augmented generation;
+  for web-grounded suggestions. Thinoda has no live web-search-augmented generation;
   treat external web search as an explicit, user-visible, opt-in data egress if added.
   Source: https://xmind.com/user-guide/grow-ideas
 - P2 Confirmed absent: AI "Reorganize" restructures an existing map/branch in one
@@ -730,14 +734,14 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P3 Confirmed absent: "Image to Mind Map" generates a structured map from an
   uploaded photo (JPG/PNG, documented 10 MB limit), using OCR for text-bearing
   images and visual-content analysis for images without text, with an output-
-  language choice. yMind's AI only accepts text prompts today; this needs a
+  language choice. Thinoda's AI only accepts text prompts today; this needs a
   vision-capable model and explicit scope/privacy decision before implementation.
   Source: https://xmind.com/user-guide/image-to-mind-map
 - P3 Confirmed absent: AI-generated topic images ("Make Image": prompt + selectable
   image-generation model + style presets + "Inspire" prompt regeneration, inserted
   as a topic illustration with automatic background removal for preset styles) and
   a standalone "Remove Image Background" action for any already-embedded image.
-  Both need an image-generation-capable backend distinct from yMind's current
+  Both need an image-generation-capable backend distinct from Thinoda's current
   text-only OpenAI-compatible client; scope and cost/privacy implications need an
   explicit product decision before implementation.
   Sources: https://xmind.com/user-guide/make-image ,
@@ -751,14 +755,14 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P3 Research reference, not adopted: the "Xmind ChatGPT App" is a hosted,
   OAuth-connected ChatGPT plugin that creates/lists/reads/edits Xmind maps from a
   chat conversation. It depends on XMind's own account/cloud service; track only
-  as prior art for yMind's own MCP-server backlog item above (XMind SDK/ecosystem
+  as prior art for Thinoda's own MCP-server backlog item above (XMind SDK/ecosystem
   review), not as a requirement to integrate with a third-party chat product or account.
   Source: https://xmind.com/user-guide/chatgpt-apps
 - P3 Platform-specific, future companion-app scope only: "Draw to Map" (iPad + Apple
   Pencil sketch digitized into an editable map, original sketch kept as the central
   topic's image) and "Record to Map" (iOS/iPadOS 26 "Apple Intelligence" voice
   recording with live transcription saved as the central topic's note, then
-  converted to a structured map) are undocumented in yMind's desktop-first scope.
+  converted to a structured map) are undocumented in Thinoda's desktop-first scope.
   Track as future companion-app research only; no current application change.
   Sources: https://xmind.com/user-guide/draw-to-map ,
   https://xmind.com/user-guide/record-to-map
@@ -768,7 +772,7 @@ to add XMind's own cloud account, billing or hosted AI service.
   macOS-only): a menu-bar-resident popup, launchable without opening the main
   window, with a single text field and a "Create Map" action that converts the
   note into a new map, plus an optional "start at system login" preference.
-  yMind has no background/menu-bar quick-capture surface on any platform; verify
+  Thinoda has no background/menu-bar quick-capture surface on any platform; verify
   a cross-platform equivalent (tray icon on Windows/Linux) before committing to
   parity with the macOS-only original. Source: https://xmind.com/user-guide/quick-entry-for-mac-new
 - P1 Code signing + notarization; auto-update via `cargo-packager-updater`

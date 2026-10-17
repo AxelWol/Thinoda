@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to yMind are documented in this file. The format follows
+All notable changes to Thinoda are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -11,9 +11,9 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
-## [0.1.0](https://github.com/AxelWol/yMind/releases/tag/v0.1.0) (2026-10-17)
+## [0.1.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.1.0) (2026-10-17)
 
-First public version.
+First public version of Thinoda — *Give your thoughts shape.*
 
 ### Features
 
@@ -36,5 +36,5 @@ First public version.
 
 ### Bug Fixes
 
-* Windows: embed the application icon and version information in `ymind.exe`
-  so Explorer and the taskbar show the yMind icon.
+* Windows: embed the application icon and version information in `thinoda.exe`
+  so Explorer and the taskbar show the Thinoda icon.

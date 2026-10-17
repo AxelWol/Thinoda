@@ -1,4 +1,4 @@
-# XMind product research (basis for the yMind clone)
+# XMind product research (basis for the Thinoda clone)
 
 Sources: xmind.com (structure, features, user guide – 931 indexed pages), the locally
 installed **Xmind 26.05.01106** (Electron app, `resources/app.asar` inspected for
@@ -22,7 +22,7 @@ Settings (Ctrl+Shift+P), File ▸, Edit ▸, Insert ▸, Tools ▸, View ▸, He
 
 **Export submenu (in this order):** PNG, JPEG, SVG, PDF, Markdown, Word, Excel,
 PowerPoint (Pitch), OPML, TextBundle, Excel (Tasks), Calendar (Tasks). Several are marked
-PRO/PREMIUM in Xmind – all are free in yMind.
+PRO/PREMIUM in Xmind – all are free in Thinoda.
 
 **Format panel – Map tab:** structure picker (preview), color theme (palette + 6 variants: multicolor
 and 5 monochrome), custom theme "+", background color, global font, branch line width,
@@ -151,7 +151,7 @@ work breakdown, chat), MCP server / CLI.
 ### Security page
 * AES-128 file encryption (password-protected files), ISO 27001 / SOC 2 Type II (cloud service), SAML SSO for teams.
 
-**yMind implications:** Zone, Matrix, Tree Table, Gantt, Task panel, comments, topic links, stickers, password
+**Thinoda implications:** Zone, Matrix, Tree Table, Gantt, Task panel, comments, topic links, stickers, password
 encryption, an MCP server/CLI and cloud-provider folders are tracked in `docs/PLAN.md` / `docs/BACKLOG.md`.
 Server-side features (real-time collaboration, SSO, compliance certifications) are out of scope for the desktop
 MVP and live in the backlog.
@@ -171,7 +171,7 @@ MVP and live in the backlog.
 * Common flow on every page: start blank or from a template (or AI prompt) → structure → style → share → export
   (PDF/PNG/PowerPoint).
 
-**yMind implications:** a template gallery with Eisenhower, SWOT, Ansoff, fishbone and study-plan templates;
+**Thinoda implications:** a template gallery with Eisenhower, SWOT, Ansoff, fishbone and study-plan templates;
 Pitch mode with slide export (PowerPoint/PDF); a brainstorm card board; to-do generation (rule-based now, optional
 AI provider later). All of these are tracked in PLAN/BACKLOG.
 
@@ -186,7 +186,7 @@ AI provider later). All of these are tracked in PLAN/BACKLOG.
 | Teachers | different learning styles, online engagement, lesson-prep workload | Daily planner (tables), comments, "Following" (presenter follow mode), AI lesson outlines | Lesson planner, Teacher planner, Curriculum flow |
 | Project managers | unclear scope, fragmented communication, remote teams | Tree Table with Start/End date and Duration columns, Task info (start/due, progress), Gantt, stage timelines, context menu "Mark as Completed" | Project kickoff map, Agile project workflow, Project manager resume |
 
-**yMind implications:**
+**Thinoda implications:**
 * Role-oriented **template gallery categories** (Business, Engineering, Education, Project Management, Personal).
 * **Marker panel tabs**: Marker / Sticker / Illustration.
 * **Tree Table columns** for task fields.

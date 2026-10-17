@@ -4878,7 +4878,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ymind-ai"
+name = "thinoda-ai"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4888,7 +4888,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ymind-app"
+name = "thinoda-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4903,25 +4903,25 @@ dependencies = [
  "tempfile",
  "uuid",
  "winresource",
- "ymind-ai",
- "ymind-canvas",
- "ymind-core",
- "ymind-io",
- "ymind-platform",
- "ymind-ui",
+ "thinoda-ai",
+ "thinoda-canvas",
+ "thinoda-core",
+ "thinoda-io",
+ "thinoda-platform",
+ "thinoda-ui",
 ]
 
 [[package]]
-name = "ymind-canvas"
+name = "thinoda-canvas"
 version = "0.1.0"
 dependencies = [
  "egui",
  "egui_kittest",
- "ymind-core",
+ "thinoda-core",
 ]
 
 [[package]]
-name = "ymind-core"
+name = "thinoda-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4930,7 +4930,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ymind-io"
+name = "thinoda-io"
 version = "0.1.0"
 dependencies = [
  "image",
@@ -4942,12 +4942,12 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
- "ymind-core",
+ "thinoda-core",
  "zip",
 ]
 
 [[package]]
-name = "ymind-platform"
+name = "thinoda-platform"
 version = "0.1.0"
 dependencies = [
  "directories",
@@ -4958,11 +4958,11 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "uuid",
- "ymind-core",
+ "thinoda-core",
 ]
 
 [[package]]
-name = "ymind-ui"
+name = "thinoda-ui"
 version = "0.1.0"
 dependencies = [
  "egui",

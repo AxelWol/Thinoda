@@ -5,8 +5,8 @@
 **Axel Wolters**
 E-Mail: <axelwolters@hotmail.com>
 
-yMind ist ein privates, nicht kommerzielles Open-Source-Projekt.
-yMind is a private, non-commercial open-source project.
+Thinoda ist ein privates, nicht kommerzielles Open-Source-Projekt.
+Thinoda is a private, non-commercial open-source project.
 
 ## Haftungsausschluss / Disclaimer
 
@@ -25,12 +25,12 @@ mind map applications over the past 40 years.
 
 XMind, FreeMind, Freeplane, MindManager and other product names mentioned in this
 repository are trademarks of their respective owners. They are used only to
-describe file-format compatibility. yMind is not affiliated with, endorsed by or
+describe file-format compatibility. Thinoda is not affiliated with, endorsed by or
 sponsored by these owners.
 
 XMind, FreeMind, Freeplane, MindManager und weitere genannte Produktnamen sind
 Marken ihrer jeweiligen Inhaber. Sie werden ausschließlich zur Beschreibung der
-Dateiformat-Kompatibilität verwendet. yMind steht in keiner Verbindung zu diesen
+Dateiformat-Kompatibilität verwendet. Thinoda steht in keiner Verbindung zu diesen
 Inhabern und wird von ihnen weder unterstützt noch gefördert.
 
 ## Gewährleistung / Warranty

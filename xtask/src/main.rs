@@ -17,7 +17,7 @@ commands:
     ci                        fmt --check, clippy -D warnings and the full test suite
 ";
 
-/// The yMind logo: a central topic with four branches on an accent gradient.
+/// The Thinoda logo: a central topic with four branches on an accent gradient.
 pub const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="#4C8DFF"/><stop offset="1" stop-color="#7B4CFF"/></linearGradient></defs>
@@ -128,13 +128,20 @@ fn package(args: &[String]) -> anyhow::Result<()> {
         run(cargo().args(["install", "cargo-packager", "--locked"]))?;
     }
     let mut build = cargo();
-    build.args(["build", "--release", "-p", "ymind-app", "--bin", "ymind"]);
+    build.args([
+        "build",
+        "--release",
+        "-p",
+        "thinoda-app",
+        "--bin",
+        "thinoda",
+    ]);
     if let Some(t) = &target {
         build.args(["--target", t]);
     }
     run(&mut build)?;
     let mut pack = Command::new("cargo-packager");
-    pack.args(["--release", "-p", "ymind-app"]);
+    pack.args(["--release", "-p", "thinoda-app"]);
     if let Some(t) = &target {
         pack.args(["--target", t]);
     }
@@ -160,7 +167,13 @@ fn ci() -> anyhow::Result<()> {
         "warnings",
     ]))?;
     run(cargo().args(["test", "--workspace"]))?;
-    run(cargo().args(["test", "-p", "ymind-core", "--example", "layout_benchmark"]))?;
+    run(cargo().args([
+        "test",
+        "-p",
+        "thinoda-core",
+        "--example",
+        "layout_benchmark",
+    ]))?;
     Ok(())
 }
 

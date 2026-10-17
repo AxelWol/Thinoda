@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest released version of yMind. Please
-update to the [latest release](https://github.com/AxelWol/yMind/releases/latest)
+Security fixes are provided for the latest released version of Thinoda. Please
+update to the [latest release](https://github.com/AxelWol/Thinoda/releases/latest)
 before reporting a problem.
 
 | Version | Supported |
@@ -21,11 +21,11 @@ Report them privately using one of these channels:
 1. **GitHub private vulnerability reporting** (preferred, if enabled): open the
    repository's **Security** tab and choose **Report a vulnerability**.
 2. **E-mail:** <axelwolters@hotmail.com> with the subject
-   `yMind security: <short summary>`.
+   `Thinoda security: <short summary>`.
 
 Please include:
 
-- the affected yMind version and operating system/architecture;
+- the affected Thinoda version and operating system/architecture;
 - a description of the vulnerability and its impact;
 - step-by-step reproduction instructions and, if applicable, a minimal
   proof-of-concept file (for example a crafted `.xmind`, `.mm` or `.opml` file);

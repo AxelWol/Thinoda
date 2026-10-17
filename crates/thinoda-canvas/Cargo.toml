@@ -1,0 +1,15 @@
+[package]
+name = "thinoda-canvas"
+description = "GPU-rendered interactive mind map canvas widget for egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+egui = { workspace = true }
+thinoda-core = { path = "../thinoda-core" }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
