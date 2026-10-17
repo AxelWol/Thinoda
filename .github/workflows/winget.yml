@@ -60,5 +60,5 @@ jobs:
           version: ${{ steps.version.outputs.version }}
           release-tag: ${{ inputs.tag }}
           installers-regex: '_(x64|arm64)-setup-.*-pc-windows-msvc\.exe$'
-          fork-user: AxelWol
+          fork-user: axelwol69
           token: ${{ secrets.WINGET_TOKEN }}
