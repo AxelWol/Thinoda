@@ -23,10 +23,13 @@ Installers for every platform are attached to each
 `aarch64-apple-darwin` (Apple silicon), `x86_64-apple-darwin` (Intel) or
 `x86_64-unknown-linux-gnu`.
 
-Each platform also has a `SHA256SUMS-<target>.txt` checksum manifest. The
-installers are not code-signed or notarized yet. Windows SmartScreen and macOS
-Gatekeeper may therefore warn on first launch. On macOS, right-click the app and
-choose **Open**.
+Each platform also has a `SHA256SUMS-<target>.txt` checksum manifest. Windows
+installers are not code-signed yet. macOS apps and DMGs use ad-hoc signatures to
+seal their contents, but are not Developer ID-signed or Apple-notarized. Windows
+SmartScreen and macOS Gatekeeper may therefore block first launch. On macOS,
+copy Thinoda to Applications, then explicitly approve it in **System Settings >
+Privacy & Security > Open Anyway** if you trust the download. Ad-hoc signing
+is an integrity check, not Apple verification of the developer.
 
 ### Installing on Ubuntu
 Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`),
@@ -257,6 +260,10 @@ coverage-guided fuzzing.
 Run each command on its corresponding operating system with the required Rust
 target and native build tools installed. Commands without `--target` build for
 the host architecture. These commands build packages; they do not install the app.
+macOS packaging signs the complete `.app` bundle before creating its DMG. The
+release workflow verifies both downloadable formats with `codesign --verify
+--deep --strict`, checks the DMG with `hdiutil verify`, and verifies and smoke-tests
+an app copied from the mounted DMG before uploading any macOS artifacts.
 
 ## Releasing
 Versions follow [Semantic Versioning](https://semver.org) and are automated by
@@ -290,8 +297,9 @@ Downloads have target-specific filenames and SHA-256 manifests; macOS `.app`
 bundles are provided as `.app.tar.gz` to preserve permissions and symlinks, alongside
 the `.dmg`. Workflow artifacts are retained for 30 days. Releases are published only
 after all five builds succeed, with the installers attached as release assets.
-Installers are not configured with production code-signing certificates or Apple
-notarization credentials; signing/notarization remain release-readiness work.
+Windows installers are not configured with production code-signing certificates.
+macOS uses ad-hoc bundle/image signing; Developer ID certificates and Apple
+notarization credentials remain required for Gatekeeper-trusted distribution.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·
