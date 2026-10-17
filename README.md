@@ -28,6 +28,14 @@ installers are not code-signed or notarized yet. Windows SmartScreen and macOS
 Gatekeeper may therefore warn on first launch. On macOS, right-click the app and
 choose **Open**.
 
+### Installing on Windows with WinGet
+```powershell
+winget install AxelWol.Thinoda
+```
+New releases are submitted to [winget-pkgs](https://github.com/microsoft/winget-pkgs)
+automatically by `.github/workflows/winget.yml` (needs the `WINGET_TOKEN` secret);
+they become available once the WinGet maintainers merge the pull request.
+
 ### Installing on Ubuntu
 Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`),
 including Ubuntu on WSL 2 with WSLg.

@@ -15,6 +15,9 @@ on:
         description: "Release tag to build and publish"
         required: true
         type: string
+    secrets:
+      WINGET_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -113,3 +116,11 @@ jobs:
           draft: false
           make_latest: true
           fail_on_unmatched_files: true
+
+  winget:
+    needs: publish
+    uses: ./.github/workflows/winget.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
