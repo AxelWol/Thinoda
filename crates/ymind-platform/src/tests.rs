@@ -509,8 +509,28 @@ fn recovery_rejects_traversal_keys() {
     }
 }
 
+// The panic hook is process-global, so the real test runs in a child process;
+// otherwise panics from concurrently running tests would be captured as crash logs.
 #[test]
 fn panic_hook_logs_backtrace_and_flushes_pending_snapshot() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::panic_hook_child", "--test-threads=1"])
+        .env("YMIND_PLATFORM_PANIC_CHILD", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "child failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn panic_hook_child() {
+    if std::env::var_os("YMIND_PLATFORM_PANIC_CHILD").is_none() {
+        return;
+    }
     type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
     struct RestoreHook(Option<PanicHook>);
     impl Drop for RestoreHook {
@@ -542,7 +562,7 @@ fn panic_hook_logs_backtrace_and_flushes_pending_snapshot() {
     assert!(result.is_err());
     assert!(chained.load(std::sync::atomic::Ordering::Acquire));
     let logs = list_crash_logs(&paths).unwrap();
-    assert_eq!(logs.len(), 1);
+    assert_eq!(logs.len(), 1, "unexpected crash logs: {logs:?}");
     let content = fs::read_to_string(&logs[0].path).unwrap();
     assert!(content.contains("intentional platform recovery test"));
     assert!(content.contains("Location:"));
@@ -780,16 +800,29 @@ fn single_instance_election_forward_poll_and_re_election() {
     let dir = directory();
     let paths = paths(&dir);
     let primary = SingleInstance::acquire(&paths).unwrap();
-    assert!(primary.is_primary());
+    assert!(primary.is_primary(), "first handle must be primary");
     let secondary = SingleInstance::acquire(&paths).unwrap();
-    assert!(!secondary.is_primary());
-    assert!(secondary.poll().is_err());
+    assert!(!secondary.is_primary(), "second handle must be secondary");
+    assert!(secondary.poll().is_err(), "secondary must not poll");
     let file = dir.path().join("map with spaces.xmind");
     secondary.forward_open(&file).unwrap();
     assert_eq!(primary.poll().unwrap(), vec![file]);
-    assert!(primary.poll().unwrap().is_empty());
+    assert!(primary.poll().unwrap().is_empty(), "queue must be drained");
+    drop(secondary);
     drop(primary);
-    assert!(SingleInstance::acquire(&paths).unwrap().is_primary());
+    // A child process forked by a concurrent test may briefly share the lock
+    // descriptor until it execs, so allow a short hand-off window.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if SingleInstance::acquire(&paths).unwrap().is_primary() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "re-election failed after primary was dropped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 #[test]
