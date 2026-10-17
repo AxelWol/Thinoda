@@ -34,6 +34,8 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   Section chevrons open a category directly; All templates returns to the
   overview. Each view retains its own scroll position. Navigation clears the
   pending selection and never creates or changes a map.
+  The main menu's New from Template submenu uses the same eight localized
+  categories, with each template directly selectable in its category.
   Scenario maps include problem solving, architecture, workshops, research,
   language learning, retrospectives, everyday planning, comparisons and creative
   production. Gallery titles are localized in EN/DE; starter document content
@@ -62,6 +64,9 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
   editable XMind theme registry or verified native visual parity.
 - Indent/Outdent in Edit, the topic context menu and command palette moves one topic
   under its previous sibling or after its parent while retaining its annotations.
+  The Outliner also exposes sibling/child insertion, topic editing, move/reparent,
+  and both subtree or topic-only deletion controls; these use the same undoable
+  canvas actions as the map view.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across yMind instances), and Save Sheet As for a

@@ -461,4 +461,48 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(!h.state().dialogs.shortcuts);
+    h.get_by_role_and_label(Role::Button, "☰").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Neu aus Vorlage…")
+        .click();
+    h.run_steps(3);
+    for category in [
+        "Grundlagen",
+        "Wissensmanagement",
+        "Besprechung und Planung",
+        "Lernen und Bildung",
+        "Projektmanagement",
+        "Freizeit und Alltag",
+        "Analyse und Entscheidung",
+        "Kreativität",
+    ] {
+        h.get_by_role_and_label(Role::Button, category);
+    }
+    h.get_by_role_and_label(Role::Button, "Analyse und Entscheidung")
+        .click();
+    h.run_steps(3);
+    h.query_all_by_role_and_label(Role::Button, "SWOT-Analyse")
+        .next()
+        .unwrap()
+        .click();
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook(),
+        &ymind_core::templates::instantiate("swot")
+    );
+    h.state_mut().mode = ymind_app::app::CenterMode::Outliner;
+    h.run_steps(3);
+    for label in [
+        "Geschwisterthema hinzufügen",
+        "Unterthema hinzufügen",
+        "Thema bearbeiten",
+        "Nach oben verschieben",
+        "Nach unten verschieben",
+        "Einrücken",
+        "Ausrücken",
+        "Thema löschen",
+        "Nur Thema löschen",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
 }

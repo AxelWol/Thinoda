@@ -359,6 +359,13 @@ const DE: &[(&str, &str)] = &[
     ("Arrange", "Anordnen"),
     ("Move Up", "Nach oben verschieben"),
     ("Move Down", "Nach unten verschieben"),
+    ("Add Sibling", "Geschwisterthema hinzufügen"),
+    ("Add Child", "Unterthema hinzufügen"),
+    ("Edit Topic", "Thema bearbeiten"),
+    ("Delete Topic", "Thema löschen"),
+    ("Select a topic to edit", "Thema zum Bearbeiten auswählen"),
+    ("Selected Topic", "Ausgewähltes Thema"),
+    ("Topic title", "Thementitel"),
     (
         "Sort Children Ascending",
         "Unterthemen aufsteigend sortieren",

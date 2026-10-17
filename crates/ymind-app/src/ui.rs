@@ -419,10 +419,18 @@ impl YMindApp {
             *cmd = Some(Cmd::New);
         }
         ui.menu_button(t("New from Template…"), |ui| {
-            for tpl in templates::TEMPLATES {
-                if ui.button(tpl.name).clicked() {
-                    *cmd = Some(Cmd::NewFromTemplate(tpl.id));
-                }
+            for category in templates::TemplateCategory::ALL {
+                let category_label = t(category.label());
+                ui.menu_button(category_label, |ui| {
+                    for template in templates::TEMPLATES
+                        .iter()
+                        .filter(|template| template.category == category)
+                    {
+                        if ui.button(t(template.name)).clicked() {
+                            *cmd = Some(Cmd::NewFromTemplate(template.id));
+                        }
+                    }
+                });
             }
         });
         if item(ui, t("Open…"), "Ctrl+O").clicked() {
@@ -1345,6 +1353,49 @@ impl YMindApp {
             return;
         };
         let mut action: Option<Action> = None;
+        let selected_title = d
+            .view
+            .primary()
+            .and_then(|id| d.doc.sheet().topic(id))
+            .map(|topic| topic.title.clone());
+        ui.label(selected_title.as_ref().map_or_else(
+            || t("Select a topic to edit").to_owned(),
+            |title| format!("{}: {title}", t("Selected Topic")),
+        ));
+        let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
+            for (label, command) in buttons {
+                let enabled = command.available(&d.doc, &d.view);
+                if ui
+                    .add_enabled(enabled, egui::Button::new(t(label)))
+                    .clicked()
+                {
+                    action = Some(command.clone());
+                }
+            }
+        };
+        ui.horizontal(|ui| {
+            action_buttons(
+                ui,
+                &[
+                    ("Add Sibling", Action::InsertSibling),
+                    ("Add Child", Action::InsertChild),
+                    ("Edit Topic", Action::StartEdit),
+                    ("Move Up", Action::MoveUp),
+                    ("Move Down", Action::MoveDown),
+                ],
+            );
+        });
+        ui.horizontal(|ui| {
+            action_buttons(
+                ui,
+                &[
+                    ("Indent", Action::Indent),
+                    ("Outdent", Action::Outdent),
+                    ("Delete Topic", Action::Delete),
+                    ("Delete Topic Only", Action::DeleteKeepChildren),
+                ],
+            );
+        });
         egui::Frame::new()
             .fill(p.bg)
             .inner_margin(Margin::symmetric(48, 24))
@@ -1415,11 +1466,14 @@ impl YMindApp {
                                     let mut text =
                                         d.view.editing_text().unwrap_or_default().to_string();
                                     let te_id = egui::Id::unique(("outliner_edit", id));
-                                    let r = ui.add(
-                                        TextEdit::singleline(&mut text)
-                                            .id(te_id)
-                                            .desired_width(f32::INFINITY),
-                                    );
+                                    let r = ui
+                                        .add(
+                                            TextEdit::singleline(&mut text)
+                                                .id(te_id)
+                                                .hint_text(t("Topic title"))
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .accessible_name(t("Topic title"));
                                     if !r.has_focus() && !r.lost_focus() {
                                         r.request_focus();
                                     }

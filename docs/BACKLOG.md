@@ -6,6 +6,15 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- The Outliner now surfaces controls for adding siblings/children, editing topics,
+  moving and reparenting topics, deleting a subtree or keeping children, with
+  availability tied to the shared canvas actions. Edits remain undoable. EN/DE
+  labels and end-to-end coverage verify topic creation, rename, ordering,
+  hierarchy changes, both deletion modes and undo.
+- New from Template main-menu submenu now groups all 35 templates under their
+  existing eight EN/DE categories. Category submenus retain direct template
+  creation; coverage verifies every template appears in its declared category
+  and that selection creates the expected workbook.
 - Importer mutation smoke: valid native ZIP/raw JSON, XMind, FreeMind, OPML,
   Markdown, plain text and MindManager seeds undergo systematic truncation and
   128 deterministic byte mutations each. Accepted imports must validate and

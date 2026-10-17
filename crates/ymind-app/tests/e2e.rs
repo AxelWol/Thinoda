@@ -1433,6 +1433,41 @@ fn symbols_disable_without_selection_and_explain_availability_on_home() {
 }
 
 #[test]
+fn new_from_template_menu_groups_every_template_by_its_category() {
+    use ymind_core::templates::{TEMPLATES, TemplateCategory};
+    let mut h = harness(YMindApp::headless());
+    for category in TemplateCategory::ALL {
+        h.get_by_role_and_label(Role::Button, "☰").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, "New from Template…")
+            .click();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, category.label())
+            .click();
+        h.run_steps(2);
+
+        let category_templates: Vec<_> = TEMPLATES
+            .iter()
+            .filter(|template| template.category == category)
+            .collect();
+        assert!(
+            !category_templates.is_empty(),
+            "empty menu category: {category:?}"
+        );
+        for template in &category_templates {
+            h.get_by_role_and_label(Role::Button, template.name);
+        }
+        let selected = category_templates[0];
+        h.get_by_role_and_label(Role::Button, selected.name).click();
+        h.run_steps(4);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &ymind_core::templates::instantiate(selected.id)
+        );
+    }
+}
+
+#[test]
 fn template_chooser_filters_selects_before_creating_and_cancels_without_touching_sources() {
     let mut app = YMindApp::headless();
     let before = app.doc().unwrap().doc.workbook().clone();
@@ -1774,6 +1809,120 @@ fn closing_dirty_tab_asks_and_dont_save_closes() {
     assert!(h.state().docs.is_empty(), "tab closed without saving");
     // With no document open, the home screen with templates is shown.
     assert!(h.query_all_by_label_contains("Mind Map").next().is_some());
+}
+
+#[test]
+fn outliner_toolbar_adds_edits_reorders_reparents_and_deletes_topics() {
+    let mut app = YMindApp::headless();
+    app.mode = ymind_app::app::CenterMode::Outliner;
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Button, "Main Topic 2")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root)
+            .len(),
+        4
+    );
+
+    h.get_by_role_and_label(Role::Button, "Add Sibling").click();
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.can_undo());
+    assert!(h.state().doc().unwrap().view.editing_topic().is_some());
+    h.get_by_label("Topic title").click();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label("Topic title").type_text("Added sibling");
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let root = d.doc.sheet().root;
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().topic(added).unwrap().title, "Added sibling");
+    assert_eq!(d.doc.sheet().parent(added), Some(root));
+    assert_eq!(d.doc.sheet().index_in_parent(added), Some(2));
+
+    assert!(ymind_canvas::Action::MoveUp.available(
+        &h.state().doc().unwrap().doc,
+        &h.state().doc().unwrap().view,
+    ));
+    h.get_by_role_and_label(Role::Button, "Move Up").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().index_in_parent(added), Some(1));
+
+    h.get_by_role_and_label(Role::Button, "Indent").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    let parent = d.doc.sheet().parent(added).unwrap();
+    assert_eq!(d.doc.sheet().topic(parent).unwrap().title, "Main Topic 1");
+
+    h.get_by_role_and_label(Role::Button, "Outdent").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().parent(added), Some(d.doc.sheet().root));
+
+    h.get_by_role_and_label(Role::Button, "Edit Topic").click();
+    h.run_steps(3);
+    h.get_by_label("Topic title").click();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label("Topic title").type_text("Edited sibling");
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().topic(added).unwrap().title, "Edited sibling");
+
+    h.get_by_role_and_label(Role::Button, "Add Child").click();
+    h.run_steps(3);
+    let child = h.state().doc().unwrap().view.primary().unwrap();
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(child),
+        Some(added)
+    );
+    h.get_by_role_and_label(Role::Button, "Edited sibling")
+        .click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Delete Topic")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert!(!d.doc.sheet().contains(child));
+    assert!(!d.doc.sheet().contains(added));
+    assert!(d.doc.can_undo());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.sheet().contains(child));
+    assert!(h.state().doc().unwrap().doc.sheet().contains(added));
+
+    h.get_by_role_and_label(Role::Button, "Edited sibling")
+        .click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Delete Topic Only")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert!(!d.doc.sheet().contains(added));
+    assert!(d.doc.sheet().contains(child));
+    assert_eq!(d.doc.sheet().parent(child), Some(root));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.sheet().contains(added));
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(child),
+        Some(added)
+    );
 }
 
 #[test]
