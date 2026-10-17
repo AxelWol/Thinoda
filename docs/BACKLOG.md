@@ -795,3 +795,9 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - P3 More UI languages (FR, ES, JA, ZH)
+
+## Documentation
+- P2 Every `*.md` file shows the date/time of its last change at the top
+  (e.g. `_Last updated: 2026-10-17 12:30 CET_`). Keep it accurate automatically:
+  a CI check or pre-commit hook (or `cargo xtask docs-stamp`) that stamps
+  changed Markdown files from `git log -1 --format=%cI`, so it never drifts.
