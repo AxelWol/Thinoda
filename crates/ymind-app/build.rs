@@ -8,8 +8,8 @@ fn main() {
     res.set_icon("../../assets/icon.ico")
         .set("ProductName", "yMind")
         .set("FileDescription", "yMind")
-        .set("CompanyName", "yMind contributors")
-        .set("LegalCopyright", "Copyright © yMind contributors")
+        .set("CompanyName", "Axel Wolters")
+        .set("LegalCopyright", "Copyright © 2026 Axel Wolters (EUPL-1.2)")
         .set("OriginalFilename", "ymind.exe")
         .set("InternalName", "ymind");
     if let Err(e) = res.compile() {

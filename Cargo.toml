@@ -21,21 +21,21 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0" # x-release-please-version
 edition = "2024"
 rust-version = "1.89"
-license = "MIT OR Apache-2.0"
+license = "EUPL-1.2"
 repository = "https://github.com/AxelWol/yMind"
-authors = ["yMind contributors"]
+authors = ["Axel Wolters <axelwolters@hotmail.com>"]
 homepage = "https://github.com/AxelWol/yMind"
 
 [workspace.dependencies]
-ymind-core = { path = "crates/ymind-core", version = "0.1.0" }
-ymind-io = { path = "crates/ymind-io", version = "0.1.0" }
-ymind-platform = { path = "crates/ymind-platform", version = "0.1.0" }
-ymind-ui = { path = "crates/ymind-ui", version = "0.1.0" }
-ymind-canvas = { path = "crates/ymind-canvas", version = "0.1.0" }
-ymind-ai = { path = "crates/ymind-ai", version = "0.1.0" }
+ymind-core = { path = "crates/ymind-core", version = "0.1.0" } # x-release-please-version
+ymind-io = { path = "crates/ymind-io", version = "0.1.0" } # x-release-please-version
+ymind-platform = { path = "crates/ymind-platform", version = "0.1.0" } # x-release-please-version
+ymind-ui = { path = "crates/ymind-ui", version = "0.1.0" } # x-release-please-version
+ymind-canvas = { path = "crates/ymind-canvas", version = "0.1.0" } # x-release-please-version
+ymind-ai = { path = "crates/ymind-ai", version = "0.1.0" } # x-release-please-version
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

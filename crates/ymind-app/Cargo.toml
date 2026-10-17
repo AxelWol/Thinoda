@@ -50,12 +50,13 @@ winresource = "0.1.34"
 [package.metadata.packager]
 product-name = "yMind"
 identifier = "io.github.axelwol.ymind"
-publisher = "yMind contributors"
-copyright = "Copyright © yMind contributors"
+publisher = "Axel Wolters"
+copyright = "Copyright © 2026 Axel Wolters. Licensed under the EUPL-1.2."
 category = "Productivity"
 description = "Fast, cross-platform mind mapping"
 long-description = "yMind is a free, GPU-accelerated mind mapping app with XMind, FreeMind, OPML and Markdown import/export, crash-safe autosave and an optional local AI assistant."
 out-dir = "../../target/packages"
+license-file = "../../LICENSE.md"
 icons = ["../../assets/icon.ico", "../../assets/icon-512.png", "../../assets/icon-256.png", "../../assets/icon-128.png", "../../assets/icon-32.png"]
 binaries = [{ path = "ymind", main = true }]
 

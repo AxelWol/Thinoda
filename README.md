@@ -5,6 +5,25 @@ GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional
 
 Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) and **Linux** (Ubuntu LTS).
 
+## Download
+Installers for every platform are attached to each
+[GitHub release](https://github.com/AxelWol/yMind/releases/latest):
+
+| Platform | File |
+|---|---|
+| Windows x64 / ARM64 | `yMind_<version>_*-setup-<target>.exe` (NSIS installer) |
+| macOS Apple silicon / Intel | `yMind_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
+| Ubuntu LTS (x64) | `.deb` or `.AppImage` for `x86_64-unknown-linux-gnu` |
+
+`<target>` is `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
+`aarch64-apple-darwin` (Apple silicon), `x86_64-apple-darwin` (Intel) or
+`x86_64-unknown-linux-gnu`.
+
+Each platform also has a `SHA256SUMS-<target>.txt` checksum manifest. The
+installers are not code-signed or notarized yet. Windows SmartScreen and macOS
+Gatekeeper may therefore warn on first launch. On macOS, right-click the app and
+choose **Open**.
+
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
@@ -214,14 +233,38 @@ Run each command on its corresponding operating system with the required Rust
 target and native build tools installed. Commands without `--target` build for
 the host architecture. These commands build packages; they do not install the app.
 
-Tagging `v*` runs the release workflow, which builds every package and drafts a GitHub release.
+## Releasing
+Versions follow [Semantic Versioning](https://semver.org) and are automated by
+[release-please](https://github.com/googleapis/release-please):
+
+1. Merge pull requests to `main` with
+   [Conventional Commit](https://www.conventionalcommits.org) titles:
+   `feat:` bumps minor, `fix:` bumps patch and `feat!:` or `BREAKING CHANGE:` bumps
+   major. While yMind is `0.x`, breaking changes bump minor.
+2. The **Release Please** workflow keeps an open release PR up to date. It bumps
+   the version in `Cargo.toml` and `Cargo.lock` and adds the entries to
+   [CHANGELOG.md](CHANGELOG.md).
+3. Merging the release PR tags `vX.Y.Z` and creates the GitHub release. It then
+   runs the release workflow to build and test all five targets and attach the
+   installers and checksums.
+
+One-time repository setting: **Settings > Actions > General > Allow GitHub
+Actions to create and approve pull requests** must be enabled for release-please.
+Commits pushed with `GITHUB_TOKEN` do not trigger other workflows, so the release
+PR's lockfile commit does not run CI by itself. Close and reopen the PR or push
+another commit to get CI checks.
+
+Pushing a `v*` tag manually also runs the release workflow, which builds every
+package and publishes a GitHub release.
+To rebuild and publish an existing tag, use **Actions > Release > Run workflow**
+and enter the tag.
 The workflow uses native Windows x64/ARM64, macOS Apple silicon/Intel and Ubuntu
 22.04 x64 runners, testing each target before packaging with cargo-packager 0.11.8.
-Use **Actions > Release > Run workflow** for an artifact-only build without a tag.
+Running it without a tag produces artifacts only.
 Downloads have target-specific filenames and SHA-256 manifests; macOS `.app`
 bundles are provided as `.app.tar.gz` to preserve permissions and symlinks, alongside
-the `.dmg`. Manual-run artifacts are retained for 30 days. Tag-triggered drafts
-are created only after all five builds succeed; review and publish them manually.
+the `.dmg`. Workflow artifacts are retained for 30 days. Releases are published only
+after all five builds succeed, with the installers attached as release assets.
 Installers are not configured with production code-signing certificates or Apple
 notarization credentials; signing/notarization remain release-readiness work.
 
@@ -229,5 +272,11 @@ notarization credentials; signing/notarization remain release-readiness work.
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·
 [XMind research](docs/XMIND-RESEARCH.md) · [User-guide checklist](docs/XMIND-USER-GUIDE.md)
 
+## Project
+[Changelog](CHANGELOG.md) · [Code of conduct & contributing](CODE_OF_CONDUCT.md) ·
+[Security policy](SECURITY.md) · [Third-party notices](THIRD_PARTY_NOTICES.md) ·
+[Impressum](IMPRESSUM.md)
+
 ## License
-MIT OR Apache-2.0
+Copyright © 2026 Axel Wolters. Licensed under the
+[European Union Public Licence v1.2 (EUPL-1.2)](LICENSE.md).

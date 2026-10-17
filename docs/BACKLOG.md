@@ -6,6 +6,19 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Publication readiness: added CHANGELOG.md (Keep a Changelog + release-please
+  Conventional-Commit semantic versioning), CODE_OF_CONDUCT.md (contribution
+  guide and rules of engagement), LICENSE.md (EUPL-1.2 with informal summary;
+  workspace and installer metadata switched from MIT/Apache-2.0), SECURITY.md,
+  IMPRESSUM.md (author, originality disclaimer, trademarks) and generated
+  THIRD_PARTY_NOTICES.md (runtime dependency licences, CI drift check).
+  Releases are published automatically with all installers attached as GitHub
+  release assets; the NSIS installer shows the licence page.
+- Release CI: macOS platform tests were flaky because the panic-hook test
+  installed a process-global hook that captured other tests' panics; it now runs
+  in an isolated child process, and single-instance re-election tolerates a
+  short lock hand-off window.
+- Windows executable embeds the yMind icon and version info (Explorer/taskbar).
 - The Outliner now surfaces controls for adding siblings/children, editing topics,
   moving and reparenting topics, deleting a subtree or keeping children, with
   availability tied to the shared canvas actions. Edits remain undoable. EN/DE
@@ -760,6 +773,13 @@ to add XMind's own cloud account, billing or hosted AI service.
   parity with the macOS-only original. Source: https://xmind.com/user-guide/quick-entry-for-mac-new
 - P1 Code signing + notarization; auto-update via `cargo-packager-updater`
 - P2 macOS universal binary; Flatpak and `.rpm` packages; winget/Homebrew manifests
+- P2 Publish installers to package managers from the release workflow (winget
+  manifest PR, Homebrew cask tap, Flathub); GitHub Packages is not used because
+  it does not host desktop installers — GitHub Release assets are the canonical
+  download location
+- P2 Enable GitHub private vulnerability reporting and branch protection with
+  required CI checks before making the repository public
+- P3 Show licence, third-party notices and Impressum inside Help > About
 - P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI
 - P3 Real-time co-editing (CRDT, e.g. `yrs`) — basis for a companion web/mobile app
 - P3 Plugin API (WASM) for importers/exporters
