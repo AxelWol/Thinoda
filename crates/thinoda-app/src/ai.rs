@@ -352,7 +352,9 @@ impl ThinodaApp {
     pub fn ai_settings_section(&mut self, ui: &mut Ui) {
         widgets::section(ui, t("AI Assistant"), false, |ui| {
             let ai = &mut self.settings.ai;
-            widgets::toggle(ui, &mut ai.enabled, t("Enable AI assistant"));
+            widgets::property_field(ui, t("Enable AI assistant"), |ui| {
+                widgets::toggle(ui, &mut ai.enabled, t("Enable AI assistant"))
+            });
             widgets::caption(
                 ui,
                 t("Any OpenAI-compatible server: LM Studio, Ollama, llama.cpp, OpenAI…"),

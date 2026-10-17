@@ -152,7 +152,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
     let mut changed = false;
     let height = 28.0;
     let width = ui.available_width();
-    let (outer, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let (outer, outer_resp) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     ui.painter()
         .rect_filled(outer, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
     let n = options.len().max(1) as f32;
@@ -162,7 +162,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
             pos2(outer.left() + 2.0 + i as f32 * seg_w, outer.top() + 2.0),
             vec2(seg_w, height - 4.0),
         );
-        let resp = ui.interact(r, ui.scope_id().with(("seg", i)), Sense::click());
+        let resp = ui.interact(r, outer_resp.id.with(("seg", i)), Sense::click());
         let selected = *value == *opt;
         resp.widget_info(|| WidgetInfo::selected(Role::Tab, true, selected, *label));
         if selected {

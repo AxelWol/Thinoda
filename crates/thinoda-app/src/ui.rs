@@ -2930,23 +2930,29 @@ impl ThinodaApp {
                         });
                     });
                     widgets::section(ui, t("Files"), true, |ui| {
-                        widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"));
+                        widgets::property_field(ui, t("Autosave"), |ui| {
+                            widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"))
+                        });
                         widgets::property_field(ui, t("Autosave interval (s)"), |ui| {
                             ui.add(
                                 egui::DragValue::new(&mut self.settings.autosave_interval_secs)
                                     .range(5..=3600),
                             )
                         });
-                        widgets::toggle(
-                            ui,
-                            &mut self.settings.backup_on_save,
-                            t("Keep backup on save"),
-                        );
-                        widgets::toggle(
-                            ui,
-                            &mut self.settings.confirm_on_delete,
-                            t("Confirm before deleting"),
-                        );
+                        widgets::property_field(ui, t("Keep backup on save"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.backup_on_save,
+                                t("Keep backup on save"),
+                            )
+                        });
+                        widgets::property_field(ui, t("Confirm before deleting"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.confirm_on_delete,
+                                t("Confirm before deleting"),
+                            )
+                        });
                         if let Some(p) = &self.services.paths
                             && ui.button(t("Open settings folder")).clicked()
                         {
