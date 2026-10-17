@@ -3,3 +3,4 @@
 /dist
 *.pdb
 
+__pycache__/

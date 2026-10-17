@@ -10,6 +10,15 @@ env:
   YMIND_AI_SKIP_LIVE: "1"
 
 jobs:
+  notices:
+    name: third-party notices
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: THIRD_PARTY_NOTICES.md matches Cargo.lock
+        run: python3 .github/scripts/third_party_notices.py --check
+
   test:
     name: test (${{ matrix.os }})
     strategy:
