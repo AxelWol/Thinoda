@@ -29,16 +29,25 @@ Gatekeeper may therefore warn on first launch. On macOS, right-click the app and
 choose **Open**.
 
 ### Installing on Ubuntu
-Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`).
+Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`),
+including Ubuntu on WSL 2 with WSLg.
 
 ```bash
 # Recommended: .deb (menu entry, icon, clean uninstall with `sudo apt remove thinoda`)
+cd /tmp
+wget https://github.com/AxelWol/Thinoda/releases/latest/download/SHA256SUMS-x86_64-unknown-linux-gnu.txt
+wget "https://github.com/AxelWol/Thinoda/releases/download/v<version>/thinoda_<version>_amd64-x86_64-unknown-linux-gnu.deb"
+sha256sum -c SHA256SUMS-x86_64-unknown-linux-gnu.txt --ignore-missing
 sudo apt install ./thinoda_<version>_amd64-x86_64-unknown-linux-gnu.deb
 
 # Portable alternative: AppImage (needs FUSE 2: libfuse2t64 on 24.04+, libfuse2 on 22.04)
 chmod +x thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
 ./thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
 ```
+
+If version 0.1.0 stops with `Library libxkbcommon-x11.so could not be loaded`,
+install the windowing libraries it did not declare yet:
+`sudo apt install libxkbcommon-x11-0 libvulkan1`.
 
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
