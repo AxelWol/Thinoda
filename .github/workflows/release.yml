@@ -87,6 +87,9 @@ jobs:
         run: cargo xtask package --target ${{ matrix.target }} --formats ${{ matrix.formats }}
       - name: Prepare architecture-specific downloads and checksums
         run: python .github/scripts/release_artifacts.py --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+      - name: Verify macOS downloads and installed app signatures
+        if: runner.os == 'macOS'
+        run: python .github/scripts/verify_macos_packages.py --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: thinoda-${{ matrix.target }}

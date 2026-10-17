@@ -108,6 +108,9 @@ display-language-selector = true
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
+# Seal the complete bundle; the ARM64 linker's signature alone is invalid in a .app.
+# Ad-hoc signing does not provide Developer ID trust or Apple notarization.
+signing-identity = "-"
 
 [package.metadata.packager.deb]
 section = "editors"
