@@ -11,6 +11,14 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.1.3](https://github.com/AxelWol/Thinoda/compare/v0.1.2...v0.1.3) (2026-10-17)
+
+
+### Bug Fixes
+
+* sign macOS bundles and verify release installers ([9a0b0ea](https://github.com/AxelWol/Thinoda/commit/9a0b0ea060874ad49737144cf53134de8f7cae24))
+* sign macOS bundles and verify release installers ([74783fb](https://github.com/AxelWol/Thinoda/commit/74783fb17335c6c59f2a919cf5f8338a4ce1d733))
+
 ## [0.1.2](https://github.com/AxelWol/Thinoda/compare/v0.1.1...v0.1.2) (2026-10-17)
 
 
