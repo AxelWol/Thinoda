@@ -205,11 +205,25 @@ coverage-guided fuzzing.
 ## Packages
 | Platform | Formats | Command |
 |---|---|---|
-| Windows x64 / ARM64 | NSIS installer (`.exe`) | `cargo xtask package --target aarch64-pc-windows-msvc` |
+| Windows x64 | NSIS installer (`.exe`) | `cargo xtask package --target x86_64-pc-windows-msvc --formats nsis` |
+| Windows ARM64 | NSIS installer (`.exe`) | `cargo xtask package --target aarch64-pc-windows-msvc --formats nsis` |
 | macOS | `.app`, `.dmg` | `cargo xtask package --formats app,dmg` |
 | Ubuntu LTS | `.deb`, AppImage | `cargo xtask package --formats deb,appimage` |
 
+Run each command on its corresponding operating system with the required Rust
+target and native build tools installed. Commands without `--target` build for
+the host architecture. These commands build packages; they do not install the app.
+
 Tagging `v*` runs the release workflow, which builds every package and drafts a GitHub release.
+The workflow uses native Windows x64/ARM64, macOS Apple silicon/Intel and Ubuntu
+22.04 x64 runners, testing each target before packaging with cargo-packager 0.11.8.
+Use **Actions > Release > Run workflow** for an artifact-only build without a tag.
+Downloads have target-specific filenames and SHA-256 manifests; macOS `.app`
+bundles are provided as `.app.tar.gz` to preserve permissions and symlinks, alongside
+the `.dmg`. Manual-run artifacts are retained for 30 days. Tag-triggered drafts
+are created only after all five builds succeed; review and publish them manually.
+Installers are not configured with production code-signing certificates or Apple
+notarization credentials; signing/notarization remain release-readiness work.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·
