@@ -1,0 +1,64 @@
+name: Publish to WinGet
+
+# Opens a pull request against microsoft/winget-pkgs that adds the released
+# Windows installers (x64 and arm64) as a new AxelWol.Thinoda version.
+#
+# Requirements:
+# - The package already exists in winget-pkgs (first version submitted manually).
+# - A fork of microsoft/winget-pkgs exists under the `fork-user` account.
+# - Repository secret WINGET_TOKEN: classic PAT of that account with `public_repo` scope.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.1.2)"
+        required: true
+        type: string
+    secrets:
+      WINGET_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (e.g. v0.1.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  winget:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check token
+        id: token
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::warning::WINGET_TOKEN secret is not set; skipping WinGet submission."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ inputs.tag }}
+      - uses: vedantmgoyal9/winget-releaser@v2
+        if: steps.token.outputs.present == 'true'
+        with:
+          identifier: AxelWol.Thinoda
+          version: ${{ steps.version.outputs.version }}
+          release-tag: ${{ inputs.tag }}
+          installers-regex: '_(x64|arm64)-setup-.*-pc-windows-msvc\.exe$'
+          fork-user: AxelWol
+          token: ${{ secrets.WINGET_TOKEN }}
