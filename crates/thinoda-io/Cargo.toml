@@ -1,0 +1,22 @@
+[package]
+name = "thinoda-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+thinoda-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+quick-xml.workspace = true
+resvg.workspace = true
+image.workspace = true
+log.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile.workspace = true

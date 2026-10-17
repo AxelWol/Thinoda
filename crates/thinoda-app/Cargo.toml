@@ -1,0 +1,101 @@
+[package]
+name = "thinoda-app"
+description = "Thinoda - Give your thoughts shape. A fast, cross-platform mind mapping app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+default-run = "thinoda"
+
+[features]
+gpu-tests = ["egui_kittest/wgpu"]
+
+[lib]
+name = "thinoda_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "thinoda"
+path = "src/main.rs"
+
+[dependencies]
+thinoda-core.workspace = true
+thinoda-io.workspace = true
+thinoda-platform.workspace = true
+thinoda-ui.workspace = true
+thinoda-canvas.workspace = true
+thinoda-ai.workspace = true
+egui.workspace = true
+eframe.workspace = true
+rfd.workspace = true
+image.workspace = true
+uuid.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
+sys-locale.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
+
+[build-dependencies]
+winresource = "0.1.34"
+
+# Installers: `cargo xtask package` (wraps `cargo packager --release -p thinoda-app`).
+[package.metadata.packager]
+product-name = "Thinoda"
+identifier = "io.github.axelwol.thinoda"
+publisher = "Axel Wolters"
+copyright = "Copyright © 2026 Axel Wolters. Licensed under the EUPL-1.2."
+category = "Productivity"
+description = "Give your thoughts shape. Fast, cross-platform mind mapping"
+long-description = "Give your thoughts shape. Thinoda is a free, GPU-accelerated mind mapping app with XMind, FreeMind, OPML and Markdown import/export, crash-safe autosave and an optional local AI assistant."
+out-dir = "../../target/packages"
+license-file = "../../LICENSE.md"
+icons = ["../../assets/icon.ico", "../../assets/icon-512.png", "../../assets/icon-256.png", "../../assets/icon-128.png", "../../assets/icon-32.png"]
+binaries = [{ path = "thinoda", main = true }]
+
+[[package.metadata.packager.file-associations]]
+extensions = ["thinoda"]
+name = "Thinoda Map"
+description = "Thinoda mind map"
+mime-type = "application/x-thinoda"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["xmind"]
+name = "XMind Map"
+description = "XMind mind map"
+mime-type = "application/vnd.xmind.workbook"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["mm"]
+name = "FreeMind Map"
+description = "FreeMind / Freeplane mind map"
+mime-type = "application/x-freemind"
+role = "editor"
+
+[[package.metadata.packager.file-associations]]
+extensions = ["opml"]
+name = "OPML Outline"
+description = "OPML outline"
+mime-type = "text/x-opml"
+role = "viewer"
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+languages = ["English", "German"]
+display-language-selector = true
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+[package.metadata.packager.deb]
+section = "editors"
+depends = ["libgtk-3-0", "libxkbcommon0", "libxcb1", "libgl1", "libwayland-client0"]

@@ -1,4 +1,6 @@
-# yMind
+# Thinoda
+
+*Give your thoughts shape.*
 
 A free, fast, cross-platform mind mapping app written in Rust — an XMind-style editor with a
 GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional local AI assistant.
@@ -7,12 +9,12 @@ Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) an
 
 ## Download
 Installers for every platform are attached to each
-[GitHub release](https://github.com/AxelWol/yMind/releases/latest):
+[GitHub release](https://github.com/AxelWol/Thinoda/releases/latest):
 
 | Platform | File |
 |---|---|
-| Windows x64 / ARM64 | `yMind_<version>_*-setup-<target>.exe` (NSIS installer) |
-| macOS Apple silicon / Intel | `yMind_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
+| Windows x64 / ARM64 | `Thinoda_<version>_*-setup-<target>.exe` (NSIS installer) |
+| macOS Apple silicon / Intel | `Thinoda_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
 | Ubuntu LTS (x64) | `.deb` or `.AppImage` for `x86_64-unknown-linux-gnu` |
 
 `<target>` is `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
@@ -58,7 +60,7 @@ choose **Open**.
   Scenario maps include problem solving, architecture, workshops, research,
   language learning, retrospectives, everyday planning, comparisons and creative
   production. Gallery titles are localized in EN/DE; starter document content
-  is English and editable. These are original yMind maps, not XMind template copies.
+  is English and editable. These are original Thinoda maps, not XMind template copies.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.
@@ -78,7 +80,7 @@ choose **Open**.
   change existing maps. Explicit topic and map overrides take precedence; Reset
   Style inherits role defaults, and selecting a built-in theme removes custom
   defaults. Optional recent-theme reuse also supports custom themes.
-  Native files and unchanged yMind XMind snapshots preserve authoring data.
+  Native files and unchanged Thinoda XMind snapshots preserve authoring data.
   Public XMind export materializes supported light-mode topic properties, not an
   editable XMind theme registry or verified native visual parity.
 - Indent/Outdent in Edit, the topic context menu and command palette moves one topic
@@ -88,15 +90,15 @@ choose **Open**.
   canvas actions as the map view.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
-  the OS clipboard (including across yMind instances), and Save Sheet As for a
-  separate `.ymind`/`.xmind` copy without changing the source save state.
+  the OS clipboard (including across Thinoda instances), and Save Sheet As for a
+  separate `.thinoda`/`.xmind` copy without changing the source save state.
   New Sheet from Topic copies a branch with its owned annotations and internal
   relationships; relationships to topics outside the branch remain in the original sheet.
 - Select submenu offers visible siblings, descendants, inversion and central-topic
   navigation. Arrange offers natural child-title sorting and floating-topic edge/
   center alignment or equal center spacing, each in one undo step.
   Sorting is rejected if it would split a Summary/boundary's source membership.
-- Tools > Merge Map Files appends complete `.ymind`/`.xmind` sheets in one undo step.
+- Tools > Merge Map Files appends complete `.thinoda`/`.xmind` sheets in one undo step.
   All inputs must load successfully; source files stay untouched and destination
   metadata is retained. External image references are not embedded.
 - Tools > Map Shot (F7) captures the visible map using native GPU readback, without
@@ -125,7 +127,7 @@ choose **Open**.
   with a highlighted insertion line and proposed connector. Split-map root drops
   choose the pointer's left/right side; Style > Branch side offers Auto/Left/Right
   for main topics. Explicit sides survive balancing and sibling additions. Native
-  files and unchanged yMind XMind snapshots retain them; public XMind side interchange
+  files and unchanged Thinoda XMind snapshots retain them; public XMind side interchange
   and exact native gesture/visual comparison remain open.
 - Insert > Labels, the topic/context menus and Style > Edit labels open the same
   anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
@@ -142,7 +144,7 @@ choose **Open**.
   once. Focused controls move by 1 map unit with arrows (Shift: 10); endpoint arrows
   cycle visible topics. Style also edits the title, endpoints, color and relative
   control coordinates, with Reset curve restoring automatic routing. Native files
-  and unchanged yMind-exported XMind files preserve custom routing; public XMind
+  and unchanged Thinoda-exported XMind files preserve custom routing; public XMind
   curve-control interoperability remains unfinished.
 - Relationship creation connects exactly two selected topics immediately. With one
   source selected, pick an existing target or click blank canvas to create a connected
@@ -171,7 +173,7 @@ choose **Open**.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
 - XMind reopening honors edits made by other applications rather than silently
-  restoring a stale private snapshot. Unchanged yMind exports retain lossless
+  restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
 - Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
@@ -181,32 +183,32 @@ choose **Open**.
 
 ## AI setup (LM Studio)
 1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.
-2. In yMind open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
+2. In Thinoda open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
    (or a LAN server such as `http://192.168.1.216:1234/v1`), leave *Model* empty for automatic
    selection and click **Test Connection**.
 3. Select a topic and press **Ctrl+Shift+I** or use the **AI** menu.
 
 Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + API key, or env
-`YMIND_AI_API_KEY`) work the same way.
+`THINODA_AI_API_KEY`) work the same way.
 
 ## Build & test
 ```sh
-cargo run -p ymind-app            # start the app
+cargo run -p thinoda-app            # start the app
 cargo xtask ci                    # fmt + clippy + all tests
-cargo test -p ymind-app --features gpu-tests --lib map_shot_gpu_readback # requires a GPU adapter
+cargo test -p thinoda-app --features gpu-tests --lib map_shot_gpu_readback # requires a GPU adapter
 cargo xtask package               # installers in target/packages
-ymind --convert map.xmind map.md  # CLI conversion
+thinoda --convert map.xmind map.md  # CLI conversion
 ```
 Linux build dependencies: `libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
 libxcb-xfixes0-dev libwayland-dev`.
 
-The live AI test uses `YMIND_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
-server answers or when `YMIND_AI_SKIP_LIVE=1`.
+The live AI test uses `THINODA_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
+server answers or when `THINODA_AI_SKIP_LIVE=1`.
 
 CPU performance baseline:
 ```sh
-cargo run --release -p ymind-core --example layout_benchmark -- --topics 10000 --samples 30
-cargo test -p ymind-core --example layout_benchmark
+cargo run --release -p thinoda-core --example layout_benchmark -- --topics 10000 --samples 30
+cargo test -p thinoda-core --example layout_benchmark
 ```
 The benchmark reports JSON p50/p95/max layout, undoable leaf-rename and undo times
 for balanced and wide maps. Use `--output` to save a report and
@@ -215,7 +217,7 @@ measurement without a GPU or viewport and is **not** a 60-fps claim. CI uploads
 per-platform reports; see [the plan](docs/PLAN.md) for the measured Windows baseline
 and remaining GPU profiling work.
 
-`cargo test -p ymind-io --test import_mutations` runs deterministic truncation,
+`cargo test -p thinoda-io --test import_mutations` runs deterministic truncation,
 byte-mutation, structured XML/JSON and oversized-ZIP-entry smoke checks. Every
 accepted import must validate and round-trip through native storage. These
 bounded tests run with the workspace suite; they do not replace long-running,
@@ -240,7 +242,7 @@ Versions follow [Semantic Versioning](https://semver.org) and are automated by
 1. Merge pull requests to `main` with
    [Conventional Commit](https://www.conventionalcommits.org) titles:
    `feat:` bumps minor, `fix:` bumps patch and `feat!:` or `BREAKING CHANGE:` bumps
-   major. While yMind is `0.x`, breaking changes bump minor.
+   major. While Thinoda is `0.x`, breaking changes bump minor.
 2. The **Release Please** workflow keeps an open release PR up to date. It bumps
    the version in `Cargo.toml` and `Cargo.lock` and adds the entries to
    [CHANGELOG.md](CHANGELOG.md).

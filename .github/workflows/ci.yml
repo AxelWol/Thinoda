@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  YMIND_AI_SKIP_LIVE: "1"
+  THINODA_AI_SKIP_LIVE: "1"
 
 jobs:
   notices:
@@ -41,9 +41,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - run: cargo test -p ymind-core --example layout_benchmark
+      - run: cargo test -p thinoda-core --example layout_benchmark
       - name: CPU layout benchmark (not GPU frame timing)
-        run: cargo run --quiet --release -p ymind-core --example layout_benchmark -- --topics 10000 --samples 30 --output layout-benchmark.json
+        run: cargo run --quiet --release -p thinoda-core --example layout_benchmark -- --topics 10000 --samples 30 --output layout-benchmark.json
       - uses: actions/upload-artifact@v4
         with:
           name: layout-benchmark-${{ matrix.os }}

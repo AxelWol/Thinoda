@@ -1,12 +1,12 @@
 # Code of Conduct and Contribution Guide
 
-yMind is an open project. Everyone is welcome to use it, report problems,
+Thinoda is an open project. Everyone is welcome to use it, report problems,
 suggest ideas and contribute code, translations or documentation. This document
 explains how to contribute and how we expect everyone to behave.
 
 ## Our pledge
 
-We want participation in yMind to be a harassment-free experience for everyone,
+We want participation in Thinoda to be a harassment-free experience for everyone,
 regardless of age, body size, visible or invisible disability, ethnicity, sex
 characteristics, gender identity and expression, level of experience,
 education, socio-economic status, nationality, personal appearance, race,
@@ -19,7 +19,7 @@ religion, or sexual identity and orientation.
 - Be kind, patient and respectful; assume good intent.
 - Give and accept constructive feedback gracefully. Criticise ideas and code,
   never people.
-- Stay on topic and keep discussions focused on improving yMind.
+- Stay on topic and keep discussions focused on improving Thinoda.
 - Help newcomers; there are no stupid questions.
 - Credit the work of others and respect licences and intellectual property.
 
@@ -30,7 +30,7 @@ religion, or sexual identity and orientation.
 - Publish other people's private information (addresses, e-mail, etc.)
   without their explicit permission.
 - Submit code, images, templates or other assets copied or reverse-engineered
-  from other (commercial or open-source) mind-mapping products. yMind contains
+  from other (commercial or open-source) mind-mapping products. Thinoda contains
   only original work and properly licensed third-party components.
 - Engage in any other conduct that could reasonably be considered
   inappropriate in a professional setting.
@@ -54,8 +54,8 @@ project. Security vulnerabilities are reported as described in
 
 ### Reporting bugs and requesting features
 
-1. Search the [existing issues](https://github.com/AxelWol/yMind/issues) first.
-2. Open a new issue with a clear title, the yMind version (Help > About), your
+1. Search the [existing issues](https://github.com/AxelWol/Thinoda/issues) first.
+2. Open a new issue with a clear title, the Thinoda version (Help > About), your
    operating system and architecture, steps to reproduce, the expected and the
    actual result, and screenshots or a minimal sample map if possible.
 3. Never attach maps that contain confidential or personal data.

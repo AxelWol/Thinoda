@@ -1,4 +1,4 @@
-# yMind — phased plan
+# Thinoda — phased plan
 
 Goal: a fast, native, cross-platform XMind clone written in Rust, with a reusable UI library for
 future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RESEARCH.md)
@@ -21,9 +21,9 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ Templates and color themes
 
 ## Phase 2 — UI library & canvas ✅
-- ✅ `ymind-ui`: design tokens, light/dark themes (follows system), widgets, command palette,
+- ✅ `thinoda-ui`: design tokens, light/dark themes (follows system), widgets, command palette,
   toasts, dialogs, icon set, font loading — no app dependencies, reusable by companion apps
-- ✅ `ymind-canvas`: GPU-rendered mind map view, pan/zoom, multi-selection, drag & drop,
+- ✅ `thinoda-canvas`: GPU-rendered mind map view, pan/zoom, multi-selection, drag & drop,
   inline editing, keyboard navigation, XMind-guide shortcuts (Tab, Enter, Ctrl+B, Ctrl+K, …)
 - ✅ App shell: tabs, toolbar, format panel (Style/Map), outliner, Zen mode, settings, EN/DE i18n
 - ✅ Selection-aware topic toolbar, direction-aware child/sibling connectors, root-safe context menus
@@ -32,16 +32,16 @@ Legend: ✅ done · 🟡 partial · ⬜ open
   and atomic title replacement (Ctrl+H) across the chosen scope
 
 ## Phase 3 — Files, interop, platform ✅
-- ✅ Native `.ymind`, XMind (`.xmind` Zen/2020+ JSON and legacy XML), FreeMind/Freeplane, OPML,
+- ✅ Native `.thinoda`, XMind (`.xmind` Zen/2020+ JSON and legacy XML), FreeMind/Freeplane, OPML,
   Markdown, plain text, MindManager import
 - ✅ Export: SVG, PNG, JPEG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle, XMind
 - ✅ Crash safety: atomic saves, continuous recovery journal, panic hook, restore dialog
 - ✅ Clipboard (topics + text), single instance, personal settings, recent files
 - ✅ Cloud folders: OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud, ownCloud detection
-- ✅ CLI conversion (`ymind --convert in.xmind out.md`)
+- ✅ CLI conversion (`thinoda --convert in.xmind out.md`)
 
 ## Phase 4 — AI assistant ✅
-- ✅ `ymind-ai`: OpenAI-compatible client (LM Studio, Ollama, llama.cpp, OpenAI), auto model pick,
+- ✅ `thinoda-ai`: OpenAI-compatible client (LM Studio, Ollama, llama.cpp, OpenAI), auto model pick,
   outline parser tolerant to reasoning models (`<think>`), background jobs
 - ✅ Brainstorm subtopics (Ctrl+Shift+I), break down into to-dos, explain → note,
   summarize branch, generate a whole map from a prompt
@@ -52,7 +52,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
   (egui_kittest), incl. AI against a mock server,
   live LM Studio integration test (skips when no server is reachable)
 - ✅ cargo-packager config: NSIS (Windows x64/ARM64), `.app` + DMG (macOS arm64/x64),
-  `.deb` + AppImage (Ubuntu LTS); file associations for `.ymind/.xmind/.mm/.opml`
+  `.deb` + AppImage (Ubuntu LTS); file associations for `.thinoda/.xmind/.mm/.opml`
 - ✅ GitHub Actions: CI matrix (Windows x64 + ARM, macOS, Ubuntu) and tag-driven release
 - ⬜ Code signing / notarization (Authenticode, Apple Developer ID)
 - ⬜ Visual regression snapshots
@@ -85,9 +85,9 @@ authorized by this planning document.
   state is identified, not a confirmed fixed defect.
 - Preserve saved documents, explicit styles, recovery data and current key bindings.
   Migrate schemas/settings compatibly and report unsupported interop explicitly.
-- Reusable controls belong in `ymind-ui`; model/editing in `ymind-core`, rendering/
-  interaction in `ymind-canvas`, formats in `ymind-io`, OS integrations in
-  `ymind-platform`, AI transport in `ymind-ai`, composition in `ymind-app`.
+- Reusable controls belong in `thinoda-ui`; model/editing in `thinoda-core`, rendering/
+  interaction in `thinoda-canvas`, formats in `thinoda-io`, OS integrations in
+  `thinoda-platform`, AI transport in `thinoda-ai`, composition in `thinoda-app`.
 - Reproduce functional interaction patterns with original/licensed assets and fonts.
   Do not copy XMind artwork, template contents, branding or commercial restrictions.
 
@@ -230,7 +230,7 @@ long text and explicit style overrides.
 5. Implement verified Link destinations; reuse Note/To-do editing rather than
    parallel content systems.
 
-**Exit:** insert/replace/remove/undo works; assets survive recovery and `.ymind` reopen;
+**Exit:** insert/replace/remove/undo works; assets survive recovery and `.thinoda` reopen;
 supported `.xmind` exchange and exports preserve content or report a precise loss.
 Malformed, oversized and missing assets produce visible errors, not silent omission.
 
@@ -466,7 +466,7 @@ R5 original-template expansion: 18 scenario maps expand the gallery from 17 to 3
 covering knowledge frameworks/architecture/problem solving, business/workshops,
 research/timetables/notes/languages, retrospectives, shopping/reflection/services,
 cause/effect/comparison/social-media planning and recipes/film production.
-Scenario-specific branches and editable prompts are original yMind content.
+Scenario-specific branches and editable prompts are original Thinoda content.
 Gallery names are EN/DE; document starter content remains English. Every registered
 template participates in actual preview/Create, keyboard selection, native/XMind
 round-trip and responsive layout checks. Timetable is a topic hierarchy, not a
@@ -560,7 +560,7 @@ No-op slots preserve Summary/boundary ownership without adding undo history.
 Split-map root drops set a persistent left/right main-branch side from pointer X.
 Style offers Auto/Left/Right for selected main topics, localized in EN/DE. Explicit
 sides override balancing and survive additional siblings; old automatic maps and
-non-split structures retain their layouts. Native and unchanged yMind XMind snapshot
+non-split structures retain their layouts. Native and unchanged Thinoda XMind snapshot
 round trips preserve sides; no speculative public XMind direction field was added.
 All 340 workspace cases and all-target clippy pass with live AI disabled. Coverage
 includes every structure's slot axis, multi-topic insert positions, exact pointer
@@ -580,7 +580,7 @@ camera coordinates, undo/redo, errors and toolbar/command wiring.
 
 Latest release-candidate checks pass: workspace formatting, all-target clippy and
 all 330 workspace cases, including both CLI subprocess cases and isolated German UI.
-Live AI tests are disabled with `YMIND_AI_SKIP_LIVE=1`; service authorization and
+Live AI tests are disabled with `THINODA_AI_SKIP_LIVE=1`; service authorization and
 native installation/accessibility QA are not implied by these results. Earlier
 Application Control blocks below are historical, not a failure of this latest run;
 no system policy was changed or bypassed.
@@ -611,7 +611,7 @@ visible topics in layout order. Style offers title, endpoints, color, four relat
 coordinates and automatic-routing reset. Non-finite/out-of-range coordinates fail
 visibly without edits. Shared geometry feeds layout/export, and hit testing uses
 the rendered curve segments, including large curves at multiple zoom levels.
-Native and unchanged yMind XMind round trips retain custom controls; public XMind
+Native and unchanged Thinoda XMind round trips retain custom controls; public XMind
 control-point interchange is not implemented. Native keyboard/accessibility QA,
 hierarchy drag refinement and the rest of R3 remain open.
 
@@ -642,7 +642,7 @@ NSIS were rebuilt. The two CLI subprocess cases were deliberately excluded from
 that e2e invocation and remain subject to the application-control limitation below.
 
 R6 interoperability coherence delivered: canonical-public-content SHA-256 binds
-the optional lossless yMind snapshot to the map it represents. External edits now
+the optional lossless Thinoda snapshot to the map it represents. External edits now
 win over stale metadata; whitespace-only JSON changes preserve lossless reopening.
 Old exports without the digest require an exact generated public-content match.
 Malformed/invalid private snapshots are logged and ignored. Public theme-role
@@ -813,12 +813,12 @@ First slice implemented (Windows x64 source verification):
   CI run was blocked by Windows Application Control on the app's empty binary test
   executable. Targeted affected suites and the Windows x64 package build pass.
 - XMind export compatibility: reproduced rejection in native XMind, whose error
-  was `Cannot create property 'name' on string 'yMind'`. Corrected metadata to
+  was `Cannot create property 'name' on string 'Thinoda'`. Corrected metadata to
   `creator: {name, version}` with `dataStructureVersion: "2"`, following the
   official xmind-generator archive format. A newly exported six-topic Unicode
   sample opens in installed Windows XMind with its hierarchy/text visible.
   Regression checks validate metadata/manifest and parse public content without
-  yMind's private lossless payload. This verifies opening, not full visual fidelity.
+  Thinoda's private lossless payload. This verifies opening, not full visual fidelity.
 
 - Next delivered slice: working General/Editor/AI/Cloud settings navigation with
   scrolling; independent persisted topic-toolbar and connector-add-button switches;
@@ -849,8 +849,8 @@ First slice implemented (Windows x64 source verification):
   German UI case, 31 canvas tests and 19 IO tests. Earlier transient Windows
   Application Control failures did not recur in this final run; no policy bypass.
   Built the Windows x64 NSIS installer and a separate executable at
-  `target\x86_64-pc-windows-msvc\release\ymind.exe`, leaving the user's running
-  `target\release\ymind.exe` and open file dialog untouched. The running process
+  `target\x86_64-pc-windows-msvc\release\thinoda.exe`, leaving the user's running
+  `target\release\thinoda.exe` and open file dialog untouched. The running process
   remains the previous build until the user closes it and launches the new binary.
   Native macOS/Linux/ARM validation and signing/notarization credentials remain
   external prerequisites.
@@ -871,8 +871,8 @@ First slice implemented (Windows x64 source verification):
 - Final non-CLI workspace run: 246 tests pass, including exact zoom limits,
   structural pointer/context actions and persistence. The two CLI tests were
   explicitly excluded because of the application-control blocker above, not
-  marked passed. After the user closed yMind, refreshed the standard
-  `target\release\ymind.exe` and `target\packages\ymind_0.1.0_x64-setup.exe`
+  marked passed. After the user closed Thinoda, refreshed the standard
+  `target\release\thinoda.exe` and `target\packages\thinoda_0.1.0_x64-setup.exe`
   with this slice. Original foundation tasks are marked complete; this does not
   close the remaining R0–R12 parity/release work.
 

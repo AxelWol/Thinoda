@@ -25,7 +25,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  YMIND_AI_SKIP_LIVE: "1"
+  THINODA_AI_SKIP_LIVE: "1"
 
 jobs:
   package:
@@ -73,7 +73,7 @@ jobs:
         run: python .github/scripts/release_artifacts.py --target ${{ matrix.target }} --formats ${{ matrix.formats }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ymind-${{ matrix.target }}
+          name: thinoda-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -88,7 +88,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: ymind-*
+          pattern: thinoda-*
           merge-multiple: true
       # Creates the release (or updates the one created by release-please) and
       # attaches every installer and checksum manifest as a download.
