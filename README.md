@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.svg" alt="Thinoda logo" width="128"></p>
+
 # Thinoda
 
 *Give your thoughts shape.*

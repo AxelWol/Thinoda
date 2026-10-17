@@ -2812,8 +2812,15 @@ impl ThinodaApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.heading(RichText::new("Thinoda").size(26.0).strong());
-                    ui.label(RichText::new(t("Give your thoughts shape.")).italics());
+                    ui.horizontal(|ui| {
+                        crate::brand::logo(ui, 72.0);
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.heading(RichText::new("Thinoda").size(26.0).strong());
+                            ui.label(RichText::new(t(crate::brand::TAGLINE)).italics());
+                        });
+                    });
+                    ui.add_space(6.0);
                     ui.label(t("A fast, open mind mapping app."));
                     ui.label(format!("{} Axel Wolters", t("Written by")));
                     ui.hyperlink_to(
@@ -2923,23 +2930,29 @@ impl ThinodaApp {
                         });
                     });
                     widgets::section(ui, t("Files"), true, |ui| {
-                        widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"));
+                        widgets::property_field(ui, t("Autosave"), |ui| {
+                            widgets::toggle(ui, &mut self.settings.autosave, t("Autosave"))
+                        });
                         widgets::property_field(ui, t("Autosave interval (s)"), |ui| {
                             ui.add(
                                 egui::DragValue::new(&mut self.settings.autosave_interval_secs)
                                     .range(5..=3600),
                             )
                         });
-                        widgets::toggle(
-                            ui,
-                            &mut self.settings.backup_on_save,
-                            t("Keep backup on save"),
-                        );
-                        widgets::toggle(
-                            ui,
-                            &mut self.settings.confirm_on_delete,
-                            t("Confirm before deleting"),
-                        );
+                        widgets::property_field(ui, t("Keep backup on save"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.backup_on_save,
+                                t("Keep backup on save"),
+                            )
+                        });
+                        widgets::property_field(ui, t("Confirm before deleting"), |ui| {
+                            widgets::toggle(
+                                ui,
+                                &mut self.settings.confirm_on_delete,
+                                t("Confirm before deleting"),
+                            )
+                        });
                         if let Some(p) = &self.services.paths
                             && ui.button(t("Open settings folder")).clicked()
                         {

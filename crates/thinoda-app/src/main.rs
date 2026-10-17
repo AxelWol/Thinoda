@@ -61,8 +61,13 @@ fn main() -> anyhow::Result<()> {
         .window
         .as_ref()
         .map_or((1280.0, 800.0), |w| (w.width, w.height));
-    let icon =
-        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-256.png")).ok();
+    // macOS draws the Dock icon from this image even inside the bundle, so use the
+    // Apple-grid variant there; other platforms use the full-bleed logo.
+    #[cfg(target_os = "macos")]
+    let icon_png: &[u8] = include_bytes!("../../../assets/icon-macos-512.png");
+    #[cfg(not(target_os = "macos"))]
+    let icon_png: &[u8] = include_bytes!("../../../assets/icon-256.png");
+    let icon = eframe::icon_data::from_png_bytes(icon_png).ok();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Thinoda")
         .with_inner_size([w, h])

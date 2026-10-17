@@ -715,6 +715,7 @@ fn about_dialog_shows_author_and_contact() {
     let mut h = harness(ThinodaApp::headless());
     h.state_mut().dialogs.about = true;
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Image, "Thinoda logo");
     h.get_by_label("Give your thoughts shape.");
     h.get_by_label("Written by Axel Wolters");
     h.get_by_role_and_label(Role::Link, "Contact: axelwolters@hotmail.com");

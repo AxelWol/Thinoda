@@ -167,6 +167,7 @@ fn help_menu_opens_quick_start_and_guide_without_network_or_map_changes() {
         h.get_by_role_and_label(Role::Button, entry).click();
         h.run_steps(4);
         assert!(h.state().dialogs.guide.open);
+        h.get_by_role_and_label(Role::Image, "Thinoda logo");
         assert_eq!(
             h.state().dialogs.guide.section.is_some(),
             entry == "Quick Start"

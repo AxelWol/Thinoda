@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod app;
+pub mod brand;
 pub mod doc;
 mod help;
 pub mod i18n;

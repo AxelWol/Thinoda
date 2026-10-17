@@ -1019,6 +1019,7 @@ const DE: &[(&str, &str)] = &[
     // About
     ("Version", "Version"),
     ("Give your thoughts shape.", "Gib deinen Gedanken Form."),
+    ("Thinoda logo", "Thinoda-Logo"),
     (
         "A fast, open mind mapping app.",
         "Eine schnelle, offene Mindmapping-App.",

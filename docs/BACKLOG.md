@@ -6,6 +6,7 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- New Thinoda logo (a "T" grown from mind-map nodes whose stem resolves into a solid shape). `cargo xtask icons` generates standard, small-size and Apple-grid variants: `icon.ico` (10 frames, 16–256 px), `icon.icns` (all Retina slots up to 1024 px), Linux hicolor PNGs (16–512 px) and the macOS Dock runtime icon. The logo is shown in the About dialog, User Guide and README.
 - Renamed the app to **Thinoda** ("Give your thoughts shape.") across all crates,
   binaries, file extension (`.thinoda`), bundle identifiers, environment variables,
   installers, workflows, documentation and the GitHub repository. The tagline appears
@@ -794,3 +795,9 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - P3 More UI languages (FR, ES, JA, ZH)
+
+## Documentation
+- P2 Every `*.md` file shows the date/time of its last change at the top
+  (e.g. `_Last updated: 2026-10-17 12:30 CET_`). Keep it accurate automatically:
+  a CI check or pre-commit hook (or `cargo xtask docs-stamp`) that stamps
+  changed Markdown files from `git log -1 --format=%cI`, so it never drifts.

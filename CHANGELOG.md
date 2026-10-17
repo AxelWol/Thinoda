@@ -17,6 +17,7 @@ First public version of Thinoda — *Give your thoughts shape.*
 
 ### Features
 
+* Thinoda logo for every platform: Windows `.ico` (16–256 px), macOS `.icns` (Apple icon grid, 16 pt–512 pt @2x), Linux hicolor PNGs, and in-app in the About dialog and User Guide.
 * Mind map editor with the mind map, logic chart, brace map, org chart, tree,
   timeline and fishbone structures, plus Matrix and tree-table views.
 * Topics with notes, labels, markers, hyperlinks, images, relationships,
