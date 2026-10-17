@@ -795,6 +795,10 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - P3 More UI languages (FR, ES, JA, ZH)
+- P2 Launching Thinoda again without files exits silently when an instance is
+  already running; it should bring the existing window to the front instead.
+- P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software
+  rasterizer; evaluate the GL backend on Mesa's D3D12 driver.
 
 ## Documentation
 - P2 Every `*.md` file shows the date/time of its last change at the top

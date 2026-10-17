@@ -15,6 +15,7 @@ USAGE:
 ";
 
 fn main() -> anyhow::Result<()> {
+    quiet_gpu_probing();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -103,4 +104,15 @@ fn main() -> anyhow::Result<()> {
 fn egui_extras_install(ctx: &egui::Context) {
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     thinoda_ui::fonts::install_fallbacks(ctx);
+}
+
+/// wgpu probes every GPU backend at startup; on Linux without a native driver
+/// (e.g. WSL) libEGL prints harmless warnings for the paths it rejects.
+/// Silence them unless the user configured EGL logging explicitly.
+fn quiet_gpu_probing() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("EGL_LOG_LEVEL").is_none() {
+        // SAFETY: called first thing in main, before any thread is spawned.
+        unsafe { std::env::set_var("EGL_LOG_LEVEL", "fatal") };
+    }
 }
