@@ -4,6 +4,10 @@ use crate::i18n::t;
 
 /// Short product tagline shown next to the logo.
 pub const TAGLINE: &str = "Give your thoughts shape.";
+/// Public contact address shown in the About dialog.
+pub const CONTACT_EMAIL: &str = "axelwolters@hotmail.com";
+/// Public project home page.
+pub const PROJECT_URL: &str = "https://github.com/AxelWol/Thinoda";
 
 const LOGO_64: &[u8] = include_bytes!("../../../assets/icon-64.png");
 const LOGO_256: &[u8] = include_bytes!("../../../assets/icon-256.png");

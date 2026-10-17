@@ -20,6 +20,9 @@ pub use app::{Startup, ThinodaApp, start_services};
 impl eframe::App for ThinodaApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.draw(ui);
+        for url in ThinodaApp::take_open_urls(ui.ctx()) {
+            self.open_link(&url);
+        }
     }
 
     fn on_exit(&mut self) {

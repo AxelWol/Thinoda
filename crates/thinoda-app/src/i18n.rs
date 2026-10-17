@@ -445,6 +445,8 @@ const DE: &[(&str, &str)] = &[
         "Löscht das Zusammenfassungsthema und seine Unterthemen, nicht die zusammengefassten Zweige.",
     ),
     ("Contact", "Kontakt"),
+    ("Write an email", "E-Mail schreiben"),
+    ("Open in web browser", "Im Webbrowser öffnen"),
     ("All sheets", "Alle Blätter"),
     ("Include labels", "Beschriftungen einbeziehen"),
     ("Replaces topic titles only.", "Ersetzt nur Thementitel."),

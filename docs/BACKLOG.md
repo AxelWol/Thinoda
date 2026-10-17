@@ -6,6 +6,12 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Clickable links: the About dialog's contact address opens the default mail client
+  (`mailto:`) and the project URL opens the web browser; Help ▸ Feedback/Project News
+  and topic hyperlinks use the same path. eframe is built without its `links`
+  feature, so the shell drains egui `OpenUrl` commands and passes them to the
+  hardened `system::open_url` (HTTP(S) and `mailto:` only). Translated hover hints,
+  theme-aware link colours; covered for EN/DE × light/dark by `tests/about_links.rs`.
 - New Thinoda logo (a "T" grown from mind-map nodes whose stem resolves into a solid shape). `cargo xtask icons` generates standard, small-size and Apple-grid variants: `icon.ico` (10 frames, 16–256 px), `icon.icns` (all Retina slots up to 1024 px), Linux hicolor PNGs (16–512 px) and the macOS Dock runtime icon. The logo is shown in the About dialog, User Guide and README.
 - Renamed the app to **Thinoda** ("Give your thoughts shape.") across all crates,
   binaries, file extension (`.thinoda`), bundle identifiers, environment variables,

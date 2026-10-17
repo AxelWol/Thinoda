@@ -2824,9 +2824,10 @@ impl ThinodaApp {
                     ui.label(t("A fast, open mind mapping app."));
                     ui.label(format!("{} Axel Wolters", t("Written by")));
                     ui.hyperlink_to(
-                        format!("{}: axelwolters@hotmail.com", t("Contact")),
-                        "mailto:axelwolters@hotmail.com",
-                    );
+                        format!("{}: {}", t("Contact"), crate::brand::CONTACT_EMAIL),
+                        format!("mailto:{}", crate::brand::CONTACT_EMAIL),
+                    )
+                    .on_hover_text(t("Write an email"));
                     ui.label(format!(
                         "{} {} · {} {}",
                         t("Version"),
@@ -2834,7 +2835,8 @@ impl ThinodaApp {
                         thinoda_platform::system::os_name(),
                         thinoda_platform::system::arch()
                     ));
-                    ui.hyperlink("https://github.com/AxelWol/Thinoda");
+                    ui.hyperlink_to(crate::brand::PROJECT_URL, crate::brand::PROJECT_URL)
+                        .on_hover_text(t("Open in web browser"));
                 });
             self.dialogs.about = open;
         }

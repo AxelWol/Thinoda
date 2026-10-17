@@ -875,6 +875,23 @@ impl ThinodaApp {
         }
     }
 
+    /// Remove the `OpenUrl` commands emitted this frame (hyperlinks, Help links) and
+    /// return their targets. eframe is built without its `links` feature, so the
+    /// native shell hands these to [`Self::open_link`] instead.
+    pub fn take_open_urls(ctx: &egui::Context) -> Vec<String> {
+        ctx.output_mut(|o| {
+            let mut urls = Vec::new();
+            o.commands.retain(|c| match c {
+                egui::OutputCommand::OpenUrl(open) => {
+                    urls.push(open.url.clone());
+                    false
+                }
+                _ => true,
+            });
+            urls
+        })
+    }
+
     pub fn merge_files(&mut self, paths: &[PathBuf]) -> bool {
         if self.doc().is_none() || paths.is_empty() {
             self.toasts

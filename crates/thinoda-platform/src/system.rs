@@ -2,14 +2,22 @@
 
 use std::{io, path::Path, process::Command};
 
-/// Open an HTTP(S) URL using the system browser; other schemes are rejected.
+/// Whether `url` may be handed to the OS: HTTP(S) or `mailto:` without control characters.
+pub fn is_openable_url(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    let scheme_ok = lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || (lower.starts_with("mailto:") && url.len() > "mailto:".len());
+    scheme_ok && !url.chars().any(char::is_control)
+}
+
+/// Open an HTTP(S) URL in the system browser or a `mailto:` URL in the default mail
+/// client; other schemes are rejected.
 pub fn open_url(url: &str) -> io::Result<()> {
-    if !(url.starts_with("https://") || url.starts_with("http://"))
-        || url.chars().any(char::is_control)
-    {
+    if !is_openable_url(url) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "only HTTP(S) URLs are supported",
+            "only HTTP(S) and mailto URLs are supported",
         ));
     }
     #[cfg(target_os = "windows")]

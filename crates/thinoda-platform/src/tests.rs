@@ -832,6 +832,20 @@ fn system_helpers_are_gui_independent_and_reject_unsafe_urls() {
     assert_eq!(crate::system::app_version(), env!("CARGO_PKG_VERSION"));
     assert!(crate::system::open_url("file:///etc/passwd").is_err());
     assert!(crate::system::open_url("https://example.org\n").is_err());
+    assert!(crate::system::open_url("javascript:alert(1)").is_err());
+    assert!(crate::system::open_url("mailto:").is_err());
+    assert!(crate::system::open_url("mailto:a@b.test\r\nX").is_err());
+    for ok in [
+        "https://github.com/AxelWol/Thinoda",
+        "http://example.org",
+        "HTTPS://EXAMPLE.ORG",
+        "mailto:axelwolters@hotmail.com",
+    ] {
+        assert!(crate::system::is_openable_url(ok), "{ok}");
+    }
+    for bad in ["file:///etc/passwd", "ftp://x", "mailto:", "smb://h/s", ""] {
+        assert!(!crate::system::is_openable_url(bad), "{bad}");
+    }
 }
 
 #[test]
