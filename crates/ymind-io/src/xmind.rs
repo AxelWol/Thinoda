@@ -1,5 +1,6 @@
 use crate::{IoError, zip_entry};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use ymind_core::{
@@ -7,6 +8,20 @@ use ymind_core::{
     TopicShape, Vec2, Workbook,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+fn export_topic_style(sheet: &Sheet, id: TopicId) -> std::borrow::Cow<'_, ymind_core::TopicStyle> {
+    if sheet.theme.custom_theme.is_some() {
+        std::borrow::Cow::Owned(
+            ymind_core::quick_styles::QuickStyle::from_appearance(
+                "Export".into(),
+                &ymind_core::theme::resolve_style(sheet, id, false),
+            )
+            .style,
+        )
+    } else {
+        std::borrow::Cow::Borrowed(&sheet.topics[&id].style)
+    }
+}
 
 fn shape_class(shape: TopicShape) -> &'static str {
     match shape {
@@ -67,7 +82,7 @@ fn parse_line_class(class: &str) -> Option<LineShape> {
     }
 }
 
-pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+fn public_content(book: &Workbook) -> Value {
     fn topic(sheet: &Sheet, id: TopicId, ids: &HashMap<TopicId, String>) -> Value {
         let model = &sheet.topics[&id];
         let mut children = serde_json::Map::new();
@@ -95,7 +110,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 children.insert("detached".into(), json!(detached));
             }
         }
-        let style = &model.style;
+        let style = export_topic_style(sheet, id);
         let mut properties = serde_json::Map::new();
         if let Some(color) = style.fill {
             properties.insert("svg:fill".into(), json!(color.to_hex()));
@@ -127,7 +142,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         if let Some(color) = style.line_color {
             properties.insert("line-color".into(), json!(color.to_hex()));
         }
-        if let Some(width) = style.line_width {
+        if let Some(width) = style.line_width.or(sheet.theme.line_width) {
             properties.insert("line-width".into(), json!(width.to_string()));
         }
         if let Some(shape) = style.shape {
@@ -136,7 +151,11 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         if let Some(line_shape) = style.line_shape {
             properties.insert("line-class".into(), json!(line_class(line_shape)));
         }
-        if let Some(font_family) = &style.font_family {
+        if let Some(font_family) = style
+            .font_family
+            .as_ref()
+            .or(sheet.theme.font_family.as_ref())
+        {
             properties.insert("fo:font-family".into(), json!(font_family));
         }
         if let Some(align) = style.align {
@@ -184,7 +203,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         }
         let boundaries: Vec<_> = sheet.boundaries.iter().filter(|boundary| boundary.parent == id).map(|boundary| {
             json!({
-                "id": format!("boundary-{}", boundary.id.0),
+                "id": format!("{}-boundary-{}", ids[&id], boundary.id.0),
                 "class": "boundary",
                 "range": boundary.range.map(|range| format!("({}, {})", range.start, range.end)).unwrap_or_else(|| "master".into()),
                 "title": boundary.title,
@@ -204,7 +223,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 sheet_summaries
                     .iter()
                     .map(|summary| json!({
-                        "id": format!("summary-{}", summary.id.0),
+                        "id": format!("{}-summary-{}", ids[&id], summary.id.0),
                         "class": "summary",
                         "range": format!("({}, {})", summary.range.start, summary.range.end),
                         "topicId": ids.get(&summary.topic)
@@ -220,7 +239,6 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
         }
         value
     }
-    let stable = serde_json::to_string(book)?;
     let sheets: Vec<Value> = book
         .sheets
         .iter()
@@ -235,7 +253,7 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
                 "id": format!("sheet-{sheet_index}"), "class": "sheet", "title": sheet.title,
                 "rootTopic": topic(sheet, sheet.root, &ids),
                 "relationships": sheet.relationships.iter().map(|relationship| json!({
-                    "id": format!("rel-{}", relationship.id.0),
+                    "id": format!("rel-{sheet_index}-{}", relationship.id.0),
                     "class": "relationship",
                     "end1Id": ids.get(&relationship.from), "end2Id": ids.get(&relationship.to),
                     "title": relationship.title,
@@ -244,11 +262,25 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
             })
         })
         .collect();
+    json!(sheets)
+}
+
+fn content_digest(content: &Value) -> Result<String, IoError> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(content)?)
+    ))
+}
+
+pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+    let stable = serde_json::to_string(book)?;
+    let sheets = public_content(book);
     let content = serde_json::to_vec(&sheets)?;
     let metadata = serde_json::to_vec(&json!({
         "creator": {"name": "yMind", "version": env!("CARGO_PKG_VERSION")},
         "dataStructureVersion": "2",
-        "ymindWorkbook": stable
+        "ymindWorkbook": stable,
+        "ymindContentSha256": content_digest(&sheets)?
     }))?;
     let manifest =
         serde_json::to_vec(&json!({"file-entries":{"content.json":{},"metadata.json":{}}}))?;
@@ -298,7 +330,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
                 .map(|structure| format!(" structure-class=\"{}\"", xml_escape(structure)))
                 .unwrap_or_default()
         ));
-        let style = &t.style;
+        let style = export_topic_style(sheet, id);
         let mut properties = Vec::new();
         if let Some(color) = style.text_color {
             properties.push(format!("fo:color=\"{}\"", color.to_hex()));
@@ -318,7 +350,11 @@ fn legacy_compatibility(book: &Workbook) -> String {
         if let Some(size) = style.font_size {
             properties.push(format!("fo:font-size=\"{size}pt\""));
         }
-        if let Some(family) = &style.font_family {
+        if let Some(family) = style
+            .font_family
+            .as_ref()
+            .or(sheet.theme.font_family.as_ref())
+        {
             properties.push(format!("fo:font-family=\"{}\"", xml_escape(family)));
         }
         if let Some(bold) = style.bold {
@@ -356,7 +392,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
         if let Some(color) = style.line_color {
             properties.push(format!("line-color=\"{}\"", color.to_hex()));
         }
-        if let Some(width) = style.line_width {
+        if let Some(width) = style.line_width.or(sheet.theme.line_width) {
             properties.push(format!("line-width=\"{width}\""));
         }
         if let Some(line_shape) = style.line_shape {
@@ -440,6 +476,8 @@ fn parse_topic(
     parent: Option<TopicId>,
     depth: usize,
     idmap: &mut HashMap<String, TopicId>,
+    theme: &Value,
+    role: &'static str,
 ) -> Result<TopicId, IoError> {
     if depth > 2000 {
         return Err(IoError::Invalid("XMind topic nesting exceeds 2000".into()));
@@ -488,11 +526,20 @@ fn parse_topic(
     {
         t.structure = Some(st);
     }
-    if let Some(props) = v
+    let mut props = theme
+        .get(role)
+        .and_then(|style| style.get("properties"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(overrides) = v
         .get("style")
         .and_then(|x| x.get("properties"))
         .and_then(Value::as_object)
     {
+        props.extend(overrides.clone());
+    }
+    if !props.is_empty() {
         let style = &mut s.topic_mut(id).unwrap().style;
         style.fill = props
             .get("svg:fill")
@@ -564,7 +611,12 @@ fn parse_topic(
         .cloned()
         .unwrap_or_default();
     for child in attached {
-        parse_topic(&child, s, Some(id), depth + 1, idmap)?;
+        let child_role = if role == "centralTopic" {
+            "mainTopic"
+        } else {
+            "subTopic"
+        };
+        parse_topic(&child, s, Some(id), depth + 1, idmap, theme, child_role)?;
     }
     if let Some(boundaries) = v.get("boundaries").and_then(Value::as_array) {
         for boundary in boundaries {
@@ -593,7 +645,15 @@ fn parse_topic(
         .and_then(Value::as_array)
     {
         for summary_topic in summaries {
-            let summary_id = parse_topic(summary_topic, s, Some(id), depth + 1, idmap)?;
+            let summary_id = parse_topic(
+                summary_topic,
+                s,
+                Some(id),
+                depth + 1,
+                idmap,
+                theme,
+                "summaryTopic",
+            )?;
             s.topic_mut(id)
                 .unwrap()
                 .children
@@ -641,7 +701,7 @@ fn parse_topic(
                     )
                 })
                 .unwrap_or(Vec2::ZERO);
-            let fid = parse_topic(&d, s, Some(id), depth + 1, idmap)?;
+            let fid = parse_topic(&d, s, Some(id), depth + 1, idmap, theme, "floatingTopic")?;
             s.topic_mut(id)
                 .unwrap()
                 .children
@@ -658,11 +718,18 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
     if bytes.starts_with(b"PK\x03\x04") {
         let mut z = ZipArchive::new(Cursor::new(bytes))?;
         if z.file_names().any(|n| n.is_ok_and(|v| v == "content.json")) {
+            let doc: Value = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
             let meta = if z
                 .file_names()
                 .any(|n| n.is_ok_and(|v| v == "metadata.json"))
             {
-                serde_json::from_slice::<Value>(&zip_entry(&mut z, "metadata.json")?).ok()
+                match serde_json::from_slice::<Value>(&zip_entry(&mut z, "metadata.json")?) {
+                    Ok(metadata) => Some(metadata),
+                    Err(e) => {
+                        log::warn!("Ignoring invalid XMind metadata; reading public content: {e}");
+                        None
+                    }
+                }
             } else {
                 None
             };
@@ -671,9 +738,31 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                 .and_then(|m| m.get("ymindWorkbook"))
                 .and_then(Value::as_str)
             {
-                return Ok(serde_json::from_str(w)?);
+                match serde_json::from_str::<Workbook>(w) {
+                    Ok(workbook) => {
+                        if let Err(e) = workbook.validate() {
+                            log::warn!("Ignoring invalid private XMind snapshot: {e}");
+                        } else {
+                            let unchanged = match meta
+                                .as_ref()
+                                .and_then(|m| m.get("ymindContentSha256"))
+                            {
+                                Some(hash) => hash.as_str() == Some(content_digest(&doc)?.as_str()),
+                                // Old yMind exports have no digest. Only trust them when their
+                                // generated public representation still matches the actual file.
+                                None => public_content(&workbook) == doc,
+                            };
+                            if unchanged {
+                                return Ok(workbook);
+                            }
+                            log::warn!(
+                                "XMind public content changed; ignoring stale private snapshot"
+                            );
+                        }
+                    }
+                    Err(e) => log::warn!("Ignoring unreadable private XMind snapshot: {e}"),
+                }
             }
-            let doc: Value = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
             let arr = doc
                 .as_array()
                 .ok_or_else(|| IoError::Invalid("XMind content must be an array".into()))?;
@@ -685,7 +774,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                     .ok_or_else(|| IoError::Invalid("XMind sheet missing rootTopic".into()))?;
                 let mut s = Sheet::new(title, "Untitled");
                 let mut ids = HashMap::new();
-                parse_topic(root, &mut s, None, 0, &mut ids)?;
+                parse_topic(root, &mut s, None, 0, &mut ids, &v["theme"], "centralTopic")?;
                 if let Some(rels) = v.get("relationships").and_then(Value::as_array) {
                     for r in rels {
                         let a = r
@@ -704,6 +793,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Workbook, IoError> {
                                 id: rid,
                                 from: a,
                                 to: b,
+                                control_points: None,
                                 title: r.get("title").and_then(Value::as_str).unwrap_or("").into(),
                                 color: r
                                     .get("style")
@@ -1002,6 +1092,8 @@ mod tests {
     #[test]
     fn legacy_xml_export_preserves_topic_style_and_content() {
         let mut w = Workbook::new(Sheet::new("S", "Root & title"));
+        w.active_mut().theme.font_family = Some("monospace".into());
+        w.active_mut().theme.line_width = Some(3.5);
         let root = w.active().root;
         let child = w.active_mut().add_child(root, None, "Child");
         w.active_mut().topic_mut(child).unwrap().style = ymind_core::TopicStyle {
@@ -1010,6 +1102,7 @@ mod tests {
             line_shape: Some(LineShape::RoundedElbow),
             font_family: Some("Noto Sans".into()),
             font_size: Some(14.0),
+            line_width: Some(4.0),
             ..Default::default()
         };
         let bytes = export(&w).unwrap();
@@ -1020,11 +1113,17 @@ mod tests {
         assert!(xml.contains("Child"));
         assert!(xml.contains("shape-class=\"org.xmind.topicShape.diamond\""));
         let imported = import_legacy_xml(xml.as_bytes()).unwrap();
+        assert_eq!(imported.active().root_topic().style.line_width, Some(3.5));
+        assert_eq!(
+            imported.active().root_topic().style.font_family.as_deref(),
+            Some("monospace")
+        );
         let imported_child = imported
             .active()
             .topic(imported.active().root_topic().children[0])
             .unwrap();
         assert_eq!(imported_child.style.fill, Some(Color::rgb(10, 20, 30)));
+        assert_eq!(imported_child.style.line_width, Some(4.0));
         assert_eq!(imported_child.style.shape, Some(TopicShape::Diamond));
         assert_eq!(
             imported_child.style.line_shape,

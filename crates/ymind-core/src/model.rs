@@ -302,6 +302,14 @@ impl TopicStyle {
     }
 }
 
+/// Explicit side of a branch attached to a split-map parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchSide {
+    Left,
+    Right,
+}
+
 /// A topic (node) of the map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Topic {
@@ -330,6 +338,9 @@ pub struct Topic {
     /// Structure override for this subtree (mixed structures).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure: Option<Structure>,
+    /// Explicit attachment side when the parent uses a split-map structure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_side: Option<BranchSide>,
     /// To-Do checkbox state (`None` = no checkbox).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo: Option<bool>,
@@ -353,6 +364,7 @@ impl Topic {
             style: TopicStyle::default(),
             position: None,
             structure: None,
+            branch_side: None,
             todo: None,
             image: None,
         }
@@ -373,6 +385,23 @@ pub struct Relationship {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
+    /// Cubic controls relative to the from/to topic centers; None uses automatic routing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_points: Option<[Vec2; 2]>,
+}
+
+impl Relationship {
+    /// Bounds each finite offset to one million map units to keep curve arithmetic usable.
+    pub fn valid_control_points(points: Option<[Vec2; 2]>) -> bool {
+        points.is_none_or(|points| {
+            points.iter().all(|p| {
+                p.x.is_finite()
+                    && p.y.is_finite()
+                    && p.x.abs() <= 1_000_000.0
+                    && p.y.abs() <= 1_000_000.0
+            })
+        })
+    }
 }
 
 /// Inclusive range of child indices of a parent topic.
@@ -836,16 +865,7 @@ impl Sheet {
             keep
         });
         for st in dead_topics {
-            for t in self.subtree_ids(st) {
-                self.topics.remove(&t);
-            }
-            let rels: Vec<_> = self
-                .relationships
-                .iter()
-                .filter(|r| self.topics.contains_key(&r.from) && self.topics.contains_key(&r.to))
-                .cloned()
-                .collect();
-            self.relationships = rels;
+            self.detach_subtree(st);
         }
     }
 
@@ -854,6 +874,7 @@ impl Sheet {
         if !self.contains(self.root) {
             return Err("root topic missing".into());
         }
+        self.theme.validate()?;
         if self.root_topic().parent.is_some() {
             return Err("root has a parent".into());
         }
@@ -897,6 +918,12 @@ impl Sheet {
         for r in &self.relationships {
             if !self.contains(r.from) || !self.contains(r.to) {
                 return Err(format!("relationship {:?} dangling", r.id));
+            }
+            if !Relationship::valid_control_points(r.control_points) {
+                return Err(format!(
+                    "relationship {:?} has invalid curve controls",
+                    r.id
+                ));
             }
         }
         for b in &self.boundaries {
@@ -961,6 +988,49 @@ impl Workbook {
         &mut self.sheets[i]
     }
 
+    /// Creates a derived, text-masked document. Structure, colors and task states
+    /// remain observable; this is not a guarantee of anonymity.
+    pub fn masked_copy(&self) -> Self {
+        let mut copy = self.clone();
+        copy.metadata = Metadata::default();
+        for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
+            sheet.title = format!("Sheet {}", sheet_index + 1);
+            sheet.theme.font_family = None;
+            if let Some(custom) = &mut sheet.theme.custom_theme {
+                custom.name = "Custom Theme".into();
+                custom.font_family = None;
+                for role in [
+                    crate::theme::Level::Central,
+                    crate::theme::Level::Main,
+                    crate::theme::Level::Sub,
+                    crate::theme::Level::Floating,
+                    crate::theme::Level::Summary,
+                ] {
+                    custom.roles.get_mut(role).font_family = None;
+                }
+            }
+            if !crate::theme::Theme::IDS.contains(&sheet.theme.theme_id.as_str()) {
+                sheet.theme.theme_id = crate::theme::ThemeSettings::default().theme_id;
+            }
+            for (index, topic) in sheet.topics.values_mut().enumerate() {
+                topic.title = format!("Topic {}", index + 1);
+                topic.notes = None;
+                topic.labels.clear();
+                topic.hyperlink = None;
+                topic.image = None;
+                topic.markers.clear();
+                topic.style.font_family = None;
+            }
+            for (index, relationship) in sheet.relationships.iter_mut().enumerate() {
+                relationship.title = format!("Relationship {}", index + 1);
+            }
+            for boundary in &mut sheet.boundaries {
+                boundary.title = None;
+            }
+        }
+        copy
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.sheets.is_empty() {
             return Err("workbook has no sheets".into());
@@ -988,6 +1058,56 @@ mod tests {
         let b = s.add_child(s.root, None, "B");
         let a1 = s.add_child(a, None, "A1");
         (s, a, b, a1)
+    }
+
+    #[test]
+    fn masked_copy_removes_every_free_text_field_without_changing_source_or_structure() {
+        let (mut s, a, b, _) = sample();
+        let summary = s.add_summary(&[a, b], "SECRET Summary").unwrap();
+        s.add_child(summary, None, "SECRET summary child");
+        s.add_boundary(&[a, b]).unwrap();
+        s.boundaries[0].title = Some("SECRET boundary".into());
+        s.add_relationship(a, b).unwrap();
+        s.relationships[0].title = "SECRET relationship".into();
+        s.title = "SECRET sheet".into();
+        s.theme.theme_id = "SECRET custom theme".into();
+        s.theme.font_family = Some("SECRET font".into());
+        for topic in s.topics.values_mut() {
+            topic.title = "SECRET title".into();
+            topic.notes = Some("SECRET notes".into());
+            topic.labels = vec!["SECRET label".into()];
+            topic.markers = vec!["SECRET marker".into()];
+            topic.hyperlink = Some("file:///SECRET/file".into());
+            topic.image = Some("SECRET image path".into());
+            topic.style.font_family = Some("SECRET topic font".into());
+            topic.todo = Some(true);
+        }
+        let mut book = Workbook::new(s);
+        book.metadata.creator = "SECRET creator".into();
+        book.metadata.description = Some("SECRET description".into());
+        book.metadata.created = Some("SECRET date".into());
+        book.metadata.modified = Some("SECRET changed".into());
+        book.sheets.push(book.sheets[0].clone());
+        book.active_sheet = 1;
+        let original = book.clone();
+        let copy = book.masked_copy();
+        copy.validate().unwrap();
+        assert!(!serde_json::to_string(&copy).unwrap().contains("SECRET"));
+        assert_eq!(copy.metadata, Metadata::default());
+        assert_eq!(copy.sheets.len(), 2);
+        assert_eq!(copy.active_sheet, 1);
+        for (masked, source) in copy.sheets.iter().zip(&book.sheets) {
+            assert_eq!(masked.root, source.root);
+            assert_eq!(masked.summaries, source.summaries);
+            assert_eq!(masked.structure, source.structure);
+            for (id, topic) in &masked.topics {
+                assert_eq!(topic.parent, source.topics[id].parent);
+                assert_eq!(topic.children, source.topics[id].children);
+                assert_eq!(topic.todo, Some(true));
+            }
+        }
+        assert_eq!(book, original);
+        assert_eq!(copy.masked_copy(), copy);
     }
 
     #[test]
@@ -1035,6 +1155,7 @@ mod tests {
             to: b,
             title: String::new(),
             color: None,
+            control_points: None,
         });
         let bid = s.alloc_boundary_id();
         s.boundaries.push(Boundary {

@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 egui = { workspace = true }
 serde = { workspace = true }
+fontdb = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { workspace = true }

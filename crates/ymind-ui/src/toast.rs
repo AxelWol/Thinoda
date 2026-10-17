@@ -94,6 +94,11 @@ impl Toasts {
     }
 
     pub fn show(&mut self, ctx: &Context) {
+        self.show_with_modal(ctx, false);
+    }
+
+    /// Keep notifications below modal controls instead of intercepting their clicks.
+    pub fn show_with_modal(&mut self, ctx: &Context, modal_open: bool) {
         if self.items.is_empty() {
             return;
         }
@@ -102,7 +107,11 @@ impl Toasts {
         let p = Palette::of(ctx);
         let mut dismiss = None;
         egui::Area::new(Id::unique("ymind_toasts"))
-            .order(Order::Tooltip)
+            .order(if modal_open {
+                Order::Middle
+            } else {
+                Order::Tooltip
+            })
             .anchor(Align2::CENTER_BOTTOM, [0.0, -36.0])
             .interactable(true)
             .show(ctx, |ui| {

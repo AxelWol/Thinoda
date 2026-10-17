@@ -8,11 +8,15 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 fn sample() -> Workbook {
     let mut s = Sheet::new("First sheet", "Central & topic");
+    s.theme.flexible_floating_topics = true;
+    s.theme.font_family = Some("serif".into());
+    s.theme.line_width = Some(3.5);
     let a = s.add_child(s.root, None, "Branch <A>");
     let b = s.add_child(s.root, None, "Branch B");
     let child = s.add_child(a, None, "Nested");
     {
         let t = s.topic_mut(a).unwrap();
+        t.branch_side = Some(ymind_core::BranchSide::Left);
         t.notes = Some("Notes & details".into());
         t.hyperlink = Some("https://example.com/?a=1&b=2".into());
         t.labels = vec!["work".into(), "important".into()];
@@ -44,6 +48,7 @@ fn sample() -> Workbook {
         to: b,
         title: "connects".into(),
         color: Some(Color::rgb(1, 2, 3)),
+        control_points: Some([Vec2::new(35.0, -80.0), Vec2::new(-45.0, 90.0)]),
     });
     let bid = s.alloc_boundary_id();
     s.boundaries.push(Boundary {
@@ -89,6 +94,141 @@ fn public_xmind_content(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 #[test]
+fn custom_themes_remain_embedded_and_materialize_public_json_and_xml_appearance() {
+    let mut book = Workbook::default();
+    let sheet = book.active_mut();
+    let child = sheet.add_child(sheet.root, None, "Custom child");
+    let mut custom = ymind_core::custom_theme::CustomTheme::from_settings(&sheet.theme);
+    custom.name = "Portable".into();
+    custom.roles.main.fill = Some(Color::rgb(2, 40, 80));
+    custom.roles.main.font_size = Some(24.0);
+    custom.roles.main.font_family = Some("monospace".into());
+    custom.roles.main.bold = Some(true);
+    custom.roles.main.line_width = Some(4.0);
+    sheet.theme.custom_theme = Some(custom);
+    let bytes = export_bytes(&book, Format::XMind, &Default::default()).unwrap();
+    for format in [Format::YMind, Format::XMind] {
+        let data = export_bytes(&book, format, &Default::default()).unwrap();
+        assert_eq!(import_bytes(format, &data).unwrap(), book);
+    }
+    let json_only = public_xmind_content(bytes.clone());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut xml = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("content.xml").unwrap(), &mut xml).unwrap();
+    for public in [json_only, zip_with(&[("content.xml", &xml)])] {
+        let reopened = import_bytes(Format::XMind, &public).unwrap();
+        let topic = reopened
+            .active()
+            .topics
+            .values()
+            .find(|topic| topic.title == "Custom child")
+            .unwrap();
+        let expected = ymind_core::theme::resolve_style(book.active(), child, false);
+        assert_eq!(topic.style.fill, expected.fill);
+        assert_eq!(topic.style.font_size, Some(expected.font_size));
+        assert_eq!(topic.style.font_family, expected.font_family);
+        assert_eq!(topic.style.bold, Some(expected.bold));
+        assert_eq!(topic.style.line_width, Some(expected.line_width));
+    }
+}
+
+#[test]
+fn masked_native_archives_contain_only_masked_public_and_private_payloads() {
+    let mut source = sample();
+    source.metadata.description = Some("PRIVATE42 metadata".into());
+    for sheet in &mut source.sheets {
+        sheet.title = "PRIVATE42 sheet".into();
+        sheet.theme.font_family = Some("PRIVATE42 font".into());
+        for topic in sheet.topics.values_mut() {
+            topic.title = "PRIVATE42 title".into();
+            topic.notes = Some("PRIVATE42 notes".into());
+            topic.image = Some("PRIVATE42 image".into());
+            topic.hyperlink = Some("https://example.test/PRIVATE42".into());
+            topic.labels = vec!["PRIVATE42 label".into()];
+            topic.markers = vec!["PRIVATE42 marker".into()];
+            topic.style.font_family = Some("PRIVATE42 topic font".into());
+        }
+        for boundary in &mut sheet.boundaries {
+            boundary.title = Some("PRIVATE42 boundary".into());
+        }
+        for relationship in &mut sheet.relationships {
+            relationship.title = "PRIVATE42 relationship".into();
+        }
+    }
+    let original = source.clone();
+    let masked = source.masked_copy();
+    for format in [Format::YMind, Format::XMind] {
+        let bytes = export_bytes(&masked, format, &Default::default()).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            assert!(!entry.name().unwrap().contains("PRIVATE42"));
+            let mut contents = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+            assert!(
+                !contents.contains("PRIVATE42"),
+                "leaked into {}",
+                entry.name().unwrap()
+            );
+        }
+        assert_eq!(import_bytes(format, &bytes).unwrap(), masked);
+        if format == Format::XMind {
+            let public = import_bytes(format, &public_xmind_content(bytes)).unwrap();
+            assert!(
+                !serde_json::to_string(&public)
+                    .unwrap()
+                    .contains("PRIVATE42")
+            );
+            assert_eq!(public.sheets.len(), masked.sheets.len());
+        }
+    }
+    assert_eq!(source, original);
+}
+
+#[test]
+fn multisheet_xmind_annotation_ids_are_globally_unique_and_references_resolve() {
+    let mut book = sample();
+    book.sheets.push(book.sheets[0].clone());
+    let bytes = export_bytes(&book, Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_reader(archive.by_name("content.json").unwrap()).unwrap();
+    fn walk(
+        value: &serde_json::Value,
+        ids: &mut std::collections::HashSet<String>,
+        references: &mut Vec<String>,
+    ) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(id) = object.get("id").and_then(|id| id.as_str()) {
+                    assert!(ids.insert(id.to_string()), "duplicate XMind ID {id}");
+                }
+                for (key, value) in object {
+                    if matches!(key.as_str(), "topicId" | "end1Id" | "end2Id") {
+                        references.push(value.as_str().unwrap().to_string());
+                    }
+                    walk(value, ids, references);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for value in array {
+                    walk(value, ids, references);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut references = Vec::new();
+    walk(&content, &mut ids, &mut references);
+    assert_eq!(references.len(), 6);
+    assert!(references.iter().all(|reference| ids.contains(reference)));
+    let restored = import_bytes(Format::XMind, &public_xmind_content(bytes)).unwrap();
+    assert_eq!(restored.sheets.len(), 3);
+    assert_eq!(restored.sheets[0], restored.sheets[2]);
+}
+
+#[test]
 fn native_archive_roundtrips_every_model_field() {
     let w = sample();
     let bytes = export_bytes(&w, Format::YMind, &Default::default()).unwrap();
@@ -115,6 +255,20 @@ fn xmind_export_import_roundtrips_model() {
     assert_eq!(restored.sheets.len(), 2);
     let sheet = &restored.sheets[0];
     assert_eq!(sheet.root_topic().title, "Central & topic");
+    assert_eq!(sheet.root_topic().style.line_width, Some(3.5));
+    assert_eq!(
+        sheet.root_topic().style.font_family.as_deref(),
+        Some("serif")
+    );
+    assert_eq!(
+        sheet
+            .topic(sheet.root_topic().children[1])
+            .unwrap()
+            .style
+            .font_family
+            .as_deref(),
+        Some("serif")
+    );
     let branch = sheet.topic(sheet.root_topic().children[0]).unwrap();
     assert_eq!(branch.title, "Branch <A>");
     assert_eq!(branch.style.shape, Some(TopicShape::Diamond));
@@ -134,6 +288,171 @@ fn xmind_export_import_roundtrips_model() {
     assert_eq!(sheet.relationships[0].color, Some(Color::rgb(1, 2, 3)));
     assert_eq!(sheet.boundaries[0].color, Some(Color::rgb(3, 4, 5)));
     assert_eq!(sheet.topics[&sheet.summaries[0].topic].title, "Summary");
+}
+
+fn xmind_json_parts(book: &Workbook) -> (serde_json::Value, serde_json::Value) {
+    let bytes = export_bytes(book, Format::XMind, &Default::default()).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let content = serde_json::from_reader(archive.by_name("content.json").unwrap()).unwrap();
+    let metadata = serde_json::from_reader(archive.by_name("metadata.json").unwrap()).unwrap();
+    (content, metadata)
+}
+
+fn xmind_from_parts(content: &serde_json::Value, metadata: &serde_json::Value) -> Vec<u8> {
+    zip_with(&[
+        ("content.json", &serde_json::to_vec_pretty(content).unwrap()),
+        ("metadata.json", &serde_json::to_vec(metadata).unwrap()),
+    ])
+}
+
+#[test]
+fn xmind_snapshot_is_content_bound_but_ignores_json_whitespace() {
+    let mut book = sample();
+    let root = book.sheets[0].root;
+    book.sheets[0].topic_mut(root).unwrap().todo = Some(true);
+    book.metadata.description = Some("Private lossless field".into());
+    let (content, metadata) = xmind_json_parts(&book);
+    assert_eq!(metadata["ymindContentSha256"].as_str().unwrap().len(), 64);
+    let bytes = xmind_from_parts(&content, &metadata);
+    assert_eq!(import_bytes(Format::XMind, &bytes).unwrap(), book);
+    let mut legacy = metadata.clone();
+    legacy.as_object_mut().unwrap().remove("ymindContentSha256");
+    assert_eq!(
+        import_bytes(Format::XMind, &xmind_from_parts(&content, &legacy)).unwrap(),
+        book
+    );
+}
+
+#[test]
+fn external_xmind_edits_win_over_current_and_legacy_private_snapshots() {
+    let book = sample();
+    let (mut content, metadata) = xmind_json_parts(&book);
+    content.as_array_mut().unwrap().truncate(1);
+    content[0]["title"] = serde_json::json!("Edited sheet");
+    content[0]["rootTopic"]["title"] = serde_json::json!("Edited outside yMind");
+    content[0]["rootTopic"]["notes"] = serde_json::json!({"plain":{"content":"new note"}});
+    content[0]["rootTopic"]["children"] =
+        serde_json::json!({"attached":[{"id":"new","title":"Replacement"}]});
+    content[0]["rootTopic"]
+        .as_object_mut()
+        .unwrap()
+        .remove("summaries");
+    content[0]["rootTopic"]
+        .as_object_mut()
+        .unwrap()
+        .remove("boundaries");
+    content[0]["relationships"] = serde_json::json!([]);
+    for legacy in [false, true] {
+        let mut meta = metadata.clone();
+        if legacy {
+            meta.as_object_mut().unwrap().remove("ymindContentSha256");
+        }
+        let restored = import_bytes(Format::XMind, &xmind_from_parts(&content, &meta)).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.sheets.len(), 1);
+        let sheet = &restored.sheets[0];
+        assert_eq!(sheet.title, "Edited sheet");
+        assert_eq!(sheet.root_topic().title, "Edited outside yMind");
+        assert_eq!(sheet.root_topic().notes.as_deref(), Some("new note"));
+        assert_eq!(sheet.topic_count(), 2);
+        assert_eq!(
+            sheet.topic(sheet.root_topic().children[0]).unwrap().title,
+            "Replacement"
+        );
+        assert!(
+            sheet.summaries.is_empty()
+                && sheet.boundaries.is_empty()
+                && sheet.relationships.is_empty()
+        );
+        let native = export_bytes(&restored, Format::YMind, &Default::default()).unwrap();
+        assert_eq!(import_bytes(Format::YMind, &native).unwrap(), restored);
+    }
+    assert_eq!(book.sheets[0].root_topic().title, "Central & topic");
+}
+
+#[test]
+fn invalid_private_snapshots_do_not_hide_valid_public_maps_or_broken_public_json() {
+    let (content, metadata) = xmind_json_parts(&sample());
+    for snapshot in ["{broken", r#"{"sheets":[],"active_sheet":0}"#] {
+        let mut meta = metadata.clone();
+        meta["ymindWorkbook"] = serde_json::json!(snapshot);
+        let restored = import_bytes(Format::XMind, &xmind_from_parts(&content, &meta)).unwrap();
+        assert_eq!(restored.sheets[0].root_topic().title, "Central & topic");
+    }
+    let mut malformed_hash = metadata.clone();
+    malformed_hash["ymindContentSha256"] = serde_json::json!(42);
+    assert!(import_bytes(Format::XMind, &xmind_from_parts(&content, &malformed_hash)).is_ok());
+    let bytes = zip_with(&[
+        ("content.json", b"{broken"),
+        ("metadata.json", &serde_json::to_vec(&metadata).unwrap()),
+    ]);
+    assert!(import_bytes(Format::XMind, &bytes).is_err());
+}
+
+#[test]
+fn xmind_theme_defaults_are_materialized_per_role_and_inline_styles_win() {
+    // Field names/role structure follow xmindltd/xmind-viewer example/content.json.
+    // This original fixture deliberately uses different values and topic content.
+    let content = serde_json::json!([{
+        "title":"Theme fixture",
+        "theme":{
+            "centralTopic":{"properties":{"svg:fill":"#112233","fo:font-size":28,"fo:font-weight":"600"}},
+            "mainTopic":{"properties":{"svg:fill":"#445566","fo:font-size":"20pt","fo:color":"#123456"}},
+            "subTopic":{"properties":{"fo:font-size":13,"shape-class":"org.xmind.topicShape.underline"}},
+            "floatingTopic":{"properties":{"svg:fill":"#778899","fo:font-size":17}},
+            "summaryTopic":{"properties":{"svg:fill":"#AABBCC","fo:font-size":19}}
+        },
+        "rootTopic":{
+            "id":"root","title":"Root",
+            "style":{"properties":{"fo:font-size":30}},
+            "children":{
+                "attached":[{"id":"main","title":"Main","style":{"properties":{"svg:fill":"#FF0000","fo:font-size":22}},
+                    "children":{"attached":[{"id":"sub","title":"Sub"}]}}],
+                "detached":[{"id":"float","title":"Floating","position":{"x":250,"y":80},
+                    "children":{"attached":[{"id":"float-child","title":"Floating child"}]}}],
+                "summary":[{"id":"summary","title":"Summary",
+                    "children":{"attached":[{"id":"summary-child","title":"Summary child"}]}}]
+            },
+            "summaries":[{"id":"sum","range":"(0, 0)","topicId":"summary"}]
+        }
+    },{
+        "title":"No inherited sheet theme","rootTopic":{"id":"other","title":"Other"}
+    }]);
+    let bytes = zip_with(&[("content.json", &serde_json::to_vec(&content).unwrap())]);
+    let book = import_bytes(Format::XMind, &bytes).unwrap();
+    book.validate().unwrap();
+    let sheet = &book.sheets[0];
+    let named = |title| {
+        sheet
+            .topics
+            .values()
+            .find(|topic| topic.title == title)
+            .unwrap()
+    };
+    assert_eq!(named("Root").style.fill, Some(Color::rgb(17, 34, 51)));
+    assert_eq!(named("Root").style.font_size, Some(30.0));
+    assert_eq!(named("Root").style.bold, Some(true));
+    assert_eq!(named("Main").style.fill, Some(Color::rgb(255, 0, 0)));
+    assert_eq!(named("Main").style.font_size, Some(22.0));
+    assert_eq!(named("Main").style.text_color, Some(Color::rgb(18, 52, 86)));
+    assert_eq!(
+        named("Floating").style.fill,
+        Some(Color::rgb(119, 136, 153))
+    );
+    assert_eq!(named("Summary").style.fill, Some(Color::rgb(170, 187, 204)));
+    for title in ["Sub", "Floating child", "Summary child"] {
+        assert_eq!(named(title).style.font_size, Some(13.0), "{title}");
+        assert_eq!(
+            named(title).style.shape,
+            Some(TopicShape::Underline),
+            "{title}"
+        );
+    }
+    assert_eq!(book.sheets[1].root_topic().style, Default::default());
+    for format in [Format::YMind, Format::XMind] {
+        let output = export_bytes(&book, format, &Default::default()).unwrap();
+        assert_eq!(import_bytes(format, &output).unwrap(), book);
+    }
 }
 
 #[test]

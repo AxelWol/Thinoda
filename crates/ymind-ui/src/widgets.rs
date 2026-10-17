@@ -6,6 +6,65 @@ use egui::{
     StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
+/// Selectable preview with a wrapped caption, accessible name and keyboard activation.
+pub fn preview_card(
+    ui: &mut Ui,
+    label: &str,
+    selected: bool,
+    width: f32,
+    preview_height: f32,
+    draw: impl FnOnce(&Ui, egui::Rect),
+) -> (Response, bool) {
+    let galley = ui.painter().layout(
+        label.to_string(),
+        FontId::proportional(11.0),
+        Color32::PLACEHOLDER,
+        (width - 10.0).max(1.0),
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(
+            width,
+            (preview_height + 8.0 + galley.size().y).max(preview_height + 36.0),
+        ),
+        Sense::click(),
+    );
+    response.widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), selected, label));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact_selectable(&response, selected);
+        ui.painter().rect(
+            rect,
+            6,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            StrokeKind::Inside,
+        );
+        if response.has_focus() || selected {
+            ui.painter()
+                .rect_stroke(rect, 6, ui.visuals().selection.stroke, StrokeKind::Inside);
+        }
+        draw(
+            ui,
+            egui::Rect::from_min_size(rect.min, vec2(width, preview_height)).shrink(2.0),
+        );
+        ui.painter().galley(
+            pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.top() + preview_height + 4.0,
+            ),
+            galley,
+            visuals.text_color(),
+        );
+    }
+    let keyboard = ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
+        });
+    let activated = ui.is_enabled() && (response.clicked() || keyboard);
+    (response.on_hover_text(label), activated)
+}
+
 /// A square, frameless icon button with a tooltip. `selected` draws an accent background.
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Response {
     let p = Palette::of_ui(ui);
@@ -377,6 +436,55 @@ mod tests {
     enum Tab {
         Style,
         Map,
+    }
+
+    #[test]
+    fn preview_card_exposes_selection_and_consumes_keyboard_activation() {
+        use egui_kittest::kittest::NodeT;
+        for key in [egui::Key::Enter, egui::Key::Space] {
+            let mut h = Harness::new_ui_state(
+                move |ui, state: &mut (bool, bool, bool)| {
+                    ui.add_enabled_ui(state.0, |ui| {
+                        let (_, activated) = preview_card(
+                            ui,
+                            "Example preview",
+                            state.1,
+                            120.0,
+                            72.0,
+                            |ui, rect| {
+                                ui.painter().rect_filled(rect, 4, Color32::BLUE);
+                            },
+                        );
+                        if activated {
+                            state.1 = true;
+                        }
+                    });
+                    if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key)) {
+                        state.2 = true;
+                    }
+                },
+                (true, false, false),
+            );
+            h.get_by_role_and_label(Role::Button, "Example preview")
+                .focus();
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(3);
+            assert!(h.state().1);
+            assert!(!h.state().2);
+            assert_eq!(
+                h.get_by_role_and_label(Role::Button, "Example preview")
+                    .accesskit_node()
+                    .toggled(),
+                Some(egui::accesskit::Toggled::True)
+            );
+            h.state_mut().0 = false;
+            h.state_mut().1 = false;
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(2);
+            assert!(!h.state().1);
+        }
     }
 
     #[test]

@@ -13,13 +13,19 @@
 //! * XMind keyboard shortcuts via [`Action`]
 
 mod actions;
+#[cfg(test)]
+mod font_tests;
 mod measure;
+mod relationship_editing;
 mod render;
+mod topic_drag;
+#[cfg(test)]
+mod topic_ordering_tests;
 mod view;
 
-pub use actions::{Action, apply_action};
+pub use actions::{Action, FloatingArrangement, apply_action};
 pub use measure::EguiMeasure;
-pub use render::{color32, paint_map};
+pub use render::{PaintOptions, Xf, color32, paint_map, paint_thumbnail};
 pub use view::{
     AddControlLabels, CanvasOutput, MapCanvas, MapView, NewTopicTitles, ObjectSelection,
 };

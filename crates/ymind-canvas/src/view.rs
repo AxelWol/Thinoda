@@ -10,7 +10,7 @@ use ymind_core::{
     ApproxMeasure, BoundaryId, Document, Layout, RelationshipId, Sheet, SummaryId, TopicId,
     clipboard::ClipboardPayload,
     geometry::Vec2,
-    layout::{Dir, Icon},
+    layout::{Dir, Icon, cubic as bezier},
     layout_sheet,
     navigation::Direction,
 };
@@ -96,14 +96,19 @@ enum Drag {
     },
     Topics {
         ids: Vec<TopicId>,
+        members: std::collections::BTreeSet<TopicId>,
+        selection: Vec<TopicId>,
         grab: Vec2,
         current: Vec2,
+        state: u64,
+        sheet: usize,
     },
 }
 
 #[derive(Clone)]
 struct LayoutCache {
     key: (u64, usize, bool, u64),
+    font_key: u64,
     layout: Arc<Layout>,
 }
 
@@ -115,6 +120,8 @@ pub struct MapView {
     pub selected_object: Option<ObjectSelection>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
+    pub relationship_handle_labels: [String; 4],
+    pub(crate) relationship_drag: Option<crate::relationship_editing::RelationshipDrag>,
     pub titles: NewTopicTitles,
     pub add_control_labels: AddControlLabels,
     /// Whether the canvas exposes connector add buttons (keyboard actions remain available).
@@ -145,6 +152,14 @@ impl Default for MapView {
             selection: Vec::new(),
             selected_object: None,
             relationship_from: None,
+            relationship_handle_labels: [
+                "Relationship start",
+                "First curve control",
+                "Second curve control",
+                "Relationship end",
+            ]
+            .map(str::to_string),
+            relationship_drag: None,
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
             show_add_controls: true,
@@ -243,6 +258,7 @@ impl MapView {
         self.selection.clear();
         self.selected_object = None;
         self.relationship_from = None;
+        self.relationship_drag = None;
         self.editing = None;
         self.drag = Drag::None;
         self.cache = None;
@@ -348,7 +364,7 @@ impl MapView {
         (self.zoom * 100.0).round() as u32
     }
 
-    fn xf(&self) -> Xf {
+    pub(crate) fn xf(&self) -> Xf {
         Xf {
             origin: self.canvas_rect.center() + self.offset,
             zoom: self.zoom,
@@ -368,12 +384,24 @@ impl MapView {
         let layout = Arc::new(layout_sheet(doc.sheet(), &ApproxMeasure, self.dark));
         self.cache = Some(LayoutCache {
             key,
+            font_key: 0,
             layout: layout.clone(),
         });
         layout
     }
 
     fn layout_with(&mut self, ctx: &egui::Context, doc: &Document) -> Arc<Layout> {
+        let font_key = ctx.fonts(|fonts| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let defs = fonts.definitions();
+            defs.families.hash(&mut hasher);
+            for (name, data) in &defs.font_data {
+                name.hash(&mut hasher);
+                Arc::as_ptr(data).hash(&mut hasher);
+            }
+            hasher.finish()
+        });
         let edit_hash = self.editing.as_ref().map_or(0, |e| {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -384,6 +412,7 @@ impl MapView {
         let key = (doc.state_id(), doc.active_index(), self.dark, edit_hash);
         if let Some(c) = &self.cache
             && c.key == key
+            && c.font_key == font_key
         {
             return c.layout.clone();
         }
@@ -405,6 +434,7 @@ impl MapView {
         let layout = Arc::new(layout);
         self.cache = Some(LayoutCache {
             key,
+            font_key,
             layout: layout.clone(),
         });
         layout
@@ -548,6 +578,27 @@ impl MapCanvas {
         Id::unique("ymind_map_canvas")
     }
 
+    /// Paints the current camera without interaction, selection, search dimming or editing chrome.
+    pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
+        let rect = ui.available_rect_before_wrap();
+        ui.advance_cursor_after_rect(rect);
+        view.canvas_rect = rect;
+        let layout = view.layout_with(ui.ctx(), doc);
+        let painter = ui.painter().with_clip_rect(rect);
+        painter.rect_filled(rect, 0, sheet_background(doc.sheet(), view.dark));
+        paint_map(
+            &painter,
+            doc.sheet(),
+            &layout,
+            view.xf(),
+            &PaintOptions {
+                dark: view.dark,
+                ..Default::default()
+            },
+        );
+        rect
+    }
+
     pub fn show(ui: &mut Ui, doc: &mut Document, view: &mut MapView) -> CanvasOutput {
         let id = Self::id();
         let rect = ui.available_rect_before_wrap();
@@ -614,7 +665,10 @@ impl MapCanvas {
             .filter(|p| rect.contains(*p))
             .and_then(|p| layout.hit_test(view.xf().sheet(p)));
 
-        if response.hovered() {
+        if response.hovered()
+            && view.relationship_drag.is_none()
+            && !matches!(view.drag, Drag::Topics { .. })
+        {
             let (scroll, zoom_delta, pos) =
                 ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
             if zoom_delta != 1.0 {
@@ -626,15 +680,25 @@ impl MapCanvas {
 
         let space =
             ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
-        let handles = if space {
+        let relationship_handle = crate::relationship_editing::interact(
+            ui,
+            doc,
+            view,
+            &mut layout,
+            &mut out.error,
+            !space,
+        );
+        let handles = if space || matches!(view.drag, Drag::Topics { .. }) {
             Vec::new()
         } else {
             add_handles(view, doc.sheet(), &layout)
         };
-        let over_handle = pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
-        let press_on_handle = ctx
-            .input(|i| i.pointer.press_origin())
-            .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let over_handle = relationship_handle
+            || pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
+        let press_on_handle = relationship_handle
+            || ctx
+                .input(|i| i.pointer.press_origin())
+                .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
         let mut handle_action = None;
         for handle in &handles {
             let target = ui.interact(
@@ -673,13 +737,22 @@ impl MapCanvas {
                 if !view.selection.contains(&t) {
                     view.select_only(t);
                 }
-                let ids: Vec<TopicId> = view.selection.clone();
                 view.commit_edit(doc);
-                view.drag = Drag::Topics {
-                    ids,
-                    grab: sp,
-                    current: sp,
-                };
+                let ids = crate::topic_drag::roots(doc.sheet(), &view.selection);
+                if ids.is_empty() {
+                    view.drag = Drag::None;
+                    out.error = Some(ymind_core::EditError::RootNotAllowed);
+                } else {
+                    view.drag = Drag::Topics {
+                        members: crate::topic_drag::members(doc.sheet(), &ids),
+                        selection: view.selection.clone(),
+                        ids,
+                        grab: sp,
+                        current: sp,
+                        state: doc.state_id(),
+                        sheet: doc.active_index(),
+                    };
+                }
             } else {
                 view.drag = Drag::Rubber {
                     start: origin,
@@ -687,7 +760,27 @@ impl MapCanvas {
                 };
             }
         }
-        if response.dragged() {
+        let stale = matches!(&view.drag, Drag::Topics { state, sheet, selection, .. }
+            if *state != doc.state_id() || *sheet != doc.active_index() || *selection != view.selection);
+        if stale {
+            view.drag = Drag::None;
+            out.error = Some(ymind_core::EditError::Invalid(
+                "topic dragging canceled because the document or selection changed".into(),
+            ));
+        } else if matches!(view.drag, Drag::Topics { .. })
+            && (egui::Popup::is_any_open(&ctx)
+                || !ui.is_enabled()
+                || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)))
+        {
+            view.drag = Drag::None;
+        }
+        if matches!(view.drag, Drag::Topics { .. })
+            && ctx.input(|i| i.pointer.primary_down())
+            && let Some(pointer) = pointer
+        {
+            crate::topic_drag::edge_pan(&ctx, view, pointer);
+        }
+        if response.dragged() || response.drag_stopped() {
             let delta = response.drag_delta();
             let xf = view.xf();
             match &mut view.drag {
@@ -702,6 +795,7 @@ impl MapCanvas {
         }
 
         // ---- clicks --------------------------------------------------------------------
+        let editing_before_click = view.editing.is_some();
         let mods = ctx.input(|i| i.modifiers);
         if response.clicked()
             && !over_handle
@@ -715,13 +809,11 @@ impl MapCanvas {
             } else if let Some(t) = layout.hit_test(sp) {
                 let tl = &layout.topics[&t];
                 if let Some(from) = view.relationship_from.take() {
-                    if from != t {
-                        match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
-                            Ok(r) => {
-                                view.select_object(ObjectSelection::Relationship(r));
-                            }
-                            Err(e) => out.error = Some(e),
+                    match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
+                        Ok(r) => {
+                            view.select_object(ObjectSelection::Relationship(r));
                         }
+                        Err(e) => out.error = Some(e),
                     }
                 } else if tl.todo_rect.is_some_and(|r| r.expand(2.0).contains(sp)) {
                     let cur = doc.sheet().topic(t).and_then(|x| x.todo);
@@ -748,14 +840,27 @@ impl MapCanvas {
                 view.select_object(object);
             } else {
                 view.commit_edit(doc);
-                view.relationship_from = None;
-                if !(mods.command || mods.shift) {
+                if let Some(from) = view.relationship_from.take() {
+                    let title = view.titles.floating.clone();
+                    match doc.edit_sheet("Add Connected Floating Topic", |s| {
+                        let target = s.add_floating(title, sp);
+                        s.add_relationship(from, target)?;
+                        Ok(target)
+                    }) {
+                        Ok(target) => {
+                            view.select_only(target);
+                            view.begin_edit(doc.sheet(), target, true);
+                        }
+                        Err(e) => out.error = Some(e),
+                    }
+                } else if !(mods.command || mods.shift) {
                     view.selection.clear();
                     view.selected_object = None;
                 }
             }
         }
         if response.double_clicked()
+            && !editing_before_click
             && !over_handle
             && !press_on_handle
             && let Some(p) = response.interact_pointer_pos()
@@ -810,18 +915,33 @@ impl MapCanvas {
                         }
                     }
                 }
-                Drag::Topics { ids, grab, current } => {
-                    drop_topics(doc, view, &layout, &ids, grab, current, &mut out);
+                Drag::Topics {
+                    ids, grab, current, ..
+                } => {
+                    if pointer.is_some_and(|p| rect.contains(p)) {
+                        drop_topics(doc, view, &layout, &ids, grab, current, &mut out);
+                    } else {
+                        out.error = Some(ymind_core::EditError::Invalid(
+                            "drop a topic inside the map canvas".into(),
+                        ));
+                    }
                 }
                 _ => {}
             }
+        } else if matches!(view.drag, Drag::Topics { .. })
+            && !ctx.input(|i| i.pointer.primary_down())
+        {
+            view.drag = Drag::None;
         }
 
         // ---- keyboard ------------------------------------------------------------------
         if let Some(action) = handle_action {
             run(doc, view, action, &mut out);
         }
-        if view.editing.is_none() && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
+        if view.editing.is_none()
+            && !egui::Popup::is_any_open(&ctx)
+            && !matches!(view.drag, Drag::Topics { .. })
+            && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
         {
             handle_keys(&ctx, doc, view, &mut out);
         }
@@ -841,17 +961,28 @@ impl MapCanvas {
         painter.rect_filled(rect, CornerRadius::ZERO, sheet_background(sheet, view.dark));
         let xf = view.xf();
         let filter = view.filter.clone();
+        let dimmed = if let Drag::Topics { members, .. } = &view.drag {
+            Some(members)
+        } else {
+            None
+        };
         let opts = PaintOptions {
-            selection: &view.selection,
-            hovered,
+            selection: if dimmed.is_some() {
+                &[]
+            } else {
+                &view.selection
+            },
+            hovered: if dimmed.is_some() { None } else { hovered },
             editing: view.editing_topic(),
             accent: view.accent,
             dark: view.dark,
             filter: filter.as_deref(),
+            dimmed,
             selected_object: view.selected_object,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
-        if !space {
+        crate::relationship_editing::paint_target(&painter, view, &layout);
+        if !space && !matches!(view.drag, Drag::Topics { .. }) {
             for handle in add_handles(view, sheet, &layout) {
                 let hot = pointer.is_some_and(|p| handle.rect().contains(p));
                 painter.line_segment(
@@ -896,30 +1027,14 @@ impl MapCanvas {
                     );
                 }
             }
-            Drag::Topics { ids, grab, current } => {
+            Drag::Topics {
+                members,
+                grab,
+                current,
+                ..
+            } => {
                 let d = *current - *grab;
-                for t in ids {
-                    if let Some(r) = layout.rect(*t) {
-                        let r = xf.rect(r.translate(d));
-                        painter.rect(
-                            r,
-                            CornerRadius::same(6),
-                            view.accent.gamma_multiply(0.15),
-                            Stroke::new(1.5, view.accent),
-                            StrokeKind::Outside,
-                        );
-                    }
-                }
-                if let Some(target) = drop_target(sheet, &layout, ids, *current)
-                    && let Some(r) = layout.rect(target)
-                {
-                    painter.rect_stroke(
-                        xf.rect(r).expand(4.0),
-                        CornerRadius::same(8),
-                        Stroke::new(2.5, view.accent),
-                        StrokeKind::Outside,
-                    );
-                }
+                crate::topic_drag::paint(&painter, sheet, &layout, view, members, d, *current);
             }
             _ => {}
         }
@@ -941,6 +1056,13 @@ impl MapCanvas {
         if response.hovered() {
             let icon = match view.drag {
                 Drag::Pan => egui::CursorIcon::Grabbing,
+                Drag::Topics {
+                    ref members,
+                    current,
+                    ..
+                } if crate::topic_drag::target(doc.sheet(), &layout, members, current).is_err() => {
+                    egui::CursorIcon::NotAllowed
+                }
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
                 _ if space => egui::CursorIcon::Grab,
                 _ if hovered.is_some() || over_handle => egui::CursorIcon::PointingHand,
@@ -1088,7 +1210,10 @@ fn show_editor(
     let xf = view.xf();
     let r = xf.rect(tl.title_rect).expand(2.0);
     let style = &tl.style;
-    let font = FontId::proportional((style.font_size * view.zoom).max(4.0));
+    let font = FontId::new(
+        (style.font_size * view.zoom).max(4.0),
+        crate::measure::font_family(ui.ctx(), style.font_family.as_deref()),
+    );
     let color = color32(style.text_color);
     let edit_id = MapCanvas::id().with("edit");
 
@@ -1165,17 +1290,6 @@ fn show_editor(
     }
 }
 
-fn drop_target(sheet: &Sheet, layout: &Layout, ids: &[TopicId], at: Vec2) -> Option<TopicId> {
-    let t = layout.hit_test(at)?;
-    if ids
-        .iter()
-        .any(|id| *id == t || sheet.subtree_ids(*id).contains(&t))
-    {
-        return None;
-    }
-    Some(t)
-}
-
 fn drop_topics(
     doc: &mut Document,
     view: &mut MapView,
@@ -1189,52 +1303,55 @@ fn drop_topics(
     if d.length() < 3.0 {
         return;
     }
-    let sheet = doc.sheet();
-    // Only move the top-most selected topics (children move with their parents).
-    let ids: Vec<TopicId> = ids
-        .iter()
-        .copied()
-        .filter(|id| {
-            *id != sheet.root
-                && !ids
-                    .iter()
-                    .any(|o| o != id && sheet.subtree_ids(*o).contains(id))
-        })
-        .collect();
+    let ids = crate::topic_drag::roots(doc.sheet(), ids);
     if ids.is_empty() {
         return;
     }
-    let target = drop_target(sheet, layout, &ids, current);
+    let target = match crate::topic_drag::target(
+        doc.sheet(),
+        layout,
+        &crate::topic_drag::members(doc.sheet(), &ids),
+        current,
+    ) {
+        Ok(target) => target,
+        Err(e) => {
+            out.error = Some(e);
+            return;
+        }
+    };
     let res = doc.edit_sheet("Move Topic", |s| {
-        for id in &ids {
-            let center = layout.rect(*id).map(|r| r.center() + d).unwrap_or(current);
-            match target {
-                Some(t) => {
-                    let n = s.children(t).len();
-                    s.move_topic(*id, t, n)?;
+        if let Some(target) = &target {
+            crate::topic_drag::apply(s, &ids, target)?;
+        } else {
+            for id in &ids {
+                let center = layout.rect(*id).map(|r| r.center() + d).unwrap_or(current);
+                if s.is_floating(*id) {
+                    s.set_position(*id, center)?;
+                } else {
+                    s.detach_to_floating(*id, center)?;
                 }
-                None if s.is_floating(*id) => s.set_position(*id, center)?,
-                None => s.detach_to_floating(*id, center)?,
             }
         }
         Ok(())
     });
     if let Err(e) = res {
         out.error = Some(e);
+    } else {
+        view.selection = ids;
     }
-    view.selection = ids;
-}
-
-fn bezier(a: Vec2, b: Vec2, c: Vec2, d: Vec2, t: f32) -> Vec2 {
-    let u = 1.0 - t;
-    a * (u * u * u) + b * (3.0 * u * u * t) + c * (3.0 * u * t * t) + d * (t * t * t)
 }
 
 fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId> {
     layout.relationships.iter().rev().find_map(|r| {
         let mut prev = r.start;
-        for i in 1..=24 {
-            let q = bezier(r.start, r.c1, r.c2, r.end, i as f32 / 24.0);
+        for i in 1..=crate::render::RELATIONSHIP_SEGMENTS {
+            let q = bezier(
+                r.start,
+                r.c1,
+                r.c2,
+                r.end,
+                i as f32 / crate::render::RELATIONSHIP_SEGMENTS as f32,
+            );
             if dist_to_segment(p, prev, q) <= tol {
                 return Some(r.id);
             }
@@ -1305,6 +1422,14 @@ fn screen_pos(view: &MapView, p: Vec2) -> Pos2 {
     let x = view.xf();
     pos2(x.origin.x + p.x * x.zoom, x.origin.y + p.y * x.zoom)
 }
+
+#[cfg(test)]
+#[path = "topic_drag_tests.rs"]
+mod topic_drag_tests;
+
+#[cfg(test)]
+#[path = "relationship_creation_tests.rs"]
+mod relationship_creation_tests;
 
 #[cfg(test)]
 mod tests {

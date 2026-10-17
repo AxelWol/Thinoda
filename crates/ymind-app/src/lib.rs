@@ -3,7 +3,15 @@
 pub mod ai;
 pub mod app;
 pub mod doc;
+mod help;
 pub mod i18n;
+mod labels;
+mod map_shot;
+mod quick_styles;
+mod shortcut_browser;
+mod structure_picker;
+mod template_gallery;
+mod theme_editor;
 pub mod ui;
 
 pub use app::{Startup, YMindApp, start_services};

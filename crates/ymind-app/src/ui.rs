@@ -23,6 +23,29 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+pub(crate) fn font_selector(
+    ui: &mut Ui,
+    fonts: &mut ymind_ui::fonts::SystemFonts,
+    value: &mut Option<String>,
+    default_label: &str,
+) -> egui::Response {
+    egui::ComboBox::from_id_salt("font_family")
+        .selected_text(match value.as_deref() {
+            None => default_label,
+            Some("monospace") => t("Monospace"),
+            Some(name) => name,
+        })
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, None, default_label);
+            ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+            for name in fonts.names() {
+                ui.selectable_value(value, Some(name.clone()), name);
+            }
+        })
+        .response
+}
+
 /// Swatch colors offered in the format panel (XMind-like palette).
 pub const SWATCHES: [Color32; 12] = [
     Color32::from_rgb(0x2E, 0x7C, 0xF6),
@@ -52,7 +75,7 @@ pub fn from_color(c: Color) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
-fn structure_label(s: Structure) -> &'static str {
+pub(crate) fn structure_label(s: Structure) -> &'static str {
     match s {
         Structure::MapClockwise => "Mind Map",
         Structure::MapAnticlockwise => "Mind Map (anticlockwise)",
@@ -78,9 +101,48 @@ impl YMindApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
+        if font_source != self.font_source {
+            let families: std::collections::BTreeSet<_> =
+                self.doc()
+                    .into_iter()
+                    .flat_map(|doc| doc.doc.workbook().sheets.iter())
+                    .flat_map(|sheet| {
+                        sheet.theme.fonts().chain(
+                            sheet
+                                .topics
+                                .values()
+                                .filter_map(|topic| topic.style.font_family.as_ref()),
+                        )
+                    })
+                    .chain(
+                        self.settings
+                            .quick_styles
+                            .iter()
+                            .filter_map(|style| style.style.font_family.as_ref()),
+                    )
+                    .chain(
+                        self.settings.custom_themes.iter().flat_map(|custom| {
+                            custom.font_family.iter().chain(custom.roles.fonts())
+                        }),
+                    )
+                    .cloned()
+                    .collect();
+            for name in self.fonts.ensure(&ctx, families) {
+                log::warn!("Font unavailable: {name}");
+                self.toasts.warning(format!(
+                    "{}: {name}. {}",
+                    t("Font unavailable"),
+                    t("Using the default font; the requested name is preserved.")
+                ));
+            }
+            self.font_source = font_source;
+        }
         self.apply_appearance(&ctx);
         self.handle_close_request(&ctx);
-        if !self.palette.open && !self.any_modal_open() {
+        self.handle_sheet_paste(&ctx);
+        self.poll_map_shot(&ctx);
+        if !self.palette.open && !self.any_modal_open() && !egui::Popup::is_any_open(&ctx) {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
         }
@@ -94,7 +156,12 @@ impl YMindApp {
                         .fill(Palette::of(&ctx).surface)
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
-                .show(ui, |ui| self.top_bar(ui));
+                .show(ui, |ui| {
+                    if self.map_shot.active() {
+                        ui.disable();
+                    }
+                    self.top_bar(ui);
+                });
             if show_doc {
                 egui::Panel::bottom("ymind_statusbar")
                     .exact_size(30.0)
@@ -103,7 +170,12 @@ impl YMindApp {
                             .fill(Palette::of(&ctx).surface)
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
-                    .show(ui, |ui| self.bottom_bar(ui));
+                    .show(ui, |ui| {
+                        if self.map_shot.active() {
+                            ui.disable();
+                        }
+                        self.bottom_bar(ui);
+                    });
                 if self.settings.show_format_panel {
                     egui::Panel::right("ymind_format")
                         .default_size(280.0)
@@ -114,6 +186,9 @@ impl YMindApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
+                            if self.map_shot.active() {
+                                ui.disable();
+                            }
                             self.sidebar(ui);
                         });
                 }
@@ -123,6 +198,14 @@ impl YMindApp {
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.label_editor.is_some()
+                    || self.quick_style_dialog.is_some()
+                    || self.theme_dialog.is_some()
+                    || self.dialogs.guide.open
+                    || self.dialogs.shortcuts
+                {
+                    ui.disable();
+                }
                 if !show_doc {
                     self.home(ui);
                 } else if self.mode == CenterMode::Outliner {
@@ -146,28 +229,57 @@ impl YMindApp {
             self.topic_toolbar(&ctx);
         }
 
-        if show_doc && self.search.open {
+        if show_doc && self.search.open && !self.map_shot.active() {
             self.search_bar(&ctx);
         }
         self.update_search();
 
         // Command palette.
-        let cmds = Self::palette_commands();
-        let list: Vec<ymind_ui::Command> = cmds.iter().map(|(_, c)| c.clone()).collect();
+        let mut cmds = Self::palette_commands();
+        self.add_quick_style_commands(&mut cmds);
+        self.add_custom_theme_commands(&mut cmds);
+        let list: Vec<ymind_ui::Command> = cmds
+            .iter()
+            .filter(|(cmd, _)| self.command_available(cmd))
+            .map(|(_, c)| c.clone())
+            .collect();
         if let Some(id) = self.palette.show(&ctx, &list, t("Type a command…"))
             && let Some((cmd, _)) = cmds.iter().find(|(_, c)| c.id == id)
         {
             self.exec(&ctx, cmd.clone());
         }
 
-        self.dialogs_ui(&ctx);
-        self.ai_prompt_dialog(&ctx);
-        self.ai_busy_overlay(&ctx);
-        self.toasts.show(&ctx);
+        self.labels_popup(&ctx);
+        self.quick_style_dialog(&ctx);
+        self.theme_editor_dialog(&ctx);
+        self.guide_dialog(&ctx);
+        self.shortcuts_dialog(&ctx);
+        if !self.map_shot.active() {
+            self.dialogs_ui(&ctx);
+            self.ai_prompt_dialog(&ctx);
+            self.ai_busy_overlay(&ctx);
+        }
+        self.map_shot_dialog(&ctx);
+        if !self.map_shot.requested && !self.map_shot.capturing {
+            self.toasts.show_with_modal(&ctx, self.any_modal_open());
+        }
+        if let Some(d) = self.doc() {
+            self.capture_map_shot(&ctx, d.view.canvas_rect());
+        }
         self.housekeeping(&ctx);
     }
 
-    fn any_modal_open(&self) -> bool {
+    pub(crate) fn any_modal_open(&self) -> bool {
+        if self.dialogs.masked_copy
+            || self.map_shot.active()
+            || self.label_editor.is_some()
+            || self.quick_style_dialog.is_some()
+            || self.theme_dialog.is_some()
+            || self.dialogs.guide.open
+            || self.dialogs.shortcuts
+        {
+            return true;
+        }
         let d = &self.dialogs;
         d.close.is_some()
             || d.conflict.is_some()
@@ -307,10 +419,18 @@ impl YMindApp {
             *cmd = Some(Cmd::New);
         }
         ui.menu_button(t("New from Template…"), |ui| {
-            for tpl in templates::TEMPLATES {
-                if ui.button(tpl.name).clicked() {
-                    *cmd = Some(Cmd::NewFromTemplate(tpl.id));
-                }
+            for category in templates::TemplateCategory::ALL {
+                let category_label = t(category.label());
+                ui.menu_button(category_label, |ui| {
+                    for template in templates::TEMPLATES
+                        .iter()
+                        .filter(|template| template.category == category)
+                    {
+                        if ui.button(t(template.name)).clicked() {
+                            *cmd = Some(Cmd::NewFromTemplate(template.id));
+                        }
+                    }
+                });
             }
         });
         if item(ui, t("Open…"), "Ctrl+O").clicked() {
@@ -385,8 +505,75 @@ impl YMindApp {
                 ("Command Palette…", "Ctrl+Shift+P", Cmd::Palette),
             ];
             for (l, sc, c) in e {
-                if item(ui, t(l), sc).clicked() {
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() { button } else { button.shortcut_text(sc) };
+                if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
+                }
+            }
+            ui.menu_button(t("Select"), |ui| {
+                for (action, label) in Self::selection_commands() {
+                    let command = Cmd::Canvas(action);
+                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                        *cmd = Some(command);
+                    }
+                }
+            });
+            ui.menu_button(t("Arrange"), |ui| {
+                for (action, label) in Self::arrangement_commands() {
+                    let command = Cmd::Canvas(action);
+                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                        *cmd = Some(command);
+                    }
+                }
+                widgets::caption(ui, t("Alignment needs floating topics only; distribution spaces centers, not edges."));
+            });
+            ui.separator();
+            for (label, shortcut, command) in [
+                ("Indent", "", Cmd::Canvas(Action::Indent)),
+                ("Outdent", "", Cmd::Canvas(Action::Outdent)),
+                ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
+                ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
+                ("Reset Style", "", Cmd::ResetStyle),
+                ("Save Quick Style…", "", Cmd::SaveQuickStyle),
+                ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
+            ] {
+                let button = egui::Button::new(t(label));
+                let button = if shortcut.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(shortcut)
+                };
+                if ui
+                    .add_enabled(self.command_available(&command), button)
+                    .clicked()
+                {
+                    *cmd = Some(command);
+                }
+            }
+            widgets::caption(
+                ui,
+                t("Copies explicit overrides; inherited theme styles stay automatic."),
+            );
+        });
+        ui.menu_button(t("Sheet"), |ui| {
+            for (label, command) in [
+                ("New Sheet", Cmd::NewSheet),
+                ("Rename Sheet", Cmd::RenameSheet),
+                ("Copy Sheet", Cmd::CopySheet),
+                ("Paste Sheet", Cmd::PasteSheet),
+                ("Duplicate Sheet", Cmd::DuplicateSheet),
+                ("Save Sheet As…", Cmd::SaveSheetAs),
+                ("Delete Sheet", Cmd::DeleteSheet),
+            ] {
+                if ui
+                    .add_enabled(
+                        self.command_available(&command),
+                        egui::Button::new(t(label)),
+                    )
+                    .clicked()
+                {
+                    *cmd = Some(command);
                 }
             }
         });
@@ -407,9 +594,28 @@ impl YMindApp {
                 ("To-Do", "", Action::ToggleTodo),
             ];
             for (l, sc, a) in e {
-                if item(ui, t(l), sc).clicked() {
-                    *cmd = Some(Cmd::Canvas(a));
+                let command = Cmd::Canvas(a);
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
+                if ui
+                    .add_enabled(self.command_available(&command), button)
+                    .clicked()
+                {
+                    *cmd = Some(command);
                 }
+            }
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::Labels),
+                    egui::Button::new(t("Labels")),
+                )
+                .clicked()
+            {
+                *cmd = Some(Cmd::Labels);
             }
         });
         ui.menu_button(t("AI"), |ui| {
@@ -424,8 +630,22 @@ impl YMindApp {
                 }
             }
         });
+        ui.menu_button(t("Tools"), |ui| {
+            if ui.add_enabled(self.command_available(&Cmd::MapShot), egui::Button::new(t("Map Shot")).shortcut_text("F7")).clicked() {
+                *cmd = Some(Cmd::MapShot);
+            }
+            if ui.add_enabled(self.command_available(&Cmd::MaskedCopy), egui::Button::new(t("Create Masked Copy…"))).clicked() {
+                *cmd = Some(Cmd::MaskedCopy);
+            }
+            if ui.add_enabled(self.command_available(&Cmd::MergeFiles), egui::Button::new(t("Merge Map Files…"))).clicked() {
+                *cmd = Some(Cmd::MergeFiles);
+            }
+            widgets::caption(ui, t("Appends complete sheets. Destination metadata is kept; external image references are not embedded."));
+        });
         ui.menu_button(t("View"), |ui| {
             let e = [
+                ("Previous Sheet", "Ctrl+PageUp", Cmd::PreviousSheet),
+                ("Next Sheet", "Ctrl+PageDown", Cmd::NextSheet),
                 ("Outliner", "Ctrl+Shift+O", Cmd::ToggleOutliner),
                 ("Zen Mode", "F11", Cmd::ToggleZen),
                 ("Format Panel", "Ctrl+Shift+R", Cmd::ToggleFormatPanel),
@@ -439,7 +659,13 @@ impl YMindApp {
                 ("Collapse All", "", Cmd::Canvas(Action::CollapseAll)),
             ];
             for (l, sc, c) in e {
-                if item(ui, t(l), sc).clicked() {
+                if ui
+                    .add_enabled(
+                        self.command_available(&c),
+                        egui::Button::new(t(l)).shortcut_text(sc),
+                    )
+                    .clicked()
+                {
                     *cmd = Some(c);
                 }
             }
@@ -449,6 +675,17 @@ impl YMindApp {
             *cmd = Some(Cmd::Settings);
         }
         ui.menu_button(t("Help"), |ui| {
+            for (label, command) in [
+                ("Quick Start", Cmd::QuickStart),
+                ("User Guide", Cmd::UserGuide),
+                ("Send Feedback…", Cmd::Feedback),
+                ("Project News…", Cmd::ProjectNews),
+            ] {
+                if ui.button(t(label)).clicked() {
+                    *cmd = Some(command);
+                }
+            }
+            ui.separator();
             if item(ui, t("Keyboard Shortcuts"), "F1").clicked() {
                 *cmd = Some(Cmd::Shortcuts);
             }
@@ -530,6 +767,12 @@ impl YMindApp {
                                     Cmd::EditField(FocusField::Hyperlink),
                                 ),
                                 (
+                                    icons::LABEL,
+                                    "Labels",
+                                    self.command_available(&Cmd::Labels),
+                                    Cmd::Labels,
+                                ),
+                                (
                                     icons::TODO,
                                     "To-Do",
                                     has_selection,
@@ -568,12 +811,31 @@ impl YMindApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if self.map_shot.active()
+            || self.label_editor.is_some()
+            || self.quick_style_dialog.is_some()
+            || self.theme_dialog.is_some()
+            || self.dialogs.guide.open
+            || self.dialogs.shortcuts
+        {
+            if let Some(d) = self.docs.get_mut(self.active) {
+                MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
+            }
+            return;
+        }
         let paste = std::mem::take(&mut self.paste_requested);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
         d.view.add_control_labels.child = t("Add child topic").into();
         d.view.add_control_labels.sibling = t("Add sibling topic").into();
+        d.view.relationship_handle_labels = [
+            "Relationship start",
+            "First curve control",
+            "Second curve control",
+            "Relationship end",
+        ]
+        .map(|label| t(label).to_string());
         d.view.show_add_controls = self.settings.show_topic_add_buttons;
         if paste {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
@@ -586,8 +848,9 @@ impl YMindApp {
         if let Some(link) = out.open_link {
             self.open_link(&link);
         }
-        if out.error.is_some() {
-            self.toasts.warning(t("Not possible here"));
+        if let Some(error) = out.error {
+            self.toasts
+                .warning(format!("{}: {error}", t("Not possible here")));
         }
         let mut cmd = None;
         out.response
@@ -669,6 +932,7 @@ impl YMindApp {
                                 false,
                                 Cmd::EditField(FocusField::Notes),
                             ),
+                            (icons::LABEL, "Edit labels", false, Cmd::Labels),
                             (
                                 icons::TODO,
                                 "Toggle to-do",
@@ -810,7 +1074,40 @@ impl YMindApp {
                 true,
             );
             item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
+            item(
+                ui,
+                t("Labels"),
+                "",
+                Cmd::Labels,
+                self.command_available(&Cmd::Labels),
+            );
         }
+        for (label, shortcut, command) in [
+            ("Indent", "", Cmd::Canvas(Action::Indent)),
+            ("Outdent", "", Cmd::Canvas(Action::Outdent)),
+            ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
+            ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
+            ("Reset Style", "", Cmd::ResetStyle),
+            ("Save Quick Style…", "", Cmd::SaveQuickStyle),
+            ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
+        ] {
+            let available = self.command_available(&command);
+            item(ui, t(label), shortcut, command, available);
+        }
+        ui.menu_button(t("Select"), |ui| {
+            for (action, label) in Self::selection_commands() {
+                let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), "", command, available);
+            }
+        });
+        ui.menu_button(t("Arrange"), |ui| {
+            for (action, label) in Self::arrangement_commands() {
+                let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), "", command, available);
+            }
+        });
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
                 for a in crate::ai::AiCommand::ALL {
@@ -906,110 +1203,142 @@ impl YMindApp {
             .inner_margin(Margin::same(32))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
-                    ui.add_space(12.0);
-                    let gap = 8.0;
-                    let columns = ((ui.available_width() + gap) / (164.0 + gap))
-                        .floor()
-                        .max(1.0) as usize;
-                    egui::Grid::new("ymind_templates")
-                        .num_columns(columns)
-                        .spacing(vec2(gap, gap))
-                        .show(ui, |ui| {
-                            for (index, tpl) in templates::TEMPLATES.iter().enumerate() {
-                                let r = widgets::card(ui).show(ui, |ui| {
-                                    ui.set_width(150.0);
-                                    ui.set_height(90.0);
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(14.0);
-                                        ui.label(
-                                            RichText::new(icons::MAP).size(26.0).color(p.accent),
-                                        );
-                                        ui.label(RichText::new(tpl.name).strong());
-                                    });
-                                });
-                                let r = ui.interact(
-                                    r.response.rect,
-                                    ui.scope_id().with(tpl.id),
-                                    Sense::click(),
+                ui.heading(RichText::new(t("Create a new map")).size(22.0).strong());
+                let previous = self.template_category;
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("template_category")
+                        .selected_text(
+                            self.template_category
+                                .map_or(t("All"), |category| t(category.label())),
+                        )
+                        .width(ui.available_width().min(360.0))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.template_category, None, t("All"));
+                            for category in templates::TemplateCategory::ALL {
+                                ui.selectable_value(
+                                    &mut self.template_category,
+                                    Some(category),
+                                    t(category.label()),
                                 );
-                                r.widget_info(|| {
-                                    egui::WidgetInfo::labeled(egui::Role::Button, true, tpl.name)
-                                });
-                                if r.hovered() {
-                                    ui.painter().rect_stroke(
-                                        r.rect,
-                                        CornerRadius::same(Tokens::RADIUS_M),
-                                        Stroke::new(2.0, p.accent),
-                                        egui::StrokeKind::Outside,
-                                    );
-                                }
-                                if r.clicked() {
-                                    cmd = Some(Cmd::NewFromTemplate(tpl.id));
-                                }
-                                if (index + 1) % columns == 0 {
-                                    ui.end_row();
+                            }
+                        })
+                        .response
+                        .accessible_name(t("Template Category"));
+                    if self.template_category.is_some() && ui.button(t("All templates")).clicked() {
+                        self.template_category = None;
+                    }
+                });
+                if previous != self.template_category {
+                    self.template_choice = None;
+                }
+                ui.add_space(12.0);
+                egui::Panel::bottom("template_actions")
+                    .exact_size(64.0)
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .add_enabled(
+                                    self.template_choice.is_some(),
+                                    egui::Button::new(t("Create")),
+                                )
+                                .clicked()
+                            {
+                                cmd = self.template_choice.map(Cmd::NewFromTemplate);
+                            }
+                            if ui.button(t("Cancel")).clicked() {
+                                self.template_choice = None;
+                                if let Some(index) = self.home_return_to.as_ref().and_then(|key| {
+                                    self.docs.iter().position(|doc| &doc.key == key)
+                                }) {
+                                    self.active = index;
                                 }
                             }
-                        });
-                    ui.add_space(24.0);
-                    ui.horizontal(|ui| {
-                        ui.heading(RichText::new(t("Recent")).size(18.0).strong());
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if widgets::secondary_button(ui, t("Open File…")).clicked() {
-                                cmd = Some(Cmd::Open);
+                            if let Some(template) = self.template_choice.and_then(|id| {
+                                templates::TEMPLATES
+                                    .iter()
+                                    .find(|template| template.id == id)
+                            }) {
+                                ui.label(t(template.name));
+                            } else {
+                                widgets::caption(ui, t("Select a template, then choose Create."));
                             }
                         });
                     });
-                    ui.add_space(6.0);
-                    let recent: Vec<_> = self
-                        .settings
-                        .existing_recent()
-                        .into_iter()
-                        .cloned()
-                        .collect();
-                    if recent.is_empty() {
-                        widgets::caption(ui, t("No recent files"));
-                    }
-                    for r in recent.iter().take(20) {
+                egui::ScrollArea::vertical()
+                    .id_salt((
+                        "home_templates",
+                        self.template_category
+                            .map_or("all", |category| category.label()),
+                    ))
+                    .show(ui, |ui| {
+                        if let Some(category) = crate::template_gallery::show(
+                            ui,
+                            self.template_category,
+                            &mut self.template_choice,
+                            &self.settings.recent_templates,
+                        ) {
+                            self.template_category = Some(category);
+                            self.template_choice = None;
+                        }
+                        ui.add_space(24.0);
                         ui.horizontal(|ui| {
-                            if ui
-                                .small_button(if r.pinned { icons::PIN } else { "·" })
-                                .clicked()
-                            {
-                                self.settings.pin_recent(&r.path, !r.pinned);
-                                self.save_settings();
-                            }
-                            let name = r
-                                .path
-                                .file_name()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            if ui.link(name).clicked() {
-                                cmd = Some(Cmd::OpenPath(r.path.clone()));
-                            }
-                            let cloud = ymind_platform::cloud::provider_for_path(
-                                &self.services.cloud,
-                                &r.path,
-                            );
-                            if let Some(c) = cloud {
-                                widgets::chip(
-                                    ui,
-                                    &format!("{} {}", icons::CLOUD, c.name),
-                                    p.accent,
-                                );
-                            }
-                            widgets::caption(
-                                ui,
-                                r.path
-                                    .parent()
-                                    .map(|x| x.display().to_string())
-                                    .unwrap_or_default(),
-                            );
+                            ui.heading(RichText::new(t("Recent")).size(18.0).strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::secondary_button(ui, t("Open File…")).clicked() {
+                                    cmd = Some(Cmd::Open);
+                                }
+                            });
                         });
-                    }
-                });
+                        ui.add_space(6.0);
+                        let recent: Vec<_> = self
+                            .settings
+                            .existing_recent()
+                            .into_iter()
+                            .cloned()
+                            .collect();
+                        if recent.is_empty() {
+                            widgets::caption(ui, t("No recent files"));
+                        }
+                        for r in recent.iter().take(20) {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .small_button(if r.pinned { icons::PIN } else { "·" })
+                                    .clicked()
+                                {
+                                    self.settings.pin_recent(&r.path, !r.pinned);
+                                    self.save_settings();
+                                }
+                                let name = r
+                                    .path
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                if ui.link(name).clicked() {
+                                    cmd = Some(Cmd::OpenPath(r.path.clone()));
+                                }
+                                let cloud = ymind_platform::cloud::provider_for_path(
+                                    &self.services.cloud,
+                                    &r.path,
+                                );
+                                if let Some(c) = cloud {
+                                    widgets::chip(
+                                        ui,
+                                        &format!("{} {}", icons::CLOUD, c.name),
+                                        p.accent,
+                                    );
+                                }
+                                widgets::caption(
+                                    ui,
+                                    r.path
+                                        .parent()
+                                        .map(|x| x.display().to_string())
+                                        .unwrap_or_default(),
+                                );
+                            });
+                        }
+                    });
             });
         if let Some(c) = cmd {
             let ctx = ui.ctx().clone();
@@ -1024,6 +1353,49 @@ impl YMindApp {
             return;
         };
         let mut action: Option<Action> = None;
+        let selected_title = d
+            .view
+            .primary()
+            .and_then(|id| d.doc.sheet().topic(id))
+            .map(|topic| topic.title.clone());
+        ui.label(selected_title.as_ref().map_or_else(
+            || t("Select a topic to edit").to_owned(),
+            |title| format!("{}: {title}", t("Selected Topic")),
+        ));
+        let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
+            for (label, command) in buttons {
+                let enabled = command.available(&d.doc, &d.view);
+                if ui
+                    .add_enabled(enabled, egui::Button::new(t(label)))
+                    .clicked()
+                {
+                    action = Some(command.clone());
+                }
+            }
+        };
+        ui.horizontal(|ui| {
+            action_buttons(
+                ui,
+                &[
+                    ("Add Sibling", Action::InsertSibling),
+                    ("Add Child", Action::InsertChild),
+                    ("Edit Topic", Action::StartEdit),
+                    ("Move Up", Action::MoveUp),
+                    ("Move Down", Action::MoveDown),
+                ],
+            );
+        });
+        ui.horizontal(|ui| {
+            action_buttons(
+                ui,
+                &[
+                    ("Indent", Action::Indent),
+                    ("Outdent", Action::Outdent),
+                    ("Delete Topic", Action::Delete),
+                    ("Delete Topic Only", Action::DeleteKeepChildren),
+                ],
+            );
+        });
         egui::Frame::new()
             .fill(p.bg)
             .inner_margin(Margin::symmetric(48, 24))
@@ -1059,24 +1431,30 @@ impl YMindApp {
                             ui.horizontal(|ui| {
                                 ui.add_space(depth as f32 * 22.0);
                                 let has_kids = !sheet.children(id).is_empty();
-                                let chevron = if !has_kids {
-                                    " "
-                                } else if topic.collapsed {
+                                let chevron = if topic.collapsed {
                                     icons::CHEVRON_RIGHT
                                 } else {
                                     icons::CHEVRON_DOWN
                                 };
-                                if ui
-                                    .add(
-                                        egui::Button::new(chevron)
-                                            .frame(false)
-                                            .min_size(vec2(16.0, 16.0)),
-                                    )
-                                    .clicked()
-                                    && has_kids
-                                {
-                                    d.view.select_only(id);
-                                    action = Some(Action::ToggleCollapse);
+                                if has_kids {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(chevron)
+                                                .frame(false)
+                                                .min_size(vec2(16.0, 16.0)),
+                                        )
+                                        .accessible_name(format!(
+                                            "{}: {}",
+                                            t("Collapse / Expand"),
+                                            topic.title
+                                        ))
+                                        .clicked()
+                                    {
+                                        d.view.select_only(id);
+                                        action = Some(Action::ToggleCollapse);
+                                    }
+                                } else {
+                                    ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                                 }
                                 if let Some(todo) = topic.todo {
                                     ui.label(if todo { "☑" } else { "☐" });
@@ -1084,15 +1462,18 @@ impl YMindApp {
                                 for m in &topic.markers {
                                     ui.label(markers::glyph(m));
                                 }
-                                if d.view.editing_topic() == Some(id) {
+                                if ui.is_enabled() && d.view.editing_topic() == Some(id) {
                                     let mut text =
                                         d.view.editing_text().unwrap_or_default().to_string();
                                     let te_id = egui::Id::unique(("outliner_edit", id));
-                                    let r = ui.add(
-                                        TextEdit::singleline(&mut text)
-                                            .id(te_id)
-                                            .desired_width(f32::INFINITY),
-                                    );
+                                    let r = ui
+                                        .add(
+                                            TextEdit::singleline(&mut text)
+                                                .id(te_id)
+                                                .hint_text(t("Topic title"))
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .accessible_name(t("Topic title"));
                                     if !r.has_focus() && !r.lost_focus() {
                                         r.request_focus();
                                     }
@@ -1141,7 +1522,11 @@ impl YMindApp {
                     });
             });
         // Keyboard in outliner when not editing.
-        if d.view.editing_topic().is_none() && !ctx.text_edit_focused() {
+        if ui.is_enabled()
+            && d.view.editing_topic().is_none()
+            && !ctx.text_edit_focused()
+            && !egui::Popup::is_any_open(&ctx)
+        {
             let keys = [
                 (Modifiers::NONE, Key::Enter, Action::InsertSibling),
                 (Modifiers::NONE, Key::Tab, Action::InsertChild),
@@ -1212,9 +1597,19 @@ impl YMindApp {
                     d.view.reset();
                 }
                 if r.double_clicked() {
+                    if i != d.doc.active_index() {
+                        d.view.commit_edit(&mut d.doc);
+                        d.doc.set_active(i);
+                        d.view.reset();
+                    }
                     cmd = Some(Cmd::RenameSheet);
                 }
                 r.context_menu(|ui| {
+                    if i != d.doc.active_index() {
+                        d.view.commit_edit(&mut d.doc);
+                        d.doc.set_active(i);
+                        d.view.reset();
+                    }
                     if ui.button(t("Rename Sheet")).clicked() {
                         d.doc.set_active(i);
                         cmd = Some(Cmd::RenameSheet);
@@ -1223,17 +1618,37 @@ impl YMindApp {
                         d.doc.set_active(i);
                         cmd = Some(Cmd::DuplicateSheet);
                     }
+                    for (label, command) in [
+                        ("Copy Sheet", Cmd::CopySheet),
+                        ("Paste Sheet", Cmd::PasteSheet),
+                        ("Save Sheet As…", Cmd::SaveSheetAs),
+                        ("New Sheet", Cmd::NewSheet),
+                    ] {
+                        if ui.button(t(label)).clicked() {
+                            cmd = Some(command);
+                        }
+                    }
                     if ui
                         .add_enabled(i > 0, egui::Button::new(t("Move Left")))
                         .clicked()
                     {
-                        let _ = d.doc.move_sheet(i, i - 1);
+                        d.view.commit_edit(&mut d.doc);
+                        if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Not possible here")));
+                        }
+                        d.view.reset();
                     }
                     if ui
                         .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
                         .clicked()
                     {
-                        let _ = d.doc.move_sheet(i, i + 1);
+                        d.view.commit_edit(&mut d.doc);
+                        if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                            self.toasts
+                                .error(format!("{}: {e}", t("Not possible here")));
+                        }
+                        d.view.reset();
                     }
                     if ui
                         .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
@@ -1438,6 +1853,13 @@ impl YMindApp {
     }
 
     fn style_tab(&mut self, ui: &mut Ui) {
+        if let Some(ymind_canvas::ObjectSelection::Relationship(id)) =
+            self.doc().and_then(|d| d.view.selected_object)
+        {
+            self.relationship_style(ui, id);
+            return;
+        }
+        self.quick_styles(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -1451,6 +1873,11 @@ impl YMindApp {
             return;
         };
         let resolved = ymind_core::theme::resolve_style(sheet, primary, d.view.dark);
+        let can_set_branch_side = sel.iter().all(|id| sheet.parent(*id) == Some(sheet.root))
+            && matches!(
+                sheet.structure,
+                Structure::MapClockwise | Structure::MapAnticlockwise | Structure::MapUnbalanced
+            );
         let mut change: Option<StyleChange> = None;
         ui.label(RichText::new(&topic.title).strong());
         if sel.len() > 1 {
@@ -1461,11 +1888,44 @@ impl YMindApp {
         }
 
         widgets::section(ui, t("Structure"), true, |ui| {
+            if can_set_branch_side {
+                let mut side = topic.branch_side;
+                widgets::property_field(ui, t("Branch side"), |ui| {
+                    egui::ComboBox::from_id_salt(("branch_side", primary))
+                        .selected_text(t(match side {
+                            None => "Auto",
+                            Some(ymind_core::BranchSide::Left) => "Left",
+                            Some(ymind_core::BranchSide::Right) => "Right",
+                        }))
+                        .show_ui(ui, |ui| {
+                            for (value, label) in [
+                                (None, "Auto"),
+                                (Some(ymind_core::BranchSide::Left), "Left"),
+                                (Some(ymind_core::BranchSide::Right), "Right"),
+                            ] {
+                                ui.selectable_value(&mut side, value, t(label));
+                            }
+                        })
+                        .response
+                });
+                if side != topic.branch_side {
+                    let result = d.doc.edit_sheet("Branch side", |s| {
+                        for id in &sel {
+                            s.set_branch_side(*id, side)?;
+                        }
+                        Ok(())
+                    });
+                    if let Err(error) = result {
+                        self.toasts
+                            .warning(format!("{}: {error}", t("Not possible here")));
+                    }
+                }
+            }
             let cur = topic.structure;
             let mut chosen = None;
             widgets::property_field(ui, t("Structure"), |ui| {
                 egui::ComboBox::from_id_salt("topic_structure")
-                    .selected_text(cur.map_or(t("Auto"), |s| structure_label(s)))
+                    .selected_text(cur.map_or(t("Auto"), |s| t(structure_label(s))))
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         if ui.selectable_label(cur.is_none(), t("Auto")).clicked() {
@@ -1473,7 +1933,7 @@ impl YMindApp {
                         }
                         for s in Structure::ALL {
                             if ui
-                                .selectable_label(cur == Some(s), structure_label(s))
+                                .selectable_label(cur == Some(s), t(structure_label(s)))
                                 .clicked()
                             {
                                 chosen = Some(Some(s));
@@ -1544,6 +2004,16 @@ impl YMindApp {
         });
 
         widgets::section(ui, t("Text"), true, |ui| {
+            let mut family = topic.style.font_family.clone();
+            widgets::property_field(ui, t("Font Family"), |ui| {
+                font_selector(ui, &mut self.fonts, &mut family, t("Auto"))
+            });
+            if family != topic.style.font_family {
+                change = Some((
+                    "Font Family",
+                    Box::new(move |st| st.font_family = family.clone()),
+                ));
+            }
             let mut size = resolved.font_size;
             widgets::property_field(ui, t("Font Size"), |ui| {
                 let r = ui.add(egui::DragValue::new(&mut size).range(6.0..=96.0).speed(0.5));
@@ -1637,6 +2107,7 @@ impl YMindApp {
         }
 
         let focus = self.focus_field.take();
+        let mut edit_labels = false;
         widgets::section(ui, t("Topic Properties"), true, |ui| {
             let l = ui.label(t("Hyperlink"));
             let current = topic.hyperlink.clone().unwrap_or_default();
@@ -1652,19 +2123,15 @@ impl YMindApp {
                     .doc
                     .edit_sheet("Hyperlink", |s| s.set_hyperlink(primary, v));
             }
-            let l = ui.label(format!("{} ({})", t("Labels"), t("comma separated")));
-            let (r, done) = buffered_text(ui, ("labels", primary), &topic.labels.join(", "), 0, "");
-            r.labelled_by(l.id);
-            if let Some(labels) = done {
-                let v: Vec<String> = labels
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if v != topic.labels {
-                    let _ = d.doc.edit_sheet("Labels", |s| s.set_labels(primary, v));
+            ui.label(t("Labels"));
+            ui.horizontal_wrapped(|ui| {
+                for label in &topic.labels {
+                    ui.label(label);
                 }
-            }
+            });
+            edit_labels = ui
+                .add_enabled(sel.len() == 1, egui::Button::new(t("Edit labels")))
+                .clicked();
             let l = ui.label(t("Notes"));
             let current = topic.notes.clone().unwrap_or_default();
             let (r, done) = buffered_text(ui, ("notes", primary), &current, 5, "");
@@ -1698,9 +2165,173 @@ impl YMindApp {
                 .doc
                 .edit_sheet(label, |s| s.update_style(&sel, |st| f(st)));
         }
+        if edit_labels {
+            self.exec(ui.ctx(), Cmd::Labels);
+        }
+    }
+
+    fn relationship_style(&mut self, ui: &mut Ui, id: ymind_core::RelationshipId) {
+        let Some(d) = self.doc_mut() else { return };
+        let Some(rel) = d
+            .doc
+            .sheet()
+            .relationships
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        ui.heading(t("Relationship"));
+        ui.label(t(
+            "Drag the round endpoints to reconnect. Drag square controls to reshape.",
+        ));
+        ui.label(t("Focused handles: arrows move controls by 1 map unit (Shift: 10); endpoint arrows cycle visible topics."));
+        let salt = (d.key.clone(), d.doc.active_index(), id);
+        let label = ui.label(t("Relationship title"));
+        let (response, title) = buffered_text(ui, (&salt, "title"), &rel.title, 0, "");
+        response.labelled_by(label.id);
+        let mut from = rel.from;
+        let mut to = rel.to;
+        for (name, value, other) in [
+            ("From topic", &mut from, rel.to),
+            ("To topic", &mut to, rel.from),
+        ] {
+            widgets::property_field(ui, t(name), |ui| {
+                egui::ComboBox::from_id_salt((&salt, name))
+                    .selected_text(
+                        d.doc
+                            .sheet()
+                            .topic(*value)
+                            .map(|topic| topic.title.as_str())
+                            .unwrap_or(""),
+                    )
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for topic in d
+                            .doc
+                            .sheet()
+                            .topics
+                            .values()
+                            .filter(|topic| topic.id != other)
+                        {
+                            ui.selectable_value(
+                                value,
+                                topic.id,
+                                format!("{} ({})", topic.title, topic.id),
+                            );
+                        }
+                    })
+                    .response
+            });
+        }
+        let mut color = None;
+        widgets::property_row(ui, t("Line Color"), |ui| {
+            color = widgets::color_swatches(ui, &SWATCHES, rel.color.map(from_color))
+                .map(|color| Some(to_color(color)));
+        });
+        if rel.color.is_some() && ui.button(t("Automatic line color")).clicked() {
+            color = Some(None);
+        }
+        let layout = d.view.layout_for(&d.doc);
+        let points = rel.control_points.or_else(|| {
+            let curve = layout.relationships.iter().find(|r| r.id == id)?;
+            Some([
+                curve.c1 - layout.topics[&rel.from].rect.center(),
+                curve.c2 - layout.topics[&rel.to].rect.center(),
+            ])
+        });
+        ui.label(t(
+            "Curve coordinates are offsets from each endpoint topic center.",
+        ));
+        let mut changed_points = None;
+        let mut parse_error = None;
+        if let Some(mut points) = points {
+            let mut edited = false;
+            for (index, name) in [
+                "First control X",
+                "First control Y",
+                "Second control X",
+                "Second control Y",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let point = &mut points[index / 2];
+                let value = if index % 2 == 0 {
+                    &mut point.x
+                } else {
+                    &mut point.y
+                };
+                widgets::property_field(ui, t(name), |ui| {
+                    let (response, done) =
+                        buffered_text(ui, (&salt, index), &value.to_string(), 0, "");
+                    if let Some(done) = done {
+                        match done.trim().parse::<f32>() {
+                            Ok(next) => {
+                                *value = next;
+                                edited = true;
+                            }
+                            Err(e) => parse_error = Some(e.to_string()),
+                        }
+                    }
+                    response
+                });
+            }
+            if edited {
+                changed_points = Some(points);
+            }
+        } else {
+            widgets::caption(
+                ui,
+                t("Expand both endpoints to edit automatic curve controls."),
+            );
+        }
+        let reset = ui
+            .add_enabled(
+                rel.control_points.is_some(),
+                egui::Button::new(t("Reset curve")),
+            )
+            .clicked();
+        let changed = title.is_some()
+            || color.is_some()
+            || reset
+            || changed_points.is_some()
+            || from != rel.from
+            || to != rel.to;
+        let result = if changed {
+            d.doc.edit_sheet("Edit Relationship", |s| {
+                if let Some(title) = title {
+                    s.set_relationship_title(id, &title)?;
+                }
+                if from != rel.from || to != rel.to {
+                    s.reconnect_relationship(id, from, to)?;
+                }
+                if let Some(color) = color {
+                    s.set_relationship_color(id, color)?;
+                }
+                if reset {
+                    s.set_relationship_control_points(id, None)?;
+                } else if let Some(points) = changed_points {
+                    s.set_relationship_control_points(id, Some(points))?;
+                }
+                Ok(())
+            })
+        } else {
+            Ok(())
+        };
+        if let Err(e) = result {
+            self.toasts
+                .warning(format!("{}: {e}", t("Not possible here")));
+        }
+        if let Some(e) = parse_error {
+            self.toasts
+                .warning(format!("{}: {e}", t("Invalid curve coordinate")));
+        }
     }
 
     fn map_tab(&mut self, ui: &mut Ui) {
+        self.custom_theme_gallery(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -1711,31 +2342,25 @@ impl YMindApp {
         widgets::caption(ui, t("Map settings apply to the entire sheet."));
 
         widgets::section(ui, t("Structure"), true, |ui| {
-            let mut chosen = None;
-            widgets::property_field(ui, t("Structure"), |ui| {
-                egui::ComboBox::from_id_salt("sheet_structure")
-                    .selected_text(structure_label(structure))
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for s in Structure::ALL {
-                            if ui
-                                .selectable_label(structure == s, structure_label(s))
-                                .clicked()
-                            {
-                                chosen = Some(s);
-                            }
-                        }
-                    })
-                    .response
-            });
-            if let Some(s) = chosen {
-                let _ = d
+            let (_, chosen) = crate::structure_picker::show(ui, structure);
+            if let Some(s) = chosen.filter(|&s| s != structure) {
+                d.view.commit_edit(&mut d.doc);
+                match d
                     .doc
-                    .edit_sheet("Structure", |sh| sh.set_structure(None, Some(s)));
+                    .edit_sheet("Structure", |sh| sh.set_structure(None, Some(s)))
+                {
+                    Ok(()) => d.view.request_fit(),
+                    Err(error) => {
+                        self.toasts.error(error.to_string());
+                    }
+                }
             }
         });
 
         widgets::section(ui, t("Theme"), true, |ui| {
+            widgets::property_field(ui, t("Global Font"), |ui| {
+                font_selector(ui, &mut self.fonts, &mut ts.font_family, t("Default"))
+            });
             let columns = ((ui.available_width() + 8.0) / 126.0).floor().max(1.0) as usize;
             egui::Grid::new("sheet_themes")
                 .num_columns(columns)
@@ -1743,7 +2368,7 @@ impl YMindApp {
                 .show(ui, |ui| {
                     for (index, id) in Theme::IDS.into_iter().enumerate() {
                         let th = Theme::builtin(id);
-                        let selected = ts.theme_id == id;
+                        let selected = ts.custom_theme.is_none() && ts.theme_id == id;
                         let r = widgets::card(ui).show(ui, |ui| {
                             ui.set_width(104.0);
                             let (rect, _) =
@@ -1794,6 +2419,7 @@ impl YMindApp {
                         }
                         if r.clicked() {
                             ts.theme_id = id.to_string();
+                            ts.custom_theme = None;
                             ts.variant = 0;
                         }
                         if (index + 1) % columns == 0 {
@@ -1801,7 +2427,7 @@ impl YMindApp {
                         }
                     }
                 });
-            let th = Theme::builtin(&ts.theme_id);
+            let th = Theme::for_settings(&ts);
             widgets::property_field(ui, t("Color Variant"), |ui| {
                 egui::ComboBox::from_id_salt("variant")
                     .selected_text(if ts.variant == 0 {
@@ -1828,6 +2454,59 @@ impl YMindApp {
             });
         });
 
+        widgets::section(ui, t("Branches"), true, |ui| {
+            let mut automatic = ts.line_width.is_none();
+            widgets::property_field(ui, t("Automatic branch width"), |ui| {
+                widgets::toggle(ui, &mut automatic, t("Automatic branch width"))
+            });
+            if automatic {
+                ts.line_width = None;
+            } else {
+                let width = ts.line_width.unwrap_or(1.5);
+                ts.line_width = Some(width);
+                widgets::property_field(ui, t("Branch Line Width"), |ui| {
+                    let (response, done) = buffered_text(
+                        ui,
+                        (
+                            &d.key,
+                            d.doc.active_index(),
+                            d.doc.state_id(),
+                            "branch-width",
+                        ),
+                        &width.to_string(),
+                        0,
+                        "0.5-16",
+                    );
+                    if let Some(done) = done {
+                        match done.trim().parse::<f32>() {
+                            Ok(value) => ts.line_width = Some(value),
+                            Err(error) => {
+                                self.toasts
+                                    .warning(format!("{}: {error}", t("Invalid branch width")));
+                            }
+                        }
+                    }
+                    response
+                });
+            }
+        });
+
+        widgets::section(ui, t("Advanced Layout"), true, |ui| {
+            widgets::property_field(ui, t("Flexible Floating Topics"), |ui| {
+                widgets::toggle(
+                    ui,
+                    &mut ts.flexible_floating_topics,
+                    t("Flexible Floating Topics"),
+                )
+            });
+            widgets::caption(
+                ui,
+                t(
+                    "Place floating topics without attaching. Turn off to convert between attached and floating topics.",
+                ),
+            );
+        });
+
         widgets::section(ui, t("Background"), true, |ui| {
             ui.horizontal(|ui| {
                 if ui
@@ -1837,17 +2516,21 @@ impl YMindApp {
                     ts.background = None;
                 }
             });
-            let background = Theme::builtin(&ts.theme_id).background(&ts, d.view.dark);
+            let background = Theme::for_settings(&ts).background(&ts, d.view.dark);
             if let Some(c) = widgets::color_swatches(ui, &SWATCHES, Some(from_color(background))) {
                 ts.background = Some(to_color(c));
             }
         });
 
         if ts != before {
-            let _ = d.doc.edit_sheet(t("Theme"), |s| {
+            let result = d.doc.edit_sheet(t("Theme"), |s| {
+                ts.validate().map_err(ymind_core::EditError::Invalid)?;
                 s.theme = ts;
                 Ok(())
             });
+            if let Err(error) = result {
+                self.toasts.error(error.to_string());
+            }
         }
     }
 
@@ -2145,38 +2828,27 @@ impl YMindApp {
                 });
             self.dialogs.about = open;
         }
-        if self.dialogs.shortcuts {
+        if self.dialogs.masked_copy {
             let mut open = true;
-            egui::Window::new(t("Keyboard Shortcuts"))
+            let mut create = false;
+            let mut cancel = false;
+            egui::Window::new(t("Create Masked Copy…"))
                 .open(&mut open)
-                .default_width(420.0)
+                .collapsible(false)
+                .default_width(460.0)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(480.0)
-                        .show(ui, |ui| {
-                            egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
-                                for (_, c) in Self::palette_commands() {
-                                    if let Some(sc) = &c.shortcut {
-                                        ui.label(&c.title);
-                                        ui.label(RichText::new(sc).monospace());
-                                        ui.end_row();
-                                    }
-                                }
-                                for (k, v) in [
-                                    ("Space / F2", "Edit"),
-                                    ("Arrows", "Navigate"),
-                                    ("Alt+↑/↓", "Move"),
-                                    ("Esc", "Select none"),
-                                    ("Home", "Central Topic"),
-                                ] {
-                                    ui.label(t(v));
-                                    ui.label(RichText::new(k).monospace());
-                                    ui.end_row();
-                                }
-                            });
-                        });
+                    ui.label(t("Creates a new unsaved document. The original is not changed."));
+                    ui.label(t("Replaces all topic, sheet and relationship titles. Removes notes, labels, links, images, markers, custom font names, boundary titles and document metadata."));
+                    ui.label(t("Structure, colors and task states remain visible. This does not guarantee anonymity; inspect every sheet before sharing."));
+                    ui.horizontal(|ui| {
+                        if ui.button(t("Cancel")).clicked() { cancel = true; }
+                        if ui.button(t("Create Preview")).clicked() { create = true; }
+                    });
                 });
-            self.dialogs.shortcuts = open;
+            self.dialogs.masked_copy = open && !cancel;
+            if create {
+                self.create_masked_copy();
+            }
         }
     }
 
@@ -2380,7 +3052,7 @@ pub fn dot(ui: &mut Ui, color: Color32) {
 /// A text field that edits a private buffer while focused and reports the new value once
 /// focus is lost (so typing is not reset by the model value on every frame).
 /// `rows == 0` renders a single-line field.
-fn buffered_text(
+pub(crate) fn buffered_text(
     ui: &mut Ui,
     salt: impl std::hash::Hash + std::fmt::Debug,
     current: &str,
@@ -2397,6 +3069,16 @@ fn buffered_text(
         TextEdit::multiline(&mut buf).desired_rows(rows)
     };
     let r = ui.add(edit.id(id).hint_text(hint).desired_width(f32::INFINITY));
+    if rows == 0 && r.lost_focus() {
+        let cancel = ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter);
+            input.consume_key(Modifiers::NONE, Key::Escape)
+        });
+        if cancel {
+            ui.data_mut(|data| data.remove::<String>(id));
+            return (r, None);
+        }
+    }
     if r.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, buf));
         (r, None)

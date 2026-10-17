@@ -60,7 +60,42 @@ fn settings_defaults_and_empty_toml() {
     assert_eq!(defaults.theme, ThemeMode::System);
     assert_eq!(defaults.language, Language::Auto);
     assert!(defaults.autosave && defaults.backup_on_save);
+    assert!(!defaults.label_auto_sort);
     assert!((1..=2).contains(&defaults.recovery_interval_secs));
+}
+
+#[test]
+fn template_recents_are_bounded_deduplicated_validated_and_independent_of_files() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let mut settings = Settings::default();
+    let path = dir.path().join("original.ymind");
+    create(&path);
+    settings.add_recent(&path);
+    let files = settings.recent_files.clone();
+    for template in ymind_core::templates::TEMPLATES {
+        settings.add_recent_template(template.id);
+    }
+    assert_eq!(settings.recent_templates.len(), 8);
+    settings.add_recent_template("swot");
+    settings.add_recent_template("swot");
+    assert_eq!(settings.recent_templates[0], "swot");
+    assert_eq!(
+        settings
+            .recent_templates
+            .iter()
+            .filter(|&id| id == "swot")
+            .count(),
+        1
+    );
+    settings.add_recent_template("unknown-template");
+    assert_eq!(settings.recent_templates[0], "swot");
+    assert_eq!(settings.recent_files, files);
+    settings.save(&paths).unwrap();
+    assert_eq!(Settings::load(&paths).unwrap(), settings);
+    let legacy: Settings = toml::from_str("language = \"english\"").unwrap();
+    assert!(legacy.recent_templates.is_empty());
 }
 
 #[test]
@@ -81,6 +116,7 @@ fn settings_roundtrip_every_field() {
         show_format_panel: false,
         show_topic_toolbar: false,
         show_topic_add_buttons: false,
+        label_auto_sort: true,
         initial_canvas_zoom: 0.8,
         reuse_last_structure: true,
         reuse_last_theme: true,

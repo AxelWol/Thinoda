@@ -50,6 +50,664 @@ fn root_title(wb: &Workbook) -> String {
     s.topic(s.root).unwrap().title.clone()
 }
 
+fn rich_sheet() -> ymind_core::Sheet {
+    let mut sheet = Workbook::default().sheets.remove(0);
+    sheet.title = "Rich sheet".into();
+    let children = sheet.children(sheet.root).to_vec();
+    let summary = sheet.add_summary(&children[..2], "Summary").unwrap();
+    let child = sheet.add_child(summary, None, "Summary child");
+    sheet.add_summary(&[child], "Nested Summary").unwrap();
+    sheet.add_boundary(&children[..2]).unwrap();
+    let floating = sheet.add_floating("Floating", ymind_core::Vec2::new(100.0, 200.0));
+    sheet.add_relationship(child, floating).unwrap();
+    sheet.topic_mut(children[0]).unwrap().notes = Some("Keep notes".into());
+    sheet.topic_mut(children[1]).unwrap().style.italic = Some(true);
+    sheet
+}
+
+#[test]
+fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
+    let mut source = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let sheet = rich_sheet();
+    source.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    let source_state = source.doc().unwrap().doc.state_id();
+    source.exec(&ctx, Cmd::CopySheet);
+    assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
+    let payload = ctx
+        .output(|output| {
+            output.commands.iter().find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+        })
+        .unwrap();
+    let mut target = harness(YMindApp::headless());
+    let before = target.state().doc().unwrap().doc.workbook().clone();
+    let ctx = target.ctx.clone();
+    target.state_mut().exec(&ctx, Cmd::PasteSheet);
+    target.event(egui::Event::Paste(payload.clone()));
+    target.run_steps(3);
+    let d = target.state().doc().unwrap();
+    assert_eq!(d.doc.workbook().sheets.len(), 2);
+    assert_eq!(d.doc.sheet(), &sheet);
+    assert!(target.state().sheet_paste_request.is_none());
+    target
+        .state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(target.state().doc().unwrap().doc.workbook(), &before);
+    target
+        .state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(target.state().doc().unwrap().doc.sheet(), &sheet);
+    // A normal paste event on the canvas also recognizes our versioned sheet payload.
+    target.event(egui::Event::Paste(payload));
+    target.run_steps(3);
+    assert_eq!(target.state().doc().unwrap().doc.workbook().sheets.len(), 3);
+    assert_eq!(target.state().doc().unwrap().doc.sheet(), &sheet);
+}
+
+#[test]
+fn sheet_context_menu_exposes_complete_clipboard_and_separate_save_actions() {
+    let mut h = harness(YMindApp::headless());
+    let title = h.state().doc().unwrap().doc.sheet().title.clone();
+    let point = h.get_by_label(&title).rect().center();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Paste Sheet");
+    h.get_by_role_and_label(Role::Button, "Save Sheet As…");
+    h.get_by_role_and_label(Role::Button, "New Sheet");
+    h.get_by_role_and_label(Role::Button, "Copy Sheet").click();
+    h.run_steps(3);
+    h.get_by_label("Copied sheet to clipboard");
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+}
+
+#[test]
+fn new_sheet_from_topic_copies_owned_annotations_without_changing_the_source() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let mut sheet = rich_sheet();
+    let summary = sheet.summaries[0].topic;
+    let child = sheet.children(summary)[0];
+    let nested = sheet.summaries[1].topic;
+    sheet.add_boundary(&[child]).unwrap();
+    sheet.add_relationship(child, nested).unwrap();
+    let expected = sheet.copy_branch_as_sheet(summary).unwrap();
+    assert_eq!(expected.root, summary);
+    assert!(expected.floating.is_empty());
+    assert_eq!(expected.summaries.len(), 1);
+    assert_eq!(expected.boundaries.len(), 1);
+    assert_eq!(expected.relationships.len(), 1);
+    assert_eq!(expected.topic_count(), 3);
+    app.doc_mut().unwrap().doc.add_sheet(sheet);
+    app.doc_mut().unwrap().view.select_only(summary);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    app.exec(&ctx, Cmd::NewSheetFromTopic);
+    assert_eq!(app.doc().unwrap().doc.workbook().sheets[..2], before.sheets);
+    assert_eq!(app.doc().unwrap().doc.sheet(), &expected);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &expected);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("branch.ymind");
+    assert!(app.save_sheet_to(&path));
+    assert_eq!(ymind_io::import_file(&path).unwrap().sheets[0], expected);
+    let d = app.doc_mut().unwrap();
+    d.view.selection = vec![expected.root, child];
+    assert!(!app.command_available(&Cmd::NewSheetFromTopic));
+    let before_invalid = app.doc().unwrap().doc.workbook().clone();
+    app.exec(&ctx, Cmd::NewSheetFromTopic);
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before_invalid);
+}
+
+#[test]
+fn sheet_paste_rejects_invalid_data_document_switches_and_timeouts() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    for text in ["ordinary text", "YMIND-SHEET-2\n{}", "YMIND-SHEET-1\n{"] {
+        h.state_mut().exec(&ctx, Cmd::PasteSheet);
+        h.event(egui::Event::Paste(text.into()));
+        h.run_steps(3);
+        assert!(h.state().sheet_paste_request.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    h.state_mut().exec(&ctx, Cmd::PasteSheet);
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert!(h.state().sheet_paste_request.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    let key = h.state().doc().unwrap().key.clone();
+    h.state_mut().sheet_paste_request = Some((
+        std::time::Instant::now() - std::time::Duration::from_secs(3),
+        key,
+    ));
+    h.run_steps(3);
+    assert!(h.state().sheet_paste_request.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(h.state().discard_late_sheet_paste);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(!h.state().discard_late_sheet_paste);
+    h.state_mut().exec(&ctx, Cmd::PasteSheet);
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.run_steps(3);
+    assert!(h.state().discard_late_sheet_paste);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.event(egui::Event::Paste(
+        ymind_core::clipboard::encode_sheet(&rich_sheet()).unwrap(),
+    ));
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(h.state().sheet_paste_request.is_none());
+}
+
+#[test]
+fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("original.ymind");
+    let mut app = YMindApp::headless();
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_book("Metadata", |book| {
+            book.metadata.creator = "Sheet author".into();
+            book.metadata.description = Some("Workbook description".into());
+            Ok(())
+        })
+        .unwrap();
+    app.doc_mut().unwrap().save_to(&original, false).unwrap();
+    let original_bytes = std::fs::read(&original).unwrap();
+    let d = app.doc_mut().unwrap();
+    let root = d.doc.sheet().root;
+    d.doc
+        .edit_sheet("Rename active root", |s| {
+            s.set_title(root, "Unsaved change")
+        })
+        .unwrap();
+    let state = app.doc().unwrap().doc.state_id();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    for extension in ["ymind", "xmind"] {
+        let path = dir.path().join(format!("sheet.{extension}"));
+        assert!(app.save_sheet_to(&path));
+        let imported = ymind_io::import_file(&path).unwrap();
+        assert_eq!(imported.sheets.len(), 1);
+        assert_eq!(imported.active_sheet, 0);
+        assert_eq!(imported.metadata, before.metadata);
+        assert_eq!(imported.sheets[0], *before.active());
+        assert_eq!(app.doc().unwrap().path.as_ref(), Some(&original));
+        assert!(app.doc().unwrap().is_dirty());
+        assert_eq!(app.doc().unwrap().doc.state_id(), state);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+    for path in [
+        original.clone(),
+        dir.path().join(".").join("original.ymind"),
+        dir.path().join("sheet.md"),
+    ] {
+        assert!(!app.save_sheet_to(&path));
+    }
+    assert!(!dir.path().join("sheet.md").exists());
+    assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
+    assert!(!app.save_sheet_to(&original.join("sheet.ymind")));
+    assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
+#[test]
+fn masked_copy_preview_is_cancelable_and_exports_only_derived_content() {
+    let mut app = YMindApp::headless();
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_book("Sensitive data", |book| {
+            book.metadata.description = Some("CONFIDENTIAL description".into());
+            for sheet in &mut book.sheets {
+                sheet.title = "CONFIDENTIAL sheet".into();
+                for topic in sheet.topics.values_mut() {
+                    topic.title = "CONFIDENTIAL title".into();
+                    topic.notes = Some("CONFIDENTIAL notes".into());
+                    topic.hyperlink = Some("https://example.test/CONFIDENTIAL".into());
+                    topic.image = Some("CONFIDENTIAL/image.png".into());
+                    topic.labels = vec!["CONFIDENTIAL label".into()];
+                    topic.markers = vec!["CONFIDENTIAL marker".into()];
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    let source = app.doc().unwrap().doc.workbook().clone();
+    let revision = app.doc().unwrap().doc.state_id();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &source);
+    h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Create Preview")
+        .click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 2);
+    let copy = h.state().doc().unwrap();
+    assert!(copy.is_dirty());
+    assert!(copy.path.is_none());
+    assert_eq!(copy.doc.workbook(), &source.masked_copy());
+    assert_eq!(h.state().docs[0].doc.workbook(), &source);
+    assert_eq!(h.state().docs[0].doc.state_id(), revision);
+    let dir = tempfile::tempdir().unwrap();
+    for extension in ["ymind", "xmind"] {
+        let path = dir.path().join(format!("masked.{extension}"));
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        let reopened = ymind_io::import_file(&path).unwrap();
+        assert_eq!(reopened, source.masked_copy());
+    }
+}
+
+#[test]
+fn merge_map_files_is_atomic_rich_and_preserves_sources_and_destination_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = YMindApp::headless();
+    let source_book = Workbook::new(rich_sheet());
+    let paths: Vec<_> = ["source.ymind", "source.xmind"]
+        .iter()
+        .map(|name| dir.path().join(name))
+        .collect();
+    for path in &paths {
+        ymind_io::export_file(
+            &source_book,
+            path,
+            Format::from_path(path).unwrap(),
+            &Default::default(),
+        )
+        .unwrap();
+    }
+    let originals: Vec<_> = paths
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let revision = app.doc().unwrap().doc.state_id();
+    let mut bad_paths = paths.clone();
+    bad_paths.push(dir.path().join("missing.xmind"));
+    assert!(!app.merge_files(&bad_paths));
+    assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert!(!app.merge_files(&[dir.path().join("text.txt")]));
+    assert!(!app.merge_files(&[]));
+    assert!(app.merge_files(&paths));
+    let merged = app.doc().unwrap().doc.workbook().clone();
+    assert_eq!(merged.sheets.len(), 3);
+    assert_eq!(merged.active_sheet, 1);
+    assert_eq!(merged.sheets[0], before.sheets[0]);
+    assert_eq!(merged.sheets[1], source_book.sheets[0]);
+    assert_eq!(merged.sheets[2], source_book.sheets[0]);
+    assert_eq!(merged.metadata, before.metadata);
+    for (path, bytes) in paths.iter().zip(originals) {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    assert!(app.doc_mut().unwrap().doc.undo());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert!(app.doc_mut().unwrap().doc.redo());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &merged);
+}
+
+#[test]
+fn arrange_menu_aligns_floating_topics_and_persists_with_single_undo() {
+    let mut app = YMindApp::headless();
+    app.settings.show_format_panel = false;
+    let ids = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Floating", |s| {
+            Ok(vec![
+                s.add_floating("First", ymind_core::Vec2::new(100.0, 300.0)),
+                s.add_floating("Second", ymind_core::Vec2::new(400.0, 600.0)),
+            ])
+        })
+        .unwrap();
+    app.doc_mut().unwrap().view.selection = ids.clone();
+    let before = app.doc().unwrap().doc.sheet().clone();
+    let mut h = harness(app);
+    h.get_by_label(ymind_ui::icons::MENU).click();
+    h.run_steps(2);
+    h.get_by_label("Edit").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Arrange").click();
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Distribute Horizontal Centers")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Align Top").click();
+    h.run_steps(3);
+    let aligned = h.state().doc().unwrap().doc.sheet().clone();
+    assert_ne!(aligned, before);
+    let ctx = h.ctx.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("aligned.ymind");
+    assert!(h.state_mut().save_sheet_to(&path));
+    assert_eq!(ymind_io::import_file(&path).unwrap().sheets[0], aligned);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(h.state().doc().unwrap().doc.sheet(), &aligned);
+}
+
+#[test]
+fn select_context_submenu_preserves_content_and_uses_same_availability() {
+    let mut h = harness(YMindApp::headless());
+    let d = h.state().doc().unwrap();
+    let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
+    let before = d.doc.workbook().clone();
+    let state = d.doc.state_id();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Select").click();
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Select Siblings")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Select Descendants")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert_eq!(d.view.selection, d.doc.sheet().children(d.doc.sheet().root));
+    assert_eq!(d.doc.workbook(), &before);
+    assert_eq!(d.doc.state_id(), state);
+}
+
+#[test]
+fn style_clipboard_is_session_wide_and_multitopic_edits_undo_atomically() {
+    let mut app = YMindApp::headless();
+    let ctx = egui::Context::default();
+    let source = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Source style", |s| {
+            s.update_style(&[source], |style| {
+                style.fill = ymind_core::Color::from_hex("#123456");
+                style.font_size = Some(24.0);
+                style.italic = Some(true);
+                style.line_width = Some(3.0);
+                style.width = Some(150.0);
+            })
+        })
+        .unwrap();
+    let source_style = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .topic(source)
+        .unwrap()
+        .style
+        .clone();
+    let source_revision = app.doc().unwrap().doc.state_id();
+    app.exec(&ctx, Cmd::CopyStyle);
+    assert_eq!(app.doc().unwrap().doc.state_id(), source_revision);
+    app.exec(&ctx, Cmd::New);
+    let topics = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(app.doc().unwrap().doc.sheet().root)[..2]
+        .to_vec();
+    app.doc_mut().unwrap().view.selection = topics.clone();
+    let before = app.doc().unwrap().doc.sheet().clone();
+    app.exec(&ctx, Cmd::PasteStyle);
+    let pasted = app.doc().unwrap().doc.sheet().clone();
+    for topic in &topics {
+        assert_eq!(pasted.topic(*topic).unwrap().style, source_style);
+        assert_eq!(
+            pasted.topic(*topic).unwrap().title,
+            before.topic(*topic).unwrap().title
+        );
+    }
+    assert!(!app.command_available(&Cmd::CopyStyle));
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &before);
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &pasted);
+    app.exec(&ctx, Cmd::ResetStyle);
+    for topic in &topics {
+        assert!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(*topic)
+                .unwrap()
+                .style
+                .is_default()
+        );
+    }
+    app.exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(app.doc().unwrap().doc.sheet(), &pasted);
+    // An empty override style is a valid clipboard, not a missing clipboard.
+    app.doc_mut().unwrap().view.select_only(before.root);
+    app.exec(&ctx, Cmd::CopyStyle);
+    assert!(app.style_clipboard.as_ref().unwrap().is_default());
+    assert!(app.command_available(&Cmd::PasteStyle));
+}
+
+#[test]
+fn style_shortcuts_and_context_actions_share_availability() {
+    let mut h = harness(YMindApp::headless());
+    let d = h.state().doc().unwrap();
+    let root_rect = d.view.selected_topic_rect(&d.doc).unwrap();
+    right_click_at(&mut h, root_rect.center());
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Paste Style")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        !h.get_by_role_and_label(Role::Button, "Copy Style")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Copy Style").click();
+    h.run_steps(3);
+    assert!(h.state().style_clipboard.is_some());
+    let first = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(h.state().doc().unwrap().doc.sheet().root)[0];
+    h.state_mut().doc_mut().unwrap().view.select_only(first);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::ALT),
+        egui::Key::V,
+    );
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .topic(first)
+            .unwrap()
+            .style
+            .is_default()
+    );
+    let d = h.state().doc().unwrap();
+    let rect = d.view.selected_topic_rect(&d.doc).unwrap();
+    right_click_at(&mut h, rect.center());
+    h.get_by_role_and_label(Role::Button, "Reset Style").click();
+    h.run_steps(3);
+    h.state_mut().doc_mut().unwrap().view.selection.clear();
+    assert!(!h.state().command_available(&Cmd::ResetStyle));
+    assert!(!h.state().command_available(&Cmd::CopyStyle));
+    assert!(!h.state().command_available(&Cmd::PasteStyle));
+}
+
+#[test]
+fn sheet_shortcuts_commit_title_edits_wrap_and_preserve_last_sheet() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    assert!(!h.state().command_available(&Cmd::NextSheet));
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.get_by_label("Topic title")
+        .type_text("Committed before new sheet");
+    h.run_steps(2);
+    h.state_mut().exec(&ctx, Cmd::NewSheet);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 1);
+    assert_eq!(
+        root_title(h.state().doc().unwrap().doc.workbook()),
+        "Committed before new sheet"
+    );
+    assert!(h.state().doc().unwrap().view.selection.is_empty());
+    let revision = h.state().doc().unwrap().doc.state_id();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::PageDown);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::PageUp);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 1);
+    h.state_mut().exec(&ctx, Cmd::DeleteSheet);
+    h.state_mut().exec(&ctx, Cmd::DeleteSheet);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 1);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .contains(h.state().doc().unwrap().doc.sheet().root)
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 2);
+}
+
+#[test]
+fn style_shortcuts_do_not_intercept_topic_text_input() {
+    let mut h = harness(YMindApp::headless());
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::StartEdit));
+    h.run_steps(3);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::ALT),
+        egui::Key::C,
+    );
+    h.run_steps(3);
+    assert!(h.state().style_clipboard.is_none());
+    h.get_by_label("Topic title").type_text("Still editing");
+    h.run_steps(3);
+    h.state_mut().exec(&ctx, Cmd::DuplicateSheet);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 2);
+    for sheet in &h.state().doc().unwrap().doc.workbook().sheets {
+        assert_eq!(sheet.root_topic().title, "Still editing");
+    }
+}
+
+#[test]
+fn indent_outdent_context_commands_are_single_undo_steps() {
+    let mut h = harness(YMindApp::headless());
+    let children = h
+        .state()
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .children(h.state().doc().unwrap().doc.sheet().root)
+        .to_vec();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .view
+        .select_only(children[1]);
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Indent))
+    );
+    assert!(
+        !h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Outdent))
+    );
+    let d = h.state().doc().unwrap();
+    let point = d.view.selected_topic_rect(&d.doc).unwrap().center();
+    right_click_at(&mut h, point);
+    h.get_by_role_and_label(Role::Button, "Indent").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(children[1]),
+        Some(children[0])
+    );
+    assert!(
+        h.state()
+            .command_available(&Cmd::Canvas(ymind_canvas::Action::Outdent))
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Outdent));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root),
+        children
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(children[1]),
+        Some(children[0])
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root),
+        children
+    );
+}
+
 #[test]
 fn about_dialog_shows_author_and_contact() {
     let mut h = harness(YMindApp::headless());
@@ -390,6 +1048,180 @@ fn map_sidebar_shows_sheet_values_not_selected_topic_overrides() {
 }
 
 #[test]
+fn structure_gallery_preserves_rich_content_selection_and_undo_for_every_layout() {
+    use ymind_core::Structure;
+    let mut app = YMindApp::headless();
+    let sheet = rich_sheet();
+    app.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    let selected = sheet.children(sheet.root)[1];
+    app.doc_mut().unwrap().view.select_only(selected);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.get_by_role_and_label(Role::Tab, "Map").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+        .click();
+    h.run_steps(3);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    h.get_by_role_and_label(Role::DisclosureTriangle, "Mind maps")
+        .click();
+    h.run_steps(8);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mind Map")
+            .is_none()
+    );
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    h.get_by_role_and_label(Role::DisclosureTriangle, "Mind maps")
+        .click();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Mind Map");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let labels = [
+        "Mind Map",
+        "Mind Map (anticlockwise)",
+        "Mind Map (one side)",
+        "Logic Chart (right)",
+        "Logic Chart (left)",
+        "Brace Map (right)",
+        "Brace Map (left)",
+        "Org Chart (down)",
+        "Org Chart (up)",
+        "Tree Chart (right)",
+        "Tree Chart (left)",
+        "Timeline (horizontal)",
+        "Timeline (vertical)",
+        "Fishbone (right)",
+        "Fishbone (left)",
+        "Matrix",
+        "Tree Table",
+    ];
+    for (structure, label) in Structure::ALL.into_iter().zip(labels) {
+        h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+            .click();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, label).click();
+        h.run_steps(4);
+        assert!(!egui::Popup::is_any_open(&h.ctx), "{label}");
+        let mut expected = before.clone();
+        expected.active_mut().structure = structure;
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &expected,
+            "{label}"
+        );
+        assert_eq!(h.state().doc().unwrap().view.primary(), Some(selected));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("layout.ymind");
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        assert_eq!(ymind_io::import_file(&path).unwrap(), expected);
+        if structure != Structure::MapClockwise {
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+            h.run_steps(3);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before, "{label}");
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Redo));
+            h.run_steps(3);
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &expected,
+                "{label}"
+            );
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(ymind_canvas::Action::Undo));
+            h.run_steps(3);
+        }
+    }
+}
+
+#[test]
+fn structure_gallery_is_bounded_and_keyboard_does_not_edit_the_map() {
+    use egui::accesskit::Toggled;
+    for (width, scale, dark) in [
+        (480.0, 1.0, false),
+        (640.0, 1.5, true),
+        (1280.0, 1.0, false),
+    ] {
+        let mut app = YMindApp::headless();
+        if width < 500.0 {
+            app.mode = ymind_app::app::CenterMode::Outliner;
+        }
+        app.settings.theme = if dark { Theme::Dark } else { Theme::Light };
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let selection = app.doc().unwrap().view.selection.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 800.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.ctx.set_pixels_per_point(scale);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Tab, "Map").click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, "Choose Structure: Mind Map")
+            .focus();
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(4);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Mind Map")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        for label in [
+            "Mind Map",
+            "Mind Map (anticlockwise)",
+            "Mind Map (one side)",
+            "Logic Chart (right)",
+            "Tree Table",
+        ] {
+            let rect = h.get_by_role_and_label(Role::Button, label).rect();
+            assert!(
+                rect.left() >= 0.0 && rect.right() <= h.ctx.content_rect().right(),
+                "{width}/{scale}: {label} {rect:?}"
+            );
+        }
+        h.key_press(egui::Key::Tab);
+        h.key_press(egui::Key::ArrowDown);
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+        h.get_by_role_and_label(Role::Button, "Tree Table").focus();
+        h.get_by_role_and_label(Role::Button, "Tree Table")
+            .scroll_to_me();
+        h.run_steps(8);
+        let card = h.get_by_role_and_label(Role::Button, "Tree Table").rect();
+        assert!(
+            card.top() >= 0.0 && card.bottom() <= h.ctx.content_rect().bottom(),
+            "{card:?}"
+        );
+        assert!(
+            h.get_by_role_and_label(Role::Button, "Tree Table")
+                .is_focused()
+        );
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+        let mut expected = before;
+        expected.active_mut().structure = ymind_core::Structure::TreeTable;
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &expected);
+        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+    }
+}
+
+#[test]
 fn map_panel_themes_fit_and_can_be_selected() {
     let mut h = harness(YMindApp::headless());
     h.get_by_role_and_label(Role::Tab, "Map").click();
@@ -601,6 +1433,259 @@ fn symbols_disable_without_selection_and_explain_availability_on_home() {
 }
 
 #[test]
+fn new_from_template_menu_groups_every_template_by_its_category() {
+    use ymind_core::templates::{TEMPLATES, TemplateCategory};
+    let mut h = harness(YMindApp::headless());
+    for category in TemplateCategory::ALL {
+        h.get_by_role_and_label(Role::Button, "☰").click();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, "New from Template…")
+            .click();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, category.label())
+            .click();
+        h.run_steps(2);
+
+        let category_templates: Vec<_> = TEMPLATES
+            .iter()
+            .filter(|template| template.category == category)
+            .collect();
+        assert!(
+            !category_templates.is_empty(),
+            "empty menu category: {category:?}"
+        );
+        for template in &category_templates {
+            h.get_by_role_and_label(Role::Button, template.name);
+        }
+        let selected = category_templates[0];
+        h.get_by_role_and_label(Role::Button, selected.name).click();
+        h.run_steps(4);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &ymind_core::templates::instantiate(selected.id)
+        );
+    }
+}
+
+#[test]
+fn template_chooser_filters_selects_before_creating_and_cancels_without_touching_sources() {
+    let mut app = YMindApp::headless();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::Home);
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Create")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Mind Map").click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().template_choice, Some("mind-map"));
+    assert!(h.state().settings.recent_templates.is_empty());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().active, 0);
+    assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Mind Map").click();
+    h.run_steps(3);
+    h.get_by_label("Template Category").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Analysis and decision")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Analysis and decision")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().template_category,
+        Some(ymind_core::templates::TemplateCategory::Analysis)
+    );
+    assert!(h.state().template_choice.is_none());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mind Map")
+            .is_none()
+    );
+    h.get_by_role_and_label(Role::Button, "SWOT Analysis")
+        .click();
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().template_choice, Some("swot"));
+    h.get_by_role_and_label(Role::Button, "Create").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Space);
+    h.run_steps(3);
+    assert_eq!(h.state().docs.len(), 2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook(),
+        &ymind_core::templates::instantiate("swot")
+    );
+    assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    assert_eq!(h.state().settings.recent_templates, ["swot"]);
+    assert!(h.state().settings.recent_files.is_empty());
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Recent template: SWOT Analysis");
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().active, 1);
+    let count = h.state().docs.len();
+    h.state_mut()
+        .exec(&ctx, Cmd::NewFromTemplate("missing-template"));
+    assert_eq!(h.state().docs.len(), count);
+    assert_eq!(h.state().settings.recent_templates, ["swot"]);
+    let expected_key = h.state().docs[1].key.clone();
+    h.state_mut()
+        .new_doc(ymind_core::templates::instantiate("meeting"));
+    h.state_mut().active = 1;
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.state_mut().close_tab_now(0);
+    h.run_steps(3);
+    assert!(h.state().doc().is_none());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().key, expected_key);
+}
+
+#[test]
+fn template_sections_navigate_with_keyboard_and_return_without_changing_maps() {
+    use ymind_core::templates::{TEMPLATES, TemplateCategory};
+    for width in [480.0, 1280.0] {
+        let mut app = YMindApp::headless();
+        let source = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&egui::Context::default(), Cmd::Home);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 900.0))
+            .build_ui_state(|ui, app: &mut YMindApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+        h.run_steps(4);
+        for category in TemplateCategory::ALL {
+            let label = format!("Browse templates: {}", category.label());
+            h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+            h.run_steps(10);
+            h.get_by_role_and_label(Role::Button, &label).focus();
+            h.run_steps(2);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(4);
+            assert_eq!(h.state().template_category, Some(category));
+            assert!(h.state().template_choice.is_none());
+            let info = TEMPLATES
+                .iter()
+                .find(|info| info.category == category)
+                .unwrap();
+            let card = h.get_by_role_and_label(Role::Button, info.name);
+            assert!(
+                h.ctx.content_rect().contains_rect(card.rect()),
+                "{} at {width}",
+                info.name
+            );
+            card.click();
+            h.run_steps(3);
+            assert_eq!(h.state().template_choice, Some(info.id));
+            let back = h.get_by_role_and_label(Role::Button, "All templates");
+            assert!(h.ctx.content_rect().contains_rect(back.rect()));
+            back.click();
+            h.run_steps(4);
+            assert!(h.state().template_category.is_none());
+            assert!(h.state().template_choice.is_none());
+            assert!(
+                h.get_by_role_and_label(Role::Button, "Create")
+                    .accesskit_node()
+                    .is_disabled()
+            );
+            assert!(
+                h.ctx
+                    .content_rect()
+                    .contains_rect(h.get_by_role_and_label(Role::Button, &label).rect())
+            );
+            assert_eq!(h.state().docs.len(), 1);
+            assert_eq!(h.state().docs[0].doc.workbook(), &source);
+            assert!(h.state().settings.recent_templates.is_empty());
+        }
+        h.get_by_role_and_label(Role::Button, "Cancel").click();
+        h.run_steps(3);
+        assert_eq!(h.state().active, 0);
+    }
+}
+
+#[test]
+fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    paths.ensure().unwrap();
+    let mut app = YMindApp::new(
+        english(),
+        Services {
+            paths: Some(paths.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
+    app.settings.reuse_last_theme = true;
+    app.settings.default_theme = "ocean".into();
+    app.settings.reuse_last_structure = true;
+    app.settings.default_structure = ymind_core::Structure::FishboneLeft.xmind_class().into();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    for template in ymind_core::templates::TEMPLATES {
+        h.state_mut().exec(&ctx, Cmd::Home);
+        h.state_mut().template_category = Some(template.category);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, template.name)
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, template.name).focus();
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(h.state().template_choice, Some(template.id));
+        assert_eq!(h.state().active, h.state().docs.len());
+        h.get_by_role_and_label(Role::Button, "Create").click();
+        h.run_steps(3);
+        assert_eq!(
+            h.state().doc().unwrap().doc.workbook(),
+            &ymind_core::templates::instantiate(template.id)
+        );
+        assert!(h.state().doc().unwrap().path.is_none());
+        for extension in ["ymind", "xmind"] {
+            let path = dir.path().join(format!("{}.{extension}", template.id));
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .save_to(&path, false)
+                .unwrap();
+            assert_eq!(
+                ymind_io::import_file(&path).unwrap(),
+                ymind_core::templates::instantiate(template.id)
+            );
+        }
+    }
+    let settings = Settings::load(&paths).unwrap();
+    assert_eq!(
+        settings.recent_templates,
+        h.state().settings.recent_templates
+    );
+    assert_eq!(settings.recent_templates.len(), 8);
+    assert!(settings.recent_files.is_empty());
+    let mut restarted = harness(YMindApp::new(settings, Services::default(), &[]));
+    restarted.run_steps(3);
+    let latest = ymind_core::templates::TEMPLATES.last().unwrap();
+    restarted.get_by_role_and_label(Role::Button, &format!("Recent template: {}", latest.name));
+    let count = restarted.state().docs.len();
+    restarted
+        .get_by_role_and_label(Role::Button, "Cancel")
+        .click();
+    restarted.run_steps(3);
+    assert_eq!(restarted.state().docs.len(), count);
+    assert!(restarted.state().doc().is_none());
+}
+
+#[test]
 fn home_templates_wrap_within_the_window() {
     for width in [480.0, 800.0, 1280.0, 2400.0] {
         let mut app = YMindApp::headless();
@@ -612,7 +1697,7 @@ fn home_templates_wrap_within_the_window() {
             .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
         h.run_steps(4);
         let first = h.get_by_role_and_label(Role::Button, "Mind Map").rect();
-        let last = h.get_by_role_and_label(Role::Button, "Project Plan").rect();
+        let last = h.get_by_role_and_label(Role::Button, "Tree Table").rect();
         for template in ymind_core::templates::TEMPLATES {
             let rect = h.get_by_role_and_label(Role::Button, template.name).rect();
             assert!(
@@ -625,7 +1710,15 @@ fn home_templates_wrap_within_the_window() {
             assert!(last.min.y > first.min.y, "templates must wrap at {width}");
         }
         h.get_by_role_and_label(Role::Button, "Project Plan")
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, "Project Plan")
             .click();
+        h.run_steps(3);
+        assert!(h.state().doc().is_none());
+        let create = h.get_by_role_and_label(Role::Button, "Create").rect();
+        assert!(create.min.y >= 0.0 && create.max.y <= 1600.0);
+        h.get_by_role_and_label(Role::Button, "Create").click();
         h.run_steps(3);
         assert!(h.state().doc().is_some());
     }
@@ -716,6 +1809,120 @@ fn closing_dirty_tab_asks_and_dont_save_closes() {
     assert!(h.state().docs.is_empty(), "tab closed without saving");
     // With no document open, the home screen with templates is shown.
     assert!(h.query_all_by_label_contains("Mind Map").next().is_some());
+}
+
+#[test]
+fn outliner_toolbar_adds_edits_reorders_reparents_and_deletes_topics() {
+    let mut app = YMindApp::headless();
+    app.mode = ymind_app::app::CenterMode::Outliner;
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Button, "Main Topic 2")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .children(h.state().doc().unwrap().doc.sheet().root)
+            .len(),
+        4
+    );
+
+    h.get_by_role_and_label(Role::Button, "Add Sibling").click();
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.can_undo());
+    assert!(h.state().doc().unwrap().view.editing_topic().is_some());
+    h.get_by_label("Topic title").click();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label("Topic title").type_text("Added sibling");
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let root = d.doc.sheet().root;
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().topic(added).unwrap().title, "Added sibling");
+    assert_eq!(d.doc.sheet().parent(added), Some(root));
+    assert_eq!(d.doc.sheet().index_in_parent(added), Some(2));
+
+    assert!(ymind_canvas::Action::MoveUp.available(
+        &h.state().doc().unwrap().doc,
+        &h.state().doc().unwrap().view,
+    ));
+    h.get_by_role_and_label(Role::Button, "Move Up").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().index_in_parent(added), Some(1));
+
+    h.get_by_role_and_label(Role::Button, "Indent").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    let parent = d.doc.sheet().parent(added).unwrap();
+    assert_eq!(d.doc.sheet().topic(parent).unwrap().title, "Main Topic 1");
+
+    h.get_by_role_and_label(Role::Button, "Outdent").click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().parent(added), Some(d.doc.sheet().root));
+
+    h.get_by_role_and_label(Role::Button, "Edit Topic").click();
+    h.run_steps(3);
+    h.get_by_label("Topic title").click();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label("Topic title").type_text("Edited sibling");
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    let added = d.view.primary().unwrap();
+    assert_eq!(d.doc.sheet().topic(added).unwrap().title, "Edited sibling");
+
+    h.get_by_role_and_label(Role::Button, "Add Child").click();
+    h.run_steps(3);
+    let child = h.state().doc().unwrap().view.primary().unwrap();
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(child),
+        Some(added)
+    );
+    h.get_by_role_and_label(Role::Button, "Edited sibling")
+        .click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Delete Topic")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert!(!d.doc.sheet().contains(child));
+    assert!(!d.doc.sheet().contains(added));
+    assert!(d.doc.can_undo());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.sheet().contains(child));
+    assert!(h.state().doc().unwrap().doc.sheet().contains(added));
+
+    h.get_by_role_and_label(Role::Button, "Edited sibling")
+        .click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Delete Topic Only")
+        .click();
+    h.run_steps(3);
+    let d = h.state().doc().unwrap();
+    assert!(!d.doc.sheet().contains(added));
+    assert!(d.doc.sheet().contains(child));
+    assert_eq!(d.doc.sheet().parent(child), Some(root));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert!(h.state().doc().unwrap().doc.sheet().contains(added));
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().parent(child),
+        Some(added)
+    );
 }
 
 #[test]

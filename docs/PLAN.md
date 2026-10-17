@@ -59,7 +59,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Phase 6 — XMind parity extras ⬜
 See [BACKLOG.md](BACKLOG.md): Pitch mode, Gantt view, Map Shot, Zone, equations, audio notes,
-attachments, password-protected files, print, quick styles, custom themes, …
+attachments, password-protected files, print, custom themes, …
 
 ## Remaining-work delivery plan (2026-10-16)
 
@@ -150,7 +150,11 @@ unknown needed by the next package. Never bypass OS application-control policy.
 5. Deliver searchable/category-filtered shortcut editing, unassigned bindings,
    conflicts, reserved keys and reset-all. Preserve current bindings by default;
    offer an XMind-compatible preset only after approval of conflicting mappings.
-6. Add Help/User guide/Quick start/About and explicit feedback/news links. Research
+   The searchable/category-filtered read-only reference, unassigned-command
+   visibility and navigation aliases are delivered. Rebinding/conflict editing
+   and native keyboard-layout audits remain open.
+6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
+   Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
    unless separately requested; updater actions arrive with R11.
 
@@ -185,15 +189,24 @@ Calendar, Sharing and updater behavior finish in R8/R10/R11.
 
 ### R3 - Canvas interaction and visual completion
 
-1. Refine reparenting with subtree ghost/dimmed origin, target connector and insertion
-   slot previews; sibling ordering, main-branch sides, cancellation and edge auto-pan.
-   Verify detach gestures; reject self/descendant/root-invalid drops atomically.
-2. Add relationship endpoint reconnect and Bezier handles/guides without replacing
-   relationship colors with selection color. Preserve links across tree moves.
+1. Delivered visible-subtree ghosts/dimmed origins, parent highlighting, cancellation,
+   stale-source protection, bounded edge auto-pan and atomic protected drops.
+   Existing detach gestures are retained and supported by the official guides.
+   Delivered shared insertion-slot/connector previews, atomic sibling ordering and
+   persistent manual main-branch sides with Style Auto/Left/Right alternatives.
+   Delivered per-sheet Flexible Floating Topics with safe free placement and
+   conversion gating. Remaining: public XMind side interchange and
+   native reference comparison.
+2. Delivered relationship endpoint reconnect, Bezier handles/guides and a dedicated
+   Style editor without replacing relationship colors with selection color.
+   Relative controls persist with one-step undo; keyboard alternatives exist.
+   Public XMind curve controls and native keyboard/accessibility QA remain open.
+   Preserve links across tree moves during the remaining hierarchy-drag work.
 3. Polish floating topics, independent boundaries and callouts; distinguish each
    from transient selection outlines and later presentation zones.
-4. Add the anchored Labels popover and shared label editor, defining trimming,
-   deduplication, autosort and commit/cancel semantics.
+4. Delivered the shared anchored Labels popover with trimming, case-sensitive
+   deduplication, opt-in Unicode sorting, suggestions and explicit Apply/Cancel.
+   Exact on-map tag rendering/reference polish remains part of visual completion.
 5. Match reference typography, spacing, rounded sub-branch junctions and theme
    hierarchy, extending Clarity without rewriting saved styles.
 
@@ -229,7 +242,8 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
 2. Cover all eight categories in the backlog with original useful examples, starting
    with Basic and existing SWOT/meeting/project templates. Verify truncated reference
    titles rather than claiming exact equivalents.
-3. Add skeleton/structure gallery, quick styles, global font and custom theme editor;
+3. Skeleton/structure gallery, real global/topic font selection and quick-style
+   libraries and embedded custom-theme editor are delivered;
    maintain per-topic override precedence and opt-in reuse of recent choices.
    Use the Map-tab anchored preview selector for changing existing sheets as well as
    choosing new-map defaults. Group Mind map, Logic, Brace, Org, Tree, Timeline,
@@ -390,6 +404,389 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+R0 importer robustness slice: eight valid seeds across all seven import formats
+(native ZIP and raw JSON both included) receive systematic boundary truncations
+and 128 deterministic byte mutations per seed. Every accepted workbook validates
+and round-trips through native storage; unexpected panics fail normally. Structured
+XML entities/attributes/depth through 64 and malformed XMind JSON receive the same
+invariant checks. Forged declared ZIP entry lengths above 200 MiB exercise the
+existing decompression guard without large allocations. These bounded smoke
+checks run in normal workspace CI; dedicated coverage-guided fuzz targets, long
+campaigns and deeper resource-limit exploration remain open. No new dependencies
+or production parser behavior changes are introduced.
+Formatting, all-target clippy, 391 workspace cases and three benchmark correctness
+tests pass with live AI disabled. The last Windows installer remains the app-feature
+build from `125c0a4`; the benchmark and importer-smoke slices do not change app behavior.
+
+R0 CPU performance baseline delivered: deterministic 10,000-topic six-way and
+wide maps report nearest-rank p50/p95/max layout, undoable leaf-rename transaction
+and undo times as JSON. One layout warm-up is excluded; fixture construction and
+validation, serialization and file I/O are outside timed operations. Layouts are
+checked for complete topic counts/finite overall bounds, and every undo restores
+the leaf title/history. Optional positive finite p95 layout budgets fail explicitly
+after the report is written. CLI bounds and percentile/fixture tests accompany the
+benchmark; CI is configured to upload each runner's report without imposing one
+hardware budget on heterogeneous hosts. Those native CI runs are not claimed here.
+
+Local Windows x64 baseline, 2026-10-16: AMD Ryzen 7 PRO 9755, 8 cores/16 threads,
+rustc 1.99.1, release build, ApproxMeasure, light mode, 30 samples. Initial p95:
+balanced layout 23.68 ms / rename 3.81 ms / undo 0.0015 ms; wide layout 28.71 ms /
+rename 3.34 ms / undo 0.0013 ms. A repeat with a local-only 50 ms layout budget
+passed at 24.46/34.93 ms layout p95. This sets an initial regression envelope on
+this machine, not a portable performance guarantee or the 16.7 ms frame target.
+There is no GPU backend, viewport, real font shaping, pan/zoom frame sampling or
+IME measurement in this benchmark. Native frame-p95/60-fps profiling and deeper
+mixed-content/structural-edit workloads remain open.
+`cargo xtask ci` passes formatting, all-target clippy, 387 workspace cases and
+three benchmark correctness tests. A deliberately impossible budget was checked:
+the process failed and still wrote both complete case results with
+`passed_budget: false`. This developer-only slice does not change the packaged app.
+
+R1 shortcut-reference slice delivered: F1/Help opens a searchable EN/DE browser
+from the palette catalog with category/unassigned filters and navigation aliases.
+Fixed footer, scroll reset and modal isolation cover narrow windows, Map/Outliner
+and Home. The UI explicitly states rebinding is not available; conflict/reserved
+key editing and reset-all remain open. Advertised Ctrl+Q now requests native
+window close, with the existing unsaved-document prompt preserved. All 387
+workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with the shortcut reference and Quit fix.
+
+R1 offline help delivered: searchable EN/DE User Guide and Quick Start are wired
+through Help and the command palette, with six offline sections and accurate
+interchange, recovery, cloud and AI privacy limitations. Home and narrow windows
+are covered. Modal input isolation preserves map/outliner edits and selection;
+search resets scroll, Escape closes the guide and popup Escape closes the popup
+first. Feedback opens the public issue chooser without document/log uploads;
+Project News opens repository history rather than claiming an updater or releases.
+All 384 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with offline help.
+
+R5 original-template expansion: 18 scenario maps expand the gallery from 17 to 35,
+covering knowledge frameworks/architecture/problem solving, business/workshops,
+research/timetables/notes/languages, retrospectives, shopping/reflection/services,
+cause/effect/comparison/social-media planning and recipes/film production.
+Scenario-specific branches and editable prompts are original yMind content.
+Gallery names are EN/DE; document starter content remains English. Every registered
+template participates in actual preview/Create, keyboard selection, native/XMind
+round-trip and responsive layout checks. Timetable is a topic hierarchy, not a
+calendar. AR, BCG/organization/nine-box matrix semantics, truncated reference
+titles and native reference equivalence remain open; R5 is not finished.
+All 379 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with all 35 templates.
+
+R5 template-section navigation delivered: eight accessible EN/DE chevrons/counts
+open category views, and fixed All templates returns to the overview. Per-view
+scroll state restores the overview position rather than inheriting a deep offset
+in the category view. Navigation clears selection, does not create maps or alter
+recents, and preserves source documents. Keyboard activation and all categories
+at 480/1280 widths are covered. All 378 workspace cases and all-target clippy pass
+with live AI disabled; Windows EXE/NSIS refreshed. Additional reference-specific
+template content, Grid-family and visual skeleton work remain open.
+
+R5 custom-theme authoring delivered: staged EN/DE editor and actual-renderer
+preview support a built-in base, 1-16 colors, light/dark backgrounds, global font
+and five role defaults. Apply embeds the theme in one undo step; Save to Library
+persists a separate profile copy without changing the sheet. Library edits save
+under a new name; duplicate names are rejected, removal is confirmed, and failed
+profile writes preserve the library and map. Existing documents remain independent
+of library removal. Explicit map/topic overrides, built-in reset and opt-in recent
+custom-theme reuse are covered. Native/private XMind snapshots retain the editor
+data; supported public JSON/XML light-mode topic properties are materialized.
+Editable imported XMind theme registries and native visual parity are not claimed.
+Modal footer geometry is bounded and toast notifications render below modal
+controls, preventing pointer interception. All 377 workspace cases and all-target
+clippy pass with live AI disabled. Reference-specific templates, Grid-family and
+visual skeleton semantics still keep R5 open. Windows EXE/NSIS rebuilt with the
+custom-theme editor and library.
+
+R5 quick-style library delivered: four original actual-renderer presets and
+named snapshots of resolved appearance reuse the existing topic style model.
+Multi-topic application is atomic/undoable across open documents without copying
+content. Style, Edit/context and palette entry points share command availability.
+EN/DE save/removal dialogs consume keyboard input without editing the canvas or
+outliner underneath; removal is confirmed. Up to 32 named styles persist in the
+local profile with validation, duplicate rejection and transactional failure
+rollback. Settings reload, exact capture across all themes/modes, persistence,
+native/XMind applied-style roundtrips and keyboard/undo behavior are covered.
+Formatting and all-target clippy pass. All 364 cases pass across the integrated
+partial run and standalone IO/platform/UI suites (live AI disabled). The full
+workspace invocation stops after 290 passing cases because Windows Application
+Control refuses to launch its IO test executable; no policy was changed.
+Windows EXE/NSIS rebuilt with quick styles.
+The custom-theme editor was subsequently delivered above; this does not finish R5.
+
+R5 map-wide branch width delivered: Automatic retains theme/level defaults;
+explicit 0.5-16 widths apply across topic roles without replacing per-topic
+overrides. The EN/DE Map control buffers numeric edits until confirmation and
+supports Escape cancellation; invalid drafts neither dirty maps nor add history.
+Shared single-line sidebar fields now consume confirmation/cancel keys so Enter
+does not leak into canvas topic insertion. Native/private snapshots retain the
+setting, and public XMind JSON/XML carries effective widths.
+All 352 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with map-wide width controls and safe numeric editing.
+Quick-style libraries and the custom-theme editor are delivered above.
+
+R2/R5 real global/topic fonts delivered: selectors enumerate installed system and
+user fonts, registering requested faces lazily in the reusable UI crate. Canvas
+measurement, painting, inline editing and Map Shot use the same family; font
+changes invalidate cached geometry even when the number of registered faces is
+unchanged. Missing fonts produce visible warnings, preserve names and do not
+dirty maps. Public XMind JSON/XML receives effective names, while native files
+retain inheritance. All 348 workspace cases and all-target clippy pass with live
+AI disabled. Fonts are not embedded; CJK fallback/IME, exact vector-export text
+metrics and non-Windows font-host QA remain open.
+Windows EXE/NSIS rebuilt with real font support.
+
+Native XMind geometry verification is currently blocked: both a new basic map
+and the previously repaired local sample remain on loading screens in the
+installed XMind app. No public branch-side/curve-control fields were inferred.
+
+R3 Flexible Floating Topics delivered: the undoable per-sheet Advanced Layout
+switch defaults off for old maps. Enabled floating roots can overlap topics
+without attaching; attached roots retain reparent/reorder but cannot detach onto
+blank space. Mixed floating/attached selections fail explicitly without partial
+moves. EN/DE control, per-sheet isolation, native/XMind snapshot persistence,
+zoom/pointer behavior, one-step undo and stale-setting cancellation are covered.
+This is not collision avoidance or Branch Free-Positioning; those remain open.
+All 344 workspace cases and all-target clippy pass with live AI disabled.
+Windows EXE/NSIS rebuilt with the setting and drag behavior.
+
+R3 hierarchy insertion/side delivery: attached-topic outer quarters choose sibling
+slots along the connector axis and centers retain reparenting. Shared target data
+drives the accent insertion line, proposed connector and atomic multi-topic move;
+reverse split-map sides and same-parent index adjustments retain requested order.
+No-op slots preserve Summary/boundary ownership without adding undo history.
+Split-map root drops set a persistent left/right main-branch side from pointer X.
+Style offers Auto/Left/Right for selected main topics, localized in EN/DE. Explicit
+sides override balancing and survive additional siblings; old automatic maps and
+non-split structures retain their layouts. Native and unchanged yMind XMind snapshot
+round trips preserve sides; no speculative public XMind direction field was added.
+All 340 workspace cases and all-target clippy pass with live AI disabled. Coverage
+includes every structure's slot axis, multi-topic insert positions, exact pointer
+commit at multiple zooms, side persistence/reset, old serde defaults, native/XMind
+reopening and German UI. Native gesture QA remains open.
+Windows EXE/NSIS rebuilt with insertion ordering and branch-side persistence.
+
+R3 relationship creation parity delivered from the official Floating Topic guide:
+two selected topics connect immediately; a single selected source can connect to an
+existing target or create a floating target by clicking blank canvas. The latter
+opens localized title editing and commits creation/connection in one transaction.
+Invalid sources roll back both operations; self-target errors are visible. Escape,
+outside clicks and rapid double-clicks do not create unintended extra topics.
+The EN/DE hint describes both target choices and is omitted for immediate two-topic
+connections. Six canvas cases plus two app integration cases cover creation, exact
+camera coordinates, undo/redo, errors and toolbar/command wiring.
+
+Latest release-candidate checks pass: workspace formatting, all-target clippy and
+all 330 workspace cases, including both CLI subprocess cases and isolated German UI.
+Live AI tests are disabled with `YMIND_AI_SKIP_LIVE=1`; service authorization and
+native installation/accessibility QA are not implied by these results. Earlier
+Application Control blocks below are historical, not a failure of this latest run;
+no system policy was changed or bypassed.
+Windows EXE/NSIS were rebuilt with relationship editing, subtree drag feedback and
+the completed relationship-creation flows.
+
+R3 hierarchy-drag feedback delivered: the complete visible owned subtree is painted
+at 55% opacity while its source is dimmed, including Summary trees, boundaries and
+internal relationships. External relationships stay on the original sheet and
+survive reparenting. Drag ownership is cached and bound to document revision, sheet
+and selection. Escape, popups and lost drags cancel; invalid self/owned-descendant
+or outside-canvas drops report errors without mutation. Central/Summary roots
+cannot start a move. Parent drops append atomically and expand collapsed targets;
+blank drops preserve existing detach/move behavior. Stationary edge drags pan at
+up to 480 logical pixels/second with a 50 ms frame cap and retain pointer alignment.
+Eight new cases cover these contracts, visible ghost text, collapsed content,
+ownership and undo/redo at multiple zoom levels. All 210 core/canvas/IO/platform/UI,
+31 app-library/relationship/German and 60 non-CLI e2e cases pass; formatting/clippy
+pass. Full hierarchy ordering, insertion connectors/slots and branch-side placement
+are not marked complete.
+
+R3 relationship editing delivered: selected lines retain their original color
+beneath a separate overlay with endpoint circles, control squares and guide lines.
+Endpoint/control drags preview in view state and commit once on release; Escape,
+invalid targets, popup isolation and stale-document revisions leave source content
+untouched. Focused control arrows move 1 map unit (Shift: 10); endpoint arrows cycle
+visible topics in layout order. Style offers title, endpoints, color, four relative
+coordinates and automatic-routing reset. Non-finite/out-of-range coordinates fail
+visibly without edits. Shared geometry feeds layout/export, and hit testing uses
+the rendered curve segments, including large curves at multiple zoom levels.
+Native and unchanged yMind XMind round trips retain custom controls; public XMind
+control-point interchange is not implemented. Native keyboard/accessibility QA,
+hierarchy drag refinement and the rest of R3 remain open.
+
+Relationship delivery verification: all 202 core/canvas/IO/platform/UI cases pass,
+including three new model cases and eight new canvas cases; both new app interaction
+cases pass. Integrated CI passes formatting/clippy, the app library (28), all editing
+e2e including both CLI cases (62), isolated German UI (1), AI and the core/canvas/IO
+suites, then Windows Application Control blocks the platform unit-test executable
+before launch (4551). The same platform suite passed in the standalone run; this
+does not make integrated CI fully green or justify changing system policy.
+Windows EXE/NSIS were rebuilt with relationship editing.
+
+R3 Labels delivered: every label-editing entry point uses a single-topic anchored
+draft with a pointer, removable chips, comma-separated additions, sheet-local
+suggestions and optional Unicode code-point sorting. Apply commits once and saves
+the local sort preference; Escape/Cancel/outside dismissal does not change labels
+or preferences. The original document key, sheet index, selection and document
+revision are checked before rendering/applying, so drafts cannot overwrite another
+tab/sheet or newer edits. Comma-containing imported labels remain intact.
+Seven targeted interaction cases cover normalization, one-step undo/redo, native/
+XMind round trips, source-binding invalidation, EN-independent popup entry points,
+sorting persistence and viewport/long-content limits; the isolated German case
+also exercises the editor. Actual native keyboard/IME and exact on-map tag
+rendering still need their parity audits.
+The standalone app library (28), non-CLI editing e2e (60), German UI (1) and
+core/platform (113) cases pass, as do workspace formatting/clippy. Windows EXE/
+NSIS were rebuilt. The two CLI subprocess cases were deliberately excluded from
+that e2e invocation and remain subject to the application-control limitation below.
+
+R6 interoperability coherence delivered: canonical-public-content SHA-256 binds
+the optional lossless yMind snapshot to the map it represents. External edits now
+win over stale metadata; whitespace-only JSON changes preserve lossless reopening.
+Old exports without the digest require an exact generated public-content match.
+Malformed/invalid private snapshots are logged and ignored. Public theme-role
+properties merge beneath inline overrides and persist as explicit topic styles;
+editable imported theme registries and full content fidelity remain open.
+
+Verification: four new IO regressions cover external structural edits/deletions,
+old/current/corrupt snapshots, lossless/pretty-printed reopening and all supported
+topic theme roles. All 191 core/canvas/IO/platform/UI cases and isolated German UI
+pass. Workspace formatting/clippy pass. The subsequent Labels integrated CI was
+blocked by Windows Application Control before launching the app unit-test binary
+(4551); the standalone targeted cases passed. Earlier CLI subprocess policy blocks
+are not reclassified as passing. Do not change/bypass application-control policy.
+
+R6 Map Shot delivered: Tools/palette/F7 requests a fresh clean canvas frame and
+native GPU readback. The preview keeps only visible canvas pixels, with fractional
+DPI conversion, drag/numeric region controls, square cropping, frame settings,
+native image clipboard output, PNG save and Escape/Cancel. Pending captures are
+bounded, time out visibly and discard late callbacks after cancellation. The map,
+selection, camera and source path are retained; an inline title is committed before
+capture. Full-sheet export remains a separate workflow and its existing renderer
+fidelity limitations are not hidden by this screen-capture implementation.
+
+Map Shot verification: seven focused unit/UI cases, isolated German UI and an
+opt-in actual wgpu readback test pass. Formatting/workspace clippy and all app,
+canvas/core and IO-unit stages pass. The full `cargo xtask ci` attempt was blocked
+by Windows Application Control (4551) before its IO integration binary executed;
+the normal standalone IO/platform/UI run then passed 73 tests. No system policy
+was changed. This does not finish native Print or R6's richer output work.
+
+R5 home-template slice delivered: 17 actual built-in documents now supply cached
+light/dark thumbnails. A shared reusable preview card provides wrapped labels,
+selection/focus feedback, disabled state and consumed Enter/Space activation;
+both the structure popup and home chooser reuse it and the canvas thumbnail painter.
+The fixed category header and Create/Cancel footer surround scrollable grouped
+sections. Eight categories plus All filter the catalog; filter changes clear the
+selection, and card selection alone never creates a document. Cancel returns to
+the prior document by stable key even after tab indices shift. Closing an unrelated
+tab no longer changes the active document or exits Home.
+
+Recently used template IDs are independent of recent files, locally persisted,
+deduplicated and capped at eight; unknown IDs are logged and excluded. Five original
+knowledge/study/life/analysis/creative maps expand the catalog without copying XMind
+assets or changing Ctrl+N/blank-map default behavior.
+Every template is checked against its preview and native/XMind save/reopen results;
+filters, selection-before-create, cancellation, persistence/restart, EN/DE controls,
+narrow/wide bounds and reusable keyboard semantics are covered.
+
+Validation: formatting/workspace clippy pass. All 62 main app cases, 14 app unit
+cases, isolated German UI, 76 core cases and standalone IO/canvas/platform/UI
+suites pass. The latest full `cargo xtask ci` attempt passed its app/core stages
+but Windows Application Control blocked its IO unit-test executable (4551).
+The normal standalone IO suite subsequently passed; system policy was not changed.
+Live AI is explicitly disabled. The earlier full-gallery CI success below is
+historical and is not a claim that this latest full invocation finished.
+Section navigation and theme authoring were subsequently delivered above.
+Reference-specific template expansion and richer assets remain open; R5 is not complete.
+
+R5 structure-gallery slice delivered: the Map selector shows the current layout
+thumbnail/name and a bounded, anchored scrollable popup with nine collapsible families
+covering all 17 existing arrangements. One-to-three columns adapt to viewport width.
+Previews use original sample maps and the same core layout/canvas renderer, cached
+separately for light/dark; no copied XMind artwork or invented visual presets.
+Choosing a different layout preserves content/styles/annotations and selection in
+one undo step and fits the resulting view. Popup keyboard input is isolated from
+underlying map/outliner edits, including Escape on the closing frame.
+Outliner leaf spacers no longer expose unnamed empty buttons.
+
+Full `cargo xtask ci` passes for the integrated gallery and previous merge/masked-copy
+slices, including 60 main app cases, German UI, 76 core cases, canvas/IO/platform/UI
+and CLI checks. Live AI is explicitly disabled. The earlier policy-blocked invocation
+below remains historical; this later integrated invocation completed normally.
+Grid-family semantics, visual skeleton variants, custom themes and home-template
+gallery work remain open; no full R5/R6 completion is claimed.
+
+R6 file-tool slice delivered: Merge Map Files parses every selected native/XMind
+source before appending complete sheets in one transaction, retaining destination
+metadata and leaving source files untouched. Empty/invalid inputs do not partially
+merge. Global public XMind annotation IDs are namespaced by owning topic/sheet,
+with reference-resolution coverage independent of private workbook metadata.
+Embedded-asset merging remains dependent on R4; current images are references.
+
+Create Masked Copy opens a new unsaved document for review and ordinary Save/Export,
+without retargeting or editing the source. It replaces sheet/topic/relationship
+titles and removes notes, labels, links, images, markers, boundary titles, custom
+font names and metadata, retaining hierarchy, colors and task states. A localized
+review dialog explains that structural information can remain identifying.
+Decoded native/XMind archive tests check public and private payloads; source
+immutability, cancel, dirty-copy lifecycle and native reopening are covered.
+
+This slice passes workspace formatting/clippy, all 58 main app cases, app unit
+tests, isolated German UI tests and the core/IO/canvas/platform/UI suites. The
+full `cargo xtask ci` attempt stopped at a Windows Application Control block
+(4551) of its German UI test executable, after the preceding app/AI tests passed.
+The isolated German executable subsequently passed without changing system policy.
+Live AI was explicitly disabled. This does not close the remaining R0–R12 work.
+
+R1 Select/Arrange delivery: shared action availability now drives menus and palette,
+with visible sibling/descendant/inverted selection, central-topic navigation,
+natural child-title sorting and floating-topic edge/center alignment or equal-center
+distribution. Arrangements use measured topic boxes (not screen coordinates), preserve
+subtrees/relationships, and undo atomically. Sorting remaps contiguous annotation
+ranges or rejects a split before mutation. EN/DE menu/context, exact geometry,
+visibility, mixed-selection guards, save/reopen and undo regressions are covered.
+Additional reference choices, custom shortcuts and native accessibility audits remain.
+The integrated `cargo xtask ci` run passes for this slice, including all workspace
+tests and CLI tests with live AI explicitly disabled.
+
+Latest R1 editing slice delivered:
+- Session-wide explicit topic-style Copy/Paste (Ctrl+Alt+C/V) and Reset Style,
+  shared availability across menus/context/palette, atomic multi-topic undo and
+  EN/DE labels. Automatic theme inheritance is not baked into the clipboard;
+  text fields retain their keyboard input.
+- Single-topic Indent under the previous sibling and Outdent after the parent,
+  with menu/context/palette actions. Reparenting retains owned boundaries,
+  relationships and recursively owned Summary trees, rejects annotation cycles
+  before mutation, and cleans annotations when their last source is removed.
+  No unverified XMind shortcut or multi-selection semantics are implied.
+- Previous/Next Sheet wraps with Ctrl+PageUp/Down; inline topic edits commit before
+  new/duplicate/delete/rename/switch/move operations. Last-sheet deletion remains
+  prohibited, view state resets on switching and duplicate/move failures are surfaced.
+- Full `cargo xtask ci` passes, including CLI tests that were policy-blocked in a
+  previous run. Live AI is explicitly disabled for deterministic verification.
+  Broader R1 command audits and window lifecycle work remain open.
+- Official manual gap research added ten source-cited, nonduplicate requirements
+  to the backlog, separating desktop gaps from future companion/research-only ideas.
+- R1 sheet workflows now include a full-sheet, versioned OS clipboard payload
+  (16 MiB limit, validated input, cross-instance and ordinary canvas Paste),
+  explicit Paste Sheet, and native separate-sheet saving that protects source
+  files and preserves the source document's dirty/path/history state.
+  Sheet menu, tab context menu and palette share localized commands. Late or
+  invalid clipboard responses cannot silently insert text topics or affect a
+  different active document. Native clipboard OS delivery still needs platform QA.
+- New Sheet from Topic copies a selected branch and recursively owned annotations
+  in one undo step without changing the original. Internal relationships are retained;
+  external ones remain in the source, with explicit notification. Rich reopening,
+  root/Summary/floating extraction and undo are covered. Clipboard and separate
+  save cover current model fields; future embedded assets require R4 integration.
+- Sheet-workflow verification: formatting and workspace clippy pass; 54 main UI
+  cases including CLI plus the German UI case, 73 core tests and the IO/platform/UI
+  suites pass. The latest full-workspace CI attempt stopped when Windows Application
+  Control blocked its core test executable (4551), without executing it; no policy
+  bypass was attempted. The earlier style/navigation slice's full CI result above
+  remains historical, not a claim that this latest full invocation completed.
 
 First slice implemented (Windows x64 source verification):
 - R0 baseline: full `cargo xtask ci` passes, including canvas execution. Native

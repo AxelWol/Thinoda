@@ -16,6 +16,16 @@ use std::collections::HashMap;
 pub trait TextMeasure {
     /// Size of `text` wrapped at `max_width`.
     fn measure(&self, text: &str, font_size: f32, bold: bool, max_width: f32) -> Vec2;
+    fn measure_with_family(
+        &self,
+        text: &str,
+        font_size: f32,
+        bold: bool,
+        max_width: f32,
+        _family: Option<&str>,
+    ) -> Vec2 {
+        self.measure(text, font_size, bold, max_width)
+    }
 }
 
 /// Font-independent approximation of text metrics.
@@ -528,7 +538,7 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
         let (Some(a), Some(b)) = (layout.rect(rel.from), layout.rect(rel.to)) else {
             continue;
         };
-        layout.relationships.push(relationship_curve(rel.id, a, b));
+        layout.relationships.push(relationship_curve(rel, a, b));
     }
 
     let mut bounds: Option<Rect> = None;
@@ -548,19 +558,22 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
     layout
 }
 
-fn relationship_curve(id: RelationshipId, a: Rect, b: Rect) -> RelationshipLayout {
+/// Shared curve geometry for layout, export and non-destructive canvas previews.
+pub fn relationship_curve(rel: &crate::Relationship, a: Rect, b: Rect) -> RelationshipLayout {
     let ca = a.center();
     let cb = b.center();
     let d = cb - ca;
     let len = d.length().max(1.0);
     let perp = Vec2::new(-d.y / len, d.x / len) * (len * 0.25).min(120.0);
-    let c1 = ca + d * 0.25 + perp;
-    let c2 = ca + d * 0.75 + perp;
+    let [c1, c2] = rel.control_points.map_or(
+        [ca + d * 0.25 + perp, ca + d * 0.75 + perp],
+        |[from, to]| [ca + from, cb + to],
+    );
     let start = clip_to_rect(a, c1);
     let end = clip_to_rect(b, c2);
     let mid = cubic(start, c1, c2, end, 0.5);
     RelationshipLayout {
-        id,
+        id: rel.id,
         start,
         c1,
         c2,
@@ -643,7 +656,13 @@ impl Engine<'_> {
         } else {
             t.title.as_str()
         };
-        let mut ts = self.measure.measure(title, fs, style.bold, max_w);
+        let mut ts = self.measure.measure_with_family(
+            title,
+            fs,
+            style.bold,
+            max_w,
+            style.font_family.as_deref(),
+        );
         if let Some(w) = style.width {
             ts.x = w;
         }
@@ -888,6 +907,32 @@ impl Engine<'_> {
     }
 
     fn split_sides(&mut self, kids: &[TopicId], st: Structure) -> (Vec<TopicId>, Vec<TopicId>) {
+        let (automatic_right, automatic_left) = self.automatic_split_sides(kids, st);
+        if kids
+            .iter()
+            .all(|id| self.sheet.topics[id].branch_side.is_none())
+        {
+            return (automatic_right, automatic_left);
+        }
+        let (mut right, mut left): (Vec<_>, Vec<_>) = kids.iter().copied().partition(|id| {
+            self.sheet.topics[id].branch_side.map_or_else(
+                || automatic_right.contains(id),
+                |side| side == crate::BranchSide::Right,
+            )
+        });
+        if st == Structure::MapAnticlockwise && !self.sheet.theme.balanced {
+            right.reverse();
+        } else {
+            left.reverse();
+        }
+        (right, left)
+    }
+
+    fn automatic_split_sides(
+        &mut self,
+        kids: &[TopicId],
+        st: Structure,
+    ) -> (Vec<TopicId>, Vec<TopicId>) {
         let n = kids.len();
         if self.sheet.theme.balanced && n > 1 {
             let heights: Vec<f32> = kids

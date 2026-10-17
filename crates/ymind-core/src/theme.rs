@@ -4,13 +4,15 @@
 //! overrides win. [`ThemeSettings`] is stored per sheet (Format panel → "Map" tab).
 
 use crate::geometry::Color;
-use crate::model::{LineShape, Sheet, TextAlign, TopicId, TopicShape};
+use crate::model::{LineShape, Sheet, TextAlign, TopicId, TopicShape, TopicStyle};
 use serde::{Deserialize, Serialize};
 
 /// Per-sheet theme configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_theme: Option<crate::custom_theme::CustomTheme>,
     /// Theme id, see [`Theme::builtin`].
     pub theme_id: String,
     /// Color variant (0 = multicolor, 1.. = single palette color).
@@ -21,8 +23,14 @@ pub struct ThemeSettings {
     pub rainbow: bool,
     /// Use the subtree heights to balance left/right in map structures.
     pub balanced: bool,
+    /// Floating roots move freely without attaching; attached topics do not detach on blank drops.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flexible_floating_topics: bool,
     /// Taper branch lines (thicker near the center).
     pub tapered_lines: bool,
+    /// Default branch stroke width; explicit topic widths still win.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_width: Option<f32>,
     /// Override global font family.
     pub font_family: Option<String>,
     /// Spacing multiplier between topics.
@@ -32,15 +40,40 @@ pub struct ThemeSettings {
 impl Default for ThemeSettings {
     fn default() -> Self {
         Self {
+            custom_theme: None,
             theme_id: "twilight".into(),
             variant: 0,
             background: None,
             rainbow: true,
             balanced: false,
+            flexible_floating_topics: false,
             tapered_lines: true,
+            line_width: None,
             font_family: None,
             spacing: 1.0,
         }
+    }
+}
+
+impl ThemeSettings {
+    pub fn fonts(&self) -> impl Iterator<Item = &String> {
+        self.font_family.iter().chain(
+            self.custom_theme
+                .iter()
+                .flat_map(|custom| custom.font_family.iter().chain(custom.roles.fonts())),
+        )
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(custom) = &self.custom_theme {
+            custom.validate()?;
+        }
+        if let Some(width) = self.line_width
+            && (!width.is_finite() || !(0.5..=16.0).contains(&width))
+        {
+            return Err("theme branch line width must be between 0.5 and 16".into());
+        }
+        Ok(())
     }
 }
 
@@ -66,6 +99,18 @@ fn c(hex: &str) -> Color {
 }
 
 impl Theme {
+    pub fn for_settings(settings: &ThemeSettings) -> Self {
+        let Some(custom) = &settings.custom_theme else {
+            return Self::builtin(&settings.theme_id);
+        };
+        let mut theme = Self::builtin(&custom.base_theme_id);
+        theme.palette = custom.palette.clone();
+        theme.light_bg = custom.light_background;
+        theme.dark_bg = custom.dark_background;
+        theme.dark_only = false;
+        theme
+    }
+
     pub const IDS: [&'static str; 8] = [
         "clarity",
         "twilight",
@@ -249,7 +294,7 @@ pub fn level_of(sheet: &Sheet, id: TopicId) -> Level {
 
 /// Resolves the visual style of `id` on `sheet` in light or dark mode.
 pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
-    let theme = Theme::builtin(&sheet.theme.theme_id);
+    let theme = Theme::for_settings(&sheet.theme);
     let settings = &sheet.theme;
     let bg = theme.background(settings, dark);
     let level = level_of(sheet, id);
@@ -280,29 +325,20 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
         ),
         Level::Sub => (None, theme.sub_shape, 14.0, false),
     };
-    // inherit the line color from the nearest styled ancestor
-    let mut line_color = if level == Level::Central {
+    let line_color = if level == Level::Central {
         theme.central_fill
     } else {
         branch
     };
-    for a in std::iter::once(id).chain(sheet.ancestors(id)) {
-        if let Some(lc) = sheet.topic(a).and_then(|t| t.style.line_color) {
-            line_color = lc;
-            break;
-        }
-    }
-    let mut line_shape = if clarity && level == Level::Sub {
+    let line_shape = if clarity && level == Level::Sub {
         LineShape::RoundedElbow
     } else {
         theme.line_shape
     };
-    for a in std::iter::once(id).chain(sheet.ancestors(id)) {
-        if let Some(ls) = sheet.topic(a).and_then(|t| t.style.line_shape) {
-            line_shape = ls;
-            break;
-        }
-    }
+    let role = settings
+        .custom_theme
+        .as_ref()
+        .map(|custom| custom.roles.get(level));
 
     let mut r = ResolvedStyle {
         fill,
@@ -310,7 +346,12 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
         border_color: None,
         border_width: 2.0,
         shape,
-        font_family: settings.font_family.clone(),
+        font_family: settings.font_family.clone().or_else(|| {
+            settings
+                .custom_theme
+                .as_ref()
+                .and_then(|custom| custom.font_family.clone())
+        }),
         font_size: size,
         bold,
         italic: false,
@@ -332,50 +373,83 @@ pub fn resolve_style(sheet: &Sheet, id: TopicId, dark: bool) -> ResolvedStyle {
     if clarity {
         r.line_width = 1.5;
     }
+    if let Some(style) = role {
+        r.apply(style);
+    }
+    if settings.font_family.is_some() {
+        r.font_family = settings.font_family.clone();
+    }
+    if let Some(width) = settings.line_width {
+        r.line_width = width;
+    }
+    // Explicit ancestor connector overrides win over role defaults.
+    for a in std::iter::once(id).chain(sheet.ancestors(id)) {
+        if let Some(color) = sheet.topic(a).and_then(|topic| topic.style.line_color) {
+            r.line_color = color;
+            break;
+        }
+    }
+    for a in std::iter::once(id).chain(sheet.ancestors(id)) {
+        if let Some(shape) = sheet.topic(a).and_then(|topic| topic.style.line_shape) {
+            r.line_shape = shape;
+            break;
+        }
+    }
     if let Some(t) = topic {
-        let s = &t.style;
-        if s.fill.is_some() {
-            r.fill = s.fill;
-        }
-        if let Some(v) = s.border_color {
-            r.border_color = Some(v);
-        }
-        if let Some(v) = s.border_width {
-            r.border_width = v;
-        }
-        if let Some(v) = s.shape {
-            r.shape = v;
-        }
-        if let Some(v) = &s.font_family {
-            r.font_family = Some(v.clone());
-        }
-        if let Some(v) = s.font_size {
-            r.font_size = v;
-        }
-        r.bold = s.bold.unwrap_or(r.bold);
-        r.italic = s.italic.unwrap_or(r.italic);
-        r.underline = s.underline.unwrap_or(r.underline);
-        r.strikethrough = s.strikethrough.unwrap_or(r.strikethrough);
-        r.align = s.align.unwrap_or(r.align);
-        if let Some(v) = s.line_width {
-            r.line_width = v;
-        }
-        r.width = s.width;
+        r.apply(&t.style);
     }
     let behind = r.fill.unwrap_or(bg);
-    r.text_color = topic.and_then(|t| t.style.text_color).unwrap_or_else(|| {
-        if clarity && level == Level::Main && topic.is_none_or(|t| t.style.fill.is_none()) {
+    let text_color = topic
+        .and_then(|t| t.style.text_color)
+        .or_else(|| role.and_then(|style| style.text_color));
+    r.text_color = text_color.unwrap_or_else(|| {
+        if clarity
+            && level == Level::Main
+            && topic.is_none_or(|t| t.style.fill.is_none())
+            && role.is_none_or(|style| style.fill.is_none())
+        {
             c("#1F2328")
         } else {
             behind.contrasting_text()
         }
     });
-    if level == Level::Central && !clarity {
-        r.text_color = topic
-            .and_then(|t| t.style.text_color)
-            .unwrap_or(theme.central_text);
+    if level == Level::Central && !clarity && role.is_none_or(|style| style.fill.is_none()) {
+        r.text_color = text_color.unwrap_or(theme.central_text);
     }
     r
+}
+
+impl ResolvedStyle {
+    fn apply(&mut self, style: &TopicStyle) {
+        macro_rules! copy {
+            ($($field:ident),*) => { $(if let Some(value) = style.$field { self.$field = value; })* };
+        }
+        if style.fill.is_some() {
+            self.fill = style.fill;
+        }
+        if style.border_color.is_some() {
+            self.border_color = style.border_color;
+        }
+        if style.font_family.is_some() {
+            self.font_family = style.font_family.clone();
+        }
+        if style.width.is_some() {
+            self.width = style.width;
+        }
+        copy!(
+            border_width,
+            shape,
+            font_size,
+            bold,
+            italic,
+            underline,
+            strikethrough,
+            align,
+            line_color,
+            line_shape,
+            line_width
+        );
+    }
 }
 
 #[cfg(test)]

@@ -131,6 +131,35 @@ impl OpenDoc {
         Ok(())
     }
 
+    /// Writes just the active sheet without marking or retargeting the source document.
+    pub fn save_sheet_to(&self, path: &Path, backup: bool) -> Result<(), String> {
+        let format = Format::from_path(path)
+            .filter(|format| is_native(*format))
+            .ok_or("choose a .ymind or .xmind file for a sheet copy")?;
+        if let Some(source) = &self.path {
+            let same_path = std::path::absolute(source).map_err(|e| e.to_string())?
+                == std::path::absolute(path).map_err(|e| e.to_string())?;
+            let same_file = if source.try_exists().map_err(|e| e.to_string())?
+                && path.try_exists().map_err(|e| e.to_string())?
+            {
+                source.canonicalize().map_err(|e| e.to_string())?
+                    == path.canonicalize().map_err(|e| e.to_string())?
+            } else {
+                false
+            };
+            if same_path || same_file {
+                return Err("choose a different path to preserve the source workbook".into());
+            }
+        }
+        let workbook = Workbook {
+            metadata: self.doc.workbook().metadata.clone(),
+            ..Workbook::new(self.doc.sheet().clone())
+        };
+        let bytes = ymind_io::export_bytes(&workbook, format, &ExportOptions::default())
+            .map_err(|e| e.to_string())?;
+        atomic_write(path, &bytes, backup).map_err(|e| e.to_string())
+    }
+
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
         let s = self.doc.state_id();

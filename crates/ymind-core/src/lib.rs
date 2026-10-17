@@ -12,6 +12,7 @@
 //! command line tools and servers.
 
 pub mod clipboard;
+pub mod custom_theme;
 pub mod document;
 pub mod edit;
 pub mod geometry;
@@ -20,6 +21,7 @@ pub mod markers;
 pub mod model;
 pub mod navigation;
 pub mod outline;
+pub mod quick_styles;
 pub mod search;
 pub mod templates;
 pub mod theme;
@@ -29,7 +31,8 @@ pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
 pub use layout::{ApproxMeasure, Layout, TextMeasure, TopicLayout, layout_sheet};
 pub use model::{
-    Boundary, BoundaryId, ChildRange, LineShape, Relationship, RelationshipId, Sheet, Structure,
-    Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle, Workbook,
+    Boundary, BoundaryId, BranchSide, ChildRange, LineShape, Relationship, RelationshipId, Sheet,
+    Structure, Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle,
+    Workbook,
 };
 pub use outline::OutlineNode;

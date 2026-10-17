@@ -25,6 +25,18 @@ pub enum EditError {
 
 pub type EditResult<T> = Result<T, EditError>;
 
+/// Trims and deduplicates labels case-sensitively, retaining their original order.
+pub fn normalize_labels(labels: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut clean = Vec::new();
+    for label in labels {
+        let label = label.trim();
+        if !label.is_empty() && !clean.iter().any(|existing| existing == label) {
+            clean.push(label.to_string());
+        }
+    }
+    clean
+}
+
 impl Sheet {
     fn require(&self, id: TopicId) -> EditResult<()> {
         if self.contains(id) {
@@ -76,10 +88,53 @@ impl Sheet {
         Ok(new)
     }
 
-    /// Like `detach_subtree` but keeps relationships (used for moves).
+    /// Includes the topic tree and all recursively owned Summary trees.
+    pub fn owned_subtree_ids(&self, id: TopicId) -> std::collections::HashSet<TopicId> {
+        let mut owned: std::collections::HashSet<_> = self.subtree_ids(id).into_iter().collect();
+        loop {
+            let before = owned.len();
+            for summary in &self.summaries {
+                if owned.contains(&summary.parent) {
+                    owned.extend(self.subtree_ids(summary.topic));
+                }
+            }
+            if before == owned.len() {
+                break;
+            }
+        }
+        owned
+    }
+
+    /// Like `detach_subtree` but retains relationships and recursively owned annotations.
     fn detach_subtree_keep_refs(&mut self, id: TopicId) -> EditResult<Subtree> {
+        if self.summary_for_topic(id).is_some() {
+            return Err(EditError::RootNotAllowed);
+        }
+        let owned = self.owned_subtree_ids(id);
+        let boundaries: Vec<_> = self
+            .boundaries
+            .iter()
+            .filter(|b| owned.contains(&b.parent))
+            .cloned()
+            .collect();
+        let summaries: Vec<_> = self
+            .summaries
+            .iter()
+            .filter(|s| owned.contains(&s.parent))
+            .cloned()
+            .collect();
+        let annotation_topics: Vec<_> = owned
+            .iter()
+            .filter(|t| !self.is_ancestor_or_self(id, **t))
+            .filter_map(|t| self.topic(*t).cloned())
+            .collect();
         let rels = self.relationships.clone();
         let sub = self.detach_subtree(id).ok_or(EditError::RootNotAllowed)?;
+        for topic in annotation_topics {
+            self.topics.insert(topic.id, topic);
+        }
+        self.boundaries.extend(boundaries);
+        self.summaries.extend(summaries);
         // restore relationships whose endpoints are inside the moved subtree or still alive
         let ids: std::collections::HashSet<_> = sub.topics.iter().map(|t| t.id).collect();
         let alive = |t: TopicId, s: &Sheet| s.contains(t) || ids.contains(&t);
@@ -160,8 +215,20 @@ impl Sheet {
         if id == self.root {
             return Err(EditError::RootNotAllowed);
         }
-        if self.is_ancestor_or_self(id, new_parent) {
+        if self.owned_subtree_ids(id).contains(&new_parent) {
             return Err(EditError::Cycle);
+        }
+        if let (Some(parent), Some(index)) = (self.parent(id), self.index_in_parent(id))
+            && self.summaries.iter().any(|summary| {
+                summary.parent == parent
+                    && summary.range.start == index
+                    && summary.range.end == index
+                    && self.owned_subtree_ids(summary.topic).contains(&new_parent)
+            })
+        {
+            return Err(EditError::Invalid(
+                "destination belongs to a Summary removed with its last source topic".into(),
+            ));
         }
         let mut index = index;
         if self.parent(id) == Some(new_parent) {
@@ -169,10 +236,56 @@ impl Sheet {
             if cur < index {
                 index -= 1;
             }
+            if index.min(self.children(new_parent).len() - 1) == cur {
+                return Ok(());
+            }
         }
         let sub = self.detach_subtree_keep_refs(id)?;
         self.attach_child(new_parent, index, sub);
         Ok(())
+    }
+
+    pub fn indent(&mut self, id: TopicId) -> EditResult<()> {
+        let parent = self.parent(id).ok_or(EditError::RootNotAllowed)?;
+        let index = self.index_in_parent(id).ok_or(EditError::NotFound)?;
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| self.children(parent).get(i))
+            .copied()
+            .ok_or_else(|| EditError::Invalid("no previous sibling to indent under".into()))?;
+        self.move_topic(id, previous, self.children(previous).len())?;
+        self.set_collapsed(previous, false)
+    }
+
+    pub fn outdent(&mut self, id: TopicId) -> EditResult<()> {
+        let parent = self.parent(id).ok_or(EditError::RootNotAllowed)?;
+        let grandparent = self.parent(parent).ok_or(EditError::RootNotAllowed)?;
+        let index = self.index_in_parent(parent).ok_or(EditError::NotFound)? + 1;
+        self.move_topic(id, grandparent, index)
+    }
+
+    /// Copies a branch with its owned annotations; unrelated floating trees and
+    /// relationships to topics outside the branch remain only in the source.
+    pub fn copy_branch_as_sheet(&self, id: TopicId) -> EditResult<Sheet> {
+        self.require(id)?;
+        let owned = self.owned_subtree_ids(id);
+        let mut sheet = self.clone();
+        sheet.root = id;
+        sheet.title = self.topic(id).unwrap().title.clone();
+        sheet.topics.retain(|id, _| owned.contains(id));
+        let root = sheet.topic_mut(id).unwrap();
+        root.parent = None;
+        root.position = None;
+        sheet.floating.clear();
+        sheet.boundaries.retain(|b| owned.contains(&b.parent));
+        sheet
+            .summaries
+            .retain(|s| owned.contains(&s.parent) && s.topic != id);
+        sheet
+            .relationships
+            .retain(|r| owned.contains(&r.from) && owned.contains(&r.to));
+        sheet.validate().map_err(EditError::Invalid)?;
+        Ok(sheet)
     }
 
     /// Moves `id` to be a floating topic at `pos`.
@@ -225,6 +338,45 @@ impl Sheet {
             let tb = natural_key(&self.topics[b].title);
             if descending { tb.cmp(&ta) } else { ta.cmp(&tb) }
         });
+        let remap = |range: ChildRange| -> EditResult<ChildRange> {
+            let original = &self.children(parent)[range.start..=range.end];
+            let mut positions: Vec<_> = original
+                .iter()
+                .map(|id| kids.iter().position(|kid| kid == id).unwrap())
+                .collect();
+            positions.sort_unstable();
+            let start = positions[0];
+            let end = *positions.last().unwrap();
+            if end - start + 1 != original.len() {
+                return Err(EditError::Invalid(
+                    "sorting would split a Summary or boundary source range".into(),
+                ));
+            }
+            Ok(ChildRange { start, end })
+        };
+        let boundaries: Vec<_> = self
+            .boundaries
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.parent == parent)
+            .filter_map(|(index, b)| {
+                b.range
+                    .map(|range| remap(range).map(|range| (index, range)))
+            })
+            .collect::<EditResult<_>>()?;
+        let summaries: Vec<_> = self
+            .summaries
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.parent == parent)
+            .map(|(index, s)| remap(s.range).map(|range| (index, range)))
+            .collect::<EditResult<_>>()?;
+        for (index, range) in boundaries {
+            self.boundaries[index].range = Some(range);
+        }
+        for (index, range) in summaries {
+            self.summaries[index].range = range;
+        }
         self.topic_mut(parent).unwrap().children = kids;
         Ok(())
     }
@@ -249,17 +401,7 @@ impl Sheet {
 
     pub fn set_labels(&mut self, id: TopicId, labels: Vec<String>) -> EditResult<()> {
         self.require(id)?;
-        let mut clean: Vec<String> = Vec::new();
-        for l in labels
-            .into_iter()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-        {
-            if !clean.contains(&l) {
-                clean.push(l);
-            }
-        }
-        self.topic_mut(id).unwrap().labels = clean;
+        self.topic_mut(id).unwrap().labels = normalize_labels(labels);
         Ok(())
     }
 
@@ -296,6 +438,19 @@ impl Sheet {
             self.require(*id)?;
             f(&mut self.topic_mut(*id).unwrap().style);
         }
+        Ok(())
+    }
+
+    pub fn set_branch_side(
+        &mut self,
+        id: TopicId,
+        side: Option<crate::BranchSide>,
+    ) -> EditResult<()> {
+        self.require(id)?;
+        if self.parent(id).is_none() {
+            return Err(EditError::RootNotAllowed);
+        }
+        self.topic_mut(id).unwrap().branch_side = side;
         Ok(())
     }
 
@@ -339,6 +494,7 @@ impl Sheet {
             to,
             title: String::new(),
             color: None,
+            control_points: None,
         });
         Ok(id)
     }
@@ -360,6 +516,48 @@ impl Sheet {
             .find(|r| r.id == id)
             .ok_or(EditError::NotFound)?;
         r.title = title.to_string();
+        Ok(())
+    }
+
+    /// Reconnects both endpoints atomically, retaining title, color and relative controls.
+    pub fn reconnect_relationship(
+        &mut self,
+        id: RelationshipId,
+        from: TopicId,
+        to: TopicId,
+    ) -> EditResult<()> {
+        self.require(from)?;
+        self.require(to)?;
+        if from == to {
+            return Err(EditError::Invalid(
+                "relationship needs two different topics".into(),
+            ));
+        }
+        let r = self
+            .relationships
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or(EditError::NotFound)?;
+        r.from = from;
+        r.to = to;
+        Ok(())
+    }
+
+    pub fn set_relationship_control_points(
+        &mut self,
+        id: RelationshipId,
+        points: Option<[Vec2; 2]>,
+    ) -> EditResult<()> {
+        if !Relationship::valid_control_points(points) {
+            return Err(EditError::Invalid(
+                "curve controls must be finite and within +/- 1000000 map units".into(),
+            ));
+        }
+        self.relationships
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or(EditError::NotFound)?
+            .control_points = points;
         Ok(())
     }
 
@@ -569,6 +767,134 @@ mod tests {
         s.move_topic(k[1], s.root, 0).unwrap();
         assert_eq!(s.children(s.root), &[k[1], k[0]]);
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn indent_and_outdent_preserve_owned_annotations_and_content() {
+        let (mut s, kids) = sheet();
+        let branch = kids[1];
+        let a = s.add_child(branch, None, "A");
+        let b = s.add_child(branch, None, "B");
+        let summary = s.add_summary(&[a, b], "Summary").unwrap();
+        let summary_child = s.add_child(summary, None, "Summary child");
+        let nested = s.add_summary(&[summary_child], "Nested").unwrap();
+        s.add_boundary(&[a, b]).unwrap();
+        s.add_boundary(&[summary_child]).unwrap();
+        s.add_boundary(&[nested]).unwrap();
+        s.add_relationship(a, summary_child).unwrap();
+        s.add_relationship(nested, kids[0]).unwrap();
+        s.topic_mut(branch).unwrap().notes = Some("Keep notes".into());
+        s.topic_mut(branch).unwrap().style.bold = Some(true);
+        s.set_collapsed(kids[0], true).unwrap();
+        let before = s.clone();
+        s.indent(branch).unwrap();
+        assert_eq!(s.parent(branch), Some(kids[0]));
+        assert!(!s.topic(kids[0]).unwrap().collapsed);
+        assert_eq!(s.boundaries, before.boundaries);
+        assert_eq!(s.summaries, before.summaries);
+        assert_eq!(s.relationships, before.relationships);
+        assert_eq!(s.topics.len(), before.topics.len());
+        for id in [a, b, summary, summary_child, nested] {
+            assert_eq!(s.topic(id), before.topic(id));
+        }
+        s.validate().unwrap();
+        s.outdent(branch).unwrap();
+        assert_eq!(s.children(s.root), kids);
+        assert_eq!(s.boundaries, before.boundaries);
+        assert_eq!(s.summaries, before.summaries);
+        assert_eq!(s.relationships, before.relationships);
+        s.validate().unwrap();
+        let unchanged = s.clone();
+        assert!(s.indent(kids[0]).is_err());
+        assert!(s.outdent(kids[0]).is_err());
+        assert!(s.indent(s.root).is_err());
+        assert_eq!(s, unchanged);
+    }
+
+    #[test]
+    fn sorting_preserves_annotation_members_and_rejects_split_ranges_atomically() {
+        let (mut s, kids) = sheet();
+        for (id, title) in kids.iter().zip(["C", "B", "A"]) {
+            s.set_title(*id, title).unwrap();
+        }
+        s.add_summary(&kids[..2], "Summary").unwrap();
+        s.add_boundary(&kids[..2]).unwrap();
+        let before = s.clone();
+        s.sort_children(s.root, false).unwrap();
+        assert_eq!(s.children(s.root), &[kids[2], kids[1], kids[0]]);
+        assert_eq!(s.summaries[0].range, ChildRange { start: 1, end: 2 });
+        assert_eq!(s.boundaries[0].range, Some(ChildRange { start: 1, end: 2 }));
+        s.sort_children(s.root, true).unwrap();
+        assert_eq!(s, before);
+        s.set_title(kids[1], "A").unwrap();
+        s.set_title(kids[2], "B").unwrap();
+        let before = s.clone();
+        assert!(
+            s.sort_children(s.root, false)
+                .unwrap_err()
+                .to_string()
+                .contains("split")
+        );
+        assert_eq!(s, before);
+        s.validate().unwrap();
+    }
+
+    #[test]
+    fn reparent_rejects_annotation_cycles_without_mutating_and_cleans_source_ranges() {
+        let (mut s, kids) = sheet();
+        let child = s.add_child(kids[1], None, "child");
+        let own_summary = s.add_summary(&[child], "owned").unwrap();
+        let own_child = s.add_child(own_summary, None, "owned child");
+        let source_summary = s.add_summary(&[kids[1]], "source").unwrap();
+        let source_child = s.add_child(source_summary, None, "source child");
+        let nested = s.add_summary(&[source_child], "nested source").unwrap();
+        s.add_boundary(&[source_child]).unwrap();
+        s.add_boundary(&[nested]).unwrap();
+        let before = s.clone();
+        for destination in [own_summary, own_child, source_summary, source_child, nested] {
+            assert!(s.move_topic(kids[1], destination, 0).is_err());
+            assert_eq!(s, before);
+        }
+        assert!(s.move_topic(own_summary, kids[0], 0).is_err());
+        assert_eq!(s, before);
+        s.indent(kids[1]).unwrap();
+        assert!(!s.contains(source_summary));
+        assert!(!s.contains(source_child));
+        assert!(!s.contains(nested));
+        assert!(s.contains(own_summary));
+        assert!(s.contains(own_child));
+        s.validate().unwrap();
+    }
+
+    #[test]
+    fn copy_branch_to_sheet_handles_tree_summary_and_floating_roots() {
+        let (mut s, kids) = sheet();
+        let child = s.add_child(kids[1], None, "child");
+        let summary = s.add_summary(&[child], "summary").unwrap();
+        s.add_child(summary, None, "summary child");
+        let floating = s.add_floating("Floating", Vec2::new(10.0, 20.0));
+        s.add_boundary(&[child]).unwrap();
+        s.add_relationship(child, summary).unwrap();
+        s.add_relationship(child, kids[0]).unwrap();
+        let before = s.clone();
+        for id in [s.root, kids[1], summary, floating] {
+            let copied = s.copy_branch_as_sheet(id).unwrap();
+            copied.validate().unwrap();
+            assert_eq!(copied.root, id);
+            assert_eq!(copied.root_topic().parent, None);
+            assert_eq!(copied.root_topic().position, None);
+            assert_eq!(copied.title, s.topic(id).unwrap().title);
+            assert!(copied.floating.is_empty());
+            assert_eq!(copied.theme, s.theme);
+            assert_eq!(copied.structure, s.structure);
+            if id == kids[1] {
+                assert_eq!(copied.topic_count(), 4);
+                assert_eq!(copied.summaries.len(), 1);
+                assert_eq!(copied.boundaries.len(), 1);
+                assert_eq!(copied.relationships.len(), 1);
+            }
+        }
+        assert_eq!(s, before);
     }
 
     #[test]

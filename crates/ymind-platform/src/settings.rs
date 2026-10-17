@@ -110,13 +110,19 @@ pub struct Settings {
     pub recovery_interval_secs: u64,
     pub backup_on_save: bool,
     pub recent_files: Vec<RecentFile>,
+    pub recent_templates: Vec<String>,
+    pub quick_styles: Vec<ymind_core::quick_styles::QuickStyle>,
+    pub custom_themes: Vec<ymind_core::custom_theme::CustomTheme>,
     pub default_structure: String,
     pub default_theme: String,
+    pub default_custom_theme: Option<ymind_core::custom_theme::CustomTheme>,
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub show_format_panel: bool,
     pub show_topic_toolbar: bool,
     pub show_topic_add_buttons: bool,
+    /// Sort label drafts by Unicode code-point order; disabled to preserve insertion order.
+    pub label_auto_sort: bool,
     /// Initial canvas zoom for newly created/opened documents, independent of UI scaling.
     pub initial_canvas_zoom: f32,
     pub reuse_last_structure: bool,
@@ -143,13 +149,18 @@ impl Default for Settings {
             recovery_interval_secs: 1,
             backup_on_save: true,
             recent_files: Vec::new(),
+            recent_templates: Vec::new(),
+            quick_styles: Vec::new(),
+            custom_themes: Vec::new(),
             default_structure: "mind_map".into(),
             default_theme: "default".into(),
+            default_custom_theme: None,
             ui_scale: 1.0,
             show_status_bar: true,
             show_format_panel: true,
             show_topic_toolbar: true,
             show_topic_add_buttons: true,
+            label_auto_sort: false,
             initial_canvas_zoom: 1.0,
             reuse_last_structure: false,
             reuse_last_theme: false,
@@ -176,6 +187,38 @@ pub struct SettingsLoad {
 }
 
 impl Settings {
+    pub fn validate_custom_themes(
+        themes: &[ymind_core::custom_theme::CustomTheme],
+    ) -> std::result::Result<(), String> {
+        if themes.len() > 32 {
+            return Err("at most 32 saved custom themes are supported".into());
+        }
+        let mut names = std::collections::HashSet::new();
+        for theme in themes {
+            theme.validate()?;
+            if !names.insert(theme.name.trim().to_lowercase()) {
+                return Err("custom theme names must be unique".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_quick_styles(
+        styles: &[ymind_core::quick_styles::QuickStyle],
+    ) -> std::result::Result<(), String> {
+        if styles.len() > 32 {
+            return Err("at most 32 saved quick styles are supported".into());
+        }
+        let mut names = std::collections::HashSet::new();
+        for style in styles {
+            style.validate()?;
+            if !names.insert(style.name.trim().to_lowercase()) {
+                return Err("quick style names must be unique".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Load preferences, logging any broken-file warning. I/O errors remain errors.
     pub fn load(paths: &Paths) -> Result<Self> {
         Ok(Self::load_with_warning(paths)?.settings)
@@ -196,7 +239,15 @@ impl Settings {
         };
         let parsed = std::str::from_utf8(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()));
+            .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()))
+            .and_then(|settings| {
+                Self::validate_quick_styles(&settings.quick_styles)?;
+                Self::validate_custom_themes(&settings.custom_themes)?;
+                if let Some(theme) = &settings.default_custom_theme {
+                    theme.validate()?;
+                }
+                Ok(settings)
+            });
         match parsed {
             Ok(mut settings) => {
                 settings.normalize();
@@ -232,6 +283,15 @@ impl Settings {
 
     /// Atomically persist preferences, normalizing recents and invalid numeric values.
     pub fn save(&self, paths: &Paths) -> Result<()> {
+        Self::validate_custom_themes(&self.custom_themes)
+            .map_err(crate::Error::InvalidCustomThemes)?;
+        if let Some(theme) = &self.default_custom_theme {
+            theme
+                .validate()
+                .map_err(crate::Error::InvalidCustomThemes)?;
+        }
+        Self::validate_quick_styles(&self.quick_styles)
+            .map_err(crate::Error::InvalidQuickStyles)?;
         let mut normalized = self.clone();
         normalized.normalize();
         let text = toml::to_string_pretty(&normalized)?;
@@ -244,6 +304,17 @@ impl Settings {
     }
 
     fn normalize(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.recent_templates.retain(|id| {
+            let known = ymind_core::templates::TEMPLATES
+                .iter()
+                .any(|template| template.id == id);
+            if !known {
+                log::warn!("Ignoring unknown recent template ID: {id}");
+            }
+            known && seen.insert(id.clone())
+        });
+        self.recent_templates.truncate(8);
         let mut merged: Vec<RecentFile> = Vec::with_capacity(self.recent_files.len());
         let mut indices = std::collections::HashMap::new();
         for recent in self.recent_files.drain(..) {
@@ -273,6 +344,13 @@ impl Settings {
         } else {
             1.0
         };
+    }
+
+    /// Remember the most recently used built-in templates, independently of files.
+    pub fn add_recent_template(&mut self, id: &str) {
+        self.recent_templates.retain(|previous| previous != id);
+        self.recent_templates.insert(0, id.to_string());
+        self.normalize();
     }
 
     /// Add or bump a path without losing its pinned state.

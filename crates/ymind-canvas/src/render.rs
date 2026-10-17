@@ -3,8 +3,7 @@
 use crate::measure::BOLD_WIDTH;
 use crate::view::ObjectSelection;
 use egui::{
-    Align, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke,
-    StrokeKind, pos2,
+    Align, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2,
     text::{LayoutJob, TextFormat},
     vec2,
 };
@@ -14,6 +13,8 @@ use ymind_core::{
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
     theme::Theme,
 };
+
+pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
 
 /// Converts a core color into an egui color.
 pub fn color32(c: Color) -> Color32 {
@@ -57,12 +58,37 @@ pub struct PaintOptions<'a> {
     pub dark: bool,
     /// Topics dimmed by an active filter (`None` = no filter).
     pub filter: Option<&'a [TopicId]>,
+    /// Additional source topics dimmed while a view-only drag preview is active.
+    pub dimmed: Option<&'a std::collections::BTreeSet<TopicId>>,
     pub selected_object: Option<ObjectSelection>,
 }
 
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
-    color32(Theme::builtin(&sheet.theme.theme_id).background(&sheet.theme, dark))
+    color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
+}
+
+/// Fits a noninteractive sample into a thumbnail, without changing any canvas camera.
+pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: Rect, dark: bool) {
+    painter.rect_filled(rect, 4, sheet_background(sheet, dark));
+    let rect = rect.shrink(5.0);
+    let zoom = (rect.width() / layout.bounds.size.x.max(1.0))
+        .min(rect.height() / layout.bounds.size.y.max(1.0));
+    let center = layout.bounds.center();
+    let xf = Xf {
+        origin: rect.center() - vec2(center.x, center.y) * zoom,
+        zoom,
+    };
+    paint_map(
+        &painter.with_clip_rect(rect),
+        sheet,
+        layout,
+        xf,
+        &PaintOptions {
+            dark,
+            ..Default::default()
+        },
+    );
 }
 
 /// Paints the whole map.
@@ -75,19 +101,25 @@ pub fn paint_map(
 ) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
-    let dim = |id: TopicId| opts.filter.is_some_and(|f| !f.contains(&id));
+    let dim = |id: TopicId| {
+        opts.filter.is_some_and(|f| !f.contains(&id))
+            || opts.dimmed.is_some_and(|ids| ids.contains(&id))
+    };
 
     // Boundaries.
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
         let selected = opts.selected_object == Some(ObjectSelection::Boundary(b.id));
-        let color = if selected {
+        let mut color = if selected {
             opts.accent
         } else {
             bd.and_then(|x| x.color)
                 .map(color32)
                 .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0))
         };
+        if bd.is_some_and(|b| dim(b.parent)) {
+            color = color.gamma_multiply(0.3);
+        }
         let r = xf.rect(b.rect);
         painter.rect_filled(
             r,
@@ -197,7 +229,7 @@ pub fn paint_map(
     // Relationships (on top of topics, like XMind).
     for r in &layout.relationships {
         let rel = sheet.relationships.iter().find(|x| x.id == r.id);
-        let color = rel
+        let mut color = rel
             .and_then(|x| x.color)
             .map(color32)
             .unwrap_or(if opts.dark {
@@ -205,14 +237,34 @@ pub fn paint_map(
             } else {
                 Color32::from_rgb(0x5A, 0x6A, 0x80)
             });
-        let pts: Vec<Pos2> = (0..=32)
-            .map(|i| xf.pos(cubic(r.start, r.c1, r.c2, r.end, i as f32 / 32.0)))
+        if rel.is_some_and(|r| dim(r.from) && dim(r.to)) {
+            color = color.gamma_multiply(0.3);
+        }
+        let pts: Vec<Pos2> = (0..=RELATIONSHIP_SEGMENTS)
+            .map(|i| {
+                xf.pos(cubic(
+                    r.start,
+                    r.c1,
+                    r.c2,
+                    r.end,
+                    i as f32 / RELATIONSHIP_SEGMENTS as f32,
+                ))
+            })
             .collect();
         let selected = opts.selected_object == Some(ObjectSelection::Relationship(r.id));
-        let stroke = Stroke::new(
-            if selected { 2.5 } else { 1.5 } * z.max(0.5),
-            if selected { opts.accent } else { color },
-        );
+        if selected {
+            painter.add(Shape::line(
+                pts.clone(),
+                Stroke::new(5.0, opts.accent.gamma_multiply(0.25)),
+            ));
+            for (anchor, control) in [(r.start, r.c1), (r.end, r.c2)] {
+                painter.line_segment(
+                    [xf.pos(anchor), xf.pos(control)],
+                    Stroke::new(1.0, opts.accent.gamma_multiply(0.6)),
+                );
+            }
+        }
+        let stroke = Stroke::new(1.5 * z.max(0.5), color);
         for s in Shape::dashed_line(&pts, stroke, 6.0 * z, 4.0 * z) {
             painter.add(s);
         }
@@ -223,6 +275,20 @@ pub fn paint_map(
             9.0 * z,
             stroke.color,
         );
+        if selected {
+            for point in [r.c1, r.c2] {
+                painter.rect(
+                    Rect::from_center_size(xf.pos(point), vec2(9.0, 9.0)),
+                    1.0,
+                    bg,
+                    Stroke::new(1.5, opts.accent),
+                    StrokeKind::Inside,
+                );
+            }
+            for point in [r.start, r.end] {
+                painter.circle(xf.pos(point), 5.0, bg, Stroke::new(1.5, opts.accent));
+            }
+        }
         if let Some(title) = rel.map(|x| x.title.as_str()).filter(|t| !t.is_empty()) {
             let font = FontId::proportional(12.0 * z);
             let g = painter.layout_no_wrap(title.to_owned(), font, color);
@@ -429,7 +495,10 @@ fn paint_topic(
     // Title.
     if !editing && let Some(topic) = topic {
         let tr = xf.rect(t.title_rect);
-        let font = FontId::new(st.font_size * z, FontFamily::Proportional);
+        let font = FontId::new(
+            st.font_size * z,
+            crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
+        );
         let mut job = LayoutJob::default();
         job.wrap.max_width = tr.width() / if st.bold { BOLD_WIDTH } else { 1.0 } + 1.0;
         job.halign = match st.align {
