@@ -43,6 +43,9 @@ sys-locale.workspace = true
 egui_kittest.workspace = true
 tempfile.workspace = true
 
+[build-dependencies]
+winresource = "0.1.34"
+
 # Installers: `cargo xtask package` (wraps `cargo packager --release -p ymind-app`).
 [package.metadata.packager]
 product-name = "yMind"
