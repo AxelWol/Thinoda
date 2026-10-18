@@ -182,6 +182,69 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    (
+        "MindManager export cannot preserve all content. Use --allow-lossy only if you accept omitted content.",
+        "Der MindManager-Export kann nicht alle Inhalte erhalten. --allow-lossy nur verwenden, wenn Sie ausgelassene Inhalte akzeptieren.",
+    ),
+    (
+        "Could not write this MindManager file. The map may be too large or contain invalid data.",
+        "Diese MindManager-Datei konnte nicht geschrieben werden. Die Map ist möglicherweise zu groß oder enthält ungültige Daten.",
+    ),
+    (
+        "Theme colors and appearance may differ. Use .thinoda to preserve all Thinoda data.",
+        "Designfarben und Darstellung können abweichen. Verwenden Sie .thinoda, um alle Thinoda-Daten zu erhalten.",
+    ),
+    ("MindManager XML", "MindManager XML"),
+    (
+        "Import requires confirmation",
+        "Import erfordert Bestätigung",
+    ),
+    (
+        "Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.",
+        "Diese MindManager-Datei konnte nicht gelesen werden. Sie ist möglicherweise ungültig, verschlüsselt, zu groß oder unsicher.",
+    ),
+    (
+        "Choose a .thinoda, .xmind or .mmap destination.",
+        "Ein Ziel mit .thinoda, .xmind oder .mmap wählen.",
+    ),
+    (
+        "MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.",
+        "MindManager speichert ein Blatt. Das aktuelle Blatt exportieren oder die vollständige Arbeitsmappe als .thinoda speichern.",
+    ),
+    (
+        "Choose a different destination to preserve the imported source.",
+        "Ein anderes Ziel wählen, um die importierte Quelldatei zu erhalten.",
+    ),
+    (
+        "Import requires confirmation. Use --allow-lossy only if you accept omitted content.",
+        "Import erfordert Bestätigung. --allow-lossy nur verwenden, wenn ausgelassene Inhalte akzeptiert werden.",
+    ),
+    (
+        "MindManager conversion may omit unsupported content. The source file is preserved.",
+        "Die MindManager-Konvertierung kann nicht unterstützte Inhalte auslassen. Die Quelldatei bleibt erhalten.",
+    ),
+    (
+        "MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.",
+        "Der MindManager-Export kann nicht alle Inhalte erhalten. Export mit Bestätigung verwenden oder als .thinoda speichern.",
+    ),
+    ("Export MindManager copy", "MindManager-Kopie exportieren"),
+    (
+        "Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.",
+        "Nur das aktuelle Blatt wird exportiert. Farben, Ressourcen, Beziehungen, erweiterte Layouts und nicht unterstützte Daten können ausgelassen werden. Die Quellarbeitsmappe bleibt unverändert.",
+    ),
+    ("Import converted copy", "Konvertierte Kopie importieren"),
+    ("Formatting and styles", "Formatierung und Stile"),
+    ("Rich notes", "Formatierte Notizen"),
+    ("Images and attachments", "Bilder und Anhänge"),
+    ("Markers and task data", "Markierungen und Aufgabendaten"),
+    (
+        "Additional or unsupported links",
+        "Zusätzliche oder nicht unterstützte Links",
+    ),
+    (
+        "Other unsupported map data",
+        "Weitere nicht unterstützte Map-Daten",
+    ),
     ("Plain text", "Klartext"),
     ("Thinoda", "Thinoda"),
     ("XMind", "XMind"),

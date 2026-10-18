@@ -156,6 +156,10 @@ pub struct Services {
 
 #[derive(Default)]
 pub struct Dialogs {
+    pub mindmanager_export: bool,
+    pub mindmanager_save: Option<(String, PathBuf, bool)>,
+    pub mindmanager_close: Option<CloseIntent>,
+    pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
@@ -220,6 +224,7 @@ pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
 
 /// Export formats in the order of XMind's Export menu (all free in Thinoda).
 pub const EXPORT_MENU: &[Format] = &[
+    Format::MindManager,
     Format::Png,
     Format::Jpeg,
     Format::Svg,
@@ -318,29 +323,48 @@ impl ThinodaApp {
             self.active = i;
             return;
         }
-        match OpenDoc::open(path) {
-            Ok(mut d) => {
-                d.view.titles = new_topic_titles();
-                d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
-                // Replace a pristine, untouched "Untitled" tab like most editors do.
-                if self.docs.len() == 1
-                    && self.docs[0].path.is_none()
-                    && !self.docs[0].is_dirty()
-                    && !self.docs[0].doc.can_undo()
-                {
-                    self.docs.clear();
-                }
-                self.docs.push(d);
-                self.active = self.docs.len() - 1;
-                if is_native(Format::from_path(path).unwrap_or(Format::Thinoda)) {
-                    self.settings.add_recent(path);
-                    self.save_settings();
-                }
+        if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+            return;
+        }
+        match OpenDoc::open_with_report(path) {
+            Ok((d, warnings)) if !warnings.is_empty() => {
+                self.dialogs
+                    .imports
+                    .push_back((path.to_path_buf(), d, warnings));
             }
+            Ok((d, _)) => self.install_opened_doc(path, d),
             Err(e) => {
                 self.toasts
                     .error(format!("{} {}: {e}", t("Could not open"), path.display()));
             }
+        }
+    }
+
+    pub fn resolve_import(&mut self, accept: bool) {
+        if let Some((path, d, _)) = self.dialogs.imports.pop_front()
+            && accept
+        {
+            self.install_opened_doc(&path, d);
+        }
+    }
+
+    fn install_opened_doc(&mut self, path: &Path, mut d: OpenDoc) {
+        let native = is_native(d.format) && d.import_source.is_none();
+        d.view.titles = new_topic_titles();
+        d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
+        // Replace a pristine, untouched "Untitled" tab like most editors do.
+        if self.docs.len() == 1
+            && self.docs[0].path.is_none()
+            && !self.docs[0].is_dirty()
+            && !self.docs[0].doc.can_undo()
+        {
+            self.docs.clear();
+        }
+        self.docs.push(d);
+        self.active = self.docs.len() - 1;
+        if native {
+            self.settings.add_recent(path);
+            self.save_settings();
         }
     }
 
@@ -1101,6 +1125,7 @@ impl ThinodaApp {
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Thinoda", &["thinoda"])
             .add_filter("XMind", &["xmind"])
+            .add_filter("MindManager", &["mmap"])
             .set_file_name(format!("{}.thinoda", sanitize(&d.doc.sheet().title)));
         if let Some(dir) = d.path.as_ref().and_then(|path| path.parent()) {
             dialog = dialog.set_directory(dir);
@@ -1111,6 +1136,16 @@ impl ThinodaApp {
     }
 
     pub fn save_sheet_to(&mut self, path: &Path) -> bool {
+        if Format::from_path(path) == Some(Format::MindManager) {
+            if let Some(doc) = self.doc() {
+                self.dialogs.mindmanager_save = Some((doc.key.clone(), path.to_path_buf(), true));
+            }
+            return false;
+        }
+        self.save_sheet_to_confirmed(path)
+    }
+
+    pub(crate) fn save_sheet_to_confirmed(&mut self, path: &Path) -> bool {
         let backup = self.settings.backup_on_save;
         let Some(d) = self.doc_mut() else {
             return false;
@@ -1132,6 +1167,9 @@ impl ThinodaApp {
 
     /// Saves the active document. Returns `false` if the user cancelled or saving failed.
     pub fn save_active(&mut self, save_as: bool) -> bool {
+        if self.dialogs.mindmanager_save.is_some() {
+            return false;
+        }
         let backup = self.settings.backup_on_save;
         let default_dir = self
             .settings
@@ -1144,7 +1182,7 @@ impl ThinodaApp {
         };
         d.view.commit_edit(&mut d.doc);
         let target = match (&d.path, save_as) {
-            (Some(p), false) if is_native(d.format) => {
+            (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
                 if d.changed_on_disk() && !d.ignore_conflict {
                     self.dialogs.conflict = Some(self.active);
                     return false;
@@ -1155,6 +1193,7 @@ impl ThinodaApp {
                 let mut dlg = rfd::FileDialog::new()
                     .add_filter("Thinoda", &["thinoda"])
                     .add_filter("XMind", &["xmind"])
+                    .add_filter("MindManager", &["mmap"])
                     .set_file_name(format!("{}.thinoda", sanitize(&d.title())));
                 if let Some(dir) = d
                     .path
@@ -1170,12 +1209,27 @@ impl ThinodaApp {
                 }
             }
         };
-        match d.save_to(&target, backup) {
+        if Format::from_path(&target) == Some(Format::MindManager) {
+            self.dialogs.mindmanager_save = Some((d.key.clone(), target, false));
+            return false;
+        }
+        self.save_active_to(&target, backup)
+    }
+
+    pub(crate) fn save_active_to(&mut self, target: &Path, backup: bool) -> bool {
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return false;
+        };
+        if d.path.as_deref() == Some(target) && d.changed_on_disk() && !d.ignore_conflict {
+            self.dialogs.conflict = Some(self.active);
+            return false;
+        }
+        match d.save_to(target, backup) {
             Ok(()) => {
                 if let Some(r) = &self.services.recovery {
                     let _ = r.remove(&d.key);
                 }
-                self.settings.add_recent(&target);
+                self.settings.add_recent(target);
                 self.save_settings();
                 self.toasts
                     .success(format!("{} {}", t("Saved to"), target.display()));
@@ -1189,6 +1243,14 @@ impl ThinodaApp {
     }
 
     fn export(&mut self, format: Format) {
+        if format == Format::MindManager {
+            self.dialogs.mindmanager_export = true;
+            return;
+        }
+        self.export_confirmed(format);
+    }
+
+    pub(crate) fn export_confirmed(&mut self, format: Format) {
         let dark = self
             .applied
             .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
@@ -1213,11 +1275,17 @@ impl ThinodaApp {
             scale: 2.0,
             ..Default::default()
         };
-        let res = thinoda_io::export_bytes(d.doc.workbook(), format, &opts)
-            .map_err(|e| e.to_string())
-            .and_then(|b| {
-                thinoda_platform::fs::atomic_write(&path, &b, false).map_err(|e| e.to_string())
-            });
+        let res = thinoda_io::export_bytes_with_consent(
+            d.doc.workbook(),
+            format,
+            &opts,
+            format == Format::MindManager,
+        )
+        .map_err(crate::doc::export_error)
+        .and_then(|b| {
+            d.ensure_export_destination(&path)?;
+            thinoda_platform::fs::atomic_write(&path, &b, false).map_err(|e| e.to_string())
+        });
         match res {
             Ok(()) => {
                 self.settings.last_export_format = Some(format.label().to_string());
@@ -1426,6 +1494,7 @@ impl ThinodaApp {
                         let mut d = OpenDoc::new(wb);
                         d.view.titles = new_topic_titles();
                         d.path = doc.meta.original_path.clone().filter(|p| p.exists());
+                        d.import_source = doc.meta.import_source.clone();
                         if let Some(p) = &d.path {
                             d.format = Format::from_path(p).unwrap_or(Format::Thinoda);
                             d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();

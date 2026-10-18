@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-use thinoda_app::{ThinodaApp, doc, start_services};
+use thinoda_app::{ThinodaApp, doc, i18n::t, start_services};
 use thinoda_platform::{Paths, single_instance::SingleInstance};
 
 const HELP: &str = "Thinoda - Give your thoughts shape.
 
 USAGE:
     thinoda [FILES...]
-    thinoda --convert <INPUT> <OUTPUT>   convert between formats (by extension)
+    thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]
     thinoda --version
     thinoda --help
 ";
@@ -18,9 +18,20 @@ fn main() -> anyhow::Result<()> {
     quiet_gpu_probing();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    thinoda_app::i18n::set_lang(thinoda_app::i18n::resolve(
+        thinoda_platform::settings::Language::Auto,
+    ));
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
-            print!("{HELP}");
+            print!(
+                "{HELP}\n{}\n{}\n",
+                t(
+                    "Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged."
+                ),
+                t(
+                    "Import requires confirmation. Use --allow-lossy only if you accept omitted content."
+                )
+            );
             return Ok(());
         }
         Some("--version" | "-V") => {
@@ -29,12 +40,16 @@ fn main() -> anyhow::Result<()> {
         }
         Some("--convert") => {
             let (Some(i), Some(o)) = (args.get(1), args.get(2)) else {
-                anyhow::bail!("usage: thinoda --convert <INPUT> <OUTPUT>");
+                anyhow::bail!("thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]");
             };
-            doc::convert(
+            if args.len() > 4 || args.get(3).is_some_and(|a| a != "--allow-lossy") {
+                anyhow::bail!("thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]");
+            }
+            doc::convert_with_consent(
                 &PathBuf::from(i),
                 &PathBuf::from(o),
                 &thinoda_io::ExportOptions::default(),
+                args.get(3).is_some(),
             )
             .map_err(anyhow::Error::msg)?;
             return Ok(());

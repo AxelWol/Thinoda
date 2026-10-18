@@ -7,6 +7,26 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
+## P1: MindManager native file compatibility (bounded slice)
+
+- User request: support the official Corel/Alludo MindManager format for
+  load/save/import/export, not extension renaming or Markdown conversion.
+- Implemented `.mmap` ZIP/Application/2003 XML reading and writing, plus `.xmmap`
+  import, based on privately inspected native references and schemas. Hierarchy,
+  mapped fonts/shapes/opaque colors, plain notes, labels, links, priority/progress
+  and selected metadata have original regression coverage. See the explicit
+  [feature/read-write matrix](MINDMANAGER.md).
+- Open/Import require consent for omitted content and preserve imported sources.
+  Single-sheet Save As is guarded; Export discloses current-sheet scope. CLI,
+  filters, association metadata, recovery guards and ten-locale safety text are
+  covered; archives are bounded and writes atomic.
+- Independently XSD-validated original candidates were observed opening/rendering
+  in MindManager by the user. This is not certification or full fidelity.
+- Residual: native-resaved reverse roundtrip, note-body/link/metadata checks;
+  rich notes/resources, advanced map features, alpha, legacy/encrypted variants
+  and redistributable public schema/reference validation remain unimplemented
+  or unverified. Keep original sources and use `.thinoda` for full workbooks.
+
 ## Recently completed
 - Automatic documentation timestamps: every tracked Markdown file carries
   non-binding UTC metadata from its last source-changing Git commit. The

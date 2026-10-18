@@ -3,6 +3,7 @@
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
 //! Raster and PDF output are rendered from the same vector layout; JPEG always uses an opaque background.
 mod formats;
+mod mindmanager;
 mod office;
 pub mod print;
 mod render;
@@ -28,6 +29,7 @@ pub enum Format {
     Markdown,
     PlainText,
     MindManager,
+    MindManagerXml,
     TextBundle,
     Svg,
     Png,
@@ -46,6 +48,7 @@ impl Format {
         Self::Markdown,
         Self::PlainText,
         Self::MindManager,
+        Self::MindManagerXml,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
         Self::Thinoda,
@@ -54,6 +57,7 @@ impl Format {
         Self::Opml,
         Self::Markdown,
         Self::PlainText,
+        Self::MindManager,
         Self::TextBundle,
         Self::Svg,
         Self::Png,
@@ -73,6 +77,7 @@ impl Format {
             "md" | "markdown" => Self::Markdown,
             "txt" => Self::PlainText,
             "mmap" => Self::MindManager,
+            "xmmap" => Self::MindManagerXml,
             "textpack" | "textbundle" => Self::TextBundle,
             "svg" => Self::Svg,
             "png" => Self::Png,
@@ -93,6 +98,7 @@ impl Format {
             Self::Markdown => &["md", "markdown"],
             Self::PlainText => &["txt"],
             Self::MindManager => &["mmap"],
+            Self::MindManagerXml => &["xmmap"],
             Self::TextBundle => &["textpack", "textbundle"],
             Self::Svg => &["svg"],
             Self::Png => &["png"],
@@ -112,6 +118,7 @@ impl Format {
             Self::Markdown => "Markdown",
             Self::PlainText => "Plain text",
             Self::MindManager => "MindManager",
+            Self::MindManagerXml => "MindManager XML",
             Self::TextBundle => "TextBundle",
             Self::Svg => "SVG",
             Self::Png => "PNG",
@@ -168,6 +175,35 @@ pub enum IoError {
     NewerVersion(String),
     #[error("invalid document: {0}")]
     Invalid(String),
+    #[error("import requires confirmation because unsupported content may be omitted: {0:?}")]
+    ImportNeedsConfirmation(Vec<ImportWarning>),
+    #[error(
+        "MindManager export requires confirmation: only the selected sheet and supported features are written"
+    )]
+    MindManagerExportNeedsConfirmation,
+    #[error("MindManager import failed: {0}")]
+    MindManager(String),
+    #[error("MindManager export failed: {0}")]
+    MindManagerExport(String),
+}
+
+/// Categories of source content not fully represented by the converted workbook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImportWarning {
+    Formatting,
+    Notes,
+    Resources,
+    Markers,
+    Links,
+    Other,
+}
+
+/// A best-effort conversion that must not be used destructively without consent.
+#[derive(Debug)]
+pub struct ImportReport {
+    pub format: Format,
+    pub workbook: Workbook,
+    pub warnings: Vec<ImportWarning>,
 }
 
 /// Detect a format using extension first, then common file signatures/content.
@@ -195,6 +231,27 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
         }
         return Some(Format::Thinoda);
     }
+    // Inspect XML's actual root, not a substring in a comment or topic title.
+    let mut reader = quick_xml::NsReader::from_reader(bytes);
+    loop {
+        match reader.read_resolved_event() {
+            Ok((
+                quick_xml::name::ResolveResult::Bound(ns),
+                quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e),
+            )) if e.local_name().as_ref() == "Map"
+                && ns.as_ref() == "http://schemas.mindjet.com/MindManager/Application/2003" =>
+            {
+                return Some(Format::MindManagerXml);
+            }
+            Ok((
+                _,
+                quick_xml::events::Event::Decl(_)
+                | quick_xml::events::Event::Comment(_)
+                | quick_xml::events::Event::Text(_),
+            )) => {}
+            _ => break,
+        }
+    }
     let start = String::from_utf8_lossy(bytes)
         .trim_start()
         .to_ascii_lowercase();
@@ -213,8 +270,24 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
 
 /// Import document bytes into a validated workbook.
 pub fn import_bytes(format: Format, bytes: &[u8]) -> Result<Workbook, IoError> {
+    let report = import_bytes_with_report(format, bytes)?;
+    if !report.warnings.is_empty() {
+        return Err(IoError::ImportNeedsConfirmation(report.warnings));
+    }
+    Ok(report.workbook)
+}
+
+/// Parse without discarding the conversion warnings. Callers must obtain explicit
+/// consent before using a report with warnings, and must preserve the source.
+pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportReport, IoError> {
     if !format.can_import() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
+    }
+    if matches!(format, Format::MindManager | Format::MindManagerXml) {
+        let report = mindmanager::import(bytes, format)
+            .map_err(|error| IoError::MindManager(error.to_string()))?;
+        report.workbook.validate().map_err(IoError::Invalid)?;
+        return Ok(report);
     }
     let result = match format {
         Format::Thinoda => formats::native_import(bytes)?,
@@ -223,18 +296,53 @@ pub fn import_bytes(format: Format, bytes: &[u8]) -> Result<Workbook, IoError> {
         Format::Opml => formats::opml_import(bytes)?,
         Format::Markdown => formats::markdown_import(bytes)?,
         Format::PlainText => formats::text_import(bytes)?,
-        Format::MindManager => formats::mindmanager_import(bytes)?,
         _ => unreachable!(),
     };
     result.validate().map_err(IoError::Invalid)?;
-    Ok(result)
+    Ok(ImportReport {
+        format,
+        workbook: result,
+        warnings: Vec::new(),
+    })
 }
 /// Import a document from disk.
 pub fn import_file(path: &Path) -> Result<Workbook, IoError> {
-    let b = fs::read(path)?;
+    let report = import_file_with_report(path)?;
+    if !report.warnings.is_empty() {
+        return Err(IoError::ImportNeedsConfirmation(report.warnings));
+    }
+    Ok(report.workbook)
+}
+
+/// File counterpart of [`import_bytes_with_report`].
+pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
+    // Bound MindManager file reads before allocating the input buffer.
+    let bounded = matches!(
+        Format::from_path(path),
+        None | Some(Format::MindManager | Format::MindManagerXml)
+    );
+    if bounded && fs::metadata(path)?.len() > 64 * 1024 * 1024 {
+        return Err(IoError::Invalid(
+            "MindManager file exceeds size limit".into(),
+        ));
+    }
+    let b = if bounded {
+        let mut bytes = Vec::new();
+        fs::File::open(path)?
+            .take(64 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > 64 * 1024 * 1024 {
+            return Err(IoError::Invalid(
+                "MindManager file exceeds size limit".into(),
+            ));
+        }
+        bytes
+    } else {
+        fs::read(path)?
+    };
     let f = detect_format(path, &b)
         .ok_or_else(|| IoError::UnsupportedFormat(path.display().to_string()))?;
-    import_bytes(f, &b)
+    import_bytes_with_report(f, &b)
 }
 /// Export a workbook to bytes in the requested format.
 pub fn export_bytes(
@@ -242,7 +350,24 @@ pub fn export_bytes(
     format: Format,
     opts: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
-    book.validate().map_err(IoError::Invalid)?;
+    export_bytes_with_consent(book, format, opts, false)
+}
+
+/// Export with explicit consent to omit unsupported MindManager content.
+/// Other format policies are unchanged.
+pub fn export_bytes_with_consent(
+    book: &Workbook,
+    format: Format,
+    opts: &ExportOptions,
+    allow_lossy: bool,
+) -> Result<Vec<u8>, IoError> {
+    book.validate().map_err(|error| {
+        if format == Format::MindManager {
+            IoError::MindManagerExport(error)
+        } else {
+            IoError::Invalid(error)
+        }
+    })?;
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
@@ -253,6 +378,12 @@ pub fn export_bytes(
         Format::Opml => formats::opml_export(book, opts)?,
         Format::Markdown => formats::markdown_export(book, opts),
         Format::PlainText => formats::text_export(book, opts),
+        Format::MindManager => {
+            mindmanager::export(book, opts, allow_lossy).map_err(|error| match error {
+                IoError::MindManagerExportNeedsConfirmation => error,
+                error => IoError::MindManagerExport(error.to_string()),
+            })?
+        }
         Format::TextBundle => formats::textbundle_export(book, opts)?,
         Format::Svg => render::svg(book, opts)?.into_bytes(),
         Format::Png => render::raster(book, opts, image::ImageFormat::Png)?,
@@ -282,10 +413,15 @@ pub fn export_file(
         .unwrap_or_default()
         .as_nanos();
     let tmp = parent.join(format!(".{name}.{}.{nonce}.tmp", std::process::id()));
-    {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(&data)?;
-        f.sync_all()?;
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
+    let written = f.write_all(&data).and_then(|_| f.sync_all());
+    drop(f);
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(IoError::Io(e));
     }
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
@@ -299,15 +435,23 @@ pub(crate) fn zip_entry<R: Read + std::io::Seek>(
     z: &mut zip::ZipArchive<R>,
     name: &str,
 ) -> Result<Vec<u8>, IoError> {
+    zip_entry_with_limit(z, name, MAX_ENTRY_SIZE)
+}
+
+pub(crate) fn zip_entry_with_limit<R: Read + std::io::Seek>(
+    z: &mut zip::ZipArchive<R>,
+    name: &str,
+    limit: u64,
+) -> Result<Vec<u8>, IoError> {
     let f = z.by_name(name)?;
-    if f.size() > MAX_ENTRY_SIZE {
+    if f.size() > limit {
         return Err(IoError::Invalid(format!(
             "archive entry {name} exceeds size limit"
         )));
     }
     let mut out = Vec::with_capacity(f.size() as usize);
-    f.take(MAX_ENTRY_SIZE + 1).read_to_end(&mut out)?;
-    if out.len() as u64 > MAX_ENTRY_SIZE {
+    f.take(limit + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > limit {
         return Err(IoError::Invalid(format!(
             "archive entry {name} exceeds size limit"
         )));

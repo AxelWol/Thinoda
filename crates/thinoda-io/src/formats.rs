@@ -7,7 +7,7 @@ use thinoda_core::{
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
+pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     let mut out = Cursor::new(Vec::new());
     let mut z = ZipWriter::new(&mut out);
     let opt = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -434,137 +434,6 @@ pub(crate) fn opml_import(b: &[u8]) -> Result<Workbook, IoError> {
 pub(crate) fn freemind_import(b: &[u8]) -> Result<Workbook, IoError> {
     let (_, mut roots) = read_xml_tree(b, false)?;
     let root = xml_node_to_outline(roots.remove(0));
-    Ok(Workbook::new(thinoda_core::outline::sheet_from_outline(
-        &root.title,
-        &root,
-    )))
-}
-pub(crate) fn mindmanager_import(b: &[u8]) -> Result<Workbook, IoError> {
-    let mut z = ZipArchive::new(Cursor::new(b))?;
-    let xml = zip_entry(&mut z, "Document.xml")?;
-    let mut reader = quick_xml::Reader::from_reader(xml.as_slice());
-    reader.config_mut().trim_text(true);
-    let mut buf = Vec::new();
-    let mut stack: Vec<OutlineNode> = Vec::new();
-    let mut roots = Vec::new();
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(quick_xml::events::Event::Start(e)) => {
-                let name = e
-                    .name()
-                    .as_ref()
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned();
-                if name.eq_ignore_ascii_case("Topic") {
-                    if stack.len() >= 2000 {
-                        return Err(IoError::Invalid(
-                            "MindManager nesting exceeds 2000 levels".into(),
-                        ));
-                    }
-                    stack.push(OutlineNode::default());
-                } else if name.eq_ignore_ascii_case("Text") {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case("PlainText")
-                            && let Some(topic) = stack.last_mut()
-                        {
-                            topic.title = attr
-                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .unwrap_or_default()
-                                .to_string();
-                        }
-                    }
-                } else if name.eq_ignore_ascii_case("Hyperlink")
-                    || name.eq_ignore_ascii_case("NotesXhtmlData")
-                {
-                    for attr in e.attributes().flatten() {
-                        let key = attr.key.as_ref();
-                        let value = attr
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap_or_default()
-                            .to_string();
-                        if let Some(topic) = stack.last_mut() {
-                            if name.eq_ignore_ascii_case("Hyperlink")
-                                && key.eq_ignore_ascii_case("Url")
-                            {
-                                topic.link = Some(value.clone());
-                            }
-                            if name.eq_ignore_ascii_case("NotesXhtmlData")
-                                && key.eq_ignore_ascii_case("PreviewPlainText")
-                            {
-                                topic.notes = Some(value);
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(quick_xml::events::Event::Empty(e)) => {
-                let name = e
-                    .name()
-                    .as_ref()
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned();
-                if name.eq_ignore_ascii_case("Text")
-                    || name.eq_ignore_ascii_case("Hyperlink")
-                    || name.eq_ignore_ascii_case("NotesXhtmlData")
-                {
-                    for attr in e.attributes().flatten() {
-                        let key = attr.key.as_ref();
-                        let value = attr
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap_or_default()
-                            .to_string();
-                        if let Some(topic) = stack.last_mut() {
-                            if name.eq_ignore_ascii_case("Text")
-                                && key.eq_ignore_ascii_case("PlainText")
-                            {
-                                topic.title = value.clone();
-                            }
-                            if name.eq_ignore_ascii_case("Hyperlink")
-                                && key.eq_ignore_ascii_case("Url")
-                            {
-                                topic.link = Some(value.clone());
-                            }
-                            if name.eq_ignore_ascii_case("NotesXhtmlData")
-                                && key.eq_ignore_ascii_case("PreviewPlainText")
-                            {
-                                topic.notes = Some(value);
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(quick_xml::events::Event::End(e)) => {
-                let name = e
-                    .name()
-                    .as_ref()
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned();
-                if name.eq_ignore_ascii_case("Topic")
-                    && let Some(topic) = stack.pop()
-                {
-                    if let Some(parent) = stack.last_mut() {
-                        parent.children.push(topic);
-                    } else {
-                        roots.push(topic);
-                    }
-                }
-            }
-            Ok(quick_xml::events::Event::Eof) => break,
-            Err(e) => return Err(IoError::Xml(e.to_string())),
-            _ => {}
-        }
-        buf.clear();
-    }
-    let root = roots
-        .into_iter()
-        .next()
-        .ok_or_else(|| IoError::Invalid("MindManager document contains no topics".into()))?;
     Ok(Workbook::new(thinoda_core::outline::sheet_from_outline(
         &root.title,
         &root,
