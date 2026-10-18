@@ -13,6 +13,7 @@ mod printing;
 mod quick_styles;
 mod shortcut_browser;
 mod structure_picker;
+mod symbols;
 mod template_gallery;
 mod theme_editor;
 pub mod ui;

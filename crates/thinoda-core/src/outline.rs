@@ -15,6 +15,8 @@ pub struct OutlineNode {
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub marker_colors: std::collections::BTreeMap<usize, crate::Color>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<OutlineNode>,
 }
@@ -46,6 +48,7 @@ pub fn to_outline(sheet: &Sheet, id: TopicId) -> OutlineNode {
         link: t.hyperlink.clone(),
         labels: t.labels.clone(),
         markers: t.markers.clone(),
+        marker_colors: t.marker_colors.clone(),
         children: t.children.iter().map(|c| to_outline(sheet, *c)).collect(),
     }
 }
@@ -66,6 +69,7 @@ fn apply_fields(t: &mut Topic, n: &OutlineNode) {
     t.hyperlink = n.link.clone();
     t.labels = n.labels.clone();
     t.markers = n.markers.clone();
+    t.marker_colors = n.marker_colors.clone();
 }
 
 /// Appends an outline as a child of `parent`; returns the new topic id.
