@@ -6,6 +6,11 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Help > About > Legal documents now embeds the full unchanged licence,
+  generated third-party notices and Impressum for offline reading and copying.
+  A scrollable, theme-aware modal keeps Close visible at narrow sizes; original
+  legal texts retain their original language. EN/DE labels, document completeness,
+  keyboard dismissal and map-edit isolation are covered.
 - Template-card double-click creates and opens the chosen map once through the
   existing Create command, across the overview, every category and Recently used
   templates. Single-click/keyboard selection and Create/Cancel remain available;
@@ -813,7 +818,8 @@ to add XMind's own cloud account, billing or hosted AI service.
   download location
 - P2 Enable GitHub private vulnerability reporting and branch protection with
   required CI checks before making the repository public
-- P3 Show licence, third-party notices and Impressum inside Help > About
+- Delivered offline licence, third-party notices and Impressum inside Help > About;
+  see Recently completed.
 - P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI
 - P3 Real-time co-editing (CRDT, e.g. `yrs`) — basis for a companion web/mobile app
 - P3 Plugin API (WASM) for importers/exporters
