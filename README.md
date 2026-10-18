@@ -35,9 +35,11 @@ is an integrity check, not Apple verification of the developer.
 ```powershell
 winget install AxelWol.Thinoda
 ```
-New releases are submitted to [winget-pkgs](https://github.com/microsoft/winget-pkgs)
-automatically by `.github/workflows/winget.yml` (needs the `WINGET_TOKEN` secret);
-they become available once the WinGet maintainers merge the pull request.
+Automatic submissions to [winget-pkgs](https://github.com/microsoft/winget-pkgs)
+are temporarily paused in `.github/workflows/winget.yml`, including calls from
+the release workflow. Download current installers from GitHub Releases instead.
+Resuming submissions requires re-enabling the workflow and its guarded job;
+the `WINGET_TOKEN` secret is still required.
 
 ### Installing on Ubuntu
 Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`),

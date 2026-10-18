@@ -23,6 +23,26 @@ class CommandTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Expected one app archive and one DMG"):
                 verify(Path(temporary), "aarch64-apple-darwin")
 
+    @patch("verify_macos_packages.run")
+    def test_architecture_check_places_input_before_variadic_option(self, command):
+        for architecture in ARCHITECTURES.values():
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as temporary:
+                app = Path(temporary) / "Thinoda.app"
+                contents = app / "Contents"
+                (contents / "_CodeSignature").mkdir(parents=True)
+                (contents / "_CodeSignature" / "CodeResources").touch()
+                with (contents / "Info.plist").open("wb") as stream:
+                    plistlib.dump({
+                        "CFBundleIdentifier": "io.github.axelwol.thinoda",
+                        "CFBundleExecutable": "thinoda",
+                    }, stream)
+                command.reset_mock()
+                verify_app(app, architecture)
+                command.assert_any_call(
+                    "lipo", str(contents / "MacOS" / "thinoda"),
+                    "-verify_arch", architecture,
+                )
+
 
 @unittest.skipUnless(sys.platform == "darwin", "Requires native macOS signing tools")
 class NativeSignatureTests(unittest.TestCase):
