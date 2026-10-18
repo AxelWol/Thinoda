@@ -100,6 +100,9 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 impl ThinodaApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
+        if !self.launch_frame(ui) {
+            return;
+        }
         let ctx = ui.ctx().clone();
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         if font_source != self.font_source {

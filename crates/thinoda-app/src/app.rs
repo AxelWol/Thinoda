@@ -208,6 +208,8 @@ pub struct ThinodaApp {
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
     last_title: String,
+    /// Startup work still pending behind the splash; `None` once ready.
+    pub(crate) launch: Option<crate::startup::Launch>,
 }
 
 pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
@@ -274,6 +276,7 @@ impl ThinodaApp {
             quick_style_dialog: None,
             theme_dialog: None,
             last_title: String::new(),
+            launch: None,
         };
         for f in files {
             app.open_path(f);
@@ -318,7 +321,20 @@ impl ThinodaApp {
             self.active = i;
             return;
         }
-        match OpenDoc::open(path) {
+        self.add_opened(path, OpenDoc::open(path));
+    }
+
+    /// Adds the result of opening `path` as a tab, or reports the error as a toast.
+    pub(crate) fn add_opened(&mut self, path: &Path, opened: Result<OpenDoc, String>) {
+        if let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.path.as_deref() == Some(path))
+        {
+            self.active = i;
+            return;
+        }
+        match opened {
             Ok(mut d) => {
                 d.view.titles = new_topic_titles();
                 d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
