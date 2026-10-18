@@ -1,7 +1,8 @@
-"""Job-free Linux native bridge integration checks.
+"""Job-free native bridge integration checks.
 
-Requires GTK 3 development files and cc. The cancellation check additionally
-requires xvfb-run. No test ever accepts a print dialog or submits a job.
+macOS compiles/links against the installed SDK for Intel and ARM, without loading
+the result. Linux requires GTK 3 development files and cc; the cancellation check
+additionally requires xvfb-run. No test accepts a print dialog or submits a job.
 """
 
 from __future__ import annotations
@@ -16,6 +17,34 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "crates/thinoda-platform/native/print_linux.c"
+
+
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS and the real Apple SDK")
+class MacNativePrintingTests(unittest.TestCase):
+    def test_bridge_compiles_and_links_with_supported_sdk_for_both_architectures(self):
+        # Real SDK declarations catch invented Objective-C properties/selectors;
+        # linking also catches missing PrintCore/framework symbols. Neither a
+        # window nor a printer is needed, and no compiled code is executed.
+        sdk = subprocess.check_output(
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True
+        ).strip()
+        source = ROOT / "crates/thinoda-platform/native/print_macos.m"
+        with tempfile.TemporaryDirectory(prefix="thinoda-mac-print-compile-") as directory:
+            for architecture in ("x86_64", "arm64"):
+                with self.subTest(architecture=architecture):
+                    subprocess.run(
+                        [
+                            "xcrun", "--sdk", "macosx", "clang",
+                            "-arch", architecture, "-isysroot", sdk,
+                            "-mmacosx-version-min=11.0", "-fobjc-arc",
+                            "-Wall", "-Wextra", "-Werror",
+                            "-Werror=unguarded-availability-new",
+                            "-dynamiclib", str(source),
+                            "-framework", "AppKit", "-framework", "ApplicationServices",
+                            "-o", str(Path(directory) / f"print-{architecture}.dylib"),
+                        ],
+                        check=True, timeout=60,
+                    )
 
 # Runs in a subprocess so initialization, main-thread identity and display
 # configuration are independent of other tests. The parent enforces a timeout.

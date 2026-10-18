@@ -55,17 +55,51 @@ int thinoda_print(void *owner, int owner_kind, const unsigned char *pixels,
         NSPrintInfo *info = [NSPrintInfo.sharedPrintInfo copy];
         NSSize requested = NSMakeSize(fmin(width_mm, height_mm) * 72.0 / 25.4,
                                        fmax(width_mm, height_mm) * 72.0 / 25.4);
-        /* Prefer the driver's named standard medium over a custom size when
-         * it advertises one. Unsupported media remain editable in the panel. */
+        /* NSPrinter has no paperNames API. Enumerate the current printer's
+         * media through PrintCore instead, including driverless printers.
+         * Get functions return borrowed objects; NSPrintInfo retains the
+         * session and the session retains its printer for this scope. */
         NSString *matchedPaper = nil;
-        for (NSString *name in info.printer.paperNames) {
-            NSSize size = [info.printer pageSizeForPaper:name];
-            if (fabs(fmin(size.width, size.height) - requested.width) < 0.5 &&
-                fabs(fmax(size.width, size.height) - requested.height) < 0.5) {
-                matchedPaper = name;
-                break;
+        if (info.printer) {
+            PMPrinter printer = NULL;
+            PMPrintSession session = (PMPrintSession)[info PMPrintSession];
+            OSStatus status = PMSessionGetCurrentPrinter(session, &printer);
+            CFArrayRef papers = NULL;
+            if (status == noErr && printer)
+                status = PMPrinterGetPaperList(printer, &papers);
+            if (status != noErr || !printer || !papers) {
+                snprintf(error, error_len, "Cannot enumerate printer paper sizes (PrintCore status %d)", (int)status);
+                return -1;
+            }
+            for (CFIndex index = 0; index < CFArrayGetCount(papers); ++index) {
+                PMPaper medium = (PMPaper)CFArrayGetValueAtIndex(papers, index);
+                double paperWidth = 0, paperHeight = 0;
+                status = PMPaperGetWidth(medium, &paperWidth);
+                if (status == noErr) status = PMPaperGetHeight(medium, &paperHeight);
+                if (status != noErr || !isfinite(paperWidth) || !isfinite(paperHeight) ||
+                    paperWidth <= 0 || paperHeight <= 0) {
+                    snprintf(error, error_len, "Cannot read printer paper dimensions (PrintCore status %d)", (int)status);
+                    return -1;
+                }
+                if (fabs(fmin(paperWidth, paperHeight) - requested.width) < 0.5 &&
+                    fabs(fmax(paperWidth, paperHeight) - requested.height) < 0.5) {
+                    CFStringRef name = NULL;
+                    status = PMPaperGetPPDPaperName(medium, &name);
+                    if (status != noErr) {
+                        snprintf(error, error_len, "Cannot read printer paper name (PrintCore status %d)", (int)status);
+                        return -1;
+                    }
+                    // A successful query may return NULL for media with no PPD
+                    // name. Use the exact requested size, not another medium.
+                    matchedPaper = (__bridge NSString *)name;
+                    break;
+                }
             }
         }
+        /* No default printer, no matching advertised medium, or an unnamed
+         * driverless medium: seed the exact requested size for the panel.
+         * This is not a different-paper fallback. The user still selects and
+         * confirms the printer/media; final printable-area fit is unchanged. */
         if (matchedPaper) info.paperName = matchedPaper;
         else info.paperSize = requested;
         info.orientation = width_mm > height_mm ? NSPaperOrientationLandscape : NSPaperOrientationPortrait;
