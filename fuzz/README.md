@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:03:06 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Importer fuzzing
 
 The fuzz harness is a separate Cargo workspace: its `libfuzzer-sys` and ZIP

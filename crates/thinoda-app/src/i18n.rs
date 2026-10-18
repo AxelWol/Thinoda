@@ -70,6 +70,14 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Legal documents", "Rechtliche Dokumente"),
+    ("License", "Lizenz"),
+    ("Third-party notices", "Drittanbieterhinweise"),
+    ("Legal notice", "Impressum"),
+    (
+        "Original legal texts are shown unchanged.",
+        "Die rechtlichen Originaltexte werden unverändert angezeigt.",
+    ),
     ("Print", "Drucken"),
     (
         "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, source resolution and colors, then open the native OS printer dialog or save a PDF. Choose a printer and its driver settings there. The whole preview page fits proportionally inside the selected printable area; OS paper changes scale it without reflow. Submitted means accepted by the OS, not physically printed. Native dialogs use the OS language and appearance.",
