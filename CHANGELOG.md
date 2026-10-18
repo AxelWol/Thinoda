@@ -11,6 +11,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.2.1](https://github.com/AxelWol/Thinoda/compare/v0.2.0...v0.2.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* correct macOS package verification and pause WinGet publishing ([fa3a5c4](https://github.com/AxelWol/Thinoda/commit/fa3a5c48e2fdb7b3eb85be7667e986319dff8095))
+
 ## [0.2.0](https://github.com/AxelWol/Thinoda/compare/v0.1.3...v0.2.0) (2026-10-18)
 
 
