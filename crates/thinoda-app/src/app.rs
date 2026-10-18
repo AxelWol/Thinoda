@@ -160,6 +160,7 @@ pub struct Dialogs {
     pub settings: bool,
     pub settings_tab: SettingsTab,
     pub about: bool,
+    pub legal: crate::legal::LegalState,
     pub shortcuts: bool,
     pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
     pub masked_copy: bool,

@@ -157,7 +157,7 @@ impl ThinodaApp {
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
                 .show(ui, |ui| {
-                    if self.map_shot.active() || self.printing.active() {
+                    if self.map_shot.active() || self.printing.active() || self.dialogs.legal.open {
                         ui.disable();
                     }
                     self.top_bar(ui);
@@ -171,7 +171,10 @@ impl ThinodaApp {
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
                     .show(ui, |ui| {
-                        if self.map_shot.active() || self.printing.active() {
+                        if self.map_shot.active()
+                            || self.printing.active()
+                            || self.dialogs.legal.open
+                        {
                             ui.disable();
                         }
                         self.bottom_bar(ui);
@@ -186,7 +189,10 @@ impl ThinodaApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
-                            if self.map_shot.active() || self.printing.active() {
+                            if self.map_shot.active()
+                                || self.printing.active()
+                                || self.dialogs.legal.open
+                            {
                                 ui.disable();
                             }
                             self.sidebar(ui);
@@ -204,6 +210,7 @@ impl ThinodaApp {
                     || self.theme_dialog.is_some()
                     || self.dialogs.guide.open
                     || self.dialogs.shortcuts
+                    || self.dialogs.legal.open
                 {
                     ui.disable();
                 }
@@ -262,6 +269,7 @@ impl ThinodaApp {
         }
         self.map_shot_dialog(&ctx);
         self.print_dialog(&ctx);
+        self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
         }
@@ -280,6 +288,7 @@ impl ThinodaApp {
             || self.theme_dialog.is_some()
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
+            || self.dialogs.legal.open
         {
             return true;
         }
@@ -831,6 +840,7 @@ impl ThinodaApp {
             || self.theme_dialog.is_some()
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
+            || self.dialogs.legal.open
         {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
@@ -2858,6 +2868,10 @@ impl ThinodaApp {
                     ));
                     ui.hyperlink_to(crate::brand::PROJECT_URL, crate::brand::PROJECT_URL)
                         .on_hover_text(t("Open in web browser"));
+                    ui.separator();
+                    if ui.button(t("Legal documents")).clicked() {
+                        self.dialogs.legal.open = true;
+                    }
                 });
             self.dialogs.about = open;
         }

@@ -122,6 +122,9 @@ install the windowing libraries it did not declare yet:
   for editing, styles, file recovery, interchange and privacy. It works without an
   open map and does not edit the canvas behind it. Send Feedback opens GitHub's
   public issue chooser without uploading files; Project News opens commit history.
+- Help > About > Legal documents provides the complete licence, third-party
+  notices and Impressum offline. The selectable original texts are unchanged;
+  the viewer uses the application's language and light/dark appearance.
 - F1 opens a searchable keyboard reference with category and unassigned-command
   filters, including navigation aliases. It is read-only; custom rebinding and
   conflict editing are not yet available. Ctrl+Q requests normal window closing,
