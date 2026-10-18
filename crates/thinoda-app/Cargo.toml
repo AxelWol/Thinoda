@@ -104,19 +104,22 @@ role = "viewer"
 
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
-languages = ["English", "German"]
+languages = ["English", "German", "Spanish", "French", "Danish", "Dutch", "Portuguese", "PortugueseBR", "Italian", "Polish"]
 display-language-selector = true
-# cargo-packager 0.11.8 has no built-in German strings for its custom controls.
-custom-language-file = { German = "../../assets/installer/German.nsh" }
+# Translate every custom control, independently of packager's built-in coverage.
+custom-language-file = { German = "../../assets/installer/German.nsh", Spanish = "../../assets/installer/Spanish.nsh", French = "../../assets/installer/French.nsh", Danish = "../../assets/installer/Danish.nsh", Dutch = "../../assets/installer/Dutch.nsh", Portuguese = "../../assets/installer/Portuguese.nsh", PortugueseBR = "../../assets/installer/PortugueseBR.nsh", Italian = "../../assets/installer/Italian.nsh", Polish = "../../assets/installer/Polish.nsh" }
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
+info-plist-path = "../../assets/installer/Info.plist"
 # Seal the complete bundle; the ARM64 linker's signature alone is invalid in a .app.
 # Ad-hoc signing does not provide Developer ID trust or Apple notarization.
 signing-identity = "-"
 
 [package.metadata.packager.deb]
 section = "editors"
+# AppImage also uses cargo-packager's Debian desktop-file generation.
+desktop-template = "../../assets/installer/thinoda.desktop"
 # winit/wgpu load most windowing/GPU libraries with dlopen. Native printing also
 # loads the host GTK 3 stack and its CUPS modules as a unit (including AppImage),
 # so these runtime libraries must be explicit (names valid on 22.04+).

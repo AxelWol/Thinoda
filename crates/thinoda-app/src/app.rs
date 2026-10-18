@@ -398,7 +398,7 @@ impl ThinodaApp {
             }
             Cmd::Open => {
                 let mut dlg = rfd::FileDialog::new().add_filter(
-                    "Mind maps",
+                    t("Mind maps"),
                     &Format::IMPORTABLE
                         .iter()
                         .flat_map(|f| f.extensions().iter().copied())
@@ -445,7 +445,7 @@ impl ThinodaApp {
                     .flat_map(|f| f.extensions().iter().copied())
                     .collect();
                 if let Some(f) = rfd::FileDialog::new()
-                    .add_filter("Import", &exts)
+                    .add_filter(t("Import"), &exts)
                     .pick_file()
                 {
                     self.open_path(&f);
@@ -1193,7 +1193,7 @@ impl ThinodaApp {
         d.view.commit_edit(&mut d.doc);
         let ext = format.extensions()[0];
         let mut dlg = rfd::FileDialog::new()
-            .add_filter(format.label(), format.extensions())
+            .add_filter(t(format.label()), format.extensions())
             .set_file_name(format!("{}.{ext}", sanitize(&d.title())));
         if let Some(dir) = d.path.as_ref().and_then(|p| p.parent()) {
             dlg = dlg.set_directory(dir);

@@ -363,8 +363,12 @@ are retained. Requires accounts/certificates and permitted native hardware/runne
    collaboration on R10's storage/conflict contracts rather than embedding CRDTs early.
 2. Define a versioned sandboxed WASM importer/exporter API with resource limits,
    explicit capabilities, error reporting and compatibility tests.
-3. Add FR/ES/JA/ZH translations with font/IME/shortcut and text-expansion checks,
-   reusing the finalized UI strings and mixed-script support.
+3. ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs and the persistent language dropdown
+   are implemented alongside EN/DE/Auto, including offline help, application
+   messages, Windows installer controls, macOS bundle declarations and Linux
+   desktop descriptions. Shared catalogs ship in all architecture builds; native
+   system controls keep OS translations. JA/ZH remain planned, requiring
+   font/IME/shortcut and text-expansion checks before advertising support.
 
 **Exit:** deterministic multi-client convergence and offline-rejoin tests, isolated
 plugin fault/limit tests, and native localization checks. A web/mobile companion

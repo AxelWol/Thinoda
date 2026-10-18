@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from verify_macos_packages import ARCHITECTURES, run, verify, verify_app
+from verify_macos_packages import ARCHITECTURES, LOCALIZATIONS, run, verify, verify_app
 
 
 class CommandTests(unittest.TestCase):
@@ -35,6 +35,8 @@ class CommandTests(unittest.TestCase):
                     plistlib.dump({
                         "CFBundleIdentifier": "io.github.axelwol.thinoda",
                         "CFBundleExecutable": "thinoda",
+                        "CFBundleDevelopmentRegion": "en",
+                        "CFBundleLocalizations": LOCALIZATIONS,
                     }, stream)
                 command.reset_mock()
                 verify_app(app, architecture)
@@ -42,6 +44,13 @@ class CommandTests(unittest.TestCase):
                     "lipo", str(contents / "MacOS" / "thinoda"),
                     "-verify_arch", architecture,
                 )
+                with (contents / "Info.plist").open("rb") as stream:
+                    info = plistlib.load(stream)
+                del info["CFBundleLocalizations"]
+                with (contents / "Info.plist").open("wb") as stream:
+                    plistlib.dump(info, stream)
+                with self.assertRaisesRegex(ValueError, "bundle localizations"):
+                    verify_app(app, architecture)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Requires native macOS signing tools")
@@ -64,6 +73,8 @@ class NativeSignatureTests(unittest.TestCase):
                 "CFBundleName": "Thinoda",
                 "CFBundleVersion": "1",
                 "CFBundlePackageType": "APPL",
+                "CFBundleDevelopmentRegion": "en",
+                "CFBundleLocalizations": LOCALIZATIONS,
             }, stream)
         source = root / "main.c"
         source.write_text("int main(void) { return 0; }\n")

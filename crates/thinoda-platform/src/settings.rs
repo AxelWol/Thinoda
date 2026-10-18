@@ -25,6 +25,47 @@ pub enum Language {
     Auto,
     English,
     German,
+    Spanish,
+    French,
+    Danish,
+    Dutch,
+    Portuguese,
+    PortugueseBrazil,
+    Italian,
+    Polish,
+}
+
+impl Language {
+    pub const ALL: [Self; 11] = [
+        Self::Auto,
+        Self::English,
+        Self::German,
+        Self::Spanish,
+        Self::French,
+        Self::Danish,
+        Self::Dutch,
+        Self::Portuguese,
+        Self::PortugueseBrazil,
+        Self::Italian,
+        Self::Polish,
+    ];
+
+    /// Autonyms remain recognizable even when the current UI language is unfamiliar.
+    pub fn native_name(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::English => "English",
+            Self::German => "Deutsch",
+            Self::Spanish => "Español",
+            Self::French => "Français",
+            Self::Danish => "Dansk",
+            Self::Dutch => "Nederlands",
+            Self::Portuguese => "Português (Portugal)",
+            Self::PortugueseBrazil => "Português (Brasil)",
+            Self::Italian => "Italiano",
+            Self::Polish => "Polski",
+        }
+    }
 }
 
 /// A recent document, optionally pinned above ordinary recents.
