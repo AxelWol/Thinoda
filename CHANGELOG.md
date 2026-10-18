@@ -11,6 +11,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.3.1](https://github.com/AxelWol/Thinoda/compare/v0.3.0...v0.3.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* label German installer shortcut and maintenance controls ([557db7f](https://github.com/AxelWol/Thinoda/commit/557db7fd7c8d28ce2ec99689b11997eea7181117))
+
 ## [0.3.0](https://github.com/AxelWol/Thinoda/compare/v0.2.1...v0.3.0) (2026-10-18)
 
 
