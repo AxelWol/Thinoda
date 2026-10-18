@@ -118,6 +118,7 @@ pub struct MapView {
     pub zoom: f32,
     pub selection: Vec<TopicId>,
     pub selected_object: Option<ObjectSelection>,
+    pub context_marker: Option<(TopicId, usize)>,
     /// Source topic while the user is picking the target of a new relationship.
     pub relationship_from: Option<TopicId>,
     pub relationship_handle_labels: [String; 4],
@@ -151,6 +152,7 @@ impl Default for MapView {
             zoom: 1.0,
             selection: Vec::new(),
             selected_object: None,
+            context_marker: None,
             relationship_from: None,
             relationship_handle_labels: [
                 "Relationship start",
@@ -207,6 +209,73 @@ impl MapView {
 
     pub fn primary(&self) -> Option<TopicId> {
         self.selection.last().copied()
+    }
+
+    /// Screen-space symbol bounds in the current rendered document, for instance affordances.
+    pub fn symbol_rect(&self, doc: &Document, id: TopicId, index: usize) -> Option<Rect> {
+        let cache = self.cache.as_ref()?;
+        if cache.key.0 != doc.state_id()
+            || cache.key.1 != doc.active_index()
+            || cache.key.2 != self.dark
+        {
+            return None;
+        }
+        cache
+            .layout
+            .topics
+            .get(&id)?
+            .markers
+            .get(index)
+            .map(|m| self.xf().rect(m.1))
+    }
+
+    /// Document paint layers at the marker center (selection outlines do not fill topics).
+    pub fn symbol_background(
+        &self,
+        doc: &Document,
+        id: TopicId,
+        index: Option<usize>,
+    ) -> thinoda_core::Color {
+        use thinoda_core::{
+            Color,
+            theme::{Theme, resolve_style},
+        };
+        let sheet = doc.sheet();
+        let mut bg = Theme::for_settings(&sheet.theme).background(&sheet.theme, self.dark);
+        if let Some(cache) = &self.cache
+            && cache.key.0 == doc.state_id()
+            && cache.key.1 == doc.active_index()
+            && cache.key.2 == self.dark
+            && let Some(topic) = cache.layout.topics.get(&id)
+        {
+            let point = index
+                .and_then(|i| topic.markers.get(i).map(|m| m.1.center()))
+                .unwrap_or(topic.rect.center());
+            for boundary in &cache.layout.boundaries {
+                if boundary.rect.contains(point) {
+                    let selected =
+                        self.selected_object == Some(ObjectSelection::Boundary(boundary.id));
+                    let c = if selected {
+                        self.accent
+                    } else {
+                        sheet
+                            .boundaries
+                            .iter()
+                            .find(|b| b.id == boundary.id)
+                            .and_then(|b| b.color)
+                            .map(color32)
+                            .unwrap_or(Color32::from_rgb(0x8A, 0x9B, 0xB0))
+                    }
+                    .gamma_multiply(0.12)
+                    .to_srgba_unmultiplied();
+                    bg = Color::rgba(c[0], c[1], c[2], c[3]).over(bg);
+                }
+            }
+        }
+        resolve_style(sheet, id, self.dark)
+            .fill
+            .map(|fill| fill.over(bg))
+            .unwrap_or(bg)
     }
 
     /// Screen-space bounds of the primary selected topic in the last rendered layout.
@@ -879,8 +948,17 @@ impl MapCanvas {
             && !over_handle
             && let Some(p) = response.interact_pointer_pos()
         {
+            view.context_marker = None;
             view.commit_edit(doc);
             if let Some(t) = layout.hit_test(view.xf().sheet(p)) {
+                let point = view.xf().sheet(p);
+                view.context_marker = layout.topics.get(&t).and_then(|topic| {
+                    topic
+                        .markers
+                        .iter()
+                        .position(|(_, r)| r.contains(point))
+                        .map(|index| (t, index))
+                });
                 if !view.selection.contains(&t) {
                     view.select_only(t);
                 }
@@ -1454,6 +1532,102 @@ mod tests {
                 },
                 State { doc, view },
             )
+    }
+
+    #[test]
+    fn symbol_background_composes_theme_boundary_selection_and_explicit_fill() {
+        use thinoda_core::{Color, theme::Theme};
+        for dark in [false, true] {
+            let mut h = harness();
+            let (child, boundary) = {
+                let state = h.state_mut();
+                let mut sheet = Sheet::new("Colors", "Root");
+                sheet.theme.background = Some(Color::rgba(220, 20, 40, 64));
+                let child = sheet.insert_child(sheet.root, "Child").unwrap();
+                sheet
+                    .toggle_marker_color(&[child], "month-jan", Some(Color::BLACK))
+                    .unwrap();
+                sheet.topic_mut(child).unwrap().style.fill = Some(Color::rgba(10, 30, 200, 128));
+                let boundary = sheet.add_boundary(&[child]).unwrap();
+                sheet.boundaries[0].color = Some(Color::rgba(20, 190, 50, 180));
+                state.doc = Document::new(Workbook::new(sheet));
+                state.view = MapView::default();
+                state.view.dark = dark;
+                state.view.select_only(child);
+                (child, boundary)
+            };
+            h.run_steps(4);
+            for selected in [false, true] {
+                if selected {
+                    h.state_mut()
+                        .view
+                        .select_object(ObjectSelection::Boundary(boundary));
+                    h.run_steps(3);
+                }
+                let state = h.state();
+                let sheet = state.doc.sheet();
+                let base = Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+                assert_eq!(base.a, 255);
+                let overlay = if selected {
+                    state.view.accent
+                } else {
+                    color32(sheet.boundaries[0].color.unwrap())
+                }
+                .gamma_multiply(0.12)
+                .to_srgba_unmultiplied();
+                let expected = Color::rgba(10, 30, 200, 128)
+                    .over(Color::rgba(overlay[0], overlay[1], overlay[2], overlay[3]).over(base));
+                assert_eq!(
+                    state.view.symbol_background(&state.doc, child, Some(0)),
+                    expected
+                );
+                assert!(Color::highest_contrast_on(expected).contrast_on(expected) >= 4.5);
+            }
+        }
+    }
+
+    #[test]
+    fn symbol_context_hit_targets_one_instance_at_different_zooms() {
+        use thinoda_core::Color;
+        for zoom in [0.5, 1.0, 2.0] {
+            let mut h = harness();
+            let root = h.state().doc.sheet().root;
+            {
+                let state = h.state_mut();
+                state
+                    .doc
+                    .edit_sheet("Symbols", |sheet| {
+                        sheet.toggle_marker_color(&[root], "priority-1", Some(Color::BLACK))?;
+                        sheet.toggle_marker_color(&[root], "flag-red", Some(Color::WHITE))
+                    })
+                    .unwrap();
+                state.view.set_zoom(zoom);
+            }
+            h.run_steps(4);
+            let state = h.state();
+            let point = state
+                .view
+                .symbol_rect(&state.doc, root, 1)
+                .unwrap()
+                .center();
+            click_at(&mut h, point, PointerButton::Secondary);
+            assert_eq!(h.state().view.context_marker, Some((root, 1)));
+            let state = h.state_mut();
+            apply_action(
+                &mut state.doc,
+                &mut state.view,
+                Action::RemoveMarker(root, 1),
+            )
+            .unwrap();
+            assert_eq!(
+                state.doc.sheet().topic(root).unwrap().markers,
+                ["priority-1"]
+            );
+            assert_eq!(
+                state.doc.sheet().topic(root).unwrap().marker_colors[&0],
+                Color::BLACK
+            );
+        }
     }
 
     #[test]

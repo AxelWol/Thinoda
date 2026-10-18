@@ -5,6 +5,23 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
+## P1 — Symbol colors and contrast (implemented; awaiting review/integration)
+- Add per-instance colors to the existing Symbols insertion popover and sidebar,
+  including editing existing symbols and a localized, keyboard-accessible
+  right-click Remove Symbol action targeting only that instance.
+- Preserve legacy appearance, native persistence, clipboard and undo/redo.
+  Audit rendering, printing and interchange; document unsupported format fields
+  explicitly rather than silently discarding colors.
+- Show WCAG contrast against the composited topic background in light/dark mode:
+  graphical symbols require 3:1, normal-size month/week text 4.5:1. Offer an
+  explicit correction without automatically changing documents. Localize all
+  controls and cover persistence, targeting, contrast and output with tests.
+- Implementation includes native/clipboard/XMind-payload persistence, canvas and
+  visual export/print rendering, per-instance editors and export-loss confirmation.
+  EN/DE light/dark UI and model/output regressions are covered. Additional-locale
+  catalog rows target localization PR29; combine the catalog additions when
+  integrating that independent PR, without discarding either set of rows.
+
 ## Recently completed
 - Help > About > Legal documents now embeds the full unchanged licence,
   generated third-party notices and Impressum for offline reading and copying.

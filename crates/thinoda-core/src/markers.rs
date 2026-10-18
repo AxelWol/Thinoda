@@ -1,5 +1,52 @@
 //! Marker catalog (XMind compatible marker ids rendered with emoji / symbols).
 
+use crate::Color;
+
+pub fn contrast_threshold(id: &str) -> f32 {
+    if matches!(group_of(id), "month" | "week") {
+        4.5
+    } else {
+        3.0
+    }
+}
+
+/// Legacy primary ink. Explicit colors override this, not the category or progress.
+pub fn default_color(id: &str) -> Color {
+    let named = |name| match name {
+        "red" => Color::rgb(0xE5, 0x48, 0x4D),
+        "orange" => Color::rgb(0xF5, 0x8A, 0x1F),
+        "yellow" => Color::rgb(0xF2, 0xC0, 0x1E),
+        "green" => Color::rgb(0x3C, 0xB3, 0x71),
+        "blue" => Color::rgb(0x2E, 0x7C, 0xF6),
+        "purple" => Color::rgb(0x8E, 0x5C, 0xE6),
+        _ => Color::rgb(0x8A, 0x8F, 0x98),
+    };
+    let (group, rest) = id.split_once('-').unwrap_or((id, ""));
+    match group {
+        "priority" => {
+            let n = rest.parse::<usize>().unwrap_or(1);
+            named(["red", "orange", "blue", "green", "purple"][(n.saturating_sub(1)) % 5])
+        }
+        "task" => named("green"),
+        "flag" | "star" => named(rest),
+        _ => Color::rgb(0x44, 0x4C, 0x58),
+    }
+}
+
+pub fn task_fraction(id: &str) -> f32 {
+    match id.strip_prefix("task-").unwrap_or(id) {
+        "start" => 0.0,
+        "oct" => 0.125,
+        "quarter" => 0.25,
+        "3oct" => 0.375,
+        "half" => 0.5,
+        "5oct" => 0.625,
+        "3quar" => 0.75,
+        "7oct" => 0.875,
+        _ => 1.0,
+    }
+}
+
 /// A marker group. Only one marker per group can be attached to a topic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarkerGroup {

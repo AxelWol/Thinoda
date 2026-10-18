@@ -1,0 +1,2 @@
+Default symbol color|Cor padrão do símbolo
+Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.|As exportações editáveis perdem as cores dos símbolos, exceto no formato Thinoda e nos arquivos XMind inalterados reabertos no Thinoda. O próprio XMind mostra ícones padrão; alterações em outros aplicativos podem eliminar as cores personalizadas.

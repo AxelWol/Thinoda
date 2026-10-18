@@ -16,7 +16,7 @@ fn esc(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 fn col(c: Color) -> String {
-    format!("#{:02X}{:02X}{:02X}", c.r, c.g, c.b)
+    c.to_hex()
 }
 fn xy(p: Vec2) -> String {
     format!("{:.2},{:.2}", p.x, p.y)
@@ -49,7 +49,19 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
             .find(|x| x.id == boundary.id)
             .and_then(|x| x.title.as_deref())
             .unwrap_or("");
-        out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"10\" fill=\"none\" stroke=\"#999999\" stroke-dasharray=\"5 4\"/>",r.min.x,r.min.y,r.size.x,r.size.y));
+        let color = s
+            .boundaries
+            .iter()
+            .find(|x| x.id == boundary.id)
+            .and_then(|b| b.color)
+            .unwrap_or(Color::rgb(0x8A, 0x9B, 0xB0));
+        let fill = Color::rgba(
+            color.r,
+            color.g,
+            color.b,
+            (color.a as f32 * 0.12).round() as u8,
+        );
+        out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"10\" fill=\"{}\" stroke=\"{}\" stroke-dasharray=\"5 4\"/>",r.min.x,r.min.y,r.size.x,r.size.y,col(fill),col(color)));
         if !title.is_empty() {
             out.push_str(&format!(
                 "<text x=\"{:.2}\" y=\"{:.2}\" fill=\"#777777\" font-size=\"12\">{}</text>",
@@ -202,6 +214,10 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
             ),
         };
         if style.shape == TopicShape::None || style.shape == TopicShape::Underline {
+            if style.fill.is_some() {
+                out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{fill}\"/>",
+                    r.min.x, r.min.y, r.size.x, r.size.y));
+            }
             out.push_str(&format!(
                 "{shape} fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{sw:.2}\"/>",
             ));
@@ -228,7 +244,11 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
             out.push_str(&format!("<text x=\"{:.2}\" y=\"{y:.2}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\">{}</text>",tl.title_rect.center().x,esc(font),style.font_size,col(style.text_color),esc(&line)));
             y += line_h;
         }
-        for (mark, mr) in &tl.markers {
+        for (index, (mark, mr)) in tl.markers.iter().enumerate() {
+            if let Some(color) = s.topics[id].marker_colors.get(&index) {
+                out.push_str(&colored_marker_svg(mark, *mr, *color));
+                continue;
+            }
             let g = thinoda_core::markers::glyph(mark);
             out.push_str(&format!(
                 "<text x=\"{:.2}\" y=\"{:.2}\" font-size=\"14\">{}</text>",
@@ -243,6 +263,89 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
     }
     out.push_str("</svg>");
     Ok(out)
+}
+
+fn colored_marker_svg(id: &str, r: thinoda_core::Rect, color: Color) -> String {
+    use thinoda_core::markers;
+    let c = r.center();
+    let rad = r.size.x.min(r.size.y) / 2.0;
+    let ink = col(color);
+    let detail = col(Color::highest_contrast_on(color.over(Color::WHITE)));
+    let text = |value: &str, size: f32, fill: &str| {
+        format!(
+            "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-family=\"Segoe UI, sans-serif\" font-size=\"{}\" fill=\"{}\">{}</text>",
+            c.x,
+            c.y,
+            size,
+            fill,
+            esc(value)
+        )
+    };
+    match markers::group_of(id) {
+        "priority" => format!(
+            "<circle cx=\"{}\" cy=\"{}\" r=\"{rad}\" fill=\"{ink}\"/>{}",
+            c.x,
+            c.y,
+            text(
+                id.strip_prefix("priority-").unwrap_or("1"),
+                rad * 1.3,
+                &detail
+            )
+        ),
+        "task" => {
+            let fraction = markers::task_fraction(id);
+            let mut svg = format!(
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{ink}\" stroke-width=\"1.2\"/>",
+                c.x,
+                c.y,
+                rad - 0.5,
+                if fraction >= 1.0 { &ink } else { &detail }
+            );
+            if fraction >= 1.0 {
+                svg.push_str(&format!("<polyline points=\"{} {} {}\" fill=\"none\" stroke=\"{detail}\" stroke-width=\"1.5\"/>",
+                    xy(c + Vec2::new(-rad * 0.45, 0.0)), xy(c + Vec2::new(-rad * 0.1, rad * 0.35)),
+                    xy(c + Vec2::new(rad * 0.5, -rad * 0.35))));
+            } else if fraction > 0.0 {
+                let steps = (24.0 * fraction).ceil() as usize + 1;
+                let mut points = vec![xy(c)];
+                for i in 0..=steps {
+                    let angle = -std::f32::consts::FRAC_PI_2
+                        + std::f32::consts::TAU * fraction * i as f32 / steps as f32;
+                    points.push(xy(c + Vec2::new(angle.cos(), angle.sin()) * (rad - 1.5)));
+                }
+                svg.push_str(&format!(
+                    "<polygon points=\"{}\" fill=\"{ink}\"/>",
+                    points.join(" ")
+                ));
+            }
+            svg
+        }
+        "flag" => {
+            let x = r.min.x + r.size.x * 0.25;
+            format!(
+                "<path d=\"M {x},{} L {x},{}\" stroke=\"{ink}\" stroke-width=\"1.4\"/><polygon points=\"{x},{} {},{} {x},{}\" fill=\"{ink}\"/>",
+                r.min.y + 1.0,
+                r.max().y - 1.0,
+                r.min.y + 1.5,
+                r.max().x - 1.0,
+                r.min.y + r.size.y * 0.3,
+                r.min.y + r.size.y * 0.6
+            )
+        }
+        "star" => {
+            let points = (0..10)
+                .map(|i| {
+                    let angle =
+                        -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+                    let radius = if i % 2 == 0 { rad } else { rad * 0.45 };
+                    xy(c + Vec2::new(angle.cos(), angle.sin()) * radius)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("<polygon points=\"{points}\" fill=\"{ink}\"/>")
+        }
+        _ => text(markers::glyph(id), rad * 1.6, &ink),
+    }
 }
 pub(crate) fn raster(
     w: &Workbook,

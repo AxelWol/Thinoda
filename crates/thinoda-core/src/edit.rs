@@ -406,10 +406,69 @@ impl Sheet {
     }
 
     pub fn toggle_marker(&mut self, ids: &[TopicId], marker: &str) -> EditResult<()> {
+        self.toggle_marker_color(ids, marker, None)
+    }
+
+    pub fn toggle_marker_color(
+        &mut self,
+        ids: &[TopicId],
+        marker: &str,
+        color: Option<Color>,
+    ) -> EditResult<()> {
         for id in ids {
             self.require(*id)?;
-            crate::markers::toggle(&mut self.topic_mut(*id).unwrap().markers, marker);
         }
+        for id in ids {
+            let topic = self.topic(*id).unwrap();
+            if let Some(index) = topic.markers.iter().position(|m| m == marker) {
+                self.remove_marker(*id, index)?;
+            } else {
+                let index = topic
+                    .markers
+                    .iter()
+                    .position(|m| crate::markers::group_of(m) == crate::markers::group_of(marker))
+                    .unwrap_or(topic.markers.len());
+                let topic = self.topic_mut(*id).unwrap();
+                crate::markers::toggle(&mut topic.markers, marker);
+                topic.marker_colors.remove(&index);
+                if let Some(color) = color {
+                    topic.marker_colors.insert(index, color);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_marker_color(
+        &mut self,
+        id: TopicId,
+        index: usize,
+        color: Option<Color>,
+    ) -> EditResult<()> {
+        self.require(id)?;
+        let topic = self.topic_mut(id).unwrap();
+        if index >= topic.markers.len() {
+            return Err(EditError::NotFound);
+        }
+        if let Some(color) = color {
+            topic.marker_colors.insert(index, color);
+        } else {
+            topic.marker_colors.remove(&index);
+        }
+        Ok(())
+    }
+
+    pub fn remove_marker(&mut self, id: TopicId, index: usize) -> EditResult<()> {
+        self.require(id)?;
+        let topic = self.topic_mut(id).unwrap();
+        if index >= topic.markers.len() {
+            return Err(EditError::NotFound);
+        }
+        topic.markers.remove(index);
+        topic.marker_colors = std::mem::take(&mut topic.marker_colors)
+            .into_iter()
+            .filter_map(|(i, c)| (i != index).then_some((if i > index { i - 1 } else { i }, c)))
+            .collect();
         Ok(())
     }
 

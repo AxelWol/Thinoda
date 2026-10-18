@@ -156,6 +156,7 @@ pub struct Services {
 
 #[derive(Default)]
 pub struct Dialogs {
+    pub symbol_export: Option<(usize, Format)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
@@ -184,6 +185,7 @@ pub struct ThinodaApp {
     pub home_return_to: Option<String>,
     /// Explicit topic-style overrides, shared by documents for this app session.
     pub style_clipboard: Option<thinoda_core::TopicStyle>,
+    pub symbol_color: Option<thinoda_core::Color>,
     pub sheet_paste_request: Option<(Instant, String)>,
     pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
@@ -252,6 +254,7 @@ impl ThinodaApp {
             template_category: None,
             home_return_to: None,
             style_clipboard: None,
+            symbol_color: None,
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
@@ -489,7 +492,21 @@ impl ThinodaApp {
             }
             Cmd::Labels => self.begin_labels(ctx),
             Cmd::Print => self.begin_print(ctx),
-            Cmd::Export(format) => self.export(format),
+            Cmd::Export(format) => {
+                if self.doc().is_some_and(|d| {
+                    thinoda_io::symbol_color_loss(d.doc.workbook(), format)
+                        || (format == Format::XMind
+                            && d.doc
+                                .workbook()
+                                .sheets
+                                .iter()
+                                .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty())))
+                }) {
+                    self.dialogs.symbol_export = Some((self.active, format));
+                } else {
+                    self.export(format, false);
+                }
+            }
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
@@ -1188,7 +1205,7 @@ impl ThinodaApp {
         }
     }
 
-    fn export(&mut self, format: Format) {
+    pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
         let dark = self
             .applied
             .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
@@ -1205,6 +1222,7 @@ impl ThinodaApp {
         }
         let Some(path) = dlg.save_file() else { return };
         let opts = ExportOptions {
+            allow_symbol_color_loss,
             dark: dark
                 && matches!(
                     format,

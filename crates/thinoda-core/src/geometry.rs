@@ -176,7 +176,7 @@ impl Color {
     pub fn luminance(self) -> f32 {
         fn ch(c: u8) -> f32 {
             let c = c as f32 / 255.0;
-            if c <= 0.03928 {
+            if c <= 0.04045 {
                 c / 12.92
             } else {
                 ((c + 0.055) / 1.055).powf(2.4)
@@ -189,6 +189,38 @@ impl Color {
     pub fn contrasting_text(self) -> Color {
         if self.luminance() > 0.45 {
             Color::rgb(0x1F, 0x23, 0x28)
+        } else {
+            Color::WHITE
+        }
+    }
+
+    /// Source-over alpha compositing in sRGB, matching the document paint layers.
+    pub fn over(self, background: Color) -> Color {
+        let a = self.a as f32 / 255.0;
+        let b = background.a as f32 / 255.0 * (1.0 - a);
+        let alpha = a + b;
+        if alpha == 0.0 {
+            return Color::TRANSPARENT;
+        }
+        let channel = |fg: u8, bg: u8| ((fg as f32 * a + bg as f32 * b) / alpha).round() as u8;
+        Color::rgba(
+            channel(self.r, background.r),
+            channel(self.g, background.g),
+            channel(self.b, background.b),
+            (alpha * 255.0).round() as u8,
+        )
+    }
+
+    /// WCAG luminance contrast. Background must already be composited to opaque.
+    pub fn contrast_on(self, background: Color) -> f32 {
+        let fg = self.over(background).luminance();
+        let bg = background.luminance();
+        (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05)
+    }
+
+    pub fn highest_contrast_on(background: Color) -> Color {
+        if Color::BLACK.contrast_on(background) >= Color::WHITE.contrast_on(background) {
+            Color::BLACK
         } else {
             Color::WHITE
         }

@@ -133,6 +133,8 @@ impl Format {
 /// Rendering settings. `sheet: None` selects the active sheet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportOptions {
+    /// Explicit caller acknowledgement for editable formats without symbol-color fields.
+    pub allow_symbol_color_loss: bool,
     pub sheet: Option<usize>,
     pub dark: bool,
     pub scale: f32,
@@ -142,6 +144,7 @@ pub struct ExportOptions {
 impl Default for ExportOptions {
     fn default() -> Self {
         Self {
+            allow_symbol_color_loss: false,
             sheet: None,
             dark: false,
             scale: 1.0,
@@ -246,6 +249,11 @@ pub fn export_bytes(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
+    if symbol_color_loss(book, format) && !opts.allow_symbol_color_loss {
+        return Err(IoError::Invalid(
+            "this editable format cannot preserve symbol colors; use Thinoda, XMind, or a visual export, or explicitly acknowledge color loss with allow_symbol_color_loss".into(),
+        ));
+    }
     Ok(match format {
         Format::Thinoda => formats::native_export(book)?,
         Format::XMind => xmind::export(book)?,
@@ -263,6 +271,18 @@ pub fn export_bytes(
         Format::Csv => office::csv(book, opts),
         _ => unreachable!(),
     })
+}
+
+/// Formats without per-symbol color support. XMind retains the Thinoda metadata payload,
+/// but its standard icons do not display custom colors in other applications.
+pub fn symbol_color_loss(book: &Workbook, format: Format) -> bool {
+    !matches!(
+        format,
+        Format::Thinoda | Format::XMind | Format::Svg | Format::Png | Format::Jpeg | Format::Pdf
+    ) && book
+        .sheets
+        .iter()
+        .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty()))
 }
 /// Atomically write an exported document next to its destination.
 pub fn export_file(
