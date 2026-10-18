@@ -90,6 +90,18 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   installed a process-global hook that captured other tests' panics; it now runs
   in an isolated child process, and single-instance re-election tolerates a
   short lock hand-off window.
+- Windows system printer preview: the modern OS dialog receives the actual
+  single-page bitmap through WinRT PrintManagerInterop, a native document source
+  and DXGI preview surfaces, replacing the missing-preview PrintDlg/GDI path.
+  The same Direct2D drawing supplies native output with OS-selected page and
+  imageable bounds. Printer choice/advanced options, modal ownership, fixed-page
+  aspect ratio and cancellation/submission/error distinctions remain intact.
+  Job-free real-SDK/WARP pixel readback, in-memory XPS page output and retained
+  callback lifecycle tests cover the bridge; Windows x64/ARM64 CI runs them.
+  macOS/Linux backends and existing translations are unchanged, not claimed as
+  newly delivered preview parity. See [native printing](NATIVE-PRINTING.md).
+  No test print jobs, printer configuration changes, external viewer handoff or
+  forced classic dialog. Independent of legal/localization work; WinGet paused.
 - Windows executable embeds the Thinoda icon and version info (Explorer/taskbar).
 - The Outliner now surfaces controls for adding siblings/children, editing topics,
   moving and reparenting topics, deleting a subtree or keeping children, with
@@ -417,6 +429,11 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   Verify each repository's current maintenance, license, runtime requirements and
   actual supported file versions before integration. Assign implementation to the
   relevant interoperability, typography, sharing or companion package after review.
+- P1 macOS native system-preview follow-up: connect the document to AppKit's
+  native preview lifecycle. The existing standalone `NSPrintPanel` has no document
+  preview; preserving it is not delivery of cross-platform native-preview parity.
+  Retain reliable cancellation versus failure reporting when changing that lifecycle.
+  Linux GTK preview behavior remains desktop/backend-dependent and unchanged.
 - P1 Print (Ctrl+P) with page setup and fit-to-page
   - Reference dialog: left live page preview with page count; right scrollable,
     grouped settings; fixed Cancel/Print footer.

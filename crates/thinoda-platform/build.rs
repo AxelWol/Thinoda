@@ -4,8 +4,19 @@ fn main() {
     let mut build = cc::Build::new();
     match target.as_str() {
         "windows" => {
-            build.file("native/print_windows.c");
-            for library in ["comdlg32", "gdi32", "user32"] {
+            build
+                .cpp(true)
+                .std("c++20")
+                .file("native/print_windows.cpp")
+                .flag_if_supported("/EHsc");
+            for library in [
+                "windowsapp",
+                "d3d11",
+                "d2d1",
+                "windowscodecs",
+                "ole32",
+                "user32",
+            ] {
                 println!("cargo:rustc-link-lib={library}");
             }
         }

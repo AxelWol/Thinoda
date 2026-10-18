@@ -1,5 +1,7 @@
 """Job-free native bridge integration checks.
 
+Windows compiles/links real SDK contracts and exercises DXGI preview rendering
+and lifecycle without opening a dialog, selecting a printer or creating a job.
 macOS compiles/links against the installed SDK for Intel and ARM, without loading
 the result. Linux requires GTK 3 development files and cc; the cancellation check
 additionally requires xvfb-run. No test accepts a print dialog or submits a job.
@@ -9,6 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -17,6 +20,40 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "crates/thinoda-platform/native/print_linux.c"
+
+
+def compile_windows_probe(directory: Path, *, ui: bool = False) -> Path:
+    vswhere = (
+        Path(os.environ["ProgramFiles(x86)"])
+        / "Microsoft Visual Studio/Installer/vswhere.exe"
+    )
+    installation = subprocess.check_output(
+        [str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+        text=True,
+    ).strip()
+    if not installation:
+        raise RuntimeError("MSVC installation required for native printing")
+    setup = Path(installation) / "VC/Auxiliary/Build/vcvarsall.bat"
+    architecture = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    source = ROOT / "crates/thinoda-platform/native/tests/print_windows_test.cpp"
+    executable = directory / ("preview-ui.exe" if ui else "preview-test.exe")
+    define = "/DTHINODA_PREVIEW_UI_PROBE" if ui else ""
+    command = (
+        f'call "{setup}" {architecture} >nul && cl /nologo /std:c++20 '
+        f'/EHsc /W4 /WX /permissive- /MD {define} "{source}" '
+        f'/Fo"{directory / "preview-test.obj"}" /Fe"{executable}" '
+        'windowsapp.lib d3d11.lib d2d1.lib windowscodecs.lib ole32.lib user32.lib'
+    )
+    subprocess.run(command, shell=True, check=True, timeout=120)
+    return executable
+
+
+@unittest.skipUnless(sys.platform == "win32", "requires Windows and the real Windows SDK")
+class WindowsNativePrintingTests(unittest.TestCase):
+    def test_job_free_preview_rendering_and_lifecycle(self):
+        with tempfile.TemporaryDirectory(prefix="thinoda-win-preview-") as directory:
+            executable = compile_windows_probe(Path(directory))
+            subprocess.run([str(executable)], check=True, timeout=60)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "requires macOS and the real Apple SDK")

@@ -13,6 +13,9 @@ static int print_error(char *error, size_t len, const char *message) {
 /* Physical, uniform fit of the entire preview page inside a printable rectangle.
  * Margins are already part of the pixels. Never independently stretch X and Y.
  * Units can be points, mm or inches; both axes must use the same physical unit. */
+#ifdef __cplusplus
+extern "C"
+#endif
 int thinoda_print_placement(double page_w, double page_h, double area_w, double area_h,
                            double out[4]) {
     if (!isfinite(page_w) || !isfinite(page_h) || !isfinite(area_w) || !isfinite(area_h)
