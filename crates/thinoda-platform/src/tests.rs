@@ -2,6 +2,7 @@ use crate::{
     Paths,
     cloud::*,
     crash::*,
+    credentials::*,
     fs::{atomic_write, backup_path, changed_since, conflict_copies, fingerprint},
     recovery::*,
     settings::*,
@@ -10,7 +11,7 @@ use crate::{
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use tempfile::TempDir;
 use thinoda_core::Workbook;
@@ -41,6 +42,38 @@ fn create(path: impl AsRef<Path>) {
     fs::write(path, b"test").unwrap();
 }
 
+#[derive(Default)]
+struct MockCredentials {
+    password: Mutex<Option<String>>,
+    fail: bool,
+    fail_delete: bool,
+}
+
+impl CredentialStore for MockCredentials {
+    fn get_password(&self) -> std::result::Result<Option<String>, String> {
+        if self.fail {
+            return Err("credential store locked".into());
+        }
+        Ok(self.password.lock().unwrap().clone())
+    }
+
+    fn set_password(&self, password: &str) -> std::result::Result<(), String> {
+        if self.fail {
+            return Err("credential store locked".into());
+        }
+        *self.password.lock().unwrap() = Some(password.to_owned());
+        Ok(())
+    }
+
+    fn delete_password(&self) -> std::result::Result<(), String> {
+        if self.fail || self.fail_delete {
+            return Err("credential store locked".into());
+        }
+        *self.password.lock().unwrap() = None;
+        Ok(())
+    }
+}
+
 #[test]
 fn directories_are_created_on_demand() {
     let dir = directory();
@@ -62,6 +95,175 @@ fn settings_defaults_and_empty_toml() {
     assert!(defaults.autosave && defaults.backup_on_save);
     assert!(!defaults.label_auto_sort);
     assert!((1..=2).contains(&defaults.recovery_interval_secs));
+}
+
+#[test]
+fn settings_store_api_key_outside_toml_and_restore_from_mock_store() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let credentials = MockCredentials::default();
+    let mut settings = Settings::default();
+    settings.ai.api_key = "test-secret".into();
+    settings
+        .save_with_credentials(&paths, &credentials)
+        .unwrap();
+
+    let toml = fs::read_to_string(paths.config_dir.join("settings.toml")).unwrap();
+    assert!(!toml.contains("test-secret"));
+    assert!(toml.contains("api_key_stored = true"));
+    assert_eq!(
+        credentials.password.lock().unwrap().as_deref(),
+        Some("test-secret")
+    );
+    assert!(!format!("{settings:?}").contains("test-secret"));
+
+    let loaded = Settings::load_with_credentials(&paths, &credentials).unwrap();
+    assert_eq!(loaded.settings.ai.api_key, "test-secret");
+    assert!(loaded.settings.ai.credentials_ready);
+}
+
+#[test]
+fn legacy_api_key_migrates_only_after_secure_store_write() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let settings_path = paths.config_dir.join("settings.toml");
+    fs::write(&settings_path, "[ai]\napi_key = \"legacy-secret\"\n").unwrap();
+
+    let credentials = MockCredentials::default();
+    let loaded = Settings::load_with_credentials(&paths, &credentials).unwrap();
+    assert!(loaded.warning.is_none());
+    assert_eq!(loaded.settings.ai.api_key, "legacy-secret");
+    assert!(loaded.settings.ai.api_key_stored && loaded.settings.ai.credentials_ready);
+    assert_eq!(
+        credentials.password.lock().unwrap().as_deref(),
+        Some("legacy-secret")
+    );
+    assert!(
+        !fs::read_to_string(settings_path)
+            .unwrap()
+            .contains("legacy-secret")
+    );
+}
+
+#[test]
+fn failed_legacy_migration_preserves_plaintext_and_blocks_ai_secret_use() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let settings_path = paths.config_dir.join("settings.toml");
+    fs::write(&settings_path, "[ai]\napi_key = \"legacy-secret\"\n").unwrap();
+
+    let credentials = MockCredentials {
+        fail: true,
+        ..MockCredentials::default()
+    };
+    let mut loaded = Settings::load_with_credentials(&paths, &credentials).unwrap();
+    assert!(loaded.warning.is_some());
+    assert!(loaded.credential_error.is_some());
+    assert_eq!(loaded.settings.ai.api_key, "legacy-secret");
+    assert!(!loaded.settings.ai.credentials_ready);
+    assert!(
+        fs::read_to_string(&settings_path)
+            .unwrap()
+            .contains("legacy-secret")
+    );
+    assert!(
+        loaded
+            .settings
+            .save_with_credentials(&paths, &credentials)
+            .is_err()
+    );
+    assert!(
+        fs::read_to_string(settings_path)
+            .unwrap()
+            .contains("legacy-secret")
+    );
+}
+
+#[test]
+fn clearing_secure_api_key_deletes_entry_and_persists_nonsecret_marker() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let credentials = MockCredentials::default();
+    let mut settings = Settings::default();
+    settings.ai.api_key = "test-secret".into();
+    settings
+        .save_with_credentials(&paths, &credentials)
+        .unwrap();
+
+    settings.ai.api_key.clear();
+    settings
+        .save_with_credentials(&paths, &credentials)
+        .unwrap();
+    assert_eq!(*credentials.password.lock().unwrap(), None);
+    assert!(!settings.ai.api_key_stored);
+    assert!(
+        !fs::read_to_string(paths.config_dir.join("settings.toml"))
+            .unwrap()
+            .contains("test-secret")
+    );
+}
+
+#[test]
+fn unavailable_store_preserves_saved_marker_without_deleting_unknown_secret() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let settings_path = paths.config_dir.join("settings.toml");
+    fs::write(&settings_path, "[ai]\napi_key_stored = true\n").unwrap();
+
+    let credentials = MockCredentials {
+        fail: true,
+        ..MockCredentials::default()
+    };
+    let mut loaded = Settings::load_with_credentials(&paths, &credentials).unwrap();
+    assert!(loaded.warning.is_some());
+    assert!(loaded.credential_error.is_some());
+    assert!(!loaded.settings.ai.credentials_ready);
+    assert!(loaded.settings.ai.api_key_stored);
+    loaded
+        .settings
+        .save_with_credentials(&paths, &credentials)
+        .unwrap();
+    assert!(loaded.settings.ai.api_key_stored);
+    assert!(!loaded.settings.ai.credentials_ready);
+}
+
+#[test]
+fn failed_secure_delete_preserves_saved_file_and_credential() {
+    let dir = directory();
+    let paths = paths(&dir);
+    paths.ensure().unwrap();
+    let settings_path = paths.config_dir.join("settings.toml");
+    fs::write(&settings_path, "[ai]\napi_key_stored = true\n").unwrap();
+    let credentials = MockCredentials {
+        password: Mutex::new(Some("test-secret".into())),
+        ..MockCredentials::default()
+    };
+    let mut settings = Settings::load_with_credentials(&paths, &credentials)
+        .unwrap()
+        .settings;
+    let original_toml = fs::read_to_string(&settings_path).unwrap();
+    settings.ai.api_key.clear();
+    let credentials = MockCredentials {
+        password: Mutex::new(Some("test-secret".into())),
+        fail_delete: true,
+        ..MockCredentials::default()
+    };
+
+    assert!(
+        settings
+            .save_with_credentials(&paths, &credentials)
+            .is_err()
+    );
+    assert_eq!(
+        credentials.password.lock().unwrap().as_deref(),
+        Some("test-secret")
+    );
+    assert_eq!(fs::read_to_string(settings_path).unwrap(), original_toml);
 }
 
 #[test]

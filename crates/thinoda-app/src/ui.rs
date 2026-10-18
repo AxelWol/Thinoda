@@ -2888,6 +2888,7 @@ impl ThinodaApp {
     fn settings_window(&mut self, ctx: &Context) {
         let mut open = true;
         let before = self.settings.clone();
+        let mut credentials_saved = false;
         egui::Window::new(t("Settings"))
             .open(&mut open)
             .default_width(440.0)
@@ -3038,7 +3039,7 @@ impl ThinodaApp {
                     });
                 }
                 if self.dialogs.settings_tab == SettingsTab::Ai {
-                    self.ai_settings_section(ui);
+                    credentials_saved = self.ai_settings_section(ui);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Cloud {
                     widgets::section(ui, t("Cloud"), true, |ui| {
@@ -3075,7 +3076,7 @@ impl ThinodaApp {
                     });
                 }
             });
-        if self.settings != before {
+        if self.settings != before && !credentials_saved {
             self.save_settings();
         }
         self.dialogs.settings = open;
