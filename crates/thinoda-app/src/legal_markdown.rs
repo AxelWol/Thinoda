@@ -146,6 +146,9 @@ fn text(ui: &mut Ui, value: &str, style: &InlineStyle, clicked: &mut Option<Stri
         );
     }
     if let Some(destination) = &style.link {
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::accesskit::Role::Link, ui.is_enabled(), value)
+        });
         let response = response.on_hover_text(destination);
         if response.clicked() {
             *clicked = Some(destination.clone());
