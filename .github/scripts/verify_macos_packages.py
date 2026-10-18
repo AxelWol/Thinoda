@@ -32,7 +32,7 @@ def verify_app(app: Path, architecture: str) -> None:
     if info["CFBundleIdentifier"] != "io.github.axelwol.thinoda":
         raise ValueError(f"Unexpected bundle identifier in {app}")
     executable = app / "Contents" / "MacOS" / info["CFBundleExecutable"]
-    run("lipo", "-verify_arch", architecture, str(executable))
+    run("lipo", str(executable), "-verify_arch", architecture)
     # Verify resources and Info.plist, not just the linker's Mach-O signature.
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app))
     if not (app / "Contents" / "_CodeSignature" / "CodeResources").is_file():

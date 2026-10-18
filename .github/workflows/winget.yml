@@ -33,6 +33,9 @@ concurrency:
 
 jobs:
   winget:
+    # Publishing is paused pending resolution of the WinGet submission issues.
+    # This also blocks reusable calls from release.yml, not only manual runs.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Check token
