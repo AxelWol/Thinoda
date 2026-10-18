@@ -56,7 +56,12 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   and malformed XMind JSON are covered. Oversized declared ZIP entries are
   rejected explicitly before decompression without allocating a large fixture.
   This is bounded regression coverage, not coverage-guided fuzzing or proof that
-  arbitrary inputs are safe; longer campaigns and dedicated fuzz targets stay open.
+  arbitrary inputs are safe; longer campaigns remain open.
+- Coverage-guided importer fuzzing: separate `cargo-fuzz` targets cover XMind,
+  FreeMind and OPML with original generated seeds and dictionaries. Linux CI runs
+  each target for 20 seconds with input, timeout, RSS and job-duration limits.
+  See [`fuzz/README.md`](../fuzz/README.md) for commands, dependency isolation
+  and limits; this smoke does not prove arbitrary inputs safe.
 - CPU layout benchmark: `thinoda-core` release example measures 10,000-topic balanced/
   wide maps with JSON p50/p95/max layout, undoable leaf rename and undo latency.
   Optional p95 budgets fail explicitly after preserving the report; CLI input
@@ -724,8 +729,9 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 
 ## AI
 - P1 Streaming responses (SSE) with live preview and cancel button
-- P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
-  Secret Service) instead of `settings.toml`
+- [x] P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
+  Secret Service) instead of `settings.toml` (implemented; legacy keys migrate only
+  after secure storage succeeds)
 - P2 Semantic search/clustering with an embedding model (e.g. `nomic-embed-text`)
 - P2 "Rewrite topic", translate branch, AI-assisted Pitch outline
 - P3 Prompt library editable by the user
@@ -821,7 +827,7 @@ to add XMind's own cloud account, billing or hosted AI service.
 ## Quality
 - P1 Visual regression tests (kittest snapshot images) per theme
 - P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca)
-- P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`)
+- [x] P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`; bounded CI smoke)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - P3 More UI languages (FR, ES, JA, ZH)
 - P2 Launching Thinoda again without files exits silently when an instance is

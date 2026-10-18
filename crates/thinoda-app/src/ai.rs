@@ -64,6 +64,8 @@ pub struct AiState {
     pub pending: Option<PendingAi>,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
+    /// Unsaved API key text; credentials are committed only on explicit save.
+    pub api_key_draft: Option<String>,
     /// Running "Test connection" request.
     pub test: Option<AiJob<Vec<String>>>,
     pub test_result: Option<Result<Vec<String>, String>>,
@@ -73,10 +75,24 @@ pub fn config(s: &AiSettings) -> AiConfig {
     AiConfig {
         base_url: s.base_url.clone(),
         model: s.model.clone(),
-        api_key: s.api_key.clone(),
+        api_key: if s.credentials_ready {
+            s.api_key.clone()
+        } else {
+            String::new()
+        },
         temperature: s.temperature,
         ..AiConfig::default()
     }
+}
+
+fn config_with_api_key(s: &AiSettings, api_key: &str) -> AiConfig {
+    let mut config = config(s);
+    config.api_key = if !s.credentials_ready && api_key == s.api_key {
+        String::new()
+    } else {
+        api_key.to_owned()
+    };
+    config
 }
 
 /// Topic path, children and subtree used as model context.
@@ -349,7 +365,15 @@ impl ThinodaApp {
     }
 
     /// AI section of the settings window.
-    pub fn ai_settings_section(&mut self, ui: &mut Ui) {
+    pub fn ai_settings_section(&mut self, ui: &mut Ui) -> bool {
+        let mut api_key_draft = self
+            .ai
+            .api_key_draft
+            .clone()
+            .unwrap_or_else(|| self.settings.ai.api_key.clone());
+        let mut save_api_key = false;
+        let mut clear_api_key = false;
+        let mut credentials_saved = false;
         widgets::section(ui, t("AI Assistant"), false, |ui| {
             let ai = &mut self.settings.ai;
             widgets::property_field(ui, t("Enable AI assistant"), |ui| {
@@ -366,12 +390,32 @@ impl ThinodaApp {
                 ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
             });
             widgets::property_field(ui, t("API Key"), |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut ai.api_key)
-                        .password(true)
-                        .hint_text(thinoda_ai::API_KEY_ENV),
-                )
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut api_key_draft)
+                            .password(true)
+                            .hint_text(thinoda_ai::API_KEY_ENV),
+                    );
+                    if ui.button(t("Save API Key")).clicked() {
+                        save_api_key = true;
+                    }
+                    if ui.button(t("Clear")).clicked() {
+                        api_key_draft.clear();
+                        clear_api_key = true;
+                    }
+                })
+                .response
             });
+            widgets::caption(
+                ui,
+                t("API keys are stored in your operating system's secure credential store."),
+            );
+            if !ai.credentials_ready {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    t("Secure credential storage is unavailable. Save a key to retry, or clear the saved key."),
+                );
+            }
             widgets::property_field(ui, t("Creativity"), |ui| {
                 ui.add(egui::Slider::new(&mut ai.temperature, 0.0..=1.5))
             });
@@ -382,8 +426,10 @@ impl ThinodaApp {
                     .clicked()
                 {
                     self.ai.test_result = None;
-                    self.ai.test =
-                        Some(AiJob::spawn_with(config(&self.settings.ai), |c| c.models()));
+                    self.ai.test = Some(AiJob::spawn_with(
+                        config_with_api_key(&self.settings.ai, &api_key_draft),
+                        |c| c.models(),
+                    ));
                 }
                 if busy {
                     ui.spinner();
@@ -416,6 +462,38 @@ impl ThinodaApp {
                 None => {}
             }
         });
+        self.ai.api_key_draft = Some(api_key_draft.clone());
+        if save_api_key || clear_api_key {
+            let mut settings = self.settings.clone();
+            settings.ai.set_api_key(if clear_api_key {
+                String::new()
+            } else {
+                api_key_draft
+            });
+            if clear_api_key {
+                settings.ai.credentials_ready = true;
+            }
+            if let Some(paths) = &self.services.paths {
+                match settings.save_with_credentials(
+                    paths,
+                    &thinoda_platform::credentials::NativeCredentialStore,
+                ) {
+                    Ok(()) => {
+                        self.settings = settings;
+                        self.ai.api_key_draft = Some(self.settings.ai.api_key.clone());
+                        credentials_saved = true;
+                    }
+                    Err(error) => {
+                        self.toasts
+                            .error(format!("{}: {error}", t("Could not save API key securely")));
+                    }
+                }
+            } else {
+                self.toasts
+                    .error(t("Secure credential storage is unavailable"));
+            }
+        }
+        credentials_saved
     }
 }
 
@@ -446,5 +524,24 @@ mod tests {
         assert_eq!(s.topic(s.root).unwrap().title, "Trip");
         assert_eq!(s.children(s.root).len(), 2);
         assert_eq!(s.children(s.children(s.root)[0]).len(), 1);
+    }
+
+    #[test]
+    fn unprotected_api_keys_are_not_used_by_ai_commands() {
+        let settings = AiSettings {
+            api_key: "legacy-secret".into(),
+            credentials_ready: false,
+            ..AiSettings::default()
+        };
+        assert!(config(&settings).api_key.is_empty());
+        assert!(
+            config_with_api_key(&settings, "legacy-secret")
+                .api_key
+                .is_empty()
+        );
+        assert_eq!(
+            config_with_api_key(&settings, "draft-secret").api_key,
+            "draft-secret"
+        );
     }
 }

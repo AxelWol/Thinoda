@@ -51,6 +51,7 @@
 
 pub mod cloud;
 pub mod crash;
+pub mod credentials;
 pub mod fs;
 pub mod paths;
 pub mod printing;
@@ -83,6 +84,8 @@ pub enum Error {
     Poisoned,
     #[error("recovery session has already finished")]
     Finished,
+    #[error("secure credential storage failed: {0}")]
+    Credential(String),
 }
 
 /// Result returned by platform persistence operations.

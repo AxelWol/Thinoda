@@ -1,9 +1,15 @@
 //! Forward-compatible TOML configuration and a bounded recent-files list.
 
-use crate::{Paths, Result, fs::atomic_write, unix_seconds};
+use crate::{
+    Error, Paths, Result,
+    credentials::{CredentialStore, NativeCredentialStore},
+    fs::atomic_write,
+    unix_seconds,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    fmt,
     path::{Path, PathBuf},
 };
 
@@ -75,17 +81,46 @@ impl Default for CloudSettings {
 }
 
 /// AI assistant preferences (any OpenAI-compatible server such as LM Studio or Ollama).
-/// The API key may instead be supplied via the `THINODA_AI_API_KEY` environment variable.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// API keys are stored in the OS credential store; the environment variable remains an override.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiSettings {
     pub enabled: bool,
     pub base_url: String,
     /// Empty = first chat model offered by the server.
     pub model: String,
+    /// Kept in memory only; `settings.toml` must never contain this value.
+    #[serde(skip)]
     pub api_key: String,
+    /// Non-secret marker indicating that an API key should exist in the OS credential store.
+    pub api_key_stored: bool,
+    /// False when a legacy key could not be secured or the native store could not be read.
+    #[serde(skip, default = "credentials_ready")]
+    pub credentials_ready: bool,
+    /// Requests a credential-store update on the next successful settings save.
+    #[serde(skip)]
+    pub api_key_dirty: bool,
     pub temperature: f32,
 }
+
+impl fmt::Debug for AiSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AiSettings")
+            .field("enabled", &self.enabled)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .field("api_key_stored", &self.api_key_stored)
+            .field("credentials_ready", &self.credentials_ready)
+            .field("temperature", &self.temperature)
+            .finish()
+    }
+}
+
+fn credentials_ready() -> bool {
+    true
+}
+
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
@@ -93,8 +128,19 @@ impl Default for AiSettings {
             base_url: "http://127.0.0.1:1234/v1".into(),
             model: String::new(),
             api_key: String::new(),
+            api_key_stored: false,
+            credentials_ready: true,
+            api_key_dirty: false,
             temperature: 0.7,
         }
+    }
+}
+
+impl AiSettings {
+    /// Replace the API key and mark it for secure persistence.
+    pub fn set_api_key(&mut self, api_key: impl Into<String>) {
+        self.api_key = api_key.into();
+        self.api_key_dirty = true;
     }
 }
 
@@ -184,6 +230,8 @@ impl Default for Settings {
 pub struct SettingsLoad {
     pub settings: Settings,
     pub warning: Option<String>,
+    /// Errors that make a simple `Settings::load` call unsafe to treat as complete.
+    pub credential_error: Option<String>,
 }
 
 impl Settings {
@@ -221,11 +269,23 @@ impl Settings {
 
     /// Load preferences, logging any broken-file warning. I/O errors remain errors.
     pub fn load(paths: &Paths) -> Result<Self> {
-        Ok(Self::load_with_warning(paths)?.settings)
+        let loaded = Self::load_with_warning(paths)?;
+        if let Some(error) = loaded.credential_error {
+            return Err(Error::Credential(error));
+        }
+        Ok(loaded.settings)
     }
 
     /// Load preferences and return a warning suitable for a notification banner.
     pub fn load_with_warning(paths: &Paths) -> Result<SettingsLoad> {
+        Self::load_with_credentials(paths, &NativeCredentialStore)
+    }
+
+    /// Load preferences using an injected credential store (also used for deterministic tests).
+    pub fn load_with_credentials(
+        paths: &Paths,
+        credentials: &dyn CredentialStore,
+    ) -> Result<SettingsLoad> {
         let path = paths.config_dir.join("settings.toml");
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -233,27 +293,101 @@ impl Settings {
                 return Ok(SettingsLoad {
                     settings: Self::default(),
                     warning: None,
+                    credential_error: None,
                 });
             }
             Err(e) => return Err(e.into()),
         };
         let parsed = std::str::from_utf8(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|text| toml::from_str::<Self>(text).map_err(|e| e.to_string()))
-            .and_then(|settings| {
+            .and_then(|text| toml::from_str::<toml::Value>(text).map_err(|e| e.to_string()))
+            .and_then(|mut value| {
+                let legacy_api_key = value
+                    .get_mut("ai")
+                    .and_then(toml::Value::as_table_mut)
+                    .and_then(|ai| ai.remove("api_key"));
+                let legacy_api_key = match legacy_api_key {
+                    Some(value) => Some(
+                        value
+                            .as_str()
+                            .ok_or_else(|| "AI API key must be a string".to_string())?
+                            .to_owned(),
+                    ),
+                    None => None,
+                };
+                let settings = value
+                    .try_into::<Self>()
+                    .map_err(|e: toml::de::Error| e.to_string())?;
                 Self::validate_quick_styles(&settings.quick_styles)?;
                 Self::validate_custom_themes(&settings.custom_themes)?;
                 if let Some(theme) = &settings.default_custom_theme {
                     theme.validate()?;
                 }
-                Ok(settings)
+                Ok((settings, legacy_api_key))
             });
         match parsed {
-            Ok(mut settings) => {
+            Ok((mut settings, legacy_api_key)) => {
                 settings.normalize();
+                let mut warning = None;
+                let mut credential_error = None;
+                if let Some(legacy_api_key) = legacy_api_key {
+                    if legacy_api_key.trim().is_empty() {
+                        if let Err(error) = Self::write_settings(paths, &settings) {
+                            warning = Some(format!(
+                                "Could not remove the empty legacy AI API key from settings: {error}"
+                            ));
+                        }
+                    } else {
+                        settings.ai.api_key = legacy_api_key;
+                        match credentials.set_password(settings.ai.api_key.trim()) {
+                            Ok(()) => {
+                                settings.ai.api_key = settings.ai.api_key.trim().to_owned();
+                                settings.ai.api_key_stored = true;
+                                settings.ai.credentials_ready = true;
+                                if let Err(error) = Self::write_settings(paths, &settings) {
+                                    let message = format!(
+                                        "The AI API key is secured, but settings.toml could not be updated to remove its legacy copy: {error}"
+                                    );
+                                    warning = Some(message.clone());
+                                    credential_error = Some(message);
+                                }
+                            }
+                            Err(error) => {
+                                settings.ai.credentials_ready = false;
+                                let message = format!(
+                                    "Could not move the legacy AI API key to secure storage: {error}. The key remains in settings.toml and AI requests are disabled until it can be secured."
+                                );
+                                warning = Some(message.clone());
+                                credential_error = Some(message);
+                            }
+                        }
+                    }
+                } else if settings.ai.api_key_stored {
+                    match credentials.get_password() {
+                        Ok(Some(api_key)) => {
+                            settings.ai.api_key = api_key;
+                            settings.ai.credentials_ready = true;
+                        }
+                        Ok(None) => {
+                            settings.ai.credentials_ready = false;
+                            let message = "The saved AI API key is missing from secure storage. Save a replacement key or clear the saved key in Settings › AI.".to_owned();
+                            warning = Some(message.clone());
+                            credential_error = Some(message);
+                        }
+                        Err(error) => {
+                            settings.ai.credentials_ready = false;
+                            let message = format!(
+                                "Could not access secure AI credential storage: {error}. AI requests are disabled until storage is available."
+                            );
+                            warning = Some(message.clone());
+                            credential_error = Some(message);
+                        }
+                    }
+                }
                 Ok(SettingsLoad {
                     settings,
-                    warning: None,
+                    warning,
+                    credential_error,
                 })
             }
             Err(error) => {
@@ -276,6 +410,7 @@ impl Settings {
                 Ok(SettingsLoad {
                     settings: Self::default(),
                     warning: Some(warning),
+                    credential_error: None,
                 })
             }
         }
@@ -283,16 +418,60 @@ impl Settings {
 
     /// Atomically persist preferences, normalizing recents and invalid numeric values.
     pub fn save(&self, paths: &Paths) -> Result<()> {
-        Self::validate_custom_themes(&self.custom_themes)
+        let mut settings = self.clone();
+        settings.save_with_credentials(paths, &NativeCredentialStore)
+    }
+
+    /// Store or clear the API key before atomically writing settings without secret values.
+    pub fn save_with_credentials(
+        &mut self,
+        paths: &Paths,
+        credentials: &dyn CredentialStore,
+    ) -> Result<()> {
+        let mut saved = self.clone();
+        Self::validate_custom_themes(&saved.custom_themes)
             .map_err(crate::Error::InvalidCustomThemes)?;
-        if let Some(theme) = &self.default_custom_theme {
+        if let Some(theme) = &saved.default_custom_theme {
             theme
                 .validate()
                 .map_err(crate::Error::InvalidCustomThemes)?;
         }
-        Self::validate_quick_styles(&self.quick_styles)
+        Self::validate_quick_styles(&saved.quick_styles)
             .map_err(crate::Error::InvalidQuickStyles)?;
-        let mut normalized = self.clone();
+        let api_key = saved.ai.api_key.trim();
+        if !api_key.is_empty() {
+            if saved.ai.api_key_dirty || !saved.ai.api_key_stored || !saved.ai.credentials_ready {
+                credentials
+                    .set_password(api_key)
+                    .map_err(Error::Credential)?;
+            }
+            saved.ai.api_key = api_key.to_owned();
+            saved.ai.api_key_stored = true;
+            saved.ai.credentials_ready = true;
+            saved.ai.api_key_dirty = false;
+        } else if saved.ai.api_key_dirty || (saved.ai.api_key_stored && saved.ai.credentials_ready)
+        {
+            credentials.delete_password().map_err(Error::Credential)?;
+            saved.ai.api_key_stored = false;
+            saved.ai.credentials_ready = true;
+            saved.ai.api_key_dirty = false;
+        }
+        Self::write_settings(paths, &saved)?;
+        *self = saved;
+        Ok(())
+    }
+
+    fn write_settings(paths: &Paths, settings: &Self) -> Result<()> {
+        Self::validate_custom_themes(&settings.custom_themes)
+            .map_err(crate::Error::InvalidCustomThemes)?;
+        if let Some(theme) = &settings.default_custom_theme {
+            theme
+                .validate()
+                .map_err(crate::Error::InvalidCustomThemes)?;
+        }
+        Self::validate_quick_styles(&settings.quick_styles)
+            .map_err(crate::Error::InvalidQuickStyles)?;
+        let mut normalized = settings.clone();
         normalized.normalize();
         let text = toml::to_string_pretty(&normalized)?;
         atomic_write(
