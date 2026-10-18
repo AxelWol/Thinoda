@@ -399,7 +399,7 @@ impl ThinodaApp {
                 }
                 ui.menu_button(RichText::new(icons::EXPORT), |ui| {
                     for f in EXPORT_MENU {
-                        if ui.button(f.label()).clicked() {
+                        if ui.button(t(f.label())).clicked() {
                             cmd = Some(Cmd::Export(*f));
                         }
                     }
@@ -500,7 +500,7 @@ impl ThinodaApp {
         }
         ui.menu_button(t("Export"), |ui| {
             for f in EXPORT_MENU {
-                if ui.button(f.label()).clicked() {
+                if ui.button(t(f.label())).clicked() {
                     *cmd = Some(Cmd::Export(*f));
                 }
             }
@@ -2011,11 +2011,11 @@ impl ThinodaApp {
             let mut shape = resolved.shape;
             widgets::property_field(ui, t("Shape"), |ui| {
                 egui::ComboBox::from_id_salt("topic_shape")
-                    .selected_text(shape.label())
+                    .selected_text(t(shape.label()))
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         for s in TopicShape::ALL {
-                            ui.selectable_value(&mut shape, s, s.label());
+                            ui.selectable_value(&mut shape, s, t(s.label()));
                         }
                     })
                     .response
@@ -2128,11 +2128,11 @@ impl ThinodaApp {
             let mut ls = resolved.line_shape;
             widgets::property_field(ui, t("Line"), |ui| {
                 egui::ComboBox::from_id_salt("line_shape")
-                    .selected_text(ls.label())
+                    .selected_text(t(ls.label()))
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         for s in LineShape::ALL {
-                            ui.selectable_value(&mut ls, s, s.label());
+                            ui.selectable_value(&mut ls, s, t(s.label()));
                         }
                     })
                     .response
@@ -2462,12 +2462,17 @@ impl ThinodaApp {
                                     from_color(*col),
                                 );
                             }
-                            ui.label(RichText::new(th.name).small());
+                            ui.label(RichText::new(t(th.name)).small());
                         });
                         let r =
                             ui.interact(r.response.rect, ui.scope_id().with(id), Sense::click());
                         r.widget_info(|| {
-                            egui::WidgetInfo::selected(egui::Role::Button, true, selected, th.name)
+                            egui::WidgetInfo::selected(
+                                egui::Role::Button,
+                                true,
+                                selected,
+                                t(th.name),
+                            )
                         });
                         if selected {
                             ui.painter().rect_stroke(
@@ -2987,15 +2992,27 @@ impl ThinodaApp {
                         });
                         widgets::property_row(ui, t("Language"), |ui| {
                             let mut l = self.settings.language;
-                            widgets::segmented(
-                                ui,
-                                &mut l,
-                                &[
-                                    (Language::Auto, t("Auto")),
-                                    (Language::English, "English"),
-                                    (Language::German, "Deutsch"),
-                                ],
-                            );
+                            egui::ComboBox::from_id_salt("settings_language")
+                                .selected_text(if l == Language::Auto {
+                                    t("Auto")
+                                } else {
+                                    l.native_name()
+                                })
+                                .show_ui(ui, |ui| {
+                                    for language in Language::ALL {
+                                        ui.selectable_value(
+                                            &mut l,
+                                            language,
+                                            if language == Language::Auto {
+                                                t("Auto")
+                                            } else {
+                                                language.native_name()
+                                            },
+                                        );
+                                    }
+                                })
+                                .response
+                                .accessible_name(t("Language"));
                             if l != self.settings.language {
                                 self.settings.language = l;
                                 i18n::set_lang(i18n::resolve(l));

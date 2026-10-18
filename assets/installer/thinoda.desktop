@@ -1,0 +1,21 @@
+[Desktop Entry]
+Categories={{categories}}
+Comment={{comment}}
+Comment[de]=Gib deinen Gedanken Form. Schnelles, plattformübergreifendes Mindmapping
+Comment[es]=Da forma a tus ideas. Mapas mentales rápidos y multiplataforma
+Comment[fr]=Donnez forme à vos idées. Cartes mentales rapides et multiplateformes
+Comment[da]=Giv dine tanker form. Hurtige mindmaps på tværs af platforme
+Comment[nl]=Geef je gedachten vorm. Snel mindmappen op meerdere platforms
+Comment[pt]=Dê forma às suas ideias. Mapas mentais rápidos e multiplataforma
+Comment[pt_PT]=Dê forma às suas ideias. Mapas mentais rápidos e multiplataforma
+Comment[pt_BR]=Dê forma às suas ideias. Mapas mentais rápidos e multiplataforma
+Comment[it]=Dai forma ai tuoi pensieri. Mappe mentali veloci e multipiattaforma
+Comment[pl]=Nadaj kształt swoim myślom. Szybkie, wieloplatformowe mapy myśli
+Exec={{exec}} {{exec_arg}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}

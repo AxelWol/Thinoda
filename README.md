@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:40:10 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 <p align="center"><img src="assets/icon.svg" alt="Thinoda logo" width="128"></p>
 
 # Thinoda
@@ -32,8 +34,10 @@ Privacy & Security > Open Anyway** if you trust the download. Ad-hoc signing
 is an integrity check, not Apple verification of the developer.
 
 ### Installing on Windows with WinGet
-The Windows installer's final page offers separate options to run Thinoda and
-create a desktop shortcut. Both are labeled in English and German.
+The Windows installer's final page offers separate labeled options to run Thinoda
+and create a desktop shortcut. Its language selector offers English, German,
+Spanish, French, Danish, Dutch, Portuguese (Portugal and Brazil), Italian and Polish,
+including maintenance, upgrade/downgrade, uninstall and application-running messages.
 
 ```powershell
 winget install AxelWol.Thinoda
@@ -65,6 +69,32 @@ If version 0.1.0 stops with `Library libxkbcommon-x11.so could not be loaded`,
 install the windowing libraries it did not declare yet:
 `sudo apt install libxkbcommon-x11-0 libvulkan1`.
 
+## Languages
+Settings > General > Language is an accessible drop-down with **Auto**, English,
+Deutsch, Español, Français, Dansk, Nederlands, Português (Portugal),
+Português (Brasil), Italiano and Polski. Selection changes the UI and future topic
+placeholders immediately, independently of light/dark appearance, and is preserved
+on restart. Auto recognizes regional OS locales (including `pt-BR` separately from
+`pt-PT`); unsupported OS languages use English. Existing document text is never
+rewritten on a language change.
+
+Menus, settings, sidebars, template/category titles, built-in theme/shape names,
+application notification text, print previews and searchable offline help use the
+same embedded catalogs on every advertised architecture. Brazilian Portuguese
+shares common Portuguese phrases and has explicit regional vocabulary overrides.
+Starter template content remains English and editable; format/product names,
+user-created names, technical diagnostic details and OS/driver messages retain
+their original spelling/language.
+
+Both Windows NSIS targets include translated standard pages and all custom
+installer controls. Both macOS app/DMG targets declare the supported bundle
+localizations; Finder's drag-to-Applications installation has no custom installer
+wizard. Linux DEB and AppImage launchers include translated desktop descriptions;
+package-manager interfaces belong to the host distribution. Native file/print
+dialogs, Finder and package managers follow the host OS language and installed
+language packs, not Thinoda's override. No claim is made that Thinoda translates
+those system-owned controls. WinGet publishing remains paused.
+
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
@@ -90,7 +120,7 @@ install the windowing libraries it did not declare yet:
   No browser, external document viewer, shell command or automatic default-printer
   submission is used. Dialogs run modally on the main/window thread; the map cannot
   be edited until they return. Native controls use the OS/desktop language, theme
-  and accessibility, independently of Thinoda's EN/DE and light/dark preview.
+  and accessibility, independently of Thinoda's language and light/dark preview.
   Available advanced options (copies, duplex, trays, quality, etc.) depend on the
   installed printer driver/backend; Thinoda does not emulate unsupported options.
   Cancellation is reported separately from errors. “Submitted” means the OS
@@ -118,7 +148,7 @@ install the windowing libraries it did not declare yet:
   Missing runtimes/symbols are reported as errors. The winit
   window is not a GtkWindow: its event loop is blocked during the GTK modal dialog,
   but some compositors may not group that dialog under Thinoda's taskbar window.
-- Help > Quick Start / User Guide provides searchable offline EN/DE guidance
+- Help > Quick Start / User Guide provides searchable offline translated guidance
   for editing, styles, file recovery, interchange and privacy. It works without an
   open map and does not edit the canvas behind it. Send Feedback opens GitHub's
   public issue chooser without uploading files; Project News opens commit history.
@@ -142,7 +172,7 @@ install the windowing libraries it did not declare yet:
   categories, with each template directly selectable in its category.
   Scenario maps include problem solving, architecture, workshops, research,
   language learning, retrospectives, everyday planning, comparisons and creative
-  production. Gallery titles are localized in EN/DE; starter document content
+  production. Gallery titles are localized in every supported UI language; starter document content
   is English and editable. These are original Thinoda maps, not XMind template copies.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset

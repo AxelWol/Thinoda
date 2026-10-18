@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:48:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Thinoda backlog
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
@@ -5,7 +7,7 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
-## P1 — Symbol colors and contrast (implemented; awaiting review/integration)
+## P1 — Symbol colors and contrast (implemented; awaiting review)
 - Add per-instance colors to the existing Symbols insertion popover and sidebar,
   including editing existing symbols and a localized, keyboard-accessible
   right-click Remove Symbol action targeting only that instance.
@@ -18,11 +20,18 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   controls and cover persistence, targeting, contrast and output with tests.
 - Implementation includes native/clipboard/XMind-payload persistence, canvas and
   visual export/print rendering, per-instance editors and export-loss confirmation.
-  EN/DE light/dark UI and model/output regressions are covered. Additional-locale
-  catalog rows target localization PR29; combine the catalog additions when
-  integrating that independent PR, without discarding either set of rows.
+  All ten supported locales have catalog entries and light/dark UI coverage,
+  alongside model/output regressions. Merged localization PR29 is integrated;
+  both catalog additions are retained.
 
 ## Recently completed
+- Automatic documentation timestamps: every tracked Markdown file carries
+  non-binding UTC metadata from its last source-changing Git commit. The
+  `docs_stamp.py` tool ignores metadata-only commits, preserves frontmatter and
+  full legal text, and refreshes metadata automatically after main pushes
+  (including squash/rebase merges and release automation). Generated notices
+  retain their independent content check. See the contribution guide for
+  optional local commands, CI permissions and concurrency handling.
 - Help > About > Legal documents now embeds the full unchanged licence,
   generated third-party notices and Impressum for offline reading and copying.
   A scrollable, theme-aware modal keeps Close visible at narrow sizes; original
@@ -560,8 +569,8 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
-- P1 Expand language support beyond English/German to Spanish, French, Danish,
-  Dutch (Netherlands), Portuguese, Italian and Polish. Translate every user-facing word
+- [x] P1 Expand language support beyond English/German to Spanish, French, Danish,
+  Dutch (Netherlands), Portuguese (Portugal and Brazil), Italian and Polish. Translate every user-facing word
   and sentence in its actual UI/workflow context, using consistent terminology
   rather than isolated literal translations. Include help, dialogs, errors and
   installer/package UI for all Windows, macOS and Linux targets/builds; retain
@@ -846,14 +855,18 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca)
 - [x] P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`; bounded CI smoke)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
-- P3 More UI languages (FR, ES, JA, ZH)
+- [x] Expanded UI localization: ES, FR, DA, NL, PT-PT, PT-BR, IT and PL, retaining
+  EN/DE and Auto. Settings uses an accessible language dropdown with immediate
+  switching and persistence. Catalogs cover UI, application messages and offline
+  help; Windows x64/ARM64 installer controls, macOS Intel/ARM bundle language
+  declarations and Linux DEB/AppImage launcher descriptions are wired. Native
+  OS/driver and package-manager controls keep host translations. Template starter
+  content stays English and editable; technical diagnostics retain original detail.
+  Regression coverage checks all catalog keys, dynamic labels, interpolation
+  contracts, locale variants, preference roundtrips and light/dark switching.
+- P3 Remaining UI languages (JA, ZH): require proper font/IME/shortcut support and
+  contextual translations; not advertised as supported by the expanded locales.
 - P2 Launching Thinoda again without files exits silently when an instance is
   already running; it should bring the existing window to the front instead.
 - P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software
   rasterizer; evaluate the GL backend on Mesa's D3D12 driver.
-
-## Documentation
-- P2 Every `*.md` file shows the date/time of its last change at the top
-  (e.g. `_Last updated: 2026-10-17 12:30 CET_`). Keep it accurate automatically:
-  a CI check or pre-commit hook (or `cargo xtask docs-stamp`) that stamps
-  changed Markdown files from `git log -1 --format=%cI`, so it never drifts.

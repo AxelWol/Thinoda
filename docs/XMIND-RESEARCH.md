@@ -1,3 +1,5 @@
+_Last updated: 2026-10-17 09:37:32 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # XMind product research (basis for the Thinoda clone)
 
 Sources: xmind.com (structure, features, user guide – 931 indexed pages), the locally

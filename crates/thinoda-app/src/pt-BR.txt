@@ -1,2 +1,159 @@
 Default symbol color|Cor padrão do símbolo
 Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.|As exportações editáveis perdem as cores dos símbolos, exceto no formato Thinoda e nos arquivos XMind inalterados reabertos no Thinoda. O próprio XMind mostra ícones padrão; alterações em outros aplicativos podem eliminar as cores personalizadas.
+# Explicit Brazilian Portuguese regional wording; other entries intentionally share common Portuguese.
+Font Family|Fonte
+Global Font|Fonte global
+Default|Padrão
+Font unavailable|Fonte indisponível
+Using the default font; the requested name is preserved.|A fonte padrão é usada; o nome solicitado é mantido.
+Theme Font|Fonte do tema
+Role preset|Predefinição de função
+Save to Library|Salvar na biblioteca
+Theme saved|Tema salvo
+Theme saved for this session|Tema salvo para esta sessão
+Could not save theme|Não foi possível salvar o tema
+Topic overrides and explicit map settings take precedence. Choose a built-in theme to remove custom defaults.|As personalizações dos tópicos e configurações explícitas do mapa têm prioridade. Escolha um tema integrado para remover os padrões personalizados.
+Save Quick Style|Salvar estilo rápido
+Save Quick Style…|Salvar estilo rápido…
+Quick style saved|Estilo rápido salvo
+Quick style saved for this session|Estilo rápido salvo para esta sessão
+Could not save quick style|Não foi possível salvar o estilo rápido
+Select one topic to save a quick style.|Selecione um tópico para salvar um estilo rápido.
+Replaces topic appearance only. Reset Style restores theme inheritance.|Substitui apenas a aparência do tópico. Redefinir estilo restaura a herança do tema.
+Saves fixed colors and typography, without topic content.|Salva cores e tipografia fixas, sem o conteúdo do tópico.
+Saved|Salvo
+Unsaved changes|Alterações não salvas
+No recent files|Nenhum arquivo recente
+Open File…|Abrir arquivo…
+Don't Save|Não salvar
+Recover Unsaved Work|Recuperar trabalho não salvo
+Save changes?|Salvar alterações?
+Do you want to save the changes you made? Your changes will be lost if you don't save them.|Deseja salvar as alterações? Elas serão perdidas se você não as salvar.
+File changed on disk|Arquivo alterado no disco
+The file was modified by another application or a sync client. Overwrite it?|O arquivo foi alterado por outro aplicativo ou cliente de sincronização. Sobrescrever?
+Overwrite|Sobrescrever
+Save As Copy|Salvar como cópia
+Appearance|Aparência
+Files|Arquivos
+Keep backup on save|Manter backup ao salvar
+Detected cloud folders|Pastas na nuvem detectadas
+No cloud folders detected|Nenhuma pasta na nuvem detectada
+Default save folder|Pasta padrão de salvamento
+Open settings folder|Abrir pasta de configurações
+Saved to|Salvo em
+Could not save|Não foi possível salvar
+Autosaved|Salvo automaticamente
+Autosave|Salvamento automático
+Autosave interval (s)|Intervalo de salvamento automático (s)
+Pick a target topic, or click blank space to create a connected floating topic|Escolha um tópico de destino ou clique em um espaço vazio para criar um tópico flutuante conectado
+Thinoda logo|Logotipo do Thinoda
+A fast, open mind mapping app.|Um aplicativo rápido e aberto de mapas mentais.
+Close Tab|Fechar aba
+New Tab|Nova aba
+Save API Key|Salvar chave de API
+API keys are stored in your operating system's secure credential store.|As chaves de API são salvas no armazenamento seguro de credenciais do sistema operacional.
+Secure credential storage is unavailable. Save a key to retry, or clear the saved key.|O armazenamento seguro de credenciais está indisponível. Salve uma chave para tentar novamente ou limpe a chave salva.
+Could not save API key securely|Não foi possível salvar a chave de API com segurança
+Could not save settings securely|Não foi possível salvar as configurações com segurança
+Test Connection|Testar conexão
+Connected|Conectado
+e.g. Launch plan for a mobile app|por exemplo, plano de lançamento de um aplicativo móvel
+AI server not reachable — check Settings › AI|Servidor de IA inacessível — verifique Configurações › IA
+AI assistant is disabled in Settings|O assistente de IA está desativado nas configurações
+AI is still working…|A IA ainda está trabalhando…
+Parent Topic|Tópico pai
+Place floating topics without attaching. Turn off to convert between attached and floating topics.|Posicione tópicos flutuantes sem conectá-los. Desative para converter entre tópicos conectados e flutuantes.
+First curve control|Primeiro controle da curva
+Second curve control|Segundo controle da curva
+First control X|X do primeiro controle
+First control Y|Y do primeiro controle
+Second control X|X do segundo controle
+Second control Y|Y do segundo controle
+Expand both endpoints to edit automatic curve controls.|Expanda ambas as extremidades para editar os controles automáticos da curva.
+Drag the round endpoints to reconnect. Drag square controls to reshape.|Arraste as extremidades redondas para reconectar. Arraste os controles quadrados para alterar a forma.
+Focused handles: arrows move controls by 1 map unit (Shift: 10); endpoint arrows cycle visible topics.|Controles com foco: as setas movem controles 1 unidade do mapa (Shift: 10); nas extremidades percorrem os tópicos visíveis.
+Link|Link
+Hyperlink|Hiperlink
+Open Link|Abrir link
+Zen Mode: press F11 to exit|Modo Zen: pressione F11 para sair
+Add child topic|Adicionar tópico filho
+Edit hyperlink|Editar hiperlink
+File|Arquivo
+Save|Salvar
+Save As…|Salvar como…
+Save All|Salvar tudo
+Settings…|Configurações…
+Settings|Configurações
+Collapse All|Recolher tudo
+Collapse / Expand|Recolher / Expandir
+Collapse / Expand All|Recolher / Expandir tudo
+Masked copy created; inspect it before saving or sharing|Cópia mascarada criada; inspecione-a antes de salvar ou compartilhar
+Creates a new unsaved document. The original is not changed.|Cria um novo documento não salvo. O original não é alterado.
+Replaces all topic, sheet and relationship titles. Removes notes, labels, links, images, markers, custom font names, boundary titles and document metadata.|Substitui todos os títulos de tópicos, folhas e relações. Remove notas, etiquetas, links, imagens, marcadores, nomes de fontes personalizadas, títulos de contornos e metadados.
+Structure, colors and task states remain visible. This does not guarantee anonymity; inspect every sheet before sharing.|A estrutura, cores e estados das tarefas continuam visíveis. Isso não garante anonimato; inspecione cada folha antes de compartilhar.
+Merge Map Files…|Mesclar arquivos de mapas…
+Select map files and open a destination document first|Selecione primeiro arquivos de mapas e abra um documento de destino
+Choose .thinoda or .xmind files|Escolha arquivos .thinoda ou .xmind
+Could not merge map files|Não foi possível mesclar os arquivos de mapas
+Merged sheets; original files are unchanged|Folhas mescladas; os arquivos originais não foram alterados
+Select Descendants|Selecionar descendentes
+Save Sheet As…|Salvar folha como…
+Saved sheet to|Folha salva em
+Could not save sheet|Não foi possível salvar a folha
+Deletes the summary topic and its children, not the covered branches.|Exclui o tópico de resumo e seus filhos, não os ramos abrangidos.
+Map settings apply to the entire sheet.|As configurações do mapa se aplicam a toda a folha.
+Map appearance|Aparência do mapa
+Save print PDF…|Salvar PDF de impressão…
+Print PDF saved|PDF de impressão salvo
+Print PDF must be saved with a .pdf extension|O PDF de impressão deve ser salvo com a extensão .pdf
+Map Shot must be saved with a .png extension|O Map Shot deve ser salvo com a extensão .png
+Save PNG…|Salvar PNG…
+Map Shot capture timed out; this renderer may not support screenshots|A captura do Map Shot excedeu o tempo limite; este renderizador pode não suportar capturas de tela
+Meeting and planning|Reuniões e planejamento
+Project Retrospective|Retrospectiva do projeto
+User Guide|Guia do usuário
+Files and Recovery|Arquivos e recuperação
+Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, source resolution and colors, then open the native OS printer dialog or save a PDF. Choose a printer and its driver settings there. The whole preview page fits proportionally inside the selected printable area; OS paper changes scale it without reflow. Submitted means accepted by the OS, not physically printed. Native dialogs use the OS language and appearance.|Imprimir (Ctrl+P) mostra a folha atual em uma página, incluindo tópicos fora da tela. Defina papel, orientação, margens, resolução de origem e cores, depois abra a caixa de diálogo nativa de impressão ou salve um PDF. Escolha ali a impressora e as opções do driver. A página completa é ajustada proporcionalmente à área imprimível; alterar o papel no sistema a redimensiona sem reorganizar o conteúdo. Enviado significa aceito pelo sistema, não impresso fisicamente. As caixas de diálogo nativas usam o idioma e a aparência do sistema.
+Fit the current sheet on one page. Offscreen topics are included; collapsed branches stay collapsed.|Ajusta a folha atual a uma página. Inclui tópicos fora da tela; os ramos recolhidos permanecem recolhidos.
+Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.|Continuar abre a caixa de diálogo de impressão do sistema com seleção de impressora e opções do driver. A página completa, incluindo margens, é ajustada proporcionalmente à área imprimível escolhida. Alterar papel ou orientação no sistema redimensiona sem reorganizar; o driver pode alterar ainda mais o resultado. Esta resolução controla o detalhe da origem, não a qualidade da impressora.
+Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.|Use o painel Estilo para a aparência do tópico e o painel Mapa para o layout e o tema. Selecione um tópico para ver as propriedades atuais.
+Save with Ctrl+S to a .thinoda file. Use .xmind for interchange. Save As creates a separate destination; export formats may omit unsupported features.|Salve com Ctrl+S em um arquivo .thinoda. Use .xmind para intercâmbio. Salvar como cria um destino separado; a exportação pode omitir recursos não suportados.
+Drag a topic onto a parent or sibling insertion slot to move its branch. The preview shows the proposed placement; Escape cancels the drag.|Arraste um tópico para um tópico pai ou um ponto de inserção entre tópicos do mesmo nível para mover o ramo. A pré-visualização mostra a posição proposta; Escape cancela.
+Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.|As abas permitem renomear, duplicar, copiar, colar, excluir e salvar folhas separadamente. Nova folha a partir do tópico copia um ramo; as relações externas ficam na folha original.
+Topic styles override map and theme defaults. Reset Style removes explicit topic overrides. Copy/Paste Style transfers appearance, not text or hierarchy.|Os estilos de tópico têm prioridade sobre os padrões do mapa e do tema. Redefinir estilo remove personalizações explícitas. Copiar/colar estilo transfere a aparência, não o texto ou a hierarquia.
+Quick Styles offers original presets and named local styles captured from resolved appearance. Applying a style to several selected topics is one undo step.|Estilos rápidos oferece predefinições originais e estilos locais com nome capturados a partir da aparência efetiva. Aplicar um estilo a vários tópicos selecionados é uma única etapa de desfazer.
+Map > Custom Themes opens a staged editor. Apply Theme embeds the theme in the sheet; Save to Library stores a separate local copy without changing the map.|Mapa > Temas personalizados abre um editor de rascunho. Aplicar tema incorpora o tema na folha; Salvar na biblioteca salva uma cópia local separada sem alterar o mapa.
+Custom themes provide palette, light/dark backgrounds, fonts and role defaults. Explicit map and topic overrides take precedence. Removing a library theme does not change existing maps.|Os temas personalizados definem paleta, fundos claros/escuros, fontes e padrões por função. As personalizações explícitas do mapa e dos tópicos têm prioridade. Remover um tema da biblioteca não altera mapas existentes.
+Select a built-in theme to remove custom defaults. Optional recent-theme reuse affects new blank maps, not named templates. Missing local fonts keep their names and show a warning.|Selecione um tema integrado para remover padrões personalizados. A reutilização opcional do último tema afeta mapas novos vazios, não modelos com nome. As fontes locais ausentes mantêm os nomes e mostram um aviso.
+Use .thinoda for full-fidelity native storage. Crash-recovery snapshots are stored locally; available recovery copies are offered at startup. Recovery is not a substitute for saving or backups.|Use .thinoda para salvar todos os dados nativos. As cópias de recuperação são locais e oferecidas na inicialização. A recuperação não substitui o salvamento nem os backups.
+When an open file changes externally, Thinoda offers conflict handling rather than silently replacing your edits. Inspect both versions before deciding which to keep.|Quando um arquivo aberto é alterado externamente, o Thinoda permite resolver o conflito em vez de substituir as alterações silenciosamente. Inspecione ambas as versões antes de escolher.
+Cloud-folder support uses locally synchronized folders supplied by your cloud client. OAuth sharing and live collaboration are not implemented.|O suporte de pastas na nuvem usa pastas sincronizadas localmente pelo seu cliente. O compartilhamento OAuth e a colaboração em tempo real não estão implementados.
+Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.|Mesclar arquivos de mapas só acrescenta folhas após carregar todos os arquivos com sucesso. Criar cópia mascarada cria uma pré-visualização não salva sem texto identificador; inspecione todas as folhas antes de compartilhar, pois a estrutura pode revelar informações.
+The Open and Export menus list supported formats. Native and unchanged Thinoda-exported XMind files preserve Thinoda-specific data. Other applications may not understand those extensions.|Os menus Abrir e Exportar listam os formatos suportados. Arquivos nativos e XMind exportados pelo Thinoda sem alterações preservam dados específicos do Thinoda. Outros aplicativos podem não compreender essas extensões.
+Map Shot (F7) captures the visible GPU-rendered canvas, with a crop preview and PNG or clipboard output. Export renders the complete sheet, including offscreen topics.|Map Shot (F7) captura a tela visível renderizada pela GPU, com pré-visualização de recorte e saída PNG ou para a área de transferência. Exportar renderiza a folha completa, incluindo tópicos fora da tela.
+External image references are not embedded attachments. Check imported content and exported files before relying on them in another application.|As referências a imagens externas não são anexos incorporados. Verifique o conteúdo importado e os arquivos exportados antes de usá-los em outro aplicativo.
+Settings controls system/light/dark appearance, language, scaling and editor preferences. Installed fonts are local to each machine; companion devices may need the same fonts.|As configurações controlam a aparência do sistema/clara/escura, idioma, escala e preferências do editor. As fontes instaladas são locais; outros dispositivos podem precisar das mesmas fontes.
+AI commands require a configured provider and may send selected topic content to that provider. Review provider settings and do not submit confidential content without permission.|Os comandos de IA exigem um provedor configurado e podem enviar a ele o conteúdo dos tópicos selecionados. Revise as configurações e não envie conteúdo confidencial sem autorização.
+Send Feedback opens the public GitHub issue chooser in your browser. It does not upload maps, settings or logs. Review anything you include before submitting an issue.|Enviar comentários abre o seletor público de problemas do GitHub no navegador. Não envia mapas, configurações ou registros. Revise o conteúdo antes de enviar um problema.
+Printing cancelled|Impressão cancelada
+Print job submitted to the OS. Physical output is not confirmed.|Trabalho de impressão enviado ao sistema operacional. A impressão física não está confirmada.
+Reset Style|Redefinir estilo
+Reset region|Redefinir região
+Reset curve|Redefinir curva
+Reset role|Redefinir função
+Contact|Contato
+Delete|Excluir
+Delete Topic|Excluir tópico
+Delete Topic Only|Excluir apenas o tópico
+Delete Relationship|Excluir relação
+Delete Boundary|Excluir contorno
+Delete Summary|Excluir resumo
+Delete Sheet|Excluir folha
+Confirm before deleting|Confirmar antes de excluir
+Strikethrough|Tachado
+Angry|Bravo
+Boring|Tédio
+Red star|Estrela vermelha
+Gray flag|Bandeira cinza
+Gray star|Estrela cinza
+Grayscale|Escala de cinza

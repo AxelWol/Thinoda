@@ -1,6 +1,9 @@
 //! Kept in one test because the UI language is process-wide.
 use egui::{Event, PointerButton, accesskit::Role};
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_app::{
     app::{Cmd, Services, SidebarFamily, ThinodaApp},
     i18n::{self, t},
@@ -56,32 +59,11 @@ fn click_at(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, button: PointerBut
 
 #[test]
 fn insertion_instance_contrast_context_removal_and_export_cancellation() {
-    // PR29 supplies the additional language variants. This same matrix exercises
-    // them when both PRs are integrated, without pulling that unrelated diff here.
-    let languages: Vec<Language> = [
-        "english",
-        "german",
-        "spanish",
-        "french",
-        "danish",
-        "dutch",
-        "portuguese",
-        "portuguese_brazil",
-        "italian",
-        "polish",
-    ]
-    .into_iter()
-    .filter_map(|name| serde_json::from_value(serde_json::json!(name)).ok())
-    .collect();
-    if std::env::var_os("THINODA_TEST_EXPANDED_LOCALES").is_some() {
-        assert_eq!(
-            languages.len(),
-            10,
-            "PR29 integration must enable all locales"
-        );
-    } else {
-        assert!(matches!(languages.len(), 2 | 10));
-    }
+    let languages: Vec<_> = Language::ALL
+        .into_iter()
+        .filter(|language| *language != Language::Auto)
+        .collect();
+    assert_eq!(languages.len(), 10);
     for language in languages {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             let mut h = harness(language, theme);
@@ -247,7 +229,10 @@ fn insertion_instance_contrast_context_removal_and_export_cancellation() {
                     h.state().dialogs.symbol_export,
                     Some((h.state().active, format))
                 );
-                h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+                h.query_all_by_role_and_label(Role::Button, t("Cancel"))
+                    .find(|node| !node.accesskit_node().is_disabled())
+                    .unwrap()
+                    .click();
                 h.run_steps(3);
                 assert!(h.state().dialogs.symbol_export.is_none());
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
