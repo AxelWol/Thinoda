@@ -73,6 +73,29 @@ install the windowing libraries it did not declare yet:
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- **Print** in the main menu / **Ctrl+P** (Command+P on macOS) opens a themed,
+  localized paper preview of the current sheet, including offscreen topics.
+  Choose A4/A3/Letter/Legal, portrait/landscape, 0–40 mm margins, 150/300 dpi,
+  light/dark map colors, optional map background and grayscale. The complete map
+  fits one page; collapsed branches remain collapsed. The UI theme and printed
+  map colors are independent (default: light map on white paper to save ink).
+  **Continue to print…** creates a local, self-contained HTML document and asks
+  the default HTML application (normally your browser) to open its print dialog.
+  If automatic printing is blocked, click **Print** in that document. Select the
+  same paper/orientation, **100% scale**, **no margins**, and **no headers/footers**;
+  printer/browser settings and unprintable hardware edges can change the result.
+  No job is silently sent to the default printer, and a handoff is not confirmation
+  of printing. Keep Thinoda open until finished. **Save print PDF…** writes a
+  paper-sized PDF without needing a browser or printer. Large maps may need A3 or
+  higher resolution; tiling over several pages is not implemented.
+  Print output uses the existing export layout/font rendering (not the GPU
+  viewport), with a raster page embedded in HTML (lossless PNG) / PDF (high-quality
+  JPEG). No network requests or
+  external images/fonts are loaded by the print document. Temporary documents
+  live in a private temporary directory until normal app exit; abnormal exits
+  can leave temporary files. Windows/macOS/Linux launchers require a working
+  default HTML application; Thinoda cannot detect browser cancellation or printer
+  completion. Actual browser/system printing should be smoke-tested on each OS.
 - Help > Quick Start / User Guide provides searchable offline EN/DE guidance
   for editing, styles, file recovery, interchange and privacy. It works without an
   open map and does not edit the canvas behind it. Send Feedback opens GitHub's

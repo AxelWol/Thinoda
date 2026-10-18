@@ -59,6 +59,7 @@ const PAGES: &[Page] = &[
             "The Open and Export menus list supported formats. Native and unchanged Thinoda-exported XMind files preserve Thinoda-specific data. Other applications may not understand those extensions.",
             "Public XMind export materializes supported topic styles. Editable custom-theme registries, native curve interchange and exact XMind visual parity are not verified.",
             "Map Shot (F7) captures the visible GPU-rendered canvas, with a crop preview and PNG or clipboard output. Export renders the complete sheet, including offscreen topics.",
+            "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, resolution and colors, then continue to the browser print dialog or save a print-ready PDF. Keep Thinoda open until printing finishes; printer settings can change the result.",
             "External image references are not embedded attachments. Check imported content and exported files before relying on them in another application.",
         ],
     },

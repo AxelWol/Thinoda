@@ -298,15 +298,27 @@ pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
         .map_err(|e| IoError::Invalid(e.to_string()))?
         .to_rgb8();
     let (width, height) = decoded.dimensions();
+    Ok(image_pdf(&jpg, width, height, width as f32, height as f32))
+}
+
+/// Wraps an opaque JPEG in a single PDF page. Page dimensions are PDF points,
+/// independent of raster resolution (printing uses physical paper dimensions).
+pub(crate) fn image_pdf(
+    jpg: &[u8],
+    width: u32,
+    height: u32,
+    page_width: f32,
+    page_height: f32,
+) -> Vec<u8> {
     let mut objects: Vec<Vec<u8>> = Vec::new();
     objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
     objects.push(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec());
-    objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>").into_bytes());
+    objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.3} {page_height:.3}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>").into_bytes());
     let mut image_obj=format!("<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",jpg.len()).into_bytes();
-    image_obj.extend_from_slice(&jpg);
+    image_obj.extend_from_slice(jpg);
     image_obj.extend_from_slice(b"\nendstream");
     objects.push(image_obj);
-    let stream = format!("q {width} 0 0 {height} 0 0 cm /Im0 Do Q");
+    let stream = format!("q {page_width:.3} 0 0 {page_height:.3} 0 0 cm /Im0 Do Q");
     objects.push(
         format!(
             "<< /Length {} >>\nstream\n{}\nendstream",
@@ -337,7 +349,7 @@ pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
         )
         .as_bytes(),
     );
-    Ok(pdf)
+    pdf
 }
 
 #[cfg(test)]

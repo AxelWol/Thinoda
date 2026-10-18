@@ -8,6 +8,7 @@ mod help;
 pub mod i18n;
 mod labels;
 mod map_shot;
+mod printing;
 mod quick_styles;
 mod shortcut_browser;
 mod structure_picker;

@@ -34,3 +34,16 @@ graph TD
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
+- **Printing**: `thinoda-io::print` fits the complete current-sheet export SVG onto
+  physical paper, rendering directly at 150/300 dpi with bounded page allocation
+  (no viewport screenshots or full-map intermediate raster clipping). The app
+  freezes a workbook snapshot after committing title edits, runs rendering/encoding
+  on workers and rejects stale previews after settings changes. Preview, local
+  browser print HTML and paper-sized PDF use the same raster page. The platform
+  launcher opens a private temporary HTML document, whose visible print button
+  and load handler request the browser's print dialog; launcher errors surface,
+  and successful handoff is explicitly not print confirmation. The browser owns
+  printer/copies/device settings. Print HTML uses embedded PNG with no network
+  resources; temporary files are retained until normal app exit. Platform launcher
+  and real printer behavior require native smoke tests; unit/UI tests never submit
+  printer jobs.
