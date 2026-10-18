@@ -5,7 +5,27 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
+## P1 - Remaining native system-preview work
+
+- macOS follow-up: connect the document to AppKit's native preview
+  lifecycle. The existing standalone `NSPrintPanel` has no document preview;
+  preserving it is not delivery of cross-platform native-preview parity. Retain
+  reliable cancellation versus failure reporting when changing that lifecycle.
+  Linux GTK preview behavior remains desktop/backend-dependent and unchanged.
+
 ## Recently completed
+- Windows system printer preview: the modern OS dialog receives the actual
+  single-page bitmap through WinRT PrintManagerInterop, a native document source
+  and DXGI preview surfaces, replacing the missing-preview PrintDlg/GDI path.
+  The same Direct2D drawing supplies native output with OS-selected page and
+  imageable bounds. Printer choice/advanced options, modal ownership, fixed-page
+  aspect ratio and cancellation/submission/error distinctions remain intact.
+  Job-free real-SDK/WARP pixel readback, in-memory XPS page output and retained
+  callback lifecycle tests cover the bridge; Windows x64/ARM64 CI runs them.
+  macOS/Linux backends and existing translations are unchanged, not claimed as
+  newly delivered preview parity. See [native printing](NATIVE-PRINTING.md).
+  No test print jobs, printer configuration changes, external viewer handoff or
+  forced classic dialog. Independent of legal/localization work; WinGet paused.
 - Template-card double-click creates and opens the chosen map once through the
   existing Create command, across the overview, every category and Recently used
   templates. Single-click/keyboard selection and Create/Cancel remain available;

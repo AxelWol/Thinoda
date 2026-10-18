@@ -42,12 +42,26 @@ graph TD
   printer page and paper-sized PDF use the same raster. `thinoda-platform::printing`
   validates dimensions and converts RGB to bounded opaque BGRA on a worker.
   The eframe adapter borrows its live window handle and invokes a compact native
-  C/Objective-C bridge synchronously on the main/window thread, never a rendering
-  worker. Windows uses an owned PrintDlg and real StartDoc/StretchDIBits/EndDoc GDI
-  submission; macOS uses the AppKit modal printer/driver panel and NSPrintOperation;
+  C++/C/Objective-C bridge synchronously on the main/window thread, never a rendering
+  worker. Windows uses `IPrintManagerInterop` for the HWND and a WinRT
+  `IPrintDocumentSource`/`IPrintDocumentPageSource` with a
+  `IPrintPreviewPageCollection`. Pagination reads the selected printer's
+  `PrintTaskOptions.GetPageDescription(1)`; Direct2D paints the full source page
+  inside that page's imageable rectangle. DXGI surfaces populate the actual
+  Windows system preview; `ID2D1PrintControl` writes the same drawing to the OS
+  package target only when Windows requests `MakeDocument` after confirmation.
+  D3D11 WARP avoids dependence on the application's GPU and supports x64/ARM64.
+  macOS uses the AppKit modal printer/driver panel and NSPrintOperation;
   Linux uses GTK 3 PrintOperation, Cairo and desktop printer backends. No generated
   HTML, browser/viewer launcher or temporary print files remain. Native buffers are
-  borrowed only for the synchronous call. The app preview stays modal during
+  borrowed only for the synchronous call; the Windows COM source owns a pixel
+  copy, serializes callbacks and disconnects retained preview targets on exit.
+  Late callbacks return `RO_E_CLOSED`. Its STA modal message loop keeps the owner
+  disabled until PrintTask completion, unregisters handlers and restores the
+  owner's enabled state. Only `PrintTaskCompletion.Submitted` means submission;
+  cancelled/abandoned tasks are cancellation, and HRESULT failures are errors.
+  Showing the native UI alone is never reported as submission.
+  The app preview stays modal during
   preparation, native UI and submission; cancellation retains it for retry.
   Native cancellation, submission acceptance and errors are distinct; no result
   confirms physical printing. OS paper changes fit the entire fixed preview page
@@ -68,5 +82,11 @@ graph TD
   only, not a direct GTK link. Windows/macOS use their system APIs/frameworks.
   Unit/UI tests never submit jobs: they cover the same native fit function,
   bounded conversion, outcome mapping, immutable snapshots and modal behavior.
+  Windows SDK-native tests additionally read back WARP preview pixels for
+  page/imageable-area changes, retain interfaces after disconnect, distinguish
+  completion states and serialize/reopen a one-page XPS package entirely in a
+  memory stream (no printer/spooler). The Python native harness runs on Windows
+  x64/ARM64 CI with strict C++ compilation. See [native printing](NATIVE-PRINTING.md)
+  for API references, manual checks and platform limitations.
   Native driver behavior still requires smoke tests on Windows x64/ARM64,
   macOS Intel/ARM64 and Linux X11/Wayland.
