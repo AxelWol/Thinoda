@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:53:14 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Native system printing
 
 ## Windows system preview
