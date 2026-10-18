@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:25:51 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Thinoda backlog
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.
@@ -6,6 +8,13 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Automatic documentation timestamps: every tracked Markdown file carries
+  non-binding UTC metadata from its last source-changing Git commit. The
+  `docs_stamp.py` tool ignores metadata-only commits, preserves frontmatter and
+  full legal text, and refreshes metadata automatically after main pushes
+  (including squash/rebase merges and release automation). Generated notices
+  retain their independent content check. See the contribution guide for
+  optional local commands, CI permissions and concurrency handling.
 - Help > About > Legal documents now embeds the full unchanged licence,
   generated third-party notices and Impressum for offline reading and copying.
   A scrollable, theme-aware modal keeps Close visible at narrow sizes; original
@@ -844,9 +853,3 @@ to add XMind's own cloud account, billing or hosted AI service.
   already running; it should bring the existing window to the front instead.
 - P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software
   rasterizer; evaluate the GL backend on Mesa's D3D12 driver.
-
-## Documentation
-- P2 Every `*.md` file shows the date/time of its last change at the top
-  (e.g. `_Last updated: 2026-10-17 12:30 CET_`). Keep it accurate automatically:
-  a CI check or pre-commit hook (or `cargo xtask docs-stamp`) that stamps
-  changed Markdown files from `git log -1 --format=%cI`, so it never drifts.

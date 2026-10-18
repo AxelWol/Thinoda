@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 08:43:41 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Architecture
 
 ```mermaid

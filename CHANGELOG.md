@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 09:24:06 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Changelog
 
 All notable changes to Thinoda are documented in this file. The format follows

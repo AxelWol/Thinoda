@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:25:29 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Code of Conduct and Contribution Guide
 
 Thinoda is an open project. Everyone is welcome to use it, report problems,
@@ -93,6 +95,49 @@ project. Security vulnerabilities are reported as described in
 By submitting a contribution you confirm that you wrote it yourself (or have the
 right to submit it) and agree that it is licensed under the
 [EUPL-1.2](LICENSE.md), the licence of the project.
+
+### Documentation timestamps
+
+Every Git-tracked `*.md` file has a rendered, non-binding metadata line at the
+top (after YAML frontmatter, if present). It is not part of the legal terms.
+The timestamp is the source commit's `%cI` committer date, displayed in UTC
+with seconds; it is not the file modification time or a publication date.
+
+CI refreshes timestamps automatically on `main` after every push, including
+normal, squash and rebase merges and release-please changes. A job with
+`contents: write` fetches the latest `main`, stamps tracked Markdown, verifies
+the result, and fast-forward pushes a metadata-only commit. It never force
+pushes or bypasses branch rules. Concurrent source pushes are retried up to
+three times; permission errors and exhausted retries fail visibly in Actions.
+`GITHUB_TOKEN` pushes do not trigger another workflow run, and unchanged
+metadata produces no commit. No new secrets or repository settings are needed
+under the current rules (which prohibit deletion and non-fast-forward pushes).
+If rules later require PRs for every push, an authorized refresh mechanism
+must be agreed before enabling those rules; this job does not bypass them.
+
+For an optional local preview after editing documentation or regenerating
+`THIRD_PARTY_NOTICES.md`:
+
+1. Commit the source changes first, including new Markdown files.
+2. Run `python .github/scripts/docs_stamp.py` from the repository root.
+3. Optionally commit the resulting metadata, then push.
+
+`python .github/scripts/docs_stamp.py --check` is a read-only accuracy check. Full
+Git history is required (`git fetch --unshallow` for a shallow checkout).
+Untracked files are excluded. Uncommitted source edits fail explicitly instead
+of receiving an inaccurate date. Timestamp-only commits are ignored when
+finding the last source change; normal merge commits that only integrate an
+unchanged file do not advance it. Renaming or re-adding a path starts its new
+path history. YAML frontmatter, UTF-8 BOMs and document bodies are preserved.
+
+PR CI tests the tool and previews the generated metadata without write
+permissions (including for forks). It does not require an extra manual commit
+or a particular merge strategy. A history rewrite can change source commit
+dates; the main-push refresh resolves these using the final committed history.
+Until that job finishes, source commits can briefly carry the prior metadata.
+Release-please PRs do not need manual timestamp repair.
+The notices generator preserves existing metadata and checks its generated body
+independently; its existing `--check` still detects any content drift.
 
 ## Attribution
 

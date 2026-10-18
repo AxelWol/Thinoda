@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:01:53 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Third-party notices
 
 Thinoda is licensed under the [EUPL-1.2](LICENSE.md). It is built with the
