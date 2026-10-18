@@ -106,6 +106,8 @@ role = "viewer"
 installer-mode = "currentUser"
 languages = ["English", "German"]
 display-language-selector = true
+# cargo-packager 0.11.8 has no built-in German strings for its custom controls.
+custom-language-file = { German = "../../assets/installer/German.nsh" }
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
