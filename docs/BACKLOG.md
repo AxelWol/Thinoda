@@ -498,6 +498,11 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   text and Gantt window lifecycle. Icon-only references are not verified behavior.
 
 ## Template gallery parity (user screenshots, 2026-10-16)
+- P1 Double-click a template card on "Create a new map" to create and open that
+  template immediately, using the same action as Create. Apply to Recently used
+  templates and every category; retain single-click selection and the existing
+  Create/Cancel and keyboard paths. Cover double-click creation exactly once,
+  recent-template updates, unsaved-document protection, and EN/DE light/dark UI.
 - Implemented generated previews, responsive grids, scrolling, fixed header/category
   filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
   Selection enables Create without immediate creation. Section navigation chevrons,
