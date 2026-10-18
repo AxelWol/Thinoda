@@ -602,7 +602,8 @@ pub(crate) fn export(
         || sheet.theme != thinoda_core::theme::ThemeSettings::default();
     for topic in sheet.topics.values() {
         let style = &topic.style;
-        lossy |= topic.image.is_some()
+        lossy |= !topic.marker_colors.is_empty()
+            || topic.image.is_some()
             || topic.position.is_some()
             || topic.structure.is_some()
             || topic.branch_side.is_some()

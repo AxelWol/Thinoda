@@ -43,6 +43,9 @@ pub enum Action {
     AddSummary,
     ToggleTodo,
     ToggleMarker(String),
+    ToggleMarkerColor(String, Option<thinoda_core::Color>),
+    SetMarkerColor(TopicId, usize, Option<thinoda_core::Color>),
+    RemoveMarker(TopicId, usize),
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -553,6 +556,15 @@ pub fn apply_action(
         }
         Action::ToggleMarker(m) => {
             doc.edit_sheet("Marker", |s| s.toggle_marker(&sel, &m))?;
+        }
+        Action::ToggleMarkerColor(m, color) => {
+            doc.edit_sheet("Symbol color", |s| s.toggle_marker_color(&sel, &m, color))?;
+        }
+        Action::SetMarkerColor(id, index, color) => {
+            doc.edit_sheet("Symbol color", |s| s.set_marker_color(id, index, color))?;
+        }
+        Action::RemoveMarker(id, index) => {
+            doc.edit_sheet("Remove Symbol", |s| s.remove_marker(id, index))?;
         }
         Action::ZoomIn => view.zoom_by(1.2, None),
         Action::ZoomOut => view.zoom_by(1.0 / 1.2, None),

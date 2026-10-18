@@ -1,3 +1,5 @@
+Default symbol color|Cor padrão do símbolo
+Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.|As exportações editáveis perdem as cores dos símbolos, exceto no formato Thinoda e nos arquivos XMind inalterados reabertos no Thinoda. O próprio XMind mostra ícones padrão; alterações em outros aplicativos podem eliminar as cores personalizadas.
 # Explicit Brazilian Portuguese regional wording; other entries intentionally share common Portuguese.
 Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.|Não foi possível ler este arquivo MindManager. Ele pode ser inválido, estar criptografado, ser grande demais ou não ser seguro.
 MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.|O MindManager salva uma única folha. Exporte a folha atual ou salve a pasta de trabalho completa como .thinoda.
@@ -163,3 +165,6 @@ Gray flag|Bandeira cinza
 Gray star|Estrela cinza
 Grayscale|Escala de cinza
 Could not write this MindManager file. The map may be too large or contain invalid data.|Não foi possível gravar este arquivo MindManager. O mapa pode ser grande demais ou conter dados inválidos.
+Starting…|Iniciando…
+Opening file:|Abrindo arquivo:
+The file loader stopped unexpectedly|O carregamento do arquivo parou inesperadamente

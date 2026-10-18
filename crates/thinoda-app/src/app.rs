@@ -157,9 +157,11 @@ pub struct Services {
 #[derive(Default)]
 pub struct Dialogs {
     pub mindmanager_export: bool,
+    pub mindmanager_symbol_color_loss: bool,
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
     pub mindmanager_close: Option<CloseIntent>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
+    pub symbol_export: Option<(usize, Format)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
@@ -188,6 +190,7 @@ pub struct ThinodaApp {
     pub home_return_to: Option<String>,
     /// Explicit topic-style overrides, shared by documents for this app session.
     pub style_clipboard: Option<thinoda_core::TopicStyle>,
+    pub symbol_color: Option<thinoda_core::Color>,
     pub sheet_paste_request: Option<(Instant, String)>,
     pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
@@ -212,6 +215,8 @@ pub struct ThinodaApp {
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
     last_title: String,
+    /// Startup work still pending behind the splash; `None` once ready.
+    pub(crate) launch: Option<crate::startup::Launch>,
 }
 
 pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
@@ -257,6 +262,7 @@ impl ThinodaApp {
             template_category: None,
             home_return_to: None,
             style_clipboard: None,
+            symbol_color: None,
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
@@ -279,6 +285,7 @@ impl ThinodaApp {
             quick_style_dialog: None,
             theme_dialog: None,
             last_title: String::new(),
+            launch: None,
         };
         for f in files {
             app.open_path(f);
@@ -326,11 +333,30 @@ impl ThinodaApp {
         if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
             return;
         }
-        match OpenDoc::open_with_report(path) {
+        self.add_opened(path, OpenDoc::open_with_report(path));
+    }
+
+    /// Adds the result of opening `path` as a tab, or reports the error as a toast.
+    pub(crate) fn add_opened(
+        &mut self,
+        path: &Path,
+        opened: Result<(OpenDoc, Vec<thinoda_io::ImportWarning>), String>,
+    ) {
+        if let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.path.as_deref() == Some(path))
+        {
+            self.active = i;
+            return;
+        }
+        match opened {
             Ok((d, warnings)) if !warnings.is_empty() => {
-                self.dialogs
-                    .imports
-                    .push_back((path.to_path_buf(), d, warnings));
+                if !self.dialogs.imports.iter().any(|(p, ..)| p == path) {
+                    self.dialogs
+                        .imports
+                        .push_back((path.to_path_buf(), d, warnings));
+                }
             }
             Ok((d, _)) => self.install_opened_doc(path, d),
             Err(e) => {
@@ -513,7 +539,21 @@ impl ThinodaApp {
             }
             Cmd::Labels => self.begin_labels(ctx),
             Cmd::Print => self.begin_print(ctx),
-            Cmd::Export(format) => self.export(format),
+            Cmd::Export(format) => {
+                if self.doc().is_some_and(|d| {
+                    thinoda_io::symbol_color_loss(d.doc.workbook(), format)
+                        || (format == Format::XMind
+                            && d.doc
+                                .workbook()
+                                .sheets
+                                .iter()
+                                .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty())))
+                }) {
+                    self.dialogs.symbol_export = Some((self.active, format));
+                } else {
+                    self.export(format, false);
+                }
+            }
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
@@ -1242,15 +1282,16 @@ impl ThinodaApp {
         }
     }
 
-    fn export(&mut self, format: Format) {
+    pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
         if format == Format::MindManager {
             self.dialogs.mindmanager_export = true;
+            self.dialogs.mindmanager_symbol_color_loss = allow_symbol_color_loss;
             return;
         }
-        self.export_confirmed(format);
+        self.export_confirmed(format, allow_symbol_color_loss);
     }
 
-    pub(crate) fn export_confirmed(&mut self, format: Format) {
+    pub(crate) fn export_confirmed(&mut self, format: Format, allow_symbol_color_loss: bool) {
         let dark = self
             .applied
             .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
@@ -1267,6 +1308,7 @@ impl ThinodaApp {
         }
         let Some(path) = dlg.save_file() else { return };
         let opts = ExportOptions {
+            allow_symbol_color_loss,
             dark: dark
                 && matches!(
                     format,

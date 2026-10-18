@@ -27,6 +27,23 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   and redistributable public schema/reference validation remain unimplemented
   or unverified. Keep original sources and use `.thinoda` for full workbooks.
 
+## P1 — Symbol colors and contrast (implemented; awaiting review)
+- Add per-instance colors to the existing Symbols insertion popover and sidebar,
+  including editing existing symbols and a localized, keyboard-accessible
+  right-click Remove Symbol action targeting only that instance.
+- Preserve legacy appearance, native persistence, clipboard and undo/redo.
+  Audit rendering, printing and interchange; document unsupported format fields
+  explicitly rather than silently discarding colors.
+- Show WCAG contrast against the composited topic background in light/dark mode:
+  graphical symbols require 3:1, normal-size month/week text 4.5:1. Offer an
+  explicit correction without automatically changing documents. Localize all
+  controls and cover persistence, targeting, contrast and output with tests.
+- Implementation includes native/clipboard/XMind-payload persistence, canvas and
+  visual export/print rendering, per-instance editors and export-loss confirmation.
+  All ten supported locales have catalog entries and light/dark UI coverage,
+  alongside model/output regressions. Merged localization PR29 is integrated;
+  both catalog additions are retained.
+
 ## Recently completed
 - Automatic documentation timestamps: every tracked Markdown file carries
   non-binding UTC metadata from its last source-changing Git commit. The
@@ -849,6 +866,20 @@ to add XMind's own cloud account, billing or hosted AI service.
   required CI checks before making the repository public
 - Delivered offline licence, third-party notices and Impressum inside Help > About;
   see Recently completed.
+- P1 (in progress) Startup splash screen: while Thinoda launches, show a centered,
+  About-style branded card (logo, name, tagline, version) with a real progress
+  indicator — indeterminate while starting, determinate only for counted launch
+  files (file i of n) — in the configured light/dark/Auto theme and startup
+  language. Launch files are imported off the UI thread so the window stays
+  responsive. Ready = every launch file opened or reported as an error toast and
+  the main UI drawn; only then does the splash disappear and pending crash
+  recovery prompts and settings warnings appear. No artificial minimum wait;
+  closing during startup quits without discarding recovery data. No splash or
+  window for `--help`, `--version`, `--convert` or a secondary instance that only
+  forwards files. Limitation: eframe keeps the window hidden until its first
+  painted frame, so native window/GPU initialization before that frame (about
+  0.3–0.4 s warm on Windows x64, longer cold) cannot be covered without a second
+  native window and renderer.
 - P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI
 - P3 Real-time co-editing (CRDT, e.g. `yrs`) — basis for a companion web/mobile app
 - P3 Plugin API (WASM) for importers/exporters

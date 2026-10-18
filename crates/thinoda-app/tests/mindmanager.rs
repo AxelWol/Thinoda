@@ -304,3 +304,108 @@ fn sheet_copy_confirms_scope_without_retargeting_and_full_multi_sheet_save_is_re
     assert_eq!(std::fs::read(&path).unwrap(), original);
     assert!(h.state().doc().unwrap().is_dirty());
 }
+
+#[test]
+fn startup_loader_retains_loss_consent_and_source_protection() {
+    let _guard = UI_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("launch.xmmap");
+    std::fs::write(&path, SOURCE).unwrap();
+    let app = ThinodaApp::launch(
+        thinoda_app::Startup {
+            settings: Settings {
+                language: Language::English,
+                ..Default::default()
+            },
+            services: Services::default(),
+            warning: None,
+            orphans: Vec::new(),
+        },
+        std::slice::from_ref(&path),
+    );
+    let mut h = Harness::builder().build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while h.state().launch_phase().is_some() {
+        assert!(std::time::Instant::now() < deadline);
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().dialogs.imports.len(), 1);
+    assert!(h.state().doc().is_none());
+    click_enabled(&mut h, t("Import converted copy"));
+    let doc = h.state().doc().unwrap();
+    assert!(doc.path.is_none() && doc.is_dirty());
+    assert_eq!(doc.import_source, Some(path.canonicalize().unwrap()));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), SOURCE);
+}
+
+fn colored_markers() -> Workbook {
+    let mut book = Workbook::default();
+    let root = book.active().root;
+    let topic = book.active_mut().topic_mut(root).unwrap();
+    topic.markers.push("priority-1".into());
+    topic.marker_colors.insert(0, thinoda_core::Color::BLACK);
+    book
+}
+
+#[test]
+fn symbol_and_mindmanager_export_consents_are_independent_in_ui_and_cli() {
+    let _guard = UI_LOCK.lock().unwrap();
+    let book = colored_markers();
+    let app = ThinodaApp::new(Settings::default(), Services::default(), &[]);
+    let mut h = Harness::builder()
+        .with_context_setup(|ctx| {
+            ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu)
+        })
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.state_mut().new_doc(book.clone());
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Export(Format::MindManager));
+    assert!(h.state().dialogs.symbol_export.is_some() && !h.state().dialogs.mindmanager_export);
+    h.run_steps(3);
+    click_enabled(&mut h, t("Export"));
+    assert!(h.state().dialogs.symbol_export.is_none());
+    assert!(
+        h.state().dialogs.mindmanager_export && h.state().dialogs.mindmanager_symbol_color_loss
+    );
+    click_enabled(&mut h, t("Cancel"));
+    assert!(
+        !h.state().dialogs.mindmanager_export && !h.state().dialogs.mindmanager_symbol_color_loss
+    );
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("colors.thinoda");
+    std::fs::write(
+        &input,
+        export_bytes(&book, Format::Thinoda, &ExportOptions::default()).unwrap(),
+    )
+    .unwrap();
+    for (index, flags) in [
+        vec!["--allow-lossy"],
+        vec!["--allow-symbol-color-loss"],
+        vec!["--allow-lossy", "--allow-symbol-color-loss"],
+        vec!["--allow-symbol-color-loss", "--allow-lossy"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = dir.path().join(format!("output-{index}.mmap"));
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_thinoda"))
+            .arg("--convert")
+            .arg(&input)
+            .arg(&output)
+            .args(flags)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.success(),
+            index >= 2,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(output.exists(), index >= 2);
+    }
+}

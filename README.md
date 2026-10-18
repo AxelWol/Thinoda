@@ -271,6 +271,27 @@ those system-owned controls. WinGet publishing remains paused.
   and Style/Map tabs stay visible while their contents scroll independently.
   Style reflects the selected topic's resolved properties, including inherited/custom
   colors with checked swatches and hex values; Map controls apply to the entire sheet.
+- Symbol colors: choose a color (picker or keyboard-editable hex) before inserting
+  from either Symbols surface. Placed symbols expose individual color, default-color
+  reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
+  right-click a particular canvas symbol for the same editor/removal action.
+  Changes are undoable, keep the one-per-category semantics and preserve legacy
+  default rendering. Contrast uses WCAG relative luminance against the composited
+  topic fill/sheet background (including boundary overlays): graphics require 3:1,
+  month/week labels 4.5:1. **Improve contrast** explicitly applies black or white;
+  no automatic theme-driven document recoloring or overall WCAG compliance is claimed.
+  Insertion feedback uses the primary topic; each candidate tooltip reports the
+  lowest ratio across the selected topics, so mixed backgrounds may still warn.
+  Native files, topic/sheet clipboard, duplication and unchanged XMind files reopened
+  in Thinoda retain colors. XMind has no supported per-marker color field: other
+  XMind applications show standard icons, and external edits invalidate the private
+  Thinoda payload and can discard custom colors. PNG/JPEG/SVG/PDF and printing
+  render custom colors (text glyph appearance still depends on available fonts).
+  FreeMind, OPML, Markdown, plain text, TextBundle, Word, Excel and CSV cannot
+  preserve these colors: GUI export requires confirmation **before** opening a save
+  dialog, and the I/O API refuses by default. CLI conversion must explicitly pass
+  `--allow-symbol-color-loss` to produce these lossy formats. External plain-text
+  clipboard content has no color fields; internal topic clipboard retains full fidelity.
 - The Map structure selector opens a viewport-bounded, scrollable preview gallery
   with nine collapsible families covering all 17 existing structures. Original sample
   maps use the actual canvas renderer in light/dark mode; layout changes preserve rich

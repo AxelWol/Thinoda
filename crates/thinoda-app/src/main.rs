@@ -9,7 +9,7 @@ const HELP: &str = "Thinoda - Give your thoughts shape.
 
 USAGE:
     thinoda [FILES...]
-    thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]
+    thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]
     thinoda --version
     thinoda --help
 ";
@@ -40,16 +40,31 @@ fn main() -> anyhow::Result<()> {
         }
         Some("--convert") => {
             let (Some(i), Some(o)) = (args.get(1), args.get(2)) else {
-                anyhow::bail!("thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]");
+                anyhow::bail!(
+                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]"
+                );
             };
-            if args.len() > 4 || args.get(3).is_some_and(|a| a != "--allow-lossy") {
-                anyhow::bail!("thinoda --convert <INPUT> <OUTPUT> [--allow-lossy]");
+            if args.len() > 5
+                || args
+                    .iter()
+                    .skip(3)
+                    .any(|a| !matches!(a.as_str(), "--allow-lossy" | "--allow-symbol-color-loss"))
+            {
+                anyhow::bail!(
+                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]"
+                );
             }
             doc::convert_with_consent(
                 &PathBuf::from(i),
                 &PathBuf::from(o),
-                &thinoda_io::ExportOptions::default(),
-                args.get(3).is_some(),
+                &thinoda_io::ExportOptions {
+                    allow_symbol_color_loss: args
+                        .iter()
+                        .skip(3)
+                        .any(|a| a == "--allow-symbol-color-loss"),
+                    ..Default::default()
+                },
+                args.iter().skip(3).any(|a| a == "--allow-lossy"),
             )
             .map_err(anyhow::Error::msg)?;
             return Ok(());
@@ -105,12 +120,7 @@ fn main() -> anyhow::Result<()> {
         options,
         Box::new(move |cc| {
             egui_extras_install(&cc.egui_ctx);
-            let mut app = ThinodaApp::new(startup.settings, startup.services, &files);
-            app.dialogs.recovery = startup.orphans;
-            if let Some(w) = startup.warning {
-                app.toasts.warning(w);
-            }
-            Ok(Box::new(app))
+            Ok(Box::new(ThinodaApp::launch(startup, &files)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

@@ -75,6 +75,13 @@ it, warnings block conversion before any output is replaced. For multi-sheet
 CLI input, the workbook's active sheet is exported only with that consent.
 Unsafe/malformed documents are rejected regardless of consent.
 
+Custom per-symbol colors are not mapped to MindManager markers. CLI exports of
+these workbooks additionally require `--allow-symbol-color-loss` (independent
+of `--allow-lossy`); either flag alone must not bypass the other guard.
+The UI likewise retains the symbol-color disclosure before MindManager's
+sheet/conversion disclosure. Launch-file loading through the startup splash
+uses the same import reports and defers lossy conversion to the consent dialog.
+
 `import_bytes` / `import_file` are strict: a lossy MindManager conversion returns
 `IoError::ImportNeedsConfirmation`. Interactive integrations should use
 `import_bytes_with_report` / `import_file_with_report`, display the warning

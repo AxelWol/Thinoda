@@ -70,14 +70,15 @@ impl OpenDoc {
     }
 
     pub fn open_with_report(path: &Path) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
-        let report = thinoda_io::import_file_with_report(path).map_err(|e| {
-            if matches!(e, thinoda_io::IoError::MindManager(_)) || matches!(Format::from_path(path), Some(Format::MindManager | Format::MindManagerXml)) {
-                log::warn!("MindManager import failed: {e}");
-                t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").to_string()
-            } else {
-                e.to_string()
-            }
-        })?;
+        let report = import_report(path)?;
+        Self::from_import_report(path, report)
+    }
+
+    /// Wraps a report imported on the UI or startup loader thread.
+    pub fn from_import_report(
+        path: &Path,
+        report: thinoda_io::ImportReport,
+    ) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
         let format = report.format;
         let mut d = Self::new(report.workbook);
         if is_native(format) {
@@ -239,14 +240,7 @@ pub fn convert_with_consent(
     if same_destination(input, output).map_err(|e| e.to_string())? {
         return Err(t("Choose a different destination to preserve the imported source.").into());
     }
-    let report = thinoda_io::import_file_with_report(input).map_err(|e| {
-        if matches!(e, thinoda_io::IoError::MindManager(_)) || matches!(Format::from_path(input), Some(Format::MindManager | Format::MindManagerXml)) {
-            log::warn!("MindManager import failed: {e}");
-            t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").to_string()
-        } else {
-            format!("{}: {e}", input.display())
-        }
-    })?;
+    let report = import_report(input).map_err(|error| format!("{}: {error}", input.display()))?;
     if !report.warnings.is_empty() {
         if !allow_lossy {
             return Err(t("Import requires confirmation. Use --allow-lossy only if you accept omitted content.").into());
@@ -264,6 +258,12 @@ pub fn convert_with_consent(
         }
         return Err(format!("{} cannot be exported", format.label()));
     }
+    if thinoda_io::symbol_color_loss(&report.workbook, format) && !opts.allow_symbol_color_loss {
+        return Err(format!(
+            "{} (--allow-symbol-color-loss)",
+            t(crate::symbols::EXPORT_WARNING)
+        ));
+    }
     if format == Format::MindManager {
         log::warn!(
             "{}",
@@ -277,6 +277,15 @@ pub fn convert_with_consent(
             t("MindManager export cannot preserve all content. Use --allow-lossy only if you accept omitted content.").into()
         } else { export_error(error) })?;
     atomic_write(output, &bytes, false).map_err(|e| e.to_string())
+}
+
+pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {
+    thinoda_io::import_file_with_report(path).map_err(|error| {
+        if matches!(error, thinoda_io::IoError::MindManager(_)) || matches!(Format::from_path(path), Some(Format::MindManager | Format::MindManagerXml)) {
+            log::warn!("MindManager import failed: {error}");
+            t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").into()
+        } else { error.to_string() }
+    })
 }
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {

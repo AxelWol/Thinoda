@@ -488,8 +488,9 @@ fn paint_topic(
     }
 
     // Markers.
-    for (m, mr) in &t.markers {
-        paint_marker(painter, m, xf.rect(*mr), dim);
+    for (index, (m, mr)) in t.markers.iter().enumerate() {
+        let color = topic.and_then(|t| t.marker_colors.get(&index)).copied();
+        paint_marker_colored(painter, m, xf.rect(*mr), dim, color);
     }
 
     // Title.
@@ -577,53 +578,31 @@ fn paint_topic(
 }
 
 /// Vector-rendered marker icons (robust regardless of installed emoji fonts).
-pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
+pub fn paint_marker_colored(painter: &Painter, id: &str, r: Rect, dim: bool, color: Option<Color>) {
     let a = |c: Color32| if dim { c.gamma_multiply(0.3) } else { c };
+    let ink = color.unwrap_or_else(|| thinoda_core::markers::default_color(id));
+    let foreground = color32(ink);
+    let detail = color
+        .map(|c| color32(Color::highest_contrast_on(c.over(Color::WHITE))))
+        .unwrap_or(Color32::WHITE);
     let c = r.center();
     let rad = r.width().min(r.height()) / 2.0;
-    let named = |name: &str| match name {
-        "red" => Color32::from_rgb(0xE5, 0x48, 0x4D),
-        "orange" => Color32::from_rgb(0xF5, 0x8A, 0x1F),
-        "yellow" => Color32::from_rgb(0xF2, 0xC0, 0x1E),
-        "green" => Color32::from_rgb(0x3C, 0xB3, 0x71),
-        "blue" => Color32::from_rgb(0x2E, 0x7C, 0xF6),
-        "purple" => Color32::from_rgb(0x8E, 0x5C, 0xE6),
-        _ => Color32::from_rgb(0x8A, 0x8F, 0x98),
-    };
     let (group, rest) = id.split_once('-').unwrap_or((id, ""));
     match group {
         "priority" => {
-            let colors = [
-                Color32::from_rgb(0xE5, 0x48, 0x4D),
-                Color32::from_rgb(0xF5, 0x8A, 0x1F),
-                Color32::from_rgb(0x2E, 0x7C, 0xF6),
-                Color32::from_rgb(0x3C, 0xB3, 0x71),
-                Color32::from_rgb(0x8E, 0x5C, 0xE6),
-            ];
-            let n: usize = rest.parse().unwrap_or(1);
-            painter.circle_filled(c, rad, a(colors[(n.saturating_sub(1)) % colors.len()]));
+            painter.circle_filled(c, rad, a(foreground));
             painter.text(
                 c,
                 egui::Align2::CENTER_CENTER,
                 rest,
                 FontId::proportional(rad * 1.3),
-                a(Color32::WHITE),
+                a(detail),
             );
         }
         "task" => {
-            let frac = match rest {
-                "start" => 0.0,
-                "oct" => 0.125,
-                "quarter" => 0.25,
-                "3oct" => 0.375,
-                "half" => 0.5,
-                "5oct" => 0.625,
-                "3quar" => 0.75,
-                "7oct" => 0.875,
-                _ => 1.0,
-            };
-            let green = a(Color32::from_rgb(0x3C, 0xB3, 0x71));
-            painter.circle(c, rad - 0.5, a(Color32::WHITE), Stroke::new(1.2, green));
+            let frac = thinoda_core::markers::task_fraction(id);
+            let green = a(foreground);
+            painter.circle(c, rad - 0.5, a(detail), Stroke::new(1.2, green));
             if frac >= 1.0 {
                 painter.circle_filled(c, rad - 0.5, green);
                 painter.add(Shape::line(
@@ -632,7 +611,7 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
                         c + vec2(-rad * 0.1, rad * 0.35),
                         c + vec2(rad * 0.5, -rad * 0.35),
                     ],
-                    Stroke::new(1.5, Color32::WHITE),
+                    Stroke::new(1.5, a(detail)),
                 ));
             } else if frac > 0.0 {
                 let mut pts = vec![c];
@@ -651,11 +630,11 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
             }
         }
         "flag" => {
-            let col = a(named(rest));
+            let col = a(foreground);
             let x0 = r.left() + r.width() * 0.25;
             painter.line_segment(
                 [pos2(x0, r.top() + 1.0), pos2(x0, r.bottom() - 1.0)],
-                Stroke::new(1.4, a(Color32::from_gray(90))),
+                Stroke::new(1.4, a(color.map(color32).unwrap_or(Color32::from_gray(90)))),
             );
             painter.add(Shape::convex_polygon(
                 vec![
@@ -668,7 +647,7 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
             ));
         }
         "star" => {
-            let col = a(named(rest));
+            let col = a(foreground);
             let mut pts = Vec::with_capacity(10);
             for i in 0..10 {
                 let ang = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
@@ -693,17 +672,23 @@ pub fn paint_marker(painter: &Painter, id: &str, r: Rect, dim: bool) {
                     egui::Align2::CENTER_CENTER,
                     glyph,
                     FontId::proportional(rad * 1.6),
-                    a(Color32::from_rgb(0x44, 0x4C, 0x58)),
+                    a(foreground),
                 );
             } else {
-                painter.circle_filled(c, rad, a(Color32::from_rgb(0x8A, 0x8F, 0x98)));
+                painter.circle_filled(
+                    c,
+                    rad,
+                    a(color
+                        .map(color32)
+                        .unwrap_or(Color32::from_rgb(0x8A, 0x8F, 0x98))),
+                );
                 let initial: String = id.chars().take(1).collect::<String>().to_uppercase();
                 painter.text(
                     c,
                     egui::Align2::CENTER_CENTER,
                     initial,
                     FontId::proportional(rad * 1.2),
-                    a(Color32::WHITE),
+                    a(detail),
                 );
             }
         }

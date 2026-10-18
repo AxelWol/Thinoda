@@ -100,6 +100,9 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 impl ThinodaApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
+        if !self.launch_frame(ui) {
+            return;
+        }
         let ctx = ui.ctx().clone();
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         if font_source != self.font_source {
@@ -161,6 +164,7 @@ impl ThinodaApp {
                         || self.printing.active()
                         || self.dialogs.legal.open
                         || self.conversion_modal_open()
+                        || self.dialogs.symbol_export.is_some()
                     {
                         ui.disable();
                     }
@@ -179,6 +183,7 @@ impl ThinodaApp {
                             || self.printing.active()
                             || self.dialogs.legal.open
                             || self.conversion_modal_open()
+                            || self.dialogs.symbol_export.is_some()
                         {
                             ui.disable();
                         }
@@ -198,6 +203,7 @@ impl ThinodaApp {
                                 || self.printing.active()
                                 || self.dialogs.legal.open
                                 || self.conversion_modal_open()
+                                || self.dialogs.symbol_export.is_some()
                             {
                                 ui.disable();
                             }
@@ -218,6 +224,7 @@ impl ThinodaApp {
                     || self.dialogs.shortcuts
                     || self.dialogs.legal.open
                     || self.conversion_modal_open()
+                    || self.dialogs.symbol_export.is_some()
                 {
                     ui.disable();
                 }
@@ -302,6 +309,7 @@ impl ThinodaApp {
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
             || self.dialogs.legal.open
+            || self.dialogs.symbol_export.is_some()
         {
             return true;
         }
@@ -739,21 +747,25 @@ impl ThinodaApp {
 
     fn marker_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_max_width(320.0);
-        for g in markers::GROUPS {
-            ui.label(RichText::new(t(g.name)).small().weak());
-            ui.horizontal_wrapped(|ui| {
-                for m in g.markers {
-                    if ui
-                        .button(m.glyph)
-                        .accessible_name(t(m.name))
-                        .on_hover_text(t(m.name))
-                        .clicked()
-                    {
-                        *cmd = Some(Cmd::Canvas(Action::ToggleMarker(m.id.to_string())));
-                    }
+        egui::ScrollArea::vertical()
+            .max_height(560.0)
+            .show(ui, |ui| {
+                self.symbol_insertion_color(ui);
+                for g in markers::GROUPS {
+                    ui.label(RichText::new(t(g.name)).small().weak());
+                    ui.horizontal_wrapped(|ui| {
+                        for m in g.markers {
+                            if self.symbol_button(ui, m, false) {
+                                *cmd = Some(Cmd::Canvas(Action::ToggleMarkerColor(
+                                    m.id.to_string(),
+                                    self.symbol_color,
+                                )));
+                            }
+                        }
+                    });
                 }
+                self.placed_symbols(ui, cmd);
             });
-        }
     }
 
     // ----- center -------------------------------------------------------------------------------
@@ -863,6 +875,7 @@ impl ThinodaApp {
             || self.dialogs.shortcuts
             || self.dialogs.legal.open
             || self.conversion_modal_open()
+            || self.dialogs.symbol_export.is_some()
         {
             if let Some(d) = self.docs.get_mut(self.active) {
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
@@ -899,8 +912,15 @@ impl ThinodaApp {
                 .warning(format!("{}: {error}", t("Not possible here")));
         }
         let mut cmd = None;
-        out.response
-            .context_menu(|ui| self.context_menu(ui, &mut cmd));
+        out.response.context_menu(|ui| {
+            if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
+                if let Some(command) = self.symbol_instance(ui, id, index) {
+                    cmd = Some(command);
+                }
+            } else {
+                self.context_menu(ui, &mut cmd);
+            }
+        });
         if let Some(c) = cmd {
             self.exec(&ctx, c);
         }
@@ -1512,8 +1532,12 @@ impl ThinodaApp {
                                 if let Some(todo) = topic.todo {
                                     ui.label(if todo { "☑" } else { "☐" });
                                 }
-                                for m in &topic.markers {
-                                    ui.label(markers::glyph(m));
+                                for (index, m) in topic.markers.iter().enumerate() {
+                                    let mut text = RichText::new(markers::glyph(m));
+                                    if let Some(color) = topic.marker_colors.get(&index) {
+                                        text = text.color(thinoda_canvas::color32(*color));
+                                    }
+                                    ui.label(text);
                                 }
                                 if ui.is_enabled() && d.view.editing_topic() == Some(id) {
                                     let mut text =
@@ -1845,6 +1869,7 @@ impl ThinodaApp {
             widgets::caption(ui, t("Click a symbol to add or remove it. One per group."));
         }
         let mut command = None;
+        self.symbol_insertion_color(ui);
         for group in markers::GROUPS {
             widgets::section(ui, t(group.name), true, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1857,22 +1882,17 @@ impl ThinodaApp {
                                     })
                                 })
                             });
-                        let response = ui
-                            .add_enabled(
-                                !selection.is_empty(),
-                                egui::Button::new(RichText::new(marker.glyph).size(20.0))
-                                    .selected(selected)
-                                    .min_size(vec2(32.0, 32.0)),
-                            )
-                            .accessible_name(t(marker.name))
-                            .on_hover_text(t(marker.name));
-                        if response.clicked() {
-                            command = Some(Cmd::Canvas(Action::ToggleMarker(marker.id.into())));
+                        if self.symbol_button(ui, marker, selected) {
+                            command = Some(Cmd::Canvas(Action::ToggleMarkerColor(
+                                marker.id.into(),
+                                self.symbol_color,
+                            )));
                         }
                     }
                 });
             });
         }
+        self.placed_symbols(ui, &mut command);
         if let Some(command) = command {
             let ctx = ui.ctx().clone();
             self.exec(&ctx, command);
@@ -2163,6 +2183,7 @@ impl ThinodaApp {
 
         let focus = self.focus_field.take();
         let mut edit_labels = false;
+        let mut marker_action = None;
         widgets::section(ui, t("Topic Properties"), true, |ui| {
             let l = ui.label(t("Hyperlink"));
             let current = topic.hyperlink.clone().unwrap_or_default();
@@ -2204,11 +2225,9 @@ impl ThinodaApp {
             if !topic.markers.is_empty() {
                 ui.label(t("Markers"));
                 ui.horizontal_wrapped(|ui| {
-                    for m in &topic.markers {
+                    for (index, m) in topic.markers.iter().enumerate() {
                         if ui.button(format!("{} ✖", markers::glyph(m))).clicked() {
-                            let _ = d
-                                .doc
-                                .edit_sheet("Marker", |s| s.toggle_marker(&[primary], m));
+                            marker_action = Some(Cmd::Canvas(Action::RemoveMarker(primary, index)));
                         }
                     }
                 });
@@ -2222,6 +2241,9 @@ impl ThinodaApp {
         }
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
+        }
+        if let Some(command) = marker_action {
+            self.exec(ui.ctx(), command);
         }
     }
 
@@ -2705,6 +2727,25 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
+        if let Some((index, format)) = self.dialogs.symbol_export {
+            if let Some(choice) = confirm_dialog(
+                ctx,
+                "symbol_export",
+                t("Symbol color"),
+                t(crate::symbols::EXPORT_WARNING),
+                &[
+                    (t("Export"), DialogButton::Primary),
+                    (t("Cancel"), DialogButton::Secondary),
+                ],
+            ) {
+                self.dialogs.symbol_export = None;
+                if choice == 0 && index < self.docs.len() {
+                    self.active = index;
+                    self.export(format, true);
+                }
+            }
+            return;
+        }
         if self.dialogs.mindmanager_save.is_some() {
             let message = format!(
                 "{}\n\n{}",
@@ -2769,8 +2810,10 @@ impl ThinodaApp {
                 ],
             ) {
                 self.dialogs.mindmanager_export = false;
+                let allow_symbol_color_loss =
+                    std::mem::take(&mut self.dialogs.mindmanager_symbol_color_loss);
                 if choice == 0 {
-                    self.export_confirmed(thinoda_io::Format::MindManager);
+                    self.export_confirmed(thinoda_io::Format::MindManager, allow_symbol_color_loss);
                 }
             }
             return;
