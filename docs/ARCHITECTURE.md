@@ -38,12 +38,35 @@ graph TD
   physical paper, rendering directly at 150/300 dpi with bounded page allocation
   (no viewport screenshots or full-map intermediate raster clipping). The app
   freezes a workbook snapshot after committing title edits, runs rendering/encoding
-  on workers and rejects stale previews after settings changes. Preview, local
-  browser print HTML and paper-sized PDF use the same raster page. The platform
-  launcher opens a private temporary HTML document, whose visible print button
-  and load handler request the browser's print dialog; launcher errors surface,
-  and successful handoff is explicitly not print confirmation. The browser owns
-  printer/copies/device settings. Print HTML uses embedded PNG with no network
-  resources; temporary files are retained until normal app exit. Platform launcher
-  and real printer behavior require native smoke tests; unit/UI tests never submit
-  printer jobs.
+  on workers and rejects stale previews after settings changes. Preview, native
+  printer page and paper-sized PDF use the same raster. `thinoda-platform::printing`
+  validates dimensions and converts RGB to bounded opaque BGRA on a worker.
+  The eframe adapter borrows its live window handle and invokes a compact native
+  C/Objective-C bridge synchronously on the main/window thread, never a rendering
+  worker. Windows uses an owned PrintDlg and real StartDoc/StretchDIBits/EndDoc GDI
+  submission; macOS uses the AppKit modal printer/driver panel and NSPrintOperation;
+  Linux uses GTK 3 PrintOperation, Cairo and desktop printer backends. No generated
+  HTML, browser/viewer launcher or temporary print files remain. Native buffers are
+  borrowed only for the synchronous call. The app preview stays modal during
+  preparation, native UI and submission; cancellation retains it for retry.
+  Native cancellation, submission acceptance and errors are distinct; no result
+  confirms physical printing. OS paper changes fit the entire fixed preview page
+  proportionally into the selected printable area without cropping/reflow.
+  Driver options may further affect output. Linux respects page-setup and reported
+  hardware margins; no hardware information means the selected setup is used.
+  Native dialogs follow OS language/theme rather than app overrides.
+  GTK cannot use a winit Wayland surface as a GtkWindow parent: the blocked app
+  event loop guarantees editor modality, but compositor taskbar grouping may differ.
+  Build requirements are the target's C toolchain, macOS AppKit SDK, or Linux GTK 3
+  development files (`libgtk-3-dev`, `pkg-config`). These are already installed by CI.
+  Linux runtime needs GTK 3 with a CUPS backend for physical printers.
+  GTK/Cairo symbols are resolved from the host's `libgtk-3.so.0` (including its
+  dependency scope); missing libraries/symbols are explicit errors. This keeps
+  the existing AppImage packager from bundling a partial GTK without its CUPS
+  modules or mixing bundled GTK and host modules. `.deb` already declares GTK 3;
+  AppImage users also need host GTK 3. Build-time pkg-config supplies headers
+  only, not a direct GTK link. Windows/macOS use their system APIs/frameworks.
+  Unit/UI tests never submit jobs: they cover the same native fit function,
+  bounded conversion, outcome mapping, immutable snapshots and modal behavior.
+  Native driver behavior still requires smoke tests on Windows x64/ARM64,
+  macOS Intel/ARM64 and Linux X11/Wayland.
