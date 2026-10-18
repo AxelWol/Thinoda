@@ -11,6 +11,7 @@ use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
+    time::Instant,
 };
 
 use egui::{Align, Color32, CornerRadius, Layout, Margin, RichText, Stroke, Ui};
@@ -43,6 +44,7 @@ pub struct Launch {
     presented: bool,
     orphans: Vec<OrphanSession>,
     warning: Option<String>,
+    created: Instant,
 }
 
 impl Launch {
@@ -61,6 +63,7 @@ impl Launch {
             presented: false,
             orphans,
             warning,
+            created: Instant::now(),
         }
     }
 
@@ -126,8 +129,10 @@ fn spawn_loader(paths: &VecDeque<PathBuf>) -> Option<Receiver<(PathBuf, Imported
 }
 
 fn display_name(path: &Path) -> String {
-    path.file_name()
-        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 impl ThinodaApp {
@@ -161,6 +166,11 @@ impl ThinodaApp {
         };
         if launch.presented && launch.pending.is_empty() {
             let launch = self.launch.take().expect("launch state checked above");
+            log::info!(
+                "startup ready {:?} after the splash was created ({} launch files)",
+                launch.created.elapsed(),
+                launch.total
+            );
             self.dialogs.recovery = launch.orphans;
             if let Some(w) = launch.warning {
                 self.toasts.warning(w);
@@ -191,7 +201,7 @@ fn splash(ui: &mut Ui, phase: &LaunchPhase, total: usize) {
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(palette.bg))
         .show(ui, |ui| {
-            let height_id = egui::Id::new("thinoda_startup_splash_height");
+            let height_id = egui::Id::unique("thinoda_startup_splash_height");
             // Measured on the previous frame; the estimate only matters for frame one.
             let height = ui
                 .ctx()
@@ -249,10 +259,13 @@ fn splash_content(ui: &mut Ui, phase: &LaunchPhase, total: usize, muted: Color32
                 ui.add(egui::Spinner::new());
                 ui.add(egui::Label::new(format!("{} {name}", t("Opening file:"))).truncate());
             });
-            ui.add(
-                egui::ProgressBar::new((*index - 1) as f32 / total.max(1) as f32)
-                    .text(format!("{index} / {total}")),
-            );
+            // Progress within one file cannot be measured; the spinner covers that case.
+            if total > 1 {
+                ui.add(
+                    egui::ProgressBar::new((*index - 1) as f32 / total as f32)
+                        .text(format!("{index} / {total}")),
+                );
+            }
         }
     }
     ui.add_space(6.0);

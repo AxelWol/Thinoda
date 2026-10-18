@@ -4,12 +4,7 @@ use std::time::{Duration, Instant};
 
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable};
-use thinoda_app::{
-    Startup, ThinodaApp,
-    app::Services,
-    i18n::t,
-    startup::LaunchPhase,
-};
+use thinoda_app::{Startup, ThinodaApp, app::Services, i18n::t, startup::LaunchPhase};
 use thinoda_platform::{
     recovery::OrphanSession,
     settings::{Language, Settings, ThemeMode},
@@ -31,6 +26,9 @@ fn startup(language: Language, theme: ThemeMode, orphans: Vec<OrphanSession>) ->
         orphans,
     }
 }
+
+/// The UI language is process-global; tests that set or read it must not interleave.
+static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Holds the app back until `live`, so the harness' settle-on-build cannot skip the splash.
 struct Gate {
@@ -74,6 +72,7 @@ fn step_until_ready(h: &mut Harness<'_, Gate>) -> Vec<LaunchPhase> {
 
 #[test]
 fn launch_files_open_in_order_errors_surface_and_recovery_waits_for_ready() {
+    let _language = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let good = dir.path().join("launch.opml");
     std::fs::write(&good, OPML).unwrap();
@@ -90,8 +89,14 @@ fn launch_files_open_in_order_errors_surface_and_recovery_waits_for_ready() {
     assert!(app.docs.is_empty());
     // The first live frame must already be the splash.
     let mut h = harness(app);
-    assert!(h.state().app.dialogs.recovery.is_empty(), "recovery behind splash");
-    assert!(h.state().app.toasts.is_empty(), "warnings wait for the main UI");
+    assert!(
+        h.state().app.dialogs.recovery.is_empty(),
+        "recovery behind splash"
+    );
+    assert!(
+        h.state().app.toasts.is_empty(),
+        "warnings wait for the main UI"
+    );
     h.get_by_label(t("Starting…"));
     h.get_by_label("Thinoda");
 
@@ -130,12 +135,16 @@ fn launch_files_open_in_order_errors_surface_and_recovery_waits_for_ready() {
 
 #[test]
 fn splash_follows_language_and_theme_and_needs_no_minimum_wait() {
+    let _language = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
     for (language, theme, dark) in [
         (Language::English, ThemeMode::Dark, true),
         (Language::German, ThemeMode::Light, false),
         (Language::German, ThemeMode::Dark, true),
     ] {
-        let mut h = harness(ThinodaApp::launch(startup(language, theme, Vec::new()), &[]));
+        let mut h = harness(ThinodaApp::launch(
+            startup(language, theme, Vec::new()),
+            &[],
+        ));
         assert_eq!(h.ctx.global_style().visuals.dark_mode, dark);
         h.get_by_label(t("Starting…"));
         h.get_by_label(t("Give your thoughts shape."));
