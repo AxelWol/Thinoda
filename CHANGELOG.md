@@ -11,6 +11,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.2.0](https://github.com/AxelWol/Thinoda/compare/v0.1.3...v0.2.0) (2026-10-18)
+
+
+### Features
+
+* print the current map with preview and page settings ([dd972ba](https://github.com/AxelWol/Thinoda/commit/dd972bad93623b2d4d0db891e6cf3f0dc23b2047))
+
 ## [0.1.3](https://github.com/AxelWol/Thinoda/compare/v0.1.2...v0.1.3) (2026-10-17)
 
 
