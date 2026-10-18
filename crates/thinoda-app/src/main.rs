@@ -9,7 +9,8 @@ const HELP: &str = "Thinoda - Give your thoughts shape.
 
 USAGE:
     thinoda [FILES...]
-    thinoda --convert <INPUT> <OUTPUT>   convert between formats (by extension)
+    thinoda --convert <INPUT> <OUTPUT> [--allow-symbol-color-loss]
+                                        convert between formats (by extension)
     thinoda --version
     thinoda --help
 ";
@@ -34,7 +35,13 @@ fn main() -> anyhow::Result<()> {
             doc::convert(
                 &PathBuf::from(i),
                 &PathBuf::from(o),
-                &thinoda_io::ExportOptions::default(),
+                &thinoda_io::ExportOptions {
+                    allow_symbol_color_loss: args
+                        .iter()
+                        .skip(3)
+                        .any(|a| a == "--allow-symbol-color-loss"),
+                    ..Default::default()
+                },
             )
             .map_err(anyhow::Error::msg)?;
             return Ok(());

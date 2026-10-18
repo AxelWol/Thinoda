@@ -223,11 +223,12 @@ impl Theme {
     }
 
     pub fn background(&self, settings: &ThemeSettings, dark: bool) -> Color {
-        settings.background.unwrap_or(if dark || self.dark_only {
+        let base = if dark || self.dark_only {
             self.dark_bg
         } else {
             self.light_bg
-        })
+        };
+        settings.background.map(|c| c.over(base)).unwrap_or(base)
     }
 
     /// Branch color for main branch `index`.
