@@ -10,6 +10,50 @@ env:
   THINODA_AI_SKIP_LIVE: "1"
 
 jobs:
+  docs:
+    name: Markdown timestamps
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The synthetic PR merge commit is not the source revision.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Test documentation metadata
+        run: python -m unittest discover -s .github/scripts -p "test_docs_stamp.py"
+      - name: Preview timestamps for committed source
+        run: |
+          python .github/scripts/docs_stamp.py
+          python .github/scripts/docs_stamp.py --check
+
+  docs-refresh:
+    name: Refresh Markdown timestamps on main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: docs-stamp-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Only metadata is committed. No force push, PR writes, secrets or bypass.
+      # GITHUB_TOKEN pushes do not retrigger CI; no diff also means no commit.
+      - name: Refresh, verify and fast-forward push metadata
+        run: python .github/scripts/docs_stamp.py --refresh-main
+
   notices:
     name: third-party notices
     runs-on: ubuntu-latest

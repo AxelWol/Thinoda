@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from docs_stamp import preserve_stamp, strip_stamp
+
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ROOT_PACKAGE = "thinoda-app"
@@ -115,13 +117,13 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="fail if the file is stale")
     args = parser.parse_args()
     text = render(runtime_packages(cargo_metadata()))
+    current = OUTPUT.read_text(encoding="utf-8") if OUTPUT.exists() else ""
     if args.check:
-        current = OUTPUT.read_text(encoding="utf-8") if OUTPUT.exists() else ""
-        if current.replace("\r\n", "\n") != text:
+        if strip_stamp(current).replace("\r\n", "\n") != text:
             print(f"{OUTPUT.name} is out of date; run {Path(__file__).name}", file=sys.stderr)
             return 1
         return 0
-    OUTPUT.write_text(text, encoding="utf-8", newline="\n")
+    OUTPUT.write_text(preserve_stamp(current, text), encoding="utf-8", newline="\n")
     print(f"wrote {OUTPUT.name} ({len(text.splitlines())} lines)")
     return 0
 

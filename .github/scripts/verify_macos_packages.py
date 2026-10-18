@@ -13,6 +13,8 @@ ARCHITECTURES = {
     "x86_64-apple-darwin": "x86_64",
 }
 
+LOCALIZATIONS = ["en", "de", "es", "fr", "da", "nl", "pt-PT", "pt-BR", "it", "pl"]
+
 
 def run(*args: str, input: str | None = None) -> str:
     print(f"> {' '.join(args)}", flush=True)
@@ -31,6 +33,11 @@ def verify_app(app: Path, architecture: str) -> None:
         info = plistlib.load(stream)
     if info["CFBundleIdentifier"] != "io.github.axelwol.thinoda":
         raise ValueError(f"Unexpected bundle identifier in {app}")
+    if (
+        info.get("CFBundleLocalizations") != LOCALIZATIONS
+        or info.get("CFBundleDevelopmentRegion") != "en"
+    ):
+        raise ValueError(f"Missing or incorrect bundle localizations in {app}")
     executable = app / "Contents" / "MacOS" / info["CFBundleExecutable"]
     run("lipo", str(executable), "-verify_arch", architecture)
     # Verify resources and Info.plist, not just the linker's Mach-O signature.

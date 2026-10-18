@@ -301,6 +301,29 @@ fn template_recents_are_bounded_deduplicated_validated_and_independent_of_files(
 }
 
 #[test]
+fn every_language_roundtrips_without_resetting_other_preferences() {
+    let dir = directory();
+    let paths = paths(&dir);
+    for language in Language::ALL {
+        let settings = Settings {
+            language,
+            theme: ThemeMode::Dark,
+            ui_scale: 1.25,
+            ..Settings::default()
+        };
+        settings.save(&paths).unwrap();
+        assert_eq!(Settings::load(&paths).unwrap(), settings);
+    }
+    for legacy in ["auto", "english", "german"] {
+        let settings: Settings = toml::from_str(&format!("language = \"{legacy}\"")).unwrap();
+        assert!(matches!(
+            settings.language,
+            Language::Auto | Language::English | Language::German
+        ));
+    }
+}
+
+#[test]
 fn settings_roundtrip_every_field() {
     let dir = directory();
     let paths = paths(&dir);
