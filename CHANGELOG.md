@@ -13,6 +13,51 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.4.0](https://github.com/AxelWol/Thinoda/compare/v0.3.1...v0.4.0) (2026-10-18)
+
+
+### Features
+
+* add per-symbol colors and contrast guidance ([b6523a1](https://github.com/AxelWol/Thinoda/commit/b6523a117112a0d498aa3ec6185bb72a79d653bc))
+* add symbol colors, targeted removal and contrast guidance ([7d89aa1](https://github.com/AxelWol/Thinoda/commit/7d89aa1bb0ff24b360ed347ffe346ac1228f9197))
+* **app:** splash translations, ready timing log and single-file spinner ([7b076f8](https://github.com/AxelWol/Thinoda/commit/7b076f8761915c494b352d47eeb69dc2d1da1def))
+* **app:** startup splash screen while launch state loads ([35d9682](https://github.com/AxelWol/Thinoda/commit/35d9682ec9798fccb37bc7a9d3bd565a6e6c74d7))
+* **app:** startup splash screen while launch state loads ([56a0a47](https://github.com/AxelWol/Thinoda/commit/56a0a476a209e6b60726586f0aad7c5770a47f6e))
+* create maps by double-clicking template cards ([ec98d5c](https://github.com/AxelWol/Thinoda/commit/ec98d5ca616b30eda6eebfe6f695d1f82fec5ff7))
+* create maps by double-clicking template cards ([7fd023e](https://github.com/AxelWol/Thinoda/commit/7fd023eb74e03daa821c4aa9201f222b6c4fdcc4))
+* **docs:** automate source-history Markdown timestamps ([babcc0e](https://github.com/AxelWol/Thinoda/commit/babcc0ec2541c20ea3bf4f9bde42d1042064071c))
+* **docs:** maintain automatic source-history Markdown timestamps ([370143a](https://github.com/AxelWol/Thinoda/commit/370143a548383d343ba01a0a1e930a39f48c5920))
+* embed offline legal documents in About ([03ba24c](https://github.com/AxelWol/Thinoda/commit/03ba24c60ae9daf019d383dfeccd834d1e3f18f0))
+* expand application and installer localization ([7551b7d](https://github.com/AxelWol/Thinoda/commit/7551b7d45e7b5382c246495fc8f08b315716208a))
+* expand UI and installer localization to ten locales ([4b68d3b](https://github.com/AxelWol/Thinoda/commit/4b68d3be5e98bbaad6ff7fa7daa411b6d4e003e3))
+* format offline legal Markdown with 1.5x line height ([972516e](https://github.com/AxelWol/Thinoda/commit/972516e7eb24a225460e0da27606749c27d5f0b5))
+* **io:** add guarded native MindManager map conversion ([41b300f](https://github.com/AxelWol/Thinoda/commit/41b300fdf64231d7cb6cc135fb1f8403bc4f32a2))
+* **print:** render pages in Windows system print preview ([256a26a](https://github.com/AxelWol/Thinoda/commit/256a26a429144f6c076eb2c4feec37db81846413))
+* **print:** support Windows native system preview ([b55821e](https://github.com/AxelWol/Thinoda/commit/b55821ee6e7122ad414d81f3a28bebd466413fd8))
+* render legal Markdown with readable line spacing ([02ba1fc](https://github.com/AxelWol/Thinoda/commit/02ba1fcc93200cfb2a117885223dcf44712d012e))
+* show complete legal documents offline in About ([e6b0df7](https://github.com/AxelWol/Thinoda/commit/e6b0df7e6d42de71d4724546d747dacfd004266d))
+* store AI API keys securely ([42bfe50](https://github.com/AxelWol/Thinoda/commit/42bfe50a0916e71a4be6c00c0a643360a9d00231))
+
+
+### Bug Fixes
+
+* detect Brazilian locales with explicit script subtags ([ebb95ec](https://github.com/AxelWol/Thinoda/commit/ebb95ecdcd44c348bbdfe52fc0b5e9aafd637f80))
+* expose formatted legal links to assistive technology ([a90b74e](https://github.com/AxelWol/Thinoda/commit/a90b74e7ddc8464f049003e969943344ec84037f))
+* **print:** use standard C++20 coroutine support ([cafa6ec](https://github.com/AxelWol/Thinoda/commit/cafa6ec6ce1f7211124aeb42ab87399c09a990de))
+* report unsupported legal document links ([83089e2](https://github.com/AxelWol/Thinoda/commit/83089e21c6156688ff5f108c9ddc6eb1d506207a))
+
+
+### Documentation
+
+* include Polish in localization backlog ([a110bb6](https://github.com/AxelWol/Thinoda/commit/a110bb6c7e4d5bb39bfe0db1c1d74574b2236872))
+* **print:** group remaining native preview work with printing ([e8938be](https://github.com/AxelWol/Thinoda/commit/e8938be1fe08a5e8393be76454fae852e92e2f7a))
+* **print:** record production system preview checks ([d324356](https://github.com/AxelWol/Thinoda/commit/d3243568171d18c4ea798378b3463718745d063b))
+* **print:** separate completed entry from concurrent backlog additions ([eae180c](https://github.com/AxelWol/Thinoda/commit/eae180c0fa8c52a56ba25d16accfc997c412936a))
+* refresh legal viewer source timestamps ([6398b52](https://github.com/AxelWol/Thinoda/commit/6398b5210dd503499c8c5d9c5e6a36e74a717900))
+* refresh merged backlog source timestamp ([59fb8bb](https://github.com/AxelWol/Thinoda/commit/59fb8bb3f665ac8896b9f8be267781cd235705de))
+* stamp BACKLOG.md ([844531d](https://github.com/AxelWol/Thinoda/commit/844531de32411fc038c785d7c8500f48eedff666))
+* stamp BACKLOG.md after merging main ([926f39c](https://github.com/AxelWol/Thinoda/commit/926f39c2a728e57260f02e9e591a7474ce4c3e32))
+
 ## [0.3.1](https://github.com/AxelWol/Thinoda/compare/v0.3.0...v0.3.1) (2026-10-18)
 
 
