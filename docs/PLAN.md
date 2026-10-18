@@ -306,7 +306,7 @@ does not close maps; scheduling state survives file round trips and recovery.
 
 ### R9 - AI safety, responsiveness and advanced assistance
 
-1. Move API keys to Windows Credential Manager/macOS Keychain/Linux Secret Service;
+1. [x] Move API keys to Windows Credential Manager/macOS Keychain/Linux Secret Service;
    migrate existing plaintext values only after successful storage, then remove them.
    Surface unavailable/locked keychain errors; never fall back silently to plaintext.
 2. Add SSE streaming, preview and cancellation/timeouts with bounded parsing and

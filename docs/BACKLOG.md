@@ -702,8 +702,9 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 
 ## AI
 - P1 Streaming responses (SSE) with live preview and cancel button
-- P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
-  Secret Service) instead of `settings.toml`
+- [x] P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
+  Secret Service) instead of `settings.toml` (implemented; legacy keys migrate only
+  after secure storage succeeds)
 - P2 Semantic search/clustering with an embedding model (e.g. `nomic-embed-text`)
 - P2 "Rewrite topic", translate branch, AI-assisted Pitch outline
 - P3 Prompt library editable by the user

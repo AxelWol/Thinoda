@@ -106,7 +106,9 @@ impl ThinodaApp {
         let mut settings = self.settings.clone();
         settings.custom_themes = themes;
         if let Some(paths) = &self.services.paths {
-            settings.save(paths).map_err(|error| error.to_string())?;
+            settings
+                .save_with_credentials(paths, &thinoda_platform::credentials::NativeCredentialStore)
+                .map_err(|error| error.to_string())?;
         }
         self.settings = settings;
         self.font_source = None;

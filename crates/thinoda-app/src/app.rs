@@ -343,11 +343,15 @@ impl ThinodaApp {
         }
     }
 
-    pub fn save_settings(&self) {
-        if let Some(p) = &self.services.paths
-            && let Err(e) = self.settings.save(p)
+    pub fn save_settings(&mut self) {
+        if let Some(p) = self.services.paths.clone()
+            && let Err(e) = self
+                .settings
+                .save_with_credentials(&p, &thinoda_platform::credentials::NativeCredentialStore)
         {
             log::warn!("could not save settings: {e}");
+            self.toasts
+                .error(format!("{}: {e}", t("Could not save settings securely")));
         }
     }
 
