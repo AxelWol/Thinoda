@@ -97,12 +97,7 @@ fn main() -> anyhow::Result<()> {
         options,
         Box::new(move |cc| {
             egui_extras_install(&cc.egui_ctx);
-            let mut app = ThinodaApp::new(startup.settings, startup.services, &files);
-            app.dialogs.recovery = startup.orphans;
-            if let Some(w) = startup.warning {
-                app.toasts.warning(w);
-            }
-            Ok(Box::new(app))
+            Ok(Box::new(ThinodaApp::launch(startup, &files)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

@@ -13,6 +13,7 @@ mod map_shot;
 mod printing;
 mod quick_styles;
 mod shortcut_browser;
+pub mod startup;
 mod structure_picker;
 mod symbols;
 mod template_gallery;

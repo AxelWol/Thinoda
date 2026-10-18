@@ -60,6 +60,11 @@ impl OpenDoc {
     /// Opens a file in any importable format.
     pub fn open(path: &Path) -> Result<Self, String> {
         let workbook = thinoda_io::import_file(path).map_err(|e| e.to_string())?;
+        Ok(Self::imported(path, workbook))
+    }
+
+    /// Wraps a workbook already imported from `path` (e.g. on a loader thread).
+    pub fn imported(path: &Path, workbook: Workbook) -> Self {
         let format = Format::from_path(path).unwrap_or(Format::Thinoda);
         let mut d = Self::new(workbook);
         if is_native(format) {
@@ -70,7 +75,7 @@ impl OpenDoc {
             // Imported from a foreign format: saving asks for a new native file name.
             d.doc.mark_dirty();
         }
-        Ok(d)
+        d
     }
 
     pub fn title(&self) -> String {

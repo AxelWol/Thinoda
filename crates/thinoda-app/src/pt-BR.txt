@@ -157,3 +157,6 @@ Red star|Estrela vermelha
 Gray flag|Bandeira cinza
 Gray star|Estrela cinza
 Grayscale|Escala de cinza
+Starting…|Iniciando…
+Opening file:|Abrindo arquivo:
+The file loader stopped unexpectedly|O carregamento do arquivo parou inesperadamente

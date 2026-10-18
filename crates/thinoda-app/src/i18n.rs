@@ -1285,6 +1285,12 @@ const DE: &[(&str, &str)] = &[
     ("New Tab", "Neuer Tab"),
     ("Next Document", "Nächstes Dokument"),
     ("Show in Folder", "Im Ordner anzeigen"),
+    ("Starting…", "Wird gestartet…"),
+    ("Opening file:", "Datei wird geöffnet:"),
+    (
+        "The file loader stopped unexpectedly",
+        "Das Laden der Datei wurde unerwartet abgebrochen",
+    ),
 ];
 
 #[cfg(test)]
