@@ -533,7 +533,7 @@ The screenshots show selected values, not every available option or factory defa
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
 - P1 Expand language support beyond English/German to Spanish, French, Danish,
-  Dutch (Netherlands), Portuguese and Italian. Translate every user-facing word
+  Dutch (Netherlands), Portuguese, Italian and Polish. Translate every user-facing word
   and sentence in its actual UI/workflow context, using consistent terminology
   rather than isolated literal translations. Include help, dialogs, errors and
   installer/package UI for all Windows, macOS and Linux targets/builds; retain
