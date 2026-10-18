@@ -532,6 +532,17 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
+- P1 Expand language support beyond English/German to Spanish, French, Danish,
+  Dutch (Netherlands), Portuguese and Italian. Translate every user-facing word
+  and sentence in its actual UI/workflow context, using consistent terminology
+  rather than isolated literal translations. Include help, dialogs, errors and
+  installer/package UI for all Windows, macOS and Linux targets/builds; retain
+  the existing languages and avoid missing or unlabeled installer controls.
+  Replace the Settings > General > Language segmented control with a drop-down
+  containing Auto and every supported language. Preserve system-language
+  detection, explicit selection and persistence. Cover translation completeness,
+  placeholders, switching/restart, installer labels, and long text in light/dark
+  mode with tests and contextual review.
 - P1 Extend the working General/Editor/AI/Cloud Preferences categories with Calendar,
   Sharing and Shortcuts as their features ship; refine icon navigation and grouped
   cards. Topic-toolbar and add-button visibility are independently configurable.
