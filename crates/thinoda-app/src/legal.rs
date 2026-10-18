@@ -70,7 +70,10 @@ impl ThinodaApp {
                     {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
-                    _ => {}
+                    _ => {
+                        log::warn!("Unsupported bundled legal-document link: {destination}");
+                        self.toasts.warning(t("Not possible here"));
+                    }
                 }
             }
             ui.separator();
