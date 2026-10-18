@@ -39,7 +39,7 @@ def compile_windows_probe(directory: Path, *, ui: bool = False) -> Path:
     executable = directory / ("preview-ui.exe" if ui else "preview-test.exe")
     define = "/DTHINODA_PREVIEW_UI_PROBE" if ui else ""
     command = (
-        f'call "{setup}" {architecture} >nul && cl /nologo /std:c++17 '
+        f'call "{setup}" {architecture} >nul && cl /nologo /std:c++20 '
         f'/EHsc /W4 /WX /permissive- /MD {define} "{source}" '
         f'/Fo"{directory / "preview-test.obj"}" /Fe"{executable}" '
         'windowsapp.lib d3d11.lib d2d1.lib windowscodecs.lib ole32.lib user32.lib'

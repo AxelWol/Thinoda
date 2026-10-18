@@ -6,7 +6,7 @@ fn main() {
         "windows" => {
             build
                 .cpp(true)
-                .std("c++17")
+                .std("c++20")
                 .file("native/print_windows.cpp")
                 .flag_if_supported("/EHsc");
             for library in [
