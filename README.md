@@ -32,6 +32,9 @@ Privacy & Security > Open Anyway** if you trust the download. Ad-hoc signing
 is an integrity check, not Apple verification of the developer.
 
 ### Installing on Windows with WinGet
+The Windows installer's final page offers separate options to run Thinoda and
+create a desktop shortcut. Both are labeled in English and German.
+
 ```powershell
 winget install AxelWol.Thinoda
 ```
