@@ -1,6 +1,13 @@
 Default symbol color|Cor padrão do símbolo
 Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.|As exportações editáveis perdem as cores dos símbolos, exceto no formato Thinoda e nos arquivos XMind inalterados reabertos no Thinoda. O próprio XMind mostra ícones padrão; alterações em outros aplicativos podem eliminar as cores personalizadas.
 # Explicit Brazilian Portuguese regional wording; other entries intentionally share common Portuguese.
+Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.|Não foi possível ler este arquivo MindManager. Ele pode ser inválido, estar criptografado, ser grande demais ou não ser seguro.
+MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.|O MindManager salva uma única folha. Exporte a folha atual ou salve a pasta de trabalho completa como .thinoda.
+Choose a different destination to preserve the imported source.|Escolha outro destino para preservar o arquivo de origem importado.
+MindManager conversion may omit unsupported content. The source file is preserved.|A conversão de MindManager pode omitir conteúdo não suportado. O arquivo de origem é preservado.
+MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.|A exportação para MindManager não pode preservar todo o conteúdo. Use Exportar com confirmação ou salve como .thinoda.
+Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.|Só é exportada a folha atual. Podem ser omitidos cores, recursos, relações, layout avançado e dados não suportados. A pasta de trabalho de origem não é alterada.
+Additional or unsupported links|Links adicionais ou não suportados
 Font Family|Fonte
 Global Font|Fonte global
 Default|Padrão
@@ -157,6 +164,7 @@ Red star|Estrela vermelha
 Gray flag|Bandeira cinza
 Gray star|Estrela cinza
 Grayscale|Escala de cinza
+Could not write this MindManager file. The map may be too large or contain invalid data.|Não foi possível gravar este arquivo MindManager. O mapa pode ser grande demais ou conter dados inválidos.
 Starting…|Iniciando…
 Opening file:|Abrindo arquivo:
 The file loader stopped unexpectedly|O carregamento do arquivo parou inesperadamente

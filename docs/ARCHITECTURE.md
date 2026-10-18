@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 10:48:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 11:32:18 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Architecture
 
@@ -18,7 +18,7 @@ graph TD
 | Crate | Responsibility | Depends on egui? |
 |---|---|---|
 | `thinoda-core` | Workbook/sheet/topic model, transactional edits + undo, layout engine for all structures, themes, templates, search, outline conversion | no |
-| `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text, MindManager import; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
+| `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
 | `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme | no |
 | `thinoda-ai` | Blocking HTTP client for `/v1/models` + `/v1/chat/completions`, prompts, outline parser, background `AiJob`, mock server for tests | no |
 | `thinoda-ui` | Design tokens, light/dark visuals, widgets, palette, toasts, dialogs, icons, fonts — **the reusable library for companion apps** | yes |

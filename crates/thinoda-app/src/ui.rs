@@ -163,6 +163,7 @@ impl ThinodaApp {
                     if self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
+                        || self.conversion_modal_open()
                         || self.dialogs.symbol_export.is_some()
                     {
                         ui.disable();
@@ -181,6 +182,7 @@ impl ThinodaApp {
                         if self.map_shot.active()
                             || self.printing.active()
                             || self.dialogs.legal.open
+                            || self.conversion_modal_open()
                             || self.dialogs.symbol_export.is_some()
                         {
                             ui.disable();
@@ -200,6 +202,7 @@ impl ThinodaApp {
                             if self.map_shot.active()
                                 || self.printing.active()
                                 || self.dialogs.legal.open
+                                || self.conversion_modal_open()
                                 || self.dialogs.symbol_export.is_some()
                             {
                                 ui.disable();
@@ -220,6 +223,7 @@ impl ThinodaApp {
                     || self.dialogs.guide.open
                     || self.dialogs.shortcuts
                     || self.dialogs.legal.open
+                    || self.conversion_modal_open()
                     || self.dialogs.symbol_export.is_some()
                 {
                     ui.disable();
@@ -289,6 +293,12 @@ impl ThinodaApp {
         self.housekeeping(&ctx);
     }
 
+    fn conversion_modal_open(&self) -> bool {
+        self.dialogs.mindmanager_export
+            || self.dialogs.mindmanager_save.is_some()
+            || !self.dialogs.imports.is_empty()
+    }
+
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
             || self.printing.active()
@@ -305,6 +315,9 @@ impl ThinodaApp {
         }
         let d = &self.dialogs;
         d.close.is_some()
+            || d.mindmanager_save.is_some()
+            || d.mindmanager_export
+            || !d.imports.is_empty()
             || d.conflict.is_some()
             || d.rename_sheet.is_some()
             || !d.recovery.is_empty()
@@ -861,6 +874,7 @@ impl ThinodaApp {
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
             || self.dialogs.legal.open
+            || self.conversion_modal_open()
             || self.dialogs.symbol_export.is_some()
         {
             if let Some(d) = self.docs.get_mut(self.active) {
@@ -2713,8 +2727,8 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
-        if let Some((index, format)) = self.dialogs.symbol_export
-            && let Some(choice) = confirm_dialog(
+        if let Some((index, format)) = self.dialogs.symbol_export {
+            if let Some(choice) = confirm_dialog(
                 ctx,
                 "symbol_export",
                 t("Symbol color"),
@@ -2723,13 +2737,120 @@ impl ThinodaApp {
                     (t("Export"), DialogButton::Primary),
                     (t("Cancel"), DialogButton::Secondary),
                 ],
-            )
-        {
-            self.dialogs.symbol_export = None;
-            if choice == 0 && index < self.docs.len() {
-                self.active = index;
-                self.export(format, true);
+            ) {
+                self.dialogs.symbol_export = None;
+                if choice == 0 && index < self.docs.len() {
+                    self.active = index;
+                    self.export(format, true);
+                }
             }
+            return;
+        }
+        if self.dialogs.mindmanager_save.is_some() {
+            let message = format!(
+                "{}\n\n{}",
+                t(
+                    "MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda."
+                ),
+                t(
+                    "Theme colors and appearance may differ. Use .thinoda to preserve all Thinoda data."
+                )
+            );
+            if let Some(choice) = confirm_dialog(
+                ctx,
+                "mindmanager_save",
+                t("Save As…"),
+                &message,
+                &[
+                    (t("Save"), DialogButton::Primary),
+                    (t("Cancel"), DialogButton::Secondary),
+                ],
+            ) {
+                let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
+                let close = self.dialogs.mindmanager_close.take();
+                if choice == 0
+                    && let Some(index) = self.docs.iter().position(|doc| doc.key == key)
+                {
+                    self.active = index;
+                    let saved = if sheet_only {
+                        self.save_sheet_to_confirmed(&path)
+                    } else {
+                        self.save_active_to(&path, self.settings.backup_on_save)
+                    };
+                    if saved && !sheet_only {
+                        match close {
+                            Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
+                            Some(CloseIntent::Quit) => {
+                                self.exec(ctx, Cmd::SaveAll);
+                                if self.dialogs.mindmanager_save.is_some() {
+                                    self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
+                                } else if !self.any_dirty() {
+                                    self.quitting = true;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if self.dialogs.mindmanager_export {
+            if let Some(choice) = confirm_dialog(
+                ctx,
+                "mindmanager_export",
+                t("Export MindManager copy"),
+                t(
+                    "Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.",
+                ),
+                &[
+                    (t("Export"), DialogButton::Primary),
+                    (t("Cancel"), DialogButton::Secondary),
+                ],
+            ) {
+                self.dialogs.mindmanager_export = false;
+                let allow_symbol_color_loss =
+                    std::mem::take(&mut self.dialogs.mindmanager_symbol_color_loss);
+                if choice == 0 {
+                    self.export_confirmed(thinoda_io::Format::MindManager, allow_symbol_color_loss);
+                }
+            }
+            return;
+        }
+        if let Some((path, _, warnings)) = self.dialogs.imports.front() {
+            let mut message = format!(
+                "{}\n\n{}",
+                path.display(),
+                t(
+                    "MindManager conversion may omit unsupported content. The source file is preserved."
+                )
+            );
+            for warning in warnings {
+                let label = match warning {
+                    thinoda_io::ImportWarning::Formatting => "Formatting and styles",
+                    thinoda_io::ImportWarning::Notes => "Rich notes",
+                    thinoda_io::ImportWarning::Resources => "Images and attachments",
+                    thinoda_io::ImportWarning::Markers => "Markers and task data",
+                    thinoda_io::ImportWarning::Links => "Additional or unsupported links",
+                    thinoda_io::ImportWarning::Other => "Other unsupported map data",
+                };
+                message.push_str("\n- ");
+                message.push_str(t(label));
+            }
+            if let Some(choice) = confirm_dialog(
+                ctx,
+                "mindmanager_import",
+                t("Import requires confirmation"),
+                &message,
+                &[
+                    (t("Import converted copy"), DialogButton::Primary),
+                    (t("Cancel"), DialogButton::Secondary),
+                ],
+            ) {
+                self.resolve_import(choice == 0);
+            }
+            return;
         }
         // Crash recovery.
         if !self.dialogs.recovery.is_empty() {
@@ -2795,11 +2916,16 @@ impl ThinodaApp {
                         self.active = i;
                         if self.save_active(false) {
                             self.close_tab_now(i);
+                        } else if self.dialogs.mindmanager_save.is_some() {
+                            self.dialogs.mindmanager_close = Some(CloseIntent::Tab(i));
                         }
                     }
                     (CloseIntent::Tab(i), 1) => self.close_tab_now(i),
                     (CloseIntent::Quit, 0) => {
                         self.exec(ctx, Cmd::SaveAll);
+                        if self.dialogs.mindmanager_save.is_some() {
+                            self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
+                        }
                         if !self.any_dirty() {
                             self.quitting = true;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

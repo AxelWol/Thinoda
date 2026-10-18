@@ -310,11 +310,15 @@ those system-owned controls. WinGet publishing remains paused.
   the last structure/theme for new blank maps without changing named templates.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
-- Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager
+- Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
+  and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
-- Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle
+- Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle,
+  and a bounded native MindManager `.mmap` subset. MindManager conversion uses
+  explicit loss/sheet-scope warnings and protects imported source files;
+  [supported features and verification limits](docs/MINDMANAGER.md).
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
 - Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders
 - AI assistant (optional): brainstorm subtopics, break down into to-dos, explain, summarize,

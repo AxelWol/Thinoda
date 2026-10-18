@@ -20,6 +20,7 @@ use thinoda_core::Workbook;
 pub struct SnapshotMeta {
     pub title: String,
     pub original_path: Option<PathBuf>,
+    pub import_source: Option<PathBuf>,
     pub dirty: bool,
     pub saved_at: u64,
 }

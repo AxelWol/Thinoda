@@ -103,6 +103,12 @@ description = "OPML outline"
 mime-type = "text/x-opml"
 role = "viewer"
 
+[[package.metadata.packager.file-associations]]
+extensions = ["mmap", "xmmap"]
+name = "MindManager Map"
+description = "MindManager map (conversion-only opening)"
+role = "viewer"
+
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
 languages = ["English", "German", "Spanish", "French", "Danish", "Dutch", "Portuguese", "PortugueseBR", "Italian", "Polish"]

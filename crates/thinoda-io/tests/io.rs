@@ -578,7 +578,7 @@ fn free_mind_opml_markdown_and_text_import() {
 }
 #[test]
 fn mindmanager_import_from_document_xml() {
-    let xml=br#"<ap:Map xmlns:ap="urn:test"><ap:OneTopic><ap:Topic><ap:Text PlainText="Root"/><ap:NotesGroup><ap:NotesXhtmlData PreviewPlainText="root note"/></ap:NotesGroup><ap:SubTopics><ap:Topic><ap:Text PlainText="Child"/><ap:Hyperlink Url="https://example.org"/></ap:Topic></ap:SubTopics></ap:Topic></ap:OneTopic></ap:Map>"#;
+    let xml=br#"<ap:Map xmlns:ap="http://schemas.mindjet.com/MindManager/Application/2003"><ap:OneTopic><ap:Topic><ap:Text PlainText="Root"/><ap:NotesGroup><ap:NotesXhtmlData PreviewPlainText="root note"/></ap:NotesGroup><ap:SubTopics><ap:Topic><ap:Text PlainText="Child"/><ap:Hyperlink Url="https://example.org"/></ap:Topic></ap:SubTopics></ap:Topic></ap:OneTopic></ap:Map>"#;
     let bytes = zip_with(&[("Document.xml", xml)]);
     let w = import_bytes(Format::MindManager, &bytes).unwrap();
     let sheet = &w.sheets[0];

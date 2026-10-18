@@ -15,13 +15,12 @@ use std::{
 };
 
 use egui::{Align, Color32, CornerRadius, Layout, Margin, RichText, Stroke, Ui};
-use thinoda_core::Workbook;
 use thinoda_platform::recovery::OrphanSession;
 use thinoda_ui::tokens::Palette;
 
 use crate::{Startup, ThinodaApp, doc::OpenDoc, i18n::t};
 
-type Imported = Result<Workbook, String>;
+type Imported = Result<thinoda_io::ImportReport, String>;
 
 /// What the splash currently waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +100,7 @@ impl Launch {
 }
 
 fn import(path: &Path) -> Imported {
-    thinoda_io::import_file(path).map_err(|e| e.to_string())
+    crate::doc::import_report(path)
 }
 
 fn spawn_loader(paths: &VecDeque<PathBuf>) -> Option<Receiver<(PathBuf, Imported)>> {
@@ -159,7 +158,10 @@ impl ThinodaApp {
         if launch.presented
             && let Some((path, result)) = launch.next_result()
         {
-            self.add_opened(&path, result.map(|wb| OpenDoc::imported(&path, wb)));
+            self.add_opened(
+                &path,
+                result.and_then(|report| OpenDoc::from_import_report(&path, report)),
+            );
         }
         let Some(launch) = self.launch.as_mut() else {
             return true;

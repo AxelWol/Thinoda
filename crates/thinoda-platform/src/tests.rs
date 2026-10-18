@@ -29,11 +29,26 @@ fn meta(title: &str) -> SnapshotMeta {
         dirty: true,
         saved_at: 42,
         original_path: Some(PathBuf::from("map.xmind")),
+        import_source: None,
     }
 }
 fn crash_session(manager: RecoveryManager) {
     assert!(manager.try_flush_for_crash());
     drop(manager);
+}
+
+#[test]
+fn recovery_preserves_import_source_and_accepts_older_metadata() {
+    let mut metadata = meta("Converted copy");
+    metadata.import_source = Some(PathBuf::from("protected.mmap"));
+    let bytes = Snapshot::to_bytes(metadata.clone(), &Workbook::default()).unwrap();
+    let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(snapshot.meta, metadata);
+    let mut old = serde_json::to_value(&metadata).unwrap();
+    old.as_object_mut().unwrap().remove("import_source");
+    let restored: SnapshotMeta = serde_json::from_value(old).unwrap();
+    assert!(restored.import_source.is_none());
+    assert_eq!(restored.original_path, metadata.original_path);
 }
 fn mkdir(path: impl AsRef<Path>) {
     fs::create_dir_all(path).unwrap();
