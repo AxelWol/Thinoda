@@ -94,8 +94,8 @@ impl PrintSettings {
     }
 }
 
-/// The preview, browser document and PDF derive from the same page pixels.
-/// Browser PNG is lossless; PDF embeds a high-quality JPEG, like existing export.
+/// The preview, native printer page and PDF derive from the same page pixels.
+/// Native output is lossless; PDF embeds a high-quality JPEG, like existing export.
 pub struct PrintDocument {
     pub settings: PrintSettings,
     pub image: RgbImage,

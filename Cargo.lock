@@ -3641,13 +3641,13 @@ name = "thinoda-app"
 version = "0.2.1"
 dependencies = [
  "anyhow",
- "base64",
  "eframe",
  "egui",
  "egui_kittest",
  "env_logger",
  "image",
  "log",
+ "raw-window-handle",
  "rfd",
  "sys-locale",
  "tempfile",
@@ -3700,8 +3700,11 @@ dependencies = [
 name = "thinoda-platform"
 version = "0.2.1"
 dependencies = [
+ "cc",
  "directories",
  "log",
+ "pkg-config",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tempfile",

@@ -72,8 +72,8 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 const DE: &[(&str, &str)] = &[
     ("Print", "Drucken"),
     (
-        "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, resolution and colors, then continue to the browser print dialog or save a print-ready PDF. Keep Thinoda open until printing finishes; printer settings can change the result.",
-        "Drucken (Strg+P) zeigt das aktuelle Blatt einschließlich der Themen außerhalb des Bildschirms auf einer Seite an. Papierformat, Ausrichtung, Ränder, Auflösung und Farben einstellen und dann zum Druckdialog im Browser wechseln oder ein druckfertiges PDF speichern. Thinoda bis zum Druckende geöffnet lassen; Druckereinstellungen können das Ergebnis ändern.",
+        "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, source resolution and colors, then open the native OS printer dialog or save a PDF. Choose a printer and its driver settings there. The whole preview page fits proportionally inside the selected printable area; OS paper changes scale it without reflow. Submitted means accepted by the OS, not physically printed. Native dialogs use the OS language and appearance.",
+        "Drucken (Strg+P) zeigt das aktuelle Blatt einschließlich der Themen außerhalb des Bildschirms auf einer Seite an. Papierformat, Ausrichtung, Ränder, Quellauflösung und Farben einstellen und dann den nativen Betriebssystem-Druckdialog öffnen oder ein PDF speichern. Dort Drucker und Treibereinstellungen wählen. Die gesamte Vorschauseite wird proportional in den gewählten bedruckbaren Bereich eingepasst; Änderungen am Papierformat skalieren sie ohne neuen Umbruch. Übermittelt bedeutet vom Betriebssystem angenommen, nicht tatsächlich ausgedruckt. Native Dialoge verwenden Sprache und Darstellung des Betriebssystems.",
     ),
     ("Retry preview", "Vorschau erneut versuchen"),
     ("Page setup", "Seite einrichten"),
@@ -105,10 +105,7 @@ const DE: &[(&str, &str)] = &[
         "Print worker stopped unexpectedly",
         "Druckverarbeitung wurde unerwartet beendet",
     ),
-    (
-        "Print preparation failed",
-        "Druckvorbereitung fehlgeschlagen",
-    ),
+    ("Printing failed", "Drucken fehlgeschlagen"),
     (
         "Preparing print document…",
         "Druckdokument wird vorbereitet…",
@@ -125,16 +122,13 @@ const DE: &[(&str, &str)] = &[
         "Das aktuelle Blatt wird auf eine Seite eingepasst. Themen außerhalb des Bildschirms sind enthalten; eingeklappte Zweige bleiben eingeklappt.",
     ),
     (
-        "Continue opens a local document in your default HTML application (normally a browser) and requests its print dialog. If blocked, click Print there. Choose the same paper and orientation, 100% scale, no margins or headers. Printer settings may change the result.",
-        "Weiter öffnet ein lokales Dokument in der Standard-HTML-Anwendung (normalerweise ein Browser) und fordert deren Druckdialog an. Falls blockiert, dort auf Drucken klicken. Dasselbe Papierformat und dieselbe Ausrichtung wählen, 100 % Skalierung, keine Ränder oder Kopfzeilen. Druckereinstellungen können das Ergebnis ändern.",
+        "Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.",
+        "Weiter öffnet den Betriebssystem-Druckdialog mit Druckerauswahl und Treibereinstellungen. Die gesamte Vorschauseite samt Rändern wird proportional in den gewählten bedruckbaren Bereich eingepasst. Papierformat oder Ausrichtung im Systemdialog skalieren die Seite ohne neuen Umbruch; Treiberoptionen können die Ausgabe zusätzlich verändern. Die Auflösung hier bestimmt den Detailgrad der Quelle, nicht die Druckqualität.",
     ),
+    ("Printing cancelled", "Drucken abgebrochen"),
     (
-        "If the print dialog did not open, click Print. Use the same paper and orientation, 100% scale, no margins and no headers or footers. Keep Thinoda open until printing is finished.",
-        "Falls sich der Druckdialog nicht geöffnet hat, auf Drucken klicken. Dasselbe Papierformat und dieselbe Ausrichtung verwenden, 100 % Skalierung, keine Ränder und keine Kopf- oder Fußzeilen. Thinoda geöffnet lassen, bis der Druck abgeschlossen ist.",
-    ),
-    (
-        "Print document handed to the system. Printing is not confirmed. Keep Thinoda open until finished.",
-        "Druckdokument an das System übergeben. Der Druck ist nicht bestätigt. Thinoda bis zum Abschluss geöffnet lassen.",
+        "Print job submitted to the OS. Physical output is not confirmed.",
+        "Druckauftrag an das Betriebssystem übermittelt. Ein tatsächlicher Ausdruck ist nicht bestätigt.",
     ),
     (
         "Map Shot must be saved with a .png extension",
@@ -1143,7 +1137,8 @@ mod tests {
             "Letter",
             "Legal",
             "Print PDF saved",
-            "Print document handed to the system. Printing is not confirmed. Keep Thinoda open until finished.",
+            "Printing cancelled",
+            "Print job submitted to the OS. Physical output is not confirmed.",
         ] {
             assert!(
                 german().contains_key(key),

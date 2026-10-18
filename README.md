@@ -81,23 +81,40 @@ install the windowing libraries it did not declare yet:
   light/dark map colors, optional map background and grayscale. The complete map
   fits one page; collapsed branches remain collapsed. The UI theme and printed
   map colors are independent (default: light map on white paper to save ink).
-  **Continue to print…** creates a local, self-contained HTML document and asks
-  the default HTML application (normally your browser) to open its print dialog.
-  If automatic printing is blocked, click **Print** in that document. Select the
-  same paper/orientation, **100% scale**, **no margins**, and **no headers/footers**;
-  printer/browser settings and unprintable hardware edges can change the result.
-  No job is silently sent to the default printer, and a handoff is not confirmation
-  of printing. Keep Thinoda open until finished. **Save print PDF…** writes a
-  paper-sized PDF without needing a browser or printer. Large maps may need A3 or
-  higher resolution; tiling over several pages is not implemented.
-  Print output uses the existing export layout/font rendering (not the GPU
-  viewport), with a raster page embedded in HTML (lossless PNG) / PDF (high-quality
-  JPEG). No network requests or
-  external images/fonts are loaded by the print document. Temporary documents
-  live in a private temporary directory until normal app exit; abnormal exits
-  can leave temporary files. Windows/macOS/Linux launchers require a working
-  default HTML application; Thinoda cannot detect browser cancellation or printer
-  completion. Actual browser/system printing should be smoke-tested on each OS.
+  **Continue to print…** opens native printer selection and OS/driver preferences:
+  Windows **PrintDlg** with **Properties**, macOS **AppKit NSPrintPanel / NSPrintOperation**,
+  Linux **GTK 3 PrintOperation** with installed desktop print backends (normally CUPS).
+  No browser, external document viewer, shell command or automatic default-printer
+  submission is used. Dialogs run modally on the main/window thread; the map cannot
+  be edited until they return. Native controls use the OS/desktop language, theme
+  and accessibility, independently of Thinoda's EN/DE and light/dark preview.
+  Available advanced options (copies, duplex, trays, quality, etc.) depend on the
+  installed printer driver/backend; Thinoda does not emulate unsupported options.
+  Cancellation is reported separately from errors. “Submitted” means the OS
+  accepted the job, **not** confirmation that a physical page was printed.
+  **Save print PDF…** still writes a paper-sized PDF without a printer.
+  The complete preview raster, including its margins and colors, is centered and
+  uniformly fitted inside the selected printable area, avoiding hardware-edge
+  clipping when the driver reports correct bounds. Paper/orientation changes in
+  the OS dialog scale this fixed page, not reflow the map. To change the source
+  layout, cancel and change Thinoda's preview settings. Hardware margins can
+  slightly reduce the printed page; differing paper aspect ratios add whitespace.
+  GTK also respects the selected page-setup margins and reported hardware margins;
+  backends without hardware-margin information use the selected page setup.
+  Source **150/300 dpi** controls raster detail; device DPI/quality and additional
+  scaling, N-up, color management or grayscale are driver settings. Thinoda's
+  grayscale pixels remain grayscale regardless of a color driver setting.
+  Output uses the complete-sheet export renderer, not the GPU viewport, with
+  lossless native raster data / high-quality JPEG in PDF. Large maps may need A3
+  or 300 dpi; multi-page tiling is not implemented. Real dialog/driver behavior
+  needs native smoke testing on each OS; tests never submit actual print jobs.
+  Linux (including AppImage) loads the host's GTK 3 and its CUPS print backend,
+  rather than bundling a partial GTK stack. Physical printers require these
+  installed system libraries and a configured printer (Ubuntu:
+  `libgtk-3-0`, which includes the CUPS backend, with a working CUPS configuration).
+  Missing runtimes/symbols are reported as errors. The winit
+  window is not a GtkWindow: its event loop is blocked during the GTK modal dialog,
+  but some compositors may not group that dialog under Thinoda's taskbar window.
 - Help > Quick Start / User Guide provides searchable offline EN/DE guidance
   for editing, styles, file recovery, interchange and privacy. It works without an
   open map and does not edit the canvas behind it. Send Feedback opens GitHub's
@@ -258,8 +275,14 @@ cargo test -p thinoda-app --features gpu-tests --lib map_shot_gpu_readback # req
 cargo xtask package               # installers in target/packages
 thinoda --convert map.xmind map.md  # CLI conversion
 ```
-Linux build dependencies: `libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
+Linux build dependencies: `pkg-config libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
 libxcb-xfixes0-dev libwayland-dev`.
+Native printing also needs a C compiler (MSVC on Windows, Xcode/Clang and the
+AppKit SDK on macOS, GCC/Clang on Linux). Job-free native Linux integration checks:
+`python3 -m unittest discover -s .github/scripts -p test_native_printing.py -v`.
+They compile the bridge without a GTK link and check missing-display errors.
+With `xvfb-run` installed they open the real GTK printer dialog and **only cancel**
+it. Rust geometry, conversion, thread checks, modal UI and EN/DE tests never send jobs.
 
 The live AI test uses `THINODA_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
 server answers or when `THINODA_AI_SKIP_LIVE=1`.

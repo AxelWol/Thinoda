@@ -1,0 +1,39 @@
+fn main() {
+    println!("cargo:rerun-if-changed=native");
+    let target = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    let mut build = cc::Build::new();
+    match target.as_str() {
+        "windows" => {
+            build.file("native/print_windows.c");
+            for library in ["comdlg32", "gdi32", "user32"] {
+                println!("cargo:rustc-link-lib={library}");
+            }
+        }
+        "macos" => {
+            build
+                .file("native/print_macos.m")
+                .flag("-fobjc-arc")
+                .flag("-mmacosx-version-min=11.0");
+            println!("cargo:rustc-link-lib=framework=AppKit");
+            println!("cargo:rustc-link-lib=framework=ApplicationServices");
+        }
+        "linux" => {
+            for path in pkg_config::Config::new()
+                .atleast_version("3.22")
+                // Runtime GTK is loaded as one host stack, including its printer
+                // modules. Do not bundle a partial GTK into portable AppImages.
+                .cargo_metadata(false)
+                .probe("gtk+-3.0")
+                .expect("native printing requires GTK 3 development libraries (libgtk-3-dev)")
+                .include_paths
+            {
+                build.include(path);
+            }
+            build.file("native/print_linux.c");
+            println!("cargo:rustc-link-lib=dl");
+            println!("cargo:rustc-link-lib=m");
+        }
+        _ => panic!("native printing is supported on Windows, macOS and Linux"),
+    }
+    build.compile("thinoda_native_print");
+}

@@ -1,4 +1,4 @@
-//! GUI-independent persistence, recovery, cloud discovery, and operating-system helpers.
+//! Persistence, recovery, cloud discovery, and native operating-system helpers.
 //!
 //! # Application lifecycle
 //!
@@ -53,6 +53,7 @@ pub mod cloud;
 pub mod crash;
 pub mod fs;
 pub mod paths;
+pub mod printing;
 pub mod recovery;
 pub mod settings;
 pub mod single_instance;

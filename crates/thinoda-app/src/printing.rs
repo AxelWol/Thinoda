@@ -1,12 +1,13 @@
-//! Full-map print preview and an explicit, local browser/system-print handoff.
-//! Rendering and document encoding stay off the UI thread.
+//! Full-map preview and native printer UI. Rendering/encoding run on workers;
+//! OS dialogs and submission run synchronously on the window event-loop thread.
 
 use std::sync::{Arc, mpsc};
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use egui::{Context, RichText};
+use raw_window_handle::HasWindowHandle;
 use thinoda_core::Workbook;
 use thinoda_io::print::{Paper, PrintDocument, PrintSettings, render_print};
+use thinoda_platform::printing::{PrintOutcome, PrintPage};
 use thinoda_ui::{Palette, widgets};
 
 use crate::{
@@ -15,21 +16,38 @@ use crate::{
 };
 
 type RenderResult = Result<PrintDocument, String>;
-type OutputResult = (Option<tempfile::TempDir>, Result<&'static str, String>);
+type OutputResult = Result<PreparedOutput, String>;
+
+enum PreparedOutput {
+    Native(PrintPage, String),
+    PdfSaved,
+}
 
 #[derive(Default)]
 pub(crate) struct PrintState {
     editor: Option<PrintEditor>,
     output: Option<mpsc::Receiver<OutputResult>>,
-    // External browsers may lazily read or reload files. Keep them for this session;
-    // TempDir removes the private files on normal application exit.
-    documents: Vec<tempfile::TempDir>,
+    native: Option<(PrintPage, String)>,
+    native_open: bool,
     message: Option<Result<&'static str, String>>,
 }
 
 impl PrintState {
     pub(crate) fn active(&self) -> bool {
-        self.editor.is_some()
+        self.editor.is_some() || self.busy()
+    }
+
+    fn busy(&self) -> bool {
+        self.output.is_some() || self.native.is_some() || self.native_open
+    }
+
+    fn native_result(&mut self, result: Result<PrintOutcome, String>) {
+        self.message = Some(result.map(|outcome| match outcome {
+            PrintOutcome::Cancelled => "Printing cancelled",
+            PrintOutcome::Submitted => {
+                "Print job submitted to the OS. Physical output is not confirmed."
+            }
+        }));
     }
 }
 
@@ -240,6 +258,35 @@ fn preview_thumbnail(image: &image::RgbImage) -> image::RgbImage {
 }
 
 impl ThinodaApp {
+    /// Only the real eframe adapter calls this, after drawing the modal preview.
+    /// Headless UI tests never invoke native UI or send jobs. Frame lends its live
+    /// native window; no raw handle is cached or sent to a worker.
+    pub(crate) fn run_native_print(&mut self, frame: &eframe::Frame, ctx: &Context) {
+        let Some((page, title)) = self.printing.native.take() else {
+            return;
+        };
+        self.printing.native_open = true;
+        let result = frame
+            .window_handle()
+            .map_err(|e| format!("Cannot access the application print window: {e}"))
+            .and_then(|owner| thinoda_platform::printing::print(owner, &page, &title));
+        self.printing.native_open = false;
+        match &result {
+            Ok(PrintOutcome::Cancelled) => self.toasts.info(t("Printing cancelled")),
+            Ok(PrintOutcome::Submitted) => self.toasts.info(t(
+                "Print job submitted to the OS. Physical output is not confirmed.",
+            )),
+            Err(error) => self
+                .toasts
+                .error(format!("{}: {error}", t("Printing failed"))),
+        };
+        self.printing.native_result(result);
+        ctx.request_repaint();
+        // Keep the preview open on cancellation/error so settings can be changed
+        // or printing retried. Status toasts remain visible on small windows
+        // even when the inline result is below the preview's scroll position.
+    }
+
     pub(crate) fn begin_print(&mut self, ctx: &Context) {
         if !self.command_available(&Cmd::Print) {
             self.toasts.warning(t("Not possible here"));
@@ -267,25 +314,27 @@ impl ThinodaApp {
     pub(crate) fn print_dialog(&mut self, ctx: &Context) {
         if let Some(receiver) = &self.printing.output {
             let result = match receiver.try_recv() {
-                Ok((directory, result)) => {
-                    if let Some(directory) = directory {
-                        self.printing.documents.push(directory);
-                    }
-                    Some(result)
-                }
+                Ok(result) => Some(result),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     Some(Err(t("Print worker stopped unexpectedly").into()))
                 }
                 Err(mpsc::TryRecvError::Empty) => None,
             };
             if let Some(result) = result {
-                match &result {
-                    Ok(message) => self.toasts.info(t(message)),
-                    Err(error) => self
-                        .toasts
-                        .error(format!("{}: {error}", t("Print preparation failed"))),
-                };
-                self.printing.message = Some(result);
+                match result {
+                    Ok(PreparedOutput::Native(page, title)) => {
+                        self.printing.native = Some((page, title));
+                    }
+                    Ok(PreparedOutput::PdfSaved) => {
+                        self.toasts.info(t("Print PDF saved"));
+                        self.printing.message = Some(Ok("Print PDF saved"));
+                    }
+                    Err(error) => {
+                        self.toasts
+                            .error(format!("{}: {error}", t("Printing failed")));
+                        self.printing.message = Some(Err(error));
+                    }
+                }
                 self.printing.output = None;
             } else {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -298,7 +347,7 @@ impl ThinodaApp {
         let mut close = false;
         let mut print = false;
         let mut save = false;
-        let busy = self.printing.output.is_some();
+        let busy = self.printing.busy();
         let response = egui::Modal::new(egui::Id::unique("print-map")).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 60.0).clamp(260.0, 860.0));
             ui.heading(t("Print"));
@@ -308,23 +357,23 @@ impl ThinodaApp {
                 .show(ui, |ui| {
                     if ui.available_width() >= 680.0 {
                         ui.columns(2, |columns| {
-                            editor.controls(&mut columns[0]);
+                            columns[0].add_enabled_ui(!busy, |ui| editor.controls(ui));
                             editor.preview_ui(&mut columns[1]);
                         });
                     } else {
-                        editor.controls(ui);
+                        ui.add_enabled_ui(!busy, |ui| editor.controls(ui));
                         ui.add_space(12.0);
                         editor.preview_ui(ui);
                     }
                     ui.add_space(12.0);
-                    ui.label(RichText::new(t("Continue opens a local document in your default HTML application (normally a browser) and requests its print dialog. If blocked, click Print there. Choose the same paper and orientation, 100% scale, no margins or headers. Printer settings may change the result.")).small().weak());
+                    ui.label(RichText::new(t("Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.")).small().weak());
                     if editor.failed.is_some() && ui.button(t("Retry preview")).clicked() {
                         editor.failed = None;
                     }
                     if let Some(message) = &self.printing.message {
                         match message {
                             Ok(key) => { ui.label(t(key)); }
-                            Err(error) => { ui.colored_label(Palette::of(ctx).danger, format!("{}: {error}", t("Print preparation failed"))); }
+                            Err(error) => { ui.colored_label(Palette::of(ctx).danger, format!("{}: {error}", t("Printing failed"))); }
                         }
                     }
                 });
@@ -334,7 +383,7 @@ impl ThinodaApp {
                     print = widgets::primary_button(ui, t("Continue to print…")).clicked();
                     save = widgets::secondary_button(ui, t("Save print PDF…")).clicked();
                 });
-                close = ui.button(t("Close")).clicked();
+                close = ui.add_enabled(!busy, egui::Button::new(t("Close"))).clicked();
                 if busy {
                     ui.spinner();
                     ui.label(t("Preparing print document…"));
@@ -354,28 +403,23 @@ impl ThinodaApp {
             if print || path.is_some() {
                 let document = Arc::clone(editor.rendered.as_ref().expect("ready print document"));
                 let title = editor.title.clone();
-                // Capture localized text before the worker runs; no user content becomes code.
-                let print_label = t("Print");
-                let instructions = t(
-                    "If the print dialog did not open, click Print. Use the same paper and orientation, 100% scale, no margins and no headers or footers. Keep Thinoda open until printing is finished.",
-                );
                 let repaint = ctx.clone();
                 let (sender, receiver) = mpsc::channel();
                 self.printing.message = None;
                 self.printing.output = Some(receiver);
                 std::thread::spawn(move || {
                     let result = if let Some(path) = path {
-                        let result = save_pdf(&document, &path).map(|()| "Print PDF saved");
-                        (None, result)
+                        save_pdf(&document, &path).map(|()| PreparedOutput::PdfSaved)
                     } else {
-                        prepare_browser_print(&document, &title, print_label, instructions)
+                        prepare_native_page(&document)
+                            .map(|page| PreparedOutput::Native(page, title))
                     };
                     let _ = sender.send(result);
                     repaint.request_repaint();
                 });
             }
         }
-        if !close && !response.should_close() {
+        if self.printing.busy() || (!close && !response.should_close()) {
             self.printing.editor = Some(editor);
         }
     }
@@ -392,99 +436,14 @@ fn save_pdf(document: &PrintDocument, path: &std::path::Path) -> Result<(), Stri
     thinoda_platform::fs::atomic_write(path, &bytes, false).map_err(|e| e.to_string())
 }
 
-fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn browser_document(
-    document: &PrintDocument,
-    title: &str,
-    print_label: &str,
-    instructions: &str,
-) -> Result<String, String> {
-    let png = document.png().map_err(|e| e.to_string())?;
-    let [width, height] = document.settings.size_mm();
-    // Paper pixels already contain margins/background. No network, fonts, scripts
-    // or unescaped map content are loaded by the browser.
-    Ok(format!(
-        r#"<!doctype html>
-<html lang="{language}"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>{title} — Thinoda</title>
-<style>
-@page {{ size: {width}mm {height}mm; margin: 0; }}
-* {{ box-sizing: border-box; }}
-body {{ margin: 0; background: #e6e7eb; font: 16px system-ui, sans-serif; color: #171923; }}
-aside {{ max-width: 800px; margin: 24px auto; padding: 20px; background: white; border-radius: 12px; }}
-button {{ font: inherit; padding: 10px 24px; cursor: pointer; }}
-img {{ display: block; width: {width}mm; height: {height}mm; margin: 0 auto; background: white; }}
-@media (prefers-color-scheme: dark) {{ body {{ background: #202228; color: #eee; }} aside {{ background: #30333b; }} }}
-@media screen {{ img {{ max-width: 95vw; height: auto; box-shadow: 0 2px 14px #0005; }} }}
-@media print {{ html, body {{ width: {width}mm; height: {height}mm; background: white; }}
-aside {{ display: none; }} img {{ margin: 0; print-color-adjust: exact; -webkit-print-color-adjust: exact; }} }}
-</style></head><body>
-<aside><h1>{title}</h1><p>{instructions}</p><p>{width} × {height} mm</p>
-<button id="print" type="button">{print_label}</button></aside>
-<img alt="{title}" src="data:image/png;base64,{image}">
-<script>
-document.getElementById('print').addEventListener('click', () => window.print());
-window.addEventListener('load', () => window.print());
-</script></body></html>"#,
-        title = escape_html(title),
-        instructions = escape_html(instructions),
-        print_label = escape_html(print_label),
-        image = STANDARD.encode(png),
-        language = match crate::i18n::lang() {
-            crate::i18n::Lang::En => "en",
-            crate::i18n::Lang::De => "de",
-        },
-    ))
-}
-
-fn prepare_browser_print(
-    document: &PrintDocument,
-    title: &str,
-    print_label: &str,
-    instructions: &str,
-) -> OutputResult {
-    prepare_browser_print_with(
-        document,
-        title,
-        print_label,
-        instructions,
-        thinoda_platform::system::open_print_document,
+fn prepare_native_page(document: &PrintDocument) -> Result<PrintPage, String> {
+    PrintPage::from_rgb(
+        document.image.as_raw(),
+        document.image.width(),
+        document.image.height(),
+        document.settings.size_mm().map(f64::from),
+        document.settings.dpi,
     )
-}
-
-fn prepare_browser_print_with(
-    document: &PrintDocument,
-    title: &str,
-    print_label: &str,
-    instructions: &str,
-    open: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
-) -> OutputResult {
-    let prepare = || -> Result<tempfile::TempDir, String> {
-        let html = browser_document(document, title, print_label, instructions)?;
-        let directory = tempfile::Builder::new()
-            .prefix("thinoda-print-")
-            .tempdir()
-            .map_err(|e| e.to_string())?;
-        std::fs::write(directory.path().join("map.html"), html).map_err(|e| e.to_string())?;
-        Ok(directory)
-    };
-    match prepare() {
-        Ok(directory) => {
-            let result = open(&directory.path().join("map.html"))
-                .map(|()| "Print document handed to the system. Printing is not confirmed. Keep Thinoda open until finished.")
-                .map_err(|e| e.to_string());
-            (Some(directory), result)
-        }
-        Err(error) => (None, Err(error)),
-    }
 }
 
 #[cfg(test)]
@@ -551,64 +510,47 @@ mod tests {
     }
 
     #[test]
-    fn browser_document_is_local_escaped_and_matches_preview_pixels() {
-        let document = tiny_document();
-        let html = browser_document(
-            &document,
-            "<script>alert('title')</script>",
-            "Drucken",
-            "Hinweis & Hilfe",
-        )
-        .unwrap();
-        assert!(!html.contains("<script>alert"));
-        assert!(html.contains("&lt;script&gt;"));
-        assert!(html.contains("Hinweis &amp; Hilfe"));
-        assert!(html.contains(">Drucken</button>"));
-        assert!(html.contains("size: 297mm 210mm"));
-        assert!(html.contains("window.print()"));
-        assert!(html.contains("default-src 'none'"));
-        assert!(html.contains("prefers-color-scheme: dark"));
-        assert!(html.contains("aside { display: none; }"));
-        let data = html
-            .split("data:image/png;base64,")
-            .nth(1)
-            .unwrap()
-            .split('"')
-            .next()
-            .unwrap();
-        let decoded = STANDARD.decode(data).unwrap();
-        assert_eq!(
-            image::load_from_memory(&decoded).unwrap().to_rgb8(),
-            document.image
-        );
+    fn native_page_uses_rendered_geometry_and_rejects_mismatched_pixels() {
+        assert!(prepare_native_page(&tiny_document()).is_err());
+        for paper in Paper::ALL {
+            for landscape in [false, true] {
+                let document = render_print(
+                    &Workbook::default(),
+                    0,
+                    PrintSettings {
+                        paper,
+                        landscape,
+                        grayscale: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert!(prepare_native_page(&document).is_ok());
+            }
+        }
     }
 
     #[test]
-    fn launcher_failures_are_errors_not_fallback_success_and_files_live_until_dropped() {
-        let document = tiny_document();
-        let (directory, result) =
-            prepare_browser_print_with(&document, "Map", "Print", "Instructions", |path| {
-                assert!(path.is_absolute() && path.is_file());
-                assert!(
-                    std::fs::read_to_string(path)
-                        .unwrap()
-                        .contains("window.print()")
-                );
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "browser unavailable",
-                ))
-            });
-        assert_eq!(result.unwrap_err(), "browser unavailable");
-        let directory = directory.unwrap();
-        let path = directory.path().join("map.html");
-        assert!(path.exists());
-        drop(directory);
-        assert!(!path.exists());
-        let (directory, result) =
-            prepare_browser_print_with(&document, "Map", "Print", "Instructions", |_| Ok(()));
-        assert!(directory.is_some());
-        assert!(result.unwrap().contains("Printing is not confirmed"));
+    fn native_outcomes_do_not_claim_physical_completion() {
+        let mut state = PrintState::default();
+        state.native_result(Ok(PrintOutcome::Cancelled));
+        assert_eq!(state.message, Some(Ok("Printing cancelled")));
+        state.native_result(Err("driver unavailable".into()));
+        assert_eq!(state.message, Some(Err("driver unavailable".into())));
+        state.native_result(Ok(PrintOutcome::Submitted));
+        assert_eq!(
+            state.message,
+            Some(Ok(
+                "Print job submitted to the OS. Physical output is not confirmed."
+            ))
+        );
+        assert!(!state.active());
+        state.native_open = true;
+        assert!(state.active());
+        state.native_open = false;
+        let (_sender, receiver) = mpsc::channel();
+        state.output = Some(receiver);
+        assert!(state.active());
     }
 
     #[test]
@@ -651,6 +593,55 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         h.run_steps(2);
+    }
+
+    #[test]
+    fn prepared_native_page_stays_modal_and_cancel_or_error_preserves_retry() {
+        let mut h = harness(ThemeMode::Light, egui::vec2(1280.0, 850.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Print);
+        wait_ready(&mut h);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.get_by_role_and_label(Role::Button, "Continue to print…")
+            .click();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            h.run_steps(1);
+            if h.state().printing.native.is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native page preparation timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Headless harness has no eframe adapter: it can test the native request
+        // and input gating without ever opening a dialog or submitting a job.
+        h.key_press(Key::Escape);
+        h.key_press(Key::Delete);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+        h.run_steps(2);
+        assert!(h.state().printing.editor.is_some());
+        assert!(!h.state().command_available(&Cmd::Print));
+        assert_eq!(h.state().docs.len(), 1);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.state_mut().printing.native.take().unwrap();
+        h.state_mut()
+            .printing
+            .native_result(Ok(PrintOutcome::Cancelled));
+        h.run_steps(2);
+        h.get_by_label("Printing cancelled");
+        assert!(h.state().printing.editor.as_ref().unwrap().ready());
+        h.state_mut()
+            .printing
+            .native_result(Err("test driver failed".into()));
+        h.run_steps(2);
+        h.get_by_label("Printing failed: test driver failed");
+        h.get_by_role_and_label(Role::Button, "Continue to print…");
+        h.get_by_role_and_label(Role::Button, "Close").click();
+        h.run_steps(2);
+        assert!(!h.state().printing.active());
     }
 
     #[test]
@@ -710,7 +701,7 @@ mod tests {
             h.get_by_role_and_label(Role::Button, "Close").click();
             h.run_steps(2);
             assert!(!h.state().printing.active());
-            assert!(h.state().printing.documents.is_empty());
+            assert!(h.state().printing.native.is_none());
         }
     }
 

@@ -15,6 +15,11 @@ directories.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
 log.workspace = true
+raw-window-handle = "0.6"
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true

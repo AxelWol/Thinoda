@@ -50,6 +50,21 @@ The user interface embeds egui's default fonts (crate `epaint_default_fonts`):
   Mozilla root certificate list.
 - **Unicode-3.0** (ICU4X crates): Unicode data and software license.
 
+## Native printing system components
+
+Windows printing uses Win32 PrintDlg/GDI; macOS printing uses AppKit.
+These APIs/frameworks are supplied by the operating system.
+
+Linux printing loads the installed GTK 3 stack and its printer backends, including
+Cairo, GLib, GObject and GIO. These are host system libraries, not statically
+embedded or bundled as part of Thinoda's native printer bridge (including in
+AppImage). Their license notices and sources are provided by the Linux
+distribution's packages. GTK 3 and GLib use LGPL-2.1-or-later; Cairo offers
+LGPL/MPL licensing:
+[GTK](https://www.gtk.org/docs/),
+[GLib](https://docs.gtk.org/glib/),
+[Cairo copying notices](https://gitlab.freedesktop.org/cairo/cairo/-/blob/master/COPYING).
+
 ## Rust crates
 """
 

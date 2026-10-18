@@ -19,8 +19,9 @@ pub mod ui;
 pub use app::{Startup, ThinodaApp, start_services};
 
 impl eframe::App for ThinodaApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.draw(ui);
+        self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);
         }
