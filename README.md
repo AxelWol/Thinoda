@@ -155,6 +155,11 @@ those system-owned controls. WinGet publishing remains paused.
 - Help > About > Legal documents provides the complete licence, third-party
   notices and Impressum offline. The selectable original texts are unchanged;
   the viewer uses the application's language and light/dark appearance.
+  CommonMark/GFM headings, emphasis, lists, links, code and striped tables are
+  formatted with 1.5× natural text line height. Wide tables can scroll horizontally;
+  Copy copies the exact original Markdown. Links between bundled legal documents
+  stay offline. Remote images are not fetched (alternative text is shown), and
+  raw HTML is displayed as inert text rather than executed.
 - F1 opens a searchable keyboard reference with category and unassigned-command
   filters, including navigation aliases. It is read-only; custom rebinding and
   conflict editing are not yet available. Ctrl+Q requests normal window closing,

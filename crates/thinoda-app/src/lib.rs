@@ -8,6 +8,7 @@ mod help;
 pub mod i18n;
 mod labels;
 mod legal;
+mod legal_markdown;
 mod map_shot;
 mod printing;
 mod quick_styles;
