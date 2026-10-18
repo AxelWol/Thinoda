@@ -7,14 +7,6 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
-## P1 - Remaining native system-preview work
-
-- macOS follow-up: connect the document to AppKit's native preview
-  lifecycle. The existing standalone `NSPrintPanel` has no document preview;
-  preserving it is not delivery of cross-platform native-preview parity. Retain
-  reliable cancellation versus failure reporting when changing that lifecycle.
-  Linux GTK preview behavior remains desktop/backend-dependent and unchanged.
-
 ## P1 — Symbol colors and contrast (implemented; awaiting review)
 - Add per-instance colors to the existing Symbols insertion popover and sidebar,
   including editing existing symbols and a localized, keyboard-accessible
@@ -412,6 +404,11 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   Verify each repository's current maintenance, license, runtime requirements and
   actual supported file versions before integration. Assign implementation to the
   relevant interoperability, typography, sharing or companion package after review.
+- P1 macOS native system-preview follow-up: connect the document to AppKit's
+  native preview lifecycle. The existing standalone `NSPrintPanel` has no document
+  preview; preserving it is not delivery of cross-platform native-preview parity.
+  Retain reliable cancellation versus failure reporting when changing that lifecycle.
+  Linux GTK preview behavior remains desktop/backend-dependent and unchanged.
 - P1 Print (Ctrl+P) with page setup and fit-to-page
   - Reference dialog: left live page preview with page count; right scrollable,
     grouped settings; fixed Cancel/Print footer.
