@@ -11,6 +11,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.3.0](https://github.com/AxelWol/Thinoda/compare/v0.2.1...v0.3.0) (2026-10-18)
+
+
+### Features
+
+* use native printer dialogs and driver settings ([47a3e2b](https://github.com/AxelWol/Thinoda/commit/47a3e2b172f41841677fd73d691bd9444c900d4a))
+
 ## [0.2.1](https://github.com/AxelWol/Thinoda/compare/v0.2.0...v0.2.1) (2026-10-18)
 
 
