@@ -91,3 +91,19 @@ map and margins, then Cancel and verify Thinoda reports cancellation and remains
 usable. Do not press Print or change printer defaults/device configuration.
 Physical output, driver-specific finishing and interactive Windows ARM64 UI
 behavior require separately approved hardware testing, not a simulated success.
+
+### Observed Windows x64 check (2026-10-18)
+
+The production debug app's original Mind Map template (Central Topic and four
+colored branches) rendered inside the German Windows 11 system dialog, including
+the 1/1 page indicator. Changing OS landscape to portrait preserved every topic
+and the fixed source-page aspect ratio. In another invocation, source margins
+were changed from 12 to 24 mm and OS advanced settings changed A4 to Legal;
+the resulting landscape preview showed the complete map on the changed paper.
+Copies, color, duplex, collation, tray, quality and paper controls remained
+available. The system dialog's Cancel returned to Thinoda with **Printing
+cancelled**, retained the source A4/landscape settings and 24 mm margin, and
+closing the app preview restored editor controls. No Print action, spool job,
+printer-default/device change or external viewer was used. This check used the
+OS dark theme; other OS themes and ARM64 interactive behavior are not claimed as
+manually exercised.
