@@ -51,25 +51,20 @@ pub fn resolve(lang: Language) -> Lang {
 /// Both BCP 47 and Unix locale separators are accepted; all regional variants
 /// use the same catalog except Brazilian Portuguese, which has regional wording.
 pub fn resolve_locale(locale: &str) -> Lang {
-    match locale
-        .split(['-', '_', '.', '@'])
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    let locale = locale.split(['.', '@']).next().unwrap_or("");
+    let mut subtags = locale.split(['-', '_']);
+    let language = subtags.next().unwrap_or("").to_ascii_lowercase();
+    let region = match subtags.next() {
+        Some(script) if script.len() == 4 => subtags.next(),
+        region => region,
+    };
+    match language.as_str() {
         "de" => Lang::De,
         "es" => Lang::Es,
         "fr" => Lang::Fr,
         "da" => Lang::Da,
         "nl" => Lang::Nl,
-        "pt" if locale
-            .split(['-', '_', '.', '@'])
-            .nth(1)
-            .is_some_and(|region| region.eq_ignore_ascii_case("br")) =>
-        {
-            Lang::PtBr
-        }
+        "pt" if region.is_some_and(|region| region.eq_ignore_ascii_case("br")) => Lang::PtBr,
         "pt" => Lang::Pt,
         "it" => Lang::It,
         "pl" => Lang::Pl,
@@ -1299,6 +1294,10 @@ mod tests {
             ("pt-PT", Lang::Pt),
             ("pt_BR.UTF-8", Lang::PtBr),
             ("pt-br", Lang::PtBr),
+            ("pt-Latn-BR", Lang::PtBr),
+            ("pt_Latn_BR.UTF-8", Lang::PtBr),
+            ("pt-x-br", Lang::Pt),
+            ("pt@br", Lang::Pt),
             ("pt-AO", Lang::Pt),
             ("it_IT@euro", Lang::It),
             ("pl-PL", Lang::Pl),
