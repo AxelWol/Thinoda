@@ -158,7 +158,10 @@ fn splash_follows_language_and_theme_and_needs_no_minimum_wait() {
 
 #[test]
 fn headless_and_direct_construction_are_ready_immediately() {
+    // Default settings resolve Auto to the OS locale, which changes the global language.
+    let _language = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(ThinodaApp::headless().launch_phase(), None);
     let app = ThinodaApp::new(Settings::default(), Services::default(), &[]);
     assert_eq!(app.launch_phase(), None);
+    thinoda_app::i18n::set_lang(thinoda_app::i18n::Lang::En);
 }
