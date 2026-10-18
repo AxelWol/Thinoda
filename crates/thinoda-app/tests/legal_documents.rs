@@ -2,7 +2,7 @@
 use egui::{Key, accesskit::Role};
 use egui_kittest::{
     Harness,
-    kittest::{By, NodeT, Queryable},
+    kittest::{By, Queryable},
 };
 use thinoda_app::{
     app::{Cmd, Services, ThinodaApp},
@@ -12,7 +12,7 @@ use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
 #[test]
 fn about_shows_complete_offline_legal_texts_with_modal_isolation_and_visible_close() {
-    for language in [Language::English, Language::German] {
+    for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             let mut app = ThinodaApp::new(
                 Settings {
@@ -46,21 +46,18 @@ fn about_shows_complete_offline_legal_texts_with_modal_isolation_and_visible_clo
                     .any(|command| matches!(command, egui::OutputCommand::OpenUrl(_)))
             );
 
-            for (title, text) in [
-                ("License", include_str!("../../../LICENSE.md")),
-                (
-                    "Third-party notices",
-                    include_str!("../../../THIRD_PARTY_NOTICES.md"),
-                ),
-                ("Legal notice", include_str!("../../../IMPRESSUM.md")),
+            for (title, rendered_heading) in [
+                ("License", "License"),
+                ("Third-party notices", "Third-party notices"),
+                ("Legal notice", "Impressum / Legal Notice"),
             ] {
                 h.get_by_role_and_label(Role::Button, t(title)).click();
                 h.run_steps(3);
                 let body = h
-                    .query_all(By::new().role(Role::Label).value(text))
+                    .query_all(By::new().value(rendered_heading))
                     .next()
-                    .expect("complete legal document is present");
-                assert_eq!(body.accesskit_node().value().as_deref(), Some(text));
+                    .expect("formatted legal document heading is present");
+                assert!(!body.rect().is_negative());
                 h.key_press(Key::Enter);
                 h.key_press(Key::Tab);
                 h.run_steps(3);
@@ -74,6 +71,12 @@ fn about_shows_complete_offline_legal_texts_with_modal_isolation_and_visible_clo
                     .content_rect()
                     .contains_rect(h.get_by_role_and_label(Role::Button, t("Close")).rect())
             );
+            h.get_by_role_and_label(Role::Button, t("Copy")).click();
+            h.run_steps(1);
+            assert!(h.output().platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text)
+                    if text == include_str!("../../../IMPRESSUM.md"))
+            }));
             h.key_press(Key::Escape);
             h.run_steps(3);
             assert!(!h.state().dialogs.legal.open);

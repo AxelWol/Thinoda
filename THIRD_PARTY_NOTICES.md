@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 10:01:53 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 11:29:34 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Third-party notices
 
@@ -52,7 +52,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-533 crates.
+535 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -357,6 +357,7 @@ LGPL/MPL licensing:
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 | <https://github.com/bkchr/proc-macro-crate> |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | <https://github.com/dtolnay/proc-macro2> |
 | profiling | 1.0.18 | MIT OR Apache-2.0 | <https://github.com/aclysma/profiling> |
+| pulldown-cmark | 0.13.4 | MIT | <https://github.com/raphlinus/pulldown-cmark> |
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 | <https://github.com/awxkee/pxfm> |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | <http://github.com/tailhook/quick-error> |
 | quick-xml | 0.41.0 | MIT | <https://github.com/tafia/quick-xml> |
@@ -461,6 +462,7 @@ LGPL/MPL licensing:
 | typeid | 1.0.3 | MIT OR Apache-2.0 | <https://github.com/dtolnay/typeid> |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | <https://github.com/paholg/typenum> |
 | uds_windows | 1.2.1 | MIT | <https://github.com/haraldh/rust_uds_windows> |
+| unicase | 2.10.0 | MIT OR Apache-2.0 | <https://github.com/seanmonstar/unicase> |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | <https://github.com/servo/unicode-bidi> |
 | unicode-general-category | 1.1.0 | Apache-2.0 | <https://github.com/yeslogic/unicode-general-category> |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | <https://github.com/dtolnay/unicode-ident> |

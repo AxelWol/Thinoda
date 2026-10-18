@@ -39,6 +39,7 @@ env_logger.workspace = true
 anyhow.workspace = true
 sys-locale.workspace = true
 raw-window-handle = "0.6"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 egui_kittest.workspace = true

@@ -34,6 +34,7 @@ impl LegalDocument {
 pub struct LegalState {
     pub open: bool,
     document: LegalDocument,
+    markdown: crate::legal_markdown::Markdown,
 }
 
 impl ThinodaApp {
@@ -52,23 +53,38 @@ impl ThinodaApp {
             });
             ui.weak(t("Original legal texts are shown unchanged."));
             let height = (ctx.content_rect().height() - 220.0).max(80.0);
-            egui::ScrollArea::vertical()
+            let document = egui::ScrollArea::both()
                 .id_salt(("legal_document", state.document.title()))
                 .auto_shrink([false, false])
                 .min_scrolled_height(height)
                 .max_height(height)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(state.document.text())
-                            .wrap()
-                            .selectable(true),
-                    )
-                    .accessible_name(t(state.document.title()));
-                });
-            ui.separator();
-            if ui.button(t("Close")).clicked() {
-                state.open = false;
+                .show(ui, |ui| state.markdown.show(ui, state.document.text()));
+            if let Some(destination) = document.inner {
+                match destination.as_str() {
+                    "LICENSE.md" => state.document = LegalDocument::License,
+                    "THIRD_PARTY_NOTICES.md" => state.document = LegalDocument::Notices,
+                    "IMPRESSUM.md" => state.document = LegalDocument::LegalNotice,
+                    url if url.starts_with("https://")
+                        || url.starts_with("http://")
+                        || url.starts_with("mailto:") =>
+                    {
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                    }
+                    _ => {
+                        log::warn!("Unsupported bundled legal-document link: {destination}");
+                        self.toasts.warning(t("Not possible here"));
+                    }
+                }
             }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button(t("Close")).clicked() {
+                    state.open = false;
+                }
+                if ui.button(t("Copy")).clicked() {
+                    ctx.copy_text(state.document.text().to_owned());
+                }
+            });
         });
         if response.should_close() {
             state.open = false;
