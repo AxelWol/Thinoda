@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:10:55 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Thinoda — phased plan
 
 Goal: a fast, native, cross-platform XMind clone written in Rust, with a reusable UI library for
