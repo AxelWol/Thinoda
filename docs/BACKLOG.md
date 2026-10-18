@@ -6,6 +6,11 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Template-card double-click creates and opens the chosen map once through the
+  existing Create command, across the overview, every category and Recently used
+  templates. Single-click/keyboard selection and Create/Cancel remain available;
+  unsaved source maps stay intact. Pointer-driven tests cover all 35 templates
+  in EN/DE and light/dark mode, slow clicks, recents and the overview.
 - Clickable links: the About dialog's contact address opens the default mail client
   (`mailto:`) and the project URL opens the web browser; Help ▸ Feedback/Project News
   and topic hyperlinks use the same path. eframe is built without its `links`
@@ -498,11 +503,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   text and Gantt window lifecycle. Icon-only references are not verified behavior.
 
 ## Template gallery parity (user screenshots, 2026-10-16)
-- P1 Double-click a template card on "Create a new map" to create and open that
-  template immediately, using the same action as Create. Apply to Recently used
-  templates and every category; retain single-click selection and the existing
-  Create/Cancel and keyboard paths. Cover double-click creation exactly once,
-  recent-template updates, unsaved-document protection, and EN/DE light/dark UI.
+- Delivered template-card double-click creation; see Recently completed.
 - Implemented generated previews, responsive grids, scrolling, fixed header/category
   filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
   Selection enables Create without immediate creation. Section navigation chevrons,

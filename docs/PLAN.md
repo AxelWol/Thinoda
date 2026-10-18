@@ -236,6 +236,9 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
 
 ### R5 - Templates, skeletons and theme tools
 
+Template double-click creation is delivered alongside selection/Create/Cancel,
+including category, overview and recent cards, without replacing unsaved maps.
+
 1. Replace icons with generated previews from the actual renderer. Add chooser
    header/category filter, recent templates, sections, selection and Cancel/Create.
    Preserve the existing responsive grid; separate template history from file history.
