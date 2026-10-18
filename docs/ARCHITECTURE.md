@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 08:43:41 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 10:48:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Architecture
 
@@ -92,3 +92,15 @@ graph TD
   for API references, manual checks and platform limitations.
   Native driver behavior still requires smoke tests on Windows x64/ARM64,
   macOS Intel/ARM64 and Linux X11/Wayland.
+- **Localization**: app chrome uses the embedded English/German and
+  ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
+  `locales.txt` and `pt-BR.txt`. English strings are stable keys; the
+  pipe-delimited catalog has an explicit translation in each column (the header
+  specifies order). Brazilian Portuguese deliberately shares common Portuguese
+  text with explicit regional overrides. Completeness tests cover literal calls
+  and dynamically selected labels; missing runtime keys are logged before English
+  fallback. Add a key to every catalog, preserve extension/shortcut tokens and
+  review terminology in its actual UI. Autonyms in the language dropdown are not
+  translated. Settings keeps stable snake-case enum values; Auto resolves complete
+  locale subtags. Installer translations live in `assets/installer`; pinned
+  packager contracts are checked by `.github/scripts/test_installer_languages.py`.

@@ -290,15 +290,16 @@ impl ThinodaApp {
                                     .labelled_by(label.id);
                                 widgets::property_field(ui, t("Base theme"), |ui| {
                                     egui::ComboBox::from_id_salt("custom_base")
-                                        .selected_text(
-                                            Theme::builtin(&draft.theme.base_theme_id).name,
+                                        .selected_text(t(Theme::builtin(
+                                            &draft.theme.base_theme_id,
                                         )
+                                        .name))
                                         .show_ui(ui, |ui| {
                                             for id in Theme::IDS {
                                                 ui.selectable_value(
                                                     &mut draft.theme.base_theme_id,
                                                     id.into(),
-                                                    Theme::builtin(id).name,
+                                                    t(Theme::builtin(id).name),
                                                 );
                                             }
                                         })

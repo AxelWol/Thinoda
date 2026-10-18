@@ -1,7 +1,8 @@
-//! Minimal UI translation layer.
+//! UI translations shared by every native build.
 //!
 //! English strings are used as keys; other languages map them to translations and
-//! fall back to English when a translation is missing.
+//! report missing translations before falling back to English. Catalog completeness
+//! is checked against the English keys in tests.
 
 use std::{
     collections::HashMap,
@@ -17,6 +18,14 @@ use thinoda_platform::settings::Language;
 pub enum Lang {
     En,
     De,
+    Es,
+    Fr,
+    Da,
+    Nl,
+    Pt,
+    It,
+    Pl,
+    PtBr,
 }
 
 static CURRENT: AtomicU8 = AtomicU8::new(0);
@@ -26,16 +35,40 @@ pub fn resolve(lang: Language) -> Lang {
     match lang {
         Language::English => Lang::En,
         Language::German => Lang::De,
-        Language::Auto => {
-            let loc = sys_locale::get_locale()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if loc.starts_with("de") {
-                Lang::De
-            } else {
-                Lang::En
-            }
-        }
+        Language::Spanish => Lang::Es,
+        Language::French => Lang::Fr,
+        Language::Danish => Lang::Da,
+        Language::Dutch => Lang::Nl,
+        Language::Portuguese => Lang::Pt,
+        Language::PortugueseBrazil => Lang::PtBr,
+        Language::Italian => Lang::It,
+        Language::Polish => Lang::Pl,
+        Language::Auto => resolve_locale(&sys_locale::get_locale().unwrap_or_default()),
+    }
+}
+
+/// Match a complete language subtag, not arbitrary prefixes such as `den`.
+/// Both BCP 47 and Unix locale separators are accepted; all regional variants
+/// use the same catalog except Brazilian Portuguese, which has regional wording.
+pub fn resolve_locale(locale: &str) -> Lang {
+    let locale = locale.split(['.', '@']).next().unwrap_or("");
+    let mut subtags = locale.split(['-', '_']);
+    let language = subtags.next().unwrap_or("").to_ascii_lowercase();
+    let region = match subtags.next() {
+        Some(script) if script.len() == 4 => subtags.next(),
+        region => region,
+    };
+    match language.as_str() {
+        "de" => Lang::De,
+        "es" => Lang::Es,
+        "fr" => Lang::Fr,
+        "da" => Lang::Da,
+        "nl" => Lang::Nl,
+        "pt" if region.is_some_and(|region| region.eq_ignore_ascii_case("br")) => Lang::PtBr,
+        "pt" => Lang::Pt,
+        "it" => Lang::It,
+        "pl" => Lang::Pl,
+        _ => Lang::En,
     }
 }
 
@@ -44,10 +77,17 @@ pub fn set_lang(lang: Lang) {
 }
 
 pub fn lang() -> Lang {
-    if CURRENT.load(Ordering::Relaxed) == 1 {
-        Lang::De
-    } else {
-        Lang::En
+    match CURRENT.load(Ordering::Relaxed) {
+        1 => Lang::De,
+        2 => Lang::Es,
+        3 => Lang::Fr,
+        4 => Lang::Da,
+        5 => Lang::Nl,
+        6 => Lang::Pt,
+        7 => Lang::It,
+        8 => Lang::Pl,
+        9 => Lang::PtBr,
+        _ => Lang::En,
     }
 }
 
@@ -57,10 +97,82 @@ pub fn t(en: &'static str) -> &'static str {
 }
 
 pub fn t_in(lang: Lang, en: &'static str) -> &'static str {
-    match lang {
-        Lang::En => en,
-        Lang::De => german().get(en).copied().unwrap_or(en),
+    if lang == Lang::En {
+        return en;
     }
+    let translated = if lang == Lang::De {
+        german().get(en).copied()
+    } else if lang == Lang::PtBr {
+        brazilian().get(en).copied()
+    } else {
+        additional()
+            .get(en)
+            .map(|values| values[lang as usize - Lang::Es as usize])
+    };
+    translated.unwrap_or_else(|| {
+        log::warn!("Missing {lang:?} UI translation: {en}");
+        en
+    })
+}
+
+/// Both Portuguese variants deliberately share wording where it is idiomatic in
+/// both regions. Regional entries are explicit, reviewed overrides, not fallbacks.
+fn brazilian() -> &'static HashMap<&'static str, &'static str> {
+    static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map: HashMap<_, _> = additional()
+            .iter()
+            .map(|(&key, values)| (key, values[4]))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        for line in include_str!("pt-BR.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+        {
+            let (key, text) = line
+                .split_once('|')
+                .expect("Invalid Brazilian Portuguese translation");
+            assert!(
+                map.contains_key(key),
+                "Unknown Brazilian Portuguese key: {key}"
+            );
+            assert!(
+                seen.insert(key),
+                "Duplicate Brazilian Portuguese key: {key}"
+            );
+            assert!(
+                !text.trim().is_empty() && !text.contains('|'),
+                "Invalid Brazilian Portuguese translation: {key}"
+            );
+            map.insert(key, text);
+        }
+        map
+    })
+}
+
+fn additional() -> &'static HashMap<&'static str, [&'static str; 7]> {
+    static MAP: OnceLock<HashMap<&'static str, [&'static str; 7]>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::new();
+        for line in include_str!("locales.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+        {
+            let fields: Vec<_> = line.split('|').collect();
+            assert_eq!(fields.len(), 8, "Invalid translation row: {line}");
+            assert!(
+                fields.iter().all(|value| !value.trim().is_empty()),
+                "Empty translation: {line}"
+            );
+            let values = std::array::from_fn(|i| fields[i + 1]);
+            assert!(
+                map.insert(fields[0], values).is_none(),
+                "Duplicate translation: {}",
+                fields[0]
+            );
+        }
+        map
+    })
 }
 
 fn german() -> &'static HashMap<&'static str, &'static str> {
@@ -70,6 +182,21 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Plain text", "Klartext"),
+    ("Thinoda", "Thinoda"),
+    ("XMind", "XMind"),
+    ("FreeMind / Freeplane", "FreeMind / Freeplane"),
+    ("OPML", "OPML"),
+    ("Markdown", "Markdown"),
+    ("MindManager", "MindManager"),
+    ("TextBundle", "TextBundle"),
+    ("SVG", "SVG"),
+    ("PNG", "PNG"),
+    ("JPEG", "JPEG"),
+    ("PDF", "PDF"),
+    ("Word", "Word"),
+    ("Excel", "Excel"),
+    ("CSV", "CSV"),
     ("Legal documents", "Rechtliche Dokumente"),
     ("License", "Lizenz"),
     ("Third-party notices", "Drittanbieterhinweise"),
@@ -78,6 +205,23 @@ const DE: &[(&str, &str)] = &[
         "Original legal texts are shown unchanged.",
         "Die rechtlichen Originaltexte werden unverändert angezeigt.",
     ),
+    ("Rounded rectangle", "Abgerundetes Rechteck"),
+    ("Rectangle", "Rechteck"),
+    ("Ellipse", "Ellipse"),
+    ("Capsule", "Kapselform"),
+    ("Diamond", "Raute"),
+    ("Curve", "Kurve"),
+    ("Straight", "Gerade"),
+    ("Elbow", "Rechtwinklig"),
+    ("Rounded elbow", "Abgerundet rechtwinklig"),
+    ("Clarity", "Klarheit"),
+    ("Twilight", "Dämmerung"),
+    ("Ocean", "Ozean"),
+    ("Forest", "Wald"),
+    ("Classic", "Klassisch"),
+    ("Monochrome", "Monochrom"),
+    ("Neon", "Neon"),
+    ("Pastel", "Pastell"),
     ("Print", "Drucken"),
     (
         "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, source resolution and colors, then open the native OS printer dialog or save a PDF. Choose a printer and its driver settings there. The whole preview page fits proportionally inside the selected printable area; OS paper changes scale it without reflow. Submitted means accepted by the OS, not physically printed. Native dialogs use the OS language and appearance.",
@@ -1125,6 +1269,193 @@ const DE: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TRANSLATED: [Lang; 9] = [
+        Lang::De,
+        Lang::Es,
+        Lang::Fr,
+        Lang::Da,
+        Lang::Nl,
+        Lang::Pt,
+        Lang::It,
+        Lang::Pl,
+        Lang::PtBr,
+    ];
+
+    #[test]
+    fn locale_subtags_and_explicit_preferences() {
+        for (locale, expected) in [
+            ("en-US", Lang::En),
+            ("DE_at.UTF-8", Lang::De),
+            ("es-MX", Lang::Es),
+            ("fr_CA.UTF-8", Lang::Fr),
+            ("da-DK", Lang::Da),
+            ("nl-BE", Lang::Nl),
+            ("pt-PT", Lang::Pt),
+            ("pt_BR.UTF-8", Lang::PtBr),
+            ("pt-br", Lang::PtBr),
+            ("pt-Latn-BR", Lang::PtBr),
+            ("pt_Latn_BR.UTF-8", Lang::PtBr),
+            ("pt-x-br", Lang::Pt),
+            ("pt@br", Lang::Pt),
+            ("pt-AO", Lang::Pt),
+            ("it_IT@euro", Lang::It),
+            ("pl-PL", Lang::Pl),
+            ("", Lang::En),
+            ("C.UTF-8", Lang::En),
+            ("den", Lang::En),
+            ("ja-JP", Lang::En),
+            ("zh-CN", Lang::En),
+        ] {
+            assert_eq!(resolve_locale(locale), expected, "{locale}");
+        }
+        let mut names = std::collections::HashSet::new();
+        let mut resolved = std::collections::HashSet::new();
+        for language in Language::ALL {
+            assert!(names.insert(language.native_name()));
+            if language != Language::Auto {
+                assert!(resolved.insert(resolve(language) as u8));
+            }
+        }
+        assert_eq!(resolved.len(), 10);
+    }
+
+    #[test]
+    fn every_catalog_covers_all_english_keys_and_dynamic_labels() {
+        let mut keys: Vec<_> = DE.iter().map(|&(key, _)| key).collect();
+        keys.extend(additional().keys().copied());
+        keys.extend(
+            thinoda_core::TopicShape::ALL
+                .iter()
+                .map(|shape| shape.label()),
+        );
+        keys.extend(
+            thinoda_core::LineShape::ALL
+                .iter()
+                .map(|shape| shape.label()),
+        );
+        keys.extend(
+            thinoda_core::theme::Theme::IDS
+                .iter()
+                .map(|id| thinoda_core::theme::Theme::builtin(id).name),
+        );
+        for group in thinoda_core::markers::GROUPS {
+            keys.push(group.name);
+            keys.extend(group.markers.iter().map(|marker| marker.name));
+        }
+        for template in thinoda_core::templates::TEMPLATES {
+            keys.push(template.name);
+            keys.push(template.category.label());
+        }
+        keys.extend(
+            thinoda_io::Format::IMPORTABLE
+                .iter()
+                .map(|format| format.label()),
+        );
+        keys.extend(
+            thinoda_io::Format::EXPORTABLE
+                .iter()
+                .map(|format| format.label()),
+        );
+        for language in TRANSLATED {
+            for &key in &keys {
+                let present = match language {
+                    Lang::De => german().contains_key(key),
+                    Lang::PtBr => brazilian().contains_key(key),
+                    _ => additional().contains_key(key),
+                };
+                assert!(present, "Missing {language:?} translation: {key}");
+                {
+                    let text = t_in(language, key);
+                    assert!(!text.trim().is_empty());
+                    assert!(!text.contains('\u{fffd}'), "Invalid Unicode: {key}");
+                    for token in [
+                        ".pdf", ".png", ".thinoda", ".xmind", "Ctrl+", "F11", "F7", "OAuth",
+                        "Unicode", "OpenAI",
+                    ] {
+                        if language == Lang::De && token == "Ctrl+" {
+                            assert_eq!(text.matches("Strg+").count(), key.matches(token).count());
+                            continue;
+                        }
+                        assert_eq!(
+                            text.matches(token).count(),
+                            key.matches(token).count(),
+                            "{language:?}: {token}: {key}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(t_in(Lang::Pt, "Save"), "Guardar");
+        assert_eq!(t_in(Lang::PtBr, "Save"), "Salvar");
+        assert_eq!(t_in(Lang::PtBr, "Language"), "Idioma");
+    }
+
+    #[test]
+    fn default_fonts_cover_catalog_alphabets() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.fonts_mut(|fonts| {
+                let font = egui::FontId::proportional(14.0);
+                let mut letters = std::collections::BTreeSet::new();
+                for values in additional().values() {
+                    letters.extend(
+                        values
+                            .iter()
+                            .flat_map(|text| text.chars())
+                            .filter(|c| c.is_alphabetic()),
+                    );
+                }
+                for text in brazilian().values() {
+                    letters.extend(text.chars().filter(|c| c.is_alphabetic()));
+                }
+                for letter in letters {
+                    assert!(
+                        fonts.has_glyph(&font, letter),
+                        "Missing default UI glyph: {letter}"
+                    );
+                }
+            });
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn every_literal_translation_call_is_in_the_catalog() {
+        for source in [
+            include_str!("ui.rs"),
+            include_str!("app.rs"),
+            include_str!("ai.rs"),
+            include_str!("help.rs"),
+            include_str!("labels.rs"),
+            include_str!("doc.rs"),
+            include_str!("map_shot.rs"),
+            include_str!("printing.rs"),
+            include_str!("quick_styles.rs"),
+            include_str!("theme_editor.rs"),
+            include_str!("template_gallery.rs"),
+            include_str!("structure_picker.rs"),
+            include_str!("shortcut_browser.rs"),
+        ] {
+            for (offset, _) in source.match_indices("t(") {
+                if offset > 0
+                    && (source.as_bytes()[offset - 1].is_ascii_alphanumeric()
+                        || source.as_bytes()[offset - 1] == b'_')
+                {
+                    continue;
+                }
+                let call = source[offset + 2..].trim_start();
+                if let Some(literal) = call.strip_prefix('"') {
+                    let key = literal.split('"').next().unwrap();
+                    assert!(german().contains_key(key), "Missing German UI key: {key}");
+                    assert!(
+                        additional().contains_key(key),
+                        "Missing additional UI key: {key}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn translation_fallback() {
