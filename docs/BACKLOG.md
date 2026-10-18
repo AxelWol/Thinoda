@@ -6,6 +6,11 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Template-card double-click creates and opens the chosen map once through the
+  existing Create command, across the overview, every category and Recently used
+  templates. Single-click/keyboard selection and Create/Cancel remain available;
+  unsaved source maps stay intact. Pointer-driven tests cover all 35 templates
+  in EN/DE and light/dark mode, slow clicks, recents and the overview.
 - Clickable links: the About dialog's contact address opens the default mail client
   (`mailto:`) and the project URL opens the web browser; Help ▸ Feedback/Project News
   and topic hyperlinks use the same path. eframe is built without its `links`
@@ -498,6 +503,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   text and Gantt window lifecycle. Icon-only references are not verified behavior.
 
 ## Template gallery parity (user screenshots, 2026-10-16)
+- Delivered template-card double-click creation; see Recently completed.
 - Implemented generated previews, responsive grids, scrolling, fixed header/category
   filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
   Selection enables Create without immediate creation. Section navigation chevrons,
@@ -527,6 +533,17 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
+- P1 Expand language support beyond English/German to Spanish, French, Danish,
+  Dutch (Netherlands), Portuguese, Italian and Polish. Translate every user-facing word
+  and sentence in its actual UI/workflow context, using consistent terminology
+  rather than isolated literal translations. Include help, dialogs, errors and
+  installer/package UI for all Windows, macOS and Linux targets/builds; retain
+  the existing languages and avoid missing or unlabeled installer controls.
+  Replace the Settings > General > Language segmented control with a drop-down
+  containing Auto and every supported language. Preserve system-language
+  detection, explicit selection and persistence. Cover translation completeness,
+  placeholders, switching/restart, installer labels, and long text in light/dark
+  mode with tests and contextual review.
 - P1 Extend the working General/Editor/AI/Cloud Preferences categories with Calendar,
   Sharing and Shortcuts as their features ship; refine icon navigation and grouped
   cards. Topic-toolbar and add-button visibility are independently configurable.

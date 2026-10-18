@@ -128,7 +128,8 @@ install the windowing libraries it did not declare yet:
   retaining the save prompt for unsaved documents.
 
 - Home offers rendered previews of 35 original templates across eight categories.
-  Select a card, then Create; Cancel returns to the previous document without
+  Select a card, then Create, or double-click a card to create immediately.
+  Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
   from recent files. Ctrl+N still creates a blank map directly.
   Section chevrons open a category directly; All templates returns to the

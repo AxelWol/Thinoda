@@ -11,6 +11,11 @@ use thinoda_core::{
 
 use crate::i18n::t;
 
+pub(crate) enum GalleryAction {
+    Navigate(TemplateCategory),
+    Create(&'static str),
+}
+
 fn samples(dark: bool) -> &'static [(Sheet, Layout)] {
     static LIGHT: OnceLock<Vec<(Sheet, Layout)>> = OnceLock::new();
     static DARK: OnceLock<Vec<(Sheet, Layout)>> = OnceLock::new();
@@ -27,7 +32,13 @@ fn samples(dark: bool) -> &'static [(Sheet, Layout)] {
     })
 }
 
-fn cards(ui: &mut Ui, entries: &[&TemplateInfo], choice: &mut Option<&'static str>, recent: bool) {
+fn cards(
+    ui: &mut Ui,
+    entries: &[&TemplateInfo],
+    choice: &mut Option<&'static str>,
+    recent: bool,
+) -> Option<&'static str> {
+    let mut create = None;
     let width = ui.available_width();
     let columns = ((width + 8.0) / 172.0).floor().max(1.0) as usize;
     let card_width = (width - 8.0 * (columns - 1) as f32) / columns as f32;
@@ -54,7 +65,7 @@ fn cards(ui: &mut Ui, entries: &[&TemplateInfo], choice: &mut Option<&'static st
                         },
                     );
                     if recent {
-                        response.accessible_name(format!(
+                        response.clone().accessible_name(format!(
                             "{}: {}",
                             t("Recent template"),
                             t(template.name)
@@ -63,12 +74,16 @@ fn cards(ui: &mut Ui, entries: &[&TemplateInfo], choice: &mut Option<&'static st
                     if activated {
                         *choice = Some(template.id);
                     }
+                    if ui.is_enabled() && response.double_clicked() {
+                        create = Some(template.id);
+                    }
                 });
                 if (index + 1) % columns == 0 {
                     ui.end_row();
                 }
             }
         });
+    create
 }
 
 pub(crate) fn show(
@@ -76,8 +91,8 @@ pub(crate) fn show(
     category: Option<TemplateCategory>,
     choice: &mut Option<&'static str>,
     recent: &[String],
-) -> Option<TemplateCategory> {
-    let mut navigate = None;
+) -> Option<GalleryAction> {
+    let mut action = None;
     let recent: Vec<_> = recent
         .iter()
         .filter_map(|id| templates::TEMPLATES.iter().find(|info| info.id == id))
@@ -86,7 +101,12 @@ pub(crate) fn show(
         .collect();
     if !recent.is_empty() {
         ui.heading(t("Recently used templates"));
-        ui.push_id("recent_templates", |ui| cards(ui, &recent, choice, true));
+        if let Some(id) = ui
+            .push_id("recent_templates", |ui| cards(ui, &recent, choice, true))
+            .inner
+        {
+            action = Some(GalleryAction::Create(id));
+        }
         ui.add_space(16.0);
     }
     for group in TemplateCategory::ALL {
@@ -108,16 +128,21 @@ pub(crate) fn show(
                         .accessible_name(label)
                         .clicked()
                     {
-                        navigate = Some(group);
+                        action = Some(GalleryAction::Navigate(group));
                     }
                     ui.label(entries.len().to_string());
                 });
             }
         });
-        ui.push_id(group.label(), |ui| cards(ui, &entries, choice, false));
+        if let Some(id) = ui
+            .push_id(group.label(), |ui| cards(ui, &entries, choice, false))
+            .inner
+        {
+            action = Some(GalleryAction::Create(id));
+        }
         ui.add_space(16.0);
     }
-    navigate
+    action
 }
 
 #[cfg(test)]
