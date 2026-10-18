@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 10:48:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 11:10:39 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -14,6 +14,23 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   preserving it is not delivery of cross-platform native-preview parity. Retain
   reliable cancellation versus failure reporting when changing that lifecycle.
   Linux GTK preview behavior remains desktop/backend-dependent and unchanged.
+
+## P1 — Symbol colors and contrast (implemented; awaiting review)
+- Add per-instance colors to the existing Symbols insertion popover and sidebar,
+  including editing existing symbols and a localized, keyboard-accessible
+  right-click Remove Symbol action targeting only that instance.
+- Preserve legacy appearance, native persistence, clipboard and undo/redo.
+  Audit rendering, printing and interchange; document unsupported format fields
+  explicitly rather than silently discarding colors.
+- Show WCAG contrast against the composited topic background in light/dark mode:
+  graphical symbols require 3:1, normal-size month/week text 4.5:1. Offer an
+  explicit correction without automatically changing documents. Localize all
+  controls and cover persistence, targeting, contrast and output with tests.
+- Implementation includes native/clipboard/XMind-payload persistence, canvas and
+  visual export/print rendering, per-instance editors and export-loss confirmation.
+  All ten supported locales have catalog entries and light/dark UI coverage,
+  alongside model/output regressions. Merged localization PR29 is integrated;
+  both catalog additions are retained.
 
 ## Recently completed
 - Windows system printer preview: the modern OS dialog receives the actual
