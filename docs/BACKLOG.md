@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 11:42:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 11:33:13 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -45,6 +45,11 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   both catalog additions are retained.
 
 ## Recently completed
+- Legal documents now render CommonMark/GFM formatting, including headings,
+  emphasis, nested lists, links, code blocks and tables, with 1.5x natural text
+  line height in both themes. Wide tables scroll; Copy preserves original
+  Markdown. Bundled-document links stay offline; remote images and executable
+  HTML are not loaded.
 - Automatic documentation timestamps: every tracked Markdown file carries
   non-binding UTC metadata from its last source-changing Git commit. The
   `docs_stamp.py` tool ignores metadata-only commits, preserves frontmatter and
