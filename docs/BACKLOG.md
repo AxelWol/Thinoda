@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 10:25:51 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 10:48:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -552,8 +552,8 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
-- P1 Expand language support beyond English/German to Spanish, French, Danish,
-  Dutch (Netherlands), Portuguese, Italian and Polish. Translate every user-facing word
+- [x] P1 Expand language support beyond English/German to Spanish, French, Danish,
+  Dutch (Netherlands), Portuguese (Portugal and Brazil), Italian and Polish. Translate every user-facing word
   and sentence in its actual UI/workflow context, using consistent terminology
   rather than isolated literal translations. Include help, dialogs, errors and
   installer/package UI for all Windows, macOS and Linux targets/builds; retain
@@ -838,7 +838,17 @@ to add XMind's own cloud account, billing or hosted AI service.
 - P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca)
 - [x] P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`; bounded CI smoke)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
-- P3 More UI languages (FR, ES, JA, ZH)
+- [x] Expanded UI localization: ES, FR, DA, NL, PT-PT, PT-BR, IT and PL, retaining
+  EN/DE and Auto. Settings uses an accessible language dropdown with immediate
+  switching and persistence. Catalogs cover UI, application messages and offline
+  help; Windows x64/ARM64 installer controls, macOS Intel/ARM bundle language
+  declarations and Linux DEB/AppImage launcher descriptions are wired. Native
+  OS/driver and package-manager controls keep host translations. Template starter
+  content stays English and editable; technical diagnostics retain original detail.
+  Regression coverage checks all catalog keys, dynamic labels, interpolation
+  contracts, locale variants, preference roundtrips and light/dark switching.
+- P3 Remaining UI languages (JA, ZH): require proper font/IME/shortcut support and
+  contextual translations; not advertised as supported by the expanded locales.
 - P2 Launching Thinoda again without files exits silently when an instance is
   already running; it should bring the existing window to the front instead.
 - P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software

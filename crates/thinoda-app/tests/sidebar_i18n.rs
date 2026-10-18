@@ -35,7 +35,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
         h.state().doc().unwrap().doc.sheet().structure,
         thinoda_core::Structure::LogicLeft
     );
-    h.get_by_role_and_label(Role::Button, "Classic").click();
+    h.get_by_role_and_label(Role::Button, "Klassisch").click();
     h.run_steps(3);
     assert_eq!(
         h.state().doc().unwrap().doc.sheet().theme.theme_id,
