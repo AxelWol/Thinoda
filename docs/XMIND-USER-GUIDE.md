@@ -1,3 +1,5 @@
+_Last updated: 2026-10-16 15:35:38 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # XMind user guide digest (verification checklist)
 
 This checklist condenses the desktop-facing behaviors documented in the official XMind user guide at [xmind.com/user-guide](https://xmind.com/user-guide). Verify each item against the cited page; where the guide gives no exact values, defaults, or shortcut, that omission is stated rather than guessed. Keyboard equivalents below are Windows first, followed by the documented Mac equivalent.

@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:25:51 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Thinoda backlog
 
 Prioritized ideas beyond the shipped phases. P1 = next, P2 = soon, P3 = later.

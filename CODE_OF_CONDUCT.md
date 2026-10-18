@@ -1,3 +1,5 @@
+_Last updated: 2026-10-18 10:25:29 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Code of Conduct and Contribution Guide
 
 Thinoda is an open project. Everyone is welcome to use it, report problems,
