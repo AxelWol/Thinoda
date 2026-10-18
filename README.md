@@ -306,7 +306,8 @@ and remaining GPU profiling work.
 byte-mutation, structured XML/JSON and oversized-ZIP-entry smoke checks. Every
 accepted import must validate and round-trip through native storage. These
 bounded tests run with the workspace suite; they do not replace long-running,
-coverage-guided fuzzing.
+coverage-guided fuzzing. The separate nightly `cargo-fuzz` targets and bounded CI
+smoke commands are documented in [`fuzz/README.md`](fuzz/README.md).
 
 ## Packages
 | Platform | Formats | Command |

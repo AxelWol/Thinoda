@@ -54,3 +54,29 @@ jobs:
           name: layout-benchmark-${{ matrix.os }}
           path: layout-benchmark.json
           if-no-files-found: error
+
+  fuzz-smoke:
+    name: importer fuzz smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> fuzz/target
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Check fuzz target formatting and lints
+        run: |
+          cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
+          cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+      - name: Run bounded importer campaigns
+        run: |
+          cargo fuzz run --release xmind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/xmind.dict
+          cargo fuzz run --release freemind -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/freemind.dict
+          cargo fuzz run --release opml -- -max_total_time=20 -rss_limit_mb=2048 -max_len=1048576 -timeout=5 -dict=fuzz/dictionaries/opml.dict

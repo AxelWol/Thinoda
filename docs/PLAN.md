@@ -412,9 +412,20 @@ and round-trips through native storage; unexpected panics fail normally. Structu
 XML entities/attributes/depth through 64 and malformed XMind JSON receive the same
 invariant checks. Forged declared ZIP entry lengths above 200 MiB exercise the
 existing decompression guard without large allocations. These bounded smoke
-checks run in normal workspace CI; dedicated coverage-guided fuzz targets, long
-campaigns and deeper resource-limit exploration remain open. No new dependencies
-or production parser behavior changes are introduced.
+checks run in normal workspace CI. At the time this first regression slice landed,
+coverage-guided fuzz targets, longer campaigns and deeper resource-limit
+exploration remained open; the dedicated fuzz follow-up is recorded below. The
+regression slice itself added no dependencies or production parser behavior changes.
+
+Coverage-guided smoke targets now exercise XMind's JSON/XML package and raw XML
+paths plus FreeMind and OPML parsing. Each has a small original seed corpus and
+dictionary; a separate nightly Linux CI job gives each target 20 seconds, caps
+inputs at 1 MiB and RSS at 2 GiB, and kills an input taking over five seconds.
+The fuzz-only dependency graph and exact local commands are documented in
+[`fuzz/README.md`](../fuzz/README.md). This bounded smoke is not a long campaign,
+does not prove arbitrary inputs safe, and does not replace the existing oversized
+archive-entry guard tests. It introduces no shipped dependencies or parser
+behavior changes.
 Formatting, all-target clippy, 391 workspace cases and three benchmark correctness
 tests pass with live AI disabled. The last Windows installer remains the app-feature
 build from `125c0a4`; the benchmark and importer-smoke slices do not change app behavior.
