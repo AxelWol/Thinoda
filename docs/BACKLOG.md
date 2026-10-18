@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 11:10:39 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-18 11:20:48 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -846,6 +846,20 @@ to add XMind's own cloud account, billing or hosted AI service.
   required CI checks before making the repository public
 - Delivered offline licence, third-party notices and Impressum inside Help > About;
   see Recently completed.
+- P1 (in progress) Startup splash screen: while Thinoda launches, show a centered,
+  About-style branded card (logo, name, tagline, version) with a real progress
+  indicator — indeterminate while starting, determinate only for counted launch
+  files (file i of n) — in the configured light/dark/Auto theme and startup
+  language. Launch files are imported off the UI thread so the window stays
+  responsive. Ready = every launch file opened or reported as an error toast and
+  the main UI drawn; only then does the splash disappear and pending crash
+  recovery prompts and settings warnings appear. No artificial minimum wait;
+  closing during startup quits without discarding recovery data. No splash or
+  window for `--help`, `--version`, `--convert` or a secondary instance that only
+  forwards files. Limitation: eframe keeps the window hidden until its first
+  painted frame, so native window/GPU initialization before that frame (about
+  0.3–0.4 s warm on Windows x64, longer cold) cannot be covered without a second
+  native window and renderer.
 - P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI
 - P3 Real-time co-editing (CRDT, e.g. `yrs`) — basis for a companion web/mobile app
 - P3 Plugin API (WASM) for importers/exporters
