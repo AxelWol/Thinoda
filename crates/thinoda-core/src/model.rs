@@ -328,6 +328,9 @@ pub struct Topic {
     /// XMind compatible marker ids, e.g. `priority-1`, `task-half`, `flag-red`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<String>,
+    /// Explicit colors indexed by marker position; absent entries retain legacy rendering.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub marker_colors: std::collections::BTreeMap<usize, Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
     #[serde(default, skip_serializing_if = "TopicStyle::is_default")]
@@ -360,6 +363,7 @@ impl Topic {
             notes: None,
             labels: Vec::new(),
             markers: Vec::new(),
+            marker_colors: Default::default(),
             hyperlink: None,
             style: TopicStyle::default(),
             position: None,
@@ -879,6 +883,12 @@ impl Sheet {
             return Err("root has a parent".into());
         }
         for (id, t) in &self.topics {
+            if t.marker_colors
+                .keys()
+                .any(|index| *index >= t.markers.len())
+            {
+                return Err(format!("topic {id} has a color for a missing marker"));
+            }
             if t.id != *id {
                 return Err(format!("topic key {id} != id {}", t.id));
             }
@@ -1019,6 +1029,7 @@ impl Workbook {
                 topic.hyperlink = None;
                 topic.image = None;
                 topic.markers.clear();
+                topic.marker_colors.clear();
                 topic.style.font_family = None;
             }
             for (index, relationship) in sheet.relationships.iter_mut().enumerate() {

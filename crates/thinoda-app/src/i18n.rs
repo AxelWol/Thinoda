@@ -182,6 +182,27 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Symbol color", "Symbolfarbe"),
+    ("Default symbol color", "Standard-Symbolfarbe"),
+    ("Placed symbols", "Platzierte Symbole"),
+    ("Remove Symbol", "Symbol entfernen"),
+    ("Contrast", "Kontrast"),
+    ("Pass", "Erfüllt"),
+    ("Low contrast", "Kontrast zu gering"),
+    ("Improve contrast", "Kontrast verbessern"),
+    ("Invalid color", "Ungültige Farbe"),
+    (
+        "Contrast compares the symbol with its topic background; it is not an overall accessibility assessment.",
+        "Der Kontrast vergleicht das Symbol mit seinem Themenhintergrund; dies ist keine umfassende Bewertung der Barrierefreiheit.",
+    ),
+    (
+        "Graphical symbols: 3:1; month and week text: 4.5:1.",
+        "Grafische Symbole: 3:1; Monats- und Wochentext: 4.5:1.",
+    ),
+    (
+        "Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.",
+        "Bearbeitbare Exporte verlieren Symbolfarben, außer im Thinoda-Format und bei unveränderten XMind-Dateien, die erneut in Thinoda geöffnet werden. XMind selbst zeigt Standardsymbole; Änderungen in anderen Anwendungen können benutzerdefinierte Farben verwerfen.",
+    ),
     ("Plain text", "Klartext"),
     ("Thinoda", "Thinoda"),
     ("XMind", "XMind"),
@@ -1436,6 +1457,7 @@ mod tests {
             include_str!("template_gallery.rs"),
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
+            include_str!("symbols.rs"),
         ] {
             for (offset, _) in source.match_indices("t(") {
                 if offset > 0
