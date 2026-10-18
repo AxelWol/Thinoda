@@ -1292,14 +1292,21 @@ impl ThinodaApp {
                             .map_or("all", |category| category.label()),
                     ))
                     .show(ui, |ui| {
-                        if let Some(category) = crate::template_gallery::show(
+                        if let Some(action) = crate::template_gallery::show(
                             ui,
                             self.template_category,
                             &mut self.template_choice,
                             &self.settings.recent_templates,
                         ) {
-                            self.template_category = Some(category);
-                            self.template_choice = None;
+                            match action {
+                                crate::template_gallery::GalleryAction::Navigate(category) => {
+                                    self.template_category = Some(category);
+                                    self.template_choice = None;
+                                }
+                                crate::template_gallery::GalleryAction::Create(id) => {
+                                    cmd = Some(Cmd::NewFromTemplate(id));
+                                }
+                            }
                         }
                         ui.add_space(24.0);
                         ui.horizontal(|ui| {
@@ -2891,6 +2898,7 @@ impl ThinodaApp {
     fn settings_window(&mut self, ctx: &Context) {
         let mut open = true;
         let before = self.settings.clone();
+        let mut credentials_saved = false;
         egui::Window::new(t("Settings"))
             .open(&mut open)
             .default_width(440.0)
@@ -3053,7 +3061,7 @@ impl ThinodaApp {
                     });
                 }
                 if self.dialogs.settings_tab == SettingsTab::Ai {
-                    self.ai_settings_section(ui);
+                    credentials_saved = self.ai_settings_section(ui);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Cloud {
                     widgets::section(ui, t("Cloud"), true, |ui| {
@@ -3090,7 +3098,7 @@ impl ThinodaApp {
                     });
                 }
             });
-        if self.settings != before {
+        if self.settings != before && !credentials_saved {
             self.save_settings();
         }
         self.dialogs.settings = open;

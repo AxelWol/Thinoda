@@ -1,0 +1,36 @@
+[package]
+name = "thinoda-io-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+thinoda-io = { path = "../crates/thinoda-io" }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[[bin]]
+name = "xmind"
+path = "fuzz_targets/xmind.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "freemind"
+path = "fuzz_targets/freemind.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opml"
+path = "fuzz_targets/opml.rs"
+test = false
+doc = false
+bench = false

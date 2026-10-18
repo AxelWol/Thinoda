@@ -6,6 +6,11 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 are not lists of wholly missing features; audit and reuse existing implementations.
 
 ## Recently completed
+- Template-card double-click creates and opens the chosen map once through the
+  existing Create command, across the overview, every category and Recently used
+  templates. Single-click/keyboard selection and Create/Cancel remain available;
+  unsaved source maps stay intact. Pointer-driven tests cover all 35 templates
+  in EN/DE and light/dark mode, slow clicks, recents and the overview.
 - Clickable links: the About dialog's contact address opens the default mail client
   (`mailto:`) and the project URL opens the web browser; Help ▸ Feedback/Project News
   and topic hyperlinks use the same path. eframe is built without its `links`
@@ -46,7 +51,12 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   and malformed XMind JSON are covered. Oversized declared ZIP entries are
   rejected explicitly before decompression without allocating a large fixture.
   This is bounded regression coverage, not coverage-guided fuzzing or proof that
-  arbitrary inputs are safe; longer campaigns and dedicated fuzz targets stay open.
+  arbitrary inputs are safe; longer campaigns remain open.
+- Coverage-guided importer fuzzing: separate `cargo-fuzz` targets cover XMind,
+  FreeMind and OPML with original generated seeds and dictionaries. Linux CI runs
+  each target for 20 seconds with input, timeout, RSS and job-duration limits.
+  See [`fuzz/README.md`](../fuzz/README.md) for commands, dependency isolation
+  and limits; this smoke does not prove arbitrary inputs safe.
 - CPU layout benchmark: `thinoda-core` release example measures 10,000-topic balanced/
   wide maps with JSON p50/p95/max layout, undoable leaf rename and undo latency.
   Optional p95 budgets fail explicitly after preserving the report; CLI input
@@ -498,6 +508,7 @@ Disabled entries in the screenshots are contextual states, not evidence of missi
   text and Gantt window lifecycle. Icon-only references are not verified behavior.
 
 ## Template gallery parity (user screenshots, 2026-10-16)
+- Delivered template-card double-click creation; see Recently completed.
 - Implemented generated previews, responsive grids, scrolling, fixed header/category
   filter, grouped sections, Recently used templates and fixed Cancel/Create actions.
   Selection enables Create without immediate creation. Section navigation chevrons,
@@ -527,6 +538,17 @@ These are reference requirements, not a claim that the settings are implemented.
 The screenshots show selected values, not every available option or factory default.
 Reuse existing persisted settings where applicable rather than introducing duplicates.
 
+- [x] P1 Expand language support beyond English/German to Spanish, French, Danish,
+  Dutch (Netherlands), Portuguese (Portugal and Brazil), Italian and Polish. Translate every user-facing word
+  and sentence in its actual UI/workflow context, using consistent terminology
+  rather than isolated literal translations. Include help, dialogs, errors and
+  installer/package UI for all Windows, macOS and Linux targets/builds; retain
+  the existing languages and avoid missing or unlabeled installer controls.
+  Replace the Settings > General > Language segmented control with a drop-down
+  containing Auto and every supported language. Preserve system-language
+  detection, explicit selection and persistence. Cover translation completeness,
+  placeholders, switching/restart, installer labels, and long text in light/dark
+  mode with tests and contextual review.
 - P1 Extend the working General/Editor/AI/Cloud Preferences categories with Calendar,
   Sharing and Shortcuts as their features ship; refine icon navigation and grouped
   cards. Topic-toolbar and add-button visibility are independently configurable.
@@ -702,8 +724,9 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 
 ## AI
 - P1 Streaming responses (SSE) with live preview and cancel button
-- P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
-  Secret Service) instead of `settings.toml`
+- [x] P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
+  Secret Service) instead of `settings.toml` (implemented; legacy keys migrate only
+  after secure storage succeeds)
 - P2 Semantic search/clustering with an embedding model (e.g. `nomic-embed-text`)
 - P2 "Rewrite topic", translate branch, AI-assisted Pitch outline
 - P3 Prompt library editable by the user
@@ -798,7 +821,7 @@ to add XMind's own cloud account, billing or hosted AI service.
 ## Quality
 - P1 Visual regression tests (kittest snapshot images) per theme
 - P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca)
-- P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`)
+- [x] P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`; bounded CI smoke)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - [x] Expanded UI localization: ES, FR, DA, NL, PT-PT, PT-BR, IT and PL, retaining
   EN/DE and Auto. Settings uses an accessible language dropdown with immediate

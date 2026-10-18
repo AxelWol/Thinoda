@@ -205,28 +205,6 @@ const DE: &[(&str, &str)] = &[
         "Original legal texts are shown unchanged.",
         "Die rechtlichen Originaltexte werden unverändert angezeigt.",
     ),
-    ("Save API Key", "API-Schlüssel speichern"),
-    ("Clear", "Löschen"),
-    (
-        "API keys are stored in your operating system's secure credential store.",
-        "API-Schlüssel werden im sicheren Anmeldedatenspeicher des Betriebssystems gespeichert.",
-    ),
-    (
-        "Secure credential storage is unavailable. Save a key to retry, or clear the saved key.",
-        "Der sichere Anmeldedatenspeicher ist nicht verfügbar. Speichern Sie einen Schlüssel erneut oder löschen Sie den gespeicherten Schlüssel.",
-    ),
-    (
-        "Could not save API key securely",
-        "API-Schlüssel konnte nicht sicher gespeichert werden",
-    ),
-    (
-        "Secure credential storage is unavailable",
-        "Der sichere Anmeldedatenspeicher ist nicht verfügbar",
-    ),
-    (
-        "Could not save settings securely",
-        "Einstellungen konnten nicht sicher gespeichert werden",
-    ),
     ("Rounded rectangle", "Abgerundetes Rechteck"),
     ("Rectangle", "Rechteck"),
     ("Ellipse", "Ellipse"),
@@ -920,6 +898,28 @@ const DE: &[(&str, &str)] = &[
     ("Model", "Modell"),
     ("automatic", "automatisch"),
     ("API Key", "API-Schlüssel"),
+    ("Save API Key", "API-Schlüssel speichern"),
+    ("Clear", "Löschen"),
+    (
+        "API keys are stored in your operating system's secure credential store.",
+        "API-Schlüssel werden im sicheren Anmeldedatenspeicher des Betriebssystems gespeichert.",
+    ),
+    (
+        "Secure credential storage is unavailable. Save a key to retry, or clear the saved key.",
+        "Der sichere Anmeldedatenspeicher ist nicht verfügbar. Speichern Sie einen Schlüssel erneut oder löschen Sie den gespeicherten Schlüssel.",
+    ),
+    (
+        "Could not save API key securely",
+        "API-Schlüssel konnte nicht sicher gespeichert werden",
+    ),
+    (
+        "Secure credential storage is unavailable",
+        "Der sichere Anmeldedatenspeicher ist nicht verfügbar",
+    ),
+    (
+        "Could not save settings securely",
+        "Einstellungen konnten nicht sicher gespeichert werden",
+    ),
     ("Creativity", "Kreativität"),
     ("Test Connection", "Verbindung testen"),
     ("Connected", "Verbunden"),

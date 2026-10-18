@@ -156,7 +156,8 @@ those system-owned controls. WinGet publishing remains paused.
   retaining the save prompt for unsaved documents.
 
 - Home offers rendered previews of 35 original templates across eight categories.
-  Select a card, then Create; Cancel returns to the previous document without
+  Select a card, then Create, or double-click a card to create immediately.
+  Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
   from recent files. Ctrl+N still creates a blank map directly.
   Section chevrons open a category directly; All templates returns to the
@@ -296,7 +297,9 @@ those system-owned controls. WinGet publishing remains paused.
 3. Select a topic and press **Ctrl+Shift+I** or use the **AI** menu.
 
 Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + API key, or env
-`THINODA_AI_API_KEY`) work the same way.
+`THINODA_AI_API_KEY`) work the same way. API keys saved in Settings are kept in the operating
+system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service),
+not in `settings.toml`.
 
 ## Build & test
 ```sh
@@ -334,7 +337,8 @@ and remaining GPU profiling work.
 byte-mutation, structured XML/JSON and oversized-ZIP-entry smoke checks. Every
 accepted import must validate and round-trip through native storage. These
 bounded tests run with the workspace suite; they do not replace long-running,
-coverage-guided fuzzing.
+coverage-guided fuzzing. The separate nightly `cargo-fuzz` targets and bounded CI
+smoke commands are documented in [`fuzz/README.md`](fuzz/README.md).
 
 ## Packages
 | Platform | Formats | Command |

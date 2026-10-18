@@ -236,6 +236,9 @@ Malformed, oversized and missing assets produce visible errors, not silent omiss
 
 ### R5 - Templates, skeletons and theme tools
 
+Template double-click creation is delivered alongside selection/Create/Cancel,
+including category, overview and recent cards, without replacing unsaved maps.
+
 1. Replace icons with generated previews from the actual renderer. Add chooser
    header/category filter, recent templates, sections, selection and Cancel/Create.
    Preserve the existing responsive grid; separate template history from file history.
@@ -306,7 +309,7 @@ does not close maps; scheduling state survives file round trips and recovery.
 
 ### R9 - AI safety, responsiveness and advanced assistance
 
-1. Move API keys to Windows Credential Manager/macOS Keychain/Linux Secret Service;
+1. [x] Move API keys to Windows Credential Manager/macOS Keychain/Linux Secret Service;
    migrate existing plaintext values only after successful storage, then remove them.
    Surface unavailable/locked keychain errors; never fall back silently to plaintext.
 2. Add SSE streaming, preview and cancellation/timeouts with bounded parsing and
@@ -416,9 +419,20 @@ and round-trips through native storage; unexpected panics fail normally. Structu
 XML entities/attributes/depth through 64 and malformed XMind JSON receive the same
 invariant checks. Forged declared ZIP entry lengths above 200 MiB exercise the
 existing decompression guard without large allocations. These bounded smoke
-checks run in normal workspace CI; dedicated coverage-guided fuzz targets, long
-campaigns and deeper resource-limit exploration remain open. No new dependencies
-or production parser behavior changes are introduced.
+checks run in normal workspace CI. At the time this first regression slice landed,
+coverage-guided fuzz targets, longer campaigns and deeper resource-limit
+exploration remained open; the dedicated fuzz follow-up is recorded below. The
+regression slice itself added no dependencies or production parser behavior changes.
+
+Coverage-guided smoke targets now exercise XMind's JSON/XML package and raw XML
+paths plus FreeMind and OPML parsing. Each has a small original seed corpus and
+dictionary; a separate nightly Linux CI job gives each target 20 seconds, caps
+inputs at 1 MiB and RSS at 2 GiB, and kills an input taking over five seconds.
+The fuzz-only dependency graph and exact local commands are documented in
+[`fuzz/README.md`](../fuzz/README.md). This bounded smoke is not a long campaign,
+does not prove arbitrary inputs safe, and does not replace the existing oversized
+archive-entry guard tests. It introduces no shipped dependencies or parser
+behavior changes.
 Formatting, all-target clippy, 391 workspace cases and three benchmark correctness
 tests pass with live AI disabled. The last Windows installer remains the app-feature
 build from `125c0a4`; the benchmark and importer-smoke slices do not change app behavior.
