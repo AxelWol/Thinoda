@@ -70,6 +70,72 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Print", "Drucken"),
+    (
+        "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, resolution and colors, then continue to the browser print dialog or save a print-ready PDF. Keep Thinoda open until printing finishes; printer settings can change the result.",
+        "Drucken (Strg+P) zeigt das aktuelle Blatt einschließlich der Themen außerhalb des Bildschirms auf einer Seite an. Papierformat, Ausrichtung, Ränder, Auflösung und Farben einstellen und dann zum Druckdialog im Browser wechseln oder ein druckfertiges PDF speichern. Thinoda bis zum Druckende geöffnet lassen; Druckereinstellungen können das Ergebnis ändern.",
+    ),
+    ("Retry preview", "Vorschau erneut versuchen"),
+    ("Page setup", "Seite einrichten"),
+    ("Paper size", "Papierformat"),
+    ("A4", "A4"),
+    ("A3", "A3"),
+    ("Letter", "US Letter"),
+    ("Legal", "US Legal"),
+    ("Orientation", "Ausrichtung"),
+    ("Portrait", "Hochformat"),
+    ("Landscape", "Querformat"),
+    ("Margins", "Seitenränder"),
+    ("Resolution", "Auflösung"),
+    ("Map appearance", "Darstellung der Map"),
+    ("Dark map", "Dunkle Map"),
+    ("Map background", "Map-Hintergrund"),
+    ("Grayscale", "Graustufen"),
+    ("Print preview", "Druckvorschau"),
+    ("1 page", "1 Seite"),
+    (
+        "Preparing print preview…",
+        "Druckvorschau wird vorbereitet…",
+    ),
+    (
+        "Could not prepare print preview",
+        "Druckvorschau konnte nicht vorbereitet werden",
+    ),
+    (
+        "Print worker stopped unexpectedly",
+        "Druckverarbeitung wurde unerwartet beendet",
+    ),
+    (
+        "Print preparation failed",
+        "Druckvorbereitung fehlgeschlagen",
+    ),
+    (
+        "Preparing print document…",
+        "Druckdokument wird vorbereitet…",
+    ),
+    ("Continue to print…", "Weiter zum Drucken…"),
+    ("Save print PDF…", "Druck-PDF speichern…"),
+    ("Print PDF saved", "Druck-PDF gespeichert"),
+    (
+        "Print PDF must be saved with a .pdf extension",
+        "Druck-PDF muss mit der Dateiendung .pdf gespeichert werden",
+    ),
+    (
+        "Fit the current sheet on one page. Offscreen topics are included; collapsed branches stay collapsed.",
+        "Das aktuelle Blatt wird auf eine Seite eingepasst. Themen außerhalb des Bildschirms sind enthalten; eingeklappte Zweige bleiben eingeklappt.",
+    ),
+    (
+        "Continue opens a local document in your default HTML application (normally a browser) and requests its print dialog. If blocked, click Print there. Choose the same paper and orientation, 100% scale, no margins or headers. Printer settings may change the result.",
+        "Weiter öffnet ein lokales Dokument in der Standard-HTML-Anwendung (normalerweise ein Browser) und fordert deren Druckdialog an. Falls blockiert, dort auf Drucken klicken. Dasselbe Papierformat und dieselbe Ausrichtung wählen, 100 % Skalierung, keine Ränder oder Kopfzeilen. Druckereinstellungen können das Ergebnis ändern.",
+    ),
+    (
+        "If the print dialog did not open, click Print. Use the same paper and orientation, 100% scale, no margins and no headers or footers. Keep Thinoda open until printing is finished.",
+        "Falls sich der Druckdialog nicht geöffnet hat, auf Drucken klicken. Dasselbe Papierformat und dieselbe Ausrichtung verwenden, 100 % Skalierung, keine Ränder und keine Kopf- oder Fußzeilen. Thinoda geöffnet lassen, bis der Druck abgeschlossen ist.",
+    ),
+    (
+        "Print document handed to the system. Printing is not confirmed. Keep Thinoda open until finished.",
+        "Druckdokument an das System übergeben. Der Druck ist nicht bestätigt. Thinoda bis zum Abschluss geöffnet lassen.",
+    ),
     (
         "Map Shot must be saved with a .png extension",
         "Map Shot muss mit der Dateiendung .png gespeichert werden",
@@ -1051,6 +1117,38 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for (k, _) in DE {
             assert!(seen.insert(*k), "duplicate key {k}");
+        }
+    }
+
+    #[test]
+    fn every_print_label_and_message_has_a_german_translation() {
+        // Includes paragraph text as well as labels; English keys are the EN UI.
+        let source = include_str!("printing.rs");
+        for (offset, _) in source.match_indices("t(\"") {
+            // Exclude identifiers ending in t, such as from_id_salt or expect.
+            if offset > 0 && source.as_bytes()[offset - 1].is_ascii_alphabetic()
+                || offset > 0 && source.as_bytes()[offset - 1] == b'_'
+            {
+                continue;
+            }
+            let key = source[offset + 3..].split('"').next().unwrap();
+            assert!(
+                german().contains_key(key),
+                "missing German print translation: {key}"
+            );
+        }
+        for key in [
+            "A4",
+            "A3",
+            "Letter",
+            "Legal",
+            "Print PDF saved",
+            "Print document handed to the system. Printing is not confirmed. Keep Thinoda open until finished.",
+        ] {
+            assert!(
+                german().contains_key(key),
+                "missing German print translation: {key}"
+            );
         }
     }
 }

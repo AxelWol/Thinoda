@@ -4,6 +4,7 @@
 //! Raster and PDF output are rendered from the same vector layout; JPEG always uses an opaque background.
 mod formats;
 mod office;
+pub mod print;
 mod render;
 mod xmind;
 

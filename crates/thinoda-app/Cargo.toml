@@ -38,10 +38,11 @@ log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
 sys-locale.workspace = true
+base64.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
-tempfile.workspace = true
 
 [build-dependencies]
 winresource = "0.1.34"

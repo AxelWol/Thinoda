@@ -43,6 +43,7 @@ pub enum Cmd {
     MergeFiles,
     MaskedCopy,
     MapShot,
+    Print,
     Labels,
     Export(Format),
     Settings,
@@ -199,6 +200,7 @@ pub struct ThinodaApp {
     pub focus_field: Option<FocusField>,
     pub ai: crate::ai::AiState,
     pub(crate) map_shot: crate::map_shot::MapShot,
+    pub(crate) printing: crate::printing::PrintState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
@@ -264,6 +266,7 @@ impl ThinodaApp {
             focus_field: None,
             ai: Default::default(),
             map_shot: Default::default(),
+            printing: Default::default(),
             label_editor: None,
             fonts: Default::default(),
             font_source: None,
@@ -480,6 +483,7 @@ impl ThinodaApp {
                 ctx.request_repaint();
             }
             Cmd::Labels => self.begin_labels(ctx),
+            Cmd::Print => self.begin_print(ctx),
             Cmd::Export(format) => self.export(format),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
@@ -756,6 +760,12 @@ impl ThinodaApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
+            Cmd::Print => {
+                self.doc().is_some()
+                    && !self.any_modal_open()
+                    && !self.dialogs.settings
+                    && !self.dialogs.about
+            }
             Cmd::Labels => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
@@ -1454,6 +1464,7 @@ impl ThinodaApp {
             (KeyboardShortcut::new(cs, Key::S), Cmd::SaveAs),
             (KeyboardShortcut::new(cmd, Key::S), Cmd::Save),
             (KeyboardShortcut::new(cs, Key::P), Cmd::Palette),
+            (KeyboardShortcut::new(cmd, Key::P), Cmd::Print),
             (
                 KeyboardShortcut::new(cs, Key::I),
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
@@ -1790,6 +1801,7 @@ impl ThinodaApp {
             (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
             (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
             (Cmd::MapShot, "Map Shot", "F7", "Tools"),
+            (Cmd::Print, "Print", "Ctrl+P", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (

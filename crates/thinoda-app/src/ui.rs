@@ -157,7 +157,7 @@ impl ThinodaApp {
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
                 .show(ui, |ui| {
-                    if self.map_shot.active() {
+                    if self.map_shot.active() || self.printing.active() {
                         ui.disable();
                     }
                     self.top_bar(ui);
@@ -171,7 +171,7 @@ impl ThinodaApp {
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
                     .show(ui, |ui| {
-                        if self.map_shot.active() {
+                        if self.map_shot.active() || self.printing.active() {
                             ui.disable();
                         }
                         self.bottom_bar(ui);
@@ -186,7 +186,7 @@ impl ThinodaApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
-                            if self.map_shot.active() {
+                            if self.map_shot.active() || self.printing.active() {
                                 ui.disable();
                             }
                             self.sidebar(ui);
@@ -199,6 +199,7 @@ impl ThinodaApp {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 if self.label_editor.is_some()
+                    || self.printing.active()
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
                     || self.dialogs.guide.open
@@ -229,7 +230,7 @@ impl ThinodaApp {
             self.topic_toolbar(&ctx);
         }
 
-        if show_doc && self.search.open && !self.map_shot.active() {
+        if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
             self.search_bar(&ctx);
         }
         self.update_search();
@@ -260,6 +261,7 @@ impl ThinodaApp {
             self.ai_busy_overlay(&ctx);
         }
         self.map_shot_dialog(&ctx);
+        self.print_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
         }
@@ -271,6 +273,7 @@ impl ThinodaApp {
 
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
+            || self.printing.active()
             || self.map_shot.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
@@ -485,6 +488,16 @@ impl ThinodaApp {
                 }
             }
         });
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::Print),
+                egui::Button::new(t("Print")).shortcut_text("Ctrl+P"),
+            )
+            .clicked()
+        {
+            *cmd = Some(Cmd::Print);
+            ui.close();
+        }
         if self.doc().is_some_and(|d| d.path.is_some()) && ui.button(t("Show in Folder")).clicked()
         {
             *cmd = Some(Cmd::ShowInFolder);
@@ -812,6 +825,7 @@ impl ThinodaApp {
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         if self.map_shot.active()
+            || self.printing.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
