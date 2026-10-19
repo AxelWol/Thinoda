@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 12:18:25 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-19 09:22:45 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Architecture
 

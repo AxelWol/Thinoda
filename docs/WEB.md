@@ -1,3 +1,5 @@
+_Last updated: 2026-10-19 09:22:45 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Thinoda for the web
 
 Thinoda also runs as a static web app. The same Rust crates as the desktop
