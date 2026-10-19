@@ -4,15 +4,24 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tomllib
 import time
+from urllib.parse import urlsplit
 
 from verify_macos_packages import ARCHITECTURES, run
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGER_RETRY_DELAYS = (5, 15)
+
+
+def is_apple_cloudkit_url(value: str) -> bool:
+    try:
+        return urlsplit(value).hostname == "api.apple-cloudkit.com"
+    except ValueError:
+        return False
 
 
 def run_packager(command: list[str], cwd: Path) -> None:
@@ -29,8 +38,12 @@ def run_packager(command: list[str], cwd: Path) -> None:
             )
         if result.returncode == 0:
             return
+        cloudkit_url = any(
+            is_apple_cloudkit_url(url)
+            for url in re.findall(r"https?://[^\s\"<>]+", result.stdout)
+        )
         transient_stapling_failure = (
-            "api.apple-cloudkit.com" in result.stdout
+            cloudkit_url
             and ("Code=-1005" in result.stdout or "network connection was lost" in result.stdout)
         )
         if not transient_stapling_failure or delay is None:

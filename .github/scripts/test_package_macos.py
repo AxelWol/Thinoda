@@ -48,7 +48,8 @@ class PackageTests(unittest.TestCase):
         command.side_effect = [
             subprocess.CompletedProcess(
                 ["cargo-packager"], 1,
-                stdout="api.apple-cloudkit.com: NSURLErrorDomain Code=-1005",
+                stdout="https://api.apple-cloudkit.com/database/lookup: "
+                "NSURLErrorDomain Code=-1005",
             ),
             subprocess.CompletedProcess(["cargo-packager"], 0, stdout="Packaged\n"),
         ]
@@ -66,7 +67,8 @@ class PackageTests(unittest.TestCase):
     @patch("package_macos.subprocess.run")
     def test_does_not_retry_non_transient_packager_failure(self, command, sleep):
         command.return_value = subprocess.CompletedProcess(
-            ["cargo-packager"], 1, stdout="Codesigning failed",
+            ["cargo-packager"], 1,
+            stdout="https://notapi.apple-cloudkit.com/lookup: NSURLErrorDomain Code=-1005",
         )
         with self.assertRaises(subprocess.CalledProcessError):
             run_packager(["cargo-packager"], Path("."))
