@@ -353,10 +353,10 @@ pub(crate) fn raster(
     fmt: image::ImageFormat,
 ) -> Result<Vec<u8>, IoError> {
     let source = svg(w, o)?;
-    let mut opts = resvg::usvg::Options::default();
-    let mut db = resvg::usvg::fontdb::Database::new();
-    db.load_system_fonts();
-    opts.fontdb = std::sync::Arc::new(db);
+    let opts = resvg::usvg::Options {
+        fontdb: crate::fonts::database(),
+        ..Default::default()
+    };
     let tree = resvg::usvg::Tree::from_str(&source, &opts)
         .map_err(|e| IoError::Invalid(format!("SVG parse: {e}")))?;
     let scale = if o.scale.is_finite() {

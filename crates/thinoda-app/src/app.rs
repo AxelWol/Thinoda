@@ -3,8 +3,9 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 use egui::{Color32, Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 use thinoda_canvas::{Action, FloatingArrangement, apply_action};
@@ -22,8 +23,16 @@ use thinoda_ui::{CommandPalette, ThemeMode, Toasts};
 
 use crate::{
     doc::{OpenDoc, is_native},
+    files,
     i18n::{self, t},
 };
+
+/// Save dialog filters for map documents.
+const MAP_FILTERS: &[files::Filter<'static>] = &[
+    ("Thinoda", &["thinoda"]),
+    ("XMind", &["xmind"]),
+    ("MindManager", &["mmap"]),
+];
 
 /// Every user command of the app (menus, toolbar, shortcuts and command palette).
 #[derive(Debug, Clone, PartialEq)]
@@ -452,17 +461,17 @@ impl ThinodaApp {
                 self.active = self.docs.len();
             }
             Cmd::Open => {
-                let mut dlg = rfd::FileDialog::new().add_filter(
-                    t("Mind maps"),
-                    &Format::IMPORTABLE
-                        .iter()
-                        .flat_map(|f| f.extensions().iter().copied())
-                        .collect::<Vec<_>>(),
-                );
-                if let Some(dir) = &self.settings.last_open_dir {
-                    dlg = dlg.set_directory(dir);
-                }
-                if let Some(files) = dlg.pick_files() {
+                let exts: Vec<&str> = Format::IMPORTABLE
+                    .iter()
+                    .flat_map(|f| f.extensions().iter().copied())
+                    .collect();
+                if let Some(files) = files::pick_files(
+                    files::Purpose::Open,
+                    None,
+                    &[(t("Mind maps"), &exts)],
+                    self.settings.last_open_dir.as_deref(),
+                    true,
+                ) {
                     for f in files {
                         if let Some(dir) = f.parent() {
                             self.settings.last_open_dir = Some(dir.to_path_buf());
@@ -499,9 +508,14 @@ impl ThinodaApp {
                     .iter()
                     .flat_map(|f| f.extensions().iter().copied())
                     .collect();
-                if let Some(f) = rfd::FileDialog::new()
-                    .add_filter(t("Import"), &exts)
-                    .pick_file()
+                for f in files::pick_files(
+                    files::Purpose::Import,
+                    None,
+                    &[(t("Import"), &exts)],
+                    None,
+                    false,
+                )
+                .unwrap_or_default()
                 {
                     self.open_path(&f);
                 }
@@ -511,11 +525,13 @@ impl ThinodaApp {
                     self.toasts.warning(t("Not possible here"));
                     return;
                 }
-                if let Some(paths) = rfd::FileDialog::new()
-                    .set_title(t("Merge Map Files…"))
-                    .add_filter("Thinoda / XMind", &["thinoda", "xmind"])
-                    .pick_files()
-                {
+                if let Some(paths) = files::pick_files(
+                    files::Purpose::Merge,
+                    Some(t("Merge Map Files…")),
+                    &[("Thinoda / XMind", &["thinoda", "xmind"])],
+                    None,
+                    true,
+                ) {
                     self.merge_files(&paths);
                 }
             }
@@ -571,6 +587,9 @@ impl ThinodaApp {
             Cmd::ProjectNews => ctx.open_url(egui::OpenUrl::new_tab(
                 "https://github.com/AxelWol/Thinoda/commits",
             )),
+            Cmd::Quit if files::is_web() => {
+                self.toasts.info(t("Close the browser tab to quit"));
+            }
             Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             Cmd::ToggleOutliner => {
                 self.mode = if self.mode == CenterMode::Map {
@@ -752,8 +771,12 @@ impl ThinodaApp {
                 }
             }
             Cmd::ShowInFolder => {
-                if let Some(p) = self.doc().and_then(|d| d.path.clone()) {
-                    let _ = system::reveal_in_file_manager(p);
+                if let Some(p) = self.doc().and_then(|d| d.path.clone())
+                    && let Err(e) = system::reveal_in_file_manager(&p)
+                    && files::is_web()
+                {
+                    self.toasts
+                        .warning(format!("{}: {e}", t("Not possible here")));
                 }
             }
             Cmd::MenuPaste => {
@@ -987,7 +1010,7 @@ impl ThinodaApp {
                 ));
                 return false;
             }
-            match thinoda_io::import_file(path) {
+            match files::import_workbook(path) {
                 Ok(workbook) => sheets.extend(workbook.sheets),
                 Err(error) => {
                     self.toasts.error(format!(
@@ -1162,15 +1185,14 @@ impl ThinodaApp {
     fn save_sheet_as(&mut self) {
         let Some(d) = self.doc_mut() else { return };
         d.view.commit_edit(&mut d.doc);
-        let mut dialog = rfd::FileDialog::new()
-            .add_filter("Thinoda", &["thinoda"])
-            .add_filter("XMind", &["xmind"])
-            .add_filter("MindManager", &["mmap"])
-            .set_file_name(format!("{}.thinoda", sanitize(&d.doc.sheet().title)));
-        if let Some(dir) = d.path.as_ref().and_then(|path| path.parent()) {
-            dialog = dialog.set_directory(dir);
-        }
-        if let Some(path) = dialog.save_file() {
+        let dir = d.path.as_ref().and_then(|path| path.parent());
+        if let Some(path) = files::save_target(
+            None,
+            MAP_FILTERS,
+            &format!("{}.thinoda", sanitize(&d.doc.sheet().title)),
+            dir,
+            files::Target::Document,
+        ) {
             self.save_sheet_to(&path);
         }
     }
@@ -1195,6 +1217,7 @@ impl ThinodaApp {
             Ok(()) => {
                 self.toasts
                     .success(format!("{} {}", t("Saved sheet to"), path.display()));
+                self.deliver(path);
                 true
             }
             Err(e) => {
@@ -1221,30 +1244,28 @@ impl ThinodaApp {
             return false;
         };
         d.view.commit_edit(&mut d.doc);
-        let target = match (&d.path, save_as) {
+        let (target, chosen) = match (&d.path, save_as) {
             (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
                 if d.changed_on_disk() && !d.ignore_conflict {
                     self.dialogs.conflict = Some(self.active);
                     return false;
                 }
-                p.clone()
+                (p.clone(), false)
             }
             _ => {
-                let mut dlg = rfd::FileDialog::new()
-                    .add_filter("Thinoda", &["thinoda"])
-                    .add_filter("XMind", &["xmind"])
-                    .add_filter("MindManager", &["mmap"])
-                    .set_file_name(format!("{}.thinoda", sanitize(&d.title())));
-                if let Some(dir) = d
+                let dir = d
                     .path
                     .as_ref()
                     .and_then(|p| p.parent().map(Path::to_path_buf))
-                    .or(default_dir)
-                {
-                    dlg = dlg.set_directory(dir);
-                }
-                match dlg.save_file() {
-                    Some(p) => p,
+                    .or(default_dir);
+                match files::save_target(
+                    None,
+                    MAP_FILTERS,
+                    &format!("{}.thinoda", sanitize(&d.title())),
+                    dir.as_deref(),
+                    files::Target::Document,
+                ) {
+                    Some(p) => (p, true),
                     None => return false,
                 }
             }
@@ -1253,7 +1274,19 @@ impl ThinodaApp {
             self.dialogs.mindmanager_save = Some((d.key.clone(), target, false));
             return false;
         }
-        self.save_active_to(&target, backup)
+        let saved = self.save_active_to(&target, backup);
+        // Browser: a newly chosen file name is also downloaded; later saves stay in browser storage.
+        if saved && chosen {
+            self.deliver(&target);
+        }
+        saved
+    }
+
+    /// Web: downloads a written file (desktop: no-op).
+    pub(crate) fn deliver(&mut self, path: &Path) {
+        if let Err(e) = files::deliver(path) {
+            self.toasts.error(format!("{}: {e}", t("Download failed")));
+        }
     }
 
     pub(crate) fn save_active_to(&mut self, target: &Path, backup: bool) -> bool {
@@ -1300,13 +1333,15 @@ impl ThinodaApp {
         };
         d.view.commit_edit(&mut d.doc);
         let ext = format.extensions()[0];
-        let mut dlg = rfd::FileDialog::new()
-            .add_filter(t(format.label()), format.extensions())
-            .set_file_name(format!("{}.{ext}", sanitize(&d.title())));
-        if let Some(dir) = d.path.as_ref().and_then(|p| p.parent()) {
-            dlg = dlg.set_directory(dir);
-        }
-        let Some(path) = dlg.save_file() else { return };
+        let Some(path) = files::save_target(
+            None,
+            &[(t(format.label()), format.extensions())],
+            &format!("{}.{ext}", sanitize(&d.title())),
+            d.path.as_ref().and_then(|p| p.parent()),
+            files::Target::Download,
+        ) else {
+            return;
+        };
         let opts = ExportOptions {
             allow_symbol_color_loss,
             dark: dark
@@ -1331,8 +1366,12 @@ impl ThinodaApp {
         match res {
             Ok(()) => {
                 self.settings.last_export_format = Some(format.label().to_string());
-                self.toasts
-                    .success(format!("{} {}", t("Exported to"), path.display()));
+                if files::is_web() {
+                    self.deliver(&path);
+                } else {
+                    self.toasts
+                        .success(format!("{} {}", t("Exported to"), path.display()));
+                }
             }
             Err(e) => {
                 self.toasts.error(format!("{}: {e}", t("Export failed")));
@@ -1399,6 +1438,23 @@ impl ThinodaApp {
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         self.toasts.tick(dt);
+        files::set_repaint_context(ctx);
+        for picked in files::take_picked() {
+            for error in picked.errors {
+                self.toasts
+                    .error(format!("{}: {error}", t("Could not open")));
+            }
+            match picked.purpose {
+                files::Purpose::Open | files::Purpose::Import => {
+                    for path in &picked.paths {
+                        self.open_path(path);
+                    }
+                }
+                files::Purpose::Merge => {
+                    self.merge_files(&picked.paths);
+                }
+            }
+        }
         self.poll_ai(ctx);
         self.remember_map_defaults();
 
@@ -1439,6 +1495,14 @@ impl ThinodaApp {
         // Files forwarded from secondary instances (e.g. double-click in Explorer/Finder).
         if self.last_poll.elapsed() > Duration::from_millis(500) {
             self.last_poll = Instant::now();
+            // The browser has no background flusher thread; this also refreshes the
+            // recovery lock heartbeat of this tab.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(r) = &self.services.recovery
+                && let Err(e) = r.flush()
+            {
+                log::debug!("recovery flush: {e}");
+            }
             let paths = self
                 .services
                 .instance
@@ -1535,7 +1599,11 @@ impl ThinodaApp {
                     Ok(wb) => {
                         let mut d = OpenDoc::new(wb);
                         d.view.titles = new_topic_titles();
-                        d.path = doc.meta.original_path.clone().filter(|p| p.exists());
+                        d.path = doc
+                            .meta
+                            .original_path
+                            .clone()
+                            .filter(|p| thinoda_platform::fs::exists(p));
                         d.import_source = doc.meta.import_source.clone();
                         if let Some(p) = &d.path {
                             d.format = Format::from_path(p).unwrap_or(Format::Thinoda);
@@ -1641,14 +1709,7 @@ impl ThinodaApp {
             self.zen = false;
         }
         // Drag & drop of files onto the window.
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_path_buf())
-                .collect()
-        });
-        for p in dropped {
+        for p in files::dropped_files(ctx) {
             self.open_path(&p);
         }
     }
@@ -2133,6 +2194,8 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
         }
     };
     thinoda_platform::crash::install_panic_hook(paths.clone(), recovery.clone());
+    // Browser: no threads; `housekeeping` flushes snapshots instead.
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(r) = recovery.clone() {
         // Flush queued snapshots off the UI thread.
         let weak = Arc::downgrade(&r);

@@ -10,6 +10,8 @@ A free, fast, cross-platform mind mapping app written in Rust — an XMind-style
 GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional local AI assistant.
 
 Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) and **Linux** (Ubuntu LTS).
+A static **web app** build runs the same code in the browser via WebAssembly and is
+published on GitLab Pages — see [Thinoda for the web](docs/WEB.md).
 
 ## Download
 Installers for every platform are attached to each
@@ -344,6 +346,10 @@ cargo test -p thinoda-app --features gpu-tests --lib map_shot_gpu_readback # req
 cargo xtask package               # installers in target/packages
 thinoda --convert map.xmind map.md  # CLI conversion
 ```
+Web app (WebAssembly, needs `rustup target add wasm32-unknown-unknown` and
+[Trunk](https://trunkrs.dev)): `cd crates/thinoda-web && trunk serve`, or
+`trunk build --release` for the static site. Browser alternatives for files,
+printing, recovery and the AI key are described in [docs/WEB.md](docs/WEB.md).
 Linux build dependencies: `pkg-config libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
 libxcb-xfixes0-dev libwayland-dev`.
 Native printing also needs a C compiler (MSVC on Windows, Xcode/Clang and the
@@ -429,6 +435,7 @@ notarization credentials remain required for Gatekeeper-trusted distribution.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Web app](docs/WEB.md) ·
 [XMind research](docs/XMIND-RESEARCH.md) · [User-guide checklist](docs/XMIND-USER-GUIDE.md)
 
 ## Project

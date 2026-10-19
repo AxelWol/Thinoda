@@ -11,8 +11,8 @@ use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
-    time::Instant,
 };
+use web_time::Instant;
 
 use egui::{Align, Color32, CornerRadius, Layout, Margin, RichText, Stroke, Ui};
 use thinoda_platform::recovery::OrphanSession;

@@ -9,6 +9,7 @@ graph TD
     app --> io[thinoda-io<br/>import / export]
     app --> platform[thinoda-platform<br/>settings, recovery, cloud, OS]
     app --> ai[thinoda-ai<br/>OpenAI-compatible client]
+    web[thinoda-web<br/>browser entry, wasm32] --> app
     canvas --> ui
     canvas --> core[thinoda-core<br/>model, edits, layout]
     io --> core
@@ -19,14 +20,20 @@ graph TD
 |---|---|---|
 | `thinoda-core` | Workbook/sheet/topic model, transactional edits + undo, layout engine for all structures, themes, templates, search, outline conversion | no |
 | `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
-| `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme | no |
-| `thinoda-ai` | Blocking HTTP client for `/v1/models` + `/v1/chat/completions`, prompts, outline parser, background `AiJob`, mock server for tests | no |
+| `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme; on wasm a `localStorage` virtual file system, downloads and browser printing | no |
+| `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for `/v1/models` + `/v1/chat/completions`, prompts, outline parser, background `AiJob`, mock server for tests | no |
 | `thinoda-ui` | Design tokens, light/dark visuals, widgets, palette, toasts, dialogs, icons, fonts — **the reusable library for companion apps** | yes |
 | `thinoda-canvas` | Interactive mind map widget: hit-testing, selection, drag & drop, inline editing, keyboard actions | yes |
 | `thinoda-app` | eframe application, commands (`Cmd`), menus, panels, dialogs, CLI | yes |
+| `thinoda-web` | Static web app entry: mounts `ThinodaApp` on a canvas with `eframe::WebRunner`, unsaved-changes and recovery page handlers ([docs/WEB.md](WEB.md)) | yes |
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **One code base for desktop and web**: the web app is the same `thinoda-app`
+  compiled to `wasm32-unknown-unknown`. Platform differences live behind
+  `thinoda-platform::fs` (std::fs vs. `localStorage` VFS), `thinoda-app::files`
+  (blocking vs. async pickers, downloads) and `cfg(target_arch = "wasm32")`
+  branches for printing and AI; see [WEB.md](WEB.md).
 - **egui + wgpu**: immediate-mode UI keeps the whole app in Rust, renders through Direct3D 12,
   Metal or Vulkan, and is testable headlessly with `egui_kittest` (AccessKit tree).
 - **Commands**: every menu item, shortcut and palette entry maps to one `Cmd`; e2e tests call

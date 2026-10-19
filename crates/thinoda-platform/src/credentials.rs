@@ -20,7 +20,12 @@ fn entry() -> std::result::Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, ACCOUNT).map_err(|error| error.to_string())
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_arch = "wasm32"
+)))]
 fn entry() -> std::result::Result<(), String> {
     Err("native credential storage is unsupported on this platform".into())
 }
@@ -49,7 +54,44 @@ impl CredentialStore for NativeCredentialStore {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+/// Browsers have no OS keychain. The key is kept in `sessionStorage`, which is
+/// scoped to this origin and tab and cleared when the tab closes, so the key is
+/// never persisted at rest; users re-enter it in each browser session.
+#[cfg(target_arch = "wasm32")]
+mod web {
+    fn storage() -> std::result::Result<web_sys::Storage, String> {
+        web_sys::window()
+            .and_then(|w| w.session_storage().ok().flatten())
+            .ok_or_else(|| "browser session storage is unavailable".to_owned())
+    }
+
+    pub(super) fn key() -> String {
+        format!("{}.{}", super::SERVICE, super::ACCOUNT)
+    }
+
+    impl super::CredentialStore for super::NativeCredentialStore {
+        fn get_password(&self) -> std::result::Result<Option<String>, String> {
+            storage()?.get_item(&key()).map_err(|e| format!("{e:?}"))
+        }
+
+        fn set_password(&self, password: &str) -> std::result::Result<(), String> {
+            storage()?
+                .set_item(&key(), password)
+                .map_err(|e| format!("{e:?}"))
+        }
+
+        fn delete_password(&self) -> std::result::Result<(), String> {
+            storage()?.remove_item(&key()).map_err(|e| format!("{e:?}"))
+        }
+    }
+}
+
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_arch = "wasm32"
+)))]
 impl CredentialStore for NativeCredentialStore {
     fn get_password(&self) -> std::result::Result<Option<String>, String> {
         entry()?;

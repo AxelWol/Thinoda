@@ -3183,6 +3183,7 @@ impl ThinodaApp {
                             )
                         });
                         if let Some(p) = &self.services.paths
+                            && !crate::files::is_web()
                             && ui.button(t("Open settings folder")).clicked()
                         {
                             let _ = thinoda_platform::system::reveal_in_file_manager(&p.config_dir);
@@ -3272,6 +3273,7 @@ impl ThinodaApp {
                                 .map(|p| p.display().to_string())
                                 .unwrap_or_else(|| "—".into());
                             widgets::caption(ui, label);
+                            #[cfg(not(target_arch = "wasm32"))]
                             if ui.button(t("Choose…")).clicked()
                                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
                             {

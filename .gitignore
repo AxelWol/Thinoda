@@ -6,3 +6,4 @@
 *.pdb
 
 __pycache__/
+/crates/thinoda-web/dist

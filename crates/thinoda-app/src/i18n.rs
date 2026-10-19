@@ -182,6 +182,21 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("File name", "Dateiname"),
+    ("Download failed", "Download fehlgeschlagen"),
+    ("Download started", "Download gestartet"),
+    (
+        "Close the browser tab to quit",
+        "Zum Beenden den Browser-Tab schließen",
+    ),
+    (
+        "Browser print dialog opened",
+        "Druckdialog des Browsers geöffnet",
+    ),
+    (
+        "Continue opens the browser print dialog. Select the same paper size and orientation there and set its margins to none or default; the page already contains the margins chosen here. Use Save print PDF… for exact page output.",
+        "Weiter öffnet den Druckdialog des Browsers. Wählen Sie dort dasselbe Papierformat und dieselbe Ausrichtung und stellen Sie die Ränder auf „Keine“ oder „Standard“; die Seite enthält bereits die hier gewählten Ränder. Verwenden Sie „Druck-PDF speichern…“ für eine exakte Seitenausgabe.",
+    ),
     (
         "MindManager export cannot preserve all content. Use --allow-lossy only if you accept omitted content.",
         "Der MindManager-Export kann nicht alle Inhalte erhalten. --allow-lossy nur verwenden, wenn Sie ausgelassene Inhalte akzeptieren.",

@@ -6,12 +6,20 @@
 //! via [`AiJob`] so the UI never blocks.
 
 #[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mock;
 pub mod outline;
 pub mod tasks;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
+use web_time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+pub use web::Client;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -105,7 +113,8 @@ pub struct AiResult {
     pub model: String,
 }
 
-/// Blocking OpenAI-compatible client.
+/// Blocking OpenAI-compatible client (the browser build uses an async `fetch` client).
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Client {
     cfg: AiConfig,
     agent: ureq::Agent,
@@ -116,6 +125,113 @@ fn is_chat_model(id: &str) -> bool {
     !(id.contains("embed") || id.contains("rerank") || id.contains("whisper") || id.contains("tts"))
 }
 
+/// `base_url` joined with an endpoint path.
+fn join_url(base_url: &str, path: &str) -> String {
+    format!("{}/{}", base_url.trim().trim_end_matches('/'), path)
+}
+
+/// Configured key, falling back to `THINODA_AI_API_KEY` (desktop only).
+fn configured_key(cfg: &AiConfig) -> Option<String> {
+    let k = cfg.api_key.trim();
+    if !k.is_empty() {
+        return Some(k.to_string());
+    }
+    std::env::var(API_KEY_ENV)
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+}
+
+/// Interpret an HTTP status and body as JSON, extracting server error messages.
+fn parse_response(status: u16, body: &str) -> Result<Value> {
+    if !(200..300).contains(&status) {
+        let msg = serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|v| {
+                v.pointer("/error/message")
+                    .or(v.get("error"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| body.chars().take(300).collect());
+        return Err(AiError::Status(status, msg));
+    }
+    serde_json::from_str(body).map_err(|e| AiError::Parse(e.to_string()))
+}
+
+fn parse_models(v: &Value) -> Result<Vec<String>> {
+    let list = v
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AiError::Parse("missing \"data\"".into()))?;
+    Ok(list
+        .iter()
+        .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect())
+}
+
+fn pick_model(cfg: &AiConfig, models: Option<Vec<String>>) -> Result<String> {
+    let m = cfg.model.trim();
+    if !m.is_empty() {
+        return Ok(m.to_string());
+    }
+    models
+        .unwrap_or_default()
+        .into_iter()
+        .find(|m| is_chat_model(m))
+        .ok_or(AiError::NoModel)
+}
+
+fn chat_body(cfg: &AiConfig, model: &str, messages: &[Message]) -> Value {
+    json!({
+        "model": model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": cfg.max_tokens,
+        "stream": false,
+    })
+}
+
+fn parse_chat(v: &Value) -> Result<String> {
+    v.pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| AiError::Parse("missing choices[0].message.content".into()))
+}
+
+/// Turn a model reply into the task's result type.
+fn finish(task: &AiTask, text: &str, model: String) -> Result<AiResult> {
+    let kind = task.output_kind();
+    let output = match kind {
+        OutputKind::Note => {
+            let t = strip_reasoning(text);
+            if t.is_empty() {
+                return Err(AiError::Empty);
+            }
+            AiOutput::Text(t)
+        }
+        OutputKind::Map => {
+            let o = parse_outline(text).into_map();
+            if o.items.is_empty() {
+                return Err(AiError::Empty);
+            }
+            AiOutput::Outline(o)
+        }
+        OutputKind::Subtopics | OutputKind::Todos => {
+            let o = parse_outline(text);
+            if o.items.is_empty() {
+                return Err(AiError::Empty);
+            }
+            AiOutput::Outline(o)
+        }
+    };
+    Ok(AiResult {
+        kind,
+        output,
+        model,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl Client {
     pub fn new(cfg: AiConfig) -> Self {
         let agent = ureq::Agent::config_builder()
@@ -132,21 +248,11 @@ impl Client {
     }
 
     fn url(&self, path: &str) -> String {
-        format!(
-            "{}/{}",
-            self.cfg.base_url.trim().trim_end_matches('/'),
-            path
-        )
+        join_url(&self.cfg.base_url, path)
     }
 
     fn api_key(&self) -> Option<String> {
-        let k = self.cfg.api_key.trim();
-        if !k.is_empty() {
-            return Some(k.to_string());
-        }
-        std::env::var(API_KEY_ENV)
-            .ok()
-            .filter(|k| !k.trim().is_empty())
+        configured_key(&self.cfg)
     }
 
     fn read(
@@ -158,19 +264,7 @@ impl Client {
             .body_mut()
             .read_to_string()
             .map_err(|e| AiError::Http(e.to_string()))?;
-        if !(200..300).contains(&status) {
-            let msg = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|v| {
-                    v.pointer("/error/message")
-                        .or(v.get("error"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or_else(|| body.chars().take(300).collect());
-            return Err(AiError::Status(status, msg));
-        }
-        serde_json::from_str(&body).map_err(|e| AiError::Parse(e.to_string()))
+        parse_response(status, &body)
     }
 
     /// Model ids offered by the server (`GET /models`).
@@ -179,87 +273,36 @@ impl Client {
         if let Some(k) = self.api_key() {
             req = req.header("Authorization", format!("Bearer {k}"));
         }
-        let v = Self::read(req.call())?;
-        let list = v
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or_else(|| AiError::Parse("missing \"data\"".into()))?;
-        Ok(list
-            .iter()
-            .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
-            .collect())
+        parse_models(&Self::read(req.call())?)
     }
 
     /// Configured model, or the first chat model the server offers.
     pub fn resolve_model(&self) -> Result<String> {
-        let m = self.cfg.model.trim();
-        if !m.is_empty() {
-            return Ok(m.to_string());
+        if !self.cfg.model.trim().is_empty() {
+            return pick_model(&self.cfg, None);
         }
-        self.models()?
-            .into_iter()
-            .find(|m| is_chat_model(m))
-            .ok_or(AiError::NoModel)
+        pick_model(&self.cfg, Some(self.models()?))
     }
 
     /// One non-streaming chat completion; returns the assistant text.
     pub fn chat(&self, model: &str, messages: &[Message]) -> Result<String> {
-        let body = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": self.cfg.temperature,
-            "max_tokens": self.cfg.max_tokens,
-            "stream": false,
-        });
+        let body = chat_body(&self.cfg, model, messages);
         let mut req = self.agent.post(self.url("chat/completions"));
         if let Some(k) = self.api_key() {
             req = req.header("Authorization", format!("Bearer {k}"));
         }
-        let v = Self::read(req.send_json(&body))?;
-        let text = v
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AiError::Parse("missing choices[0].message.content".into()))?;
-        Ok(text.to_string())
+        parse_chat(&Self::read(req.send_json(&body))?)
     }
 
     /// Runs a mind-map task end to end.
     pub fn run(&self, task: &AiTask) -> Result<AiResult> {
         let model = self.resolve_model()?;
         let text = self.chat(&model, &task.messages())?;
-        let kind = task.output_kind();
-        let output = match kind {
-            OutputKind::Note => {
-                let t = strip_reasoning(&text);
-                if t.is_empty() {
-                    return Err(AiError::Empty);
-                }
-                AiOutput::Text(t)
-            }
-            OutputKind::Map => {
-                let o = parse_outline(&text).into_map();
-                if o.items.is_empty() {
-                    return Err(AiError::Empty);
-                }
-                AiOutput::Outline(o)
-            }
-            OutputKind::Subtopics | OutputKind::Todos => {
-                let o = parse_outline(&text);
-                if o.items.is_empty() {
-                    return Err(AiError::Empty);
-                }
-                AiOutput::Outline(o)
-            }
-        };
-        Ok(AiResult {
-            kind,
-            output,
-            model,
-        })
+        finish(task, &text, model)
     }
 }
 
-/// A request running on a background thread.
+/// A request running on a background thread (a browser task on the web).
 pub struct AiJob<T = AiResult> {
     rx: mpsc::Receiver<Result<T>>,
     pub started: Instant,
@@ -267,6 +310,7 @@ pub struct AiJob<T = AiResult> {
 
 impl<T: Send + 'static> AiJob<T> {
     /// Runs `f` with a fresh client on a background thread.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_with(
         cfg: AiConfig,
         f: impl FnOnce(&Client) -> Result<T> + Send + 'static,
@@ -304,8 +348,36 @@ impl<T: Send + 'static> AiJob<T> {
 }
 
 impl AiJob<AiResult> {
+    /// Run a mind-map task.
     pub fn spawn(cfg: AiConfig, task: AiTask) -> Self {
-        Self::spawn_with(cfg, move |c| c.run(&task))
+        #[cfg(not(target_arch = "wasm32"))]
+        return Self::spawn_with(cfg, move |c| c.run(&task));
+        #[cfg(target_arch = "wasm32")]
+        Self::spawn_local(async move { Client::new(cfg).run(&task).await })
+    }
+}
+
+impl AiJob<Vec<String>> {
+    /// List the models offered by the server.
+    pub fn models(cfg: AiConfig) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        return Self::spawn_with(cfg, |c| c.models());
+        #[cfg(target_arch = "wasm32")]
+        Self::spawn_local(async move { Client::new(cfg).models().await })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: 'static> AiJob<T> {
+    fn spawn_local(work: impl std::future::Future<Output = Result<T>> + 'static) -> Self {
+        let (tx, rx) = mpsc::channel();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = tx.send(work.await);
+        });
+        Self {
+            rx,
+            started: Instant::now(),
+        }
     }
 }
 
@@ -326,6 +398,29 @@ mod tests {
             ..AiConfig::default()
         });
         assert_eq!(c.url("models"), "http://h:1/v1/models");
+    }
+
+    #[test]
+    fn shared_response_parsing_used_by_desktop_and_web_clients() {
+        let ok = parse_response(200, r#"{"data":[{"id":"embed-x"},{"id":"chat-y"}]}"#).unwrap();
+        let models = parse_models(&ok).unwrap();
+        assert_eq!(models, ["embed-x", "chat-y"]);
+        let cfg = AiConfig::default();
+        assert_eq!(pick_model(&cfg, Some(models)).unwrap(), "chat-y");
+        assert_eq!(pick_model(&cfg, Some(vec![])), Err(AiError::NoModel));
+        assert_eq!(
+            parse_response(401, r#"{"error":{"message":"bad key"}}"#),
+            Err(AiError::Status(401, "bad key".into()))
+        );
+        assert!(matches!(
+            parse_response(200, "nope"),
+            Err(AiError::Parse(_))
+        ));
+        let chat = parse_response(200, r#"{"choices":[{"message":{"content":"- A"}}]}"#).unwrap();
+        assert_eq!(parse_chat(&chat).unwrap(), "- A");
+        let body = chat_body(&cfg, "m", &[Message::user("hi")]);
+        assert_eq!(body["model"], "m");
+        assert_eq!(body["stream"], false);
     }
 
     #[test]

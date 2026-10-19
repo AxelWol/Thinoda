@@ -328,7 +328,7 @@ impl Settings {
         credentials: &dyn CredentialStore,
     ) -> Result<SettingsLoad> {
         let path = paths.config_dir.join("settings.toml");
-        let bytes = match std::fs::read(&path) {
+        let bytes = match crate::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(SettingsLoad {
@@ -409,6 +409,11 @@ impl Settings {
                             settings.ai.api_key = api_key;
                             settings.ai.credentials_ready = true;
                         }
+                        // Browser keys live only for one session (see credentials.rs).
+                        Ok(None) if cfg!(target_arch = "wasm32") => {
+                            settings.ai.api_key_stored = false;
+                            settings.ai.credentials_ready = true;
+                        }
                         Ok(None) => {
                             settings.ai.credentials_ready = false;
                             let message = "The saved AI API key is missing from secure storage. Save a replacement key or clear the saved key in Settings › AI.".to_owned();
@@ -435,14 +440,14 @@ impl Settings {
                 let mut broken = paths
                     .config_dir
                     .join(format!("settings.toml.broken-{}", unix_seconds()));
-                if broken.exists() {
+                if crate::fs::exists(&broken) {
                     broken = paths.config_dir.join(format!(
                         "settings.toml.broken-{}-{}",
                         unix_seconds(),
                         uuid::Uuid::new_v4()
                     ));
                 }
-                std::fs::rename(&path, &broken)?;
+                crate::fs::rename(&path, &broken)?;
                 let warning = format!(
                     "Could not read settings; defaults restored. Original preserved at {}: {error}",
                     broken.display()
@@ -619,13 +624,13 @@ impl Settings {
     pub fn existing_recent(&self) -> Vec<&RecentFile> {
         self.recent_files
             .iter()
-            .filter(|r| r.path.is_file())
+            .filter(|r| crate::fs::is_file(&r.path))
             .collect()
     }
 }
 
 fn path_key(path: &Path) -> String {
-    let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let normalized = crate::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let value = normalized.to_string_lossy().into_owned();
     if cfg!(any(target_os = "windows", target_os = "macos")) {
         value.to_lowercase()

@@ -99,6 +99,28 @@ jobs:
           path: layout-benchmark.json
           if-no-files-found: error
 
+  web:
+    name: web app (wasm32)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Trunk
+        run: curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin
+      - run: cargo clippy --locked --target wasm32-unknown-unknown -p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings
+      - name: Build static site
+        working-directory: crates/thinoda-web
+        run: trunk build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinoda-web
+          path: crates/thinoda-web/dist
+          if-no-files-found: error
+
   fuzz-smoke:
     name: importer fuzz smoke
     runs-on: ubuntu-24.04

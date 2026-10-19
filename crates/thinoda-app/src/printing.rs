@@ -1,17 +1,27 @@
-//! Full-map preview and native printer UI. Rendering/encoding run on workers;
+//! Full-map preview and printer UI. Rendering/encoding run on workers;
 //! OS dialogs and submission run synchronously on the window event-loop thread.
+//! The browser build has no printer API: it prints the same rendered page through
+//! the browser's print dialog (hidden iframe) and offers the exact print PDF as a
+//! download.
 
-use std::sync::{Arc, mpsc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, mpsc},
+};
 
 use egui::{Context, RichText};
+#[cfg(not(target_arch = "wasm32"))]
 use raw_window_handle::HasWindowHandle;
 use thinoda_core::Workbook;
 use thinoda_io::print::{Paper, PrintDocument, PrintSettings, render_print};
+#[cfg(not(target_arch = "wasm32"))]
 use thinoda_platform::printing::{PrintOutcome, PrintPage};
+use thinoda_platform::system::run_background;
 use thinoda_ui::{Palette, widgets};
 
 use crate::{
     app::{Cmd, ThinodaApp},
+    files,
     i18n::t,
 };
 
@@ -19,14 +29,19 @@ type RenderResult = Result<PrintDocument, String>;
 type OutputResult = Result<PreparedOutput, String>;
 
 enum PreparedOutput {
+    #[cfg(not(target_arch = "wasm32"))]
     Native(PrintPage, String),
-    PdfSaved,
+    /// Self-contained HTML page printed through the browser's print dialog.
+    #[cfg(target_arch = "wasm32")]
+    Browser(String),
+    PdfSaved(PathBuf),
 }
 
 #[derive(Default)]
 pub(crate) struct PrintState {
     editor: Option<PrintEditor>,
     output: Option<mpsc::Receiver<OutputResult>>,
+    #[cfg(not(target_arch = "wasm32"))]
     native: Option<(PrintPage, String)>,
     native_open: bool,
     message: Option<Result<&'static str, String>>,
@@ -38,9 +53,14 @@ impl PrintState {
     }
 
     fn busy(&self) -> bool {
-        self.output.is_some() || self.native.is_some() || self.native_open
+        #[cfg(not(target_arch = "wasm32"))]
+        let native = self.native.is_some();
+        #[cfg(target_arch = "wasm32")]
+        let native = false;
+        self.output.is_some() || native || self.native_open
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn native_result(&mut self, result: Result<PrintOutcome, String>) {
         self.message = Some(result.map(|outcome| match outcome {
             PrintOutcome::Cancelled => "Printing cancelled",
@@ -117,7 +137,8 @@ impl PrintEditor {
             let repaint = ctx.clone();
             let (sender, receiver) = mpsc::channel();
             self.pending = Some((settings, receiver));
-            std::thread::spawn(move || {
+            // Runs inline in the browser, which has no threads.
+            let _ = run_background("thinoda-print-preview", move || {
                 let result = render_print(&workbook, sheet, settings).map_err(|e| e.to_string());
                 let _ = sender.send(result);
                 repaint.request_repaint();
@@ -258,9 +279,13 @@ fn preview_thumbnail(image: &image::RgbImage) -> image::RgbImage {
 }
 
 impl ThinodaApp {
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn run_native_print(&mut self, _frame: &eframe::Frame, _ctx: &Context) {}
+
     /// Only the real eframe adapter calls this, after drawing the modal preview.
     /// Headless UI tests never invoke native UI or send jobs. Frame lends its live
     /// native window; no raw handle is cached or sent to a worker.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn run_native_print(&mut self, frame: &eframe::Frame, ctx: &Context) {
         let Some((page, title)) = self.printing.native.take() else {
             return;
@@ -322,13 +347,35 @@ impl ThinodaApp {
             };
             if let Some(result) = result {
                 match result {
+                    #[cfg(not(target_arch = "wasm32"))]
                     Ok(PreparedOutput::Native(page, title)) => {
                         self.printing.native = Some((page, title));
                     }
-                    Ok(PreparedOutput::PdfSaved) => {
-                        self.toasts.info(t("Print PDF saved"));
-                        self.printing.message = Some(Ok("Print PDF saved"));
+                    #[cfg(target_arch = "wasm32")]
+                    Ok(PreparedOutput::Browser(html)) => {
+                        match thinoda_platform::web::print_html(&html) {
+                            Ok(()) => {
+                                self.toasts.info(t("Browser print dialog opened"));
+                                self.printing.message = Some(Ok("Browser print dialog opened"));
+                            }
+                            Err(error) => {
+                                self.toasts
+                                    .error(format!("{}: {error}", t("Printing failed")));
+                                self.printing.message = Some(Err(error));
+                            }
+                        }
                     }
+                    Ok(PreparedOutput::PdfSaved(path)) => match files::deliver(&path) {
+                        Ok(()) => {
+                            self.toasts.info(t("Print PDF saved"));
+                            self.printing.message = Some(Ok("Print PDF saved"));
+                        }
+                        Err(error) => {
+                            self.toasts
+                                .error(format!("{}: {error}", t("Printing failed")));
+                            self.printing.message = Some(Err(error));
+                        }
+                    },
                     Err(error) => {
                         self.toasts
                             .error(format!("{}: {error}", t("Printing failed")));
@@ -366,7 +413,12 @@ impl ThinodaApp {
                         editor.preview_ui(ui);
                     }
                     ui.add_space(12.0);
-                    ui.label(RichText::new(t("Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.")).small().weak());
+                    let hint = if files::is_web() {
+                        t("Continue opens the browser print dialog. Select the same paper size and orientation there and set its margins to none or default; the page already contains the margins chosen here. Use Save print PDF… for exact page output.")
+                    } else {
+                        t("Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.")
+                    };
+                    ui.label(RichText::new(hint).small().weak());
                     if editor.failed.is_some() && ui.button(t("Retry preview")).clicked() {
                         editor.failed = None;
                     }
@@ -392,11 +444,13 @@ impl ThinodaApp {
         });
         if print || save {
             let path = if save {
-                rfd::FileDialog::new()
-                    .set_title(t("Save print PDF…"))
-                    .add_filter("PDF", &["pdf"])
-                    .set_file_name("map-print.pdf")
-                    .save_file()
+                files::save_target(
+                    Some(t("Save print PDF…")),
+                    &[("PDF", &["pdf"])],
+                    "map-print.pdf",
+                    None,
+                    files::Target::Download,
+                )
             } else {
                 None
             };
@@ -407,12 +461,11 @@ impl ThinodaApp {
                 let (sender, receiver) = mpsc::channel();
                 self.printing.message = None;
                 self.printing.output = Some(receiver);
-                std::thread::spawn(move || {
+                let _ = run_background("thinoda-print", move || {
                     let result = if let Some(path) = path {
-                        save_pdf(&document, &path).map(|()| PreparedOutput::PdfSaved)
+                        save_pdf(&document, &path).map(|()| PreparedOutput::PdfSaved(path))
                     } else {
-                        prepare_native_page(&document)
-                            .map(|page| PreparedOutput::Native(page, title))
+                        prepare_output(&document, title)
                     };
                     let _ = sender.send(result);
                     repaint.request_repaint();
@@ -436,6 +489,33 @@ fn save_pdf(document: &PrintDocument, path: &std::path::Path) -> Result<(), Stri
     thinoda_platform::fs::atomic_write(path, &bytes, false).map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn prepare_output(document: &PrintDocument, title: String) -> OutputResult {
+    prepare_native_page(document).map(|page| PreparedOutput::Native(page, title))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn prepare_output(document: &PrintDocument, title: String) -> OutputResult {
+    browser_print_html(document, &title).map(PreparedOutput::Browser)
+}
+
+/// HTML page with the rendered print image at its exact paper size (browser print).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn browser_print_html(document: &PrintDocument, title: &str) -> Result<String, String> {
+    let mut png = std::io::Cursor::new(Vec::new());
+    document
+        .image
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    let [w, h] = document.settings.size_mm();
+    Ok(thinoda_platform::web::print_document(
+        title,
+        &png.into_inner(),
+        [f64::from(w), f64::from(h)],
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn prepare_native_page(document: &PrintDocument) -> Result<PrintPage, String> {
     PrintPage::from_rgb(
         document.image.as_raw(),

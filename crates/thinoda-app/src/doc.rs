@@ -1,9 +1,8 @@
 //! Open documents: file I/O, dirty tracking, conflict detection and recovery snapshots.
 
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::path::{Path, PathBuf};
+use thinoda_platform::fs as pfs;
+use web_time::Instant;
 
 use thinoda_canvas::MapView;
 use thinoda_core::{Document, Workbook};
@@ -87,7 +86,7 @@ impl OpenDoc {
             d.fingerprint = fingerprint(path).ok();
         } else {
             // Imported from a foreign format: saving asks for a new native file name.
-            d.import_source = Some(path.canonicalize().map_err(|e| e.to_string())?);
+            d.import_source = Some(pfs::canonicalize(path).map_err(|e| e.to_string())?);
             d.doc.mark_dirty();
         }
         Ok((d, report.warnings))
@@ -163,13 +162,11 @@ impl OpenDoc {
             .filter(|format| is_native(*format) || *format == Format::MindManager)
             .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
         if let Some(source) = &self.path {
-            let same_path = std::path::absolute(source).map_err(|e| e.to_string())?
-                == std::path::absolute(path).map_err(|e| e.to_string())?;
-            let same_file = if source.try_exists().map_err(|e| e.to_string())?
-                && path.try_exists().map_err(|e| e.to_string())?
-            {
-                source.canonicalize().map_err(|e| e.to_string())?
-                    == path.canonicalize().map_err(|e| e.to_string())?
+            let same_path = pfs::absolute(source).map_err(|e| e.to_string())?
+                == pfs::absolute(path).map_err(|e| e.to_string())?;
+            let same_file = if pfs::exists(source) && pfs::exists(path) {
+                pfs::canonicalize(source).map_err(|e| e.to_string())?
+                    == pfs::canonicalize(path).map_err(|e| e.to_string())?
             } else {
                 false
             };
@@ -280,7 +277,15 @@ pub fn convert_with_consent(
 }
 
 pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {
-    thinoda_io::import_file_with_report(path).map_err(|error| {
+    // Natively the reader bounds MindManager input before allocating; the browser
+    // stores files in its virtual file system, which import reads from memory.
+    #[cfg(not(target_arch = "wasm32"))]
+    let report = thinoda_io::import_file_with_report(path);
+    #[cfg(target_arch = "wasm32")]
+    let report = pfs::read(path)
+        .map_err(thinoda_io::IoError::from)
+        .and_then(|bytes| thinoda_io::import_named_bytes_with_report(path, &bytes));
+    report.map_err(|error| {
         if matches!(error, thinoda_io::IoError::MindManager(_)) || matches!(Format::from_path(path), Some(Format::MindManager | Format::MindManagerXml)) {
             log::warn!("MindManager import failed: {error}");
             t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").into()
@@ -300,12 +305,12 @@ pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
 }
 
 fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> {
-    if std::path::absolute(source)? == std::path::absolute(destination)? {
+    if pfs::absolute(source)? == pfs::absolute(destination)? {
         return Ok(true);
     }
-    Ok(source.try_exists()?
-        && destination.try_exists()?
-        && source.canonicalize()? == destination.canonicalize()?)
+    Ok(pfs::exists(source)
+        && pfs::exists(destination)
+        && pfs::canonicalize(source)? == pfs::canonicalize(destination)?)
 }
 #[cfg(test)]
 mod tests {

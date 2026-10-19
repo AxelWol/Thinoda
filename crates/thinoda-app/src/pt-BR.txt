@@ -168,3 +168,8 @@ Could not write this MindManager file. The map may be too large or contain inval
 Starting…|Iniciando…
 Opening file:|Abrindo arquivo:
 The file loader stopped unexpectedly|O carregamento do arquivo parou inesperadamente
+File name|Nome do arquivo
+Download failed|Falha no download
+Download started|Download iniciado
+Close the browser tab to quit|Feche a aba do navegador para sair
+Continue opens the browser print dialog. Select the same paper size and orientation there and set its margins to none or default; the page already contains the margins chosen here. Use Save print PDF… for exact page output.|Continuar abre a caixa de impressão do navegador. Escolha nela o mesmo tamanho de papel e a mesma orientação e defina as margens como nenhuma ou padrão; a página já contém as margens escolhidas aqui. Use Salvar PDF de impressão… para uma página exata.

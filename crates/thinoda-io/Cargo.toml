@@ -17,6 +17,8 @@ resvg.workspace = true
 image.workspace = true
 log.workspace = true
 sha2 = "0.10"
+# Embedded fallback fonts for raster export/printing where no system fonts exist (web).
+epaint_default_fonts = "0.37"
 
 [dev-dependencies]
 tempfile.workspace = true

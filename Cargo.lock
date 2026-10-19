@@ -3978,10 +3978,15 @@ dependencies = [
 name = "thinoda-ai"
 version = "0.4.0"
 dependencies = [
+ "js-sys",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -4007,6 +4012,8 @@ dependencies = [
  "thinoda-platform",
  "thinoda-ui",
  "uuid",
+ "wasm-bindgen-futures",
+ "web-time",
  "winresource",
 ]
 
@@ -4032,6 +4039,7 @@ dependencies = [
 name = "thinoda-io"
 version = "0.4.0"
 dependencies = [
+ "epaint_default_fonts",
  "image",
  "log",
  "quick-xml 0.42.0",
@@ -4049,8 +4057,10 @@ dependencies = [
 name = "thinoda-platform"
 version = "0.4.0"
 dependencies = [
+ "base64",
  "cc",
  "directories",
+ "js-sys",
  "keyring",
  "log",
  "pkg-config",
@@ -4062,6 +4072,9 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -4072,6 +4085,20 @@ dependencies = [
  "egui_kittest",
  "fontdb",
  "serde",
+]
+
+[[package]]
+name = "thinoda-web"
+version = "0.4.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "log",
+ "thinoda-app",
+ "thinoda-platform",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
