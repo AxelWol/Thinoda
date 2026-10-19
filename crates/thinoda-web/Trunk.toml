@@ -2,7 +2,7 @@
 [build]
 target = "index.html"
 dist = "dist"
-# Relative URLs let the same build run from any sub path, such as GitLab Pages.
+# Relative URLs let the same build run from any sub path, such as GitHub Pages.
 public_url = "./"
 filehash = true
 

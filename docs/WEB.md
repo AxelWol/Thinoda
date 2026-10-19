@@ -21,24 +21,20 @@ Trunk downloads `wasm-bindgen` and `wasm-opt` on first use. The build uses
 relative URLs (`public_url = "./"` in `Trunk.toml`), so `dist` works from any
 sub path. WebGL 2 is required; Thinoda renders through wgpu's WebGL backend.
 
-## Publishing on GitLab Pages
-[`.gitlab-ci.yml`](../.gitlab-ci.yml) defines the pipeline:
+## Publishing on GitHub Pages
+The web app is built and deployed by the `CI` workflow
+([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)):
 
-| Job | Stage | What it does |
+| Job | Runs on | What it does |
 |---|---|---|
-| `web-check` | test | wasm32 Clippy for all browser crates; native tests for the browser helpers |
-| `web-build` | build | `trunk build --release --locked`, keeps `dist` as an artifact |
-| `pages` | deploy | copies `dist` to `public`, adds `.gz` copies, publishes (default branch only) |
+| `web` | every push and pull request | wasm32 Clippy for all browser crates, `trunk build --release --locked`, uploads `dist` as the `thinoda-web` artifact; on `main` also packages it as the Pages artifact |
+| `pages` | pushes to `main` | after `web` and all native `test` jobs pass, deploys the site with `actions/deploy-pages` to the `github-pages` environment |
 
-The source repository is on GitHub. To publish:
-1. Create a GitLab project and set up **Settings > Repository > Mirroring
-   repositories** to pull from `https://github.com/AxelWol/Thinoda`, or push
-   the branch to GitLab directly.
-2. Run the pipeline on the default branch. The site appears at
-   `https://<namespace>.gitlab.io/<project>/` (see **Deploy > Pages**).
-
-GitHub CI also builds the site in the `web` job and uploads it as the
-`thinoda-web` artifact, so web build breakage shows up in pull requests.
+The site is published at <https://axelwol.github.io/Thinoda/>. One-time setup:
+in **Settings > Pages**, set **Build and deployment > Source** to
+**GitHub Actions**. Pull requests build the site but never deploy it; download
+the `thinoda-web` artifact from the workflow run to try a pull request locally
+(`python -m http.server -d <unzipped folder>`).
 
 ## Feature parity and browser alternatives
 All editing features are the same shared code as on the desktop: topics,
@@ -71,9 +67,10 @@ Local storage is per site origin and typically limited to about 5 MB. Large
 maps or many embedded images can exceed it; Thinoda then reports a save error,
 and you should download the map (Save As or Export) to keep it. Clearing site
 data in the browser deletes stored documents, settings and recovery data.
-GitLab Pages gives every project its own origin only if
-[unique domains](https://docs.gitlab.com/user/project/pages/#unique-domains) are
-enabled; otherwise sites in the same namespace share one storage origin.
+GitHub Pages serves all project sites of an account from the same
+`<owner>.github.io` origin, so they share one storage quota. Thinoda stores its
+documents, settings and recovery data under `thinoda.`-prefixed keys to avoid
+collisions with other sites on that origin.
 
 ## Architecture notes
 - `crates/thinoda-web` is only the entry point: it mounts `ThinodaApp` on the
