@@ -13,6 +13,15 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.5.1](https://github.com/AxelWol/Thinoda/compare/v0.5.0...v0.5.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **web:** add Linux GPU blocklist tip to startup troubleshooting ([e6919f3](https://github.com/AxelWol/Thinoda/commit/e6919f3fd6ab59232736383d5de6517bdac2505c))
+* **web:** show WebGL troubleshooting steps when the renderer cannot start ([9740a98](https://github.com/AxelWol/Thinoda/commit/9740a9882005d564f236d972e2ec1ea7ebdb2b93))
+* **web:** show WebGL troubleshooting steps when the renderer cannot start ([fdc3778](https://github.com/AxelWol/Thinoda/commit/fdc3778720871b1bd09ed4f96b908c3162a67a07))
+
 ## [0.5.0](https://github.com/AxelWol/Thinoda/compare/v0.4.0...v0.5.0) (2026-10-19)
 
 
