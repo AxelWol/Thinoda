@@ -16,9 +16,9 @@ ARCHITECTURES = {
 LOCALIZATIONS = ["en", "de", "es", "fr", "da", "nl", "pt-PT", "pt-BR", "it", "pl"]
 
 
-def run(*args: str, input: str | None = None) -> str:
+def run(*args: str, input: str | None = None, timeout: int = 120) -> str:
     print(f"> {' '.join(args)}", flush=True)
-    result = subprocess.run(args, input=input, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(args, input=input, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(
             f"Command failed ({result.returncode}): {' '.join(args)}\n"
@@ -27,7 +27,7 @@ def run(*args: str, input: str | None = None) -> str:
     return result.stdout
 
 
-def verify_app(app: Path, architecture: str) -> None:
+def verify_app(app: Path, architecture: str, require_notarization: bool = False) -> None:
     run("plutil", "-lint", str(app / "Contents" / "Info.plist"))
     with (app / "Contents" / "Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
@@ -44,10 +44,13 @@ def verify_app(app: Path, architecture: str) -> None:
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app))
     if not (app / "Contents" / "_CodeSignature" / "CodeResources").is_file():
         raise ValueError(f"Missing app resource seal in {app}")
+    if require_notarization:
+        run("xcrun", "stapler", "validate", str(app))
+        run("spctl", "--assess", "--type", "execute", "--verbose=2", str(app))
     print(f"Verified {architecture} app: {app}", flush=True)
 
 
-def verify(source: Path, target: str) -> None:
+def verify(source: Path, target: str, require_notarization: bool = False) -> None:
     architecture = ARCHITECTURES[target]
     archives = list(source.glob(f"*-{target}.app.tar.gz"))
     images = list(source.glob(f"*-{target}.dmg"))
@@ -62,10 +65,16 @@ def verify(source: Path, target: str) -> None:
         apps = list(extracted.glob("*.app"))
         if len(apps) != 1:
             raise ValueError(f"Expected one app in {archives[0]}")
-        verify_app(apps[0], architecture)
+        verify_app(apps[0], architecture, require_notarization)
 
         run("hdiutil", "verify", str(images[0]))
         run("codesign", "--verify", "--strict", "--verbose=2", str(images[0]))
+        if require_notarization:
+            run("xcrun", "stapler", "validate", str(images[0]))
+            run(
+                "spctl", "--assess", "--type", "open", "--context",
+                "context:primary-signature", "--verbose=2", str(images[0]),
+            )
         mount = root / "mount"
         mount.mkdir()
         run(
@@ -76,10 +85,10 @@ def verify(source: Path, target: str) -> None:
             apps = list(mount.glob("*.app"))
             if len(apps) != 1:
                 raise ValueError(f"Expected one app in {images[0]}")
-            verify_app(apps[0], architecture)
+            verify_app(apps[0], architecture, require_notarization)
             installed = root / "installed" / apps[0].name
             run("ditto", str(apps[0]), str(installed))
-            verify_app(installed, architecture)
+            verify_app(installed, architecture, require_notarization)
             # Both targets run on native runners; Intel must not require Rosetta on ARM.
             run(str(installed / "Contents" / "MacOS" / "thinoda"), "--version")
         finally:
@@ -91,5 +100,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("dist"))
     parser.add_argument("--target", choices=ARCHITECTURES, required=True)
+    parser.add_argument("--require-notarization", action="store_true")
     args = parser.parse_args()
-    verify(args.source, args.target)
+    verify(args.source, args.target, args.require_notarization)

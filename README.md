@@ -29,12 +29,10 @@ Installers for every platform are attached to each
 `x86_64-unknown-linux-gnu`.
 
 Each platform also has a `SHA256SUMS-<target>.txt` checksum manifest. Windows
-installers are not code-signed yet. macOS apps and DMGs use ad-hoc signatures to
-seal their contents, but are not Developer ID-signed or Apple-notarized. Windows
-SmartScreen and macOS Gatekeeper may therefore block first launch. On macOS,
-copy Thinoda to Applications, then explicitly approve it in **System Settings >
-Privacy & Security > Open Anyway** if you trust the download. Ad-hoc signing
-is an integrity check, not Apple verification of the developer.
+installers are not code-signed yet and SmartScreen may block first launch.
+The macOS release workflow Developer ID-signs, Apple-notarizes and staples both
+the app and DMG for Apple silicon and Intel. Older releases and local builds may
+still use ad-hoc signatures, which seal contents but do not establish developer trust.
 
 ### Installing on Windows with WinGet
 The Windows installer's final page offers separate labeled options to run Thinoda
@@ -431,8 +429,26 @@ bundles are provided as `.app.tar.gz` to preserve permissions and symlinks, alon
 the `.dmg`. Workflow artifacts are retained for 30 days. Releases are published only
 after all five builds succeed, with the installers attached as release assets.
 Windows installers are not configured with production code-signing certificates.
-macOS uses ad-hoc bundle/image signing; Developer ID certificates and Apple
-notarization credentials remain required for Gatekeeper-trusted distribution.
+macOS releases require these repository Actions secrets (also forwarded by Release Please):
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERT_P12` | Base64-encoded Developer ID Application `.p12` certificate and private key |
+| `MACOS_CERT_PASSWORD` | Password used to export the `.p12` |
+| `MACOS_SIGN_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
+| `KEYCHAIN_PASSWORD` | Random password for the temporary build keychain |
+| `APPLE_API_KEY_P8` | Base64-encoded App Store Connect `.p8` API key |
+| `APPLE_API_KEY_ID` | App Store Connect API key ID |
+| `APPLE_API_ISSUER` | App Store Connect issuer ID |
+
+Both macOS runners import the certificate into a temporary keychain. The pinned
+packager signs the executable and complete app bundle with hardened runtime and
+secure timestamps, then notarizes and staples the app before embedding it in the
+signed DMG. The workflow also notarizes and staples the DMG before creating downloads
+and checksums. Extracted and installed apps must pass signature, stapling and
+Gatekeeper checks before upload. Missing credentials or rejected notarization fail
+the release; credentials are removed even on failure. Local `cargo xtask package`
+builds retain ad-hoc signing and do not require these secrets.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·

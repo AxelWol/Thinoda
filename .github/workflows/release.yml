@@ -18,6 +18,20 @@ on:
     secrets:
       WINGET_TOKEN:
         required: false
+      MACOS_CERT_P12:
+        required: true
+      MACOS_CERT_PASSWORD:
+        required: true
+      MACOS_SIGN_IDENTITY:
+        required: true
+      KEYCHAIN_PASSWORD:
+        required: true
+      APPLE_API_KEY_P8:
+        required: true
+      APPLE_API_KEY_ID:
+        required: true
+      APPLE_API_ISSUER:
+        required: true
 
 permissions:
   contents: read
@@ -83,13 +97,65 @@ jobs:
         run: rm -rf target/${{ matrix.target }}/debug
       - name: Install pinned packaging tool
         run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Import macOS signing certificate and notarization key
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERT_P12 MACOS_CERT_PASSWORD MACOS_SIGN_IDENTITY \
+            KEYCHAIN_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required repository secret: $name"
+              exit 1
+            fi
+          done
+          umask 077
+          cert="$RUNNER_TEMP/thinoda-signing.p12"
+          keychain="$RUNNER_TEMP/thinoda-build.keychain-db"
+          trap 'rm -f "$cert"' EXIT
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$cert"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/thinoda-AuthKey.p8"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$cert" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
       - name: Build installers
+        if: runner.os != 'macOS'
         run: cargo xtask package --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+      - name: Build, sign and notarize macOS installers
+        if: runner.os == 'macOS'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/thinoda-AuthKey.p8
+        run: python .github/scripts/package_macos.py --target ${{ matrix.target }}
       - name: Prepare architecture-specific downloads and checksums
         run: python .github/scripts/release_artifacts.py --target ${{ matrix.target }} --formats ${{ matrix.formats }}
       - name: Verify macOS downloads and installed app signatures
         if: runner.os == 'macOS'
-        run: python .github/scripts/verify_macos_packages.py --target ${{ matrix.target }}
+        run: python .github/scripts/verify_macos_packages.py --target ${{ matrix.target }} --require-notarization
+      - name: Remove macOS signing credentials
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/thinoda-signing.p12" "$RUNNER_TEMP/thinoda-AuthKey.p8"
+          keychain="$RUNNER_TEMP/thinoda-build.keychain-db"
+          if [[ -f "$keychain" ]]; then
+            security delete-keychain "$keychain"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: thinoda-${{ matrix.target }}
