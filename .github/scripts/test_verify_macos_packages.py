@@ -2,6 +2,7 @@ from pathlib import Path
 import plistlib
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -23,6 +24,37 @@ class CommandTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Expected one app archive and one DMG"):
                 verify(Path(temporary), "aarch64-apple-darwin")
 
+    @patch("verify_macos_packages.verify_app")
+    @patch("verify_macos_packages.run")
+    def test_release_checks_notarization_in_archive_dmg_and_installed_copy(self, command, app_check):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            app = source / "Thinoda.app"
+            app.mkdir()
+            target = "aarch64-apple-darwin"
+            with tarfile.open(source / f"Thinoda-{target}.app.tar.gz", "w:gz") as archive:
+                archive.add(app, arcname=app.name)
+            image = source / f"Thinoda-{target}.dmg"
+            image.touch()
+
+            def run_command(*args, **kwargs):
+                if args[:2] == ("hdiutil", "attach"):
+                    mount = Path(args[args.index("-mountpoint") + 1])
+                    (mount / app.name).mkdir()
+                return ""
+
+            command.side_effect = run_command
+            verify(source, target, require_notarization=True)
+            command.assert_any_call("xcrun", "stapler", "validate", str(image))
+            command.assert_any_call(
+                "spctl", "--assess", "--type", "open", "--context",
+                "context:primary-signature", "--verbose=2", str(image),
+            )
+            self.assertEqual(app_check.call_count, 3)
+            for call in app_check.call_args_list:
+                self.assertEqual(call.args[1:], ("arm64", True))
+            self.assertEqual(command.call_args.args[:2], ("hdiutil", "detach"))
+
     @patch("verify_macos_packages.run")
     def test_architecture_check_places_input_before_variadic_option(self, command):
         for architecture in ARCHITECTURES.values():
@@ -43,6 +75,12 @@ class CommandTests(unittest.TestCase):
                 command.assert_any_call(
                     "lipo", str(contents / "MacOS" / "thinoda"),
                     "-verify_arch", architecture,
+                )
+                self.assertFalse(any(call.args[0] == "spctl" for call in command.call_args_list))
+                verify_app(app, architecture, require_notarization=True)
+                command.assert_any_call("xcrun", "stapler", "validate", str(app))
+                command.assert_any_call(
+                    "spctl", "--assess", "--type", "execute", "--verbose=2", str(app),
                 )
                 with (contents / "Info.plist").open("rb") as stream:
                     info = plistlib.load(stream)
