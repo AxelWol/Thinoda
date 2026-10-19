@@ -3,9 +3,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from package_macos import ROOT, notarize_dmg, package, package_config
+from package_macos import ROOT, notarize_dmg, package, package_config, run_packager
 from verify_macos_packages import ARCHITECTURES
 
 
@@ -40,6 +40,39 @@ class PackageConfigTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_retries_cargo_packager_after_transient_ticket_lookup_failure(
+        self, command, sleep,
+    ):
+        command.side_effect = [
+            subprocess.CompletedProcess(
+                ["cargo-packager"], 1,
+                stdout="api.apple-cloudkit.com: NSURLErrorDomain Code=-1005",
+            ),
+            subprocess.CompletedProcess(["cargo-packager"], 0, stdout="Packaged\n"),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            run_packager(["cargo-packager"], Path(temporary))
+
+        self.assertEqual(command.call_count, 2)
+        self.assertEqual(command.call_args_list[0], call(
+            ["cargo-packager"], cwd=Path(temporary), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, check=False,
+        ))
+        sleep.assert_called_once_with(5)
+
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_does_not_retry_non_transient_packager_failure(self, command, sleep):
+        command.return_value = subprocess.CompletedProcess(
+            ["cargo-packager"], 1, stdout="Codesigning failed",
+        )
+        with self.assertRaises(subprocess.CalledProcessError):
+            run_packager(["cargo-packager"], Path("."))
+        command.assert_called_once()
+        sleep.assert_not_called()
+
     @patch.dict("os.environ", {}, clear=True)
     @patch("package_macos.subprocess.run")
     def test_missing_credentials_fail_before_building(self, command):
@@ -67,15 +100,16 @@ class PackageTests(unittest.TestCase):
                     patch.dict("os.environ", env, clear=True),
                     patch("package_macos.package_config", return_value={"macos": {"signing-identity": IDENTITY}}),
                     patch("package_macos.subprocess.run") as command,
+                    patch("package_macos.run_packager") as pack,
                     patch("package_macos.run") as check,
                     patch("package_macos.notarize_dmg") as notarize,
                 ):
                     package(root, target)
-                    build, pack = command.call_args_list
+                    build = command.call_args
                     self.assertIn("--locked", build.args[0])
                     self.assertEqual(build.args[0][-1], target)
-                    self.assertEqual(pack.kwargs, {"cwd": root / "crates" / "thinoda-app", "check": True})
-                    args = pack.args[0]
+                    self.assertEqual(pack.call_args.kwargs, {"cwd": root / "crates" / "thinoda-app"})
+                    args = pack.call_args.args[0]
                     self.assertEqual(json.loads(args[2])["macos"]["signing-identity"], IDENTITY)
                     self.assertEqual(args[-2:], ["--formats", "app,dmg"])
                     check.assert_any_call("xcrun", "stapler", "validate", str(app))
