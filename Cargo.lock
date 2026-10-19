@@ -3976,7 +3976,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ai"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -3991,7 +3991,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-app"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -4019,7 +4019,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-canvas"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4037,7 +4037,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "epaint_default_fonts",
  "image",
@@ -4055,7 +4055,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-platform"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "cc",
@@ -4079,7 +4079,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -4089,7 +4089,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-web"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "egui",
@@ -5435,7 +5435,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "image",
