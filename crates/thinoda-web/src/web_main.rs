@@ -133,6 +133,7 @@ fn graphics_error_html(details: &str) -> String {
 <li>Check for policies that block WebGL: open <code>edge://policy</code> or <code>chrome://policy</code> and look for <code>WebGLAllowed</code> or <code>HardwareAccelerationModeEnabled</code>. If your organization set them, ask your IT department.</li>
 <li>Try a private window with extensions turned off. Privacy and anti-fingerprinting extensions often block WebGL.</li>
 <li>Update your graphics driver. <code>edge://gpu</code> or <code>chrome://gpu</code> shows whether WebGL&nbsp;2 is available.</li>
+<li>On Linux, the browser often blocks the GPU (common with older Mesa or NVIDIA drivers and in virtual machines). Install the latest Mesa or vendor driver, enable 3D acceleration in the virtual machine, or as a test enable <em>Override software rendering list</em> in <code>edge://flags/#ignore-gpu-blocklist</code> or <code>chrome://flags/#ignore-gpu-blocklist</code> and restart the browser.</li>
 <li>Check whether <a href="https://get.webgl.org/webgl2/" target="_blank" rel="noopener">get.webgl.org/webgl2</a> works. If it fails too, the problem is in the browser or system, not in Thinoda.</li>
 </ol>
 <details><summary>Technical details</summary><pre>{}</pre></details>"#,

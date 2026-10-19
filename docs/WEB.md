@@ -83,7 +83,12 @@ the raw error under **Technical details**:
    `HardwareAccelerationModeEnabled` set by your organization.
 3. Try a private window without extensions (privacy extensions often block WebGL).
 4. Update the graphics driver; `edge://gpu` / `chrome://gpu` shows WebGL 2 status.
-5. Test <https://get.webgl.org/webgl2/>. If it fails too, the cause is the
+5. On Linux, Chromium-based browsers (Edge, Chrome) do not enable WebGPU by
+   default and often block the GPU (older Mesa or NVIDIA drivers, virtual
+   machines). Update the driver, enable 3D acceleration in the VM, or as a
+   test enable **Override software rendering list**
+   (`edge://flags/#ignore-gpu-blocklist`).
+6. Test <https://get.webgl.org/webgl2/>. If it fails too, the cause is the
    browser or system, not Thinoda.
 
 ## Architecture notes
