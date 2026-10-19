@@ -13,6 +13,20 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.5.0](https://github.com/AxelWol/Thinoda/compare/v0.4.0...v0.5.0) (2026-10-19)
+
+
+### Features
+
+* **web:** static WebAssembly web app on GitHub Pages ([6039784](https://github.com/AxelWol/Thinoda/commit/60397842e3c5584ccd154505a511b2e325960775))
+* **web:** static WebAssembly web app published on GitLab Pages ([e806fc3](https://github.com/AxelWol/Thinoda/commit/e806fc31b010a7294b0470da14fda7be7872b1c6))
+
+
+### Documentation
+
+* refresh Markdown timestamps ([9c175f4](https://github.com/AxelWol/Thinoda/commit/9c175f424e640794d933ba67b7cbe909990e2bca))
+* refresh Markdown timestamps ([bd57bed](https://github.com/AxelWol/Thinoda/commit/bd57bedf48aaa07f59c69df51c72efa948965cc6))
+
 ## [0.4.0](https://github.com/AxelWol/Thinoda/compare/v0.3.1...v0.4.0) (2026-10-18)
 
 
