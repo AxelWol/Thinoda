@@ -1,3 +1,5 @@
+_Last updated: 2026-10-19 11:46:09 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 ## Code signing Policy for Windows
 
 Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
