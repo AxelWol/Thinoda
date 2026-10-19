@@ -14,6 +14,13 @@ A static **web app** build runs the same code in the browser via WebAssembly and
 published on [GitHub Pages](https://axelwol.github.io/Thinoda/) — see
 [Thinoda for the web](docs/WEB.md).
 
+## Privacy
+
+Thinoda's maintainers do not collect or process your personal data or mind map
+content through the app. Editing and storage happen locally on your device.
+Optional AI connections, cloud-synced folders and web hosting involve the
+services you choose to use. See the [Privacy Policy](PRIVACY.md) for details.
+
 ## Download
 Installers for every platform are attached to each
 [GitHub release](https://github.com/AxelWol/Thinoda/releases/latest):
