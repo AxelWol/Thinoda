@@ -4,13 +4,56 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tomllib
+import time
+from urllib.parse import urlsplit
 
 from verify_macos_packages import ARCHITECTURES, run
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PACKAGER_RETRY_DELAYS = (5, 15)
+
+
+def is_apple_cloudkit_url(value: str) -> bool:
+    try:
+        return urlsplit(value).hostname == "api.apple-cloudkit.com"
+    except ValueError:
+        return False
+
+
+def run_packager(command: list[str], cwd: Path) -> None:
+    for attempt, delay in enumerate((*PACKAGER_RETRY_DELAYS, None), start=1):
+        result = subprocess.run(
+            command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, check=False,
+        )
+        if result.stdout:
+            print(
+                result.stdout,
+                end="" if result.stdout.endswith("\n") else "\n",
+                flush=True,
+            )
+        if result.returncode == 0:
+            return
+        cloudkit_url = any(
+            is_apple_cloudkit_url(url)
+            for url in re.findall(r"https?://[^\s\"<>]+", result.stdout)
+        )
+        transient_stapling_failure = (
+            cloudkit_url
+            and ("Code=-1005" in result.stdout or "network connection was lost" in result.stdout)
+        )
+        if not transient_stapling_failure or delay is None:
+            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+        print(
+            f"Transient Apple ticket lookup failure; retrying cargo-packager "
+            f"({attempt}/{len(PACKAGER_RETRY_DELAYS) + 1}) in {delay}s.",
+            flush=True,
+        )
+        time.sleep(delay)
 
 
 def package_config(root: Path, target: str, identity: str) -> dict:
@@ -64,10 +107,10 @@ def package(root: Path, target: str) -> None:
     ], cwd=root, check=True)
     # Packager 0.11.8 signs Mach-O files and the bundle inside-out with hardened
     # runtime + timestamps, then notarizes/staples the app BEFORE creating the DMG.
-    subprocess.run([
+    run_packager([
         "cargo-packager", "--config", json.dumps(config),
         "--target", target, "--formats", "app,dmg",
-    ], cwd=root / "crates" / "thinoda-app", check=True)
+    ], cwd=root / "crates" / "thinoda-app")
     output = root / "target" / "packages"
     apps = list(output.glob("*.app"))
     images = list(output.glob("*.dmg"))
