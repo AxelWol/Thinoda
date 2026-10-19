@@ -1,3 +1,5 @@
+_Last updated: 2026-10-19 11:38:34 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Privacy Policy
 
 Effective date: October 19, 2026
