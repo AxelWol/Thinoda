@@ -72,6 +72,20 @@ GitHub Pages serves all project sites of an account from the same
 documents, settings and recovery data under `thinoda.`-prefixed keys to avoid
 collisions with other sites on that origin.
 
+## Troubleshooting: "Thinoda could not start"
+Thinoda prefers WebGPU and falls back to WebGL 2. Browsers usually still offer
+WebGL 2 through software rendering when the GPU is unavailable, so this error
+means WebGL is blocked entirely. The start page lists these steps and keeps
+the raw error under **Technical details**:
+1. Enable **Use graphics acceleration when available** (`edge://settings/system`
+   or `chrome://settings/system`) and restart the browser.
+2. Check `edge://policy` / `chrome://policy` for `WebGLAllowed` or
+   `HardwareAccelerationModeEnabled` set by your organization.
+3. Try a private window without extensions (privacy extensions often block WebGL).
+4. Update the graphics driver; `edge://gpu` / `chrome://gpu` shows WebGL 2 status.
+5. Test <https://get.webgl.org/webgl2/>. If it fails too, the cause is the
+   browser or system, not Thinoda.
+
 ## Architecture notes
 - `crates/thinoda-web` is only the entry point: it mounts `ThinodaApp` on the
   `thinoda_canvas` element with `eframe::WebRunner`, installs `beforeunload`

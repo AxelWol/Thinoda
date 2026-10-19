@@ -46,9 +46,7 @@ pub fn main() {
             .await;
         match result {
             Ok(()) => hide_loading(),
-            Err(e) => show_error(&format!(
-                "Thinoda could not start. WebGL may be unavailable in this browser. ({e:?})"
-            )),
+            Err(e) => show_graphics_error(&format!("{e:?}")),
         }
     });
 }
@@ -113,6 +111,48 @@ fn hide_loading() {
     if let Some(loading) = element("loading") {
         loading.remove();
     }
+}
+
+/// Explains how to re-enable WebGL 2, which is the usual reason the renderer fails
+/// to start; the raw error stays available for bug reports.
+fn show_graphics_error(details: &str) {
+    log::error!("Thinoda could not start: {details}");
+    let Some(loading) = element("loading") else {
+        return;
+    };
+    loading.set_inner_html(&graphics_error_html(details));
+    loading.set_class_name("error");
+}
+
+fn graphics_error_html(details: &str) -> String {
+    format!(
+        r#"<h2>Thinoda could not start</h2>
+<p>Thinoda needs WebGL&nbsp;2 (or WebGPU) to draw, but this browser blocked it.</p>
+<ol>
+<li>Turn on hardware acceleration: in Edge open <code>edge://settings/system</code>, in Chrome <code>chrome://settings/system</code>, enable <em>Use graphics acceleration when available</em> and restart the browser.</li>
+<li>Check for policies that block WebGL: open <code>edge://policy</code> or <code>chrome://policy</code> and look for <code>WebGLAllowed</code> or <code>HardwareAccelerationModeEnabled</code>. If your organization set them, ask your IT department.</li>
+<li>Try a private window with extensions turned off. Privacy and anti-fingerprinting extensions often block WebGL.</li>
+<li>Update your graphics driver. <code>edge://gpu</code> or <code>chrome://gpu</code> shows whether WebGL&nbsp;2 is available.</li>
+<li>Check whether <a href="https://get.webgl.org/webgl2/" target="_blank" rel="noopener">get.webgl.org/webgl2</a> works. If it fails too, the problem is in the browser or system, not in Thinoda.</li>
+</ol>
+<details><summary>Technical details</summary><pre>{}</pre></details>"#,
+        escape_html(details)
+    )
+}
+
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn show_error(message: &str) {

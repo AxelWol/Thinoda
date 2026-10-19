@@ -16,7 +16,13 @@
         #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
             justify-content: center; gap: 16px; color: #e6e9ef; font: 16px system-ui, sans-serif; text-align: center; padding: 24px; }
         #loading img { width: 96px; height: 96px; }
-        #loading.error { color: #ffb4a9; }
+        #loading.error { color: #ffb4a9; justify-content: flex-start; overflow-y: auto; box-sizing: border-box; }
+        #loading.error h2 { margin: 24px 0 0; }
+        #loading.error p, #loading.error ol, #loading.error details { max-width: 640px; margin: 0; color: #e6e9ef; text-align: left; line-height: 1.5; }
+        #loading.error li { margin-bottom: 8px; }
+        #loading.error a { color: #8ab4f8; }
+        #loading.error code { background: #2b3140; padding: 1px 4px; border-radius: 3px; }
+        #loading.error pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #aab1bf; }
     </style>
 </head>
 <body>
