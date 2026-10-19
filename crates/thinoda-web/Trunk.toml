@@ -1,0 +1,11 @@
+# Trunk configuration for the Thinoda web app (see docs/WEB.md).
+[build]
+target = "index.html"
+dist = "dist"
+# Relative URLs let the same build run from any sub path, such as GitHub Pages.
+public_url = "./"
+filehash = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080

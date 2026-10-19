@@ -13,4 +13,14 @@ homepage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+web-time.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq.workspace = true
+
+# The browser build talks to the server with `fetch` (the endpoint must allow CORS).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Request", "RequestInit", "RequestMode", "Response", "Headers", "AbortSignal"] }

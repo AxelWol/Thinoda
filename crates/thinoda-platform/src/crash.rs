@@ -1,7 +1,8 @@
 //! Panic diagnostics and best-effort synchronous recovery flushing.
 
+use crate::fs::{EntryKind, list_dir};
 use crate::{Paths, recovery::RecoveryManager, unix_seconds};
-use std::{backtrace::Backtrace, fs, io, path::PathBuf, sync::Arc};
+use std::{backtrace::Backtrace, io, path::PathBuf, sync::Arc};
 
 /// Install a process-global hook, chaining the previous hook after saving state.
 /// The hook owns an `Arc`; call `RecoveryManager::finish` on clean exit even if
@@ -53,19 +54,17 @@ pub struct CrashLog {
 
 /// Enumerate crash logs newest first; missing directories are an empty list.
 pub fn list_crash_logs(paths: &Paths) -> io::Result<Vec<CrashLog>> {
-    let entries = match fs::read_dir(paths.data_dir.join("crash-logs")) {
+    let entries = match list_dir(paths.data_dir.join("crash-logs")) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
     let mut logs = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
+    for (path, kind) in entries {
+        if kind != EntryKind::File {
             continue;
         }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
         let Some(rest) = name
@@ -77,7 +76,7 @@ pub fn list_crash_logs(paths: &Paths) -> io::Result<Vec<CrashLog>> {
         let timestamp = rest.split('-').next().and_then(|s| s.parse().ok());
         if let Some(timestamp) = timestamp {
             logs.push(CrashLog {
-                path: entry.path(),
+                path: path.clone(),
                 timestamp,
             });
         }

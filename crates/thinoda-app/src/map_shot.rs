@@ -1,11 +1,7 @@
 //! Native GPU readback of the visible canvas, followed by a local, non-destructive crop.
 
-use std::{
-    io::Cursor,
-    path::Path,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{io::Cursor, path::Path, sync::mpsc, time::Duration};
+use web_time::Instant;
 
 use egui::{
     Color32, ColorImage, Context, Key, Modifiers, Pos2, Rect, Sense, Stroke, TextureHandle,
@@ -418,10 +414,11 @@ impl ThinodaApp {
                     }
                 }
                 if ui.button(t("Save PNG…")).clicked()
-                    && let Some(path) = rfd::FileDialog::new().set_title(t("Save PNG…"))
-                        .add_filter("PNG", &["png"]).set_file_name("map-shot.png").save_file()
+                    && let Some(path) = crate::files::save_target(Some(t("Save PNG…")),
+                        &[("PNG", &["png"])], "map-shot.png", None, crate::files::Target::Download)
                 {
-                    match editor.output().and_then(|image| save_png(&path, &image)) {
+                    match editor.output().and_then(|image| save_png(&path, &image)).and_then(|()| crate::files::deliver(&path)) {
+                        Ok(()) if crate::files::is_web() => self.toasts.success(t("Download started")),
                         Ok(()) => self.toasts.success(format!("{} {}", t("Exported to"), path.display())),
                         Err(e) => self.toasts.error(format!("{}: {e}", t("Export failed"))),
                     };

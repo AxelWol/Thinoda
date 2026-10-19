@@ -145,8 +145,10 @@ pub fn render_print(
             ..Default::default()
         },
     )?;
-    let mut options = resvg::usvg::Options::default();
-    options.fontdb_mut().load_system_fonts();
+    let options = resvg::usvg::Options {
+        fontdb: crate::fonts::database(),
+        ..Default::default()
+    };
     let tree = resvg::usvg::Tree::from_str(&source, &options)
         .map_err(|e| IoError::Invalid(format!("SVG parse: {e}")))?;
     let source_size = tree.size();

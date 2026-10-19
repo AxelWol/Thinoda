@@ -1,10 +1,13 @@
 //! Per-process crash recovery with advisory locks and coalesced snapshot writes.
 
-use crate::{Error, Paths, Result, fs::atomic_write, unix_seconds};
+use crate::{
+    Error, Paths, Result,
+    fs::{self, EntryKind, Lock, atomic_write},
+    unix_seconds,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
     sync::{
@@ -52,7 +55,7 @@ struct SessionInfo {
 }
 
 struct State {
-    lock: Option<File>,
+    lock: Option<Lock>,
     finished: bool,
 }
 
@@ -66,15 +69,6 @@ pub struct RecoveryManager {
     state: Mutex<State>,
     preserve: AtomicBool,
     closed: AtomicBool,
-}
-
-fn open_lock(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
 }
 
 fn check_key(key: &str) -> Result<()> {
@@ -95,8 +89,7 @@ impl RecoveryManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let session_dir = paths.data_dir.join("recovery").join(&session_id);
         fs::create_dir_all(session_dir.join("docs"))?;
-        let lock = open_lock(&session_dir.join("lock"))?;
-        lock.try_lock().map_err(io::Error::from)?;
+        let lock = Lock::try_acquire(&session_dir.join("lock"))?;
         let manager = Self {
             session_id,
             session_dir,
@@ -109,7 +102,11 @@ impl RecoveryManager {
             closed: AtomicBool::new(false),
         };
         let info = SessionInfo {
-            pid: std::process::id(),
+            pid: if cfg!(target_arch = "wasm32") {
+                0
+            } else {
+                std::process::id()
+            },
             started_at: unix_seconds(),
             app_version: crate::system::app_version(),
         };
@@ -163,11 +160,36 @@ impl RecoveryManager {
         Ok(())
     }
 
+    /// Persist pending snapshots and release the session lock, e.g. when a browser
+    /// page is hidden or unloaded. Another tab (or the reloaded page) can then offer
+    /// the snapshots for recovery. [`Self::resume`] takes the lock again.
+    pub fn suspend(&self) -> Result<()> {
+        let result = self.flush();
+        if let Ok(mut state) = self.state.lock() {
+            state.lock.take();
+        }
+        result
+    }
+
+    /// Re-acquire the session lock after [`Self::suspend`]. Fails if another
+    /// process or tab claimed the session in the meantime.
+    pub fn resume(&self) -> Result<()> {
+        let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        if state.finished || state.lock.is_some() {
+            return Ok(());
+        }
+        state.lock = Some(Lock::try_acquire(&self.session_dir.join("lock"))?);
+        Ok(())
+    }
+
     /// Persist pending snapshots synchronously. Failed writes remain queued for retry.
     pub fn flush(&self) -> Result<()> {
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Err(Error::Finished);
+        }
+        if let Some(lock) = &state.lock {
+            lock.refresh();
         }
         let mut pending = {
             let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
@@ -250,45 +272,30 @@ impl RecoveryManager {
     /// Returned handles retain the orphan lock so concurrent processes cannot claim it.
     pub fn find_orphans(paths: &Paths) -> Vec<OrphanSession> {
         let root = paths.data_dir.join("recovery");
-        let Ok(entries) = fs::read_dir(root) else {
+        let Ok(entries) = fs::list_dir(root) else {
             return Vec::new();
         };
         let mut sessions = Vec::new();
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !entry
-                .file_type()
-                .is_ok_and(|t| t.is_dir() && !t.is_symlink())
-            {
+        for (dir, kind) in entries {
+            if kind != EntryKind::Dir {
                 continue;
             }
             let Some(session_id) = dir.file_name().and_then(|s| s.to_str()).map(str::to_owned)
             else {
                 continue;
             };
-            let Ok(lock) = open_lock(&dir.join("lock")) else {
+            let Ok(lock) = Lock::try_acquire(&dir.join("lock")) else {
                 continue;
             };
-            if lock.try_lock().is_err() {
-                continue;
-            }
             let mut documents = Vec::new();
             let mut can_cleanup = true;
-            match fs::read_dir(dir.join("docs")) {
+            match fs::list_dir(dir.join("docs")) {
                 Ok(entries) => {
-                    for item in entries {
-                        let Ok(item) = item else {
-                            can_cleanup = false;
-                            continue;
-                        };
-                        let path = item.path();
+                    for (path, kind) in entries {
                         if path.extension().is_none_or(|e| e != "json") {
                             continue;
                         }
-                        if !item
-                            .file_type()
-                            .is_ok_and(|t| t.is_file() && !t.is_symlink())
-                        {
+                        if kind != EntryKind::File {
                             can_cleanup = false;
                             continue;
                         }
@@ -359,7 +366,7 @@ impl Drop for RecoveryManager {
 }
 
 struct OrphanLease {
-    lock: Mutex<Option<File>>,
+    lock: Mutex<Option<Lock>>,
     dir: PathBuf,
 }
 impl OrphanLease {
@@ -373,8 +380,14 @@ impl OrphanLease {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
-        let has_docs = fs::read_dir(self.dir.join("docs"))?
-            .any(|e| e.map_or(true, |e| e.path().extension().is_some_and(|s| s == "json")));
+        let has_docs = match fs::list_dir(self.dir.join("docs")) {
+            Ok(entries) => entries
+                .iter()
+                .any(|(path, _)| path.extension().is_some_and(|s| s == "json")),
+            // The browser filesystem has no empty directories.
+            Err(e) if cfg!(target_arch = "wasm32") && e.kind() == io::ErrorKind::NotFound => false,
+            Err(e) => return Err(e.into()),
+        };
         if !has_docs {
             // Empty docs are no longer recoverable, so unlocking before deletion is safe.
             lock.take();
@@ -452,6 +465,31 @@ mod lock_tests {
         assert!(!manager.try_flush_for_crash());
         drop(state);
         assert!(manager.try_flush_for_crash());
+        manager.finish().unwrap();
+    }
+
+    #[test]
+    fn suspended_sessions_are_recoverable_until_resumed() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let manager = RecoveryManager::start(&paths).unwrap();
+        manager
+            .queue_snapshot(
+                "doc",
+                Snapshot::to_bytes(SnapshotMeta::default(), &Workbook::default()).unwrap(),
+            )
+            .unwrap();
+        assert!(RecoveryManager::find_orphans(&paths).is_empty());
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        assert!(
+            manager.resume().is_err(),
+            "a claimed session must not be re-locked"
+        );
+        drop(orphans);
+        manager.resume().unwrap();
+        assert!(RecoveryManager::find_orphans(&paths).is_empty());
         manager.finish().unwrap();
     }
 }

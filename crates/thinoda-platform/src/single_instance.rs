@@ -12,11 +12,21 @@ use std::{
 pub struct SingleInstance {
     lock: Option<File>,
     ipc_dir: PathBuf,
+    web: bool,
 }
 impl SingleInstance {
     /// Elect the primary for this data directory; a busy lock means secondary.
+    /// Browser tabs are independent documents windows, so every tab is primary
+    /// and never receives forwarded requests.
     pub fn acquire(paths: &Paths) -> Result<Self> {
         let ipc_dir = paths.data_dir.join("ipc");
+        if cfg!(target_arch = "wasm32") {
+            return Ok(Self {
+                lock: None,
+                ipc_dir,
+                web: true,
+            });
+        }
         fs::create_dir_all(&ipc_dir)?;
         let file = OpenOptions::new()
             .read(true)
@@ -29,12 +39,16 @@ impl SingleInstance {
             Err(std::fs::TryLockError::WouldBlock) => None,
             Err(e) => return Err(io::Error::from(e).into()),
         };
-        Ok(Self { lock, ipc_dir })
+        Ok(Self {
+            lock,
+            ipc_dir,
+            web: false,
+        })
     }
 
     /// Whether this handle owns the primary-instance lock.
     pub fn is_primary(&self) -> bool {
-        self.lock.is_some()
+        self.web || self.lock.is_some()
     }
 
     /// Atomically queue a file-open request. Relative paths become absolute before
@@ -62,6 +76,9 @@ impl SingleInstance {
                 "only the primary instance can poll requests",
             )
             .into());
+        }
+        if self.web {
+            return Ok(Vec::new());
         }
         let mut files: Vec<_> = fs::read_dir(&self.ipc_dir)?
             .filter_map(|e| e.ok())

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" translate="no">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="description" content="Thinoda - Give your thoughts shape. A mind mapping app that runs entirely in your browser.">
+    <meta name="theme-color" content="#1f2430">
+    <title>Thinoda</title>
+    <link data-trunk rel="rust" data-bin="thinoda-web" data-wasm-opt="2" data-wasm-opt-params="--enable-bulk-memory --enable-bulk-memory-opt --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types --enable-multivalue --enable-mutable-globals">
+    <link data-trunk rel="icon" href="../../assets/icon-64.png">
+    <link data-trunk rel="copy-file" href="../../assets/icon-256.png">
+    <link rel="apple-touch-icon" href="icon-256.png">
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #1f2430; }
+        canvas#thinoda_canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; outline: none; }
+        #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: 16px; color: #e6e9ef; font: 16px system-ui, sans-serif; text-align: center; padding: 24px; }
+        #loading img { width: 96px; height: 96px; }
+        #loading.error { color: #ffb4a9; }
+    </style>
+</head>
+<body>
+    <canvas id="thinoda_canvas"></canvas>
+    <div id="loading">
+        <img src="icon-256.png" alt="">
+        <noscript>Thinoda needs JavaScript and WebAssembly to run.</noscript>
+        <span>Loading Thinoda…</span>
+    </div>
+</body>
+</html>

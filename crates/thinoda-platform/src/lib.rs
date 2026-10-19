@@ -54,11 +54,14 @@ pub mod crash;
 pub mod credentials;
 pub mod fs;
 pub mod paths;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod printing;
 pub mod recovery;
 pub mod settings;
 pub mod single_instance;
 pub mod system;
+pub mod vfs;
+pub mod web;
 
 pub use paths::Paths;
 pub use settings::Settings;
@@ -92,8 +95,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub(crate) fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }

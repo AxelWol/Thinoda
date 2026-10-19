@@ -1,5 +1,9 @@
 fn main() {
     println!("cargo:rerun-if-changed=native");
+    // Browsers print through their own dialog (see src/web.rs); no native bridge.
+    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32") {
+        return;
+    }
     let target = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
     let mut build = cc::Build::new();
     match target.as_str() {

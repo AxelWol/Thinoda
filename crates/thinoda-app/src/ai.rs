@@ -426,10 +426,10 @@ impl ThinodaApp {
                     .clicked()
                 {
                     self.ai.test_result = None;
-                    self.ai.test = Some(AiJob::spawn_with(
-                        config_with_api_key(&self.settings.ai, &api_key_draft),
-                        |c| c.models(),
-                    ));
+                    self.ai.test = Some(AiJob::models(config_with_api_key(
+                        &self.settings.ai,
+                        &api_key_draft,
+                    )));
                 }
                 if busy {
                     ui.spinner();

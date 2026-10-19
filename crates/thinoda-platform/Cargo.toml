@@ -16,6 +16,14 @@ uuid.workspace = true
 thiserror.workspace = true
 log.workspace = true
 raw-window-handle = "0.6"
+web-time.workspace = true
+base64.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlElement", "HtmlIFrameElement", "HtmlAnchorElement", "Node", "Storage", "Blob", "BlobPropertyBag", "Url", "Location", "CssStyleDeclaration", "console"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }

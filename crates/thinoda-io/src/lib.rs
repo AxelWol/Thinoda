@@ -2,6 +2,7 @@
 //!
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
 //! Raster and PDF output are rendered from the same vector layout; JPEG always uses an opaque background.
+pub mod fonts;
 mod formats;
 mod mindmanager;
 mod office;
@@ -317,6 +318,36 @@ pub fn import_file(path: &Path) -> Result<Workbook, IoError> {
     Ok(report.workbook)
 }
 
+/// Largest accepted MindManager input, bounded before parsing.
+const MINDMANAGER_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Import bytes whose format is detected from `name` (a file name or path) and
+/// content, as for [`import_file_with_report`]. Used where files arrive as
+/// bytes, for example from a browser file picker or drag and drop.
+pub fn import_named_bytes_with_report(name: &Path, bytes: &[u8]) -> Result<ImportReport, IoError> {
+    let bounded = matches!(
+        Format::from_path(name),
+        None | Some(Format::MindManager | Format::MindManagerXml)
+    );
+    if bounded && bytes.len() > MINDMANAGER_LIMIT {
+        return Err(IoError::Invalid(
+            "MindManager file exceeds size limit".into(),
+        ));
+    }
+    let f = detect_format(name, bytes)
+        .ok_or_else(|| IoError::UnsupportedFormat(name.display().to_string()))?;
+    import_bytes_with_report(f, bytes)
+}
+
+/// [`import_named_bytes_with_report`] that refuses imports needing confirmation.
+pub fn import_named_bytes(name: &Path, bytes: &[u8]) -> Result<Workbook, IoError> {
+    let report = import_named_bytes_with_report(name, bytes)?;
+    if !report.warnings.is_empty() {
+        return Err(IoError::ImportNeedsConfirmation(report.warnings));
+    }
+    Ok(report.workbook)
+}
+
 /// File counterpart of [`import_bytes_with_report`].
 pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
     // Bound MindManager file reads before allocating the input buffer.
@@ -343,9 +374,7 @@ pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
     } else {
         fs::read(path)?
     };
-    let f = detect_format(path, &b)
-        .ok_or_else(|| IoError::UnsupportedFormat(path.display().to_string()))?;
-    import_bytes_with_report(f, &b)
+    import_named_bytes_with_report(path, &b)
 }
 /// Export a workbook to bytes in the requested format.
 pub fn export_bytes(
@@ -436,12 +465,13 @@ pub fn export_file(
         .unwrap_or_default()
         .as_nanos();
     let tmp = parent.join(format!(".{name}.{}.{nonce}.tmp", std::process::id()));
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)?;
-    let written = f.write_all(&data).and_then(|_| f.sync_all());
-    drop(f);
+    let written = {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(&data).and_then(|_| f.sync_all())
+    };
     if let Err(e) = written {
         let _ = fs::remove_file(&tmp);
         return Err(IoError::Io(e));

@@ -16,7 +16,11 @@ pub struct Paths {
 impl Paths {
     /// Resolve platform defaults; `THINODA_HOME` overrides every directory.
     /// Directories are not created until an operation needs them.
+    /// In the browser, everything lives under `/thinoda` in browser storage.
     pub fn new() -> io::Result<Self> {
+        if cfg!(target_arch = "wasm32") {
+            return Ok(Self::from_root("/thinoda"));
+        }
         if let Some(root) = std::env::var_os("THINODA_HOME").filter(|s| !s.is_empty()) {
             return Ok(Self::from_root(root));
         }
@@ -48,7 +52,7 @@ impl Paths {
     /// Create all application directories, including missing parents.
     pub fn ensure(&self) -> io::Result<()> {
         for path in [&self.config_dir, &self.data_dir, &self.cache_dir] {
-            std::fs::create_dir_all(path)?;
+            crate::fs::create_dir_all(path)?;
         }
         Ok(())
     }
