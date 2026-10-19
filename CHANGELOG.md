@@ -13,6 +13,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.5.2](https://github.com/AxelWol/Thinoda/compare/v0.5.1...v0.5.2) (2026-10-19)
+
+
+### Documentation
+
+* add privacy policy ([a0889c8](https://github.com/AxelWol/Thinoda/commit/a0889c8ec9348482a9172b0a518feb33643283a7))
+
 ## [0.5.1](https://github.com/AxelWol/Thinoda/compare/v0.5.0...v0.5.1) (2026-10-19)
 
 
