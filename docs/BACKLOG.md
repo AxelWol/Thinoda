@@ -7,6 +7,25 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
+## Current open work-item inventory
+
+GitHub was checked on 2026-10-20: there are no open issues. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
+
+Two WIP pull requests are the only open GitHub work items:
+
+| Work item | Current status | Roadmap placement |
+|---|---|---|
+| [#56 Linux CI recovery persistence failure](https://github.com/AxelWol/Thinoda/pull/56) | Open WIP; reproduction/fix/review tasks remain unchecked. Its latest displayed CI matrix passed, which does not itself complete or merge the PR. | R0 baseline and CI reliability |
+| [#57 Windows print-preview test timeout](https://github.com/AxelWol/Thinoda/pull/57) | Open WIP; test-only timeout adjustment and focused review remain unchecked. Its latest displayed CI matrix passed, which does not itself complete or merge the PR. | R0 baseline and CI reliability; related R6 print verification |
+
+The remaining unfinished work is the feature/quality inventory in this file and
+the package acceptance plan in [PLAN.md](PLAN.md). R0 covers baseline,
+reference/status verification and incomplete review states; R1-R3 cover daily
+editing/navigation; R4-R6 cover rich content and file/output workflows; R7-R8
+cover presentation and project planning; R9-R10 cover AI and protected/connected
+files; R11 covers distribution; R12 covers extensibility, collaboration and
+the accepted additional locales. No issue is omitted from the priority plan.
+
 ## P1: MindManager native file compatibility (bounded slice)
 
 - User request: support the official Corel/Alludo MindManager format for
@@ -43,6 +62,9 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   All ten supported locales have catalog entries and light/dark UI coverage,
   alongside model/output regressions. Merged localization PR29 is integrated;
   both catalog additions are retained.
+- Remaining action: R0 must verify review/release status and update this heading;
+  do not schedule duplicate feature implementation. Future changes must extend
+  validation to the full 13-locale matrix.
 
 ## Recently completed
 - Legal documents now render CommonMark/GFM formatting, including headings,
@@ -888,7 +910,8 @@ to add XMind's own cloud account, billing or hosted AI service.
   required CI checks before making the repository public
 - Delivered offline licence, third-party notices and Impressum inside Help > About;
   see Recently completed.
-- P1 (in progress) Startup splash screen: while Thinoda launches, show a centered,
+- P1 Startup splash screen (implemented; R0 acceptance verification remains):
+  while Thinoda launches, show a centered,
   About-style branded card (logo, name, tagline, version) with a real progress
   indicator — indeterminate while starting, determinate only for counted launch
   files (file i of n) — in the configured light/dark/Auto theme and startup
@@ -920,8 +943,12 @@ to add XMind's own cloud account, billing or hosted AI service.
   content stays English and editable; technical diagnostics retain original detail.
   Regression coverage checks all catalog keys, dynamic labels, interpolation
   contracts, locale variants, preference roundtrips and light/dark switching.
-- P3 Remaining UI languages (JA, ZH): require proper font/IME/shortcut support and
-  contextual translations; not advertised as supported by the expanded locales.
+- P1 User-directed localization expansion: add Japanese, Simplified Chinese
+  (`zh-CN`) and Traditional Chinese (`zh-TW`) in addition to the ten shipped
+  locales. Translate all UI, help, installer and platform strings in context;
+  verify font fallback, IME, shortcut handling, layout remeasurement, long-text
+  behavior, light/dark/Auto, and all supported native targets plus applicable
+  WASM workflows before advertising support.
 - P2 Launching Thinoda again without files exits silently when an instance is
   already running; it should bring the existing window to the front instead.
 - P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software

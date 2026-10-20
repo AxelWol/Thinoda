@@ -74,8 +74,56 @@ Package descriptions below are acceptance targets, not completion claims; the
 No application changes, account connections, publishing or release deployment are
 authorized by this planning document.
 
+### Planning deliverable verification
+
+This roadmap task is complete when repository documentation, unfinished backlog
+scope, and the current GitHub issue/PR inventory are reconciled into a prioritized,
+dependency-aware plan. It does **not** require implementing roadmap packages,
+merging branches, or running application CI. Those are execution and release
+gates in R0 and the applicable feature packages below; do not treat their absence
+as a defect in the planning deliverable.
+
 ### Baseline and constraints
 
+- The user reports that issues #47 (topic size after drag), #48 (hover cursor),
+  and #50 (long text in graphical exports) were fixed and merged to `main`.
+  Reconcile the development branch with those fixes and rerun their regressions
+  before extending the affected code. GitHub confirms all three issues are
+  closed; merged PR #54 explicitly fixes #47. At the latest review,
+  `origin/main` was 13 commits ahead of this worktree, so this branch does not
+  yet contain the verified baseline. This is an implementation prerequisite,
+  not a blocker to completing this planning inventory.
+- Current GitHub work-item inventory (checked 2026-10-20): there are **no open
+  issues**. The three most recently closed UX issues are #47, #48 and #50 above.
+  Two open work-in-progress pull requests remain:
+  - [#56](https://github.com/AxelWol/Thinoda/pull/56), Linux CI recovery
+    persistence assertion: reproduce the failure, implement/regress the fix,
+    and complete review. Map to **R0 baseline/CI reliability**; do not treat its
+    successful workflow run as proof the WIP change is merged or accepted.
+  - [#57](https://github.com/AxelWol/Thinoda/pull/57), Windows print-preview
+    tests timing out on slower rendering: adjust the test-only wait allowance,
+    run focused validation, and review. Map to **R0 baseline/CI reliability**
+    (with R6 print behavior as the related feature area); keep the fix test-only
+    unless new evidence demonstrates a production defect.
+  Both PRs were still open at the inventory check. Their latest displayed CI
+  matrix checks were successful on Windows x64/ARM64, macOS, Ubuntu, WASM and
+  importer fuzz smoke, but their PR descriptions still show unfinished work.
+  No additional open GitHub issues or PRs were returned by the full repository
+  listings.
+- The accepted delivery scope is the complete R0-R12 roadmap across Windows
+  x64/ARM64, macOS x64/ARM64, Linux Ubuntu LTS packages, and applicable
+  `wasm32-unknown-unknown` browser workflows. Every feature must be tested in
+  light and dark appearance (including Auto/system behavior) and all 13 locales:
+  EN, DE, ES, FR, DA, NL, PT-PT, PT-BR, IT, PL, JA, Simplified Chinese (`zh-CN`),
+  and Traditional Chinese (`zh-TW`).
+- New CJK locales require complete contextual catalogs, IME and font-fallback
+  checks, layout remeasurement, shortcut and installer/package coverage. Do not
+  claim a locale or platform as supported from catalog presence or compilation
+  alone.
+- The startup splash implementation is present in `thinoda-app/src/startup.rs`.
+  R0 owns its acceptance verification (launch-file progress/errors, recovery,
+  close behavior and platform-specific startup); it is not a new feature to
+  implement unless that verification finds a concrete defect.
 - Latest source includes Clarity styling, the Zen exit toast, a responsive template
   grid and a Home-screen explanation for Format Panel availability. The running
   release predates these changes.
@@ -131,6 +179,20 @@ feature in an earlier band. Deliver incremental releases rather than waiting for
 5. Define benchmark hardware, backend, viewport and interactions for the 10,000-topic,
    60-fps goal; record p95 frame time (target <=16.7 ms) and layout/edit latency.
    Set an explicit layout-latency budget after measuring the baseline.
+6. Reconcile the closed UX issues #47/#48/#50 and current CI maintenance PRs #56/#57
+   against the exact tested revision. Keep per-platform, WASM, locale, and
+   light/dark/Auto results separate; a running CI job is not a pass.
+7. For every R1-R12 package, record feature applicability for native targets
+   versus WASM. Verify browser equivalents where available (local virtual
+   storage, browser downloads/printing, and web-safe interactions); explicitly
+   document and hide native-only controls rather than implying browser parity.
+
+**Open-work linkage:** the repository issue tracker has no open issues at the
+2026-10-20 inventory check. The only open GitHub work items are PRs #56 and #57,
+both assigned to R0 for CI reliability; #57 also informs R6 print acceptance.
+All other unfinished scope is in the repository's own [backlog](BACKLOG.md) and
+is assigned to R1-R12 in the delivery-order table below and the detailed package
+sections. Thus no untriaged open issue is omitted from the proposed order.
 
 **Exit:** baseline failures have reproducible cases or explicit blockers; visual
 fixtures and benchmark commands run in CI; a short decision record exists for each
@@ -268,6 +330,10 @@ creates nothing, recent/filter state persists correctly and licensed assets are 
    replacement counts and well-defined transactional undo; preserve active-sheet mode.
 2. Complete standalone sheet save/clipboard fidelity and merge-XMind-files with ID/
    asset remapping, explicit conflicts and relationship preservation.
+   Continue the bounded MindManager interoperability work here: verify residual
+   native-resaved round trips where a legitimate reference is available, retain
+   explicit conversion warnings, and document unverified/lossy fields. R0 owns
+   the baseline/reference inventory; do not claim full MindManager compatibility.
 3. Deliver Map Shot region selection, clipboard/PNG output and cancel; align export
    rendering with rich canvas content and light/dark backgrounds.
 4. Deliver native Print/page setup, preview/fit-to-page and page handling on each OS.
@@ -372,8 +438,10 @@ are retained. Requires accounts/certificates and permitted native hardware/runne
    are implemented alongside EN/DE/Auto, including offline help, application
    messages, Windows installer controls, macOS bundle declarations and Linux
    desktop descriptions. Shared catalogs ship in all architecture builds; native
-   system controls keep OS translations. JA/ZH remain planned, requiring
-   font/IME/shortcut and text-expansion checks before advertising support.
+   system controls keep OS translations. Add complete JA, Simplified Chinese
+   (`zh-CN`) and Traditional Chinese (`zh-TW`) catalogs and native autonyms as
+   accepted product scope. Validate font/IME support, layout/text expansion,
+   shortcuts, installer controls and platform metadata before advertising support.
 
 **Exit:** deterministic multi-client convergence and offline-rejoin tests, isolated
 plugin fault/limit tests, and native localization checks. A web/mobile companion
@@ -387,6 +455,10 @@ application itself is separate scope; these interfaces enable it.
   `cargo xtask ci` for the release candidate (fmt, clippy and workspace tests).
   Run visual snapshots, recovery/format fixtures, fuzz smoke and benchmarks relevant
   to the feature; no fixed total test count substitutes for coverage.
+- Support matrix: run locale-catalog/completeness tests for all 13 locales and
+  focused light/dark/Auto UI checks; run applicable behavior on Windows x64/ARM64,
+  macOS x64/ARM64, Linux, and WASM browser builds/smoke tests. State which checks
+  executed natively and which only compiled.
 - Native: verify Windows first, then macOS and Ubuntu before cross-platform claims.
   Use temporary maps, do not overwrite user files, and coordinate app interaction
   with the user. Rebuilding the running executable requires normal close/save handling.
