@@ -1,3 +1,5 @@
+_Last updated: 2026-10-20 10:07:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Accessibility
 
 Thinoda is a mind mapping app for giving your thoughts shape. Thinking,
