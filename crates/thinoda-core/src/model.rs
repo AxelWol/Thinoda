@@ -294,6 +294,9 @@ pub struct TopicStyle {
     /// Fixed topic width ("Length" in XMind's Style panel).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<f32>,
+    /// Explicit horizontal and vertical padding, used to preserve topic size across hierarchy moves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub padding: Option<Vec2>,
 }
 
 impl TopicStyle {

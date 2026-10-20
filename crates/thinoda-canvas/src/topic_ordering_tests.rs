@@ -41,7 +41,7 @@ fn insertion_edges_follow_connector_axis_and_document_order_for_all_structures()
             assert!(a.slot.is_some() && b.slot.is_some());
             for proposal in [a, b] {
                 let mut edited = sheet.clone();
-                apply(&mut edited, &[floating], &proposal).unwrap();
+                apply(&mut edited, &[floating], &proposal, &layout).unwrap();
                 assert_eq!(
                     edited.children(root)[proposal.index],
                     floating,
@@ -83,6 +83,7 @@ fn multi_topic_insertion_preserves_requested_order_and_one_step_undo() {
                 active_sheet: 0,
                 metadata: Default::default(),
             });
+            let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
             let before = doc.workbook().clone();
             let proposal = DropTarget {
                 parent: root,
@@ -90,7 +91,7 @@ fn multi_topic_insertion_preserves_requested_order_and_one_step_undo() {
                 slot: None,
                 side: None,
             };
-            doc.edit_sheet("Insert topics", |s| apply(s, &moving, &proposal))
+            doc.edit_sheet("Insert topics", |s| apply(s, &moving, &proposal, &layout))
                 .unwrap();
             assert_eq!(
                 doc.sheet().children(root),
@@ -149,6 +150,7 @@ fn dropping_into_an_unchanged_slot_preserves_summary_ownership_and_history() {
         active_sheet: 0,
         metadata: Default::default(),
     });
+    let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
     let before = doc.workbook().clone();
     let state = doc.state_id();
     for index in [0, 1] {
@@ -158,7 +160,7 @@ fn dropping_into_an_unchanged_slot_preserves_summary_ownership_and_history() {
             side: None,
             slot: None,
         };
-        doc.edit_sheet("No-op drop", |s| apply(s, &[a], &proposal))
+        doc.edit_sheet("No-op drop", |s| apply(s, &[a], &proposal, &layout))
             .unwrap();
         assert_eq!(doc.workbook(), &before);
         assert_eq!(doc.state_id(), state);
