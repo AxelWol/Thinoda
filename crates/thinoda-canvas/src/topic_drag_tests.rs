@@ -1,6 +1,7 @@
 use super::*;
+use crate::topic_drag::{DropTarget, apply};
 use egui_kittest::Harness;
-use thinoda_core::{EditError, Workbook};
+use thinoda_core::{ApproxMeasure, EditError, Sheet, Workbook, layout_sheet, theme::Level};
 
 struct State {
     doc: Document,
@@ -121,6 +122,36 @@ fn subtree_drag_paints_full_content_without_edits_then_moves_once_at_each_zoom()
         assert!(h.state_mut().doc.redo());
         assert_eq!(h.state().doc.workbook(), &after);
     }
+}
+
+#[test]
+fn moving_topic_to_another_hierarchy_level_preserves_its_visual_size() {
+    let mut sheet = Sheet::new("Move", "Center");
+    let source = sheet.insert_child(sheet.root, "Source branch").unwrap();
+    let target = sheet.insert_child(sheet.root, "Target branch").unwrap();
+    let before_layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let before = before_layout.topics[&source].clone();
+    assert_eq!(before.level, Level::Main);
+
+    apply(
+        &mut sheet,
+        &[source],
+        &DropTarget {
+            parent: target,
+            index: 0,
+            slot: None,
+            side: None,
+        },
+        &before_layout,
+    )
+    .unwrap();
+
+    let after_layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let after = &after_layout.topics[&source];
+    assert_eq!(after.level, Level::Sub);
+    assert_eq!(after.style.font_size, before.style.font_size);
+    assert_eq!(after.padding, before.padding);
+    assert_eq!(after.rect.size, before.rect.size);
 }
 
 #[test]

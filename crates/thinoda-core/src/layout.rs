@@ -156,6 +156,8 @@ pub struct TopicLayout {
     pub rect: Rect,
     pub level: Level,
     pub style: ResolvedStyle,
+    /// Effective horizontal and vertical padding in sheet coordinates.
+    pub padding: Vec2,
     pub grow: Dir,
     pub title_rect: Rect,
     pub image_rect: Option<Rect>,
@@ -352,7 +354,7 @@ struct Engine<'a> {
     measure: &'a dyn TextMeasure,
     dark: bool,
     spacing: f32,
-    info: HashMap<TopicId, (Vec2, Content, ResolvedStyle, Level)>,
+    info: HashMap<TopicId, (Vec2, Content, ResolvedStyle, Level, Vec2)>,
     grow: HashMap<TopicId, Dir>,
 }
 
@@ -611,12 +613,12 @@ pub fn cubic(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
 }
 
 impl Engine<'_> {
-    fn info(&mut self, id: TopicId) -> &(Vec2, Content, ResolvedStyle, Level) {
+    fn info(&mut self, id: TopicId) -> &(Vec2, Content, ResolvedStyle, Level, Vec2) {
         if !self.info.contains_key(&id) {
             let style = resolve_style(self.sheet, id, self.dark);
             let level = level_of(self.sheet, id);
-            let (size, content) = self.measure_topic(id, &style, level);
-            self.info.insert(id, (size, content, style, level));
+            let (size, content, padding) = self.measure_topic(id, &style, level);
+            self.info.insert(id, (size, content, style, level, padding));
         }
         &self.info[&id]
     }
@@ -625,7 +627,12 @@ impl Engine<'_> {
         self.info(id).0
     }
 
-    fn measure_topic(&self, id: TopicId, style: &ResolvedStyle, level: Level) -> (Vec2, Content) {
+    fn measure_topic(
+        &self,
+        id: TopicId,
+        style: &ResolvedStyle,
+        level: Level,
+    ) -> (Vec2, Content, Vec2) {
         let t = self.sheet.topic(id).expect("topic exists");
         let fs = style.font_size;
         let (mut px, mut py): (f32, f32) = match level {
@@ -634,6 +641,10 @@ impl Engine<'_> {
             Level::Floating | Level::Summary => (14.0, 9.0),
             Level::Sub => (8.0, 5.0),
         };
+        if let Some(padding) = t.style.padding {
+            px = padding.x;
+            py = padding.y;
+        }
         let stroke_padding = style.border_width.max(style.line_width) / 2.0 + 4.0;
         px = px.max(stroke_padding);
         py = py.max(stroke_padding);
@@ -746,12 +757,12 @@ impl Engine<'_> {
                 lx += lw + gap;
             }
         }
-        (Vec2::new(w.ceil(), h.ceil()), c)
+        (Vec2::new(w.ceil(), h.ceil()), c, Vec2::new(px, py))
     }
 
     fn finish_items(&mut self, layout: &mut Layout, items: Vec<(TopicId, Vec2)>) {
         for (id, center) in items {
-            let (size, content, style, level) = self.info(id).clone();
+            let (size, content, style, level, padding) = self.info(id).clone();
             let rect = Rect::from_center_size(center, size);
             let off = rect.min;
             let mv = |r: Rect| r.translate(off);
@@ -768,6 +779,7 @@ impl Engine<'_> {
                     rect,
                     level,
                     style,
+                    padding,
                     grow: *self.grow.get(&id).unwrap_or(&Dir::Right),
                     title_rect: mv(content.title),
                     image_rect: content.image.map(mv),
@@ -985,7 +997,7 @@ impl Engine<'_> {
     }
 
     fn attach(&mut self, id: TopicId, center: Vec2, dir: Dir, outgoing: bool) -> Vec2 {
-        let (size, _, style, _) = self.info(id);
+        let (size, _, style, _, _) = self.info(id);
         let r = Rect::from_center_size(center, *size);
         let underline = style.shape == TopicShape::Underline;
         let toward_right = (dir == Dir::Right) == outgoing;
