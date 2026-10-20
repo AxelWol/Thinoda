@@ -87,7 +87,8 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
   existing command/symbol/quick-style tests pass. Planning and finished-step reviews
   found no blockers. Full grouping/text-control/native-accessibility acceptance,
-  toolbar popovers and short-window nested color-picker QA remain open.
+  short-window nested color-picker QA remain open; toolbar roots are covered by
+  the completed follow-up below.
 - Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
   **Delivered:** pointer-drag reproduction isolated theme-grid cell expansion.
   Reused fixed-size preview cards with responsive columns instead of allowing
@@ -106,6 +107,19 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   popup cleanup and hidden-inspector reopening/Notes-shortcut alternatives.
   Planning and finished-step reviews completed without remaining blockers.
   Native GPU/accessibility acceptance remains open.
+
+### R2 toolbar-popup follow-up
+
+- **Delivered:** Export, Marker, More insert actions, Zoom and Statistics share
+  viewport-bounded scrolling and keyboard-focus reveal. Marker no longer assumes
+  a 560-point-tall screen; Export has a localized accessible name.
+  The locale/appearance/100-200% matrix covers short and normal-height windows,
+  first/last item reachability, actual popup bounds (one physical pixel of frame
+  rounding tolerance), Marker/More widths, marker insertion/undo, keyboard zoom
+  activation and unchanged document/selection on dismissal.
+  Planning and finished-step rubber-duck reviews found no remaining blockers.
+  Nested egui color-picker/text-control menus and native/GPU/accessibility
+  acceptance remain open; R2/P4.2 are not marked complete.
 
 ### Earlier completed slices
 

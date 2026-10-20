@@ -629,8 +629,25 @@ document/selection; existing context action, symbol and quick-style suites pass.
 Follow with the broader P4.2 grouping/accessibility audit (including text-control
 menus owned by egui); do not claim native OS menus or full P4.2 acceptance here.
 Toolbar-triggered symbol/marker, export, zoom and statistics popovers remain a
-separate audit. The symbol context menu's nested egui color picker still needs
+separate audit (toolbar roots are now covered by the follow-up below).
+The symbol context menu's nested egui color picker still needs
 dedicated short-window interaction QA; planning review identified that edge case.
+
+**Delivered R2 follow-up - toolbar popup bounds:** top-bar Export, Map insertion
+Marker/More, and status-bar Zoom/Statistics now reuse the same viewport-height
+scrolling/focus helper. Removed the symbol insertion menu's independent 560-point
+limit, which could exceed short windows. Menu responses, localized accessible
+names, color controls and existing commands remain intact; Export now has an
+explicit localized accessible name rather than only an icon/tooltip.
+The sequential shipped-locale/Light/Dark/System matrix covers 100/150/200% scaling,
+240-logical-point short windows and a normal-height case, actual foreground
+popup bounds, first/last item reachability, Marker/More width constraints, marker
+application with undo, keyboard zoom activation and Escape/state preservation.
+Popup-frame checks allow one physical pixel for independent frame/origin rounding;
+action reachability is checked against the unexpanded viewport.
+Planning and finished-step rubber-duck reviews have no remaining blockers.
+Nested egui color pickers, text-edit context menus, native/GPU and assistive-
+technology acceptance remain separate checks; this does not complete R2/P4.2.
 
 **Delivered R2 mitigation - Map pane maximum-resize corruption (user screenshot,
 2026-10-20):** reproduced with actual pointer dragging in the Windows headless

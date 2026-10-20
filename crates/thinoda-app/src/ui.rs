@@ -51,8 +51,12 @@ pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
         });
 }
 
-fn menu_button(ui: &mut Ui, label: &str, content: impl FnOnce(&mut Ui)) {
-    ui.menu_button(label, |ui| scroll_menu(ui, content));
+fn menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    ui.menu_button(label, |ui| scroll_menu(ui, content))
 }
 
 pub(crate) fn font_selector(
@@ -455,7 +459,7 @@ impl ThinodaApp {
                 {
                     cmd = Some(Cmd::ToggleSymbolsPanel);
                 }
-                ui.menu_button(RichText::new(icons::EXPORT), |ui| {
+                menu_button(ui, RichText::new(icons::EXPORT), |ui| {
                     for f in EXPORT_MENU {
                         if ui.button(t(f.label())).clicked() {
                             cmd = Some(Cmd::Export(*f));
@@ -463,6 +467,7 @@ impl ThinodaApp {
                     }
                 })
                 .response
+                .accessible_name(t("Export"))
                 .on_hover_text(t("Export"));
                 if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
                     cmd = Some(Cmd::ToggleZen);
@@ -845,25 +850,21 @@ impl ThinodaApp {
 
     fn marker_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_max_width(320.0);
-        egui::ScrollArea::vertical()
-            .max_height(560.0)
-            .show(ui, |ui| {
-                self.symbol_insertion_color(ui);
-                for g in markers::GROUPS {
-                    ui.label(RichText::new(t(g.name)).small().weak());
-                    ui.horizontal_wrapped(|ui| {
-                        for m in g.markers {
-                            if self.symbol_button(ui, m, false) {
-                                *cmd = Some(Cmd::Canvas(Action::ToggleMarkerColor(
-                                    m.id.to_string(),
-                                    self.symbol_color,
-                                )));
-                            }
-                        }
-                    });
+        self.symbol_insertion_color(ui);
+        for g in markers::GROUPS {
+            ui.label(RichText::new(t(g.name)).small().weak());
+            ui.horizontal_wrapped(|ui| {
+                for m in g.markers {
+                    if self.symbol_button(ui, m, false) {
+                        *cmd = Some(Cmd::Canvas(Action::ToggleMarkerColor(
+                            m.id.to_string(),
+                            self.symbol_color,
+                        )));
+                    }
                 }
-                self.placed_symbols(ui, cmd);
             });
+        }
+        self.placed_symbols(ui, cmd);
     }
 
     // ----- center -------------------------------------------------------------------------------
@@ -900,57 +901,61 @@ impl ThinodaApp {
                             }
                         });
                         widgets::vdivider(ui);
-                        ui.menu_button(icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
+                        menu_button(ui, icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
                             .response
                             .accessible_name(t("Marker"))
                             .on_hover_text(t("Marker"));
-                        ui.menu_button(format!("{} {}", icons::ADD, icons::CHEVRON_DOWN), |ui| {
-                            ui.set_min_width(190.0);
-                            for (icon, label, enabled, command) in [
-                                (
-                                    icons::NOTE,
-                                    "Notes",
-                                    single,
-                                    Cmd::EditField(FocusField::Notes),
-                                ),
-                                (
-                                    icons::LINK,
-                                    "Hyperlink",
-                                    single,
-                                    Cmd::EditField(FocusField::Hyperlink),
-                                ),
-                                (
-                                    icons::LABEL,
-                                    "Labels",
-                                    self.command_available(&Cmd::Labels),
-                                    Cmd::Labels,
-                                ),
-                                (
-                                    icons::TODO,
-                                    "To-Do",
-                                    has_selection,
-                                    Cmd::Canvas(Action::ToggleTodo),
-                                ),
-                                (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
-                            ] {
-                                if ui
-                                    .add_enabled(
-                                        enabled,
-                                        egui::Button::new(format!("{icon} {}", t(label))),
-                                    )
-                                    .accessible_name(t(label))
-                                    .clicked()
-                                {
-                                    cmd = Some(command);
+                        menu_button(
+                            ui,
+                            format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
+                            |ui| {
+                                ui.set_min_width(190.0);
+                                for (icon, label, enabled, command) in [
+                                    (
+                                        icons::NOTE,
+                                        "Notes",
+                                        single,
+                                        Cmd::EditField(FocusField::Notes),
+                                    ),
+                                    (
+                                        icons::LINK,
+                                        "Hyperlink",
+                                        single,
+                                        Cmd::EditField(FocusField::Hyperlink),
+                                    ),
+                                    (
+                                        icons::LABEL,
+                                        "Labels",
+                                        self.command_available(&Cmd::Labels),
+                                        Cmd::Labels,
+                                    ),
+                                    (
+                                        icons::TODO,
+                                        "To-Do",
+                                        has_selection,
+                                        Cmd::Canvas(Action::ToggleTodo),
+                                    ),
+                                    (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
+                                ] {
+                                    if ui
+                                        .add_enabled(
+                                            enabled,
+                                            egui::Button::new(format!("{icon} {}", t(label))),
+                                        )
+                                        .accessible_name(t(label))
+                                        .clicked()
+                                    {
+                                        cmd = Some(command);
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button(t("Find and Replace…")).clicked() {
+                                    cmd = Some(Cmd::FindReplace);
                                     ui.close();
                                 }
-                            }
-                            ui.separator();
-                            if ui.button(t("Find and Replace…")).clicked() {
-                                cmd = Some(Cmd::FindReplace);
-                                ui.close();
-                            }
-                        })
+                            },
+                        )
                         .response
                         .accessible_name(t("More insert actions"))
                         .on_hover_text(t("More insert actions"));
@@ -1867,7 +1872,7 @@ impl ThinodaApp {
                     cmd = Some(Cmd::Canvas(Action::ZoomIn));
                 }
                 let current = d.view.zoom_percent();
-                ui.menu_button(format!("{current}%"), |ui| {
+                menu_button(ui, format!("{current}%"), |ui| {
                     let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
                     if !presets.contains(&current) {
                         presets.push(current);
@@ -1903,32 +1908,36 @@ impl ThinodaApp {
                         thinoda_core::search::word_count(sheet)
                     ),
                 );
-                ui.menu_button(format!("{}: {}", t("Topics"), sheet.topics.len()), |ui| {
-                    ui.strong(t("Current sheet"));
-                    for (label, value) in [
-                        ("Topics", sheet.topics.len()),
-                        ("Words", thinoda_core::search::word_count(sheet)),
-                        (
-                            "Characters",
-                            sheet
-                                .topics
-                                .values()
-                                .map(|topic| topic.title.chars().count())
-                                .sum(),
-                        ),
-                    ] {
-                        ui.label(format!("{}: {value}", t(label)));
-                    }
-                    ui.separator();
-                    widgets::caption(
-                        ui,
-                        t("Topic titles only, including collapsed and floating topics."),
-                    );
-                    widgets::caption(
-                        ui,
-                        t("Words split at whitespace; characters count Unicode scalar values."),
-                    );
-                })
+                menu_button(
+                    ui,
+                    format!("{}: {}", t("Topics"), sheet.topics.len()),
+                    |ui| {
+                        ui.strong(t("Current sheet"));
+                        for (label, value) in [
+                            ("Topics", sheet.topics.len()),
+                            ("Words", thinoda_core::search::word_count(sheet)),
+                            (
+                                "Characters",
+                                sheet
+                                    .topics
+                                    .values()
+                                    .map(|topic| topic.title.chars().count())
+                                    .sum(),
+                            ),
+                        ] {
+                            ui.label(format!("{}: {value}", t(label)));
+                        }
+                        ui.separator();
+                        widgets::caption(
+                            ui,
+                            t("Topic titles only, including collapsed and floating topics."),
+                        );
+                        widgets::caption(
+                            ui,
+                            t("Words split at whitespace; characters count Unicode scalar values."),
+                        );
+                    },
+                )
                 .response
                 .accessible_name(t("Statistics"));
                 widgets::vdivider(ui);
