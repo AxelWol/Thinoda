@@ -23,7 +23,7 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
-fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
     let margin = egui::Frame::menu(ui.style()).total_margin().sum().y;
     let height = (ui.ctx().content_rect().height() - margin).max(0.0);
     // A popup's initial sizing height must not become the permanent scroll limit.
@@ -1006,13 +1006,15 @@ impl ThinodaApp {
         }
         let mut cmd = None;
         out.response.context_menu(|ui| {
-            if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
-                if let Some(command) = self.symbol_instance(ui, id, index) {
-                    cmd = Some(command);
+            scroll_menu(ui, |ui| {
+                if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
+                    if let Some(command) = self.symbol_instance(ui, id, index) {
+                        cmd = Some(command);
+                    }
+                } else {
+                    self.context_menu(ui, &mut cmd);
                 }
-            } else {
-                self.context_menu(ui, &mut cmd);
-            }
+            });
         });
         if let Some(c) = cmd {
             self.exec(&ctx, c);
@@ -1218,6 +1220,7 @@ impl ThinodaApp {
         );
         item(ui, t("To-Do"), "", Cmd::Canvas(Action::ToggleTodo), has_sel);
         if single {
+            ui.separator();
             item(
                 ui,
                 t("Edit hyperlink"),
@@ -1241,6 +1244,7 @@ impl ThinodaApp {
                 self.command_available(&Cmd::Labels),
             );
         }
+        ui.separator();
         for (label, shortcut, command) in [
             ("Indent", "", Cmd::Canvas(Action::Indent)),
             ("Outdent", "", Cmd::Canvas(Action::Outdent)),
@@ -1253,14 +1257,15 @@ impl ThinodaApp {
             let available = self.command_available(&command);
             item(ui, t(label), shortcut, command, available);
         }
-        ui.menu_button(t("Select"), |ui| {
+        ui.separator();
+        menu_button(ui, t("Select"), |ui| {
             for (action, label) in Self::selection_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
                 item(ui, t(label), "", command, available);
             }
         });
-        ui.menu_button(t("Arrange"), |ui| {
+        menu_button(ui, t("Arrange"), |ui| {
             for (action, label) in Self::arrangement_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
@@ -1269,20 +1274,22 @@ impl ThinodaApp {
         });
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
-                for a in crate::ai::AiCommand::ALL {
-                    let sc = if a == crate::ai::AiCommand::Brainstorm {
-                        "Ctrl+Shift+I"
-                    } else {
-                        ""
-                    };
-                    item(
-                        ui,
-                        t(a.label()),
-                        sc,
-                        Cmd::Ai(a),
-                        has_sel || !a.needs_topic(),
-                    );
-                }
+                scroll_menu(ui, |ui| {
+                    for a in crate::ai::AiCommand::ALL {
+                        let sc = if a == crate::ai::AiCommand::Brainstorm {
+                            "Ctrl+Shift+I"
+                        } else {
+                            ""
+                        };
+                        item(
+                            ui,
+                            t(a.label()),
+                            sc,
+                            Cmd::Ai(a),
+                            has_sel || !a.needs_topic(),
+                        );
+                    }
+                });
             });
         }
         if has_link {
@@ -1775,58 +1782,62 @@ impl ThinodaApp {
                     cmd = Some(Cmd::RenameSheet);
                 }
                 r.context_menu(|ui| {
-                    if i != d.doc.active_index() {
-                        d.view.commit_edit(&mut d.doc);
-                        d.doc.set_active(i);
-                        d.view.reset();
-                    }
-                    if ui.button(t("Rename Sheet")).clicked() {
-                        d.doc.set_active(i);
-                        cmd = Some(Cmd::RenameSheet);
-                    }
-                    if ui.button(t("Duplicate Sheet")).clicked() {
-                        d.doc.set_active(i);
-                        cmd = Some(Cmd::DuplicateSheet);
-                    }
-                    for (label, command) in [
-                        ("Copy Sheet", Cmd::CopySheet),
-                        ("Paste Sheet", Cmd::PasteSheet),
-                        ("Save Sheet As…", Cmd::SaveSheetAs),
-                        ("New Sheet", Cmd::NewSheet),
-                    ] {
-                        if ui.button(t(label)).clicked() {
-                            cmd = Some(command);
+                    scroll_menu(ui, |ui| {
+                        if i != d.doc.active_index() {
+                            d.view.commit_edit(&mut d.doc);
+                            d.doc.set_active(i);
+                            d.view.reset();
                         }
-                    }
-                    if ui
-                        .add_enabled(i > 0, egui::Button::new(t("Move Left")))
-                        .clicked()
-                    {
-                        d.view.commit_edit(&mut d.doc);
-                        if let Err(e) = d.doc.move_sheet(i, i - 1) {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Not possible here")));
+                        if ui.button(t("Rename Sheet")).clicked() {
+                            d.doc.set_active(i);
+                            cmd = Some(Cmd::RenameSheet);
                         }
-                        d.view.reset();
-                    }
-                    if ui
-                        .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
-                        .clicked()
-                    {
-                        d.view.commit_edit(&mut d.doc);
-                        if let Err(e) = d.doc.move_sheet(i, i + 1) {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Not possible here")));
+                        if ui.button(t("Duplicate Sheet")).clicked() {
+                            d.doc.set_active(i);
+                            cmd = Some(Cmd::DuplicateSheet);
                         }
-                        d.view.reset();
-                    }
-                    if ui
-                        .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
-                        .clicked()
-                    {
-                        d.doc.set_active(i);
-                        cmd = Some(Cmd::DeleteSheet);
-                    }
+                        ui.separator();
+                        for (label, command) in [
+                            ("Copy Sheet", Cmd::CopySheet),
+                            ("Paste Sheet", Cmd::PasteSheet),
+                            ("Save Sheet As…", Cmd::SaveSheetAs),
+                            ("New Sheet", Cmd::NewSheet),
+                        ] {
+                            if ui.button(t(label)).clicked() {
+                                cmd = Some(command);
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .add_enabled(i > 0, egui::Button::new(t("Move Left")))
+                            .clicked()
+                        {
+                            d.view.commit_edit(&mut d.doc);
+                            if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                                self.toasts
+                                    .error(format!("{}: {e}", t("Not possible here")));
+                            }
+                            d.view.reset();
+                        }
+                        if ui
+                            .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
+                            .clicked()
+                        {
+                            d.view.commit_edit(&mut d.doc);
+                            if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                                self.toasts
+                                    .error(format!("{}: {e}", t("Not possible here")));
+                            }
+                            d.view.reset();
+                        }
+                        if ui
+                            .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
+                            .clicked()
+                        {
+                            d.doc.set_active(i);
+                            cmd = Some(Cmd::DeleteSheet);
+                        }
+                    });
                 });
             }
             if ui

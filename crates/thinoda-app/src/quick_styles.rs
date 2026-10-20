@@ -166,10 +166,12 @@ impl ThinodaApp {
                                 }
                                 if *custom {
                                     response.context_menu(|ui| {
-                                        if ui.button(t("Remove Quick Style…")).clicked() {
-                                            remove = Some(style.name.clone());
-                                            ui.close();
-                                        }
+                                        crate::ui::scroll_menu(ui, |ui| {
+                                            if ui.button(t("Remove Quick Style…")).clicked() {
+                                                remove = Some(style.name.clone());
+                                                ui.close();
+                                            }
+                                        });
                                     });
                                 }
                             });

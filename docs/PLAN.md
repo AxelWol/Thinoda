@@ -613,6 +613,53 @@ Context menus, symbol/toolbar popovers, all-command keyboard traversal, native
 accessibility and actual native/browser execution remain open. R2 and P4.2 are
 not complete; reuse these sizing/focus helpers when auditing the remaining menus.
 
+**Delivered R2 mitigation - context-menu overflow (user screenshot, 2026-10-20):**
+the German topic context menu extends below the app window, hiding later commands.
+Applied the proven viewport-height/focus-aware scroll helper to canvas/topic/object/
+symbol context menus, sheet-tab context menus and custom quick-style menus, plus
+their Select/Arrange/AI submenus. Preserve current labels, availability and direct
+command paths during this safety fix; use separators for semantic groups. Exercise
+short windows, edge anchors, 100/150/200% app scaling, shipped locales and appearance
+modes, scroll-to-last/first and keyboard activation with no accidental document
+changes. Include actual popup geometry and existing context-action regression tests.
+Planning and finished-step rubber-duck reviews found no blockers. The new sequential
+locale/theme/scaling matrix verifies topic and sheet menus, nested Arrange/AI,
+corner anchors, disabled commands, keyboard activation, undo and unchanged
+document/selection; existing context action, symbol and quick-style suites pass.
+Follow with the broader P4.2 grouping/accessibility audit (including text-control
+menus owned by egui); do not claim native OS menus or full P4.2 acceptance here.
+Toolbar-triggered symbol/marker, export, zoom and statistics popovers remain a
+separate audit. The symbol context menu's nested egui color picker still needs
+dedicated short-window interaction QA; planning review identified that edge case.
+
+**Next R2 mitigation - Map pane maximum-resize corruption (user screenshot,
+2026-10-20):** resizing the Map pane to its maximum leaves tabs, captions and theme
+cards clipped/offset against the pane boundary. The report calls it the left pane;
+the supplied screenshot shows the affected Map inspector on the right. Reproduce
+the actual resize gesture in the current Windows build before attributing a cause.
+Audit panel width limits, persisted resize state, content/clip rectangles and
+canvas/sidebar layout ordering; clamp saved widths to the current work area and
+reflow controls/cards without overlap. Keep a usable canvas and reachable tabs.
+Exercise minimum/maximum/repeated resizing, subsequent window resize, hide/reopen
+and restart, across shipped locales, light/dark/System and 100/150/200% scaling.
+Verify actual paint/clip behavior (not only accessible widget bounds), preserve
+document/selection/undo state, and include focused regression coverage. Schedule
+after context-menu safety, with planning/finished-step rubber-duck review and its
+own commit; this remains open until reproduced and verified.
+
+**Next R2 mitigation - Outline/structure toolbar collision (user screenshot,
+2026-10-20):** the map's floating insertion toolbox covers Outline list-modification
+buttons. Make toolbox visibility/placement specific to the active center mode:
+prefer hiding the canvas-only toolbox in Outline, where equivalent list controls
+already exist, rather than merely drawing either surface above the other.
+Verify no actions become unavailable; otherwise reserve non-overlapping space for
+the missing actions. Cover Map/Outline transitions, selection changes, narrow/short
+windows, shipped translations and 100/150/200% scaling. Assert button rectangles
+and hit targets are unobscured and exercise insert/move/indent/delete with undo,
+preserving selection on mode changes. Confirm light/dark/System appearance and
+native paint behavior. Schedule after context-menu safety and Map-pane resizing,
+with planning/finished-step rubber-duck review and a separate commit.
+
 R0 importer robustness slice: eight valid seeds across all seven import formats
 (native ZIP and raw JSON both included) receive systematic boundary truncations
 and 128 deterministic byte mutations per seed. Every accepted workbook validates

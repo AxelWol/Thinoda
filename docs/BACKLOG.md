@@ -77,6 +77,33 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   document/selection preservation. Finished-step rubber-duck review has no blocking
   findings. Context menus, symbol popovers, full keyboard/accessibility audits and
   real native/browser acceptance remain open; this does not complete R2/P4.2.
+
+### R2 screenshot-driven mitigations
+
+- User screenshot (2026-10-20): the German topic context menu is taller than the
+  app window. **Delivered:** all application-defined context-menu roots and nested
+  Select/Arrange/AI menus use shared viewport-height scrolling/focus behavior,
+  retaining direct command access with semantic separators. The regression matrix
+  covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
+  existing command/symbol/quick-style tests pass. Planning and finished-step reviews
+  found no blockers. Full grouping/text-control/native-accessibility acceptance,
+  toolbar popovers and short-window nested color-picker QA remain open.
+- Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
+  captions, tabs and theme cards appear clipped/offset at the panel boundary.
+  Reproduce the actual gesture, audit persisted sizing and paint/clip/layout
+  ordering, then bound/reflow the inspector while preserving canvas space and map
+  state. Cover min/max/repeated resize, window changes and restart across locales,
+  themes and scaling, including paint-level checks. This follows context-menu
+  safety as a separate R2 fix/review/commit; no fix is claimed yet.
+- Outline/structure toolbar collision (user screenshot, 2026-10-20): the floating
+  map insertion toolbox obscures list-modification buttons. Make it mode-specific
+  (prefer hiding canvas-only controls in Outline after checking action parity),
+  or reserve dedicated non-overlapping space. Verify actual hit targets and
+  insert/move/indent/delete plus undo across mode transitions, locales, themes,
+  scaling and small windows. Separate R2 fix after context safety/Map-pane sizing.
+
+### Earlier completed slices
+
 - R1 compact menu-navigation slice: the hamburger now presents eight categories
   (File/Edit/Sheet/Insert/AI/Tools/View/Help). File contains document actions and
   Quit; Settings is in Edit, with matching palette/shortcut-browser categorization.
