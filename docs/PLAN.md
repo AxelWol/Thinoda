@@ -591,8 +591,27 @@ as short-viewport submenu acceptance. Existing nested template, Arrange and
 German print/sidebar tests pass. Application all-target and WASM clippy pass.
 Finished-step rubber-duck review found stale Settings categorization; corrected
 with a regression assertion. Full R1 command consistency/keyboard traversal and
-R2/P4.2 tall submenu/context-menu bounds remain open. A scroll-area experiment
-broke nested submenu interaction and was removed rather than shipped.
+R2/P4.2 context-menu bounds remain open. The initial scroll-area experiment
+clipped nested commands and was removed from the R1 commit; the R2 follow-up below
+fixes the underlying popup sizing rather than changing the command hierarchy.
+
+R2 main-menu overflow follow-up: the hamburger root and every nested main-menu
+popup use viewport-height-bounded vertical scrolling, subtracting the actual menu
+frame margins. The popup's initially estimated height no longer becomes its
+permanent scroll limit. Newly focused commands scroll into view; unchanged focus
+does not pin subsequent manual scrolling. Existing command availability, nested
+template/Arrange paths and dismissal behavior remain intact.
+The expanded matrix tests all shipped locales and Light/Dark/System at
+640x360/100%, 960x540/150%, 1280x720/200% and 1280x480/200% (240 logical pixels
+high), without enlarging the window to reach leaf actions. It checks popup area
+rectangles with half-physical-pixel rounding tolerance, first/last command
+reachability, nested template/Arrange commands, assistive focus, Up/Down scrolling,
+Enter activation and unchanged document/selection. Application all-target and WASM
+clippy pass; Windows x64 `cargo xtask ci` passes with live AI disabled.
+Finished-step rubber-duck review has no blocking findings.
+Context menus, symbol/toolbar popovers, all-command keyboard traversal, native
+accessibility and actual native/browser execution remain open. R2 and P4.2 are
+not complete; reuse these sizing/focus helpers when auditing the remaining menus.
 
 R0 importer robustness slice: eight valid seeds across all seven import formats
 (native ZIP and raw JSON both included) receive systematic boundary truncations

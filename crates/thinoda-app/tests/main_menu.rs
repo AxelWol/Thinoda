@@ -8,16 +8,46 @@ use thinoda_app::{
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+fn reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let rect = h.get_by_role_and_label(Role::Button, label).rect();
+    assert!(
+        h.ctx.content_rect().contains_rect(rect),
+        "{label} out of view: {rect:?}"
+    );
+    let viewport = h.ctx.content_rect().expand(0.5 / h.ctx.pixels_per_point());
+    h.ctx.memory(|memory| {
+        for layer in memory
+            .layer_ids()
+            .filter(|layer| layer.order == egui::Order::Foreground)
+        {
+            if let Some(rect) = memory.area_rect(layer.id) {
+                assert!(
+                    viewport.contains_rect(rect),
+                    "Popup near {label} exceeds viewport: {rect:?}"
+                );
+            }
+        }
+    });
+}
+
 #[test]
 fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
-            for (width, height, scale) in [(640.0, 360.0, 1.0), (1280.0, 720.0, 2.0)] {
+            for (width, height, scale) in [
+                (640.0, 360.0, 1.0),
+                (960.0, 540.0, 1.5),
+                (1280.0, 720.0, 2.0),
+                (1280.0, 480.0, 2.0),
+            ] {
                 let mut app = ThinodaApp::new(
                     Settings {
                         language,
                         theme,
                         ui_scale: scale,
+                        show_format_panel: false,
                         ..Default::default()
                     },
                     Services::default(),
@@ -43,6 +73,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 for category in [
                     "File", "Edit", "Sheet", "Insert", "AI", "Tools", "View", "Help",
                 ] {
+                    reveal(&mut h, t(category));
                     let rect = h.get_by_role_and_label(Role::Button, t(category)).rect();
                     assert!(
                         h.ctx.content_rect().contains_rect(rect),
@@ -50,48 +81,111 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                     );
                 }
                 let settings_label = format!("{} Ctrl+,", t("Settings…"));
-                assert!(
-                    h.query_by_role_and_label(Role::Button, &settings_label)
-                        .is_none()
-                );
                 h.key_press(egui::Key::Escape);
                 h.run_steps(2);
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
-                // Submenu overflow is tracked separately from compact root navigation.
-                h.set_size(egui::vec2(1280.0, 1600.0));
-                h.run_steps(3);
+                for (category, first, shortcut, last) in [
+                    ("Sheet", "New Sheet", "", "Delete Sheet"),
+                    ("Insert", "Topic", "Enter", "Labels"),
+                    (
+                        "AI",
+                        thinoda_app::ai::AiCommand::Brainstorm.label(),
+                        "Ctrl+Shift+I",
+                        thinoda_app::ai::AiCommand::ALL.last().unwrap().label(),
+                    ),
+                    ("Tools", "Map Shot", "F7", "Merge Map Files…"),
+                    ("View", "Previous Sheet", "Ctrl+PageUp", "Collapse All"),
+                    ("Help", "Quick Start", "", "About Thinoda"),
+                ] {
+                    h.get_by_label(thinoda_ui::icons::MENU).click();
+                    h.run_steps(3);
+                    reveal(&mut h, t(category));
+                    h.get_by_role_and_label(Role::Button, t(category)).click();
+                    h.run_steps(3);
+                    for (label, shortcut) in [(last, ""), (first, shortcut)] {
+                        let label = if shortcut.is_empty() {
+                            t(label).to_owned()
+                        } else {
+                            format!("{} {shortcut}", t(label))
+                        };
+                        reveal(&mut h, &label);
+                    }
+                    h.key_press(egui::Key::Escape);
+                    h.run_steps(3);
+                }
                 h.get_by_label(thinoda_ui::icons::MENU).click();
                 h.run_steps(3);
+                reveal(&mut h, t("File"));
                 h.get_by_role_and_label(Role::Button, t("File")).click();
                 h.run_steps(3);
                 let quit = format!("{} Ctrl+Q", t("Quit"));
-                h.get_by_role_and_label(Role::Button, &quit).scroll_to_me();
-                h.run_steps(6);
-                let rect = h.get_by_role_and_label(Role::Button, &quit).rect();
-                assert!(
-                    h.ctx.content_rect().contains_rect(rect),
-                    "{language:?}/{theme:?}/{scale}: Quit out of view: {rect:?}"
-                );
+                reveal(&mut h, &quit);
+                let templates = t("New from Template…");
+                reveal(&mut h, templates);
+                h.get_by_role_and_label(Role::Button, templates).click();
+                h.run_steps(3);
+                let category = thinoda_core::templates::TemplateCategory::ALL[0];
+                reveal(&mut h, t(category.label()));
+                h.get_by_role_and_label(Role::Button, t(category.label()))
+                    .click();
+                h.run_steps(3);
+                let template = thinoda_core::templates::TEMPLATES
+                    .iter()
+                    .rfind(|template| template.category == category)
+                    .unwrap();
+                reveal(&mut h, t(template.name));
                 h.key_press(egui::Key::Escape);
                 h.run_steps(2);
                 if h.query_by_role_and_label(Role::Button, t("Edit")).is_none() {
                     h.get_by_label(thinoda_ui::icons::MENU).click();
                     h.run_steps(3);
                 }
+                reveal(&mut h, t("Edit"));
                 h.get_by_role_and_label(Role::Button, t("Edit")).click();
                 h.run_steps(3);
+                reveal(&mut h, t("Arrange"));
+                h.get_by_role_and_label(Role::Button, t("Arrange")).click();
+                h.run_steps(3);
+                for label in ["Distribute Vertical Centers", "Align Left"] {
+                    reveal(&mut h, t(label));
+                }
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.run_steps(3);
+                reveal(&mut h, t("Edit"));
+                h.get_by_role_and_label(Role::Button, t("Edit")).click();
+                h.run_steps(3);
+                reveal(&mut h, &format!("{} Ctrl+Z", t("Undo")));
                 h.get_by_role_and_label(Role::Button, &settings_label)
-                    .scroll_to_me();
-                h.run_steps(6);
+                    .focus();
+                h.run_steps(8);
                 let rect = h
                     .get_by_role_and_label(Role::Button, &settings_label)
                     .rect();
                 assert!(
                     h.ctx.content_rect().contains_rect(rect),
-                    "{language:?}/{theme:?}/{scale}: Settings out of view: {rect:?}"
+                    "Focused Settings out of view: {rect:?}"
                 );
-                h.get_by_role_and_label(Role::Button, &settings_label)
-                    .click();
+                let settings_focus = h.ctx.memory(|memory| memory.focused()).unwrap();
+                reveal(&mut h, &format!("{} Ctrl+Z", t("Undo")));
+                h.key_press(egui::Key::ArrowUp);
+                h.run_steps(8);
+                let previous_focus = h.ctx.memory(|memory| memory.focused()).unwrap();
+                assert_ne!(previous_focus, settings_focus);
+                let previous_rect = h.ctx.read_response(previous_focus).unwrap().rect;
+                assert!(h.ctx.content_rect().contains_rect(previous_rect));
+                h.key_press(egui::Key::ArrowDown);
+                h.run_steps(8);
+                assert_eq!(
+                    h.ctx.memory(|memory| memory.focused()),
+                    Some(settings_focus)
+                );
+                let rect = h
+                    .get_by_role_and_label(Role::Button, &settings_label)
+                    .rect();
+                assert!(h.ctx.content_rect().contains_rect(rect));
+                h.key_press(egui::Key::Enter);
                 h.run_steps(3);
                 assert!(h.state().dialogs.settings);
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);

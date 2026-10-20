@@ -23,6 +23,38 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+    let margin = egui::Frame::menu(ui.style()).total_margin().sum().y;
+    let height = (ui.ctx().content_rect().height() - margin).max(0.0);
+    // A popup's initial sizing height must not become the permanent scroll limit.
+    ui.set_max_height(height);
+    egui::ScrollArea::vertical()
+        .id_salt("menu_scroll")
+        .max_height(height)
+        .min_scrolled_height(0.0)
+        .show(ui, |ui| {
+            content(ui);
+            let focus = ui.memory(|memory| memory.focused());
+            let focus_key = ui.scope_id().with("menu_focus");
+            let previous = ui.data_mut(|data| {
+                let previous = data.get_temp::<Option<egui::Id>>(focus_key);
+                data.insert_temp(focus_key, focus);
+                previous
+            });
+            if previous != Some(focus)
+                && let Some(focused) = focus
+                && let Some(response) = ui.ctx().read_response(focused)
+                && response.layer_id == ui.layer_id()
+            {
+                ui.scroll_to_rect(response.rect, None);
+            }
+        });
+}
+
+fn menu_button(ui: &mut Ui, label: &str, content: impl FnOnce(&mut Ui)) {
+    ui.menu_button(label, |ui| scroll_menu(ui, content));
+}
+
 pub(crate) fn font_selector(
     ui: &mut Ui,
     fonts: &mut thinoda_ui::fonts::SystemFonts,
@@ -336,7 +368,7 @@ impl ThinodaApp {
         let mut cmd: Option<Cmd> = None;
         ui.horizontal_centered(|ui| {
             ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
-                self.main_menu(ui, &mut cmd)
+                scroll_menu(ui, |ui| self.main_menu(ui, &mut cmd));
             });
             let (can_undo, can_redo) = self
                 .doc()
@@ -459,10 +491,10 @@ impl ThinodaApp {
         if item(ui, t("New"), "Ctrl+N").clicked() {
             *cmd = Some(Cmd::New);
         }
-        ui.menu_button(t("New from Template…"), |ui| {
+        menu_button(ui, t("New from Template…"), |ui| {
             for category in templates::TemplateCategory::ALL {
                 let category_label = t(category.label());
-                ui.menu_button(category_label, |ui| {
+                menu_button(ui, category_label, |ui| {
                     for template in templates::TEMPLATES
                         .iter()
                         .filter(|template| template.category == category)
@@ -477,7 +509,7 @@ impl ThinodaApp {
         if item(ui, t("Open…"), "Ctrl+O").clicked() {
             *cmd = Some(Cmd::Open);
         }
-        ui.menu_button(t("Open Recent"), |ui| {
+        menu_button(ui, t("Open Recent"), |ui| {
             let recent: Vec<_> = self
                 .settings
                 .existing_recent()
@@ -519,7 +551,7 @@ impl ThinodaApp {
         if ui.button(t("Import")).clicked() {
             *cmd = Some(Cmd::Import);
         }
-        ui.menu_button(t("Export"), |ui| {
+        menu_button(ui, t("Export"), |ui| {
             for f in EXPORT_MENU {
                 if ui.button(t(f.label())).clicked() {
                     *cmd = Some(Cmd::Export(*f));
@@ -548,10 +580,16 @@ impl ThinodaApp {
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
-        let item =
-            |ui: &mut Ui, label: &str, sc: &str| ui.add(egui::Button::new(label).shortcut_text(sc));
-        ui.menu_button(t("File"), |ui| self.file_menu(ui, cmd));
-        ui.menu_button(t("Edit"), |ui| {
+        let item = |ui: &mut Ui, label: &str, sc: &str| {
+            let button = egui::Button::new(label);
+            ui.add(if sc.is_empty() {
+                button
+            } else {
+                button.shortcut_text(sc)
+            })
+        };
+        menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
+        menu_button(ui, t("Edit"), |ui| {
             let e = [
                 ("Undo", "Ctrl+Z", Cmd::Canvas(Action::Undo)),
                 ("Redo", "Ctrl+Shift+Z", Cmd::Canvas(Action::Redo)),
@@ -567,27 +605,48 @@ impl ThinodaApp {
             ];
             for (l, sc, c) in e {
                 let button = egui::Button::new(t(l));
-                let button = if sc.is_empty() { button } else { button.shortcut_text(sc) };
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
             }
-            ui.menu_button(t("Select"), |ui| {
+            menu_button(ui, t("Select"), |ui| {
                 for (action, label) in Self::selection_commands() {
                     let command = Cmd::Canvas(action);
-                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.command_available(&command),
+                            egui::Button::new(t(label)),
+                        )
+                        .clicked()
+                    {
                         *cmd = Some(command);
                     }
                 }
             });
-            ui.menu_button(t("Arrange"), |ui| {
+            menu_button(ui, t("Arrange"), |ui| {
                 for (action, label) in Self::arrangement_commands() {
                     let command = Cmd::Canvas(action);
-                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.command_available(&command),
+                            egui::Button::new(t(label)),
+                        )
+                        .clicked()
+                    {
                         *cmd = Some(command);
                     }
                 }
-                widgets::caption(ui, t("Alignment needs floating topics only; distribution spaces centers, not edges."));
+                widgets::caption(
+                    ui,
+                    t(
+                        "Alignment needs floating topics only; distribution spaces centers, not edges.",
+                    ),
+                );
             });
             ui.separator();
             for (label, shortcut, command) in [
@@ -621,7 +680,7 @@ impl ThinodaApp {
                 *cmd = Some(Cmd::Settings);
             }
         });
-        ui.menu_button(t("Sheet"), |ui| {
+        menu_button(ui, t("Sheet"), |ui| {
             for (label, command) in [
                 ("New Sheet", Cmd::NewSheet),
                 ("Rename Sheet", Cmd::RenameSheet),
@@ -642,7 +701,7 @@ impl ThinodaApp {
                 }
             }
         });
-        ui.menu_button(t("Insert"), |ui| {
+        menu_button(ui, t("Insert"), |ui| {
             let e = [
                 ("Topic", "Enter", Action::InsertSibling),
                 ("Subtopic", "Tab", Action::InsertChild),
@@ -683,7 +742,7 @@ impl ThinodaApp {
                 *cmd = Some(Cmd::Labels);
             }
         });
-        ui.menu_button(t("AI"), |ui| {
+        menu_button(ui, t("AI"), |ui| {
             for a in crate::ai::AiCommand::ALL {
                 let sc = if a == crate::ai::AiCommand::Brainstorm {
                     "Ctrl+Shift+I"
@@ -695,19 +754,42 @@ impl ThinodaApp {
                 }
             }
         });
-        ui.menu_button(t("Tools"), |ui| {
-            if ui.add_enabled(self.command_available(&Cmd::MapShot), egui::Button::new(t("Map Shot")).shortcut_text("F7")).clicked() {
+        menu_button(ui, t("Tools"), |ui| {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MapShot),
+                    egui::Button::new(t("Map Shot")).shortcut_text("F7"),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MapShot);
             }
-            if ui.add_enabled(self.command_available(&Cmd::MaskedCopy), egui::Button::new(t("Create Masked Copy…"))).clicked() {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MaskedCopy),
+                    egui::Button::new(t("Create Masked Copy…")),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MaskedCopy);
             }
-            if ui.add_enabled(self.command_available(&Cmd::MergeFiles), egui::Button::new(t("Merge Map Files…"))).clicked() {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MergeFiles),
+                    egui::Button::new(t("Merge Map Files…")),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MergeFiles);
             }
-            widgets::caption(ui, t("Appends complete sheets. Destination metadata is kept; external image references are not embedded."));
+            widgets::caption(
+                ui,
+                t(
+                    "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
+                ),
+            );
         });
-        ui.menu_button(t("View"), |ui| {
+        menu_button(ui, t("View"), |ui| {
             let e = [
                 ("Previous Sheet", "Ctrl+PageUp", Cmd::PreviousSheet),
                 ("Next Sheet", "Ctrl+PageDown", Cmd::NextSheet),
@@ -724,18 +806,18 @@ impl ThinodaApp {
                 ("Collapse All", "", Cmd::Canvas(Action::CollapseAll)),
             ];
             for (l, sc, c) in e {
-                if ui
-                    .add_enabled(
-                        self.command_available(&c),
-                        egui::Button::new(t(l)).shortcut_text(sc),
-                    )
-                    .clicked()
-                {
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
+                if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
             }
         });
-        ui.menu_button(t("Help"), |ui| {
+        menu_button(ui, t("Help"), |ui| {
             for (label, command) in [
                 ("Quick Start", Cmd::QuickStart),
                 ("User Guide", Cmd::UserGuide),
