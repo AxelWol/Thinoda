@@ -1,4 +1,4 @@
-_Last updated: 2026-10-19 11:38:34 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-20 09:31:54 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 <p align="center"><img src="assets/icon.svg" alt="Thinoda logo" width="128"></p>
 
@@ -327,6 +327,12 @@ those system-owned controls. WinGet publishing remains paused.
   and a bounded native MindManager `.mmap` subset. MindManager conversion uses
   explicit loss/sheet-scope warnings and protects imported source files;
   [supported features and verification limits](docs/MINDMANAGER.md).
+- Graphical exports share font-measured title wrapping and reserve whitespace
+  inside node borders, including multiline text and shaped nodes. PDF export
+  preserves vector shapes, connectors and outlined text instead of embedding a
+  page-sized bitmap, so zooming stays sharp. Outlined PDF text is not selectable.
+  This works on Windows, macOS, Linux and the web; raster scale only affects
+  PNG/JPEG. The separate **Save print PDF...** path remains paper-sized raster output.
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
 - Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders
 - AI assistant (optional): brainstorm subtopics, break down into to-dos, explain, summarize,

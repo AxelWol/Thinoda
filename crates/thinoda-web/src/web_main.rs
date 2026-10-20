@@ -40,6 +40,7 @@ pub fn main() {
                 eframe::WebOptions::default(),
                 Box::new(move |cc| {
                     thinoda_app::install_context(&cc.egui_ctx);
+                    crate::cursor::install(&cc.egui_ctx);
                     Ok(Box::new(ThinodaApp::launch(startup, &[])))
                 }),
             )

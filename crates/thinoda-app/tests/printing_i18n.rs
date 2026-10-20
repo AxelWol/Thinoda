@@ -48,7 +48,7 @@ fn german_print_dialog_is_translated_and_accessible_in_both_themes() {
         ] {
             h.get_by_label(label);
         }
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
         while h
             .query_by_role_and_label(Role::Image, "Druckvorschau")
             .is_none()

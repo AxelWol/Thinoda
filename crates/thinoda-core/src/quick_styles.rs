@@ -29,6 +29,13 @@ pub(crate) fn validate_named_style(
             return Err(format!("{kind} {name} must be between {min} and {max}"));
         }
     }
+    if style.padding.is_some_and(|padding| {
+        [padding.x, padding.y]
+            .into_iter()
+            .any(|value| !value.is_finite() || !(0.0..=1000.0).contains(&value))
+    }) {
+        return Err(format!("{kind} padding must be between 0 and 1000"));
+    }
     Ok(())
 }
 
@@ -61,6 +68,7 @@ impl QuickStyle {
                 line_color: Some(r.line_color),
                 line_shape: Some(r.line_shape),
                 line_width: Some(r.line_width),
+                padding: None,
                 width: r.width,
             },
         }
@@ -110,6 +118,7 @@ pub fn preset(name: &str) -> Option<QuickStyle> {
             line_color: Some(fill),
             line_shape: Some(LineShape::Curve),
             line_width: Some(1.5),
+            padding: None,
             ..Default::default()
         },
     })

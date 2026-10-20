@@ -14,6 +14,8 @@ thiserror.workspace = true
 zip.workspace = true
 quick-xml.workspace = true
 resvg.workspace = true
+# Text is outlined by our existing usvg renderer before PDF conversion.
+svg2pdf = { version = "0.13", default-features = false, features = ["image"] }
 image.workspace = true
 log.workspace = true
 sha2 = "0.10"

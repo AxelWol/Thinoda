@@ -1399,7 +1399,7 @@ fn drop_topics(
     };
     let res = doc.edit_sheet("Move Topic", |s| {
         if let Some(target) = &target {
-            crate::topic_drag::apply(s, &ids, target)?;
+            crate::topic_drag::apply(s, &ids, target, layout)?;
         } else {
             for id in &ids {
                 let center = layout.rect(*id).map(|r| r.center() + d).unwrap_or(current);
@@ -1408,6 +1408,7 @@ fn drop_topics(
                 } else {
                     s.detach_to_floating(*id, center)?;
                 }
+                crate::topic_drag::preserve_size_after_move(s, *id, layout)?;
             }
         }
         Ok(())

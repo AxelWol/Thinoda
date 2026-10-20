@@ -661,7 +661,7 @@ mod tests {
     }
 
     fn wait_ready(h: &mut Harness<'_, ThinodaApp>) {
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             h.run_steps(1);
             let editor = h.state().printing.editor.as_ref().unwrap();

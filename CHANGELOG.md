@@ -1,4 +1,4 @@
-_Last updated: 2026-10-19 12:15:18 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-20 10:22:30 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,17 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.5.4](https://github.com/AxelWol/Thinoda/compare/v0.5.3...v0.5.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* contain exported node text and preserve PDF vectors ([#50](https://github.com/AxelWol/Thinoda/issues/50)) ([#52](https://github.com/AxelWol/Thinoda/issues/52)) ([24234ea](https://github.com/AxelWol/Thinoda/commit/24234eac89984fb99eced27bf3f1d4bb874f4efd))
+* preserve topic size when dragging across hierarchy levels ([#54](https://github.com/AxelWol/Thinoda/issues/54)) ([3ca57a5](https://github.com/AxelWol/Thinoda/commit/3ca57a56b3290b4ec87c748978aef0504d83bcec)), closes [#47](https://github.com/AxelWol/Thinoda/issues/47)
+* resolve export fonts on partial-font systems ([#50](https://github.com/AxelWol/Thinoda/issues/50)) ([#55](https://github.com/AxelWol/Thinoda/issues/55)) ([c91fc18](https://github.com/AxelWol/Thinoda/commit/c91fc184f1fb72a3d71a83609c3b572f3ffadab1))
+* **web:** show hover pointers on clickable controls ([#48](https://github.com/AxelWol/Thinoda/issues/48)) ([b702b3f](https://github.com/AxelWol/Thinoda/commit/b702b3fb35bf1f9b5284863a9d92d465a62ece1a))
+* **web:** show hover pointers on clickable controls ([#48](https://github.com/AxelWol/Thinoda/issues/48)) ([#51](https://github.com/AxelWol/Thinoda/issues/51)) ([5d3740e](https://github.com/AxelWol/Thinoda/commit/5d3740ed8f7b9cc4d2b6e4815c3ed4cba1c91570))
 
 ## [0.5.3](https://github.com/AxelWol/Thinoda/compare/v0.5.2...v0.5.3) (2026-10-19)
 

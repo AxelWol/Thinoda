@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use egui::{Color32, Painter, Stroke};
 use thinoda_core::{
     BranchSide, EditError, Layout, Sheet, Structure, TopicId, Vec2, layout::ConnectorKind,
+    theme::level_of,
 };
 
 use crate::{MapView, PaintOptions, Xf, paint_map, render::connector_path};
@@ -176,16 +177,42 @@ pub(crate) fn apply(
     sheet: &mut Sheet,
     ids: &[TopicId],
     target: &DropTarget,
+    layout: &Layout,
 ) -> Result<(), EditError> {
     let mut index = target.index;
     for id in ids {
         sheet.move_topic(*id, target.parent, index)?;
+        preserve_size_after_move(sheet, *id, layout)?;
         if let Some(side) = target.side {
             sheet.set_branch_side(*id, Some(side))?;
         }
         index = sheet.index_in_parent(*id).ok_or(EditError::NotFound)? + 1;
     }
     sheet.set_collapsed(target.parent, false)
+}
+
+pub(crate) fn preserve_size_after_move(
+    sheet: &mut Sheet,
+    id: TopicId,
+    layout: &Layout,
+) -> Result<(), EditError> {
+    let Some(previous) = layout.topics.get(&id) else {
+        return Ok(());
+    };
+    preserve_previous_size(sheet, id, previous)
+}
+
+fn preserve_previous_size(
+    sheet: &mut Sheet,
+    id: TopicId,
+    previous: &thinoda_core::TopicLayout,
+) -> Result<(), EditError> {
+    if level_of(sheet, id) != previous.level {
+        let topic = sheet.topic_mut(id).ok_or(EditError::NotFound)?;
+        topic.style.font_size = Some(previous.style.font_size);
+        topic.style.padding = Some(previous.padding);
+    }
+    Ok(())
 }
 
 pub(crate) fn edge_pan(ctx: &egui::Context, view: &mut MapView, pointer: egui::Pos2) {

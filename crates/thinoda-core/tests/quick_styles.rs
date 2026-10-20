@@ -1,5 +1,5 @@
 use thinoda_core::{
-    Color, Sheet, TopicStyle,
+    Color, Sheet, TopicStyle, Vec2,
     quick_styles::{PRESETS, QuickStyle, preset},
     theme::{Theme, resolve_style},
 };
@@ -83,6 +83,20 @@ fn quick_style_validation_rejects_bad_names_and_nonfinite_or_invalid_dimensions(
         assert!(
             QuickStyle {
                 name: "Size".into(),
+                style
+            }
+            .validate()
+            .is_err()
+        );
+    }
+    for value in [f32::NAN, f32::INFINITY, -1.0, 1001.0] {
+        let style = TopicStyle {
+            padding: Some(Vec2::new(value, 5.0)),
+            ..Default::default()
+        };
+        assert!(
+            QuickStyle {
+                name: "Padding".into(),
                 style
             }
             .validate()
