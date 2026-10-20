@@ -51,30 +51,20 @@ fn configure_generic_families(db: &mut Database) {
         .map(|(name, _)| name.clone())
         .find(|name| Some(name) != sans.as_ref());
 
-    if !has_sans {
-        if let Some(sans) = &sans {
-            db.set_sans_serif_family(sans.clone());
-        }
+    if !has_sans && let Some(sans) = &sans {
+        db.set_sans_serif_family(sans.clone());
     }
-    if !has_serif {
-        if let Some(sans) = &sans {
-            db.set_serif_family(sans.clone());
-        }
+    if !has_serif && let Some(sans) = &sans {
+        db.set_serif_family(sans.clone());
     }
-    if !has_cursive {
-        if let Some(sans) = &sans {
-            db.set_cursive_family(sans.clone());
-        }
+    if !has_cursive && let Some(sans) = &sans {
+        db.set_cursive_family(sans.clone());
     }
-    if !has_fantasy {
-        if let Some(sans) = &sans {
-            db.set_fantasy_family(sans);
-        }
+    if !has_fantasy && let Some(sans) = &sans {
+        db.set_fantasy_family(sans);
     }
-    if !has_monospace {
-        if let Some(mono) = mono.or(sans) {
-            db.set_monospace_family(mono);
-        }
+    if !has_monospace && let Some(mono) = mono.or(sans) {
+        db.set_monospace_family(mono);
     }
 }
 
