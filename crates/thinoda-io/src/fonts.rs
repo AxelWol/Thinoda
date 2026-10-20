@@ -22,24 +22,60 @@ pub(crate) fn build(system: bool) -> Database {
     }
     if db.is_empty() {
         db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
-        let sans = first_family(&db);
         db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
-        let mono = db
-            .faces()
-            .filter_map(|face| face.families.first())
-            .map(|(name, _)| name.clone())
-            .find(|name| Some(name) != sans.as_ref());
-        if let Some(sans) = sans {
+    }
+    configure_generic_families(&mut db);
+    db
+}
+
+fn configure_generic_families(db: &mut Database) {
+    use resvg::usvg::fontdb::{Family, Query};
+
+    let has_family = |family| {
+        let query = Query {
+            families: &[family],
+            ..Query::default()
+        };
+        db.query(&query).is_some()
+    };
+    let has_sans = has_family(Family::SansSerif);
+    let has_serif = has_family(Family::Serif);
+    let has_cursive = has_family(Family::Cursive);
+    let has_fantasy = has_family(Family::Fantasy);
+    let has_monospace = has_family(Family::Monospace);
+
+    let sans = first_family(db);
+    let mono = db
+        .faces()
+        .filter_map(|face| face.families.first())
+        .map(|(name, _)| name.clone())
+        .find(|name| Some(name) != sans.as_ref());
+
+    if !has_sans {
+        if let Some(sans) = &sans {
             db.set_sans_serif_family(sans.clone());
+        }
+    }
+    if !has_serif {
+        if let Some(sans) = &sans {
             db.set_serif_family(sans.clone());
+        }
+    }
+    if !has_cursive {
+        if let Some(sans) = &sans {
             db.set_cursive_family(sans.clone());
+        }
+    }
+    if !has_fantasy {
+        if let Some(sans) = &sans {
             db.set_fantasy_family(sans);
         }
-        if let Some(mono) = mono {
+    }
+    if !has_monospace {
+        if let Some(mono) = mono.or(sans) {
             db.set_monospace_family(mono);
         }
     }
-    db
 }
 
 fn first_family(db: &Database) -> Option<String> {
@@ -64,5 +100,45 @@ mod tests {
             };
             assert!(db.query(&query).is_some(), "{family:?}");
         }
+    }
+
+    #[test]
+    fn partial_system_fonts_resolve_unavailable_generic_families() {
+        use resvg::usvg::fontdb::{Family, Query};
+
+        let mut db = Database::new();
+        db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+        db.set_serif_family("Unavailable serif");
+        db.set_sans_serif_family("Unavailable sans");
+        db.set_cursive_family("Unavailable cursive");
+        db.set_fantasy_family("Unavailable fantasy");
+        db.set_monospace_family("Unavailable monospace");
+
+        configure_generic_families(&mut db);
+
+        for family in [
+            Family::SansSerif,
+            Family::Serif,
+            Family::Cursive,
+            Family::Fantasy,
+            Family::Monospace,
+        ] {
+            let query = Query {
+                families: &[family],
+                ..Query::default()
+            };
+            assert!(db.query(&query).is_some(), "{family:?}");
+        }
+
+        let options = resvg::usvg::Options {
+            fontdb: Arc::new(db),
+            ..Default::default()
+        };
+        let tree = resvg::usvg::Tree::from_str(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><text id="line" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16">Central</text></svg>"#,
+            &options,
+        )
+        .unwrap();
+        assert!(tree.node_by_id("line").is_some());
     }
 }
