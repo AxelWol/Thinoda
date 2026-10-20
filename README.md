@@ -116,6 +116,8 @@ those system-owned controls. WinGet publishing remains paused.
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- The searchable keyboard-shortcut reference scrolls within short/high-scale
+  windows while keeping Close visible. Bindings are read-only for now.
 - **Print** in the main menu / **Ctrl+P** (Command+P on macOS) opens a themed,
   localized paper preview of the current sheet, including offscreen topics.
   Choose A4/A3/Letter/Legal, portrait/landscape, 0–40 mm margins, 150/300 dpi,

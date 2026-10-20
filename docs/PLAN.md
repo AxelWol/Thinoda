@@ -612,6 +612,26 @@ disabled Insert/More states. Planning and finished-step reviews found no
 remaining blockers. Full command-metadata/shortcut-rebinding and native keyboard
 layout acceptance remain open; this is not completion of R1.
 
+**Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
+dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
+budget. Its frame is bounded by the current logical viewport and actual frame
+margins. One scroll surface contains the reference and filters; a measured Close
+row remains visible outside it. The footer is reserved before content layout but
+its interactive button is registered last, preserving Search/Category/Unassigned/
+Close Tab order and reverse traversal. Newly focused controls scroll into view,
+without pinning manual scrolling. Search/category/unassigned changes reset the
+reference scroll.
+The original overflow was reproduced at a 240-point logical height. The sequential
+shipped-locale/Light/Dark/System matrix covers 100/150/200% application scaling down
+to 320x180 logical points, explicitly checking physical-size/scale conversion,
+modal/category-popup bounds, Close hit/paint bounds, first/last reference hit/paint/
+clip reachability, real filters/search, Tab/Shift+Tab, live resize, Close/Escape and
+Outline state preservation. Existing Map/Outline shortcut tests remain green.
+The finished-step review caught a footer-first Tab-order regression; it was
+reproduced and fixed with a regression assertion before committing. Rebinding,
+native keyboard layouts/assistive technology and smaller-than-tested viewports
+remain outside this slice.
+
 R2 main-menu overflow follow-up: the hamburger root and every nested main-menu
 popup use viewport-height-bounded vertical scrolling, subtracting the actual menu
 frame margins. The popup's initially estimated height no longer becomes its

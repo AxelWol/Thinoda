@@ -34,21 +34,25 @@ pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
         .min_scrolled_height(0.0)
         .show(ui, |ui| {
             content(ui);
-            let focus = ui.memory(|memory| memory.focused());
-            let focus_key = ui.scope_id().with("menu_focus");
-            let previous = ui.data_mut(|data| {
-                let previous = data.get_temp::<Option<egui::Id>>(focus_key);
-                data.insert_temp(focus_key, focus);
-                previous
-            });
-            if previous != Some(focus)
-                && let Some(focused) = focus
-                && let Some(response) = ui.ctx().read_response(focused)
-                && response.layer_id == ui.layer_id()
-            {
-                ui.scroll_to_rect(response.rect, None);
-            }
+            reveal_changed_focus(ui);
         });
+}
+
+pub(crate) fn reveal_changed_focus(ui: &mut Ui) {
+    let focus = ui.memory(|memory| memory.focused());
+    let focus_key = ui.scope_id().with("scroll_focus");
+    let previous = ui.data_mut(|data| {
+        let previous = data.get_temp::<Option<egui::Id>>(focus_key);
+        data.insert_temp(focus_key, focus);
+        previous
+    });
+    if previous != Some(focus)
+        && let Some(focused) = focus
+        && let Some(response) = ui.ctx().read_response(focused)
+        && response.layer_id == ui.layer_id()
+    {
+        ui.scroll_to_rect(response.rect, None);
+    }
 }
 
 fn menu_button(

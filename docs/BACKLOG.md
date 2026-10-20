@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1/R2 shortcut-reference viewport safety: actual frame margins and available
+  height replace fixed chrome/minimum-list estimates. A single reference scroll
+  keeps all filters/commands reachable; a measured Close row stays visible.
+  Footer reservation preserves natural forward/reverse Tab order. The shipped-
+  locale/theme/scaling matrix checks frame/hit/paint/clip bounds, actual search/
+  category/unassigned filters, focus reveal, resizing and document preservation
+  down to 320x180 logical points. Planning and finished reviews completed; the
+  latter's Tab-order finding was reproduced and corrected before commit.
+  Shortcut rebinding/conflicts and native keyboard/AT acceptance remain open.
 - R1 topic-field command consistency: Insert exposes Notes/Hyperlink using their
   existing shortcuts. Menu/toolbox/context/palette availability and direct/shortcut
   execution now require one valid topic and no blocking dialog/object selection.
