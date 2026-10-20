@@ -108,8 +108,13 @@ the raw error under **Technical details**:
   blocking desktop client; `AiJob` uses it on wasm.
 - Time comes from `web-time` and background work runs inline on wasm because
   browsers do not allow `std::thread` without special headers.
+- The web entry point installs pointer feedback for enabled, hovered click-only
+  controls, including custom tabs and buttons. Text, resize and drag cursors
+  retain precedence; desktop cursor behavior is unchanged.
 
 ## Testing
+- `cargo test -p thinoda-web` exercises browser hover feedback on the shared
+  widgets, including disabled controls, theme changes and specialized cursors.
 - `cargo test --workspace` covers the shared code, including the virtual file
   system, print page HTML, file name sanitizing, upload naming and recovery
   suspension, all of which are platform independent.
