@@ -223,8 +223,8 @@ undo/redo or explicit save semantics. Native keyboard-layout coverage includes
 Windows DE/EN and platform-appropriate macOS/Linux modifiers.
 
 **Remaining safety audit identified during delivery:** Save All's current loop can
-skip a title-only draft (dirty check precedes title commit) and overwrite a pending
-conflict by proceeding to later documents. Redesign interruption/continuation
+overwrite a pending conflict by proceeding to later documents. Title-only draft
+detection is fixed by the lifecycle follow-up below. Redesign interruption/continuation
 together with Quit/Close and MindManager consent, rather than independently
 stopping the loop and stranding those flows. Preserve file identity and unsaved
 documents on cancellation/error. The command-palette Escape/short-window issue
@@ -632,8 +632,29 @@ shipped-locale/theme matrix checks disabled File/toolbar states and real palette
 results on empty Home, Home with background documents and an active document.
 All advertised export formats reject missing-document execution without dialogs
 or map mutation. Planning/finished-step reviews completed; no remaining blockers
-in this slice. Save All's iteration/dirty/error/consent/Quit semantics are unchanged;
-their interruption safety audit above remains open.
+in this slice. Save All's error/consent/Quit continuation is unchanged; its
+interruption safety audit above remains open. Pending-title dirty detection is
+handled by the lifecycle follow-up below.
+
+**Delivered R0/R1 follow-up - pending-title save/close safety:** Save All flushes
+all open documents' inline title drafts before deciding which documents are dirty.
+Tab close commits only its target (including a background tab), and a native
+window-close request commits all titles before deciding whether to prompt.
+Non-close frames and invalid tab indices do not flush drafts; unchanged titles
+do not create undo entries or unnecessary prompts. Cancelling the prompt keeps
+the title text as an ordinary undoable edit, rather than reopening its inline
+editor, consistent with other editor-to-dialog transitions.
+All three original failures were reproduced before fixing them. Map/Outline
+tests cover real two-file save/reopen from active tabs and Home, one-step title
+undo/redo, background-target close with untouched non-target drafts, and all
+Save/Cancel/Don't Save choices for tab/native window close. Native close checks
+assert actual CancelClose output for title-only changes and allow accepted
+Save/Don't Save to close; untouched/unchanged drafts stay clean.
+Planning and finished-step reviews found no remaining blockers. Targeted
+application suites (133 cases), native all-target clippy and WASM clippy pass.
+`OpenDoc::is_dirty`, idle autosave/recovery and interrupted Save All continuation
+are unchanged; pending-editor crash snapshots and the conflict/consent sequence
+still need their own acceptance work.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

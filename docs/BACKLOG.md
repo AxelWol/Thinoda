@@ -69,6 +69,14 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0/R1 pending-title lifecycle safety: Save All commits all inline title drafts
+  before dirty checks; tab close commits only its target; native window close
+  commits all titles before the save prompt. Cancel retains undoable text, while
+  unchanged titles create neither edits nor spurious prompts. Map/Outline tests
+  cover saved native files, Home/background documents, target-only flushing,
+  all close choices, actual native-close cancellation output and one-step undo.
+  Planning/finished reviews have no blockers. Idle autosave/recovery of pending
+  editors and interrupted/conflicting Save All continuation remain open.
 - R1/R2 command-palette safety: viewport-bounded results keep search visible and
   automatically reveal keyboard selection without pinning manual scrolling.
   Palette input no longer reaches the canvas/Outline, fixing Escape dismissal
@@ -84,9 +92,8 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   Save All remains available for Home's background documents and preserves Home/
   the original active tab. Real native two-file save/reopen and shipped-locale/
   theme/state matrices cover these routes. Planning/finished reviews have no
-  remaining blockers in this slice. Save All draft detection and interruption/
-  conflict/Quit continuation remain a separate safety task; loop semantics were
-  intentionally not changed here.
+  remaining blockers in this slice. Draft detection is fixed by the subsequent
+  lifecycle slice above; interruption/conflict/Quit continuation remains open.
 - R1/R2 shortcut-reference viewport safety: actual frame margins and available
   height replace fixed chrome/minimum-list estimates. A single reference scroll
   keeps all filters/commands reachable; a measured Close row stays visible.

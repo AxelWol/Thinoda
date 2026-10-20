@@ -494,6 +494,9 @@ impl ThinodaApp {
                 self.save_active(true);
             }
             Cmd::SaveAll => {
+                for d in &mut self.docs {
+                    d.view.commit_edit(&mut d.doc);
+                }
                 let cur = self.active;
                 for i in 0..self.docs.len() {
                     if self.docs[i].is_dirty() {
@@ -1405,6 +1408,8 @@ impl ThinodaApp {
         if i >= self.docs.len() {
             return;
         }
+        let d = &mut self.docs[i];
+        d.view.commit_edit(&mut d.doc);
         if self.docs[i].is_dirty() {
             self.active = i;
             self.dialogs.close = Some(CloseIntent::Tab(i));
@@ -1582,6 +1587,9 @@ impl ThinodaApp {
     /// Handles a window close request (asks to save dirty documents).
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
+            for d in &mut self.docs {
+                d.view.commit_edit(&mut d.doc);
+            }
             if self.quitting || !self.any_dirty() {
                 self.shutdown();
             } else {
