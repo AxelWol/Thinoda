@@ -644,7 +644,13 @@ impl ThinodaApp {
                 self.search.show_replace = true;
                 self.search.focus = true;
             }
-            Cmd::Palette => self.palette.toggle(),
+            Cmd::Palette => {
+                if self.command_available(&Cmd::Palette) {
+                    self.palette.toggle();
+                } else {
+                    self.toasts.warning(t("Not possible here"));
+                }
+            }
             Cmd::NewSheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
@@ -862,6 +868,10 @@ impl ThinodaApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
+            Cmd::Palette => {
+                self.palette.open
+                    || (!self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about)
+            }
             Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => self.doc().is_some(),
             Cmd::SaveAll => !self.docs.is_empty(),
             Cmd::Print => {

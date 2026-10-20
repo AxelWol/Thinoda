@@ -81,7 +81,8 @@ fn assert_palette(h: &mut Harness<'_, ThinodaApp>, command: Cmd, expected: bool)
         expected,
         "palette: {command:?}"
     );
-    exec(h, Cmd::Palette);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
     assert!(!h.state().palette.open);
 }
 

@@ -118,6 +118,9 @@ those system-owned controls. WinGet publishing remains paused.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
   windows while keeping Close visible. Bindings are read-only for now.
+- The command palette keeps search visible above scrollable results on small
+  windows. Arrow keys reveal the selected result; Escape closes without clearing
+  the map selection or changing a pending title edit.
 - Save/Save As/Export require an active map. Save All also works from Home for
   background documents and keeps Home open afterward.
 - **Print** in the main menu / **Ctrl+P** (Command+P on macOS) opens a themed,

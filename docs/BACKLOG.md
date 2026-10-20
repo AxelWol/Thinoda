@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1/R2 command-palette safety: viewport-bounded results keep search visible and
+  automatically reveal keyboard selection without pinning manual scrolling.
+  Palette input no longer reaches the canvas/Outline, fixing Escape dismissal
+  and preserving selection/title drafts. Direct entry rejects other dialogs;
+  modal/background-click precedence is covered. Locale/theme/scaling matrices
+  verify actual frame/hit/paint/clip bounds down to 320x180 logical points, and
+  keyboard tests cover all twelve visible matches, refiltering and exactly-once
+  Enter activation. Planning/finished reviews completed; native keyboard/AT
+  coverage remains open.
 - R1 active-file command availability: File Save/Save As and both Export roots/
   leaves agree with palette filtering and guarded direct execution. Missing
   documents produce an explicit warning without save pickers/export consents.

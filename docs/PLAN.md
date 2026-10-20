@@ -227,9 +227,9 @@ skip a title-only draft (dirty check precedes title commit) and overwrite a pend
 conflict by proceeding to later documents. Redesign interruption/continuation
 together with Quit/Close and MindManager consent, rather than independently
 stopping the loop and stranding those flows. Preserve file identity and unsaved
-documents on cancellation/error. Also reproduce command-palette Escape with an
-active query and audit its short-window geometry; current File-command tests
-explicitly toggle it closed and do not claim that Escape case is resolved.
+documents on cancellation/error. The command-palette Escape/short-window issue
+discovered during this audit is delivered below; full native keyboard-layout
+and assistive-technology coverage remain open.
 
 ### R2 - Sidebar, preferences and compact navigation
 
@@ -654,6 +654,29 @@ The finished-step review caught a footer-first Tab-order regression; it was
 reproduced and fixed with a regression assertion before committing. Rebinding,
 native keyboard layouts/assistive technology and smaller-than-tested viewports
 remain outside this slice.
+
+**Delivered R1/R2 follow-up - command-palette bounds and modal isolation:** the
+palette now reserves its search field above viewport-bounded results, accounting
+for actual frame margins. Keyboard selection scrolls into view without pinning
+manual browsing; query changes reset results. The existing twelve-result cap,
+ranking, shortcuts and Enter behavior remain unchanged.
+The Escape failure was reproduced: the canvas consumed Escape before egui's
+modal could dismiss. Palette-open now disables app chrome/Outline input and uses
+the Map paint-only snapshot, preserving selection and pending title drafts.
+egui's own modal handles Escape; no duplicate Escape policy was introduced.
+Direct palette entry rejects other active dialogs/settings/about, and remains
+able to toggle itself closed. Regression tests also verify that a background
+menu click dismisses the existing modal without opening the menu or palette.
+Shipped locales, Light/Dark/System and explicitly verified logical sizes down to
+320x180 cover Home/Map/Outline, frame/hit/paint/clip bounds and first/twelfth result
+reachability. Safe fake-command tests verify Down through twelve results, manual
+scrolling, Up, refiltering and exactly-once Enter activation. Real File-command
+palette tests now close with Escape. Planning and finished reviews completed;
+modal-precedence feedback is covered by shortcut, direct-dispatch and background
+click tests. Native screen-reader/keyboard-layout execution remains open.
+Windows x64 `cargo xtask ci` passes after these changes with
+`THINODA_AI_SKIP_LIVE=1`; WASM clippy also passes. These checks do not replace
+native GPU/browser execution or the outstanding platform acceptance matrix.
 
 R2 main-menu overflow follow-up: the hamburger root and every nested main-menu
 popup use viewport-height-bounded vertical scrolling, subtracting the actual menu

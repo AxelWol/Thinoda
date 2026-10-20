@@ -201,7 +201,8 @@ impl ThinodaApp {
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
                 .show(ui, |ui| {
-                    if self.map_shot.active()
+                    if self.palette.open
+                        || self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
                         || self.conversion_modal_open()
@@ -220,7 +221,8 @@ impl ThinodaApp {
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
                     .show(ui, |ui| {
-                        if self.map_shot.active()
+                        if self.palette.open
+                            || self.map_shot.active()
                             || self.printing.active()
                             || self.dialogs.legal.open
                             || self.conversion_modal_open()
@@ -240,7 +242,8 @@ impl ThinodaApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
-                            if self.map_shot.active()
+                            if self.palette.open
+                                || self.map_shot.active()
                                 || self.printing.active()
                                 || self.dialogs.legal.open
                                 || self.conversion_modal_open()
@@ -261,7 +264,8 @@ impl ThinodaApp {
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                if self.label_editor.is_some()
+                if self.palette.open
+                    || self.label_editor.is_some()
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
@@ -1034,7 +1038,8 @@ impl ThinodaApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if self.map_shot.active()
+        if self.palette.open
+            || self.map_shot.active()
             || self.printing.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
