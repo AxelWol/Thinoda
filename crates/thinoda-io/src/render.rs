@@ -3,10 +3,12 @@ use std::io::Cursor;
 use thinoda_core::{
     Workbook,
     geometry::{Color, Vec2},
-    layout::{ApproxMeasure, ConnectorKind, layout_sheet},
+    layout::{ConnectorKind, layout_sheet},
     model::TopicShape,
     theme::Theme,
 };
+
+mod text;
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -25,8 +27,17 @@ fn sheet<'a>(w: &'a Workbook, o: &ExportOptions) -> &'a thinoda_core::Sheet {
     &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)]
 }
 pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
+    svg_with_fonts(w, o, crate::fonts::database())
+}
+
+fn svg_with_fonts(
+    w: &Workbook,
+    o: &ExportOptions,
+    fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
+) -> Result<String, IoError> {
     let s = sheet(w, o);
-    let layout = layout_sheet(s, &ApproxMeasure, o.dark);
+    let text = text::ExportText::new(s, o.dark, fontdb)?;
+    let layout = layout_sheet(s, &text, o.dark);
     let pad = o.padding.max(0.0);
     let b = layout.bounds.expand(pad);
     let max = b.max();
@@ -226,23 +237,27 @@ pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
                 "{shape} fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{sw:.2}\"/>"
             ));
         }
-        let title = &s.topics[id].title;
-        let lines = ApproxMeasure::wrap(
-            title,
-            style.font_size,
-            style.bold,
-            tl.title_rect.size.x.max(style.font_size),
-        );
-        let line_h = style.font_size * ApproxMeasure::LINE_HEIGHT;
-        let mut y = tl.title_rect.center().y - (lines.len() as f32 - 1.0) * line_h / 2.0;
+        let block = text.topic(*id);
+        let mut y = tl.title_rect.min.y;
         let weight = if style.bold { "bold" } else { "normal" };
         let font = style
             .font_family
             .as_deref()
             .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif");
-        for (line, _) in lines {
-            out.push_str(&format!("<text x=\"{:.2}\" y=\"{y:.2}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\">{}</text>",tl.title_rect.center().x,esc(font),style.font_size,col(style.text_color),esc(&line)));
-            y += line_h;
+        for (index, line) in block.lines.iter().enumerate() {
+            let x = tl.title_rect.center().x - line.bounds.center().x;
+            let baseline = y + (block.line_height - line.bounds.size.y) / 2.0 - line.bounds.min.y;
+            // Standalone SVG viewers may substitute fonts; retain the measured width.
+            let length = if line.text.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\"",
+                    line.bounds.size.x
+                )
+            };
+            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(style.text_color),esc(&line.text)));
+            y += block.line_height;
         }
         for (index, (mark, mr)) in tl.markers.iter().enumerate() {
             if let Some(color) = s.topics[id].marker_colors.get(&index) {
@@ -395,13 +410,22 @@ pub(crate) fn raster(
 pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
     let mut opts = o.clone();
     opts.transparent = false;
-    opts.scale = 1.0;
-    let jpg = raster(w, &opts, image::ImageFormat::Jpeg)?;
-    let decoded = image::load_from_memory(&jpg)
-        .map_err(|e| IoError::Invalid(e.to_string()))?
-        .to_rgb8();
-    let (width, height) = decoded.dimensions();
-    Ok(image_pdf(&jpg, width, height, width as f32, height as f32))
+    let source = svg(w, &opts)?;
+    let tree = resvg::usvg::Tree::from_str(
+        &source,
+        &resvg::usvg::Options {
+            fontdb: crate::fonts::database(),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| IoError::Invalid(format!("SVG parse: {e}")))?;
+    // Outline with the same font resolver as raster export. The PDF converter's
+    // usvg version differs, so pass normalized SVG rather than incompatible trees.
+    let outlined = tree.to_string(&resvg::usvg::WriteOptions::default());
+    let tree = svg2pdf::usvg::Tree::from_str(&outlined, &Default::default())
+        .map_err(|e| IoError::Invalid(format!("PDF SVG parse: {e}")))?;
+    svg2pdf::to_pdf(&tree, Default::default(), Default::default())
+        .map_err(|e| IoError::Invalid(format!("PDF conversion: {e}")))
 }
 
 /// Wraps an opaque JPEG in a single PDF page. Page dimensions are PDF points,
@@ -458,10 +482,179 @@ pub(crate) fn image_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use thinoda_core::{Rect, Sheet};
+
     #[test]
     fn svg_escapes_topic_text() {
         let w = Workbook::new(thinoda_core::Sheet::new("S", "<root>"));
         let xml = svg(&w, &ExportOptions::default()).unwrap();
         assert!(xml.contains("&lt;root&gt;"));
+    }
+
+    fn assert_title_fits(
+        source: &str,
+        fontdb: Arc<resvg::usvg::fontdb::Database>,
+        layout: &thinoda_core::layout::Layout,
+        text: &text::ExportText,
+    ) {
+        let tree = resvg::usvg::Tree::from_str(
+            source,
+            &resvg::usvg::Options {
+                fontdb,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for (&id, topic) in &layout.topics {
+            let inset = topic.style.border_width.max(topic.style.line_width) / 2.0 + 2.0;
+            let inner = topic.rect.expand(-inset);
+            for (index, line) in text.topic(id).lines.iter().enumerate() {
+                if line.text.is_empty() {
+                    continue;
+                }
+                let node = tree
+                    .node_by_id(&format!("topic-{id}-line-{index}"))
+                    .unwrap();
+                let bbox = node.bounding_box();
+                let bounds = Rect::from_min_size(
+                    Vec2::new(bbox.x(), bbox.y()),
+                    Vec2::new(bbox.width(), bbox.height()),
+                );
+                for corner in [
+                    bounds.min,
+                    bounds.max(),
+                    Vec2::new(bounds.min.x, bounds.max().y),
+                    Vec2::new(bounds.max().x, bounds.min.y),
+                ] {
+                    assert!(
+                        inner.contains(corner),
+                        "{id} {:?}: {bounds:?} outside {inner:?}",
+                        line.text
+                    );
+                    let delta = corner - inner.center();
+                    let x = delta.x / (inner.size.x / 2.0);
+                    let y = delta.y / (inner.size.y / 2.0);
+                    match topic.style.shape {
+                        TopicShape::Ellipse => assert!(x * x + y * y <= 1.0, "ellipse {id}"),
+                        TopicShape::Diamond => assert!(x.abs() + y.abs() <= 1.0, "diamond {id}"),
+                        TopicShape::Capsule => {
+                            let radius = inner.size.y / 2.0;
+                            let dx = (delta.x.abs() - (inner.size.x / 2.0 - radius)).max(0.0);
+                            assert!(
+                                dx * dx + delta.y * delta.y <= radius * radius,
+                                "capsule {id}"
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn regression_map() -> Workbook {
+        let mut s = Sheet::new("Export regression", "KI Coden");
+        let branch = s.add_child(s.root, None, "6. Von der Idee zum Code");
+        for title in [
+            "Formen von KI-Coding",
+            "Chat in VsCode",
+            "GitHub Copilot CLI",
+            "KERN Katalog",
+            "R\u{fc}ckblick / Entwicklung von LLMs",
+            "Refactoring und Produkt ab 9/25 (V1.x)",
+            "Integration in die kern-ux.de Dom\u{e4}ne ab 1/26",
+            "One line\n\nAn explicit third line",
+            "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+            "",
+        ] {
+            s.add_child(branch, None, title);
+        }
+        for shape in [
+            TopicShape::RoundedRect,
+            TopicShape::Rect,
+            TopicShape::Capsule,
+            TopicShape::Ellipse,
+            TopicShape::Diamond,
+            TopicShape::Underline,
+        ] {
+            let id = s.add_child(branch, None, "Wide WWW accents \u{c4}\u{e9}gyp\nmore text");
+            let style = &mut s.topics.get_mut(&id).unwrap().style;
+            style.shape = Some(shape);
+            style.width = Some(95.0);
+            style.font_size = Some(28.0);
+            style.bold = Some(true);
+            style.font_family = Some("monospace".into());
+            style.border_width = Some(12.0);
+        }
+        let narrow = s.add_child(branch, None, "W");
+        s.topics.get_mut(&narrow).unwrap().style.width = Some(1.0);
+        Workbook::new(s)
+    }
+
+    #[test]
+    fn rendered_titles_keep_whitespace_inside_nodes_with_native_and_web_fonts() {
+        let w = regression_map();
+        for fontdb in [
+            crate::fonts::database(),
+            Arc::new(crate::fonts::build(false)),
+        ] {
+            for dark in [false, true] {
+                let opts = ExportOptions {
+                    dark,
+                    ..Default::default()
+                };
+                let text = text::ExportText::new(w.active(), dark, fontdb.clone()).unwrap();
+                let layout = layout_sheet(w.active(), &text, dark);
+                let source = svg_with_fonts(&w, &opts, fontdb.clone()).unwrap();
+                assert_title_fits(&source, fontdb.clone(), &layout, &text);
+                let substituted = source.replace(
+                    "font-family=\"Segoe UI, Helvetica, Arial, sans-serif\"",
+                    "font-family=\"monospace\"",
+                );
+                assert_title_fits(&substituted, fontdb.clone(), &layout, &text);
+                let id = w
+                    .active()
+                    .topics
+                    .values()
+                    .find(|t| t.title == "KERN Katalog")
+                    .unwrap()
+                    .id;
+                assert_eq!(text.topic(id).lines.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn drawing_reuses_measured_lines_even_when_the_last_space_was_trimmed() {
+        let mut sheet = Sheet::new("S", "Root");
+        let parent = sheet.add_child(sheet.root, None, "Branch");
+        let id = sheet.add_child(parent, None, "Formen von KI-Coding");
+        let w = Workbook::new(sheet);
+        let text = text::ExportText::new(w.active(), false, crate::fonts::database()).unwrap();
+        assert_eq!(text.topic(id).lines.len(), 1);
+        let source = svg(&w, &Default::default()).unwrap();
+        assert!(source.contains("Formen von KI-Coding</text>"));
+        assert!(!source.contains(&format!("topic-{id}-line-1")));
+    }
+
+    #[test]
+    fn pdf_contains_vectors_not_a_page_sized_bitmap_and_ignores_raster_scale() {
+        let w = regression_map();
+        let a = pdf(&w, &Default::default()).unwrap();
+        let b = pdf(
+            &w,
+            &ExportOptions {
+                scale: 8.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(a.starts_with(b"%PDF-"));
+        let source = String::from_utf8_lossy(&a);
+        assert!(!source.contains("/Subtype /Image"));
+        assert!(!source.contains("/DCTDecode"));
+        assert!(source.contains("/MediaBox"));
+        assert_eq!(a, b);
     }
 }

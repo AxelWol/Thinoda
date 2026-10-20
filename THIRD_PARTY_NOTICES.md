@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 11:29:34 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-20 09:31:54 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Third-party notices
 
@@ -52,7 +52,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-535 crates.
+544 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -97,6 +97,7 @@ LGPL/MPL licensing:
 | atspi | 0.29.0 | Apache-2.0 OR MIT | <https://github.com/odilia-app/atspi> |
 | atspi-common | 0.13.0 | Apache-2.0 OR MIT | <https://github.com/odilia-app/atspi> |
 | atspi-proxies | 0.13.0 | Apache-2.0 OR MIT | <https://github.com/odilia-app/atspi> |
+| base64 | 0.22.1 | MIT OR Apache-2.0 | <https://github.com/marshallpierce/rust-base64> |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | <https://github.com/marshallpierce/rust-base64> |
 | bit-set | 0.10.0 | Apache-2.0 OR MIT | <https://github.com/contain-rs/bit-set> |
 | bit-vec | 0.9.1 | Apache-2.0 OR MIT | <https://github.com/contain-rs/bit-vec> |
@@ -238,6 +239,7 @@ LGPL/MPL licensing:
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT | <https://github.com/hsivonen/idna_adapter> |
 | image | 0.25.10 | MIT OR Apache-2.0 | <https://github.com/image-rs/image> |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 | <https://github.com/image-rs/image-webp> |
+| imagesize | 0.13.0 | MIT | <https://github.com/Roughsketch/imagesize> |
 | imagesize | 0.15.0 | MIT | <https://github.com/Roughsketch/imagesize> |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | <https://github.com/indexmap-rs/indexmap> |
 | inout | 0.1.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
@@ -255,6 +257,7 @@ LGPL/MPL licensing:
 | js-sys | 0.3.106 | MIT OR Apache-2.0 | <https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys> |
 | keyring | 3.6.3 | MIT OR Apache-2.0 | <https://github.com/hwchen/keyring-rs.git> |
 | khronos-egl | 6.0.0 | MIT/Apache-2.0 | <https://github.com/timothee-haudebourg/khronos-egl> |
+| kurbo | 0.11.3 | Apache-2.0 OR MIT | <https://github.com/linebender/kurbo> |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | <https://github.com/linebender/kurbo> |
 | libc | 0.2.190 | MIT OR Apache-2.0 | <https://github.com/rust-lang/libc> |
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT | <https://github.com/diwic/dbus-rs> |
@@ -330,6 +333,7 @@ LGPL/MPL licensing:
 | parking | 2.2.1 | Apache-2.0 OR MIT | <https://github.com/smol-rs/parking> |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
+| pdf-writer | 0.12.1 | MIT OR Apache-2.0 | <https://github.com/typst/pdf-writer> |
 | peniko | 0.6.1 | Apache-2.0 OR MIT | <https://github.com/linebender/peniko> |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url/> |
 | petgraph | 0.8.3 | MIT OR Apache-2.0 | <https://github.com/petgraph/petgraph> |
@@ -395,6 +399,7 @@ LGPL/MPL licensing:
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | <https://github.com/rustls/pki-types> |
 | rustls-webpki | 0.103.15 | ISC | <https://github.com/rustls/webpki> |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | <https://github.com/dtolnay/rustversion> |
+| ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | <https://github.com/dtolnay/ryu> |
 | scoped-tls | 1.0.1 | MIT/Apache-2.0 | <https://github.com/alexcrichton/scoped-tls> |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | <https://github.com/bluss/scopeguard> |
 | secret-service | 4.0.0 | MIT OR Apache-2.0 | <https://github.com/hwchen/secret-service-rs.git> |
@@ -428,6 +433,8 @@ LGPL/MPL licensing:
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/nvzqz/static-assertions-rs> |
 | strict-num | 0.1.1 | MIT | <https://github.com/RazrFalcon/strict-num> |
 | subtle | 2.6.1 | BSD-3-Clause | <https://github.com/dalek-cryptography/subtle> |
+| svg2pdf | 0.13.0 | MIT OR Apache-2.0 | <https://github.com/typst/svg2pdf> |
+| svgtypes | 0.15.3 | Apache-2.0 OR MIT | <https://github.com/linebender/svgtypes> |
 | svgtypes | 0.16.1 | Apache-2.0 OR MIT | <https://github.com/linebender/svgtypes> |
 | syn | 2.0.119 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
 | syn | 3.0.9 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
@@ -444,6 +451,7 @@ LGPL/MPL licensing:
 | time-core | 0.1.9 | MIT OR Apache-2.0 | <https://github.com/time-rs/time> |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 | <https://github.com/time-rs/time> |
 | tiny-skia | 0.12.0 | BSD-3-Clause | <https://github.com/linebender/tiny-skia> |
+| tiny-skia-path | 0.11.4 | BSD-3-Clause | <https://github.com/RazrFalcon/tiny-skia/tree/master/path> |
 | tiny-skia-path | 0.12.0 | BSD-3-Clause | <https://github.com/linebender/tiny-skia/tree/master/path> |
 | tinystr | 0.8.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | <https://github.com/Lokathor/tinyvec> |
@@ -475,6 +483,7 @@ LGPL/MPL licensing:
 | ureq | 3.4.2 | MIT OR Apache-2.0 | <https://github.com/algesten/ureq> |
 | ureq-proto | 0.6.4 | MIT OR Apache-2.0 | <https://github.com/algesten/ureq-proto> |
 | url | 2.5.8 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url> |
+| usvg | 0.45.1 | Apache-2.0 OR MIT | <https://github.com/linebender/resvg> |
 | usvg | 0.48.1 | Apache-2.0 OR MIT | <https://github.com/linebender/resvg> |
 | utf8-zero | 0.8.1 | MIT OR Apache-2.0 | <https://github.com/algesten/utf8-zero> |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | <https://github.com/hsivonen/utf8_iter> |

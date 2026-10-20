@@ -1,4 +1,4 @@
-_Last updated: 2026-10-19 10:21:54 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-20 09:39:13 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda for the web
 
@@ -50,7 +50,7 @@ features work differently:
 | Open / Import / Merge dialogs | The browser's file picker. The chosen file is copied into `/Documents` (`name (2).ext` if a different file has the same name). |
 | Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
 | Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. A plain Save of an already named document only updates the browser copy; use Save As to download again. |
-| Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. |
+| Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
 | Crash recovery | The recovery journal is flushed to local storage every half second and when the page is hidden. After a reload, a crash or closing the tab, the next visit offers **Recover Unsaved Work**. |
@@ -108,8 +108,13 @@ the raw error under **Technical details**:
   blocking desktop client; `AiJob` uses it on wasm.
 - Time comes from `web-time` and background work runs inline on wasm because
   browsers do not allow `std::thread` without special headers.
+- The web entry point installs pointer feedback for enabled, hovered click-only
+  controls, including custom tabs and buttons. Text, resize and drag cursors
+  retain precedence; desktop cursor behavior is unchanged.
 
 ## Testing
+- `cargo test -p thinoda-web` exercises browser hover feedback on the shared
+  widgets, including disabled controls, theme changes and specialized cursors.
 - `cargo test --workspace` covers the shared code, including the virtual file
   system, print page HTML, file name sanitizing, upload naming and recovery
   suspension, all of which are platform independent.
