@@ -26,3 +26,8 @@ egui.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Event", "EventTarget", "BeforeUnloadEvent", "CssStyleDeclaration", "PageTransitionEvent"] }
+
+[dev-dependencies]
+egui.workspace = true
+egui_kittest.workspace = true
+thinoda-ui.workspace = true

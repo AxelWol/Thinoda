@@ -4161,9 +4161,11 @@ version = "0.5.3"
 dependencies = [
  "eframe",
  "egui",
+ "egui_kittest",
  "log",
  "thinoda-app",
  "thinoda-platform",
+ "thinoda-ui",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

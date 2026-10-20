@@ -1,5 +1,8 @@
 //! Thinoda as a static web app. Build with `trunk build --release` (see docs/WEB.md).
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod cursor;
+
 #[cfg(target_arch = "wasm32")]
 mod web_main;
 
