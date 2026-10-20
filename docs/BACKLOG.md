@@ -9,14 +9,15 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was checked on 2026-10-20: there are no open issues. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
+GitHub was refreshed on 2026-10-20 after incorporating main through `07fec3c`:
+there are no open issues or pull requests. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
 
-Two WIP pull requests are the only open GitHub work items:
+The former WIP pull requests are now merged:
 
 | Work item | Current status | Roadmap placement |
 |---|---|---|
-| [#56 Linux CI recovery persistence failure](https://github.com/AxelWol/Thinoda/pull/56) | Open WIP; reproduction/fix/review tasks remain unchecked. Its latest displayed CI matrix passed, which does not itself complete or merge the PR. | R0 baseline and CI reliability |
-| [#57 Windows print-preview test timeout](https://github.com/AxelWol/Thinoda/pull/57) | Open WIP; test-only timeout adjustment and focused review remain unchecked. Its latest displayed CI matrix passed, which does not itself complete or merge the PR. | R0 baseline and CI reliability; related R6 print verification |
+| [#56 Linux CI recovery persistence failure](https://github.com/AxelWol/Thinoda/pull/56) | Merged at `07fec3c`; included in the current branch. | R0 regression coverage and CI reliability |
+| [#57 Windows print-preview test timeout](https://github.com/AxelWol/Thinoda/pull/57) | Merged at `68c988c`; test-only wait adjustment included in the current branch. | R0 regression coverage and CI reliability; related R6 print verification |
 
 The remaining unfinished work is the feature/quality inventory in this file and
 the package acceptance plan in [PLAN.md](PLAN.md). R0 covers baseline,
@@ -24,7 +25,8 @@ reference/status verification and incomplete review states; R1-R3 cover daily
 editing/navigation; R4-R6 cover rich content and file/output workflows; R7-R8
 cover presentation and project planning; R9-R10 cover AI and protected/connected
 files; R11 covers distribution; R12 covers extensibility, collaboration and
-the accepted additional locales. No issue is omitted from the priority plan.
+the accepted additional locales. R13 / Phase P4 adds future OS-integrated menus
+and window lifecycle under "R12 and above." No issue is omitted from the priority plan.
 
 ## P1: MindManager native file compatibility (bounded slice)
 
@@ -67,6 +69,18 @@ the accepted additional locales. No issue is omitted from the priority plan.
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0 startup-close follow-up: headless viewport-event regressions verify that
+  first-splash close preserves earlier recovery snapshots and unopened sources;
+  closing during multi-file import protects dirty maps with the existing save
+  prompt, and Cancel preserves all imported documents. Dedicated rubber-duck
+  review has no blocking findings; real native window close remains unverified.
+- R0 startup/sidebar regression slice: splash appearance and readiness across all
+  ten shipped locales plus Auto, light/dark and simulated system appearance,
+  narrow windows and 150% app scaling. Persisted sidebar visibility is exercised
+  through Home, Map/Outline and Style/Map changes without document/selection loss.
+  Outline action rows now wrap instead of intercepting Map-tab clicks at narrow
+  widths. This does not close the broader Format Panel report or all localized
+  geometry work; Italian toolbar/sidebar accessible bounds still need R2 review.
 - Legal documents now render CommonMark/GFM formatting, including headings,
   emphasis, nested lists, links, code blocks and tables, with 1.5x natural text
   line height in both themes. Wide tables scroll; Copy preserves original
@@ -893,6 +907,23 @@ to add XMind's own cloud account, billing or hosted AI service.
   https://xmind.com/user-guide/record-to-map
 
 ## Platform & collaboration
+- User-directed **Phase P4 / R13 (R12 and above)**: enhanced OS-integrated menus.
+  Windows gets an original collapsible Office-like ribbon; macOS gets the real
+  screen-top menu bar and multiple document windows; Ubuntu follows the supported
+  desktop/session's standard menu conventions with an in-window fallback. WASM
+  retains a compact hamburger with grouped, height-bounded menus; an optional
+  wide-screen menu bar is evaluated without pretending to be an OS-global menu.
+  Shared actions include File/Edit/Sheet/Insert/AI/Tools/View/Help, Settings in
+  Edit (plus the standard macOS alias), native shortcuts and required OS actions.
+  Audit and regroup **all** main/context menus so no item becomes unreachable in
+  short viewports or at high scaling. All 13 accepted locales, light/dark/Auto,
+  accessibility, updated tests/docs and safe unsaved-work handling are required.
+  [P4.1-P4.7 in PLAN.md](PLAN.md#phase-p4---os-integrated-menus-and-windows-r12-and-above)
+  define the multiple steps and full planning/per-finished-step rubber-duck gates.
+  Full planning rubber-duck review is complete; its ribbon taxonomy,
+  Settings-placement, single-instance/viewport and floating-toolbar clarifications
+  are incorporated. All implementation steps remain open; this does not interrupt
+  the existing R0-R12 order.
 - P3 Quick Entry-equivalent background capture (XMind "Quick Entry", documented
   macOS-only): a menu-bar-resident popup, launchable without opening the main
   window, with a single text field and a "Create Map" action that converts the

@@ -1446,7 +1446,7 @@ impl ThinodaApp {
                 }
             }
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             action_buttons(
                 ui,
                 &[
@@ -1458,7 +1458,7 @@ impl ThinodaApp {
                 ],
             );
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             action_buttons(
                 ui,
                 &[
