@@ -742,6 +742,22 @@ impl ThinodaApp {
                     *cmd = Some(command);
                 }
             }
+            ui.separator();
+            for (label, shortcut, field) in [
+                ("Notes", "Ctrl+Shift+N", FocusField::Notes),
+                ("Hyperlink", "Ctrl+K", FocusField::Hyperlink),
+            ] {
+                let command = Cmd::EditField(field);
+                if ui
+                    .add_enabled(
+                        self.command_available(&command),
+                        egui::Button::new(t(label)).shortcut_text(shortcut),
+                    )
+                    .clicked()
+                {
+                    *cmd = Some(command);
+                }
+            }
             if ui
                 .add_enabled(
                     self.command_available(&Cmd::Labels),
@@ -872,7 +888,6 @@ impl ThinodaApp {
     fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) {
         let Some(d) = self.doc() else { return };
         let has_selection = !d.view.selection.is_empty();
-        let single = d.view.selection.len() == 1;
         let mut cmd = None;
         egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
             .order(egui::Order::Foreground)
@@ -914,13 +929,15 @@ impl ThinodaApp {
                                     (
                                         icons::NOTE,
                                         "Notes",
-                                        single,
+                                        self.command_available(&Cmd::EditField(FocusField::Notes)),
                                         Cmd::EditField(FocusField::Notes),
                                     ),
                                     (
                                         icons::LINK,
                                         "Hyperlink",
-                                        single,
+                                        self.command_available(&Cmd::EditField(
+                                            FocusField::Hyperlink,
+                                        )),
                                         Cmd::EditField(FocusField::Hyperlink),
                                     ),
                                     (
@@ -1236,14 +1253,14 @@ impl ThinodaApp {
                 t("Edit hyperlink"),
                 "Ctrl+K",
                 Cmd::EditField(FocusField::Hyperlink),
-                true,
+                self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
             );
             item(
                 ui,
                 t("Edit notes"),
                 "Ctrl+Shift+N",
                 Cmd::EditField(FocusField::Notes),
-                true,
+                self.command_available(&Cmd::EditField(FocusField::Notes)),
             );
             item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
             item(

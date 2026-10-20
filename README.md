@@ -216,6 +216,9 @@ those system-owned controls. WinGet publishing remains paused.
   canvas actions as the map view. Its action rows replace the floating Map
   insertion toolbox, so the two toolbars do not overlap. Format and Symbols remain
   available from the top bar; the Notes/Hyperlink shortcuts open their Map inspector.
+- Insert > Notes / Hyperlink opens the selected topic's inspector field using the
+  existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
+  topic; they commit an in-progress topic-title edit before switching views.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a

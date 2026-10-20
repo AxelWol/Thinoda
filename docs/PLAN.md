@@ -595,6 +595,23 @@ R2/P4.2 context-menu bounds remain open. The initial scroll-area experiment
 clipped nested commands and was removed from the R1 commit; the R2 follow-up below
 fixes the underlying popup sizing rather than changing the command hierarchy.
 
+**Delivered R1 follow-up - topic-field command consistency:** Insert now exposes
+the existing Notes and Hyperlink commands with their existing Ctrl+Shift+N/Ctrl+K
+bindings. Main menu, insertion toolbox, topic context menu and filtered palette
+share the single-valid-topic availability rule already used by Labels. Global
+shortcuts/direct execution enforce the same rule and report invalid context
+explicitly instead of opening a primary-topic editor for a multiple selection.
+Opening either field commits a pending inline title edit before switching from
+Outline to Map, avoiding reliance on a disappearing editor's lost-focus handler.
+No shortcut or valid-selection editing behavior is replaced.
+Tests cover Home/no selection/multiple/stale/object selections and modal blockers,
+unchanged state plus warnings on rejection, and Map/Outline draft commit/undo.
+The shipped-locale/Light/Dark/System/100-200% matrix exercises the real Insert
+route with a hidden inspector, focused buffered field edits, undo/redo and
+disabled Insert/More states. Planning and finished-step reviews found no
+remaining blockers. Full command-metadata/shortcut-rebinding and native keyboard
+layout acceptance remain open; this is not completion of R1.
+
 R2 main-menu overflow follow-up: the hamburger root and every nested main-menu
 popup use viewport-height-bounded vertical scrolling, subtracting the actual menu
 frame margins. The popup's initially estimated height no longer becomes its
@@ -609,8 +626,9 @@ reachability, nested template/Arrange commands, assistive focus, Up/Down scrolli
 Enter activation and unchanged document/selection. Application all-target and WASM
 clippy pass; Windows x64 `cargo xtask ci` passes with live AI disabled.
 Finished-step rubber-duck review has no blocking findings.
-Context menus, symbol/toolbar popovers, all-command keyboard traversal, native
-accessibility and actual native/browser execution remain open. R2 and P4.2 are
+Context/toolbar roots are handled by the follow-ups below; nested color pickers,
+text-control menus, all-command keyboard traversal, native accessibility and
+actual native/browser execution remain open. R2 and P4.2 are
 not complete; reuse these sizing/focus helpers when auditing the remaining menus.
 
 **Delivered R2 mitigation - context-menu overflow (user screenshot, 2026-10-20):**

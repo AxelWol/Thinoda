@@ -786,14 +786,18 @@ impl ThinodaApp {
             }
             Cmd::Ai(a) => self.start_ai(a),
             Cmd::EditField(f) => {
-                if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
-                    self.mode = CenterMode::Map;
-                    self.zen = false;
-                    self.settings.show_format_panel = true;
-                    self.sidebar_family = SidebarFamily::Format;
-                    self.format_tab = FormatTab::Style;
-                    self.focus_field = Some(f);
+                if !self.command_available(&Cmd::EditField(f)) {
+                    self.toasts.warning(t("Not possible here"));
+                    return;
                 }
+                let d = self.doc_mut().unwrap();
+                d.view.commit_edit(&mut d.doc);
+                self.mode = CenterMode::Map;
+                self.zen = false;
+                self.settings.show_format_panel = true;
+                self.sidebar_family = SidebarFamily::Format;
+                self.format_tab = FormatTab::Style;
+                self.focus_field = Some(f);
             }
             Cmd::TopicStyle => {
                 if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
@@ -858,7 +862,7 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
-            Cmd::Labels => {
+            Cmd::Labels | Cmd::EditField(_) => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
                     && !self.dialogs.about

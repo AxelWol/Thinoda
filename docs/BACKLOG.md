@@ -69,14 +69,24 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 topic-field command consistency: Insert exposes Notes/Hyperlink using their
+  existing shortcuts. Menu/toolbox/context/palette availability and direct/shortcut
+  execution now require one valid topic and no blocking dialog/object selection.
+  Invalid execution warns without changing the map or editor state. Opening a
+  field explicitly commits an in-flight Map/Outline title edit before switching
+  views. The locale/theme/scaling matrix covers focus, hidden-inspector reopening,
+  buffered Notes/Hyperlink editing, undo/redo and disabled menu parity; guard/draft
+  regressions cover invalid contexts. Planning/finished reviews have no blockers.
+  General command auditing, rebinding and native keyboard acceptance remain open.
 - R2 main-menu overflow follow-up: hamburger categories and all their nested
   submenus now scroll within the available viewport height. Newly focused menu
   actions scroll into view without pinning manual scrolling. The shipped-locale
   Light/Dark/System matrix covers 100/150/200% scaling down to 240 logical pixels
   high, actual popup bounds, template/Arrange nesting, keyboard activation and
   document/selection preservation. Finished-step rubber-duck review has no blocking
-  findings. Context menus, symbol popovers, full keyboard/accessibility audits and
-  real native/browser acceptance remain open; this does not complete R2/P4.2.
+  findings. See subsequent context/toolbar-root fixes below. Nested color pickers,
+  text-control menus, full keyboard/accessibility audits and real native/browser
+  acceptance remain open; this does not complete R2/P4.2.
 
 ### R2 screenshot-driven mitigations
 
