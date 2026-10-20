@@ -2490,6 +2490,8 @@ fn crash_recovery_restores_unsaved_work() {
         app.doc_mut().unwrap().snapshot(&recovery);
         // Simulate a crash: the panic hook flushes and marks the session for preservation.
         assert!(recovery.try_flush_for_crash());
+        // This e2e test discovers recovery in-process, so release the native session lock.
+        recovery.suspend().unwrap();
         drop(app);
     }
 
