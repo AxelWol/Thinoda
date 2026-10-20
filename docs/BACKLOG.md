@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 compact menu-navigation slice: the hamburger now presents eight categories
+  (File/Edit/Sheet/Insert/AI/Tools/View/Help). File contains document actions and
+  Quit; Settings is in Edit, with matching palette/shortcut-browser categorization.
+  Escape dismissal preserves topic selection. The root fits short localized
+  windows at 100/200% scaling across shipped locales and appearance modes.
+  Nested Arrange/template/print routes retain coverage. Tall submenu and context
+  menu bounds, keyboard traversal and native menus remain R2/P4 work, not delivered
+  by this slice. Finished-step rubber-duck review identified the category mismatch,
+  which was corrected before completion.
 - R0 startup-close follow-up: headless viewport-event regressions verify that
   first-splash close preserves earlier recovery snapshots and unopened sources;
   closing during multi-file import protects dirty maps with the existing save

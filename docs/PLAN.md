@@ -580,6 +580,20 @@ native window-manager acceptance. Targeted startup/sidebar/shortcut tests and
 all-target application clippy pass. A full finished-step rubber-duck review
 found no blocking issues; actual OS close/renderer behavior remains open.
 
+R1 compact menu-navigation slice: the root hamburger is reduced to
+File/Edit/Sheet/Insert/AI/Tools/View/Help. File retains the existing document
+actions and Quit; Settings moves into Edit, with matching command-palette and
+shortcut-browser categories. Dismissing a popup with Escape consumes the event
+before canvas handling, preserving map selection. A sequential shipped-locale
+and Light/Dark/System matrix checks root bounds at 640x360/100% and
+1280x720/200%; leaf navigation is checked in a larger viewport, not represented
+as short-viewport submenu acceptance. Existing nested template, Arrange and
+German print/sidebar tests pass. Application all-target and WASM clippy pass.
+Finished-step rubber-duck review found stale Settings categorization; corrected
+with a regression assertion. Full R1 command consistency/keyboard traversal and
+R2/P4.2 tall submenu/context-menu bounds remain open. A scroll-area experiment
+broke nested submenu interaction and was removed rather than shipped.
+
 R0 importer robustness slice: eight valid seeds across all seven import formats
 (native ZIP and raw JSON both included) receive systematic boundary truncations
 and 128 deterministic byte mutations per seed. Every accepted workbook validates

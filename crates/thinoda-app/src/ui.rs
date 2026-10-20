@@ -145,7 +145,8 @@ impl ThinodaApp {
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
         self.poll_map_shot(&ctx);
-        if !self.palette.open && !self.any_modal_open() && !egui::Popup::is_any_open(&ctx) {
+        let popup_was_open = egui::Popup::is_any_open(&ctx);
+        if !self.palette.open && !self.any_modal_open() && !popup_was_open {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
         }
@@ -211,6 +212,10 @@ impl ThinodaApp {
                         });
                 }
             }
+        }
+
+        if popup_was_open && !egui::Popup::is_any_open(&ctx) {
+            ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
         }
 
         let center = egui::CentralPanel::default()
@@ -447,7 +452,7 @@ impl ThinodaApp {
         }
     }
 
-    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+    fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
         let item =
             |ui: &mut Ui, label: &str, sc: &str| ui.add(egui::Button::new(label).shortcut_text(sc));
@@ -536,6 +541,16 @@ impl ThinodaApp {
             *cmd = Some(Cmd::ShowInFolder);
         }
         ui.separator();
+        if item(ui, t("Quit"), "Ctrl+Q").clicked() {
+            *cmd = Some(Cmd::Quit);
+        }
+    }
+
+    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        ui.set_min_width(220.0);
+        let item =
+            |ui: &mut Ui, label: &str, sc: &str| ui.add(egui::Button::new(label).shortcut_text(sc));
+        ui.menu_button(t("File"), |ui| self.file_menu(ui, cmd));
         ui.menu_button(t("Edit"), |ui| {
             let e = [
                 ("Undo", "Ctrl+Z", Cmd::Canvas(Action::Undo)),
@@ -601,6 +616,10 @@ impl ThinodaApp {
                 ui,
                 t("Copies explicit overrides; inherited theme styles stay automatic."),
             );
+            ui.separator();
+            if item(ui, t("Settings…"), "Ctrl+,").clicked() {
+                *cmd = Some(Cmd::Settings);
+            }
         });
         ui.menu_button(t("Sheet"), |ui| {
             for (label, command) in [
@@ -716,10 +735,6 @@ impl ThinodaApp {
                 }
             }
         });
-        ui.separator();
-        if item(ui, t("Settings…"), "Ctrl+,").clicked() {
-            *cmd = Some(Cmd::Settings);
-        }
         ui.menu_button(t("Help"), |ui| {
             for (label, command) in [
                 ("Quick Start", Cmd::QuickStart),
@@ -739,10 +754,6 @@ impl ThinodaApp {
                 *cmd = Some(Cmd::About);
             }
         });
-        ui.separator();
-        if item(ui, t("Quit"), "Ctrl+Q").clicked() {
-            *cmd = Some(Cmd::Quit);
-        }
     }
 
     fn marker_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {

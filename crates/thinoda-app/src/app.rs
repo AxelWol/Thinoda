@@ -1872,7 +1872,7 @@ impl ThinodaApp {
             (Cmd::SaveAs, "Save As…", "Ctrl+Shift+S", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
-            (Cmd::Settings, "Settings…", "Ctrl+,", "File"),
+            (Cmd::Settings, "Settings…", "Ctrl+,", "Edit"),
             (
                 Cmd::Canvas(Action::InsertChild),
                 "Subtopic",

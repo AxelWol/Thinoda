@@ -1443,6 +1443,8 @@ fn new_from_template_menu_groups_every_template_by_its_category() {
     for category in TemplateCategory::ALL {
         h.get_by_role_and_label(Role::Button, "☰").click();
         h.run_steps(2);
+        h.get_by_role_and_label(Role::Button, "File").click();
+        h.run_steps(2);
         h.get_by_role_and_label(Role::Button, "New from Template…")
             .click();
         h.run_steps(2);
