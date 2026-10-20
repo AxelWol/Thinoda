@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 active-file command availability: File Save/Save As and both Export roots/
+  leaves agree with palette filtering and guarded direct execution. Missing
+  documents produce an explicit warning without save pickers/export consents.
+  Save All remains available for Home's background documents and preserves Home/
+  the original active tab. Real native two-file save/reopen and shipped-locale/
+  theme/state matrices cover these routes. Planning/finished reviews have no
+  remaining blockers in this slice. Save All draft detection and interruption/
+  conflict/Quit continuation remain a separate safety task; loop semantics were
+  intentionally not changed here.
 - R1/R2 shortcut-reference viewport safety: actual frame margins and available
   height replace fixed chrome/minimum-list estimates. A single reference scroll
   keeps all filters/commands reachable; a measured Close row stays visible.

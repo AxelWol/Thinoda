@@ -118,6 +118,8 @@ those system-owned controls. WinGet publishing remains paused.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
   windows while keeping Close visible. Bindings are read-only for now.
+- Save/Save As/Export require an active map. Save All also works from Home for
+  background documents and keeps Home open afterward.
 - **Print** in the main menu / **Ctrl+P** (Command+P on macOS) opens a themed,
   localized paper preview of the current sheet, including offscreen topics.
   Choose A4/A3/Letter/Legal, portrait/landscape, 0–40 mm margins, 150/300 dpi,

@@ -222,6 +222,15 @@ navigation and Escape restore focus; all document-changing actions have correct
 undo/redo or explicit save semantics. Native keyboard-layout coverage includes
 Windows DE/EN and platform-appropriate macOS/Linux modifiers.
 
+**Remaining safety audit identified during delivery:** Save All's current loop can
+skip a title-only draft (dirty check precedes title commit) and overwrite a pending
+conflict by proceeding to later documents. Redesign interruption/continuation
+together with Quit/Close and MindManager consent, rather than independently
+stopping the loop and stranding those flows. Preserve file identity and unsaved
+documents on cancellation/error. Also reproduce command-palette Escape with an
+active query and audit its short-window geometry; current File-command tests
+explicitly toggle it closed and do not claim that Escape case is resolved.
+
 ### R2 - Sidebar, preferences and compact navigation
 
 1. Implement the top-right smiley and panel selector for shared sidebar families:
@@ -611,6 +620,20 @@ route with a hidden inspector, focused buffered field edits, undo/redo and
 disabled Insert/More states. Planning and finished-step reviews found no
 remaining blockers. Full command-metadata/shortcut-rebinding and native keyboard
 layout acceptance remain open; this is not completion of R1.
+
+**Delivered R1 follow-up - active-file command availability:** Save/Save As/Export
+require an active document in File, the top Export toolbar and the filtered
+palette. Direct dispatch, including shortcuts, rejects missing-document context
+with the existing localized warning before any file picker or export consent
+opens. Save All stays available on Home when background documents exist, and now
+restores the exact original tab/Home state instead of activating the last tab.
+The native two-file test saves and reopens real dirty documents from Home; the
+shipped-locale/theme matrix checks disabled File/toolbar states and real palette
+results on empty Home, Home with background documents and an active document.
+All advertised export formats reject missing-document execution without dialogs
+or map mutation. Planning/finished-step reviews completed; no remaining blockers
+in this slice. Save All's iteration/dirty/error/consent/Quit semantics are unchanged;
+their interruption safety audit above remains open.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

@@ -418,6 +418,12 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
+        if matches!(cmd, Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_))
+            && !self.command_available(&cmd)
+        {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
         match cmd {
             Cmd::Canvas(action) => self.canvas_action(ctx, action),
             Cmd::New => {
@@ -495,7 +501,7 @@ impl ThinodaApp {
                         self.save_active(false);
                     }
                 }
-                self.active = cur.min(self.docs.len().saturating_sub(1));
+                self.active = cur;
             }
             Cmd::CloseTab(i) => self.request_close_tab(i),
             Cmd::NextDoc => {
@@ -856,6 +862,8 @@ impl ThinodaApp {
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
         match cmd {
+            Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => self.doc().is_some(),
+            Cmd::SaveAll => !self.docs.is_empty(),
             Cmd::Print => {
                 self.doc().is_some()
                     && !self.any_modal_open()

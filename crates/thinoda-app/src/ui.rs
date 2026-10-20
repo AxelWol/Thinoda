@@ -463,16 +463,29 @@ impl ThinodaApp {
                 {
                     cmd = Some(Cmd::ToggleSymbolsPanel);
                 }
-                menu_button(ui, RichText::new(icons::EXPORT), |ui| {
-                    for f in EXPORT_MENU {
-                        if ui.button(t(f.label())).clicked() {
-                            cmd = Some(Cmd::Export(*f));
-                        }
-                    }
-                })
-                .response
-                .accessible_name(t("Export"))
-                .on_hover_text(t("Export"));
+                ui.add_enabled_ui(
+                    EXPORT_MENU
+                        .iter()
+                        .any(|f| self.command_available(&Cmd::Export(*f))),
+                    |ui| {
+                        menu_button(ui, RichText::new(icons::EXPORT), |ui| {
+                            for f in EXPORT_MENU {
+                                if ui
+                                    .add_enabled(
+                                        self.command_available(&Cmd::Export(*f)),
+                                        egui::Button::new(t(f.label())),
+                                    )
+                                    .clicked()
+                                {
+                                    cmd = Some(Cmd::Export(*f));
+                                }
+                            }
+                        })
+                        .response
+                        .accessible_name(t("Export"))
+                        .on_hover_text(t("Export"));
+                    },
+                );
                 if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
                     cmd = Some(Cmd::ToggleZen);
                 }
@@ -553,25 +566,56 @@ impl ThinodaApp {
             }
         });
         ui.separator();
-        if item(ui, t("Save"), "Ctrl+S").clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::Save),
+                egui::Button::new(t("Save")).shortcut_text("Ctrl+S"),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::Save);
         }
-        if item(ui, t("Save As…"), "Ctrl+Shift+S").clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::SaveAs),
+                egui::Button::new(t("Save As…")).shortcut_text("Ctrl+Shift+S"),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::SaveAs);
         }
-        if ui.button(t("Save All")).clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::SaveAll),
+                egui::Button::new(t("Save All")),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::SaveAll);
         }
         if ui.button(t("Import")).clicked() {
             *cmd = Some(Cmd::Import);
         }
-        menu_button(ui, t("Export"), |ui| {
-            for f in EXPORT_MENU {
-                if ui.button(t(f.label())).clicked() {
-                    *cmd = Some(Cmd::Export(*f));
-                }
-            }
-        });
+        ui.add_enabled_ui(
+            EXPORT_MENU
+                .iter()
+                .any(|f| self.command_available(&Cmd::Export(*f))),
+            |ui| {
+                menu_button(ui, t("Export"), |ui| {
+                    for f in EXPORT_MENU {
+                        if ui
+                            .add_enabled(
+                                self.command_available(&Cmd::Export(*f)),
+                                egui::Button::new(t(f.label())),
+                            )
+                            .clicked()
+                        {
+                            *cmd = Some(Cmd::Export(*f));
+                        }
+                    }
+                });
+            },
+        );
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Print),
