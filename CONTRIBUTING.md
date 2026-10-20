@@ -1,3 +1,5 @@
+_Last updated: 2026-10-20 09:54:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Contributing to Thinoda
 
 Thank you for your interest in Thinoda! Bug reports, ideas, code, translations,
