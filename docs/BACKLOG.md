@@ -89,12 +89,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   found no blockers. Full grouping/text-control/native-accessibility acceptance,
   toolbar popovers and short-window nested color-picker QA remain open.
 - Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
-  captions, tabs and theme cards appear clipped/offset at the panel boundary.
-  Reproduce the actual gesture, audit persisted sizing and paint/clip/layout
-  ordering, then bound/reflow the inspector while preserving canvas space and map
-  state. Cover min/max/repeated resize, window changes and restart across locales,
-  themes and scaling, including paint-level checks. This follows context-menu
-  safety as a separate R2 fix/review/commit; no fix is claimed yet.
+  **Delivered:** pointer-drag reproduction isolated theme-grid cell expansion.
+  Reused fixed-size preview cards with responsive columns instead of allowing
+  preview/caption layout to push content beyond the panel's clamped boundary.
+  Locale/appearance/scaling coverage exercises in-drag/released min/max/repeated
+  resize, window shrink, hide/reopen and restored egui panel memory. Paint/clip
+  checks include both tabs and every scrolled theme caption; document, selection
+  and revision stay unchanged. Keyboard theme activation/undo is covered.
+  Planning and finished-step reviews completed, including nonvacuity improvements.
+  Native GPU visual acceptance and actual disk-backed host restart remain open.
 - Outline/structure toolbar collision (user screenshot, 2026-10-20): the floating
   map insertion toolbox obscures list-modification buttons. Make it mode-specific
   (prefer hiding canvas-only controls in Outline after checking action parity),

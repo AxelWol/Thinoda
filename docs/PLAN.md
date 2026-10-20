@@ -632,20 +632,23 @@ Toolbar-triggered symbol/marker, export, zoom and statistics popovers remain a
 separate audit. The symbol context menu's nested egui color picker still needs
 dedicated short-window interaction QA; planning review identified that edge case.
 
-**Next R2 mitigation - Map pane maximum-resize corruption (user screenshot,
-2026-10-20):** resizing the Map pane to its maximum leaves tabs, captions and theme
-cards clipped/offset against the pane boundary. The report calls it the left pane;
-the supplied screenshot shows the affected Map inspector on the right. Reproduce
-the actual resize gesture in the current Windows build before attributing a cause.
-Audit panel width limits, persisted resize state, content/clip rectangles and
-canvas/sidebar layout ordering; clamp saved widths to the current work area and
-reflow controls/cards without overlap. Keep a usable canvas and reachable tabs.
-Exercise minimum/maximum/repeated resizing, subsequent window resize, hide/reopen
-and restart, across shipped locales, light/dark/System and 100/150/200% scaling.
-Verify actual paint/clip behavior (not only accessible widget bounds), preserve
-document/selection/undo state, and include focused regression coverage. Schedule
-after context-menu safety, with planning/finished-step rubber-duck review and its
-own commit; this remains open until reproduced and verified.
+**Delivered R2 mitigation - Map pane maximum-resize corruption (user screenshot,
+2026-10-20):** reproduced with actual pointer dragging in the Windows headless
+app harness. The built-in theme grid inherited horizontal cell layout: preview
+and caption expanded cards beyond their intended width, making the panel's
+clamped boundary disagree with its content origin. Reused the existing fixed-size
+preview-card control, with width-aware columns, wrapped captions and keyboard
+activation. This bounds cell allocation even with long localized names instead
+of hiding the problem with a larger panel or a second horizontal scrollbar.
+The regression matrix covers shipped locales, Light/Dark/System, 100/150/200%,
+minimum/maximum/repeated drag, in-drag and released geometry, tabs, window shrink,
+hide/reopen and restoring egui panel memory into a new app harness. It checks
+actual caption paint/clip bounds as well as hit rectangles, scrolls every theme
+into view in the smaller window, and preserves workbook/selection/revision.
+German keyboard theme application and undo are covered. Planning/finished-step
+rubber-duck reviews completed; test nonvacuity feedback was incorporated.
+Native GPU visual acceptance and actual on-disk host restart remain separate
+R0/R2 checks; cloned egui memory is not claimed as a native restart test.
 
 **Next R2 mitigation - Outline/structure toolbar collision (user screenshot,
 2026-10-20):** the map's floating insertion toolbox covers Outline list-modification

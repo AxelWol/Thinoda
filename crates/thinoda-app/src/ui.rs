@@ -1,7 +1,7 @@
 //! All app chrome: top bar, format panel, sheet tabs, status bar, outliner, home screen, dialogs.
 
 use egui::{
-    Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense, Stroke,
+    Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense,
     TextEdit, Ui, vec2,
 };
 use thinoda_canvas::{Action, MapCanvas};
@@ -2542,7 +2542,10 @@ impl ThinodaApp {
             widgets::property_field(ui, t("Global Font"), |ui| {
                 font_selector(ui, &mut self.fonts, &mut ts.font_family, t("Default"))
             });
-            let columns = ((ui.available_width() + 8.0) / 126.0).floor().max(1.0) as usize;
+            let width = ui.available_width();
+            let columns = ((width + 8.0) / 126.0).floor().max(1.0) as usize;
+            let card_width =
+                ((width - 8.0 * (columns - 1) as f32) / columns as f32).clamp(1.0, 118.0);
             egui::Grid::new("sheet_themes")
                 .num_columns(columns)
                 .spacing(vec2(8.0, 8.0))
@@ -2550,60 +2553,48 @@ impl ThinodaApp {
                     for (index, id) in Theme::IDS.into_iter().enumerate() {
                         let th = Theme::builtin(id);
                         let selected = ts.custom_theme.is_none() && ts.theme_id == id;
-                        let r = widgets::card(ui).show(ui, |ui| {
-                            ui.set_width(104.0);
-                            let (rect, _) =
-                                ui.allocate_exact_size(vec2(100.0, 34.0), Sense::hover());
-                            let painter = ui.painter();
-                            painter.rect_filled(
-                                rect,
-                                CornerRadius::same(4),
-                                from_color(th.light_bg),
-                            );
-                            let c = rect.center();
-                            painter.rect_filled(
-                                egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
-                                CornerRadius::same(3),
-                                from_color(th.central_fill),
-                            );
-                            for (k, col) in th.palette.iter().take(4).enumerate() {
-                                let x = if k % 2 == 0 {
-                                    rect.left() + 14.0
-                                } else {
-                                    rect.right() - 14.0
-                                };
-                                let y = if k < 2 {
-                                    rect.top() + 9.0
-                                } else {
-                                    rect.bottom() - 9.0
-                                };
+                        let (_, activated) = widgets::preview_card(
+                            ui,
+                            t(th.name),
+                            selected,
+                            card_width,
+                            38.0,
+                            |ui, rect| {
+                                let painter = ui.painter();
                                 painter.rect_filled(
-                                    egui::Rect::from_center_size(egui::pos2(x, y), vec2(18.0, 7.0)),
-                                    CornerRadius::same(2),
-                                    from_color(*col),
+                                    rect,
+                                    CornerRadius::same(4),
+                                    from_color(th.light_bg),
                                 );
-                            }
-                            ui.label(RichText::new(t(th.name)).small());
-                        });
-                        let r =
-                            ui.interact(r.response.rect, ui.scope_id().with(id), Sense::click());
-                        r.widget_info(|| {
-                            egui::WidgetInfo::selected(
-                                egui::Role::Button,
-                                true,
-                                selected,
-                                t(th.name),
-                            )
-                        });
-                        if selected {
-                            ui.painter().rect_stroke(
-                                r.rect,
-                                CornerRadius::same(8),
-                                Stroke::new(2.0, d.view.accent),
-                                egui::StrokeKind::Outside,
-                            );
-                        }
-                        if r.clicked() {
+                                let c = rect.center();
+                                painter.rect_filled(
+                                    egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
+                                    CornerRadius::same(3),
+                                    from_color(th.central_fill),
+                                );
+                                for (k, col) in th.palette.iter().take(4).enumerate() {
+                                    let x = if k % 2 == 0 {
+                                        rect.left() + 14.0
+                                    } else {
+                                        rect.right() - 14.0
+                                    };
+                                    let y = if k < 2 {
+                                        rect.top() + 9.0
+                                    } else {
+                                        rect.bottom() - 9.0
+                                    };
+                                    painter.rect_filled(
+                                        egui::Rect::from_center_size(
+                                            egui::pos2(x, y),
+                                            vec2(18.0, 7.0),
+                                        ),
+                                        CornerRadius::same(2),
+                                        from_color(*col),
+                                    );
+                                }
+                            },
+                        );
+                        if activated {
                             ts.theme_id = id.to_string();
                             ts.custom_theme = None;
                             ts.variant = 0;
