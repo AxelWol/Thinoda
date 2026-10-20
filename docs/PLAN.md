@@ -650,18 +650,21 @@ rubber-duck reviews completed; test nonvacuity feedback was incorporated.
 Native GPU visual acceptance and actual on-disk host restart remain separate
 R0/R2 checks; cloned egui memory is not claimed as a native restart test.
 
-**Next R2 mitigation - Outline/structure toolbar collision (user screenshot,
-2026-10-20):** the map's floating insertion toolbox covers Outline list-modification
-buttons. Make toolbox visibility/placement specific to the active center mode:
-prefer hiding the canvas-only toolbox in Outline, where equivalent list controls
-already exist, rather than merely drawing either surface above the other.
-Verify no actions become unavailable; otherwise reserve non-overlapping space for
-the missing actions. Cover Map/Outline transitions, selection changes, narrow/short
-windows, shipped translations and 100/150/200% scaling. Assert button rectangles
-and hit targets are unobscured and exercise insert/move/indent/delete with undo,
-preserving selection on mode changes. Confirm light/dark/System appearance and
-native paint behavior. Schedule after context-menu safety and Map-pane resizing,
-with planning/finished-step rubber-duck review and a separate commit.
+**Delivered R2 mitigation - Outline/structure toolbar collision (user screenshot,
+2026-10-20):** the floating insertion toolbox is now Map-only, matching the existing
+contextual topic-toolbar gate. Outline retains its wrapped sibling/child/edit/
+move/reparent/delete action rows without a foreground toolbox covering them.
+The regression matrix covers shipped locales, Light/Dark/System, 100/150/200%
+scaling in a 640-point-wide window, visible/hidden inspector, actual pointer
+actions, mode transitions and unchanged selection/revision on view-only changes.
+It checks visible foreground layers, button hit bounds and caption paint/clip
+bounds; insert/move/indent/delete each exercise model-specific outcomes and
+undo/redo. Returning to Map restores the toolbox; switching with More insert
+actions open does not retain/reopen its popup. Hidden-inspector cases verify
+Format/Symbols reopening and the existing Notes shortcut, which opens Map/Style.
+Planning and finished-step rubber-duck reviews completed with no remaining
+blockers. Native GPU/assistive-technology acceptance remains a release gate,
+not a claim made by these deterministic headless paint checks.
 
 R0 importer robustness slice: eight valid seeds across all seven import formats
 (native ZIP and raw JSON both included) receive systematic boundary truncations

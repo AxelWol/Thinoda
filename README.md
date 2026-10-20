@@ -213,7 +213,9 @@ those system-owned controls. WinGet publishing remains paused.
   under its previous sibling or after its parent while retaining its annotations.
   The Outliner also exposes sibling/child insertion, topic editing, move/reparent,
   and both subtree or topic-only deletion controls; these use the same undoable
-  canvas actions as the map view.
+  canvas actions as the map view. Its action rows replace the floating Map
+  insertion toolbox, so the two toolbars do not overlap. Format and Symbols remain
+  available from the top bar; the Notes/Hyperlink shortcuts open their Map inspector.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a

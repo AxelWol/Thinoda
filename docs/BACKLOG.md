@@ -99,11 +99,13 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   Planning and finished-step reviews completed, including nonvacuity improvements.
   Native GPU visual acceptance and actual disk-backed host restart remain open.
 - Outline/structure toolbar collision (user screenshot, 2026-10-20): the floating
-  map insertion toolbox obscures list-modification buttons. Make it mode-specific
-  (prefer hiding canvas-only controls in Outline after checking action parity),
-  or reserve dedicated non-overlapping space. Verify actual hit targets and
-  insert/move/indent/delete plus undo across mode transitions, locales, themes,
-  scaling and small windows. Separate R2 fix after context safety/Map-pane sizing.
+  map insertion toolbox obscures list-modification buttons. **Delivered:** the
+  insertion toolbox is Map-only; Outline's own wrapped action rows remain
+  unobscured. Locale/theme/100-200% regression coverage verifies visible layers,
+  hit/paint/clip bounds, actual editing with undo/redo, mode/selection preservation,
+  popup cleanup and hidden-inspector reopening/Notes-shortcut alternatives.
+  Planning and finished-step reviews completed without remaining blockers.
+  Native GPU/accessibility acceptance remains open.
 
 ### Earlier completed slices
 

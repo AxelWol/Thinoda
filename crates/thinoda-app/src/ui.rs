@@ -274,7 +274,12 @@ impl ThinodaApp {
                 }
             });
 
-        if show_doc && !self.zen && !self.any_modal_open() && !self.dialogs.settings {
+        if show_doc
+            && self.mode == CenterMode::Map
+            && !self.zen
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+        {
             self.editing_toolbar(&ctx, center.response.rect);
         }
 
