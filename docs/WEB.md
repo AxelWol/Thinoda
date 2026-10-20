@@ -50,7 +50,7 @@ features work differently:
 | Open / Import / Merge dialogs | The browser's file picker. The chosen file is copied into `/Documents` (`name (2).ext` if a different file has the same name). |
 | Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
 | Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. A plain Save of an already named document only updates the browser copy; use Save As to download again. |
-| Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. |
+| Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
 | Crash recovery | The recovery journal is flushed to local storage every half second and when the page is hidden. After a reload, a crash or closing the tab, the next visit offers **Recover Unsaved Work**. |
