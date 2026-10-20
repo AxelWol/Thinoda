@@ -1,7 +1,8 @@
 //! Import and export adapters for Thinoda and common mind-map formats.
 //!
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
-//! Raster and PDF output are rendered from the same vector layout; JPEG always uses an opaque background.
+//! Graphical output shares font-measured title layout. PDF keeps vector paths
+//! (including outlined text); JPEG always uses an opaque background.
 pub mod fonts;
 mod formats;
 mod mindmanager;

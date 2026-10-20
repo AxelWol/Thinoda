@@ -15,7 +15,7 @@ pub fn database() -> Arc<Database> {
         .clone()
 }
 
-fn build(system: bool) -> Database {
+pub(crate) fn build(system: bool) -> Database {
     let mut db = Database::new();
     if system {
         db.load_system_fonts();

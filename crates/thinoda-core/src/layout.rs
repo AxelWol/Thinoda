@@ -628,24 +628,15 @@ impl Engine<'_> {
     fn measure_topic(&self, id: TopicId, style: &ResolvedStyle, level: Level) -> (Vec2, Content) {
         let t = self.sheet.topic(id).expect("topic exists");
         let fs = style.font_size;
-        let (mut px, mut py) = match level {
+        let (mut px, mut py): (f32, f32) = match level {
             Level::Central => (24.0, 16.0),
             Level::Main => (16.0, 10.0),
             Level::Floating | Level::Summary => (14.0, 9.0),
             Level::Sub => (8.0, 5.0),
         };
-        match style.shape {
-            TopicShape::Ellipse => {
-                px *= 1.6;
-                py *= 1.6;
-            }
-            TopicShape::Diamond => {
-                px *= 2.2;
-                py *= 2.2;
-            }
-            TopicShape::Capsule => px += fs * 0.6,
-            _ => {}
-        }
+        let stroke_padding = style.border_width.max(style.line_width) / 2.0 + 4.0;
+        px = px.max(stroke_padding);
+        py = py.max(stroke_padding);
         let max_w = style.width.unwrap_or(if level == Level::Central {
             420.0
         } else {
@@ -664,7 +655,7 @@ impl Engine<'_> {
             style.font_family.as_deref(),
         );
         if let Some(w) = style.width {
-            ts.x = w;
+            ts.x = ts.x.max(w);
         }
         let ms = (fs * 1.1).round();
         let gap = 4.0;
@@ -698,12 +689,25 @@ impl Engine<'_> {
             .max(labels_w)
             .max(if t.image.is_some() { IMAGE_SIZE.x } else { 0.0 });
         let labels_h = if t.labels.is_empty() { 0.0 } else { lh + gap };
-        let w = (inner_w + 2.0 * px).max(fs * 2.0);
-        let h = 2.0 * py + image_h + row_h + labels_h;
+        let mut w = (inner_w + 2.0 * px).max(fs * 2.0);
+        let content_h = image_h + row_h + labels_h;
+        let mut h = 2.0 * py + content_h;
+        // Inscribe the padded content rectangle, rather than relying on fixed
+        // extra padding that fails for wide or multiline titles.
+        let shape_scale = match style.shape {
+            TopicShape::Ellipse => std::f32::consts::SQRT_2,
+            TopicShape::Diamond => 2.0,
+            _ => 1.0,
+        };
+        w *= shape_scale;
+        h *= shape_scale;
+        if style.shape == TopicShape::Capsule {
+            w = w.max(inner_w + h);
+        }
         let inner_x = (w - inner_w) / 2.0;
 
         let mut c = Content::default();
-        let mut y = py;
+        let mut y = (h - content_h) / 2.0;
         if t.image.is_some() {
             c.image = Some(Rect::from_min_size(
                 Vec2::new(inner_x + (inner_w - IMAGE_SIZE.x) / 2.0, y),
@@ -742,7 +746,7 @@ impl Engine<'_> {
                 lx += lw + gap;
             }
         }
-        (Vec2::new(w.round(), h.round()), c)
+        (Vec2::new(w.ceil(), h.ceil()), c)
     }
 
     fn finish_items(&mut self, layout: &mut Layout, items: Vec<(TopicId, Vec2)>) {
