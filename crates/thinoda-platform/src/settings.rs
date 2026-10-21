@@ -74,6 +74,26 @@ impl Language {
     }
 }
 
+/// Last selected sidebar family, independent of whether the panel is visible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarFamily {
+    Symbols,
+    #[default]
+    #[serde(other)]
+    Format,
+}
+
+/// Last selected formatting tab, retained while the Symbols family is shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatTab {
+    Map,
+    #[default]
+    #[serde(other)]
+    Style,
+}
+
 /// A recent document, optionally pinned above ordinary recents.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -206,6 +226,8 @@ pub struct Settings {
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub show_format_panel: bool,
+    pub sidebar_family: SidebarFamily,
+    pub format_tab: FormatTab,
     pub show_topic_toolbar: bool,
     pub show_topic_add_buttons: bool,
     /// Sort label drafts by Unicode code-point order; disabled to preserve insertion order.
@@ -245,6 +267,8 @@ impl Default for Settings {
             ui_scale: 1.0,
             show_status_bar: true,
             show_format_panel: true,
+            sidebar_family: SidebarFamily::default(),
+            format_tab: FormatTab::default(),
             show_topic_toolbar: true,
             show_topic_add_buttons: true,
             label_auto_sort: false,

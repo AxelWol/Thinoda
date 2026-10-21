@@ -138,39 +138,62 @@ impl CommandPalette {
             self.selected = self.selected.saturating_sub(1);
         }
         let mut chosen = None;
-        let resp = Modal::new(Id::unique("thinoda_command_palette")).show(ctx, |ui| {
-            ui.set_width(520.0);
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .hint_text(placeholder)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::FontId::proportional(Tokens::FONT_HEADING)),
-            );
-            edit.request_focus();
-            if edit.changed() {
-                self.selected = 0;
-            }
-            ui.add_space(6.0);
-            for (i, c) in matches.iter().enumerate() {
-                let sel = i == self.selected;
-                let r = ui
-                    .add(
-                        egui::Button::selectable(sel, RichText::new(&c.title).color(p.text))
-                            .right_text(
-                                RichText::new(c.shortcut.clone().unwrap_or_default())
-                                    .color(p.text_muted),
-                            )
-                            .min_size(egui::vec2(ui.available_width(), 26.0)),
-                    )
-                    .on_hover_text(c.category.clone().unwrap_or_default());
-                if r.clicked() || (sel && enter) {
-                    chosen = Some(c.id.clone());
+        let frame = egui::Frame::popup(&ctx.global_style());
+        let resp = Modal::new(Id::unique("thinoda_command_palette"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                let available = (ctx.content_rect().size()
+                    - frame.total_margin().sum()
+                    - egui::Vec2::splat(16.0))
+                .max(egui::Vec2::ZERO);
+                ui.set_width(available.x.min(520.0));
+                ui.set_max_height(available.y);
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.query)
+                        .hint_text(placeholder)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::FontId::proportional(Tokens::FONT_HEADING)),
+                );
+                edit.request_focus();
+                if edit.changed() {
+                    self.selected = 0;
                 }
-            }
-            if matches.is_empty() {
-                crate::widgets::caption(ui, "—");
-            }
-        });
+                ui.add_space(6.0);
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt("palette_results")
+                    .min_scrolled_height(0.0)
+                    .max_height(ui.available_height());
+                if edit.changed() {
+                    scroll = scroll.vertical_scroll_offset(0.0);
+                }
+                scroll.show(ui, |ui| {
+                    for (i, c) in matches.iter().enumerate() {
+                        let sel = i == self.selected;
+                        let r = ui
+                            .add(
+                                egui::Button::selectable(
+                                    sel,
+                                    RichText::new(&c.title).color(p.text),
+                                )
+                                .right_text(
+                                    RichText::new(c.shortcut.clone().unwrap_or_default())
+                                        .color(p.text_muted),
+                                )
+                                .min_size(egui::vec2(ui.available_width(), 26.0)),
+                            )
+                            .on_hover_text(c.category.clone().unwrap_or_default());
+                        if sel && (up || down || edit.changed()) {
+                            r.scroll_to_me(None);
+                        }
+                        if r.clicked() || (sel && enter) {
+                            chosen = Some(c.id.clone());
+                        }
+                    }
+                    if matches.is_empty() {
+                        crate::widgets::caption(ui, "—");
+                    }
+                });
+            });
         if resp.should_close() || chosen.is_some() {
             self.open = false;
         }
@@ -207,5 +230,72 @@ mod tests {
         assert_eq!(p.filter(&cmds)[0].id, "export.png");
         p.set_query("");
         assert_eq!(p.filter(&cmds).len(), 3);
+    }
+
+    #[test]
+    fn keyboard_selection_scrolls_without_pinning_manual_browsing() {
+        use egui::accesskit::Role;
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let commands: Vec<_> = (0..12)
+            .map(|index| Command::new(format!("command-{index}"), format!("Command {index:02}")))
+            .collect();
+        let mut palette = CommandPalette::default();
+        palette.toggle();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(320.0, 180.0))
+            .build_ui_state(
+                |ui, state: &mut (CommandPalette, Vec<String>)| {
+                    if let Some(chosen) = state.0.show(ui.ctx(), &commands, "Search") {
+                        state.1.push(chosen);
+                    }
+                },
+                (palette, Vec::new()),
+            );
+        h.run_steps(4);
+        for index in 1..12 {
+            h.key_press(Key::ArrowDown);
+            h.run_steps(8);
+            let rect = h
+                .get_by_role_and_label(Role::Button, &format!("Command {index:02} "))
+                .rect();
+            assert!(
+                h.ctx.content_rect().contains_rect(rect),
+                "{index}: {rect:?}"
+            );
+            assert!(rect.top() >= h.get_by_role(Role::TextInput).rect().bottom());
+        }
+        h.get_by_role_and_label(Role::Button, "Command 00 ")
+            .scroll_to_me();
+        h.run_steps(8);
+        assert!(
+            h.ctx
+                .content_rect()
+                .contains_rect(h.get_by_role_and_label(Role::Button, "Command 00 ").rect())
+        );
+        h.key_press(Key::ArrowUp);
+        h.run_steps(8);
+        assert!(
+            h.ctx
+                .content_rect()
+                .contains_rect(h.get_by_role_and_label(Role::Button, "Command 10 ").rect())
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(4);
+        assert_eq!(h.state().1, ["command-10"]);
+        assert!(!h.state().0.open);
+
+        h.state_mut().0.toggle();
+        h.run_steps(4);
+        h.get_by_role(Role::TextInput).type_text("Command 05");
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, "Command 05 ");
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Command 00 ")
+                .is_none()
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(4);
+        assert_eq!(h.state().1, ["command-10", "command-5"]);
     }
 }

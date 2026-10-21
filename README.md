@@ -116,6 +116,18 @@ those system-owned controls. WinGet publishing remains paused.
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- The searchable keyboard-shortcut reference scrolls within short/high-scale
+  windows while keeping Close visible. Bindings are read-only for now.
+- The command palette keeps search visible above scrollable results on small
+  windows. Arrow keys reveal the selected result; Escape closes without clearing
+  the map selection or changing a pending title edit.
+- Save/Save As/Export require an active map. Save All also works from Home for
+  background documents and keeps Home open afterward. In-progress topic titles
+  are committed before Save All or save-on-close checks; cancelling close keeps
+  that text as an undoable edit. Save All pauses for file conflicts or save
+  consent, then resumes automatically; a pending Quit waits for every save.
+  Cancel or a save failure stops the batch without closing. Earlier successful
+  saves stay saved; the remaining documents keep their edits.
 - **Print** in the main menu / **Ctrl+P** (Command+P on macOS) opens a themed,
   localized paper preview of the current sheet, including offscreen topics.
   Choose A4/A3/Letter/Legal, portrait/landscape, 0–40 mm margins, 150/300 dpi,
@@ -213,7 +225,12 @@ those system-owned controls. WinGet publishing remains paused.
   under its previous sibling or after its parent while retaining its annotations.
   The Outliner also exposes sibling/child insertion, topic editing, move/reparent,
   and both subtree or topic-only deletion controls; these use the same undoable
-  canvas actions as the map view.
+  canvas actions as the map view. Its action rows replace the floating Map
+  insertion toolbox, so the two toolbars do not overlap. Format and Symbols remain
+  available from the top bar; the Notes/Hyperlink shortcuts open their Map inspector.
+- Insert > Notes / Hyperlink opens the selected topic's inspector field using the
+  existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
+  topic; they commit an in-progress topic-title edit before switching views.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
@@ -318,6 +335,11 @@ those system-owned controls. WinGet publishing remains paused.
   the last structure/theme for new blank maps without changing named templates.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
+  Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
+  stays visible. Long tab names are shortened visually, with full names in tooltips.
+  Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
+  The sidebar remembers its Format/Symbols family and last Style/Map tab across
+  restarts, independently of whether the panel is hidden.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently

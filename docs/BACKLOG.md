@@ -7,6 +7,27 @@ Execution order, dependencies, acceptance criteria and release gates are defined
 [PLAN.md](PLAN.md#remaining-work-delivery-plan-2026-10-16). Reference inventories below
 are not lists of wholly missing features; audit and reuse existing implementations.
 
+## Current open work-item inventory
+
+GitHub was refreshed on 2026-10-20 after incorporating main through `07fec3c`:
+there are no open issues or pull requests. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
+
+The former WIP pull requests are now merged:
+
+| Work item | Current status | Roadmap placement |
+|---|---|---|
+| [#56 Linux CI recovery persistence failure](https://github.com/AxelWol/Thinoda/pull/56) | Merged at `07fec3c`; included in the current branch. | R0 regression coverage and CI reliability |
+| [#57 Windows print-preview test timeout](https://github.com/AxelWol/Thinoda/pull/57) | Merged at `68c988c`; test-only wait adjustment included in the current branch. | R0 regression coverage and CI reliability; related R6 print verification |
+
+The remaining unfinished work is the feature/quality inventory in this file and
+the package acceptance plan in [PLAN.md](PLAN.md). R0 covers baseline,
+reference/status verification and incomplete review states; R1-R3 cover daily
+editing/navigation; R4-R6 cover rich content and file/output workflows; R7-R8
+cover presentation and project planning; R9-R10 cover AI and protected/connected
+files; R11 covers distribution; R12 covers extensibility, collaboration and
+the accepted additional locales. R13 / Phase P4 adds future OS-integrated menus
+and window lifecycle under "R12 and above." No issue is omitted from the priority plan.
+
 ## P1: MindManager native file compatibility (bounded slice)
 
 - User request: support the official Corel/Alludo MindManager format for
@@ -43,8 +64,168 @@ are not lists of wholly missing features; audit and reuse existing implementatio
   All ten supported locales have catalog entries and light/dark UI coverage,
   alongside model/output regressions. Merged localization PR29 is integrated;
   both catalog additions are retained.
+- Remaining action: R0 must verify review/release status and update this heading;
+  do not schedule duplicate feature implementation. Future changes must extend
+  validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 sidebar preferences: Format/Symbols family and the last Style/Map tab now
+  survive disk-backed restart, independently of panel visibility. Symbols/hiding
+  keep the remembered Map tab; topic formatting/Notes/Hyperlink intentionally
+  select and remember Style. Missing fields retain the previous Format/Style
+  defaults; unknown future string choices fall back without discarding unrelated
+  settings. Saves occur on actual UI/command events, not idle frames. EN/DE and
+  light/dark restart tests cover reopening, Home guards, unchanged map/history/
+  selection and idle-write detection; platform settings regressions and native/
+  WASM lint pass. Planning/finished rubber-duck reviews found no blockers.
+  Future Sticker/Illustration/Pitch panes are not implied by these preferences.
+- R2 responsive sheet/bottom navigation: many long sheet names no longer push Zoom
+  and Fit outside the window. Explicitly bounded, independent horizontal regions
+  retain tab context actions, zoom and statistics; New Sheet has a persistent slot.
+  Long tabs truncate with full tooltips/accessibility names. Ordinary mouse wheels,
+  horizontal scrolling and new keyboard focus reveal actions without pinning manual
+  browsing or moving the other region. Active-sheet visibility is refreshed after
+  rename/undo/resize and document switching, including returning to an existing
+  document. Hiding status controls still preserves/expands sheet navigation.
+  Sequential coverage includes 198 shipped-language/Auto, light/dark, scale and
+  measured logical-viewport combinations, paint/clip bounds, navigation/Tab order,
+  context menus, unchanged sheet data/history and stable row height. Menu tests
+  share semantic popup scoping so accessible background buttons cannot masquerade
+  as popup actions. Planning/finished rubber-duck reviews found no blockers;
+  full workspace CI with live AI disabled and WASM lint pass.
+  Native GPU/touch/assistive-technology acceptance and broader R2 work remain open.
+- R0/R1 resumable Save All: one stable-document-key queue pauses at each conflict
+  or whole-document MindManager consent and automatically resumes after resolution,
+  including pending Quit, as explicitly selected by the user. Home/original-tab
+  restoration survives reordering. Cancel/picker cancel/write failure aborts
+  without closing or writing later documents; earlier saves are retained and
+  unused overwrite consent is revoked. Autosave pauses during the batch; native
+  close cancels without replacing the decision or upgrading manual Save All to
+  Quit. Missing queued documents abort safely; new dirty documents veto Quit.
+  Real file/reopen, conflict/consent cycling, partial success, cancellation,
+  actual write failure, autosave timing and Close/CancelClose regressions pass.
+  Planning/finished rubber-duck reviews found no blockers. Workspace CI with live
+  AI disabled and WASM lint pass. Native picker/Save As Copy interaction and
+  actual OS window-close acceptance remain manual; broader lifecycle is not done.
+- R0/R1 pending-title lifecycle safety: Save All commits all inline title drafts
+  before dirty checks; tab close commits only its target; native window close
+  commits all titles before the save prompt. Cancel retains undoable text, while
+  unchanged titles create neither edits nor spurious prompts. Map/Outline tests
+  cover saved native files, Home/background documents, target-only flushing,
+  all close choices, actual native-close cancellation output and one-step undo.
+  Planning/finished reviews have no blockers. Idle autosave/recovery of pending
+  editors remain open; interrupted/conflicting Save All is handled above.
+- R1/R2 command-palette safety: viewport-bounded results keep search visible and
+  automatically reveal keyboard selection without pinning manual scrolling.
+  Palette input no longer reaches the canvas/Outline, fixing Escape dismissal
+  and preserving selection/title drafts. Direct entry rejects other dialogs;
+  modal/background-click precedence is covered. Locale/theme/scaling matrices
+  verify actual frame/hit/paint/clip bounds down to 320x180 logical points, and
+  keyboard tests cover all twelve visible matches, refiltering and exactly-once
+  Enter activation. Planning/finished reviews completed; native keyboard/AT
+  coverage remains open.
+- R1 active-file command availability: File Save/Save As and both Export roots/
+  leaves agree with palette filtering and guarded direct execution. Missing
+  documents produce an explicit warning without save pickers/export consents.
+  Save All remains available for Home's background documents and preserves Home/
+  the original active tab. Real native two-file save/reopen and shipped-locale/
+  theme/state matrices cover these routes. Planning/finished reviews have no
+  remaining blockers in this slice. Draft detection is fixed by the subsequent
+  lifecycle slice above; interruption/conflict/Quit continuation is handled above.
+- R1/R2 shortcut-reference viewport safety: actual frame margins and available
+  height replace fixed chrome/minimum-list estimates. A single reference scroll
+  keeps all filters/commands reachable; a measured Close row stays visible.
+  Footer reservation preserves natural forward/reverse Tab order. The shipped-
+  locale/theme/scaling matrix checks frame/hit/paint/clip bounds, actual search/
+  category/unassigned filters, focus reveal, resizing and document preservation
+  down to 320x180 logical points. Planning and finished reviews completed; the
+  latter's Tab-order finding was reproduced and corrected before commit.
+  Shortcut rebinding/conflicts and native keyboard/AT acceptance remain open.
+- R1 topic-field command consistency: Insert exposes Notes/Hyperlink using their
+  existing shortcuts. Menu/toolbox/context/palette availability and direct/shortcut
+  execution now require one valid topic and no blocking dialog/object selection.
+  Invalid execution warns without changing the map or editor state. Opening a
+  field explicitly commits an in-flight Map/Outline title edit before switching
+  views. The locale/theme/scaling matrix covers focus, hidden-inspector reopening,
+  buffered Notes/Hyperlink editing, undo/redo and disabled menu parity; guard/draft
+  regressions cover invalid contexts. Planning/finished reviews have no blockers.
+  General command auditing, rebinding and native keyboard acceptance remain open.
+- R2 main-menu overflow follow-up: hamburger categories and all their nested
+  submenus now scroll within the available viewport height. Newly focused menu
+  actions scroll into view without pinning manual scrolling. The shipped-locale
+  Light/Dark/System matrix covers 100/150/200% scaling down to 240 logical pixels
+  high, actual popup bounds, template/Arrange nesting, keyboard activation and
+  document/selection preservation. Finished-step rubber-duck review has no blocking
+  findings. See subsequent context/toolbar-root fixes below. Nested color pickers,
+  text-control menus, full keyboard/accessibility audits and real native/browser
+  acceptance remain open; this does not complete R2/P4.2.
+
+### R2 screenshot-driven mitigations
+
+- User screenshot (2026-10-20): the German topic context menu is taller than the
+  app window. **Delivered:** all application-defined context-menu roots and nested
+  Select/Arrange/AI menus use shared viewport-height scrolling/focus behavior,
+  retaining direct command access with semantic separators. The regression matrix
+  covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
+  existing command/symbol/quick-style tests pass. Planning and finished-step reviews
+  found no blockers. Full grouping/text-control/native-accessibility acceptance,
+  short-window nested color-picker QA remain open; toolbar roots are covered by
+  the completed follow-up below.
+- Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
+  **Delivered:** pointer-drag reproduction isolated theme-grid cell expansion.
+  Reused fixed-size preview cards with responsive columns instead of allowing
+  preview/caption layout to push content beyond the panel's clamped boundary.
+  Locale/appearance/scaling coverage exercises in-drag/released min/max/repeated
+  resize, window shrink, hide/reopen and restored egui panel memory. Paint/clip
+  checks include both tabs and every scrolled theme caption; document, selection
+  and revision stay unchanged. Keyboard theme activation/undo is covered.
+  Planning and finished-step reviews completed, including nonvacuity improvements.
+  Native GPU visual acceptance and actual disk-backed host restart remain open.
+- Outline/structure toolbar collision (user screenshot, 2026-10-20): the floating
+  map insertion toolbox obscures list-modification buttons. **Delivered:** the
+  insertion toolbox is Map-only; Outline's own wrapped action rows remain
+  unobscured. Locale/theme/100-200% regression coverage verifies visible layers,
+  hit/paint/clip bounds, actual editing with undo/redo, mode/selection preservation,
+  popup cleanup and hidden-inspector reopening/Notes-shortcut alternatives.
+  Planning and finished-step reviews completed without remaining blockers.
+  Native GPU/accessibility acceptance remains open.
+
+### R2 toolbar-popup follow-up
+
+- **Delivered:** Export, Marker, More insert actions, Zoom and Statistics share
+  viewport-bounded scrolling and keyboard-focus reveal. Marker no longer assumes
+  a 560-point-tall screen; Export has a localized accessible name.
+  The locale/appearance/100-200% matrix covers short and normal-height windows,
+  first/last item reachability, actual popup bounds (one physical pixel of frame
+  rounding tolerance), Marker/More widths, marker insertion/undo, keyboard zoom
+  activation and unchanged document/selection on dismissal.
+  Planning and finished-step rubber-duck reviews found no remaining blockers.
+  Nested egui color-picker/text-control menus and native/GPU/accessibility
+  acceptance remain open; R2/P4.2 are not marked complete.
+
+### Earlier completed slices
+
+- R1 compact menu-navigation slice: the hamburger now presents eight categories
+  (File/Edit/Sheet/Insert/AI/Tools/View/Help). File contains document actions and
+  Quit; Settings is in Edit, with matching palette/shortcut-browser categorization.
+  Escape dismissal preserves topic selection. The root fits short localized
+  windows at 100/200% scaling across shipped locales and appearance modes.
+  Nested Arrange/template/print routes retain coverage. Main submenu overflow is
+  handled by the R2 follow-up above; context menu bounds, full keyboard traversal
+  and native menus remain open. Finished-step rubber-duck review identified the category mismatch,
+  which was corrected before completion.
+- R0 startup-close follow-up: headless viewport-event regressions verify that
+  first-splash close preserves earlier recovery snapshots and unopened sources;
+  closing during multi-file import protects dirty maps with the existing save
+  prompt, and Cancel preserves all imported documents. Dedicated rubber-duck
+  review has no blocking findings; real native window close remains unverified.
+- R0 startup/sidebar regression slice: splash appearance and readiness across all
+  ten shipped locales plus Auto, light/dark and simulated system appearance,
+  narrow windows and 150% app scaling. Persisted sidebar visibility is exercised
+  through Home, Map/Outline and Style/Map changes without document/selection loss.
+  Outline action rows now wrap instead of intercepting Map-tab clicks at narrow
+  widths. This does not close the broader Format Panel report or all localized
+  geometry work; Italian toolbar/sidebar accessible bounds still need R2 review.
 - Legal documents now render CommonMark/GFM formatting, including headings,
   emphasis, nested lists, links, code blocks and tables, with 1.5x natural text
   line height in both themes. Wide tables scroll; Copy preserves original
@@ -871,6 +1052,23 @@ to add XMind's own cloud account, billing or hosted AI service.
   https://xmind.com/user-guide/record-to-map
 
 ## Platform & collaboration
+- User-directed **Phase P4 / R13 (R12 and above)**: enhanced OS-integrated menus.
+  Windows gets an original collapsible Office-like ribbon; macOS gets the real
+  screen-top menu bar and multiple document windows; Ubuntu follows the supported
+  desktop/session's standard menu conventions with an in-window fallback. WASM
+  retains a compact hamburger with grouped, height-bounded menus; an optional
+  wide-screen menu bar is evaluated without pretending to be an OS-global menu.
+  Shared actions include File/Edit/Sheet/Insert/AI/Tools/View/Help, Settings in
+  Edit (plus the standard macOS alias), native shortcuts and required OS actions.
+  Audit and regroup **all** main/context menus so no item becomes unreachable in
+  short viewports or at high scaling. All 13 accepted locales, light/dark/Auto,
+  accessibility, updated tests/docs and safe unsaved-work handling are required.
+  [P4.1-P4.7 in PLAN.md](PLAN.md#phase-p4---os-integrated-menus-and-windows-r12-and-above)
+  define the multiple steps and full planning/per-finished-step rubber-duck gates.
+  Full planning rubber-duck review is complete; its ribbon taxonomy,
+  Settings-placement, single-instance/viewport and floating-toolbar clarifications
+  are incorporated. All implementation steps remain open; this does not interrupt
+  the existing R0-R12 order.
 - P3 Quick Entry-equivalent background capture (XMind "Quick Entry", documented
   macOS-only): a menu-bar-resident popup, launchable without opening the main
   window, with a single text field and a "Create Map" action that converts the
@@ -888,7 +1086,8 @@ to add XMind's own cloud account, billing or hosted AI service.
   required CI checks before making the repository public
 - Delivered offline licence, third-party notices and Impressum inside Help > About;
   see Recently completed.
-- P1 (in progress) Startup splash screen: while Thinoda launches, show a centered,
+- P1 Startup splash screen (implemented; R0 acceptance verification remains):
+  while Thinoda launches, show a centered,
   About-style branded card (logo, name, tagline, version) with a real progress
   indicator — indeterminate while starting, determinate only for counted launch
   files (file i of n) — in the configured light/dark/Auto theme and startup
@@ -920,8 +1119,12 @@ to add XMind's own cloud account, billing or hosted AI service.
   content stays English and editable; technical diagnostics retain original detail.
   Regression coverage checks all catalog keys, dynamic labels, interpolation
   contracts, locale variants, preference roundtrips and light/dark switching.
-- P3 Remaining UI languages (JA, ZH): require proper font/IME/shortcut support and
-  contextual translations; not advertised as supported by the expanded locales.
+- P1 User-directed localization expansion: add Japanese, Simplified Chinese
+  (`zh-CN`) and Traditional Chinese (`zh-TW`) in addition to the ten shipped
+  locales. Translate all UI, help, installer and platform strings in context;
+  verify font fallback, IME, shortcut handling, layout remeasurement, long-text
+  behavior, light/dark/Auto, and all supported native targets plus applicable
+  WASM workflows before advertising support.
 - P2 Launching Thinoda again without files exits silently when an instance is
   already running; it should bring the existing window to the front instead.
 - P3 GPU acceleration under WSL 2: wgpu falls back to the llvmpipe software

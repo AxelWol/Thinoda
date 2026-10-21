@@ -1,7 +1,7 @@
 //! All app chrome: top bar, format panel, sheet tabs, status bar, outliner, home screen, dialogs.
 
 use egui::{
-    Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense, Stroke,
+    Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense,
     TextEdit, Ui, vec2,
 };
 use thinoda_canvas::{Action, MapCanvas};
@@ -22,6 +22,65 @@ use crate::{
 
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
+
+pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+    let margin = egui::Frame::menu(ui.style()).total_margin().sum().y;
+    let height = (ui.ctx().content_rect().height() - margin).max(0.0);
+    // A popup's initial sizing height must not become the permanent scroll limit.
+    ui.set_max_height(height);
+    egui::ScrollArea::vertical()
+        .id_salt("menu_scroll")
+        .max_height(height)
+        .min_scrolled_height(0.0)
+        .show(ui, |ui| {
+            content(ui);
+            reveal_changed_focus(ui);
+        });
+}
+
+pub(crate) fn reveal_changed_focus(ui: &mut Ui) {
+    let focus = ui.memory(|memory| memory.focused());
+    let focus_key = ui.scope_id().with("scroll_focus");
+    let previous = ui.data_mut(|data| {
+        let previous = data.get_temp::<Option<egui::Id>>(focus_key);
+        data.insert_temp(focus_key, focus);
+        previous
+    });
+    if previous != Some(focus)
+        && let Some(focused) = focus
+        && let Some(response) = ui.ctx().read_response(focused)
+        && response.layer_id == ui.layer_id()
+    {
+        ui.scroll_to_rect(response.rect, None);
+    }
+}
+
+fn menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    ui.menu_button(label, |ui| scroll_menu(ui, content))
+}
+
+fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        vec2(width, ui.spacing().interact_size.y),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.style_mut().always_scroll_the_only_direction = true;
+            egui::ScrollArea::horizontal()
+                .id_salt(salt)
+                .max_width(width)
+                .auto_shrink([false, false])
+                .min_scrolled_width(0.0)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal_centered(content);
+                });
+        },
+    );
+}
 
 pub(crate) fn font_selector(
     ui: &mut Ui,
@@ -145,7 +204,8 @@ impl ThinodaApp {
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
         self.poll_map_shot(&ctx);
-        if !self.palette.open && !self.any_modal_open() && !egui::Popup::is_any_open(&ctx) {
+        let popup_was_open = egui::Popup::is_any_open(&ctx);
+        if !self.palette.open && !self.any_modal_open() && !popup_was_open {
             self.global_shortcuts(&ctx);
             self.insert_shortcuts(&ctx);
         }
@@ -160,7 +220,8 @@ impl ThinodaApp {
                         .inner_margin(Margin::symmetric(8, 6)),
                 )
                 .show(ui, |ui| {
-                    if self.map_shot.active()
+                    if self.palette.open
+                        || self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
                         || self.conversion_modal_open()
@@ -179,7 +240,8 @@ impl ThinodaApp {
                             .inner_margin(Margin::symmetric(8, 3)),
                     )
                     .show(ui, |ui| {
-                        if self.map_shot.active()
+                        if self.palette.open
+                            || self.map_shot.active()
                             || self.printing.active()
                             || self.dialogs.legal.open
                             || self.conversion_modal_open()
@@ -199,7 +261,8 @@ impl ThinodaApp {
                                 .inner_margin(Margin::same(10)),
                         )
                         .show(ui, |ui| {
-                            if self.map_shot.active()
+                            if self.palette.open
+                                || self.map_shot.active()
                                 || self.printing.active()
                                 || self.dialogs.legal.open
                                 || self.conversion_modal_open()
@@ -213,10 +276,15 @@ impl ThinodaApp {
             }
         }
 
+        if popup_was_open && !egui::Popup::is_any_open(&ctx) {
+            ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+        }
+
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                if self.label_editor.is_some()
+                if self.palette.open
+                    || self.label_editor.is_some()
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
@@ -237,7 +305,12 @@ impl ThinodaApp {
                 }
             });
 
-        if show_doc && !self.zen && !self.any_modal_open() && !self.dialogs.settings {
+        if show_doc
+            && self.mode == CenterMode::Map
+            && !self.zen
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+        {
             self.editing_toolbar(&ctx, center.response.rect);
         }
 
@@ -331,7 +404,7 @@ impl ThinodaApp {
         let mut cmd: Option<Cmd> = None;
         ui.horizontal_centered(|ui| {
             ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
-                self.main_menu(ui, &mut cmd)
+                scroll_menu(ui, |ui| self.main_menu(ui, &mut cmd));
             });
             let (can_undo, can_redo) = self
                 .doc()
@@ -413,15 +486,29 @@ impl ThinodaApp {
                 {
                     cmd = Some(Cmd::ToggleSymbolsPanel);
                 }
-                ui.menu_button(RichText::new(icons::EXPORT), |ui| {
-                    for f in EXPORT_MENU {
-                        if ui.button(t(f.label())).clicked() {
-                            cmd = Some(Cmd::Export(*f));
-                        }
-                    }
-                })
-                .response
-                .on_hover_text(t("Export"));
+                ui.add_enabled_ui(
+                    EXPORT_MENU
+                        .iter()
+                        .any(|f| self.command_available(&Cmd::Export(*f))),
+                    |ui| {
+                        menu_button(ui, RichText::new(icons::EXPORT), |ui| {
+                            for f in EXPORT_MENU {
+                                if ui
+                                    .add_enabled(
+                                        self.command_available(&Cmd::Export(*f)),
+                                        egui::Button::new(t(f.label())),
+                                    )
+                                    .clicked()
+                                {
+                                    cmd = Some(Cmd::Export(*f));
+                                }
+                            }
+                        })
+                        .response
+                        .accessible_name(t("Export"))
+                        .on_hover_text(t("Export"));
+                    },
+                );
                 if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
                     cmd = Some(Cmd::ToggleZen);
                 }
@@ -447,17 +534,17 @@ impl ThinodaApp {
         }
     }
 
-    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+    fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
         let item =
             |ui: &mut Ui, label: &str, sc: &str| ui.add(egui::Button::new(label).shortcut_text(sc));
         if item(ui, t("New"), "Ctrl+N").clicked() {
             *cmd = Some(Cmd::New);
         }
-        ui.menu_button(t("New from Template…"), |ui| {
+        menu_button(ui, t("New from Template…"), |ui| {
             for category in templates::TemplateCategory::ALL {
                 let category_label = t(category.label());
-                ui.menu_button(category_label, |ui| {
+                menu_button(ui, category_label, |ui| {
                     for template in templates::TEMPLATES
                         .iter()
                         .filter(|template| template.category == category)
@@ -472,7 +559,7 @@ impl ThinodaApp {
         if item(ui, t("Open…"), "Ctrl+O").clicked() {
             *cmd = Some(Cmd::Open);
         }
-        ui.menu_button(t("Open Recent"), |ui| {
+        menu_button(ui, t("Open Recent"), |ui| {
             let recent: Vec<_> = self
                 .settings
                 .existing_recent()
@@ -502,25 +589,56 @@ impl ThinodaApp {
             }
         });
         ui.separator();
-        if item(ui, t("Save"), "Ctrl+S").clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::Save),
+                egui::Button::new(t("Save")).shortcut_text("Ctrl+S"),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::Save);
         }
-        if item(ui, t("Save As…"), "Ctrl+Shift+S").clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::SaveAs),
+                egui::Button::new(t("Save As…")).shortcut_text("Ctrl+Shift+S"),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::SaveAs);
         }
-        if ui.button(t("Save All")).clicked() {
+        if ui
+            .add_enabled(
+                self.command_available(&Cmd::SaveAll),
+                egui::Button::new(t("Save All")),
+            )
+            .clicked()
+        {
             *cmd = Some(Cmd::SaveAll);
         }
         if ui.button(t("Import")).clicked() {
             *cmd = Some(Cmd::Import);
         }
-        ui.menu_button(t("Export"), |ui| {
-            for f in EXPORT_MENU {
-                if ui.button(t(f.label())).clicked() {
-                    *cmd = Some(Cmd::Export(*f));
-                }
-            }
-        });
+        ui.add_enabled_ui(
+            EXPORT_MENU
+                .iter()
+                .any(|f| self.command_available(&Cmd::Export(*f))),
+            |ui| {
+                menu_button(ui, t("Export"), |ui| {
+                    for f in EXPORT_MENU {
+                        if ui
+                            .add_enabled(
+                                self.command_available(&Cmd::Export(*f)),
+                                egui::Button::new(t(f.label())),
+                            )
+                            .clicked()
+                        {
+                            *cmd = Some(Cmd::Export(*f));
+                        }
+                    }
+                });
+            },
+        );
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Print),
@@ -536,7 +654,23 @@ impl ThinodaApp {
             *cmd = Some(Cmd::ShowInFolder);
         }
         ui.separator();
-        ui.menu_button(t("Edit"), |ui| {
+        if item(ui, t("Quit"), "Ctrl+Q").clicked() {
+            *cmd = Some(Cmd::Quit);
+        }
+    }
+
+    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        ui.set_min_width(220.0);
+        let item = |ui: &mut Ui, label: &str, sc: &str| {
+            let button = egui::Button::new(label);
+            ui.add(if sc.is_empty() {
+                button
+            } else {
+                button.shortcut_text(sc)
+            })
+        };
+        menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
+        menu_button(ui, t("Edit"), |ui| {
             let e = [
                 ("Undo", "Ctrl+Z", Cmd::Canvas(Action::Undo)),
                 ("Redo", "Ctrl+Shift+Z", Cmd::Canvas(Action::Redo)),
@@ -552,27 +686,48 @@ impl ThinodaApp {
             ];
             for (l, sc, c) in e {
                 let button = egui::Button::new(t(l));
-                let button = if sc.is_empty() { button } else { button.shortcut_text(sc) };
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
             }
-            ui.menu_button(t("Select"), |ui| {
+            menu_button(ui, t("Select"), |ui| {
                 for (action, label) in Self::selection_commands() {
                     let command = Cmd::Canvas(action);
-                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.command_available(&command),
+                            egui::Button::new(t(label)),
+                        )
+                        .clicked()
+                    {
                         *cmd = Some(command);
                     }
                 }
             });
-            ui.menu_button(t("Arrange"), |ui| {
+            menu_button(ui, t("Arrange"), |ui| {
                 for (action, label) in Self::arrangement_commands() {
                     let command = Cmd::Canvas(action);
-                    if ui.add_enabled(self.command_available(&command), egui::Button::new(t(label))).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.command_available(&command),
+                            egui::Button::new(t(label)),
+                        )
+                        .clicked()
+                    {
                         *cmd = Some(command);
                     }
                 }
-                widgets::caption(ui, t("Alignment needs floating topics only; distribution spaces centers, not edges."));
+                widgets::caption(
+                    ui,
+                    t(
+                        "Alignment needs floating topics only; distribution spaces centers, not edges.",
+                    ),
+                );
             });
             ui.separator();
             for (label, shortcut, command) in [
@@ -601,8 +756,12 @@ impl ThinodaApp {
                 ui,
                 t("Copies explicit overrides; inherited theme styles stay automatic."),
             );
+            ui.separator();
+            if item(ui, t("Settings…"), "Ctrl+,").clicked() {
+                *cmd = Some(Cmd::Settings);
+            }
         });
-        ui.menu_button(t("Sheet"), |ui| {
+        menu_button(ui, t("Sheet"), |ui| {
             for (label, command) in [
                 ("New Sheet", Cmd::NewSheet),
                 ("Rename Sheet", Cmd::RenameSheet),
@@ -623,7 +782,7 @@ impl ThinodaApp {
                 }
             }
         });
-        ui.menu_button(t("Insert"), |ui| {
+        menu_button(ui, t("Insert"), |ui| {
             let e = [
                 ("Topic", "Enter", Action::InsertSibling),
                 ("Subtopic", "Tab", Action::InsertChild),
@@ -654,6 +813,22 @@ impl ThinodaApp {
                     *cmd = Some(command);
                 }
             }
+            ui.separator();
+            for (label, shortcut, field) in [
+                ("Notes", "Ctrl+Shift+N", FocusField::Notes),
+                ("Hyperlink", "Ctrl+K", FocusField::Hyperlink),
+            ] {
+                let command = Cmd::EditField(field);
+                if ui
+                    .add_enabled(
+                        self.command_available(&command),
+                        egui::Button::new(t(label)).shortcut_text(shortcut),
+                    )
+                    .clicked()
+                {
+                    *cmd = Some(command);
+                }
+            }
             if ui
                 .add_enabled(
                     self.command_available(&Cmd::Labels),
@@ -664,7 +839,7 @@ impl ThinodaApp {
                 *cmd = Some(Cmd::Labels);
             }
         });
-        ui.menu_button(t("AI"), |ui| {
+        menu_button(ui, t("AI"), |ui| {
             for a in crate::ai::AiCommand::ALL {
                 let sc = if a == crate::ai::AiCommand::Brainstorm {
                     "Ctrl+Shift+I"
@@ -676,19 +851,42 @@ impl ThinodaApp {
                 }
             }
         });
-        ui.menu_button(t("Tools"), |ui| {
-            if ui.add_enabled(self.command_available(&Cmd::MapShot), egui::Button::new(t("Map Shot")).shortcut_text("F7")).clicked() {
+        menu_button(ui, t("Tools"), |ui| {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MapShot),
+                    egui::Button::new(t("Map Shot")).shortcut_text("F7"),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MapShot);
             }
-            if ui.add_enabled(self.command_available(&Cmd::MaskedCopy), egui::Button::new(t("Create Masked Copy…"))).clicked() {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MaskedCopy),
+                    egui::Button::new(t("Create Masked Copy…")),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MaskedCopy);
             }
-            if ui.add_enabled(self.command_available(&Cmd::MergeFiles), egui::Button::new(t("Merge Map Files…"))).clicked() {
+            if ui
+                .add_enabled(
+                    self.command_available(&Cmd::MergeFiles),
+                    egui::Button::new(t("Merge Map Files…")),
+                )
+                .clicked()
+            {
                 *cmd = Some(Cmd::MergeFiles);
             }
-            widgets::caption(ui, t("Appends complete sheets. Destination metadata is kept; external image references are not embedded."));
+            widgets::caption(
+                ui,
+                t(
+                    "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
+                ),
+            );
         });
-        ui.menu_button(t("View"), |ui| {
+        menu_button(ui, t("View"), |ui| {
             let e = [
                 ("Previous Sheet", "Ctrl+PageUp", Cmd::PreviousSheet),
                 ("Next Sheet", "Ctrl+PageDown", Cmd::NextSheet),
@@ -705,22 +903,18 @@ impl ThinodaApp {
                 ("Collapse All", "", Cmd::Canvas(Action::CollapseAll)),
             ];
             for (l, sc, c) in e {
-                if ui
-                    .add_enabled(
-                        self.command_available(&c),
-                        egui::Button::new(t(l)).shortcut_text(sc),
-                    )
-                    .clicked()
-                {
+                let button = egui::Button::new(t(l));
+                let button = if sc.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(sc)
+                };
+                if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
             }
         });
-        ui.separator();
-        if item(ui, t("Settings…"), "Ctrl+,").clicked() {
-            *cmd = Some(Cmd::Settings);
-        }
-        ui.menu_button(t("Help"), |ui| {
+        menu_button(ui, t("Help"), |ui| {
             for (label, command) in [
                 ("Quick Start", Cmd::QuickStart),
                 ("User Guide", Cmd::UserGuide),
@@ -739,33 +933,25 @@ impl ThinodaApp {
                 *cmd = Some(Cmd::About);
             }
         });
-        ui.separator();
-        if item(ui, t("Quit"), "Ctrl+Q").clicked() {
-            *cmd = Some(Cmd::Quit);
-        }
     }
 
     fn marker_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_max_width(320.0);
-        egui::ScrollArea::vertical()
-            .max_height(560.0)
-            .show(ui, |ui| {
-                self.symbol_insertion_color(ui);
-                for g in markers::GROUPS {
-                    ui.label(RichText::new(t(g.name)).small().weak());
-                    ui.horizontal_wrapped(|ui| {
-                        for m in g.markers {
-                            if self.symbol_button(ui, m, false) {
-                                *cmd = Some(Cmd::Canvas(Action::ToggleMarkerColor(
-                                    m.id.to_string(),
-                                    self.symbol_color,
-                                )));
-                            }
-                        }
-                    });
+        self.symbol_insertion_color(ui);
+        for g in markers::GROUPS {
+            ui.label(RichText::new(t(g.name)).small().weak());
+            ui.horizontal_wrapped(|ui| {
+                for m in g.markers {
+                    if self.symbol_button(ui, m, false) {
+                        *cmd = Some(Cmd::Canvas(Action::ToggleMarkerColor(
+                            m.id.to_string(),
+                            self.symbol_color,
+                        )));
+                    }
                 }
-                self.placed_symbols(ui, cmd);
             });
+        }
+        self.placed_symbols(ui, cmd);
     }
 
     // ----- center -------------------------------------------------------------------------------
@@ -773,7 +959,6 @@ impl ThinodaApp {
     fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) {
         let Some(d) = self.doc() else { return };
         let has_selection = !d.view.selection.is_empty();
-        let single = d.view.selection.len() == 1;
         let mut cmd = None;
         egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
             .order(egui::Order::Foreground)
@@ -802,57 +987,63 @@ impl ThinodaApp {
                             }
                         });
                         widgets::vdivider(ui);
-                        ui.menu_button(icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
+                        menu_button(ui, icons::MARKER, |ui| self.marker_menu(ui, &mut cmd))
                             .response
                             .accessible_name(t("Marker"))
                             .on_hover_text(t("Marker"));
-                        ui.menu_button(format!("{} {}", icons::ADD, icons::CHEVRON_DOWN), |ui| {
-                            ui.set_min_width(190.0);
-                            for (icon, label, enabled, command) in [
-                                (
-                                    icons::NOTE,
-                                    "Notes",
-                                    single,
-                                    Cmd::EditField(FocusField::Notes),
-                                ),
-                                (
-                                    icons::LINK,
-                                    "Hyperlink",
-                                    single,
-                                    Cmd::EditField(FocusField::Hyperlink),
-                                ),
-                                (
-                                    icons::LABEL,
-                                    "Labels",
-                                    self.command_available(&Cmd::Labels),
-                                    Cmd::Labels,
-                                ),
-                                (
-                                    icons::TODO,
-                                    "To-Do",
-                                    has_selection,
-                                    Cmd::Canvas(Action::ToggleTodo),
-                                ),
-                                (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
-                            ] {
-                                if ui
-                                    .add_enabled(
-                                        enabled,
-                                        egui::Button::new(format!("{icon} {}", t(label))),
-                                    )
-                                    .accessible_name(t(label))
-                                    .clicked()
-                                {
-                                    cmd = Some(command);
+                        menu_button(
+                            ui,
+                            format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
+                            |ui| {
+                                ui.set_min_width(190.0);
+                                for (icon, label, enabled, command) in [
+                                    (
+                                        icons::NOTE,
+                                        "Notes",
+                                        self.command_available(&Cmd::EditField(FocusField::Notes)),
+                                        Cmd::EditField(FocusField::Notes),
+                                    ),
+                                    (
+                                        icons::LINK,
+                                        "Hyperlink",
+                                        self.command_available(&Cmd::EditField(
+                                            FocusField::Hyperlink,
+                                        )),
+                                        Cmd::EditField(FocusField::Hyperlink),
+                                    ),
+                                    (
+                                        icons::LABEL,
+                                        "Labels",
+                                        self.command_available(&Cmd::Labels),
+                                        Cmd::Labels,
+                                    ),
+                                    (
+                                        icons::TODO,
+                                        "To-Do",
+                                        has_selection,
+                                        Cmd::Canvas(Action::ToggleTodo),
+                                    ),
+                                    (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
+                                ] {
+                                    if ui
+                                        .add_enabled(
+                                            enabled,
+                                            egui::Button::new(format!("{icon} {}", t(label))),
+                                        )
+                                        .accessible_name(t(label))
+                                        .clicked()
+                                    {
+                                        cmd = Some(command);
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button(t("Find and Replace…")).clicked() {
+                                    cmd = Some(Cmd::FindReplace);
                                     ui.close();
                                 }
-                            }
-                            ui.separator();
-                            if ui.button(t("Find and Replace…")).clicked() {
-                                cmd = Some(Cmd::FindReplace);
-                                ui.close();
-                            }
-                        })
+                            },
+                        )
                         .response
                         .accessible_name(t("More insert actions"))
                         .on_hover_text(t("More insert actions"));
@@ -866,7 +1057,8 @@ impl ThinodaApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if self.map_shot.active()
+        if self.palette.open
+            || self.map_shot.active()
             || self.printing.active()
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
@@ -913,13 +1105,15 @@ impl ThinodaApp {
         }
         let mut cmd = None;
         out.response.context_menu(|ui| {
-            if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
-                if let Some(command) = self.symbol_instance(ui, id, index) {
-                    cmd = Some(command);
+            scroll_menu(ui, |ui| {
+                if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
+                    if let Some(command) = self.symbol_instance(ui, id, index) {
+                        cmd = Some(command);
+                    }
+                } else {
+                    self.context_menu(ui, &mut cmd);
                 }
-            } else {
-                self.context_menu(ui, &mut cmd);
-            }
+            });
         });
         if let Some(c) = cmd {
             self.exec(&ctx, c);
@@ -1125,19 +1319,20 @@ impl ThinodaApp {
         );
         item(ui, t("To-Do"), "", Cmd::Canvas(Action::ToggleTodo), has_sel);
         if single {
+            ui.separator();
             item(
                 ui,
                 t("Edit hyperlink"),
                 "Ctrl+K",
                 Cmd::EditField(FocusField::Hyperlink),
-                true,
+                self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
             );
             item(
                 ui,
                 t("Edit notes"),
                 "Ctrl+Shift+N",
                 Cmd::EditField(FocusField::Notes),
-                true,
+                self.command_available(&Cmd::EditField(FocusField::Notes)),
             );
             item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
             item(
@@ -1148,6 +1343,7 @@ impl ThinodaApp {
                 self.command_available(&Cmd::Labels),
             );
         }
+        ui.separator();
         for (label, shortcut, command) in [
             ("Indent", "", Cmd::Canvas(Action::Indent)),
             ("Outdent", "", Cmd::Canvas(Action::Outdent)),
@@ -1160,14 +1356,15 @@ impl ThinodaApp {
             let available = self.command_available(&command);
             item(ui, t(label), shortcut, command, available);
         }
-        ui.menu_button(t("Select"), |ui| {
+        ui.separator();
+        menu_button(ui, t("Select"), |ui| {
             for (action, label) in Self::selection_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
                 item(ui, t(label), "", command, available);
             }
         });
-        ui.menu_button(t("Arrange"), |ui| {
+        menu_button(ui, t("Arrange"), |ui| {
             for (action, label) in Self::arrangement_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
@@ -1176,20 +1373,22 @@ impl ThinodaApp {
         });
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
-                for a in crate::ai::AiCommand::ALL {
-                    let sc = if a == crate::ai::AiCommand::Brainstorm {
-                        "Ctrl+Shift+I"
-                    } else {
-                        ""
-                    };
-                    item(
-                        ui,
-                        t(a.label()),
-                        sc,
-                        Cmd::Ai(a),
-                        has_sel || !a.needs_topic(),
-                    );
-                }
+                scroll_menu(ui, |ui| {
+                    for a in crate::ai::AiCommand::ALL {
+                        let sc = if a == crate::ai::AiCommand::Brainstorm {
+                            "Ctrl+Shift+I"
+                        } else {
+                            ""
+                        };
+                        item(
+                            ui,
+                            t(a.label()),
+                            sc,
+                            Cmd::Ai(a),
+                            has_sel || !a.needs_topic(),
+                        );
+                    }
+                });
             });
         }
         if has_link {
@@ -1446,7 +1645,7 @@ impl ThinodaApp {
                 }
             }
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             action_buttons(
                 ui,
                 &[
@@ -1458,7 +1657,7 @@ impl ThinodaApp {
                 ],
             );
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             action_buttons(
                 ui,
                 &[
@@ -1663,180 +1862,268 @@ impl ThinodaApp {
             return;
         };
         ui.horizontal_centered(|ui| {
-            // Sheet tabs.
-            let n = d.doc.workbook().sheets.len();
-            for i in 0..n {
-                let title = d.doc.workbook().sheets[i].title.clone();
-                let r = ui.selectable_label(i == d.doc.active_index(), &title);
-                if r.clicked() && i != d.doc.active_index() {
-                    d.view.commit_edit(&mut d.doc);
-                    d.doc.set_active(i);
-                    d.view.reset();
-                }
-                if r.double_clicked() {
-                    if i != d.doc.active_index() {
+            let add_width = ui.spacing().interact_size.x;
+            let height = ui.spacing().interact_size.y;
+            let gaps = if self.settings.show_status_bar {
+                2.0
+            } else {
+                1.0
+            };
+            let width =
+                (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
+            let tabs_width = if self.settings.show_status_bar {
+                width * 0.4
+            } else {
+                width
+            };
+            scroll_row(ui, "sheet_tabs", tabs_width, |ui| {
+                // Sheet tabs.
+                let n = d.doc.workbook().sheets.len();
+                let active_index = d.doc.active_index();
+                let active = egui::Id::unique((
+                    &d.key,
+                    active_index,
+                    tabs_width.to_bits(),
+                    d.doc
+                        .workbook()
+                        .sheets
+                        .iter()
+                        .map(|sheet| &sheet.title)
+                        .collect::<Vec<_>>(),
+                ));
+                let active_key = ui.scope_id().with("active_sheet");
+                let changed = ui.data_mut(|data| {
+                    let previous = data.get_temp::<egui::Id>(active_key);
+                    data.insert_temp(active_key, active);
+                    previous != Some(active)
+                });
+                let max_width = tabs_width.min(180.0);
+                for i in 0..n {
+                    let title = d.doc.workbook().sheets[i].title.clone();
+                    let text = egui::WidgetText::from(title.clone()).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Button,
+                    );
+                    let tab_width =
+                        (text.size().x + 2.0 * ui.spacing().button_padding.x).min(max_width);
+                    let r = ui
+                        .add_sized(
+                            vec2(tab_width, height),
+                            egui::Button::selectable(i == d.doc.active_index(), &title).truncate(),
+                        )
+                        .on_hover_text(&title);
+                    if r.gained_focus() || (changed && i == active_index) {
+                        r.scroll_to_me(None);
+                    }
+                    if r.clicked() && i != d.doc.active_index() {
                         d.view.commit_edit(&mut d.doc);
                         d.doc.set_active(i);
                         d.view.reset();
                     }
-                    cmd = Some(Cmd::RenameSheet);
-                }
-                r.context_menu(|ui| {
-                    if i != d.doc.active_index() {
-                        d.view.commit_edit(&mut d.doc);
-                        d.doc.set_active(i);
-                        d.view.reset();
-                    }
-                    if ui.button(t("Rename Sheet")).clicked() {
-                        d.doc.set_active(i);
+                    if r.double_clicked() {
+                        if i != d.doc.active_index() {
+                            d.view.commit_edit(&mut d.doc);
+                            d.doc.set_active(i);
+                            d.view.reset();
+                        }
                         cmd = Some(Cmd::RenameSheet);
                     }
-                    if ui.button(t("Duplicate Sheet")).clicked() {
-                        d.doc.set_active(i);
-                        cmd = Some(Cmd::DuplicateSheet);
-                    }
-                    for (label, command) in [
-                        ("Copy Sheet", Cmd::CopySheet),
-                        ("Paste Sheet", Cmd::PasteSheet),
-                        ("Save Sheet As…", Cmd::SaveSheetAs),
-                        ("New Sheet", Cmd::NewSheet),
-                    ] {
-                        if ui.button(t(label)).clicked() {
-                            cmd = Some(command);
-                        }
-                    }
+                    r.context_menu(|ui| {
+                        scroll_menu(ui, |ui| {
+                            if i != d.doc.active_index() {
+                                d.view.commit_edit(&mut d.doc);
+                                d.doc.set_active(i);
+                                d.view.reset();
+                            }
+                            if ui.button(t("Rename Sheet")).clicked() {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::RenameSheet);
+                            }
+                            if ui.button(t("Duplicate Sheet")).clicked() {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::DuplicateSheet);
+                            }
+                            ui.separator();
+                            for (label, command) in [
+                                ("Copy Sheet", Cmd::CopySheet),
+                                ("Paste Sheet", Cmd::PasteSheet),
+                                ("Save Sheet As…", Cmd::SaveSheetAs),
+                                ("New Sheet", Cmd::NewSheet),
+                            ] {
+                                if ui.button(t(label)).clicked() {
+                                    cmd = Some(command);
+                                }
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(i > 0, egui::Button::new(t("Move Left")))
+                                .clicked()
+                            {
+                                d.view.commit_edit(&mut d.doc);
+                                if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                                    self.toasts
+                                        .error(format!("{}: {e}", t("Not possible here")));
+                                }
+                                d.view.reset();
+                            }
+                            if ui
+                                .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
+                                .clicked()
+                            {
+                                d.view.commit_edit(&mut d.doc);
+                                if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                                    self.toasts
+                                        .error(format!("{}: {e}", t("Not possible here")));
+                                }
+                                d.view.reset();
+                            }
+                            if ui
+                                .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
+                                .clicked()
+                            {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::DeleteSheet);
+                            }
+                        });
+                    });
+                }
+            });
+            ui.allocate_ui_with_layout(
+                vec2(add_width, height),
+                Layout::left_to_right(Align::Center),
+                |ui| {
                     if ui
-                        .add_enabled(i > 0, egui::Button::new(t("Move Left")))
+                        .small_button(icons::ADD)
+                        .on_hover_text(t("New Sheet"))
+                        .accessible_name(t("New Sheet"))
                         .clicked()
                     {
-                        d.view.commit_edit(&mut d.doc);
-                        if let Err(e) = d.doc.move_sheet(i, i - 1) {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Not possible here")));
+                        cmd = Some(Cmd::NewSheet);
+                    }
+                },
+            );
+            if self.settings.show_status_bar {
+                scroll_row(ui, "bottom_controls", width - tabs_width, |ui| {
+                    let minus = ui
+                        .small_button("−")
+                        .on_hover_text(t("Zoom Out"))
+                        .accessible_name(t("Zoom Out"));
+                    if minus.gained_focus() {
+                        minus.scroll_to_me(None);
+                    }
+                    if minus.clicked() {
+                        cmd = Some(Cmd::Canvas(Action::ZoomOut));
+                    }
+                    let current = d.view.zoom_percent();
+                    let zoom = menu_button(ui, format!("{current}%"), |ui| {
+                        let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
+                        if !presets.contains(&current) {
+                            presets.push(current);
+                            presets.sort_unstable_by(|a, b| b.cmp(a));
                         }
-                        d.view.reset();
-                    }
-                    if ui
-                        .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
-                        .clicked()
-                    {
-                        d.view.commit_edit(&mut d.doc);
-                        if let Err(e) = d.doc.move_sheet(i, i + 1) {
-                            self.toasts
-                                .error(format!("{}: {e}", t("Not possible here")));
+                        for percent in presets {
+                            if ui
+                                .selectable_label(current == percent, format!("{percent}%"))
+                                .clicked()
+                            {
+                                d.view.set_zoom(percent as f32 / 100.0);
+                                ui.close();
+                            }
                         }
-                        d.view.reset();
-                    }
-                    if ui
-                        .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
-                        .clicked()
-                    {
-                        d.doc.set_active(i);
-                        cmd = Some(Cmd::DeleteSheet);
-                    }
-                });
-            }
-            if ui
-                .small_button(icons::ADD)
-                .on_hover_text(t("New Sheet"))
-                .clicked()
-            {
-                cmd = Some(Cmd::NewSheet);
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if !self.settings.show_status_bar {
-                    return;
-                }
-                if ui
-                    .small_button(icons::FIT)
-                    .on_hover_text(t("Fit Map"))
-                    .clicked()
-                {
-                    cmd = Some(Cmd::Canvas(Action::Fit));
-                }
-                if ui.small_button("+").on_hover_text(t("Zoom In")).clicked() {
-                    cmd = Some(Cmd::Canvas(Action::ZoomIn));
-                }
-                let current = d.view.zoom_percent();
-                ui.menu_button(format!("{current}%"), |ui| {
-                    let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
-                    if !presets.contains(&current) {
-                        presets.push(current);
-                        presets.sort_unstable_by(|a, b| b.cmp(a));
-                    }
-                    for percent in presets {
-                        if ui
-                            .selectable_label(current == percent, format!("{percent}%"))
-                            .clicked()
-                        {
-                            d.view.set_zoom(percent as f32 / 100.0);
+                        ui.separator();
+                        if ui.button(t("Fit Map")).clicked() {
+                            cmd = Some(Cmd::Canvas(Action::Fit));
                             ui.close();
                         }
+                    })
+                    .response
+                    .accessible_name(t("Zoom"));
+                    if zoom.gained_focus() {
+                        zoom.scroll_to_me(None);
                     }
-                    ui.separator();
-                    if ui.button(t("Fit Map")).clicked() {
+                    let plus = ui
+                        .small_button("+")
+                        .on_hover_text(t("Zoom In"))
+                        .accessible_name(t("Zoom In"));
+                    if plus.gained_focus() {
+                        plus.scroll_to_me(None);
+                    }
+                    if plus.clicked() {
+                        cmd = Some(Cmd::Canvas(Action::ZoomIn));
+                    }
+                    let fit = ui
+                        .small_button(icons::FIT)
+                        .on_hover_text(t("Fit Map"))
+                        .accessible_name(t("Fit Map"));
+                    if fit.gained_focus() {
+                        fit.scroll_to_me(None);
+                    }
+                    if fit.clicked() {
                         cmd = Some(Cmd::Canvas(Action::Fit));
-                        ui.close();
                     }
-                })
-                .response
-                .accessible_name(t("Zoom"));
-                if ui.small_button("−").on_hover_text(t("Zoom Out")).clicked() {
-                    cmd = Some(Cmd::Canvas(Action::ZoomOut));
-                }
-                widgets::vdivider(ui);
-                let sheet = d.doc.sheet();
-                widgets::caption(
-                    ui,
-                    format!(
-                        "{}: {}",
-                        t("Words"),
-                        thinoda_core::search::word_count(sheet)
-                    ),
-                );
-                ui.menu_button(format!("{}: {}", t("Topics"), sheet.topics.len()), |ui| {
-                    ui.strong(t("Current sheet"));
-                    for (label, value) in [
-                        ("Topics", sheet.topics.len()),
-                        ("Words", thinoda_core::search::word_count(sheet)),
-                        (
-                            "Characters",
-                            sheet
-                                .topics
-                                .values()
-                                .map(|topic| topic.title.chars().count())
-                                .sum(),
+                    widgets::vdivider(ui);
+                    let sheet = d.doc.sheet();
+                    widgets::caption(
+                        ui,
+                        format!(
+                            "{}: {}",
+                            t("Words"),
+                            thinoda_core::search::word_count(sheet)
                         ),
-                    ] {
-                        ui.label(format!("{}: {value}", t(label)));
-                    }
-                    ui.separator();
-                    widgets::caption(
-                        ui,
-                        t("Topic titles only, including collapsed and floating topics."),
                     );
-                    widgets::caption(
-                        ui,
-                        t("Words split at whitespace; characters count Unicode scalar values."),
-                    );
-                })
+                    let statistics = menu_button(
+                    ui,
+                    format!("{}: {}", t("Topics"), sheet.topics.len()),
+                    |ui| {
+                        ui.strong(t("Current sheet"));
+                        for (label, value) in [
+                            ("Topics", sheet.topics.len()),
+                            ("Words", thinoda_core::search::word_count(sheet)),
+                            (
+                                "Characters",
+                                sheet
+                                    .topics
+                                    .values()
+                                    .map(|topic| topic.title.chars().count())
+                                    .sum(),
+                            ),
+                        ] {
+                            ui.label(format!("{}: {value}", t(label)));
+                        }
+                        ui.separator();
+                        widgets::caption(
+                            ui,
+                            t("Topic titles only, including collapsed and floating topics."),
+                        );
+                        widgets::caption(
+                            ui,
+                            t("Words split at whitespace; characters count Unicode scalar values."),
+                        );
+                    },
+                )
                 .response
                 .accessible_name(t("Statistics"));
-                widgets::vdivider(ui);
-                if let Some(c) = d.path.as_ref().and_then(|p| {
-                    thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
-                }) {
-                    widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
-                }
-                widgets::caption(
-                    ui,
-                    if d.is_dirty() {
-                        t("Unsaved changes")
-                    } else {
-                        t("Saved")
-                    },
-                );
-            });
+                    if statistics.gained_focus() {
+                        statistics.scroll_to_me(None);
+                    }
+                    widgets::vdivider(ui);
+                    if let Some(c) = d.path.as_ref().and_then(|p| {
+                        thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
+                    }) {
+                        widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
+                    }
+                    widgets::caption(
+                        ui,
+                        if d.is_dirty() {
+                            t("Unsaved changes")
+                        } else {
+                            t("Saved")
+                        },
+                    );
+                });
+            }
         });
         if let Some(c) = cmd {
             self.exec(&ctx, c);
@@ -1906,7 +2193,10 @@ impl ThinodaApp {
             &mut tab,
             &[(FormatTab::Style, t("Style")), (FormatTab::Map, t("Map"))],
         );
-        self.format_tab = tab;
+        if self.format_tab != tab {
+            self.format_tab = tab;
+            self.save_settings();
+        }
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
             .id_salt(match tab {
@@ -2438,7 +2728,10 @@ impl ThinodaApp {
             widgets::property_field(ui, t("Global Font"), |ui| {
                 font_selector(ui, &mut self.fonts, &mut ts.font_family, t("Default"))
             });
-            let columns = ((ui.available_width() + 8.0) / 126.0).floor().max(1.0) as usize;
+            let width = ui.available_width();
+            let columns = ((width + 8.0) / 126.0).floor().max(1.0) as usize;
+            let card_width =
+                ((width - 8.0 * (columns - 1) as f32) / columns as f32).clamp(1.0, 118.0);
             egui::Grid::new("sheet_themes")
                 .num_columns(columns)
                 .spacing(vec2(8.0, 8.0))
@@ -2446,60 +2739,48 @@ impl ThinodaApp {
                     for (index, id) in Theme::IDS.into_iter().enumerate() {
                         let th = Theme::builtin(id);
                         let selected = ts.custom_theme.is_none() && ts.theme_id == id;
-                        let r = widgets::card(ui).show(ui, |ui| {
-                            ui.set_width(104.0);
-                            let (rect, _) =
-                                ui.allocate_exact_size(vec2(100.0, 34.0), Sense::hover());
-                            let painter = ui.painter();
-                            painter.rect_filled(
-                                rect,
-                                CornerRadius::same(4),
-                                from_color(th.light_bg),
-                            );
-                            let c = rect.center();
-                            painter.rect_filled(
-                                egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
-                                CornerRadius::same(3),
-                                from_color(th.central_fill),
-                            );
-                            for (k, col) in th.palette.iter().take(4).enumerate() {
-                                let x = if k % 2 == 0 {
-                                    rect.left() + 14.0
-                                } else {
-                                    rect.right() - 14.0
-                                };
-                                let y = if k < 2 {
-                                    rect.top() + 9.0
-                                } else {
-                                    rect.bottom() - 9.0
-                                };
+                        let (_, activated) = widgets::preview_card(
+                            ui,
+                            t(th.name),
+                            selected,
+                            card_width,
+                            38.0,
+                            |ui, rect| {
+                                let painter = ui.painter();
                                 painter.rect_filled(
-                                    egui::Rect::from_center_size(egui::pos2(x, y), vec2(18.0, 7.0)),
-                                    CornerRadius::same(2),
-                                    from_color(*col),
+                                    rect,
+                                    CornerRadius::same(4),
+                                    from_color(th.light_bg),
                                 );
-                            }
-                            ui.label(RichText::new(t(th.name)).small());
-                        });
-                        let r =
-                            ui.interact(r.response.rect, ui.scope_id().with(id), Sense::click());
-                        r.widget_info(|| {
-                            egui::WidgetInfo::selected(
-                                egui::Role::Button,
-                                true,
-                                selected,
-                                t(th.name),
-                            )
-                        });
-                        if selected {
-                            ui.painter().rect_stroke(
-                                r.rect,
-                                CornerRadius::same(8),
-                                Stroke::new(2.0, d.view.accent),
-                                egui::StrokeKind::Outside,
-                            );
-                        }
-                        if r.clicked() {
+                                let c = rect.center();
+                                painter.rect_filled(
+                                    egui::Rect::from_center_size(c, vec2(30.0, 14.0)),
+                                    CornerRadius::same(3),
+                                    from_color(th.central_fill),
+                                );
+                                for (k, col) in th.palette.iter().take(4).enumerate() {
+                                    let x = if k % 2 == 0 {
+                                        rect.left() + 14.0
+                                    } else {
+                                        rect.right() - 14.0
+                                    };
+                                    let y = if k < 2 {
+                                        rect.top() + 9.0
+                                    } else {
+                                        rect.bottom() - 9.0
+                                    };
+                                    painter.rect_filled(
+                                        egui::Rect::from_center_size(
+                                            egui::pos2(x, y),
+                                            vec2(18.0, 7.0),
+                                        ),
+                                        CornerRadius::same(2),
+                                        from_color(*col),
+                                    );
+                                }
+                            },
+                        );
+                        if activated {
                             ts.theme_id = id.to_string();
                             ts.custom_theme = None;
                             ts.variant = 0;
@@ -2768,29 +3049,33 @@ impl ThinodaApp {
             ) {
                 let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
                 let close = self.dialogs.mindmanager_close.take();
-                if choice == 0
-                    && let Some(index) = self.docs.iter().position(|doc| doc.key == key)
-                {
-                    self.active = index;
-                    let saved = if sheet_only {
-                        self.save_sheet_to_confirmed(&path)
-                    } else {
-                        self.save_active_to(&path, self.settings.backup_on_save)
-                    };
-                    if saved && !sheet_only {
-                        match close {
-                            Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
-                            Some(CloseIntent::Quit) => {
-                                self.exec(ctx, Cmd::SaveAll);
-                                if self.dialogs.mindmanager_save.is_some() {
-                                    self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
-                                } else if !self.any_dirty() {
-                                    self.quitting = true;
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
-                            }
-                            None => {}
+                let index = self.docs.iter().position(|doc| doc.key == key);
+                let saved = if choice == 0 {
+                    if let Some(index) = index {
+                        self.active = index;
+                        if sheet_only {
+                            self.save_sheet_to_confirmed(&path)
+                        } else {
+                            self.save_active_to(&path, self.settings.backup_on_save)
                         }
+                    } else {
+                        self.toasts.warning(t("Not possible here"));
+                        false
+                    }
+                } else {
+                    false
+                };
+                if self.resolve_save_all(ctx, &key, saved) {
+                    return;
+                }
+                if saved
+                    && !sheet_only
+                    && let Some(index) = index
+                {
+                    match close {
+                        Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
+                        Some(CloseIntent::Quit) => self.begin_save_all(ctx, true),
+                        None => {}
                     }
                 }
             }
@@ -2922,14 +3207,7 @@ impl ThinodaApp {
                     }
                     (CloseIntent::Tab(i), 1) => self.close_tab_now(i),
                     (CloseIntent::Quit, 0) => {
-                        self.exec(ctx, Cmd::SaveAll);
-                        if self.dialogs.mindmanager_save.is_some() {
-                            self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
-                        }
-                        if !self.any_dirty() {
-                            self.quitting = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
+                        self.begin_save_all(ctx, true);
                     }
                     (CloseIntent::Quit, 1) => {
                         for d in &mut self.docs {
@@ -2944,7 +3222,7 @@ impl ThinodaApp {
         }
 
         // External modification conflict.
-        if let Some(i) = self.dialogs.conflict {
+        if let Some(key) = self.dialogs.conflict.clone() {
             let buttons = [
                 (t("Overwrite"), DialogButton::Danger),
                 (t("Save As Copy"), DialogButton::Primary),
@@ -2958,19 +3236,21 @@ impl ThinodaApp {
                 &buttons,
             ) {
                 self.dialogs.conflict = None;
-                self.active = i;
-                match b {
-                    0 => {
-                        if let Some(d) = self.docs.get_mut(i) {
-                            d.ignore_conflict = true;
+                let saved = if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
+                    self.active = index;
+                    match b {
+                        0 => {
+                            self.docs[index].ignore_conflict = true;
+                            self.save_active(false)
                         }
-                        self.save_active(false);
+                        1 => self.save_active(true),
+                        _ => false,
                     }
-                    1 => {
-                        self.save_active(true);
-                    }
-                    _ => {}
-                }
+                } else {
+                    self.toasts.warning(t("Not possible here"));
+                    false
+                };
+                self.resolve_save_all(ctx, &key, saved);
             }
         }
 

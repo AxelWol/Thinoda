@@ -465,6 +465,8 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     assert!(!h.state().dialogs.shortcuts);
     h.get_by_role_and_label(Role::Button, "☰").click();
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Datei").click();
+    h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Neu aus Vorlage…")
         .click();
     h.run_steps(3);

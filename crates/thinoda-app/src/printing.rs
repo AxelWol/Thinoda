@@ -733,6 +733,8 @@ mod tests {
             let state = h.state().doc().unwrap().doc.state_id();
             h.get_by_label(thinoda_ui::icons::MENU).click();
             h.run_steps(2);
+            h.get_by_role_and_label(Role::Button, "File").click();
+            h.run_steps(2);
             h.get_by_role_and_label(Role::Button, "Print Ctrl+P")
                 .click();
             h.run_steps(2);
