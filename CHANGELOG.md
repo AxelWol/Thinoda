@@ -13,6 +13,36 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.6.0](https://github.com/AxelWol/Thinoda/compare/v0.5.4...v0.6.0) (2026-10-21)
+
+
+### Features
+
+* **ui:** remember sidebar family and formatting tab across restarts ([43f89a0](https://github.com/AxelWol/Thinoda/commit/43f89a062795160a58ed77427ea4c9807e29239f))
+
+
+### Bug Fixes
+
+* **app:** commit pending titles before save and close checks ([18266ca](https://github.com/AxelWol/Thinoda/commit/18266ca710df34524ac213e7f45aaf2acd2cdfa0))
+* **app:** resume Save All after conflict and consent decisions ([a4d1e06](https://github.com/AxelWol/Thinoda/commit/a4d1e067cecfc2152cb6d097cca16721a8bb1661))
+* **ui:** align file actions with the active document context ([3446ec5](https://github.com/AxelWol/Thinoda/commit/3446ec5e8d31aad912588a5a6cf43074101d2e07))
+* **ui:** bound command palette and isolate its input ([87133a8](https://github.com/AxelWol/Thinoda/commit/87133a8a1d4317d1484f8ad7a32e0eba0d757123))
+* **ui:** bound main-menu popups and reveal keyboard focus ([4b5da84](https://github.com/AxelWol/Thinoda/commit/4b5da84c2ef632a23ce3e95f99201d8da0f25921))
+* **ui:** bound toolbar popups to the available viewport ([d4d532e](https://github.com/AxelWol/Thinoda/commit/d4d532ec447f852f9f35f9fa07befe7c33054ca7))
+* **ui:** constrain context menus to the available viewport ([2716dc5](https://github.com/AxelWol/Thinoda/commit/2716dc5816ccb3af7ae7e54f7e29393c1d261d9a))
+* **ui:** group main menu actions and preserve selection on dismissal ([8892499](https://github.com/AxelWol/Thinoda/commit/8892499df33d48f3fdb70693993f8af2c44fb54d))
+* **ui:** keep Map inspector content aligned during resizing ([47238a6](https://github.com/AxelWol/Thinoda/commit/47238a612a4977207f80c8e7db7a75b2f1ab432a))
+* **ui:** keep sheet navigation and bottom controls within the window ([1380111](https://github.com/AxelWol/Thinoda/commit/1380111a4fc04aacb0efcd4014ffeca36a6f3893))
+* **ui:** keep shortcut reference reachable in short windows ([c349568](https://github.com/AxelWol/Thinoda/commit/c349568c45ed26974742e78e5b5631257041ff8c))
+* **ui:** keep the Map insertion toolbox out of Outline view ([a549eb6](https://github.com/AxelWol/Thinoda/commit/a549eb62eba56ae381e88ee09a0f5f95dee11af3))
+* **ui:** unify Notes and Hyperlink command availability ([4055773](https://github.com/AxelWol/Thinoda/commit/4055773131339d78a37e36dca32622b8dd663293))
+* **ui:** verify startup safety and responsive sidebar lifecycle ([aecc6e3](https://github.com/AxelWol/Thinoda/commit/aecc6e3df6b58e8a1e8e8faafe0fbeb72beb8f51))
+
+
+### Documentation
+
+* record prioritized cross-platform UX roadmap ([f239ec7](https://github.com/AxelWol/Thinoda/commit/f239ec78a7c8cf9de9687e303cde099c6a0a5002))
+
 ## [0.5.4](https://github.com/AxelWol/Thinoda/compare/v0.5.3...v0.5.4) (2026-10-20)
 
 
