@@ -740,8 +740,13 @@ Settings/Outline and macOS packaging fixes. Release Please PR
 [#61](https://github.com/AxelWol/Thinoda/pull/61) passed CI, including its synced
 lockfile, and merged as `5afae7d`, creating v0.7.0. Build/publication run
 [`39610005813`](https://github.com/AxelWol/Thinoda/actions/runs/39610005813)
-is in progress; all five packages, checksums and published assets must be
-verified before declaring release completion. The later responsive-search
+completed successfully: all five native package jobs and publication passed.
+[v0.7.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.7.0) contains eight
+downloads (Windows x64/ARM64 installers, macOS Intel/ARM DMGs and app archives,
+Linux DEB/AppImage) and five target-specific checksum manifests. Every published
+download was fetched and its SHA-256 matched its manifest. Both macOS targets
+passed signing, notarization and installed-copy verification. WinGet was skipped;
+no package-manager publication is claimed. The later responsive-search
 (`311219a`) and Outline focus-ownership (`e1bcc27`) slices are post-release
 work, intentionally excluded from that tag. Main's v0.7.0 metadata is integrated
 into ongoing work. Current daily-editing work is still open; spelling/CJK font
