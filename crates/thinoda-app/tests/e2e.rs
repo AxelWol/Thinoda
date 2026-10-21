@@ -732,6 +732,17 @@ fn editor_preferences_independently_control_toolbar_and_add_handles() {
     h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Editor").click();
     h.run_steps(3);
+    let toggle_rect = h
+        .get_by_role_and_label(Role::Switch, "Show topic toolbar")
+        .rect();
+    let window_rect = h
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
+        .unwrap();
+    assert!(
+        window_rect.contains_rect(toggle_rect),
+        "toggle {toggle_rect:?}; window {window_rect:?}"
+    );
     h.get_by_role_and_label(Role::Switch, "Show topic toolbar")
         .click();
     h.run_steps(3);

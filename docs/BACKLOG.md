@@ -77,7 +77,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   exhausted retries and all other errors fail, with mandatory signature/stapling/
   Gatekeeper checks unchanged. Recovery, exhaustion, rejection and real stderr
   capture regressions pass; planning/finished rubber-duck reviews found no
-  blockers. Fixed-branch live packaging remains to be verified; no repaired
+  blockers. The first live run exposed and locally reproduced a separate Settings
+  startup-width regression in all five native test jobs. Reserving frame/scrollbar
+  space fixes the clipped Editor toggle; direct unscrolled clicks and an expanded
+  88-case Settings matrix cover it. Full local workspace CI and WASM lint pass.
+  Fixed-branch live packaging remains to be verified; no repaired
   v0.6.0 release assets or completed distribution acceptance is claimed.
 - R2 shortcut-reference navigation: Settings now opens the existing searchable
   Keyboard Shortcuts reference from its category row. It is an action, not an

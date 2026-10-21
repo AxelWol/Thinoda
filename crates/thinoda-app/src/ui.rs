@@ -3398,18 +3398,25 @@ impl ThinodaApp {
         let mut credentials_saved = false;
         let mut open_shortcuts = false;
         let bounds = ctx.content_rect().shrink(8.0);
+        const CONTENT_WIDTH: f32 = 440.0;
+        let style = ctx.global_style();
+        let frame = egui::Frame::window(&style);
+        // Leave room for the minimum-width body without requiring an initial horizontal scroll.
+        let default_width =
+            CONTENT_WIDTH + frame.total_margin().sum().x + style.spacing.scroll.allocated_width();
         egui::Window::new(t("Settings"))
             .id(egui::Id::unique("thinoda_settings"))
+            .frame(frame)
             .open(&mut open)
             .enabled(!self.dialogs.shortcuts)
             .min_size(egui::Vec2::ZERO)
             .max_size(bounds.size())
             .constrain_to(bounds)
-            .default_width(440.0)
+            .default_width(default_width)
             .collapsible(false)
             .scroll([true, true])
             .show(ctx, |ui| {
-                ui.set_min_width(440.0);
+                ui.set_min_width(CONTENT_WIDTH);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (SettingsTab::General, "General"),

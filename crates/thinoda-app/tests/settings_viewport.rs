@@ -83,6 +83,7 @@ fn every_settings_category_is_reachable_in_short_narrow_windows() {
                 (egui::vec2(320.0, 180.0), 1.0),
                 (egui::vec2(320.0, 180.0), 2.0),
                 (egui::vec2(640.0, 360.0), 1.5),
+                (egui::vec2(1280.0, 800.0), 1.0),
             ] {
                 let mut app = ThinodaApp::new(
                     Settings {
@@ -126,6 +127,23 @@ fn every_settings_category_is_reachable_in_short_narrow_windows() {
                 reveal(&mut h, Role::Switch, "Confirm before deleting");
                 reveal(&mut h, Role::ComboBox, "Language");
                 category(&mut h, "Editor");
+                if size.x == 1280.0 {
+                    for label in ["Show topic toolbar", "Show topic add buttons"] {
+                        let control = h.get_by_role_and_label(Role::Switch, t(label)).rect();
+                        let window = h
+                            .ctx
+                            .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
+                            .unwrap();
+                        assert!(
+                            window.contains_rect(control),
+                            "{label}: {control:?} outside {window:?}"
+                        );
+                    }
+                    h.get_by_role_and_label(Role::Switch, t("Show topic toolbar"))
+                        .click();
+                    h.run_steps(4);
+                    assert!(!h.state().settings.show_topic_toolbar);
+                }
                 for label in [
                     "Show topic toolbar",
                     "Show topic add buttons",
