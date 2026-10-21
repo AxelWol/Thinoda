@@ -735,8 +735,12 @@ stapling; non-network/signature failures still fail immediately.
 Planning and finished-step rubber-duck reviews found no blockers. All 71 script
 tests pass locally (9 native-only skips). Added native macOS tiny-image coverage
 checks embedded license resources, Applications link, installed app signature
-and no leftover image on successful/failed verification. Intel/ARM live packaging
-acceptance is pending; this does not repair the immutable v0.6.0 tag tooling or
+and no leftover image on successful/failed verification. Artifact-only run
+[`39598190225`](https://github.com/AxelWol/Thinoda/actions/runs/39598190225)
+at `afdf9b7` passed all five native test/package jobs. Intel and Apple silicon
+passed native image lifecycle tests, app/DMG signing, notarization, stapling,
+download/installed-copy verification and artifact upload. Publish/WinGet were
+intentionally skipped. This does not repair the immutable v0.6.0 tag tooling or
 claim published assets. Rebuilding that exact source with corrected tooling
 requires an explicitly separate tooling/source checkout, not retagging or
 attaching feature-branch application binaries.
