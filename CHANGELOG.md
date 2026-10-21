@@ -1,4 +1,4 @@
-_Last updated: 2026-10-21 08:07:18 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-21 13:40:10 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,13 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.7.0](https://github.com/AxelWol/Thinoda/compare/v0.6.0...v0.7.0) (2026-10-21)
+
+
+### Features
+
+* improve responsive editing and harden macOS release packaging ([6e2fcfa](https://github.com/AxelWol/Thinoda/commit/6e2fcfa9746e4a5155ad49f7230c579c77f7fe51))
 
 ## [0.6.0](https://github.com/AxelWol/Thinoda/compare/v0.5.4...v0.6.0) (2026-10-21)
 
