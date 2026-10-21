@@ -69,6 +69,19 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0/R1 resumable Save All: one stable-document-key queue pauses at each conflict
+  or whole-document MindManager consent and automatically resumes after resolution,
+  including pending Quit, as explicitly selected by the user. Home/original-tab
+  restoration survives reordering. Cancel/picker cancel/write failure aborts
+  without closing or writing later documents; earlier saves are retained and
+  unused overwrite consent is revoked. Autosave pauses during the batch; native
+  close cancels without replacing the decision or upgrading manual Save All to
+  Quit. Missing queued documents abort safely; new dirty documents veto Quit.
+  Real file/reopen, conflict/consent cycling, partial success, cancellation,
+  actual write failure, autosave timing and Close/CancelClose regressions pass.
+  Planning/finished rubber-duck reviews found no blockers. Workspace CI with live
+  AI disabled and WASM lint pass. Native picker/Save As Copy interaction and
+  actual OS window-close acceptance remain manual; broader lifecycle is not done.
 - R0/R1 pending-title lifecycle safety: Save All commits all inline title drafts
   before dirty checks; tab close commits only its target; native window close
   commits all titles before the save prompt. Cancel retains undoable text, while
@@ -76,7 +89,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   cover saved native files, Home/background documents, target-only flushing,
   all close choices, actual native-close cancellation output and one-step undo.
   Planning/finished reviews have no blockers. Idle autosave/recovery of pending
-  editors and interrupted/conflicting Save All continuation remain open.
+  editors remain open; interrupted/conflicting Save All is handled above.
 - R1/R2 command-palette safety: viewport-bounded results keep search visible and
   automatically reveal keyboard selection without pinning manual scrolling.
   Palette input no longer reaches the canvas/Outline, fixing Escape dismissal
@@ -93,7 +106,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   the original active tab. Real native two-file save/reopen and shipped-locale/
   theme/state matrices cover these routes. Planning/finished reviews have no
   remaining blockers in this slice. Draft detection is fixed by the subsequent
-  lifecycle slice above; interruption/conflict/Quit continuation remains open.
+  lifecycle slice above; interruption/conflict/Quit continuation is handled above.
 - R1/R2 shortcut-reference viewport safety: actual frame margins and available
   height replace fixed chrome/minimum-list estimates. A single reference scroll
   keeps all filters/commands reachable; a measured Close row stays visible.

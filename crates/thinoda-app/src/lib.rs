@@ -13,6 +13,7 @@ mod legal_markdown;
 mod map_shot;
 mod printing;
 mod quick_styles;
+mod save_all;
 mod shortcut_browser;
 pub mod startup;
 mod structure_picker;

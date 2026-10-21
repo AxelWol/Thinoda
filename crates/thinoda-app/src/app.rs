@@ -180,7 +180,7 @@ pub struct Dialogs {
     pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
     pub masked_copy: bool,
     pub close: Option<CloseIntent>,
-    pub conflict: Option<usize>,
+    pub conflict: Option<String>,
     pub rename_sheet: Option<(usize, String)>,
     pub recovery: Vec<OrphanSession>,
 }
@@ -209,6 +209,7 @@ pub struct ThinodaApp {
     pub accent: Color32,
     pub(crate) applied: Option<(SettingsTheme, Color32, u32)>,
     pub(crate) quitting: bool,
+    pub(crate) save_all: Option<crate::save_all::SaveAll>,
     last_poll: Instant,
     last_frame: Instant,
     /// Ask the OS clipboard for text on the next frame (menu "Paste").
@@ -281,6 +282,7 @@ impl ThinodaApp {
             accent: thinoda_ui::tokens::DEFAULT_ACCENT,
             applied: None,
             quitting: false,
+            save_all: None,
             last_poll: Instant::now(),
             last_frame: Instant::now(),
             paste_requested: false,
@@ -418,8 +420,10 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
-        if matches!(cmd, Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_))
-            && !self.command_available(&cmd)
+        if matches!(
+            cmd,
+            Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_) | Cmd::Quit
+        ) && !self.command_available(&cmd)
         {
             self.toasts.warning(t("Not possible here"));
             return;
@@ -494,17 +498,7 @@ impl ThinodaApp {
                 self.save_active(true);
             }
             Cmd::SaveAll => {
-                for d in &mut self.docs {
-                    d.view.commit_edit(&mut d.doc);
-                }
-                let cur = self.active;
-                for i in 0..self.docs.len() {
-                    if self.docs[i].is_dirty() {
-                        self.active = i;
-                        self.save_active(false);
-                    }
-                }
-                self.active = cur;
+                self.begin_save_all(ctx, false);
             }
             Cmd::CloseTab(i) => self.request_close_tab(i),
             Cmd::NextDoc => {
@@ -875,8 +869,12 @@ impl ThinodaApp {
                 self.palette.open
                     || (!self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about)
             }
-            Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => self.doc().is_some(),
-            Cmd::SaveAll => !self.docs.is_empty(),
+            Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => {
+                self.save_all.is_none() && self.doc().is_some()
+            }
+            Cmd::SaveAll => self.save_all.is_none() && !self.docs.is_empty(),
+            Cmd::Quit => self.save_all.is_none(),
+            Cmd::CloseTab(index) => self.save_all.is_none() && *index < self.docs.len(),
             Cmd::Print => {
                 self.doc().is_some()
                     && !self.any_modal_open()
@@ -1272,7 +1270,7 @@ impl ThinodaApp {
         let (target, chosen) = match (&d.path, save_as) {
             (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
                 if d.changed_on_disk() && !d.ignore_conflict {
-                    self.dialogs.conflict = Some(self.active);
+                    self.dialogs.conflict = Some(d.key.clone());
                     return false;
                 }
                 (p.clone(), false)
@@ -1319,7 +1317,7 @@ impl ThinodaApp {
             return false;
         };
         if d.path.as_deref() == Some(target) && d.changed_on_disk() && !d.ignore_conflict {
-            self.dialogs.conflict = Some(self.active);
+            self.dialogs.conflict = Some(d.key.clone());
             return false;
         }
         match d.save_to(target, backup) {
@@ -1405,6 +1403,10 @@ impl ThinodaApp {
     }
 
     pub fn request_close_tab(&mut self, i: usize) {
+        if self.save_all.is_some() {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
         if i >= self.docs.len() {
             return;
         }
@@ -1499,7 +1501,7 @@ impl ThinodaApp {
             }
         }
         // Autosave of documents that already have a native file.
-        if self.settings.autosave {
+        if self.settings.autosave && self.save_all.is_none() {
             let interval = self.settings.autosave_interval_secs.max(5) as f32;
             let backup = self.settings.backup_on_save;
             for d in &mut self.docs {
@@ -1587,6 +1589,10 @@ impl ThinodaApp {
     /// Handles a window close request (asks to save dirty documents).
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
+            if self.save_all.is_some() {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                return;
+            }
             for d in &mut self.docs {
                 d.view.commit_edit(&mut d.doc);
             }

@@ -222,14 +222,12 @@ navigation and Escape restore focus; all document-changing actions have correct
 undo/redo or explicit save semantics. Native keyboard-layout coverage includes
 Windows DE/EN and platform-appropriate macOS/Linux modifiers.
 
-**Remaining safety audit identified during delivery:** Save All's current loop can
-overwrite a pending conflict by proceeding to later documents. Title-only draft
-detection is fixed by the lifecycle follow-up below. Redesign interruption/continuation
-together with Quit/Close and MindManager consent, rather than independently
-stopping the loop and stranding those flows. Preserve file identity and unsaved
-documents on cancellation/error. The command-palette Escape/short-window issue
-discovered during this audit is delivered below; full native keyboard-layout
-and assistive-technology coverage remain open.
+**Safety audit follow-ups delivered:** title-only draft detection, ordered Save All
+conflict/consent continuation (including pending Quit), and the command-palette
+Escape/short-window issue are delivered below. Save All preserves document identity
+and remaining edits on cancellation/error. Native picker/Save As Copy interaction,
+actual OS window-close acceptance, full native keyboard-layout and
+assistive-technology coverage remain open.
 
 ### R2 - Sidebar, preferences and compact navigation
 
@@ -632,9 +630,8 @@ shipped-locale/theme matrix checks disabled File/toolbar states and real palette
 results on empty Home, Home with background documents and an active document.
 All advertised export formats reject missing-document execution without dialogs
 or map mutation. Planning/finished-step reviews completed; no remaining blockers
-in this slice. Save All's error/consent/Quit continuation is unchanged; its
-interruption safety audit above remains open. Pending-title dirty detection is
-handled by the lifecycle follow-up below.
+in this slice. Save All's error/consent/Quit continuation and pending-title dirty
+detection are handled by the subsequent follow-ups below.
 
 **Delivered R0/R1 follow-up - pending-title save/close safety:** Save All flushes
 all open documents' inline title drafts before deciding which documents are dirty.
@@ -652,9 +649,34 @@ assert actual CancelClose output for title-only changes and allow accepted
 Save/Don't Save to close; untouched/unchanged drafts stay clean.
 Planning and finished-step reviews found no remaining blockers. Targeted
 application suites (133 cases), native all-target clippy and WASM clippy pass.
-`OpenDoc::is_dirty`, idle autosave/recovery and interrupted Save All continuation
-are unchanged; pending-editor crash snapshots and the conflict/consent sequence
-still need their own acceptance work.
+`OpenDoc::is_dirty` and idle pending-editor autosave/recovery are unchanged;
+pending-editor crash snapshots still need their own acceptance work. Interrupted
+Save All continuation is handled by the following slice.
+
+**Delivered R0/R1 follow-up - resumable Save All and pending Quit:** the user
+explicitly selected automatic continuation after conflict/save-consent resolution.
+A queue of stable document keys replaces the loop that could overwrite a pending
+conflict. Only one document waits for a decision; later documents are not written.
+Conflict and whole-document MindManager consent can transition in either direction
+without losing the queue or pending Quit. Each pause, completion and abort restores
+the original document or Home by identity, even after reordering.
+Cancel, picker cancellation and write failure stop the batch and pending Quit.
+Already-saved files remain saved; remaining documents retain their edits, and
+unconsumed overwrite consent is cleared. Missing queued documents warn and abort
+rather than targeting the tab that inherited their index. Save/Save As/Save All/
+Export/Quit/tab-close dispatch cannot replace the batch. Native close during a
+pending batch sends CancelClose without stacking another dialog or upgrading a
+manual Save All to Quit. Autosave waits while the batch is paused; recovery remains
+active. Quit only closes after every queued save succeeds and no dirty document
+remains, including documents created outside the original queue.
+Real temporary-file save/reopen tests cover active/Home origins, reorder/removal,
+conflict/consent cycling, partial success/cancel, actual write failure, overwrite
+consent revocation, a full autosave interval, new dirty-document veto and actual
+Close/CancelClose output. Existing title, file-command, tab-close and MindManager
+regressions pass. Planning and finished-step rubber-duck reviews found no blockers;
+workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save As
+Copy interaction and actual renderer/window-manager close behavior remain manual
+acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

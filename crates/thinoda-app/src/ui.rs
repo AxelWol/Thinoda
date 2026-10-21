@@ -2947,29 +2947,33 @@ impl ThinodaApp {
             ) {
                 let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
                 let close = self.dialogs.mindmanager_close.take();
-                if choice == 0
-                    && let Some(index) = self.docs.iter().position(|doc| doc.key == key)
-                {
-                    self.active = index;
-                    let saved = if sheet_only {
-                        self.save_sheet_to_confirmed(&path)
-                    } else {
-                        self.save_active_to(&path, self.settings.backup_on_save)
-                    };
-                    if saved && !sheet_only {
-                        match close {
-                            Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
-                            Some(CloseIntent::Quit) => {
-                                self.exec(ctx, Cmd::SaveAll);
-                                if self.dialogs.mindmanager_save.is_some() {
-                                    self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
-                                } else if !self.any_dirty() {
-                                    self.quitting = true;
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
-                            }
-                            None => {}
+                let index = self.docs.iter().position(|doc| doc.key == key);
+                let saved = if choice == 0 {
+                    if let Some(index) = index {
+                        self.active = index;
+                        if sheet_only {
+                            self.save_sheet_to_confirmed(&path)
+                        } else {
+                            self.save_active_to(&path, self.settings.backup_on_save)
                         }
+                    } else {
+                        self.toasts.warning(t("Not possible here"));
+                        false
+                    }
+                } else {
+                    false
+                };
+                if self.resolve_save_all(ctx, &key, saved) {
+                    return;
+                }
+                if saved
+                    && !sheet_only
+                    && let Some(index) = index
+                {
+                    match close {
+                        Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
+                        Some(CloseIntent::Quit) => self.begin_save_all(ctx, true),
+                        None => {}
                     }
                 }
             }
@@ -3101,14 +3105,7 @@ impl ThinodaApp {
                     }
                     (CloseIntent::Tab(i), 1) => self.close_tab_now(i),
                     (CloseIntent::Quit, 0) => {
-                        self.exec(ctx, Cmd::SaveAll);
-                        if self.dialogs.mindmanager_save.is_some() {
-                            self.dialogs.mindmanager_close = Some(CloseIntent::Quit);
-                        }
-                        if !self.any_dirty() {
-                            self.quitting = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
+                        self.begin_save_all(ctx, true);
                     }
                     (CloseIntent::Quit, 1) => {
                         for d in &mut self.docs {
@@ -3123,7 +3120,7 @@ impl ThinodaApp {
         }
 
         // External modification conflict.
-        if let Some(i) = self.dialogs.conflict {
+        if let Some(key) = self.dialogs.conflict.clone() {
             let buttons = [
                 (t("Overwrite"), DialogButton::Danger),
                 (t("Save As Copy"), DialogButton::Primary),
@@ -3137,19 +3134,21 @@ impl ThinodaApp {
                 &buttons,
             ) {
                 self.dialogs.conflict = None;
-                self.active = i;
-                match b {
-                    0 => {
-                        if let Some(d) = self.docs.get_mut(i) {
-                            d.ignore_conflict = true;
+                let saved = if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
+                    self.active = index;
+                    match b {
+                        0 => {
+                            self.docs[index].ignore_conflict = true;
+                            self.save_active(false)
                         }
-                        self.save_active(false);
+                        1 => self.save_active(true),
+                        _ => false,
                     }
-                    1 => {
-                        self.save_active(true);
-                    }
-                    _ => {}
-                }
+                } else {
+                    self.toasts.warning(t("Not possible here"));
+                    false
+                };
+                self.resolve_save_all(ctx, &key, saved);
             }
         }
 
