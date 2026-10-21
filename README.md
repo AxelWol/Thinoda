@@ -296,6 +296,10 @@ those system-owned controls. WinGet publishing remains paused.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.
+  Controls wrap and scroll into view with keyboard focus in narrow/short windows;
+  replacement drafts survive resizing. The compact card may temporarily cover
+  the inspector. Outline shortcuts yield while search is open, so Tab navigates
+  controls rather than adding topics.
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
   and Style/Map tabs stay visible while their contents scroll independently.
@@ -384,6 +388,7 @@ system credential store (Windows Credential Manager, macOS Keychain, or Linux Se
 not in `settings.toml`.
 
 ## Build & test
+
 ```sh
 cargo run -p thinoda-app            # start the app
 cargo xtask ci                    # fmt + clippy + all tests

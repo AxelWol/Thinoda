@@ -325,7 +325,7 @@ impl ThinodaApp {
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
-            self.search_bar(&ctx);
+            self.search_bar(&ctx, center.response.rect);
         }
         self.update_search();
 
@@ -1835,6 +1835,7 @@ impl ThinodaApp {
             });
         // Keyboard in outliner when not editing.
         if ui.is_enabled()
+            && !self.search.open
             && d.view.editing_topic().is_none()
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
@@ -2969,104 +2970,118 @@ impl ThinodaApp {
 
     // ----- search bar ---------------------------------------------------------------------------
 
-    fn search_bar(&mut self, ctx: &Context) {
+    fn search_bar(&mut self, ctx: &Context, canvas: egui::Rect) {
         let mut close = false;
+        let bounds = ctx.content_rect().shrink(8.0);
+        let width = 354.0_f32.min(bounds.width());
+        let right = if canvas.width() >= width {
+            canvas.right().min(bounds.right())
+        } else {
+            bounds.right()
+        };
+        let top = 56.0_f32.min(bounds.top() + bounds.height() * 0.15);
+        let position = egui::pos2((right - width).max(bounds.left()), top);
         egui::Area::new(egui::Id::unique("thinoda_search"))
-            .anchor(
-                egui::Align2::RIGHT_TOP,
-                vec2(
-                    -(if self.settings.show_format_panel && !self.zen {
-                        300.0
-                    } else {
-                        16.0
-                    }),
-                    56.0,
-                ),
-            )
+            .fixed_pos(position)
+            .constrain_to(bounds)
             .show(ctx, |ui| {
-                widgets::card(ui).show(ui, |ui| {
-                    ui.set_width(340.0);
-                    ui.horizontal(|ui| {
-                        let r = ui
-                            .allocate_ui(vec2(230.0, 28.0), |ui| {
-                                widgets::search_field(ui, &mut self.search.query, t("Search"))
-                            })
-                            .inner;
-                        if std::mem::take(&mut self.search.focus) {
-                            r.request_focus();
-                        }
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                            let back = ui.input(|i| i.modifiers.shift);
-                            self.goto_hit(if back { -1 } else { 1 });
-                            r.request_focus();
-                        }
-                        if ui
-                            .small_button("▲")
-                            .accessible_name(t("Previous result"))
-                            .clicked()
-                        {
-                            self.goto_hit(-1);
-                        }
-                        if ui
-                            .small_button("▼")
-                            .accessible_name(t("Next result"))
-                            .clicked()
-                        {
-                            self.goto_hit(1);
-                        }
-                        if ui
-                            .small_button(icons::CLOSE)
-                            .accessible_name(t("Close search"))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    });
-                    let n = self.search.hits.len();
-                    widgets::caption(
-                        ui,
-                        if self.search.query.is_empty() {
-                            String::new()
-                        } else if n == 0 {
-                            t("No results").to_string()
-                        } else {
-                            format!("{}/{} {}", self.search.current + 1, n, t("results"))
-                        },
-                    );
-                    if self.search.all_sheets
-                        && let Some(hit) = self.search.hits.get(self.search.current)
-                        && let Some(sheet) = self
-                            .doc()
-                            .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
-                    {
-                        widgets::caption(ui, format!("{}: {}", t("Sheet"), sheet.title));
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
-                        ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
-                        ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
-                        ui.checkbox(&mut self.search.opts.include_notes, t("Include notes"));
-                        ui.checkbox(&mut self.search.opts.include_labels, t("Include labels"));
-                        ui.checkbox(&mut self.search.dim, t("Dim others"));
-                        ui.checkbox(&mut self.search.show_replace, t("Replace"));
-                    });
-                    if self.search.show_replace {
-                        widgets::caption(ui, t("Replaces topic titles only."));
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                TextEdit::singleline(&mut self.search.replace)
-                                    .hint_text(t("Replace"))
-                                    .desired_width(220.0),
-                            )
-                            .accessible_name(t("Replace with"));
-                            if ui
-                                .add_enabled(n > 0, egui::Button::new(t("Replace All")))
-                                .clicked()
-                            {
-                                self.replace_all();
+                let frame = widgets::card(ui);
+                let margin = frame.total_margin().sum();
+                frame.show(ui, |ui| {
+                    ui.set_width((width - margin.x).max(0.0));
+                    egui::ScrollArea::vertical()
+                        .id_salt("search_scroll")
+                        .max_height((bounds.bottom() - position.y - margin.y).max(0.0))
+                        .min_scrolled_height(0.0)
+                        .show(ui, |ui| {
+                            let r = widgets::search_field(ui, &mut self.search.query, t("Search"));
+                            if self.search.focus && ui.is_enabled() && !ui.is_sizing_pass() {
+                                self.search.focus = !r.has_focus();
+                                r.request_focus();
                             }
+                            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                                let back = ui.input(|i| i.modifiers.shift);
+                                self.goto_hit(if back { -1 } else { 1 });
+                                r.request_focus();
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .small_button("▲")
+                                    .accessible_name(t("Previous result"))
+                                    .clicked()
+                                {
+                                    self.goto_hit(-1);
+                                }
+                                if ui
+                                    .small_button("▼")
+                                    .accessible_name(t("Next result"))
+                                    .clicked()
+                                {
+                                    self.goto_hit(1);
+                                }
+                                if ui
+                                    .small_button(icons::CLOSE)
+                                    .accessible_name(t("Close search"))
+                                    .clicked()
+                                {
+                                    close = true;
+                                }
+                            });
+                            let n = self.search.hits.len();
+                            widgets::caption(
+                                ui,
+                                if self.search.query.is_empty() {
+                                    String::new()
+                                } else if n == 0 {
+                                    t("No results").to_string()
+                                } else {
+                                    format!("{}/{} {}", self.search.current + 1, n, t("results"))
+                                },
+                            );
+                            if self.search.all_sheets
+                                && let Some(hit) = self.search.hits.get(self.search.current)
+                                && let Some(sheet) = self
+                                    .doc()
+                                    .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
+                            {
+                                let title = format!("{}: {}", t("Sheet"), sheet.title);
+                                ui.add(egui::Label::new(&title).truncate())
+                                    .on_hover_text(title);
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
+                                ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
+                                ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
+                                ui.checkbox(
+                                    &mut self.search.opts.include_notes,
+                                    t("Include notes"),
+                                );
+                                ui.checkbox(
+                                    &mut self.search.opts.include_labels,
+                                    t("Include labels"),
+                                );
+                                ui.checkbox(&mut self.search.dim, t("Dim others"));
+                                ui.checkbox(&mut self.search.show_replace, t("Replace"));
+                            });
+                            if self.search.show_replace {
+                                widgets::caption(ui, t("Replaces topic titles only."));
+                                ui.add(
+                                    TextEdit::singleline(&mut self.search.replace)
+                                        .hint_text(t("Replace"))
+                                        .desired_width(ui.available_width()),
+                                )
+                                .accessible_name(t("Replace with"));
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui
+                                        .add_enabled(n > 0, egui::Button::new(t("Replace All")))
+                                        .clicked()
+                                    {
+                                        self.replace_all();
+                                    }
+                                });
+                            }
+                            reveal_changed_focus(ui);
                         });
-                    }
                 });
             });
         if close || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {

@@ -693,6 +693,28 @@ blockers; full workspace CI with live AI disabled and WASM lint pass.
 Full native input/accessibility and exceptionally tiny viewports remain manual
 acceptance work, not a claim of complete Outline parity.
 
+**Delivered R1/R2 follow-up - responsive Find and Replace:** at 320x240 the old
+fixed-width overlay put the replacement field at x=-27. The search card now
+uses the measured central canvas edge when there is room and constrains itself
+to the viewport; at narrow widths it may temporarily cover the inspector rather
+than putting controls outside the window. Query/replacement fields use available
+width, action/options rows wrap and a height-bounded scroll region reveals
+keyboard focus. Long sheet titles truncate with the full title on hover.
+Search focus survives the sizing/reopen pass without pinning later navigation.
+The new keyboard matrix also reproduced a document-safety defect: Tab on a
+search navigation button in Outline inserted a child. Non-editing Outline
+shortcuts now yield while Find/Replace is open.
+The 66-case shipped-locale/Auto, light/dark, viewport/scale matrix exercises both
+Map/Outline, inspector visible/hidden, Tab order, focus reveal, actual button
+paint/clip containment, resize/draft retention, replacement/one-step undo and
+Escape/Close filter cleanup. Existing search reopening and cross-sheet regression
+coverage is retained. Planning/finished-step rubber-duck reviews found no
+blocking issues; temporary inspector overlap is an intentional compact-mode
+trade-off, not hidden-layout parity. Full workspace CI with live AI disabled and
+WASM lint pass. This does not close the daily-editing band: shortcut rebinding,
+spelling/CJK font work, canvas reference polish and native input/accessibility
+acceptance remain before claiming R1-R3 complete.
+
 **Publishing status (2026-10-21):** v0.6.0 Release Please run
 [`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
 attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject

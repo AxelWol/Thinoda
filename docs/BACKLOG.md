@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
+  now inside a viewport-bounded, height-scrollable search card with adaptive
+  fields, wrapped controls and keyboard focus reveal. Narrow windows may
+  temporarily cover the inspector to retain usable search controls. Outline
+  editing shortcuts yield while search is open, preventing Tab navigation from
+  inserting a child. A 66-case locale/theme/size-scale matrix covers both views,
+  panel states, focus/Tab, control paint, resize/drafts, replacement/undo and close
+  cleanup; existing search/cross-sheet tests remain. Daily-editing feature and
+  native acceptance gaps are still open in the plan.
 - R11 DMG lifecycle hardening: release packaging
   no longer explicitly mounts/customizes a writable image. Closed staging keeps
   the signed app, Applications link, icon and license prompt before image signing
