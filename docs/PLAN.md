@@ -242,7 +242,10 @@ assistive-technology coverage remain open.
    opt-in recent structure/theme, smart guides and independent topic-toolbar/
    add-button visibility. Never present unimplemented switches as functional.
 4. Implement spelling dictionaries/suggestions and CJK/mixed-script font fallback,
-   with remeasurement across open tabs and actual installed-font checks.
+   with remeasurement across open tabs and actual installed-font checks,
+   retaining explicit default-CJK-font preferences and native/browser IME acceptance
+   as separate requirements. Native automatic fallback is delivered below; browser
+   font provisioning and remaining preferences are still open.
 5. Add the floating bottom-right bar: statistics popover, zoom presets/current-value/
    Fit, Map/Outline switch and verified view actions. Wire Gantt/Pitch when ready.
    Define statistics scope and Unicode counting before exposing character totals.
@@ -714,6 +717,32 @@ trade-off, not hidden-layout parity. Full workspace CI with live AI disabled and
 WASM lint pass. This does not close the daily-editing band: shortcut rebinding,
 spelling/CJK font work, canvas reference polish and native input/accessibility
 acceptance remain before claiming R1-R3 complete.
+
+**Delivered R2 follow-up - native mixed-script font fallback:** the workspace
+disabled eframe's default features without re-enabling `system_fonts`. This left
+Japanese/Chinese/Korean characters missing even with suitable installed fonts.
+Enable the existing egui 0.37 native provider rather than adding document scans,
+script tables or another cache. It enumerates fonts in a background thread,
+looks up missing glyphs on demand (the first request can wait for enumeration),
+validates coverage and preserves collection indices. Configured/named faces keep
+priority; document names, saved state and undo history are not rewritten. All
+native text surfaces share this provider, including uncommitted title drafts.
+Deterministic embedded-font coverage checks initial measurement, cache reuse,
+configured-family precedence and providers surviving font-definition updates.
+The opt-in Windows acceptance test uses installed CJK fonts to verify real glyph
+coverage in proportional/monospace/named families, measured layout, draft/undo and
+document/Outline switching. It passes on the development Windows host; CI does
+not assume every runner has optional CJK language fonts. Run it explicitly with
+`cargo test -p thinoda-app --test font_families -- --include-ignored --test-threads=1`.
+Fonts are neither downloaded nor redistributed. macOS/Linux native CJK acceptance,
+default CJK-font preferences, IME, browser font provisioning and exact vector-export
+matching remain open; this slice does not close R2 or add a locale.
+Planning and finished-step rubber-duck reviews found no blockers. The final review
+identified the Linux Fontconfig build prerequisite; both CI and release workflows
+now install `pkg-config`/`libfontconfig1-dev`, and DEB metadata declares
+`libfontconfig1`. Generated runtime dependency notices are updated. Full workspace
+CI with live AI disabled, WASM lint, notice checks and packaging-script tests pass
+locally; native Linux/macOS build acceptance remains a PR check, not a local claim.
 
 **Delivered R1 follow-up - Outline keyboard ownership:** Tab from the Outline
 action toolbar reproduced an unintended child insertion, and global topic keys

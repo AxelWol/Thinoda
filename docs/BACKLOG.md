@@ -78,6 +78,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   actual button Enter, pointer/arrow focus, row Tab/edit Escape and sidebar Undo.
   Full workspace CI and WASM lint pass; planning/finished rubber-duck reviews
   found no blockers. Native input/accessibility acceptance remains open.
+- R2 native mixed-script fallback: enable eframe 0.37's existing `system_fonts`
+  provider, previously excluded by the default-feature override. Missing glyphs
+  resolve to installed OS faces on demand, after configured fonts, without
+  rewriting document fonts/history. Deterministic tests cover precedence,
+  first measurement/cache reuse and font-definition changes; opt-in Windows
+  installed-CJK acceptance covers real glyphs, title drafts/undo, documents and
+  Outline. No font download/embedding or new locale. Native macOS/Linux CJK,
+  default CJK preferences, IME, browser fonts and vector-export matching remain
+  open; Ubuntu users need installed coverage such as `fonts-noto-cjk`.
 - R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
   now inside a viewport-bounded, height-scrollable search card with adaptive
   fields, wrapped controls and keyboard focus reveal. Narrow windows may
@@ -917,8 +926,10 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 - P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
   the last structure/theme for new blank maps are implemented; skeleton-specific
   variants still need the layout-gallery research.
-- P2 Editor: default CJK font and mixed-script fallback for all open documents,
-  with layout remeasurement and Windows/macOS/Linux font availability checks.
+- P2 Editor: explicit default CJK-font preference, browser font provisioning,
+  IME and remaining macOS/Linux font acceptance. Native automatic mixed-script
+  fallback is implemented; configured font priority, layout/cache behavior,
+  open-document switching and installed Windows CJK coverage are verified.
 - P2 Calendar: selectable base/work calendars, month navigation, working-weekday
   toggles, non-working-day shading and dated exceptions; integrate with Gantt scheduling.
   Calendar management operations behind the reference overflow menu still need research.

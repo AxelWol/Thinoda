@@ -52,7 +52,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-544 crates.
+550 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -163,6 +163,7 @@ LGPL/MPL licensing:
 | egui-wgpu | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/egui-wgpu> |
 | egui-winit | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/egui-winit> |
 | egui_glow | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/egui_glow> |
+| egui_system_font_provider | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/egui_system_font_provider> |
 | either | 1.19.0 | MIT OR Apache-2.0 | <https://github.com/rayon-rs/either> |
 | emath | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/emath> |
 | endi | 1.1.1 | MIT | <https://github.com/zeenix/endi> |
@@ -191,6 +192,7 @@ LGPL/MPL licensing:
 | font-types | 0.12.7 | MIT OR Apache-2.0 | <https://github.com/googlefonts/fontations> |
 | fontconfig-parser | 0.5.8 | MIT | <https://github.com/Riey/fontconfig-parser> |
 | fontdb | 0.24.0 | MIT | <https://github.com/RazrFalcon/fontdb> |
+| fontique | 0.11.1 | Apache-2.0 OR MIT | <https://github.com/linebender/parley> |
 | foreign-types | 0.5.0 | MIT/Apache-2.0 | <https://github.com/sfackler/foreign-types> |
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 | <https://github.com/sfackler/foreign-types> |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 | <https://github.com/sfackler/foreign-types> |
@@ -309,6 +311,7 @@ LGPL/MPL licensing:
 | objc2-core-graphics | 0.3.2 | Zlib OR Apache-2.0 OR MIT | <https://github.com/madsmtm/objc2> |
 | objc2-core-image | 0.2.2 | MIT | <https://github.com/madsmtm/objc2> |
 | objc2-core-location | 0.2.2 | MIT | <https://github.com/madsmtm/objc2> |
+| objc2-core-text | 0.3.2 | Zlib OR Apache-2.0 OR MIT | <https://github.com/madsmtm/objc2> |
 | objc2-encode | 4.1.0 | MIT | <https://github.com/madsmtm/objc2> |
 | objc2-foundation | 0.2.2 | MIT | <https://github.com/madsmtm/objc2> |
 | objc2-foundation | 0.3.2 | MIT | <https://github.com/madsmtm/objc2> |
@@ -333,6 +336,7 @@ LGPL/MPL licensing:
 | parking | 2.2.1 | Apache-2.0 OR MIT | <https://github.com/smol-rs/parking> |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
+| parlance | 0.1.1 | Apache-2.0 OR MIT | <https://github.com/linebender/parley> |
 | pdf-writer | 0.12.1 | MIT OR Apache-2.0 | <https://github.com/typst/pdf-writer> |
 | peniko | 0.6.1 | Apache-2.0 OR MIT | <https://github.com/linebender/peniko> |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url/> |
@@ -348,6 +352,7 @@ LGPL/MPL licensing:
 | piper | 0.2.5 | MIT OR Apache-2.0 | <https://github.com/smol-rs/piper> |
 | plain | 0.2.3 | MIT/Apache-2.0 | <https://github.com/randomites/plain> |
 | png | 0.18.1 | MIT OR Apache-2.0 | <https://github.com/image-rs/image-png> |
+| poll-promise | 0.3.0 | MIT OR Apache-2.0 | <https://github.com/EmbarkStudios/poll-promise> |
 | polling | 3.11.0 | Apache-2.0 OR MIT | <https://github.com/smol-rs/polling> |
 | pollster | 0.4.0 | Apache-2.0/MIT | <https://github.com/zesterer/pollster> |
 | pollster | 1.0.1 | Apache-2.0/MIT | <https://github.com/zesterer/pollster> |
@@ -567,6 +572,7 @@ LGPL/MPL licensing:
 | xkbcommon-dl | 0.4.2 | MIT | <https://github.com/rust-windowing/xkbcommon-dl> |
 | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib | <https://github.com/notgull/xkeysym> |
 | xmlwriter | 0.1.0 | MIT | <https://github.com/RazrFalcon/xmlwriter> |
+| yeslogic-fontconfig-sys | 6.0.1 | MIT | <https://github.com/yeslogic/fontconfig-rs> |
 | yoke | 0.8.3 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | yoke-derive | 0.8.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | zbus | 4.4.0 | MIT | <https://github.com/dbus2/zbus/> |

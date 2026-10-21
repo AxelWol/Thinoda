@@ -112,6 +112,14 @@ those system-owned controls. WinGet publishing remains paused.
   unavailable families warn and keep their requested names. Native files retain
   the settings, and public XMind JSON/XML receive the effective font names.
   Fonts are not embedded or redistributed; install them on each target machine.
+- Native Windows/macOS/Linux builds also discover installed fonts on demand for
+  characters missing from the configured face, including mixed Japanese, Chinese
+  and Korean titles and text drafts. Configured fonts keep priority; document font
+  names and undo history are unchanged. Coverage depends on installed fonts (for
+  example, `fonts-noto-cjk` on Ubuntu); this does not install or download fonts.
+  Browser builds do not gain access to OS fonts through this native fallback.
+  Default CJK-font preferences, native IME acceptance and exact vector-export
+  font matching remain separate work.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
@@ -402,7 +410,7 @@ Web app (WebAssembly, needs `rustup target add wasm32-unknown-unknown` and
 [Trunk](https://trunkrs.dev)): `cd crates/thinoda-web && trunk serve`, or
 `trunk build --release` for the static site. Browser alternatives for files,
 printing, recovery and the AI key are described in [docs/WEB.md](docs/WEB.md).
-Linux build dependencies: `pkg-config libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
+Linux build dependencies: `pkg-config libfontconfig1-dev libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
 libxcb-xfixes0-dev libwayland-dev`.
 Native printing also needs a C compiler (MSVC on Windows, Xcode/Clang and the
 AppKit SDK on macOS, GCC/Clang on Linux). Job-free native Linux integration checks:
