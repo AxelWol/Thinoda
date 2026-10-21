@@ -180,7 +180,15 @@ fn topic_fields_share_selection_guards_and_preserve_inline_edits() {
                         FocusField::Hyperlink => Role::TextInput,
                     };
                     let input = h.get_by_role_and_label(role, t(label));
-                    assert!(input.is_focused());
+                    assert!(
+                        input.is_focused(),
+                        "{language:?} {theme:?} {mode:?} scale={scale} {field:?}: field={:?}, focus={:?}",
+                        input.rect(),
+                        h.ctx
+                            .memory(|memory| memory.focused())
+                            .and_then(|id| h.ctx.read_response(id))
+                            .map(|response| response.rect)
+                    );
                     input.type_text(value);
                     h.run_steps(4);
                     h.get_by_role_and_label(Role::Tab, t("Style")).focus();

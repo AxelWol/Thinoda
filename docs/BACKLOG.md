@@ -69,6 +69,42 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 Outline keyboard ownership: structural shortcuts now belong to focused
+  topic rows/disclosures, not the action toolbar, sidebar or other chrome.
+  Stable topic-scoped IDs, explicit pointer focus and row-focus restoration
+  preserve intentional topic editing/navigation. Global non-text Undo/Redo
+  remains available without jumping focus away from the invoking control.
+  The 99-case locale/theme/scale/panel matrix covers toolbar no-edit keys,
+  actual button Enter, pointer/arrow focus, row Tab/edit Escape and sidebar Undo.
+  Full workspace CI and WASM lint pass; planning/finished rubber-duck reviews
+  found no blockers. Native input/accessibility acceptance remains open.
+- R2 inspector keyboard reachability: Hyperlink could be focused at y1112 in
+  an 800x400 viewport without scrolling. Style/Map/Symbols now reveal newly
+  focused descendant controls. Shared scroll-focus handling follows widget
+  ancestry, not just background layer, so Outline and sidebar regions cannot
+  scroll one another. Unchanged focus preserves manual scrolling. The 66-case
+  shipped-locale/Auto, light/dark, viewport/scale matrix covers focus, real Tab,
+  clipped paint bounds, Outline isolation, document/history preservation and
+  Notes draft/commit/one-step undo. Native assistive-technology acceptance remains
+  separate; this does not close R2.
+- R2 native mixed-script fallback: enable eframe 0.37's existing `system_fonts`
+  provider, previously excluded by the default-feature override. Missing glyphs
+  resolve to installed OS faces on demand, after configured fonts, without
+  rewriting document fonts/history. Deterministic tests cover precedence,
+  first measurement/cache reuse and font-definition changes; opt-in Windows
+  installed-CJK acceptance covers real glyphs, title drafts/undo, documents and
+  Outline. No font download/embedding or new locale. Native macOS/Linux CJK,
+  default CJK preferences, IME, browser fonts and vector-export matching remain
+  open; Ubuntu users need installed coverage such as `fonts-noto-cjk`.
+- R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
+  now inside a viewport-bounded, height-scrollable search card with adaptive
+  fields, wrapped controls and keyboard focus reveal. Narrow windows may
+  temporarily cover the inspector to retain usable search controls. Outline
+  editing shortcuts yield while search is open, preventing Tab navigation from
+  inserting a child. A 66-case locale/theme/size-scale matrix covers both views,
+  panel states, focus/Tab, control paint, resize/drafts, replacement/undo and close
+  cleanup; existing search/cross-sheet tests remain. Daily-editing feature and
+  native acceptance gaps are still open in the plan.
 - R11 DMG lifecycle hardening: release packaging
   no longer explicitly mounts/customizes a writable image. Closed staging keeps
   the signed app, Applications link, icon and license prompt before image signing
@@ -899,8 +935,10 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 - P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
   the last structure/theme for new blank maps are implemented; skeleton-specific
   variants still need the layout-gallery research.
-- P2 Editor: default CJK font and mixed-script fallback for all open documents,
-  with layout remeasurement and Windows/macOS/Linux font availability checks.
+- P2 Editor: explicit default CJK-font preference, browser font provisioning,
+  IME and remaining macOS/Linux font acceptance. Native automatic mixed-script
+  fallback is implemented; configured font priority, layout/cache behavior,
+  open-document switching and installed Windows CJK coverage are verified.
 - P2 Calendar: selectable base/work calendars, month navigation, working-weekday
   toggles, non-working-day shading and dated exceptions; integrate with Gantt scheduling.
   Calendar management operations behind the reference overflow menu still need research.

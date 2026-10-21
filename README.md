@@ -112,10 +112,21 @@ those system-owned controls. WinGet publishing remains paused.
   unavailable families warn and keep their requested names. Native files retain
   the settings, and public XMind JSON/XML receive the effective font names.
   Fonts are not embedded or redistributed; install them on each target machine.
+- Native Windows/macOS/Linux builds also discover installed fonts on demand for
+  characters missing from the configured face, including mixed Japanese, Chinese
+  and Korean titles and text drafts. Configured fonts keep priority; document font
+  names and undo history are unchanged. Coverage depends on installed fonts (for
+  example, `fonts-noto-cjk` on Ubuntu); this does not install or download fonts.
+  Browser builds do not gain access to OS fonts through this native fallback.
+  Default CJK-font preferences, native IME acceptance and exact vector-export
+  font matching remain separate work.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Style, Map and Symbols sidebars reveal newly focused controls during keyboard
+  navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
+  is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
   windows while keeping Close visible. Bindings are read-only for now.
 - The command palette keeps search visible above scrollable results on small
@@ -296,6 +307,12 @@ those system-owned controls. WinGet publishing remains paused.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.
+  Controls wrap and scroll into view with keyboard focus in narrow/short windows;
+  replacement drafts survive resizing. The compact card may temporarily cover
+  the inspector. Outline shortcuts yield while search is open, so Tab navigates
+  controls rather than adding topics.
+  In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
+  focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
   and Style/Map tabs stay visible while their contents scroll independently.
@@ -384,6 +401,7 @@ system credential store (Windows Credential Manager, macOS Keychain, or Linux Se
 not in `settings.toml`.
 
 ## Build & test
+
 ```sh
 cargo run -p thinoda-app            # start the app
 cargo xtask ci                    # fmt + clippy + all tests
@@ -395,7 +413,7 @@ Web app (WebAssembly, needs `rustup target add wasm32-unknown-unknown` and
 [Trunk](https://trunkrs.dev)): `cd crates/thinoda-web && trunk serve`, or
 `trunk build --release` for the static site. Browser alternatives for files,
 printing, recovery and the AI key are described in [docs/WEB.md](docs/WEB.md).
-Linux build dependencies: `pkg-config libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
+Linux build dependencies: `pkg-config libfontconfig1-dev libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev
 libxcb-xfixes0-dev libwayland-dev`.
 Native printing also needs a C compiler (MSVC on Windows, Xcode/Clang and the
 AppKit SDK on macOS, GCC/Clang on Linux). Job-free native Linux integration checks:

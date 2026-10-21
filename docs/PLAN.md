@@ -242,7 +242,10 @@ assistive-technology coverage remain open.
    opt-in recent structure/theme, smart guides and independent topic-toolbar/
    add-button visibility. Never present unimplemented switches as functional.
 4. Implement spelling dictionaries/suggestions and CJK/mixed-script font fallback,
-   with remeasurement across open tabs and actual installed-font checks.
+   with remeasurement across open tabs and actual installed-font checks,
+   retaining explicit default-CJK-font preferences and native/browser IME acceptance
+   as separate requirements. Native automatic fallback is delivered below; browser
+   font provisioning and remaining preferences are still open.
 5. Add the floating bottom-right bar: statistics popover, zoom presets/current-value/
    Fit, Map/Outline switch and verified view actions. Wire Gantt/Pitch when ready.
    Define statistics scope and Unicode counting before exposing character totals.
@@ -693,7 +696,118 @@ blockers; full workspace CI with live AI disabled and WASM lint pass.
 Full native input/accessibility and exceptionally tiny viewports remain manual
 acceptance work, not a claim of complete Outline parity.
 
-**Publishing status (2026-10-21):** v0.6.0 Release Please run
+**Delivered R1/R2 follow-up - responsive Find and Replace:** at 320x240 the old
+fixed-width overlay put the replacement field at x=-27. The search card now
+uses the measured central canvas edge when there is room and constrains itself
+to the viewport; at narrow widths it may temporarily cover the inspector rather
+than putting controls outside the window. Query/replacement fields use available
+width, action/options rows wrap and a height-bounded scroll region reveals
+keyboard focus. Long sheet titles truncate with the full title on hover.
+Search focus survives the sizing/reopen pass without pinning later navigation.
+The new keyboard matrix also reproduced a document-safety defect: Tab on a
+search navigation button in Outline inserted a child. Non-editing Outline
+shortcuts now yield while Find/Replace is open.
+The 66-case shipped-locale/Auto, light/dark, viewport/scale matrix exercises both
+Map/Outline, inspector visible/hidden, Tab order, focus reveal, actual button
+paint/clip containment, resize/draft retention, replacement/one-step undo and
+Escape/Close filter cleanup. Existing search reopening and cross-sheet regression
+coverage is retained. Planning/finished-step rubber-duck reviews found no
+blocking issues; temporary inspector overlap is an intentional compact-mode
+trade-off, not hidden-layout parity. Full workspace CI with live AI disabled and
+WASM lint pass. This does not close the daily-editing band: shortcut rebinding,
+spelling/CJK font work, canvas reference polish and native input/accessibility
+acceptance remain before claiming R1-R3 complete.
+
+**Delivered R2 follow-up - inspector keyboard reachability:** at 800x400 the
+Hyperlink input accepted accessibility/keyboard focus while its rectangle stayed
+at y1112-1138. Style/Map/Symbols scroll regions now reveal newly focused controls.
+The shared helper verifies actual widget ancestry with a bounded parent walk,
+not just a shared background layer; this prevents Outline/sidebar scroll regions
+from moving one another. Existing menu, search and Settings focus reveal uses the
+same stricter ownership check. Unchanged focus does not override manual scrolling.
+The 66-case shipped-locale/Auto, light/dark and measured viewport/scale matrix
+covers Style Hyperlink/Tab/Edit labels/Notes, Map controls, first/last Symbols,
+visible hit and paint/clip bounds, same-layer Outline isolation, retained manual
+scrolling and unchanged document revision. An actual Notes draft commits on blur
+and restores the original workbook with one Undo. Adjacent menu, search, Settings
+and compact Outline regressions pass. Full CI exposed a coupled command handoff:
+opening Notes could reveal the input but yield focus to the canvas. Pending
+Hyperlink/Notes requests now survive disabled/layout passes until actual focus
+is observed, then release normally for Tab and blur. The existing topic-field
+command matrix passes with diagnostic assertions retained. Planning, finished
+and focused follow-up rubber-duck reviews found no blockers; full workspace CI
+with live AI disabled and WASM lint pass.
+Native keyboard/assistive-technology
+acceptance remains open; this does not close the daily-editing band.
+
+**Delivered R2 follow-up - native mixed-script font fallback:** the workspace
+disabled eframe's default features without re-enabling `system_fonts`. This left
+Japanese/Chinese/Korean characters missing even with suitable installed fonts.
+Enable the existing egui 0.37 native provider rather than adding document scans,
+script tables or another cache. It enumerates fonts in a background thread,
+looks up missing glyphs on demand (the first request can wait for enumeration),
+validates coverage and preserves collection indices. Configured/named faces keep
+priority; document names, saved state and undo history are not rewritten. All
+native text surfaces share this provider, including uncommitted title drafts.
+Deterministic embedded-font coverage checks initial measurement, cache reuse,
+configured-family precedence and providers surviving font-definition updates.
+The opt-in Windows acceptance test uses installed CJK fonts to verify real glyph
+coverage in proportional/monospace/named families, measured layout, draft/undo and
+document/Outline switching. It passes on the development Windows host; CI does
+not assume every runner has optional CJK language fonts. Run it explicitly with
+`cargo test -p thinoda-app --test font_families -- --include-ignored --test-threads=1`.
+Fonts are neither downloaded nor redistributed. macOS/Linux native CJK acceptance,
+default CJK-font preferences, IME, browser font provisioning and exact vector-export
+matching remain open; this slice does not close R2 or add a locale.
+Planning and finished-step rubber-duck reviews found no blockers. The final review
+identified the Linux Fontconfig build prerequisite; both CI and release workflows
+now install `pkg-config`/`libfontconfig1-dev`, and DEB metadata declares
+`libfontconfig1`. Generated runtime dependency notices are updated. Full workspace
+CI with live AI disabled, WASM lint, notice checks and packaging-script tests pass
+locally. PR #62 run `39624209070` passed Windows x64/ARM64, macOS, Ubuntu and web
+CI at `7d45d41`, including the Fontconfig prerequisites. This verifies native
+compilation/regressions, not manual Linux/macOS CJK/IME acceptance. Later commits
+on the PR must receive their own green checks before merge.
+
+**Delivered R1 follow-up - Outline keyboard ownership:** Tab from the Outline
+action toolbar reproduced an unintended child insertion, and global topic keys
+could override the focused control. Structural keys and arrow selection now
+require a topic-row/disclosure owner captured before rendering; toolbar/sidebar
+widgets keep their own keyboard behavior. Stable topic-scoped title/disclosure
+IDs survive reordering. Pointer selection explicitly focuses the row, entering
+Outline focuses the primary topic, and navigation/action/edit-Escape restores
+topic focus without moving focus away from a toolbar-origin Undo/Redo.
+Global non-text Undo/Redo remains available; activated buttons cannot be
+overridden by the later structural shortcut handler.
+The existing 99-case locale/Auto, light/dark/System and scale/panel matrix now
+checks toolbar Tab/Delete/F2/arrows without edits, Enter activating only Move
+Down, pointer/arrow row focus, topic Tab insertion, edit Escape and sidebar-focus
+Undo. Adjacent Outline, search, title, menu and sidebar regressions pass; full
+workspace CI with live AI disabled and WASM lint pass.
+Planning/finished-step rubber-duck reviews found no blockers. An unrendered
+focused topic fails closed rather than dispatching a structural edit; native
+accessibility/input acceptance and complete daily-editing parity remain open.
+
+**Current release handoff (2026-10-21):** PR
+[#60](https://github.com/AxelWol/Thinoda/pull/60) merged the verified responsive
+Settings/Outline and macOS packaging fixes. Release Please PR
+[#61](https://github.com/AxelWol/Thinoda/pull/61) passed CI, including its synced
+lockfile, and merged as `5afae7d`, creating v0.7.0. Build/publication run
+[`39610005813`](https://github.com/AxelWol/Thinoda/actions/runs/39610005813)
+completed successfully: all five native package jobs and publication passed.
+[v0.7.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.7.0) contains eight
+downloads (Windows x64/ARM64 installers, macOS Intel/ARM DMGs and app archives,
+Linux DEB/AppImage) and five target-specific checksum manifests. Every published
+download was fetched and its SHA-256 matched its manifest. Both macOS targets
+passed signing, notarization and installed-copy verification. WinGet was skipped;
+no package-manager publication is claimed. The later responsive-search
+(`311219a`) and Outline focus-ownership (`e1bcc27`) slices are post-release
+work, intentionally excluded from that tag. Main's v0.7.0 metadata is integrated
+into ongoing work. Current daily-editing work is still open; spelling/CJK font
+preferences, shortcut editing, canvas reference polish and native acceptance
+are not silently deferred into a "completed" phase.
+
+**Prior publishing incident (2026-10-21):** v0.6.0 Release Please run
 [`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
 attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject
 `disk2` ("Resource busy"), before asset publication. The original-tag failed-job

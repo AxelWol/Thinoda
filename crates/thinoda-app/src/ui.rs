@@ -50,9 +50,29 @@ pub(crate) fn reveal_changed_focus(ui: &mut Ui) {
         && let Some(focused) = focus
         && let Some(response) = ui.ctx().read_response(focused)
         && response.layer_id == ui.layer_id()
+        && response_is_within(ui, &response)
     {
         ui.scroll_to_rect(response.rect, None);
     }
+}
+
+fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
+    let mut current = response.clone();
+    // Bound the walk in case conflicting widget IDs form a cycle.
+    for _ in 0..1000 {
+        let parent = current.parent_id();
+        if parent == ui.unique_id() {
+            return true;
+        }
+        if parent == current.id {
+            return false;
+        }
+        let Some(response) = ui.ctx().read_response(parent) else {
+            return false;
+        };
+        current = response;
+    }
+    false
 }
 
 fn menu_button(
@@ -325,7 +345,7 @@ impl ThinodaApp {
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
-            self.search_bar(&ctx);
+            self.search_bar(&ctx, center.response.rect);
         }
         self.update_search();
 
@@ -1630,6 +1650,20 @@ impl ThinodaApp {
             d.doc.workbook().active_sheet,
             d.doc.sheet().root,
         ));
+        let focused = ctx.memory(|memory| memory.focused());
+        let mut topic_focus = false;
+        let frame = ctx.cumulative_frame_nr();
+        let entering = ui.data_mut(|data| {
+            let previous = data.get_temp::<u64>(outline_id.with("last_frame"));
+            data.insert_temp(outline_id.with("last_frame"), frame);
+            previous.is_none_or(|previous| previous.saturating_add(1) < frame)
+        });
+        let mut focus_topic = ui
+            .data_mut(|data| data.remove_temp::<Option<TopicId>>(outline_id.with("focus_topic")))
+            .flatten();
+        if entering && !self.search.open {
+            focus_topic = d.view.primary();
+        }
         let primary = d.view.primary();
         let reveal_primary = ui.data_mut(|data| {
             let previous = data.get_temp::<Option<TopicId>>(outline_id.with("primary"));
@@ -1650,6 +1684,7 @@ impl ThinodaApp {
                     response.scroll_to_me(None);
                 }
                 if response.clicked() {
+                    response.request_focus();
                     action = Some(command.clone());
                 }
             }
@@ -1740,18 +1775,23 @@ impl ThinodaApp {
                                 };
                                 if has_kids {
                                     let response =
-                                        ui.add(
-                                            egui::Button::new(chevron)
-                                                .frame(false)
-                                                .min_size(vec2(16.0, 16.0)),
-                                        )
+                                        ui.push_id(("outline_disclosure", id), |ui| {
+                                            ui.add(
+                                                egui::Button::new(chevron)
+                                                    .frame(false)
+                                                    .min_size(vec2(16.0, 16.0)),
+                                            )
+                                        })
+                                        .inner
                                         .accessible_name(
                                             format!("{}: {}", t("Collapse / Expand"), topic.title),
                                         );
+                                    topic_focus |= focused == Some(response.id);
                                     if response.gained_focus() {
                                         response.scroll_to_me(None);
                                     }
                                     if response.clicked() {
+                                        response.request_focus();
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
                                     }
@@ -1796,6 +1836,14 @@ impl ThinodaApp {
                                     });
                                     if enter || tab || esc || r.lost_focus() {
                                         d.view.commit_edit(&mut d.doc);
+                                        if esc {
+                                            ui.data_mut(|data| {
+                                                data.insert_temp(
+                                                    outline_id.with("focus_topic"),
+                                                    Some(id),
+                                                );
+                                            });
+                                        }
                                         if enter {
                                             action = Some(Action::InsertSibling);
                                         } else if tab {
@@ -1814,11 +1862,21 @@ impl ThinodaApp {
                                     } else {
                                         RichText::new(title)
                                     };
-                                    let r = ui.selectable_label(selected, text);
+                                    let r = ui
+                                        .push_id(("outline_title", id), |ui| {
+                                            ui.selectable_label(selected, text)
+                                        })
+                                        .inner;
+                                    topic_focus |= focused == Some(r.id);
+                                    if focus_topic == Some(id) {
+                                        r.request_focus();
+                                        topic_focus = true;
+                                    }
                                     if (primary == Some(id) && reveal_primary) || r.gained_focus() {
                                         r.scroll_to_me(None);
                                     }
                                     if r.clicked() {
+                                        r.request_focus();
                                         d.view.select_only(id);
                                     }
                                     if r.double_clicked() {
@@ -1835,27 +1893,31 @@ impl ThinodaApp {
             });
         // Keyboard in outliner when not editing.
         if ui.is_enabled()
+            && !self.search.open
             && d.view.editing_topic().is_none()
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
         {
             let keys = [
+                (Modifiers::COMMAND, Key::Z, Action::Undo),
+                (Modifiers::COMMAND, Key::Y, Action::Redo),
                 (Modifiers::NONE, Key::Enter, Action::InsertSibling),
                 (Modifiers::NONE, Key::Tab, Action::InsertChild),
                 (Modifiers::NONE, Key::Delete, Action::Delete),
                 (Modifiers::NONE, Key::F2, Action::StartEdit),
                 (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
                 (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
-                (Modifiers::COMMAND, Key::Z, Action::Undo),
-                (Modifiers::COMMAND, Key::Y, Action::Redo),
             ];
             for (m, k, a) in keys {
-                if ctx.input_mut(|i| i.consume_key(m, k)) {
+                if (topic_focus || matches!(a, Action::Undo | Action::Redo))
+                    && action.is_none()
+                    && ctx.input_mut(|i| i.consume_key(m, k))
+                {
                     action = Some(a);
                     break;
                 }
             }
-            if action.is_none() {
+            if topic_focus && action.is_none() {
                 let (up, down) = ctx.input_mut(|i| {
                     (
                         i.consume_key(Modifiers::NONE, Key::ArrowUp),
@@ -1878,14 +1940,25 @@ impl ThinodaApp {
                             (i + 1).min(order.len() - 1)
                         };
                         d.view.select_only(order[j]);
+                        ui.data_mut(|data| {
+                            data.insert_temp(outline_id.with("focus_topic"), Some(order[j]));
+                        });
                     }
                 }
             }
         }
-        if let Some(a) = action
-            && let Err(_e) = thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a)
-        {
-            self.toasts.warning(t("Not possible here"));
+        if let Some(a) = action {
+            match thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a) {
+                Ok(_) if topic_focus && d.view.editing_topic().is_none() => {
+                    ui.data_mut(|data| {
+                        data.insert_temp(outline_id.with("focus_topic"), d.view.primary());
+                    });
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    self.toasts.warning(t("Not possible here"));
+                }
+            }
         }
     }
 
@@ -2210,7 +2283,10 @@ impl ThinodaApp {
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .id_salt("symbols_scroll")
-                    .show(ui, |ui| self.symbols_panel(ui));
+                    .show(ui, |ui| {
+                        self.symbols_panel(ui);
+                        reveal_changed_focus(ui);
+                    });
             }
         }
     }
@@ -2284,6 +2360,7 @@ impl ThinodaApp {
                         FormatTab::Map => self.map_tab(ui),
                     },
                 );
+                reveal_changed_focus(ui);
             });
     }
 
@@ -2550,8 +2627,13 @@ impl ThinodaApp {
             let (r, done) = buffered_text(ui, ("hyperlink", primary), &current, 0, "https://…");
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Hyperlink) {
-                r.request_focus();
-                r.scroll_to_me(Some(egui::Align::Center));
+                if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
+                    self.focus_field = focus;
+                }
+                if ui.is_enabled() && !ui.is_sizing_pass() {
+                    r.request_focus();
+                    r.scroll_to_me(Some(egui::Align::Center));
+                }
             }
             if let Some(link) = done {
                 let v = (!link.trim().is_empty()).then(|| link.trim().to_string());
@@ -2573,8 +2655,13 @@ impl ThinodaApp {
             let (r, done) = buffered_text(ui, ("notes", primary), &current, 5, "");
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Notes) {
-                r.request_focus();
-                r.scroll_to_me(Some(egui::Align::Center));
+                if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
+                    self.focus_field = focus;
+                }
+                if ui.is_enabled() && !ui.is_sizing_pass() {
+                    r.request_focus();
+                    r.scroll_to_me(Some(egui::Align::Center));
+                }
             }
             if let Some(notes) = done {
                 let v = (!notes.trim().is_empty()).then_some(notes);
@@ -2969,104 +3056,118 @@ impl ThinodaApp {
 
     // ----- search bar ---------------------------------------------------------------------------
 
-    fn search_bar(&mut self, ctx: &Context) {
+    fn search_bar(&mut self, ctx: &Context, canvas: egui::Rect) {
         let mut close = false;
+        let bounds = ctx.content_rect().shrink(8.0);
+        let width = 354.0_f32.min(bounds.width());
+        let right = if canvas.width() >= width {
+            canvas.right().min(bounds.right())
+        } else {
+            bounds.right()
+        };
+        let top = 56.0_f32.min(bounds.top() + bounds.height() * 0.15);
+        let position = egui::pos2((right - width).max(bounds.left()), top);
         egui::Area::new(egui::Id::unique("thinoda_search"))
-            .anchor(
-                egui::Align2::RIGHT_TOP,
-                vec2(
-                    -(if self.settings.show_format_panel && !self.zen {
-                        300.0
-                    } else {
-                        16.0
-                    }),
-                    56.0,
-                ),
-            )
+            .fixed_pos(position)
+            .constrain_to(bounds)
             .show(ctx, |ui| {
-                widgets::card(ui).show(ui, |ui| {
-                    ui.set_width(340.0);
-                    ui.horizontal(|ui| {
-                        let r = ui
-                            .allocate_ui(vec2(230.0, 28.0), |ui| {
-                                widgets::search_field(ui, &mut self.search.query, t("Search"))
-                            })
-                            .inner;
-                        if std::mem::take(&mut self.search.focus) {
-                            r.request_focus();
-                        }
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                            let back = ui.input(|i| i.modifiers.shift);
-                            self.goto_hit(if back { -1 } else { 1 });
-                            r.request_focus();
-                        }
-                        if ui
-                            .small_button("▲")
-                            .accessible_name(t("Previous result"))
-                            .clicked()
-                        {
-                            self.goto_hit(-1);
-                        }
-                        if ui
-                            .small_button("▼")
-                            .accessible_name(t("Next result"))
-                            .clicked()
-                        {
-                            self.goto_hit(1);
-                        }
-                        if ui
-                            .small_button(icons::CLOSE)
-                            .accessible_name(t("Close search"))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    });
-                    let n = self.search.hits.len();
-                    widgets::caption(
-                        ui,
-                        if self.search.query.is_empty() {
-                            String::new()
-                        } else if n == 0 {
-                            t("No results").to_string()
-                        } else {
-                            format!("{}/{} {}", self.search.current + 1, n, t("results"))
-                        },
-                    );
-                    if self.search.all_sheets
-                        && let Some(hit) = self.search.hits.get(self.search.current)
-                        && let Some(sheet) = self
-                            .doc()
-                            .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
-                    {
-                        widgets::caption(ui, format!("{}: {}", t("Sheet"), sheet.title));
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
-                        ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
-                        ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
-                        ui.checkbox(&mut self.search.opts.include_notes, t("Include notes"));
-                        ui.checkbox(&mut self.search.opts.include_labels, t("Include labels"));
-                        ui.checkbox(&mut self.search.dim, t("Dim others"));
-                        ui.checkbox(&mut self.search.show_replace, t("Replace"));
-                    });
-                    if self.search.show_replace {
-                        widgets::caption(ui, t("Replaces topic titles only."));
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                TextEdit::singleline(&mut self.search.replace)
-                                    .hint_text(t("Replace"))
-                                    .desired_width(220.0),
-                            )
-                            .accessible_name(t("Replace with"));
-                            if ui
-                                .add_enabled(n > 0, egui::Button::new(t("Replace All")))
-                                .clicked()
-                            {
-                                self.replace_all();
+                let frame = widgets::card(ui);
+                let margin = frame.total_margin().sum();
+                frame.show(ui, |ui| {
+                    ui.set_width((width - margin.x).max(0.0));
+                    egui::ScrollArea::vertical()
+                        .id_salt("search_scroll")
+                        .max_height((bounds.bottom() - position.y - margin.y).max(0.0))
+                        .min_scrolled_height(0.0)
+                        .show(ui, |ui| {
+                            let r = widgets::search_field(ui, &mut self.search.query, t("Search"));
+                            if self.search.focus && ui.is_enabled() && !ui.is_sizing_pass() {
+                                self.search.focus = !r.has_focus();
+                                r.request_focus();
                             }
+                            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                                let back = ui.input(|i| i.modifiers.shift);
+                                self.goto_hit(if back { -1 } else { 1 });
+                                r.request_focus();
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .small_button("▲")
+                                    .accessible_name(t("Previous result"))
+                                    .clicked()
+                                {
+                                    self.goto_hit(-1);
+                                }
+                                if ui
+                                    .small_button("▼")
+                                    .accessible_name(t("Next result"))
+                                    .clicked()
+                                {
+                                    self.goto_hit(1);
+                                }
+                                if ui
+                                    .small_button(icons::CLOSE)
+                                    .accessible_name(t("Close search"))
+                                    .clicked()
+                                {
+                                    close = true;
+                                }
+                            });
+                            let n = self.search.hits.len();
+                            widgets::caption(
+                                ui,
+                                if self.search.query.is_empty() {
+                                    String::new()
+                                } else if n == 0 {
+                                    t("No results").to_string()
+                                } else {
+                                    format!("{}/{} {}", self.search.current + 1, n, t("results"))
+                                },
+                            );
+                            if self.search.all_sheets
+                                && let Some(hit) = self.search.hits.get(self.search.current)
+                                && let Some(sheet) = self
+                                    .doc()
+                                    .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
+                            {
+                                let title = format!("{}: {}", t("Sheet"), sheet.title);
+                                ui.add(egui::Label::new(&title).truncate())
+                                    .on_hover_text(title);
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
+                                ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
+                                ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
+                                ui.checkbox(
+                                    &mut self.search.opts.include_notes,
+                                    t("Include notes"),
+                                );
+                                ui.checkbox(
+                                    &mut self.search.opts.include_labels,
+                                    t("Include labels"),
+                                );
+                                ui.checkbox(&mut self.search.dim, t("Dim others"));
+                                ui.checkbox(&mut self.search.show_replace, t("Replace"));
+                            });
+                            if self.search.show_replace {
+                                widgets::caption(ui, t("Replaces topic titles only."));
+                                ui.add(
+                                    TextEdit::singleline(&mut self.search.replace)
+                                        .hint_text(t("Replace"))
+                                        .desired_width(ui.available_width()),
+                                )
+                                .accessible_name(t("Replace with"));
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui
+                                        .add_enabled(n > 0, egui::Button::new(t("Replace All")))
+                                        .clicked()
+                                    {
+                                        self.replace_all();
+                                    }
+                                });
+                            }
+                            reveal_changed_focus(ui);
                         });
-                    }
                 });
             });
         if close || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {

@@ -1999,10 +1999,17 @@ fn search_icon_opens_accessible_search_and_can_reopen() {
     let mut app = ThinodaApp::headless();
     rename_root(&mut app, "Quarterly Roadmap");
     let mut h = harness(app);
-    for _ in 0..3 {
+    for attempt in 0..3 {
         h.get_by_role_and_label(Role::Button, "Find…").click();
         h.run_steps(3);
-        assert!(h.get_by_label("Search").is_focused());
+        assert!(
+            h.get_by_label("Search").is_focused(),
+            "search focus on reopen {attempt}: {:?}",
+            h.ctx
+                .memory(|m| m.focused())
+                .and_then(|id| h.ctx.read_response(id))
+                .map(|r| r.rect)
+        );
         h.get_by_label("Search").type_text("roadmap");
         h.run_steps(2);
         let root = h.state().doc().unwrap().doc.sheet().root;
