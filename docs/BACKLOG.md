@@ -69,6 +69,17 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 compact Map/Outliner switch: bottom controls now show the current view and
+  reuse the existing toolbar/menu/palette/shortcut command. Pointer, Enter and
+  Space work; localized shortcut hints use the platform modifier. Long current-
+  view labels truncate to their scroll region, with full accessible names.
+  Focus reveals the control without pinning manual browsing; hidden status, Zen,
+  Home and modal/palette behavior follow the existing bottom-bar rules. Pending
+  title drafts, selection, workbook and undo state survive view changes. All
+  shipped languages/Auto, light/dark and three measured logical size/scale cases
+  cover pointer/keyboard operation and actual label paint/clip bounds. Planning/
+  finished rubber-duck reviews found no blockers; 69 targeted cases and native/
+  WASM lint pass. The floating bar redesign and Gantt/Pitch remain open.
 - R2 sidebar preferences: Format/Symbols family and the last Style/Map tab now
   survive disk-backed restart, independently of panel visibility. Symbols/hiding
   keep the remembered Map tab; topic formatting/Notes/Hyperlink intentionally

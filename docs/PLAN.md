@@ -678,6 +678,27 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - compact Map/Outliner switching:** the bounded bottom
+controls begin with a current-view icon/label button reusing `ToggleOutliner`.
+Pointer, Enter and Space agree with toolbar/menu/palette/shortcut semantics;
+the alternate-view hover hint uses egui's platform shortcut formatting. Accessible
+names include the View category to distinguish the existing Outliner toolbar
+button. Long labels truncate to the actual control-region width, retaining their
+full accessible names; new keyboard focus reveals the control in its own region.
+The existing status-visibility preference, Zen and Home hide the control, and
+existing palette/modal chrome disabling is inherited. View changes do not commit
+or discard pending inline titles, mutate the workbook/history or clear selection.
+Sequential tests cover all ten shipped languages plus Auto, light/dark and
+320x240 at 200%, 640x480 at 150%, and 1000x700 at 100% UI scaling, asserting actual
+logical viewport sizes and label paint/clip bounds, pointer/keyboard toggling,
+shortcut parity, focus reveal, draft retention and visibility/modal behavior.
+The paint assertion reproduced a long-label overflow; limiting the button width
+and truncating fixed it. Existing bottom/menu/Outline/editing regressions pass
+(69 cases across five suites), as do native all-target and WASM lint.
+Planning and finished-step rubber-duck reviews found no blockers. This completes
+the compact view-switch affordance, not the floating-bar redesign, Gantt/Pitch or
+native GPU/touch/assistive-technology acceptance.
+
 **Delivered R2 follow-up - remembered sidebar choices:** persisted Format/Symbols
 family and Style/Map tab are restored at startup independently of panel visibility.
 Switching to Symbols or hiding the panel retains the remembered formatting tab;

@@ -2006,6 +2006,40 @@ impl ThinodaApp {
             );
             if self.settings.show_status_bar {
                 scroll_row(ui, "bottom_controls", width - tabs_width, |ui| {
+                    let (icon, current, next) = match self.mode {
+                        CenterMode::Map => (icons::MAP, "Map", "Outliner"),
+                        CenterMode::Outliner => (icons::OUTLINER, "Outliner", "Map"),
+                    };
+                    let label = format!("{icon} {}", t(current));
+                    let text = egui::WidgetText::from(label.clone()).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Button,
+                    );
+                    let view_width = (text.size().x + 2.0 * ui.spacing().button_padding.x)
+                        .min(width - tabs_width);
+                    let view = ui
+                        .add_sized(
+                            vec2(view_width, height),
+                            egui::Button::new(label).truncate(),
+                        )
+                        .accessible_name(format!("{}: {}", t("View"), t(current)))
+                        .on_hover_text(format!(
+                            "{} ({})",
+                            t(next),
+                            ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                                Modifiers::COMMAND.plus(Modifiers::SHIFT),
+                                Key::O
+                            ),)
+                        ));
+                    if view.gained_focus() {
+                        view.scroll_to_me(None);
+                    }
+                    if view.clicked() {
+                        cmd = Some(Cmd::ToggleOutliner);
+                    }
+                    widgets::vdivider(ui);
                     let minus = ui
                         .small_button("−")
                         .on_hover_text(t("Zoom Out"))

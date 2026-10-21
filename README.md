@@ -340,6 +340,8 @@ those system-owned controls. WinGet publishing remains paused.
   Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
+  The bottom bar shows the current Map/Outliner view; click it or use
+  Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently

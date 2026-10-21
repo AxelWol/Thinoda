@@ -39,6 +39,9 @@ fn assert_fit(h: &Harness<'_, ThinodaApp>, label: &str) {
 }
 
 fn open(h: &mut Harness<'_, ThinodaApp>, label: &'static str) {
+    h.get_by_role_and_label(Role::Button, t(label))
+        .scroll_to_me();
+    h.run_steps(8);
     h.get_by_role_and_label(Role::Button, t(label)).click();
     h.run_steps(4);
     assert_fit(h, label);
