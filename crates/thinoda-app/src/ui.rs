@@ -2193,7 +2193,10 @@ impl ThinodaApp {
             &mut tab,
             &[(FormatTab::Style, t("Style")), (FormatTab::Map, t("Map"))],
         );
-        self.format_tab = tab;
+        if self.format_tab != tab {
+            self.format_tab = tab;
+            self.save_settings();
+        }
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
             .id_salt(match tab {

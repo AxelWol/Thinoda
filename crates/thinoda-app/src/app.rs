@@ -111,17 +111,7 @@ pub enum CenterMode {
     Outliner,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormatTab {
-    Style,
-    Map,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidebarFamily {
-    Format,
-    Symbols,
-}
+pub use thinoda_platform::settings::{FormatTab, SidebarFamily};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
@@ -262,12 +252,12 @@ impl ThinodaApp {
         let mut app = Self {
             docs: Vec::new(),
             active: 0,
+            format_tab: settings.format_tab,
+            sidebar_family: settings.sidebar_family,
             settings,
             services,
             mode: CenterMode::Map,
             zen: false,
-            format_tab: FormatTab::Style,
-            sidebar_family: SidebarFamily::Format,
             template_choice: None,
             template_category: None,
             home_return_to: None,
@@ -406,6 +396,8 @@ impl ThinodaApp {
     }
 
     pub fn save_settings(&mut self) {
+        self.settings.format_tab = self.format_tab;
+        self.settings.sidebar_family = self.sidebar_family;
         if let Some(p) = self.services.paths.clone()
             && let Err(e) = self
                 .settings
@@ -807,6 +799,7 @@ impl ThinodaApp {
                 self.sidebar_family = SidebarFamily::Format;
                 self.format_tab = FormatTab::Style;
                 self.focus_field = Some(f);
+                self.save_settings();
             }
             Cmd::TopicStyle => {
                 if self.doc().is_some_and(|d| !d.view.selection.is_empty()) {
@@ -814,6 +807,7 @@ impl ThinodaApp {
                     self.settings.show_format_panel = true;
                     self.sidebar_family = SidebarFamily::Format;
                     self.format_tab = FormatTab::Style;
+                    self.save_settings();
                 }
             }
             Cmd::SetTheme(th) => {

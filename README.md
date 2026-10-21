@@ -338,6 +338,8 @@ those system-owned controls. WinGet publishing remains paused.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
   stays visible. Long tab names are shortened visually, with full names in tooltips.
   Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
+  The sidebar remembers its Format/Symbols family and last Style/Map tab across
+  restarts, independently of whether the panel is hidden.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently

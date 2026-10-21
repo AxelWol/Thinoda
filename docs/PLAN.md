@@ -678,6 +678,23 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - remembered sidebar choices:** persisted Format/Symbols
+family and Style/Map tab are restored at startup independently of panel visibility.
+Switching to Symbols or hiding the panel retains the remembered formatting tab;
+explicit topic formatting, Notes and Hyperlink intentionally select/remember Style.
+The platform settings own the typed schema, with existing app enum imports
+preserved through reexports. Old files default to Format/Style, while unknown
+future string values safely fall back without quarantining the settings file or
+resetting unrelated preferences. Event-driven saves synchronize runtime choices
+before writing; no new idle-frame disk writes are introduced.
+Real temporary config save/load/restart tests cover EN/DE and light/dark, old and
+future config, hidden-panel reopening, Home rejection, UI tab selection and the
+three Style-entry commands. Workbook/history/selection stay unchanged, and a
+config sentinel detects unintended idle saves. Existing sidebar lifecycle,
+topic-field and settings tests plus 60 platform library tests pass; native
+all-target and WASM lint pass. Planning/finished rubber-duck reviews found no
+blockers. Sticker/Illustration/Pitch panes and other preferences remain open.
+
 **Delivered R2 follow-up - responsive sheet/bottom navigation:** reproduced twenty
 long sheet names pushing Zoom to x=3604 in a 640-point viewport. Sheet tabs and
 status/zoom controls now have explicitly bounded independent horizontal regions;
@@ -1320,6 +1337,6 @@ First slice implemented (Windows x64 source verification):
   close the remaining R0–R12 parity/release work.
 
 Continue R1 command-availability consistency and remaining R2 preferences/bottom controls,
-alongside reference verification. Sticker/Illustration/Pitch panes and persistent
-family/tab preferences are not implemented; assets/legend/custom groups/task-marker
+alongside reference verification. Sidebar family/tab preferences are now delivered
+above; Sticker/Illustration/Pitch panes are not implemented. Assets/legend/custom groups/task-marker
 synchronization stay with R4/R7. No entire R0/R1/R2 package is complete.

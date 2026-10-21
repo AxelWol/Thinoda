@@ -69,6 +69,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 sidebar preferences: Format/Symbols family and the last Style/Map tab now
+  survive disk-backed restart, independently of panel visibility. Symbols/hiding
+  keep the remembered Map tab; topic formatting/Notes/Hyperlink intentionally
+  select and remember Style. Missing fields retain the previous Format/Style
+  defaults; unknown future string choices fall back without discarding unrelated
+  settings. Saves occur on actual UI/command events, not idle frames. EN/DE and
+  light/dark restart tests cover reopening, Home guards, unchanged map/history/
+  selection and idle-write detection; platform settings regressions and native/
+  WASM lint pass. Planning/finished rubber-duck reviews found no blockers.
+  Future Sticker/Illustration/Pitch panes are not implied by these preferences.
 - R2 responsive sheet/bottom navigation: many long sheet names no longer push Zoom
   and Fit outside the window. Explicitly bounded, independent horizontal regions
   retain tab context actions, zoom and statistics; New Sheet has a persistent slot.
