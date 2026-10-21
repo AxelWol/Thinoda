@@ -718,6 +718,28 @@ WASM lint pass. This does not close the daily-editing band: shortcut rebinding,
 spelling/CJK font work, canvas reference polish and native input/accessibility
 acceptance remain before claiming R1-R3 complete.
 
+**Delivered R2 follow-up - inspector keyboard reachability:** at 800x400 the
+Hyperlink input accepted accessibility/keyboard focus while its rectangle stayed
+at y1112-1138. Style/Map/Symbols scroll regions now reveal newly focused controls.
+The shared helper verifies actual widget ancestry with a bounded parent walk,
+not just a shared background layer; this prevents Outline/sidebar scroll regions
+from moving one another. Existing menu, search and Settings focus reveal uses the
+same stricter ownership check. Unchanged focus does not override manual scrolling.
+The 66-case shipped-locale/Auto, light/dark and measured viewport/scale matrix
+covers Style Hyperlink/Tab/Edit labels/Notes, Map controls, first/last Symbols,
+visible hit and paint/clip bounds, same-layer Outline isolation, retained manual
+scrolling and unchanged document revision. An actual Notes draft commits on blur
+and restores the original workbook with one Undo. Adjacent menu, search, Settings
+and compact Outline regressions pass. Full CI exposed a coupled command handoff:
+opening Notes could reveal the input but yield focus to the canvas. Pending
+Hyperlink/Notes requests now survive disabled/layout passes until actual focus
+is observed, then release normally for Tab and blur. The existing topic-field
+command matrix passes with diagnostic assertions retained. Planning, finished
+and focused follow-up rubber-duck reviews found no blockers; full workspace CI
+with live AI disabled and WASM lint pass.
+Native keyboard/assistive-technology
+acceptance remains open; this does not close the daily-editing band.
+
 **Delivered R2 follow-up - native mixed-script font fallback:** the workspace
 disabled eframe's default features without re-enabling `system_fonts`. This left
 Japanese/Chinese/Korean characters missing even with suitable installed fonts.
@@ -742,7 +764,10 @@ identified the Linux Fontconfig build prerequisite; both CI and release workflow
 now install `pkg-config`/`libfontconfig1-dev`, and DEB metadata declares
 `libfontconfig1`. Generated runtime dependency notices are updated. Full workspace
 CI with live AI disabled, WASM lint, notice checks and packaging-script tests pass
-locally; native Linux/macOS build acceptance remains a PR check, not a local claim.
+locally. PR #62 run `39624209070` passed Windows x64/ARM64, macOS, Ubuntu and web
+CI at `7d45d41`, including the Fontconfig prerequisites. This verifies native
+compilation/regressions, not manual Linux/macOS CJK/IME acceptance. Later commits
+on the PR must receive their own green checks before merge.
 
 **Delivered R1 follow-up - Outline keyboard ownership:** Tab from the Outline
 action toolbar reproduced an unintended child insertion, and global topic keys

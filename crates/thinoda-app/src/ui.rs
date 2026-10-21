@@ -50,9 +50,29 @@ pub(crate) fn reveal_changed_focus(ui: &mut Ui) {
         && let Some(focused) = focus
         && let Some(response) = ui.ctx().read_response(focused)
         && response.layer_id == ui.layer_id()
+        && response_is_within(ui, &response)
     {
         ui.scroll_to_rect(response.rect, None);
     }
+}
+
+fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
+    let mut current = response.clone();
+    // Bound the walk in case conflicting widget IDs form a cycle.
+    for _ in 0..1000 {
+        let parent = current.parent_id();
+        if parent == ui.unique_id() {
+            return true;
+        }
+        if parent == current.id {
+            return false;
+        }
+        let Some(response) = ui.ctx().read_response(parent) else {
+            return false;
+        };
+        current = response;
+    }
+    false
 }
 
 fn menu_button(
@@ -2263,7 +2283,10 @@ impl ThinodaApp {
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .id_salt("symbols_scroll")
-                    .show(ui, |ui| self.symbols_panel(ui));
+                    .show(ui, |ui| {
+                        self.symbols_panel(ui);
+                        reveal_changed_focus(ui);
+                    });
             }
         }
     }
@@ -2337,6 +2360,7 @@ impl ThinodaApp {
                         FormatTab::Map => self.map_tab(ui),
                     },
                 );
+                reveal_changed_focus(ui);
             });
     }
 
@@ -2603,8 +2627,13 @@ impl ThinodaApp {
             let (r, done) = buffered_text(ui, ("hyperlink", primary), &current, 0, "https://…");
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Hyperlink) {
-                r.request_focus();
-                r.scroll_to_me(Some(egui::Align::Center));
+                if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
+                    self.focus_field = focus;
+                }
+                if ui.is_enabled() && !ui.is_sizing_pass() {
+                    r.request_focus();
+                    r.scroll_to_me(Some(egui::Align::Center));
+                }
             }
             if let Some(link) = done {
                 let v = (!link.trim().is_empty()).then(|| link.trim().to_string());
@@ -2626,8 +2655,13 @@ impl ThinodaApp {
             let (r, done) = buffered_text(ui, ("notes", primary), &current, 5, "");
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Notes) {
-                r.request_focus();
-                r.scroll_to_me(Some(egui::Align::Center));
+                if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
+                    self.focus_field = focus;
+                }
+                if ui.is_enabled() && !ui.is_sizing_pass() {
+                    r.request_focus();
+                    r.scroll_to_me(Some(egui::Align::Center));
+                }
             }
             if let Some(notes) = done {
                 let v = (!notes.trim().is_empty()).then_some(notes);

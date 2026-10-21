@@ -78,6 +78,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   actual button Enter, pointer/arrow focus, row Tab/edit Escape and sidebar Undo.
   Full workspace CI and WASM lint pass; planning/finished rubber-duck reviews
   found no blockers. Native input/accessibility acceptance remains open.
+- R2 inspector keyboard reachability: Hyperlink could be focused at y1112 in
+  an 800x400 viewport without scrolling. Style/Map/Symbols now reveal newly
+  focused descendant controls. Shared scroll-focus handling follows widget
+  ancestry, not just background layer, so Outline and sidebar regions cannot
+  scroll one another. Unchanged focus preserves manual scrolling. The 66-case
+  shipped-locale/Auto, light/dark, viewport/scale matrix covers focus, real Tab,
+  clipped paint bounds, Outline isolation, document/history preservation and
+  Notes draft/commit/one-step undo. Native assistive-technology acceptance remains
+  separate; this does not close R2.
 - R2 native mixed-script fallback: enable eframe 0.37's existing `system_fonts`
   provider, previously excluded by the default-feature override. Missing glyphs
   resolve to installed OS faces on demand, after configured fonts, without

@@ -124,6 +124,9 @@ those system-owned controls. WinGet publishing remains paused.
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Style, Map and Symbols sidebars reveal newly focused controls during keyboard
+  navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
+  is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
   windows while keeping Close visible. Bindings are read-only for now.
 - The command palette keeps search visible above scrollable results on small
