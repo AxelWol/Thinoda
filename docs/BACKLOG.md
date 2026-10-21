@@ -69,6 +69,89 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R11 DMG lifecycle hardening: release packaging
+  no longer explicitly mounts/customizes a writable image. Closed staging keeps
+  the signed app, Applications link, icon and license prompt before image signing
+  and notarization. Read-only verification scopes cleanup to its exact image/
+  device, handles partial attaches, diagnoses open handles and retries EBUSY;
+  last-resort forced detach is limited to that owned read-only device and must
+  leave no attachment. Ticket/Gatekeeper checks share CloudKit-only retry policy.
+  Local script suite: 71 tests, 9 native-only skips. Artifact-only run
+  [`39598190225`](https://github.com/AxelWol/Thinoda/actions/runs/39598190225)
+  at `afdf9b7` passed all five targets, including Intel/ARM native image lifecycle/
+  EULA/signature tests and signed/notarized package/install verification.
+  Publish/WinGet intentionally skipped. Planning/finished rubber-duck
+  reviews found no blockers. Repeated Intel failures span different stages;
+  different macOS runner images do not establish a CPU-specific defect.
+  v0.6.0 attempt 4 failed installed-copy CloudKit validation; assets remain empty.
+- R2 compact Outline actions: long selected titles no longer push actions off
+  the page. A truncated summary/full hover and height-bounded, independently
+  scrollable actions retain space for topics in short windows; adaptive margins
+  reduce wasted space. Per-response focus reveal prevents header/body scroll
+  interference. A 66-case locale/theme/viewport-scale matrix checks all nine
+  actions' hit/paint bounds, root visibility, focus isolation and Move Down/Undo.
+  Full workspace CI with live AI disabled and WASM lint pass; planning/finished
+  rubber-duck reviews found no blockers. Native input/accessibility and extremely
+  small viewports remain manual acceptance work.
+- R2 deep Outline reachability: a 30-level branch reproduced an unreachable
+  title even after scrolling. Both-axis scrolling now exposes deep rows, with
+  document/sheet-scoped offsets, changed-primary/focus reveal and viewport-bounded
+  title editors. Stable selection does not snap manual browsing back. A 66-case
+  shipped-locale/Auto, light/dark and measured viewport/scale matrix exercises
+  50-level trees, unclipped title paint, pointer selection, arrow navigation,
+  typing/commit/undo and cross-document scroll retention. Existing Outline/title/
+  e2e suites (70 cases total) and native/WASM lint pass. Planning/finished
+  rubber-duck reviews found no blockers. Very short action-toolbar layout, native
+  input/assistive technology and broader Outline presentation polish remain open.
+- R11 Apple ticket retry hardening: failed Intel release jobs were traced to
+  CloudKit connection loss after accepted notarization, not failed compilation
+  or missing signing credentials. App packaging and DMG stapling now opt into
+  five bounded attempts with 15/30/60/120-second backoff for the confirmed
+  CloudKit network-loss signature only. DMG retries do not resubmit notarization;
+  exhausted retries and all other errors fail, with mandatory signature/stapling/
+  Gatekeeper checks unchanged. Recovery, exhaustion, rejection and real stderr
+  capture regressions pass; planning/finished rubber-duck reviews found no
+  blockers. The first live run exposed and locally reproduced a separate Settings
+  startup-width regression in all five native test jobs. Reserving frame/scrollbar
+  space fixes the clipped Editor toggle; direct unscrolled clicks and an expanded
+  88-case Settings matrix cover it. Full local workspace CI and WASM lint pass.
+  Fixed-branch artifact-only run
+  [`39585598204`](https://github.com/AxelWol/Thinoda/actions/runs/39585598204)
+  at `df8d1b7` passed all five native test/package jobs, including both macOS
+  signature/notarization/stapling/installed-package checks, and uploaded all five
+  artifacts. Publishing was intentionally skipped; fixes are not yet on main,
+  and no repaired v0.6.0 release assets or full distribution acceptance is claimed.
+- R2 shortcut-reference navigation: Settings now opens the existing searchable
+  Keyboard Shortcuts reference from its category row. It is an action, not an
+  empty preferences tab or a shortcut editor. Settings is disabled beneath the
+  modal; Close/Escape returns to the previous category and retains unsaved AI
+  key drafts. The 88-case shipped-locale/Auto, theme, Home/Map/Outline and category
+  matrix uses actual pointer/search input at logical 320x240/200%; document,
+  history, selection and preferences stay unchanged. Existing shortcut and
+  Settings viewport regressions plus native/WASM lint pass. Planning/finished
+  rubber-duck reviews found no blockers; rebinding/conflicts/reserved keys remain
+  open, as does native input/assistive-technology acceptance.
+- R2 bounded Settings: the window is constrained to the current viewport with
+  both-axis scrolling, keyboard-focus reveal and a locale-independent identity.
+  Wrapped API-key controls and stacked default-folder controls remove reproduced
+  negative-coordinate overflow; detected cloud-folder rows wrap. All shipped
+  languages/Auto, light/dark and three measured viewport/scale cases cover button
+  ink/clip bounds, real Tab navigation, all categories, long paths, Cloud Use,
+  close, resize/live scale and unsaved key-draft retention without credential,
+  network or picker calls. Existing preference regressions and native/WASM lint
+  pass; planning/finished rubber-duck reviews found no blockers. Native input/
+  renderer acceptance and the broader preferences/shortcut editor remain open.
+- R2 compact Map/Outliner switch: bottom controls now show the current view and
+  reuse the existing toolbar/menu/palette/shortcut command. Pointer, Enter and
+  Space work; localized shortcut hints use the platform modifier. Long current-
+  view labels truncate to their scroll region, with full accessible names.
+  Focus reveals the control without pinning manual browsing; hidden status, Zen,
+  Home and modal/palette behavior follow the existing bottom-bar rules. Pending
+  title drafts, selection, workbook and undo state survive view changes. All
+  shipped languages/Auto, light/dark and three measured logical size/scale cases
+  cover pointer/keyboard operation and actual label paint/clip bounds. Planning/
+  finished rubber-duck reviews found no blockers; 69 targeted cases and native/
+  WASM lint pass. The floating bar redesign and Gantt/Pitch remain open.
 - R2 sidebar preferences: Format/Symbols family and the last Style/Map tab now
   survive disk-backed restart, independently of panel visibility. Symbols/hiding
   keep the remembered Map tab; topic formatting/Notes/Hyperlink intentionally

@@ -333,6 +333,10 @@ those system-owned controls. WinGet publishing remains paused.
 - Settings categories for General, Editor, AI and Cloud. Editor preferences independently
   control the topic toolbar and add buttons, set initial map zoom and optionally reuse
   the last structure/theme for new blank maps without changing named templates.
+  Settings stays inside short/narrow windows with both-axis scrolling and focus
+  reveal; API-key actions and long cloud-folder paths no longer push actions offscreen.
+  Keyboard Shortcuts in Settings opens the existing searchable reference; closing
+  it returns to the same preferences category. Shortcut rebinding is not yet available.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
@@ -340,6 +344,13 @@ those system-owned controls. WinGet publishing remains paused.
   Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
+  The bottom bar shows the current Map/Outliner view; click it or use
+  Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.
+  Deep Outline trees scroll in both directions. Keyboard selection and focused
+  title editors reveal themselves without pinning manual scrolling; scroll
+  positions are scoped to each document and sheet.
+  In short windows, Outline actions scroll separately from topics and the selected
+  summary is shortened visually with full text on hover, keeping the list reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently
@@ -482,8 +493,31 @@ secure timestamps, then notarizes and staples the app before embedding it in the
 signed DMG. The workflow also notarizes and staples the DMG before creating downloads
 and checksums. Extracted and installed apps must pass signature, stapling and
 Gatekeeper checks before upload. Missing credentials or rejected notarization fail
-the release; credentials are removed even on failure. Local `cargo xtask package`
+the release; credentials are removed even on failure. Confirmed Apple CloudKit
+connection-loss errors during app packaging, stapling or ticket/Gatekeeper
+validation get up to five attempts with 15/30/60/120-second backoff.
+DMG retries reuse the accepted submission instead
+of resubmitting it. Other errors and exhausted retries still fail the release;
+signature, stapling and Gatekeeper checks are never bypassed. Local `cargo xtask package`
 builds retain ad-hoc signing and do not require these secrets.
+
+Release DMGs are created directly as compressed HFS+ images from a temporary
+staging directory, rather than customizing an attached writable image. The staged
+signed app, Applications shortcut, volume icon and license are closed before
+creation; the embedded license prompt is added before signing/notarizing the DMG.
+This removes the old `create-dmg` writable-mount/eject race without opening Finder
+or changing system-wide indexing settings. As before, CI does not customize a
+Finder window layout.
+
+Download verification attaches only read-only, hidden volumes and executes the
+installed copy, never the app on the volume. Cleanup correlates the exact image
+path with its device using `hdiutil info -plist`, including partial attach failure.
+Busy detaches log scoped `lsof` diagnostics and retry after 2/4/8/16 seconds; only
+that owned read-only device may then be force-detached. Pre-existing, unexpected
+or ambiguous attachments are not touched. A remaining attachment or failed
+cleanup fails the job; verification errors are not converted into success.
+Native macOS tests cover license resources, installation/signature preservation,
+and no leftover attachment after successful and failed checks.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·

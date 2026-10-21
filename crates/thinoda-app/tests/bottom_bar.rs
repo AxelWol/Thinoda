@@ -296,6 +296,8 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
                 ] {
                     let mut h = harness(size, scale, language, theme);
                     let add = assert_visible(&h, t("New Sheet"));
+                    h.get_by_role_and_label(Role::Button, t("Zoom")).focus();
+                    h.run_steps(8);
                     let zoom = assert_visible(&h, t("Zoom"));
                     assert!(zoom.left() >= add.right());
                     let percent = format!("{}%", h.state().doc().unwrap().view.zoom_percent());

@@ -4,56 +4,61 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
+import plistlib
+import shutil
+import struct
 import subprocess
+import tempfile
 import tomllib
-import time
-from urllib.parse import urlsplit
 
-from verify_macos_packages import ARCHITECTURES, run
+from verify_macos_packages import ARCHITECTURES, run, run_with_ticket_retry
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGER_RETRY_DELAYS = (5, 15)
 
 
-def is_apple_cloudkit_url(value: str) -> bool:
-    try:
-        return urlsplit(value).hostname == "api.apple-cloudkit.com"
-    except ValueError:
-        return False
+def license_resources(license: Path) -> dict:
+    def resource(data: bytes) -> list[dict]:
+        return [{"Attributes": "0x0000", "ID": "5000", "Name": "English", "Data": data}]
+
+    strings = [
+        "English", "Agree", "Disagree", "Print", "Save...",
+        "Choose Agree to access this volume under the displayed license, or Disagree to cancel.",
+    ]
+    encoded = [text.encode("mac_roman") for text in strings]
+    buttons = struct.pack(">H", len(encoded)) + b"".join(
+        bytes([len(text)]) + text for text in encoded
+    )
+    return {
+        # LPic: default language, count, (system language, resource offset, two-byte flag).
+        "LPic": resource(struct.pack(">5H", 0, 1, 0, 0, 0)),
+        "STR#": resource(buttons),
+        "TEXT": resource(license.read_bytes()),
+    }
 
 
-def run_packager(command: list[str], cwd: Path) -> None:
-    for attempt, delay in enumerate((*PACKAGER_RETRY_DELAYS, None), start=1):
-        result = subprocess.run(
-            command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, check=False,
+def create_dmg(app: Path, image: Path, license: Path) -> None:
+    """Create from closed staging files, without a writable image/Finder session."""
+    with tempfile.TemporaryDirectory(prefix="thinoda-dmg-stage-") as temporary:
+        root = Path(temporary)
+        staging = root / "volume"
+        staging.mkdir()
+        run("ditto", str(app), str(staging / app.name))
+        # No file handles or subprocesses remain in the staging tree at image creation.
+        (staging / "Applications").symlink_to("/Applications", target_is_directory=True)
+        shutil.copy2(license, staging / "LICENSE.md")
+        with (app / "Contents" / "Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        icon = app / "Contents" / "Resources" / info["CFBundleIconFile"]
+        shutil.copy2(icon, staging / ".VolumeIcon.icns")
+        run("SetFile", "-a", "C", str(staging))
+        resources = root / "license.plist"
+        resources.write_bytes(plistlib.dumps(license_resources(license)))
+        run(
+            "hdiutil", "create", "-ov", "-volname", app.stem, "-fs", "HFS+",
+            "-format", "UDZO", "-srcfolder", str(staging), str(image), timeout=600,
         )
-        if result.stdout:
-            print(
-                result.stdout,
-                end="" if result.stdout.endswith("\n") else "\n",
-                flush=True,
-            )
-        if result.returncode == 0:
-            return
-        cloudkit_url = any(
-            is_apple_cloudkit_url(url)
-            for url in re.findall(r"https?://[^\s\"<>]+", result.stdout)
-        )
-        transient_stapling_failure = (
-            cloudkit_url
-            and ("Code=-1005" in result.stdout or "network connection was lost" in result.stdout)
-        )
-        if not transient_stapling_failure or delay is None:
-            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
-        print(
-            f"Transient Apple ticket lookup failure; retrying cargo-packager "
-            f"({attempt}/{len(PACKAGER_RETRY_DELAYS) + 1}) in {delay}s.",
-            flush=True,
-        )
-        time.sleep(delay)
+        run("hdiutil", "udifrez", "-xml", str(resources), "", "-quiet", str(image))
 
 
 def package_config(root: Path, target: str, identity: str) -> dict:
@@ -87,7 +92,9 @@ def notarize_dmg(image: Path) -> None:
     if response["status"] != "Accepted":
         log = run("xcrun", "notarytool", "log", response["id"], *credentials)
         raise RuntimeError(f"DMG notarization was not accepted: {response}\n{log}")
-    run("xcrun", "stapler", "staple", str(image))
+    run_with_ticket_retry(
+        ["xcrun", "stapler", "staple", str(image)], timeout=120,
+    )
     run("xcrun", "stapler", "validate", str(image))
 
 
@@ -106,21 +113,24 @@ def package(root: Path, target: str) -> None:
         "--bin", "thinoda", "--target", target,
     ], cwd=root, check=True)
     # Packager 0.11.8 signs Mach-O files and the bundle inside-out with hardened
-    # runtime + timestamps, then notarizes/staples the app BEFORE creating the DMG.
-    run_packager([
+    # runtime + timestamps, then notarizes/staples the app independently of DMG.
+    run_with_ticket_retry([
         "cargo-packager", "--config", json.dumps(config),
-        "--target", target, "--formats", "app,dmg",
+        "--target", target, "--formats", "app",
     ], cwd=root / "crates" / "thinoda-app")
     output = root / "target" / "packages"
     apps = list(output.glob("*.app"))
-    images = list(output.glob("*.dmg"))
-    if len(apps) != 1 or len(images) != 1:
-        raise ValueError(f"Expected one app and one DMG in {output}")
+    if len(apps) != 1:
+        raise ValueError(f"Expected one app in {output}")
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(apps[0]))
-    run("xcrun", "stapler", "validate", str(apps[0]))
-    run("codesign", "--verify", "--strict", "--verbose=2", str(images[0]))
-    # Packager signs the DMG but only notarizes/staples the app.
-    notarize_dmg(images[0])
+    run_with_ticket_retry(["xcrun", "stapler", "validate", str(apps[0])], timeout=120)
+    suffix = "x64" if ARCHITECTURES[target] == "x86_64" else "arm64"
+    image = output / f"{config['product-name']}_{config['version']}_{suffix}.dmg"
+    license = root / "crates" / "thinoda-app" / config["license-file"]
+    create_dmg(apps[0], image, license)
+    run("codesign", "--force", "--timestamp", "--sign", os.environ["MACOS_SIGN_IDENTITY"], str(image))
+    run("codesign", "--verify", "--strict", "--verbose=2", str(image))
+    notarize_dmg(image)
 
 
 if __name__ == "__main__":

@@ -1624,56 +1624,86 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        let outline_id = egui::Id::unique((
+            "outline_topics",
+            &d.key,
+            d.doc.workbook().active_sheet,
+            d.doc.sheet().root,
+        ));
+        let primary = d.view.primary();
+        let reveal_primary = ui.data_mut(|data| {
+            let previous = data.get_temp::<Option<TopicId>>(outline_id.with("primary"));
+            data.insert_temp(outline_id.with("primary"), primary);
+            previous.is_some_and(|previous| previous != primary)
+        });
         let mut action: Option<Action> = None;
         let selected_title = d
             .view
             .primary()
             .and_then(|id| d.doc.sheet().topic(id))
             .map(|topic| topic.title.clone());
-        ui.label(selected_title.as_ref().map_or_else(
-            || t("Select a topic to edit").to_owned(),
-            |title| format!("{}: {title}", t("Selected Topic")),
-        ));
         let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
             for (label, command) in buttons {
                 let enabled = command.available(&d.doc, &d.view);
-                if ui
-                    .add_enabled(enabled, egui::Button::new(t(label)))
-                    .clicked()
-                {
+                let response = ui.add_enabled(enabled, egui::Button::new(t(label)));
+                if response.gained_focus() {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() {
                     action = Some(command.clone());
                 }
             }
         };
-        ui.horizontal_wrapped(|ui| {
-            action_buttons(
-                ui,
-                &[
-                    ("Add Sibling", Action::InsertSibling),
-                    ("Add Child", Action::InsertChild),
-                    ("Edit Topic", Action::StartEdit),
-                    ("Move Up", Action::MoveUp),
-                    ("Move Down", Action::MoveDown),
-                ],
-            );
-        });
-        ui.horizontal_wrapped(|ui| {
-            action_buttons(
-                ui,
-                &[
-                    ("Indent", Action::Indent),
-                    ("Outdent", Action::Outdent),
-                    ("Delete Topic", Action::Delete),
-                    ("Delete Topic Only", Action::DeleteKeepChildren),
-                ],
-            );
-        });
+        let header_height = ui.available_height().max(0.0) * 0.4;
+        egui::ScrollArea::vertical()
+            .id_salt(outline_id.with("actions"))
+            .min_scrolled_height(0.0)
+            .max_height(header_height)
+            .show(ui, |ui| {
+                let summary = selected_title.as_ref().map_or_else(
+                    || t("Select a topic to edit").to_owned(),
+                    |title| format!("{}: {title}", t("Selected Topic")),
+                );
+                ui.add(egui::Label::new(&summary).truncate())
+                    .on_hover_text(&summary);
+                ui.horizontal_wrapped(|ui| {
+                    action_buttons(
+                        ui,
+                        &[
+                            ("Add Sibling", Action::InsertSibling),
+                            ("Add Child", Action::InsertChild),
+                            ("Edit Topic", Action::StartEdit),
+                            ("Move Up", Action::MoveUp),
+                            ("Move Down", Action::MoveDown),
+                        ],
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    action_buttons(
+                        ui,
+                        &[
+                            ("Indent", Action::Indent),
+                            ("Outdent", Action::Outdent),
+                            ("Delete Topic", Action::Delete),
+                            ("Delete Topic Only", Action::DeleteKeepChildren),
+                        ],
+                    );
+                });
+            });
+        let margin = Margin::symmetric(
+            (ui.available_width().max(0.0) * 0.08).min(48.0) as i8,
+            (ui.available_height().max(0.0) * 0.1).min(24.0) as i8,
+        );
         egui::Frame::new()
             .fill(p.bg)
-            .inner_margin(Margin::symmetric(48, 24))
+            .inner_margin(margin)
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                egui::ScrollArea::vertical()
+                let edit_width = ui.available_width().clamp(120.0, 320.0);
+                egui::ScrollArea::both()
+                    .id_salt(outline_id)
+                    .min_scrolled_width(0.0)
+                    .min_scrolled_height(0.0)
                     .auto_shrink(false)
                     .show(ui, |ui| {
                         ui.set_max_width(820.0);
@@ -1709,19 +1739,19 @@ impl ThinodaApp {
                                     icons::CHEVRON_DOWN
                                 };
                                 if has_kids {
-                                    if ui
-                                        .add(
+                                    let response =
+                                        ui.add(
                                             egui::Button::new(chevron)
                                                 .frame(false)
                                                 .min_size(vec2(16.0, 16.0)),
                                         )
-                                        .accessible_name(format!(
-                                            "{}: {}",
-                                            t("Collapse / Expand"),
-                                            topic.title
-                                        ))
-                                        .clicked()
-                                    {
+                                        .accessible_name(
+                                            format!("{}: {}", t("Collapse / Expand"), topic.title),
+                                        );
+                                    if response.gained_focus() {
+                                        response.scroll_to_me(None);
+                                    }
+                                    if response.clicked() {
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
                                     }
@@ -1747,11 +1777,14 @@ impl ThinodaApp {
                                             TextEdit::singleline(&mut text)
                                                 .id(te_id)
                                                 .hint_text(t("Topic title"))
-                                                .desired_width(f32::INFINITY),
+                                                .desired_width(edit_width),
                                         )
                                         .accessible_name(t("Topic title"));
                                     if !r.has_focus() && !r.lost_focus() {
                                         r.request_focus();
+                                        r.scroll_to_me(None);
+                                    } else if r.gained_focus() {
+                                        r.scroll_to_me(None);
                                     }
                                     d.view.set_editing_text(&text);
                                     let (enter, tab, esc) = ui.input_mut(|i| {
@@ -1782,6 +1815,9 @@ impl ThinodaApp {
                                         RichText::new(title)
                                     };
                                     let r = ui.selectable_label(selected, text);
+                                    if (primary == Some(id) && reveal_primary) || r.gained_focus() {
+                                        r.scroll_to_me(None);
+                                    }
                                     if r.clicked() {
                                         d.view.select_only(id);
                                     }
@@ -2006,6 +2042,40 @@ impl ThinodaApp {
             );
             if self.settings.show_status_bar {
                 scroll_row(ui, "bottom_controls", width - tabs_width, |ui| {
+                    let (icon, current, next) = match self.mode {
+                        CenterMode::Map => (icons::MAP, "Map", "Outliner"),
+                        CenterMode::Outliner => (icons::OUTLINER, "Outliner", "Map"),
+                    };
+                    let label = format!("{icon} {}", t(current));
+                    let text = egui::WidgetText::from(label.clone()).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Button,
+                    );
+                    let view_width = (text.size().x + 2.0 * ui.spacing().button_padding.x)
+                        .min(width - tabs_width);
+                    let view = ui
+                        .add_sized(
+                            vec2(view_width, height),
+                            egui::Button::new(label).truncate(),
+                        )
+                        .accessible_name(format!("{}: {}", t("View"), t(current)))
+                        .on_hover_text(format!(
+                            "{} ({})",
+                            t(next),
+                            ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                                Modifiers::COMMAND.plus(Modifiers::SHIFT),
+                                Key::O
+                            ),)
+                        ));
+                    if view.gained_focus() {
+                        view.scroll_to_me(None);
+                    }
+                    if view.clicked() {
+                        cmd = Some(Cmd::ToggleOutliner);
+                    }
+                    widgets::vdivider(ui);
                     let minus = ui
                         .small_button("−")
                         .on_hover_text(t("Zoom Out"))
@@ -3362,12 +3432,27 @@ impl ThinodaApp {
         let mut open = true;
         let before = self.settings.clone();
         let mut credentials_saved = false;
+        let mut open_shortcuts = false;
+        let bounds = ctx.content_rect().shrink(8.0);
+        const CONTENT_WIDTH: f32 = 440.0;
+        let style = ctx.global_style();
+        let frame = egui::Frame::window(&style);
+        // Leave room for the minimum-width body without requiring an initial horizontal scroll.
+        let default_width =
+            CONTENT_WIDTH + frame.total_margin().sum().x + style.spacing.scroll.allocated_width();
         egui::Window::new(t("Settings"))
+            .id(egui::Id::unique("thinoda_settings"))
+            .frame(frame)
             .open(&mut open)
-            .default_width(440.0)
+            .enabled(!self.dialogs.shortcuts)
+            .min_size(egui::Vec2::ZERO)
+            .max_size(bounds.size())
+            .constrain_to(bounds)
+            .default_width(default_width)
             .collapsible(false)
-            .vscroll(true)
+            .scroll([true, true])
             .show(ctx, |ui| {
+                ui.set_min_width(CONTENT_WIDTH);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (SettingsTab::General, "General"),
@@ -3377,6 +3462,7 @@ impl ThinodaApp {
                     ] {
                         ui.selectable_value(&mut self.dialogs.settings_tab, tab, t(label));
                     }
+                    open_shortcuts = ui.button(t("Keyboard Shortcuts")).clicked();
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
@@ -3534,7 +3620,7 @@ impl ThinodaApp {
                             widgets::caption(ui, t("No cloud folders detected"));
                         }
                         for f in self.services.cloud.clone() {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 let sel =
                                     self.settings.cloud.preferred_folder.as_ref() == Some(&f.path);
                                 ui.label(format!("{} {}", icons::CLOUD, f.name));
@@ -3544,7 +3630,8 @@ impl ThinodaApp {
                                 }
                             });
                         }
-                        widgets::property_row(ui, t("Default save folder"), |ui| {
+                        ui.label(t("Default save folder"));
+                        ui.vertical(|ui| {
                             let label = self
                                 .settings
                                 .cloud
@@ -3562,11 +3649,15 @@ impl ThinodaApp {
                         });
                     });
                 }
+                reveal_changed_focus(ui);
             });
         if self.settings != before && !credentials_saved {
             self.save_settings();
         }
         self.dialogs.settings = open;
+        if open_shortcuts {
+            self.exec(ctx, Cmd::Shortcuts);
+        }
     }
 }
 
