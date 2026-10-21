@@ -13,6 +13,13 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.7.0](https://github.com/AxelWol/Thinoda/compare/v0.6.0...v0.7.0) (2026-10-21)
+
+
+### Features
+
+* improve responsive editing and harden macOS release packaging ([6e2fcfa](https://github.com/AxelWol/Thinoda/commit/6e2fcfa9746e4a5155ad49f7230c579c77f7fe51))
+
 ## [0.6.0](https://github.com/AxelWol/Thinoda/compare/v0.5.4...v0.6.0) (2026-10-21)
 
 
