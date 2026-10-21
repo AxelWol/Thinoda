@@ -678,6 +678,22 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - shortcut-reference entry in Settings:** a plain
+Keyboard Shortcuts action beside the existing category tabs reuses `Cmd::Shortcuts`
+and its searchable/filterable reference. No new empty category or pretend rebinding
+control is introduced; the reference-only notice remains visible. Settings stays
+open but disabled below the modal. Close/Escape returns to the same category,
+retaining unsaved AI key text and settings. Existing command behavior, including
+committing pending map title edits before showing the reference, is unchanged.
+The 88-case shipped-locale/Auto, light/dark, Home/Map/Outline and category matrix
+clicks the entry and types search/key-draft text at a measured logical 320x240 with
+200% scaling. It checks modal disabling, the reference-only notice, both dismissal
+routes and unchanged document/history/selection/preferences without credential,
+network or picker calls. Existing shortcut and Settings viewport suites and native/
+WASM lint pass. Planning/finished rubber-duck reviews found no blockers. Shortcut
+rebinding, conflict/reserved-key rules and native keyboard/accessibility acceptance
+remain open; the broader preferences navigation is not claimed complete.
+
 **Delivered R2 follow-up - reachable Settings:** the nonmodal preferences window
 is constrained to the measured viewport with a stable, locale-independent ID,
 both-axis scrolling and focus reveal. Its minimum content width remains 440

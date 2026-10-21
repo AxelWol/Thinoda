@@ -335,6 +335,8 @@ those system-owned controls. WinGet publishing remains paused.
   the last structure/theme for new blank maps without changing named templates.
   Settings stays inside short/narrow windows with both-axis scrolling and focus
   reveal; API-key actions and long cloud-folder paths no longer push actions offscreen.
+  Keyboard Shortcuts in Settings opens the existing searchable reference; closing
+  it returns to the same preferences category. Shortcut rebinding is not yet available.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet

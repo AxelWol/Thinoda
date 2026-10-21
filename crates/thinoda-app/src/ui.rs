@@ -3396,10 +3396,12 @@ impl ThinodaApp {
         let mut open = true;
         let before = self.settings.clone();
         let mut credentials_saved = false;
+        let mut open_shortcuts = false;
         let bounds = ctx.content_rect().shrink(8.0);
         egui::Window::new(t("Settings"))
             .id(egui::Id::unique("thinoda_settings"))
             .open(&mut open)
+            .enabled(!self.dialogs.shortcuts)
             .min_size(egui::Vec2::ZERO)
             .max_size(bounds.size())
             .constrain_to(bounds)
@@ -3417,6 +3419,7 @@ impl ThinodaApp {
                     ] {
                         ui.selectable_value(&mut self.dialogs.settings_tab, tab, t(label));
                     }
+                    open_shortcuts = ui.button(t("Keyboard Shortcuts")).clicked();
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
@@ -3609,6 +3612,9 @@ impl ThinodaApp {
             self.save_settings();
         }
         self.dialogs.settings = open;
+        if open_shortcuts {
+            self.exec(ctx, Cmd::Shortcuts);
+        }
     }
 }
 

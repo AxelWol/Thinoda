@@ -69,6 +69,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 shortcut-reference navigation: Settings now opens the existing searchable
+  Keyboard Shortcuts reference from its category row. It is an action, not an
+  empty preferences tab or a shortcut editor. Settings is disabled beneath the
+  modal; Close/Escape returns to the previous category and retains unsaved AI
+  key drafts. The 88-case shipped-locale/Auto, theme, Home/Map/Outline and category
+  matrix uses actual pointer/search input at logical 320x240/200%; document,
+  history, selection and preferences stay unchanged. Existing shortcut and
+  Settings viewport regressions plus native/WASM lint pass. Planning/finished
+  rubber-duck reviews found no blockers; rebinding/conflicts/reserved keys remain
+  open, as does native input/assistive-technology acceptance.
 - R2 bounded Settings: the window is constrained to the current viewport with
   both-axis scrolling, keyboard-focus reveal and a locale-independent identity.
   Wrapped API-key controls and stacked default-folder controls remove reproduced
