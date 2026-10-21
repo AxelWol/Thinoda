@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+import plistlib
+import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -7,10 +10,10 @@ import unittest
 from unittest.mock import call, patch
 
 from package_macos import (
-    ROOT, TICKET_RETRY_DELAYS, notarize_dmg, package, package_config,
+    ROOT, create_dmg, license_resources, notarize_dmg, package, package_config,
     run_with_ticket_retry,
 )
-from verify_macos_packages import ARCHITECTURES
+from verify_macos_packages import ARCHITECTURES, TICKET_RETRY_DELAYS
 
 
 IDENTITY = "Developer ID Application: Example Developer (EXAMPLE123)"
@@ -50,7 +53,7 @@ class PackageConfigTests(unittest.TestCase):
 
 
 class PackageTests(unittest.TestCase):
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     def test_stderr_ticket_failure_is_seen_from_a_real_subprocess(self, sleep):
         with tempfile.TemporaryDirectory() as temporary:
             marker = Path(temporary) / "attempted"
@@ -64,7 +67,7 @@ class PackageTests(unittest.TestCase):
             run_with_ticket_retry([sys.executable, "-c", script], timeout=120)
         sleep.assert_called_once_with(15)
 
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_retries_cargo_packager_after_transient_ticket_lookup_failure(
         self, command, sleep,
@@ -87,7 +90,7 @@ class PackageTests(unittest.TestCase):
         ))
         sleep.assert_called_once_with(15)
 
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_does_not_retry_non_transient_packager_failure(self, command, sleep):
         for output in (
@@ -108,7 +111,7 @@ class PackageTests(unittest.TestCase):
                 command.assert_called_once()
                 sleep.assert_not_called()
 
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_transient_failure_budget_is_bounded_and_preserves_final_error(self, command, sleep):
         command.return_value = subprocess.CompletedProcess(
@@ -121,7 +124,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(error.exception.returncode, 68)
         self.assertEqual(error.exception.output, TICKET_FAILURE)
 
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_timeout_is_not_treated_as_confirmed_ticket_failure(self, command, sleep):
         command.side_effect = subprocess.TimeoutExpired(["xcrun"], 120)
@@ -147,7 +150,8 @@ class PackageTests(unittest.TestCase):
                 output.mkdir(parents=True)
                 app = output / "Thinoda.app"
                 app.mkdir()
-                image = output / "Thinoda.dmg"
+                suffix = "arm64" if target == "aarch64-apple-darwin" else "x64"
+                image = output / f"Thinoda_0.6.0_{suffix}.dmg"
                 image.touch()
                 env = {
                     "MACOS_SIGN_IDENTITY": IDENTITY, "APPLE_API_KEY": "key-id",
@@ -155,21 +159,31 @@ class PackageTests(unittest.TestCase):
                 }
                 with (
                     patch.dict("os.environ", env, clear=True),
-                    patch("package_macos.package_config", return_value={"macos": {"signing-identity": IDENTITY}}),
+                    patch("package_macos.package_config", return_value={
+                        "macos": {"signing-identity": IDENTITY}, "product-name": "Thinoda",
+                        "version": "0.6.0", "license-file": "../../LICENSE.md",
+                    }),
                     patch("package_macos.subprocess.run") as command,
                     patch("package_macos.run_with_ticket_retry") as pack,
                     patch("package_macos.run") as check,
                     patch("package_macos.notarize_dmg") as notarize,
+                    patch("package_macos.create_dmg") as create,
                 ):
                     package(root, target)
                     build = command.call_args
                     self.assertIn("--locked", build.args[0])
                     self.assertEqual(build.args[0][-1], target)
-                    self.assertEqual(pack.call_args.kwargs, {"cwd": root / "crates" / "thinoda-app"})
-                    args = pack.call_args.args[0]
+                    self.assertEqual(pack.call_args_list[0].kwargs, {"cwd": root / "crates" / "thinoda-app"})
+                    args = pack.call_args_list[0].args[0]
                     self.assertEqual(json.loads(args[2])["macos"]["signing-identity"], IDENTITY)
-                    self.assertEqual(args[-2:], ["--formats", "app,dmg"])
-                    check.assert_any_call("xcrun", "stapler", "validate", str(app))
+                    self.assertEqual(args[-2:], ["--formats", "app"])
+                    pack.assert_any_call(["xcrun", "stapler", "validate", str(app)], timeout=120)
+                    create.assert_called_once_with(
+                        app, image, root / "crates" / "thinoda-app" / "../../LICENSE.md",
+                    )
+                    check.assert_any_call(
+                        "codesign", "--force", "--timestamp", "--sign", IDENTITY, str(image),
+                    )
                     notarize.assert_called_once_with(image)
 
     @patch("package_macos.subprocess.run")
@@ -189,7 +203,7 @@ class PackageTests(unittest.TestCase):
     "APPLE_API_ISSUER": "issuer",
 }, clear=True)
 class NotarizationTests(unittest.TestCase):
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     @patch("package_macos.run")
     def test_dmg_ticket_recovery_does_not_resubmit_or_skip_validation(self, command, staple, sleep):
@@ -215,7 +229,7 @@ class NotarizationTests(unittest.TestCase):
             ))
         self.assertEqual(sleep.call_args_list, [call(15), call(30)])
 
-    @patch("package_macos.time.sleep")
+    @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
     @patch("package_macos.run")
     def test_dmg_ticket_exhaustion_fails_without_validating(self, command, staple, sleep):
@@ -267,6 +281,58 @@ class NotarizationTests(unittest.TestCase):
                     notarize_dmg(Path("Thinoda.dmg"))
                 self.assertEqual(command.call_count, 1)
                 staple.assert_not_called()
+
+
+class DmgCreationTests(unittest.TestCase):
+    def test_license_has_single_english_mapping_and_original_text(self):
+        resources = license_resources(ROOT / "LICENSE.md")
+        self.assertEqual(resources["LPic"][0]["Data"], struct.pack(">5H", 0, 1, 0, 0, 0))
+        self.assertEqual(resources["TEXT"][0]["Data"], (ROOT / "LICENSE.md").read_bytes())
+        self.assertEqual(resources["STR#"][0]["Data"][:2], struct.pack(">H", 6))
+        self.assertIn(b"Agree", resources["STR#"][0]["Data"])
+        self.assertIn(b"Disagree", resources["STR#"][0]["Data"])
+        self.assertEqual(plistlib.loads(plistlib.dumps(resources)), resources)
+
+    @patch.object(Path, "symlink_to")
+    @patch("package_macos.run")
+    def test_creates_without_attach_and_preserves_icon_license_and_app(self, command, link):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "Thinoda.app"
+            contents = app / "Contents"
+            (contents / "Resources").mkdir(parents=True)
+            (contents / "Resources" / "icon.icns").write_bytes(b"icon")
+            (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIconFile": "icon.icns"}))
+            license = root / "LICENSE.md"
+            license.write_text("Original license", encoding="utf-8")
+            image = root / "Thinoda.dmg"
+            staging = None
+
+            def run_command(*args, **kwargs):
+                nonlocal staging
+                if args[0] == "ditto":
+                    shutil.copytree(args[1], args[2])
+                elif args[:2] == ("hdiutil", "create"):
+                    staging = Path(args[args.index("-srcfolder") + 1])
+                    self.assertEqual((staging / "LICENSE.md").read_bytes(), license.read_bytes())
+                    self.assertEqual((staging / ".VolumeIcon.icns").read_bytes(), b"icon")
+                    self.assertTrue((staging / app.name / "Contents" / "Info.plist").is_file())
+                    self.assertEqual(args[args.index("-format") + 1], "UDZO")
+                    self.assertEqual(kwargs["timeout"], 600)
+                elif args[:2] == ("hdiutil", "udifrez"):
+                    resources = plistlib.loads(Path(args[3]).read_bytes())
+                    self.assertEqual(resources["TEXT"][0]["Data"], license.read_bytes())
+                return ""
+
+            command.side_effect = run_command
+            create_dmg(app, image, license)
+            self.assertIsNotNone(staging)
+            self.assertFalse(staging.exists())
+            self.assertEqual(
+                [entry.args[:2] for entry in command.call_args_list if entry.args[0] == "hdiutil"],
+                [("hdiutil", "create"), ("hdiutil", "udifrez")],
+            )
+            link.assert_called_once_with("/Applications", target_is_directory=True)
 
 
 if __name__ == "__main__":

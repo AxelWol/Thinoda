@@ -1,11 +1,15 @@
 """Verify the downloadable macOS app archive and the app installed from its DMG."""
 
 import argparse
+from contextlib import contextmanager
 from pathlib import Path
 import plistlib
+import re
 import subprocess
 import tarfile
 import tempfile
+import time
+from urllib.parse import urlsplit
 
 
 ARCHITECTURES = {
@@ -14,17 +18,132 @@ ARCHITECTURES = {
 }
 
 LOCALIZATIONS = ["en", "de", "es", "fr", "da", "nl", "pt-PT", "pt-BR", "it", "pl"]
+TICKET_RETRY_DELAYS = (15, 30, 60, 120)
+DETACH_RETRY_DELAYS = (2, 4, 8, 16)
+
+
+class CommandError(RuntimeError):
+    def __init__(self, args: tuple[str, ...], result: subprocess.CompletedProcess):
+        self.returncode = result.returncode
+        super().__init__(
+            f"Command failed ({result.returncode}): {' '.join(args)}\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def run(*args: str, input: str | None = None, timeout: int = 120) -> str:
     print(f"> {' '.join(args)}", flush=True)
     result = subprocess.run(args, input=input, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError(
-            f"Command failed ({result.returncode}): {' '.join(args)}\n"
-            f"{result.stdout}{result.stderr}"
-        )
+        raise CommandError(args, result)
     return result.stdout
+
+
+def is_apple_cloudkit_url(value: str) -> bool:
+    try:
+        return urlsplit(value).hostname == "api.apple-cloudkit.com"
+    except ValueError:
+        return False
+
+
+def run_with_ticket_retry(
+    command: list[str], *, cwd: Path | None = None, timeout: int | None = None,
+) -> str:
+    for attempt, delay in enumerate((*TICKET_RETRY_DELAYS, None), start=1):
+        result = subprocess.run(
+            command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, check=False, timeout=timeout,
+        )
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True)
+        if result.returncode == 0:
+            return result.stdout
+        cloudkit_url = any(
+            is_apple_cloudkit_url(url)
+            for url in re.findall(r"https?://[^\s\"<>]+", result.stdout)
+        )
+        transient = cloudkit_url and (
+            "Code=-1005" in result.stdout or "network connection was lost" in result.stdout
+        )
+        if not transient or delay is None:
+            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+        print(
+            f"Transient Apple ticket lookup failure; retrying {command[0]} "
+            f"({attempt}/{len(TICKET_RETRY_DELAYS) + 1}) in {delay}s.",
+            flush=True,
+        )
+        time.sleep(delay)
+
+
+def attached_image(image: Path) -> dict | None:
+    info = plistlib.loads(run("hdiutil", "info", "-plist").encode("utf-8"))
+    matches = [
+        entry for entry in info["images"]
+        if Path(entry["image-path"]).resolve() == image.resolve()
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(f"Multiple attachments for {image}; refusing ambiguous cleanup")
+    return matches[0] if matches else None
+
+
+def detach_readonly_image(device: str, mount: Path) -> None:
+    for delay in (*DETACH_RETRY_DELAYS, None):
+        try:
+            run("hdiutil", "detach", device)
+            return
+        except CommandError as error:
+            print(error, flush=True)
+            if error.returncode != 16:
+                raise
+            # lsof returns 1 when no handles match; it is diagnostic, not a gate.
+            try:
+                result = subprocess.run(
+                    ["lsof", "+D", str(mount)], capture_output=True, text=True, timeout=30,
+                )
+                print(f"Open handles under {mount} (lsof {result.returncode}):\n"
+                      f"{result.stdout}{result.stderr}", flush=True)
+            except subprocess.TimeoutExpired as diagnostic:
+                print(f"Open-handle diagnostic timed out: {diagnostic}", flush=True)
+            if delay is None:
+                # Only used for our explicitly read-only verification attachment.
+                # No writable filesystem or unrelated disk is ever force-detached.
+                run("hdiutil", "detach", "-force", device)
+                return
+            print(f"Read-only image busy; retrying {device} in {delay}s.", flush=True)
+            time.sleep(delay)
+
+
+@contextmanager
+def readonly_image(image: Path, mount: Path):
+    image = image.resolve()
+    if attached_image(image) is not None:
+        raise RuntimeError(f"Image already attached; refusing to take ownership: {image}")
+    mount.mkdir()
+    try:
+        run(
+            "hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
+            "-mountpoint", str(mount), str(image), input="Y\n",
+        )
+        yield mount
+    finally:
+        # Also find devices left by a partially failed or timed-out attach.
+        attachment = attached_image(image)
+        if attachment is not None:
+            entities = attachment["system-entities"]
+            if any(
+                Path(entity["mount-point"]).resolve() != mount.resolve()
+                for entity in entities if entity.get("mount-point")
+            ):
+                raise RuntimeError(f"Unexpected mount for {image}; refusing unsafe cleanup")
+            devices = [
+                entity["dev-entry"] for entity in entities
+                if re.fullmatch(r"/dev/disk\d+", entity.get("dev-entry", ""))
+            ]
+            if len(devices) != 1:
+                raise RuntimeError(f"Cannot identify whole image device for {image}: {entities}")
+            detach_readonly_image(devices[0], mount)
+            if attached_image(image) is not None:
+                raise RuntimeError(f"Image remains attached after detach: {image}")
 
 
 def verify_app(app: Path, architecture: str, require_notarization: bool = False) -> None:
@@ -45,8 +164,10 @@ def verify_app(app: Path, architecture: str, require_notarization: bool = False)
     if not (app / "Contents" / "_CodeSignature" / "CodeResources").is_file():
         raise ValueError(f"Missing app resource seal in {app}")
     if require_notarization:
-        run("xcrun", "stapler", "validate", str(app))
-        run("spctl", "--assess", "--type", "execute", "--verbose=2", str(app))
+        run_with_ticket_retry(["xcrun", "stapler", "validate", str(app)], timeout=120)
+        run_with_ticket_retry(
+            ["spctl", "--assess", "--type", "execute", "--verbose=2", str(app)], timeout=120,
+        )
     print(f"Verified {architecture} app: {app}", flush=True)
 
 
@@ -70,18 +191,13 @@ def verify(source: Path, target: str, require_notarization: bool = False) -> Non
         run("hdiutil", "verify", str(images[0]))
         run("codesign", "--verify", "--strict", "--verbose=2", str(images[0]))
         if require_notarization:
-            run("xcrun", "stapler", "validate", str(images[0]))
-            run(
+            run_with_ticket_retry(["xcrun", "stapler", "validate", str(images[0])], timeout=120)
+            run_with_ticket_retry([
                 "spctl", "--assess", "--type", "open", "--context",
                 "context:primary-signature", "--verbose=2", str(images[0]),
-            )
+            ], timeout=120)
         mount = root / "mount"
-        mount.mkdir()
-        run(
-            "hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
-            "-mountpoint", str(mount), str(images[0].resolve()), input="Y\n",
-        )
-        try:
+        with readonly_image(images[0], mount):
             apps = list(mount.glob("*.app"))
             if len(apps) != 1:
                 raise ValueError(f"Expected one app in {images[0]}")
@@ -91,8 +207,6 @@ def verify(source: Path, target: str, require_notarization: bool = False) -> Non
             verify_app(installed, architecture, require_notarization)
             # Both targets run on native runners; Intel must not require Rosetta on ARM.
             run(str(installed / "Contents" / "MacOS" / "thinoda"), "--version")
-        finally:
-            run("hdiutil", "detach", str(mount))
     print(f"Verified downloadable packages for {target}", flush=True)
 
 

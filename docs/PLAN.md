@@ -697,9 +697,49 @@ acceptance work, not a claim of complete Outline parity.
 [`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
 attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject
 `disk2` ("Resource busy"), before asset publication. The original-tag failed-job
-retry was restarted; the latest observed attempt 4 is in progress. This preserves v0.6.0 source
-identity rather than attaching newer feature-branch binaries; assets are not
+retry was restarted; attempt 4 completed with another Intel CloudKit connection
+loss during installed-copy ticket validation, after DMG creation and notarization
+succeeded. Publication is still blocked and assets remain empty. This preserves
+v0.6.0 source identity rather than attaching newer feature-branch binaries; assets are not
 claimed published until the release/publish jobs and downloads are verified.
+
+**R11 release reliability follow-up - DMG lifecycle:** attempt 2 job
+`119186008681` failed the external writable-image detach, not application code
+or our later installed-copy check. The
+[pinned packager source](https://github.com/crabnebula-dev/cargo-packager/blob/cargo-packager-v0.11.8/crates/packager/src/package/dmg/mod.rs)
+uses [create-dmg at `28867ba`](https://github.com/create-dmg/create-dmg/blob/28867ba3563ddef62f55dcf130677103b4296c42/create-dmg):
+read/write attach without `-nobrowse`, only three busy-detach attempts with
+2/4-second waits, and no open-handle diagnostics/failure cleanup. CI skips the
+Finder customization AppleScript, so an open Finder script/window is not proven
+as the cause. No log identifies the holding process. Intel uses macOS 15
+(`20260824.0482.1`); the successful ARM job uses macOS 26
+(`20261013.0424.1`). OS/image/background-service timing is a plausible difference,
+not proof of a CPU-specific defect.
+
+The release script now requests only the app from cargo-packager (its independent
+app signing/notarization is confirmed in upstream `package/app/mod.rs`) and
+creates a compressed HFS+ DMG directly from closed staging files. Preserve the
+signed app, Applications link, icon, license file and embedded license prompt;
+resource changes precede image signing/notarization. No explicit writable mount,
+Finder automation, global Spotlight changes or broad process kills are used.
+The remaining read-only verification mount has image-correlated cleanup,
+partial-attach/timeout handling, scoped handle diagnostics, bounded EBUSY retries,
+and last-resort force-detach of only the owned read-only device. A post-detach
+check must confirm no attachment remains. Existing/potentially foreign mounts
+fail closed. Cleanup and verification failures remain visible through exception
+chaining.
+
+The latest installed-copy validation failure also requires the existing
+CloudKit-only retry policy on ticket validation/Gatekeeper checks, not just
+stapling; non-network/signature failures still fail immediately.
+Planning and finished-step rubber-duck reviews found no blockers. All 71 script
+tests pass locally (9 native-only skips). Added native macOS tiny-image coverage
+checks embedded license resources, Applications link, installed app signature
+and no leftover image on successful/failed verification. Intel/ARM live packaging
+acceptance is pending; this does not repair the immutable v0.6.0 tag tooling or
+claim published assets. Rebuilding that exact source with corrected tooling
+requires an explicitly separate tooling/source checkout, not retagging or
+attaching feature-branch application binaries.
 
 **Delivered R2 follow-up - deep Outline reachability:** a 30-level branch at
 640x700 remained outside the viewport even after an explicit scroll request.

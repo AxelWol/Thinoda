@@ -494,11 +494,30 @@ signed DMG. The workflow also notarizes and staples the DMG before creating down
 and checksums. Extracted and installed apps must pass signature, stapling and
 Gatekeeper checks before upload. Missing credentials or rejected notarization fail
 the release; credentials are removed even on failure. Confirmed Apple CloudKit
-connection-loss errors during app packaging or DMG stapling get up to five attempts,
-with 15/30/60/120-second backoff. DMG retries reuse the accepted submission instead
+connection-loss errors during app packaging, stapling or ticket/Gatekeeper
+validation get up to five attempts with 15/30/60/120-second backoff.
+DMG retries reuse the accepted submission instead
 of resubmitting it. Other errors and exhausted retries still fail the release;
 signature, stapling and Gatekeeper checks are never bypassed. Local `cargo xtask package`
 builds retain ad-hoc signing and do not require these secrets.
+
+Release DMGs are created directly as compressed HFS+ images from a temporary
+staging directory, rather than customizing an attached writable image. The staged
+signed app, Applications shortcut, volume icon and license are closed before
+creation; the embedded license prompt is added before signing/notarizing the DMG.
+This removes the old `create-dmg` writable-mount/eject race without opening Finder
+or changing system-wide indexing settings. As before, CI does not customize a
+Finder window layout.
+
+Download verification attaches only read-only, hidden volumes and executes the
+installed copy, never the app on the volume. Cleanup correlates the exact image
+path with its device using `hdiutil info -plist`, including partial attach failure.
+Busy detaches log scoped `lsof` diagnostics and retry after 2/4/8/16 seconds; only
+that owned read-only device may then be force-detached. Pre-existing, unexpected
+or ambiguous attachments are not touched. A remaining attachment or failed
+cleanup fails the job; verification errors are not converted into success.
+Native macOS tests cover license resources, installation/signature preservation,
+and no leftover attachment after successful and failed checks.
 
 ## Docs
 [Plan](docs/PLAN.md) · [Backlog](docs/BACKLOG.md) · [Architecture](docs/ARCHITECTURE.md) ·

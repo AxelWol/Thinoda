@@ -69,6 +69,18 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R11 DMG lifecycle hardening (native acceptance pending): release packaging
+  no longer explicitly mounts/customizes a writable image. Closed staging keeps
+  the signed app, Applications link, icon and license prompt before image signing
+  and notarization. Read-only verification scopes cleanup to its exact image/
+  device, handles partial attaches, diagnoses open handles and retries EBUSY;
+  last-resort forced detach is limited to that owned read-only device and must
+  leave no attachment. Ticket/Gatekeeper checks share CloudKit-only retry policy.
+  Local script suite: 71 tests, 9 native-only skips; new native image lifecycle/
+  EULA/signature tests await Intel/ARM runners. Planning/finished rubber-duck
+  reviews found no blockers. Repeated Intel failures span different stages;
+  different macOS runner images do not establish a CPU-specific defect.
+  v0.6.0 attempt 4 failed installed-copy CloudKit validation; assets remain empty.
 - R2 compact Outline actions: long selected titles no longer push actions off
   the page. A truncated summary/full hover and height-bounded, independently
   scrollable actions retain space for topics in short windows; adaptive margins
