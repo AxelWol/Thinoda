@@ -1642,47 +1642,61 @@ impl ThinodaApp {
             .primary()
             .and_then(|id| d.doc.sheet().topic(id))
             .map(|topic| topic.title.clone());
-        ui.label(selected_title.as_ref().map_or_else(
-            || t("Select a topic to edit").to_owned(),
-            |title| format!("{}: {title}", t("Selected Topic")),
-        ));
         let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
             for (label, command) in buttons {
                 let enabled = command.available(&d.doc, &d.view);
-                if ui
-                    .add_enabled(enabled, egui::Button::new(t(label)))
-                    .clicked()
-                {
+                let response = ui.add_enabled(enabled, egui::Button::new(t(label)));
+                if response.gained_focus() {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() {
                     action = Some(command.clone());
                 }
             }
         };
-        ui.horizontal_wrapped(|ui| {
-            action_buttons(
-                ui,
-                &[
-                    ("Add Sibling", Action::InsertSibling),
-                    ("Add Child", Action::InsertChild),
-                    ("Edit Topic", Action::StartEdit),
-                    ("Move Up", Action::MoveUp),
-                    ("Move Down", Action::MoveDown),
-                ],
-            );
-        });
-        ui.horizontal_wrapped(|ui| {
-            action_buttons(
-                ui,
-                &[
-                    ("Indent", Action::Indent),
-                    ("Outdent", Action::Outdent),
-                    ("Delete Topic", Action::Delete),
-                    ("Delete Topic Only", Action::DeleteKeepChildren),
-                ],
-            );
-        });
+        let header_height = ui.available_height().max(0.0) * 0.4;
+        egui::ScrollArea::vertical()
+            .id_salt(outline_id.with("actions"))
+            .min_scrolled_height(0.0)
+            .max_height(header_height)
+            .show(ui, |ui| {
+                let summary = selected_title.as_ref().map_or_else(
+                    || t("Select a topic to edit").to_owned(),
+                    |title| format!("{}: {title}", t("Selected Topic")),
+                );
+                ui.add(egui::Label::new(&summary).truncate())
+                    .on_hover_text(&summary);
+                ui.horizontal_wrapped(|ui| {
+                    action_buttons(
+                        ui,
+                        &[
+                            ("Add Sibling", Action::InsertSibling),
+                            ("Add Child", Action::InsertChild),
+                            ("Edit Topic", Action::StartEdit),
+                            ("Move Up", Action::MoveUp),
+                            ("Move Down", Action::MoveDown),
+                        ],
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    action_buttons(
+                        ui,
+                        &[
+                            ("Indent", Action::Indent),
+                            ("Outdent", Action::Outdent),
+                            ("Delete Topic", Action::Delete),
+                            ("Delete Topic Only", Action::DeleteKeepChildren),
+                        ],
+                    );
+                });
+            });
+        let margin = Margin::symmetric(
+            (ui.available_width().max(0.0) * 0.08).min(48.0) as i8,
+            (ui.available_height().max(0.0) * 0.1).min(24.0) as i8,
+        );
         egui::Frame::new()
             .fill(p.bg)
-            .inner_margin(Margin::symmetric(48, 24))
+            .inner_margin(margin)
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 let edit_width = ui.available_width().clamp(120.0, 320.0);
@@ -1725,19 +1739,19 @@ impl ThinodaApp {
                                     icons::CHEVRON_DOWN
                                 };
                                 if has_kids {
-                                    if ui
-                                        .add(
+                                    let response =
+                                        ui.add(
                                             egui::Button::new(chevron)
                                                 .frame(false)
                                                 .min_size(vec2(16.0, 16.0)),
                                         )
-                                        .accessible_name(format!(
-                                            "{}: {}",
-                                            t("Collapse / Expand"),
-                                            topic.title
-                                        ))
-                                        .clicked()
-                                    {
+                                        .accessible_name(
+                                            format!("{}: {}", t("Collapse / Expand"), topic.title),
+                                        );
+                                    if response.gained_focus() {
+                                        response.scroll_to_me(None);
+                                    }
+                                    if response.clicked() {
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
                                     }
@@ -1768,6 +1782,9 @@ impl ThinodaApp {
                                         .accessible_name(t("Topic title"));
                                     if !r.has_focus() && !r.lost_focus() {
                                         r.request_focus();
+                                        r.scroll_to_me(None);
+                                    } else if r.gained_focus() {
+                                        r.scroll_to_me(None);
                                     }
                                     d.view.set_editing_text(&text);
                                     let (enter, tab, esc) = ui.input_mut(|i| {
@@ -1798,7 +1815,7 @@ impl ThinodaApp {
                                         RichText::new(title)
                                     };
                                     let r = ui.selectable_label(selected, text);
-                                    if primary == Some(id) && reveal_primary {
+                                    if (primary == Some(id) && reveal_primary) || r.gained_focus() {
                                         r.scroll_to_me(None);
                                     }
                                     if r.clicked() {
@@ -1814,7 +1831,6 @@ impl ThinodaApp {
                                 }
                             });
                         }
-                        reveal_changed_focus(ui);
                     });
             });
         // Keyboard in outliner when not editing.

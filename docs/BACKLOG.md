@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 compact Outline actions: long selected titles no longer push actions off
+  the page. A truncated summary/full hover and height-bounded, independently
+  scrollable actions retain space for topics in short windows; adaptive margins
+  reduce wasted space. Per-response focus reveal prevents header/body scroll
+  interference. A 66-case locale/theme/viewport-scale matrix checks all nine
+  actions' hit/paint bounds, root visibility, focus isolation and Move Down/Undo.
+  Full workspace CI with live AI disabled and WASM lint pass; planning/finished
+  rubber-duck reviews found no blockers. Native input/accessibility and extremely
+  small viewports remain manual acceptance work.
 - R2 deep Outline reachability: a 30-level branch reproduced an unreachable
   title even after scrolling. Both-axis scrolling now exposes deep rows, with
   document/sheet-scoped offsets, changed-primary/focus reveal and viewport-bounded

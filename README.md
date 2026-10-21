@@ -349,6 +349,8 @@ those system-owned controls. WinGet publishing remains paused.
   Deep Outline trees scroll in both directions. Keyboard selection and focused
   title editors reveal themselves without pinning manual scrolling; scroll
   positions are scoped to each document and sheet.
+  In short windows, Outline actions scroll separately from topics and the selected
+  summary is shortened visually with full text on hover, keeping the list reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently

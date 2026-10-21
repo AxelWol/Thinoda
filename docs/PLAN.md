@@ -678,6 +678,29 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - compact Outline actions:** at 320x240, a long selected title
+placed Add Sibling at y628 outside the page. The selected summary now truncates
+with its full text available on hover/accessibility. A vertically scrollable
+header caps the summary and existing action rows at 40% of available Outline
+height, while adaptive frame margins preserve space for topics. Focus reveal is
+scoped to the actual action, disclosure, topic or editor response rather than a
+layer-wide focus lookup, preventing sibling header/body scroll interference.
+The 66-case shipped-locale/Auto, light/dark and measured viewport/scale matrix
+checks all nine action hit rectangles and caption paint/clip bounds, independent
+root visibility, alternating header/body focus, unchanged document/history, and
+actual Move Down/Undo. Planning and finished-step rubber-duck reviews found no
+blockers; full workspace CI with live AI disabled and WASM lint pass.
+Full native input/accessibility and exceptionally tiny viewports remain manual
+acceptance work, not a claim of complete Outline parity.
+
+**Publishing status (2026-10-21):** v0.6.0 Release Please run
+[`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
+attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject
+`disk2` ("Resource busy"), before asset publication. The original-tag failed-job
+retry was restarted; the latest observed attempt 4 is in progress. This preserves v0.6.0 source
+identity rather than attaching newer feature-branch binaries; assets are not
+claimed published until the release/publish jobs and downloads are verified.
+
 **Delivered R2 follow-up - deep Outline reachability:** a 30-level branch at
 640x700 remained outside the viewport even after an explicit scroll request.
 The topic list now scrolls in both axes, with offsets scoped to document key,
