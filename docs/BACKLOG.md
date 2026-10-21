@@ -81,8 +81,12 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   startup-width regression in all five native test jobs. Reserving frame/scrollbar
   space fixes the clipped Editor toggle; direct unscrolled clicks and an expanded
   88-case Settings matrix cover it. Full local workspace CI and WASM lint pass.
-  Fixed-branch live packaging remains to be verified; no repaired
-  v0.6.0 release assets or completed distribution acceptance is claimed.
+  Fixed-branch artifact-only run
+  [`39585598204`](https://github.com/AxelWol/Thinoda/actions/runs/39585598204)
+  at `df8d1b7` passed all five native test/package jobs, including both macOS
+  signature/notarization/stapling/installed-package checks, and uploaded all five
+  artifacts. Publishing was intentionally skipped; fixes are not yet on main,
+  and no repaired v0.6.0 release assets or full distribution acceptance is claimed.
 - R2 shortcut-reference navigation: Settings now opens the existing searchable
   Keyboard Shortcuts reference from its category row. It is an action, not an
   empty preferences tab or a shortcut editor. Settings is disabled beneath the

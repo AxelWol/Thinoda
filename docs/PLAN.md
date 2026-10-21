@@ -701,8 +701,16 @@ The default now reserves measured frame/scrollbar space in addition to the share
 body width. Direct pointer coverage stays unscrolled, and the Settings matrix adds
 normal 1280x800 startup across all shipped locales/themes (88 cases in total).
 Full local workspace CI with live AI disabled and WASM lint pass; planning and
-finished-step rubber-duck reviews found no blockers. Remote packaging is still
-pending, not presumed successful from local checks.
+finished-step rubber-duck reviews found no blockers. Remote packaging is now
+verified: artifact-only run
+[`39585598204`](https://github.com/AxelWol/Thinoda/actions/runs/39585598204)
+at `df8d1b7` passed native tests and packaging on Windows x64/ARM64, macOS
+Intel/Apple silicon and Linux x64. Both macOS jobs passed signing, notarization,
+stapling and installed-package verification; all five artifacts were uploaded.
+Publish/WinGet were intentionally skipped. This live smoke test does not prove
+Apple cannot exceed the retry budget; deterministic tests cover retry behavior.
+The fixes remain on the feature branch, and v0.6.0 release assets have not been
+repaired or replaced.
 
 **Delivered R2 follow-up - shortcut-reference entry in Settings:** a plain
 Keyboard Shortcuts action beside the existing category tabs reuses `Cmd::Shortcuts`
