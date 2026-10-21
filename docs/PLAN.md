@@ -734,7 +734,21 @@ Planning/finished-step rubber-duck reviews found no blockers. An unrendered
 focused topic fails closed rather than dispatching a structural edit; native
 accessibility/input acceptance and complete daily-editing parity remain open.
 
-**Publishing status (2026-10-21):** v0.6.0 Release Please run
+**Current release handoff (2026-10-21):** PR
+[#60](https://github.com/AxelWol/Thinoda/pull/60) merged the verified responsive
+Settings/Outline and macOS packaging fixes. Release Please PR
+[#61](https://github.com/AxelWol/Thinoda/pull/61) passed CI, including its synced
+lockfile, and merged as `5afae7d`, creating v0.7.0. Build/publication run
+[`39610005813`](https://github.com/AxelWol/Thinoda/actions/runs/39610005813)
+is in progress; all five packages, checksums and published assets must be
+verified before declaring release completion. The later responsive-search
+(`311219a`) and Outline focus-ownership (`e1bcc27`) slices are post-release
+work, intentionally excluded from that tag. Main's v0.7.0 metadata is integrated
+into ongoing work. Current daily-editing work is still open; spelling/CJK font
+preferences, shortcut editing, canvas reference polish and native acceptance
+are not silently deferred into a "completed" phase.
+
+**Prior publishing incident (2026-10-21):** v0.6.0 Release Please run
 [`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
 attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject
 `disk2` ("Resource busy"), before asset publication. The original-tag failed-job
