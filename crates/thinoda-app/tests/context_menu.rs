@@ -11,6 +11,9 @@ use thinoda_app::{
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+mod support;
+use support::menu_action;
+
 fn right_click(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2) {
     h.event(Event::PointerMoved(pos));
     for pressed in [true, false] {
@@ -51,21 +54,6 @@ fn reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
         "{label} outside viewport: {rect:?}"
     );
     assert_popups_fit(h);
-}
-
-fn menu_action<'a>(h: &'a Harness<'_, ThinodaApp>, label: &'a str) -> egui_kittest::Node<'a> {
-    h.query_all_by_role_and_label(Role::Button, label)
-        .find(|node| {
-            let mut parent = node.accesskit_node().parent();
-            while let Some(node) = parent {
-                if node.role() == Role::Menu {
-                    return true;
-                }
-                parent = node.parent();
-            }
-            false
-        })
-        .unwrap_or_else(|| panic!("No menu action: {label}"))
 }
 
 #[test]
@@ -130,10 +118,9 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 right_click(&mut h, tab);
                 reveal(&mut h, t("Delete Sheet"));
                 reveal(&mut h, t("Rename Sheet"));
-                h.get_by_role_and_label(Role::Button, t("New Sheet"))
-                    .focus();
+                menu_action(&h, t("New Sheet")).focus();
                 h.run_steps(8);
-                let rect = h.get_by_role_and_label(Role::Button, t("New Sheet")).rect();
+                let rect = menu_action(&h, t("New Sheet")).rect();
                 assert!(h.ctx.content_rect().contains_rect(rect));
                 h.key_press(egui::Key::Enter);
                 h.run_steps(3);

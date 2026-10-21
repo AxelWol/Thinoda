@@ -16,6 +16,9 @@ use thinoda_platform::paths::Paths;
 use thinoda_platform::recovery::RecoveryManager;
 use thinoda_platform::settings::{Language, Settings, ThemeMode as Theme};
 
+mod support;
+use support::menu_action;
+
 fn harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
@@ -117,7 +120,7 @@ fn sheet_context_menu_exposes_complete_clipboard_and_separate_save_actions() {
     right_click_at(&mut h, point);
     h.get_by_role_and_label(Role::Button, "Paste Sheet");
     h.get_by_role_and_label(Role::Button, "Save Sheet As…");
-    h.get_by_role_and_label(Role::Button, "New Sheet");
+    menu_action(&h, "New Sheet");
     h.get_by_role_and_label(Role::Button, "Copy Sheet").click();
     h.run_steps(3);
     h.get_by_label("Copied sheet to clipboard");
@@ -820,7 +823,7 @@ fn zoom_menu_has_presets_current_value_and_fit_without_changing_ui_scale() {
     assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 10);
     h.get_by_label("Zoom").click();
     h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Fit Map").click();
+    menu_action(&h, "Fit Map").click();
     h.run_steps(3);
     assert!(h.state().doc().unwrap().view.zoom > 0.0);
 }

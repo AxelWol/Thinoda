@@ -678,6 +678,33 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - responsive sheet/bottom navigation:** reproduced twenty
+long sheet names pushing Zoom to x=3604 in a 640-point viewport. Sheet tabs and
+status/zoom controls now have explicitly bounded independent horizontal regions;
+New Sheet retains a fixed slot. Long tabs truncate to their region, with full
+tooltips and accessible names. Hidden scrollbars preserve the compact row height;
+ordinary mouse wheels map to horizontal scrolling within the hovered region, and
+horizontal-device scrolling and touch-drag support use egui's scroll handling.
+Controls use natural left-to-right insertion/Tab order. Newly focused responses
+reveal themselves only in their own region; unchanged focus does not pin manual
+scrolling. Active-tab reveal tracks document identity, active sheet, region width
+and sheet-name geometry, covering rename/undo/resize and document switching.
+Returning to an existing document intentionally reveals its active sheet rather
+than preserving browsing of unrelated sheet tabs. The existing status-visibility
+preference still hides the right-hand controls and expands sheet navigation;
+it does not remove the sheet bar.
+Regression coverage includes pointer/keyboard first/last-tab access, tab context
+actions, independent scrolling and Tab/Shift+Tab order, title rename/undo, creation,
+resize and document return, unchanged sheet content/history on navigation and
+stable bar height. A sequential 198-case matrix covers all ten shipped languages
+plus Auto, light/dark, 100/150/200% scaling and measured 320x240/640x480/1000x700
+logical viewports, including actual zoom/statistics/truncated-title paint and clip
+bounds. Existing menu tests now share a semantic Menu-ancestor selector, avoiding
+ambiguity with newly named background New Sheet/Fit buttons. Planning and finished
+rubber-duck reviews found no blockers; full workspace CI with live AI disabled and
+WASM lint pass. Actual native GPU/touch/screen-reader checks,
+the floating view bar and remaining R2 preferences are not claimed complete.
+
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
 budget. Its frame is bounded by the current logical viewport and actual frame

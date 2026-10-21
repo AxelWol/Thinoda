@@ -69,6 +69,21 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 responsive sheet/bottom navigation: many long sheet names no longer push Zoom
+  and Fit outside the window. Explicitly bounded, independent horizontal regions
+  retain tab context actions, zoom and statistics; New Sheet has a persistent slot.
+  Long tabs truncate with full tooltips/accessibility names. Ordinary mouse wheels,
+  horizontal scrolling and new keyboard focus reveal actions without pinning manual
+  browsing or moving the other region. Active-sheet visibility is refreshed after
+  rename/undo/resize and document switching, including returning to an existing
+  document. Hiding status controls still preserves/expands sheet navigation.
+  Sequential coverage includes 198 shipped-language/Auto, light/dark, scale and
+  measured logical-viewport combinations, paint/clip bounds, navigation/Tab order,
+  context menus, unchanged sheet data/history and stable row height. Menu tests
+  share semantic popup scoping so accessible background buttons cannot masquerade
+  as popup actions. Planning/finished rubber-duck reviews found no blockers;
+  full workspace CI with live AI disabled and WASM lint pass.
+  Native GPU/touch/assistive-technology acceptance and broader R2 work remain open.
 - R0/R1 resumable Save All: one stable-document-key queue pauses at each conflict
   or whole-document MindManager consent and automatically resumes after resolution,
   including pending Quit, as explicitly selected by the user. Home/original-tab

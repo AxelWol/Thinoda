@@ -8,10 +8,13 @@ use thinoda_app::{
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+mod support;
+use support::menu_action;
+
 fn reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
-    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    menu_action(h, label).scroll_to_me();
     h.run_steps(8);
-    let rect = h.get_by_role_and_label(Role::Button, label).rect();
+    let rect = menu_action(h, label).rect();
     assert!(
         h.ctx.content_rect().contains_rect(rect),
         "{label} out of view: {rect:?}"

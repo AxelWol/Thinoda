@@ -63,6 +63,25 @@ fn menu_button(
     ui.menu_button(label, |ui| scroll_menu(ui, content))
 }
 
+fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        vec2(width, ui.spacing().interact_size.y),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.style_mut().always_scroll_the_only_direction = true;
+            egui::ScrollArea::horizontal()
+                .id_salt(salt)
+                .max_width(width)
+                .auto_shrink([false, false])
+                .min_scrolled_width(0.0)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal_centered(content);
+                });
+        },
+    );
+}
+
 pub(crate) fn font_selector(
     ui: &mut Ui,
     fonts: &mut thinoda_ui::fonts::SystemFonts,
@@ -1843,142 +1862,218 @@ impl ThinodaApp {
             return;
         };
         ui.horizontal_centered(|ui| {
-            // Sheet tabs.
-            let n = d.doc.workbook().sheets.len();
-            for i in 0..n {
-                let title = d.doc.workbook().sheets[i].title.clone();
-                let r = ui.selectable_label(i == d.doc.active_index(), &title);
-                if r.clicked() && i != d.doc.active_index() {
-                    d.view.commit_edit(&mut d.doc);
-                    d.doc.set_active(i);
-                    d.view.reset();
-                }
-                if r.double_clicked() {
-                    if i != d.doc.active_index() {
+            let add_width = ui.spacing().interact_size.x;
+            let height = ui.spacing().interact_size.y;
+            let gaps = if self.settings.show_status_bar {
+                2.0
+            } else {
+                1.0
+            };
+            let width =
+                (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
+            let tabs_width = if self.settings.show_status_bar {
+                width * 0.4
+            } else {
+                width
+            };
+            scroll_row(ui, "sheet_tabs", tabs_width, |ui| {
+                // Sheet tabs.
+                let n = d.doc.workbook().sheets.len();
+                let active_index = d.doc.active_index();
+                let active = egui::Id::unique((
+                    &d.key,
+                    active_index,
+                    tabs_width.to_bits(),
+                    d.doc
+                        .workbook()
+                        .sheets
+                        .iter()
+                        .map(|sheet| &sheet.title)
+                        .collect::<Vec<_>>(),
+                ));
+                let active_key = ui.scope_id().with("active_sheet");
+                let changed = ui.data_mut(|data| {
+                    let previous = data.get_temp::<egui::Id>(active_key);
+                    data.insert_temp(active_key, active);
+                    previous != Some(active)
+                });
+                let max_width = tabs_width.min(180.0);
+                for i in 0..n {
+                    let title = d.doc.workbook().sheets[i].title.clone();
+                    let text = egui::WidgetText::from(title.clone()).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Button,
+                    );
+                    let tab_width =
+                        (text.size().x + 2.0 * ui.spacing().button_padding.x).min(max_width);
+                    let r = ui
+                        .add_sized(
+                            vec2(tab_width, height),
+                            egui::Button::selectable(i == d.doc.active_index(), &title).truncate(),
+                        )
+                        .on_hover_text(&title);
+                    if r.gained_focus() || (changed && i == active_index) {
+                        r.scroll_to_me(None);
+                    }
+                    if r.clicked() && i != d.doc.active_index() {
                         d.view.commit_edit(&mut d.doc);
                         d.doc.set_active(i);
                         d.view.reset();
                     }
-                    cmd = Some(Cmd::RenameSheet);
-                }
-                r.context_menu(|ui| {
-                    scroll_menu(ui, |ui| {
+                    if r.double_clicked() {
                         if i != d.doc.active_index() {
                             d.view.commit_edit(&mut d.doc);
                             d.doc.set_active(i);
                             d.view.reset();
                         }
-                        if ui.button(t("Rename Sheet")).clicked() {
-                            d.doc.set_active(i);
-                            cmd = Some(Cmd::RenameSheet);
-                        }
-                        if ui.button(t("Duplicate Sheet")).clicked() {
-                            d.doc.set_active(i);
-                            cmd = Some(Cmd::DuplicateSheet);
-                        }
-                        ui.separator();
-                        for (label, command) in [
-                            ("Copy Sheet", Cmd::CopySheet),
-                            ("Paste Sheet", Cmd::PasteSheet),
-                            ("Save Sheet As…", Cmd::SaveSheetAs),
-                            ("New Sheet", Cmd::NewSheet),
-                        ] {
-                            if ui.button(t(label)).clicked() {
-                                cmd = Some(command);
-                            }
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(i > 0, egui::Button::new(t("Move Left")))
-                            .clicked()
-                        {
-                            d.view.commit_edit(&mut d.doc);
-                            if let Err(e) = d.doc.move_sheet(i, i - 1) {
-                                self.toasts
-                                    .error(format!("{}: {e}", t("Not possible here")));
-                            }
-                            d.view.reset();
-                        }
-                        if ui
-                            .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
-                            .clicked()
-                        {
-                            d.view.commit_edit(&mut d.doc);
-                            if let Err(e) = d.doc.move_sheet(i, i + 1) {
-                                self.toasts
-                                    .error(format!("{}: {e}", t("Not possible here")));
-                            }
-                            d.view.reset();
-                        }
-                        if ui
-                            .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
-                            .clicked()
-                        {
-                            d.doc.set_active(i);
-                            cmd = Some(Cmd::DeleteSheet);
-                        }
-                    });
-                });
-            }
-            if ui
-                .small_button(icons::ADD)
-                .on_hover_text(t("New Sheet"))
-                .clicked()
-            {
-                cmd = Some(Cmd::NewSheet);
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if !self.settings.show_status_bar {
-                    return;
-                }
-                if ui
-                    .small_button(icons::FIT)
-                    .on_hover_text(t("Fit Map"))
-                    .clicked()
-                {
-                    cmd = Some(Cmd::Canvas(Action::Fit));
-                }
-                if ui.small_button("+").on_hover_text(t("Zoom In")).clicked() {
-                    cmd = Some(Cmd::Canvas(Action::ZoomIn));
-                }
-                let current = d.view.zoom_percent();
-                menu_button(ui, format!("{current}%"), |ui| {
-                    let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
-                    if !presets.contains(&current) {
-                        presets.push(current);
-                        presets.sort_unstable_by(|a, b| b.cmp(a));
+                        cmd = Some(Cmd::RenameSheet);
                     }
-                    for percent in presets {
-                        if ui
-                            .selectable_label(current == percent, format!("{percent}%"))
-                            .clicked()
-                        {
-                            d.view.set_zoom(percent as f32 / 100.0);
+                    r.context_menu(|ui| {
+                        scroll_menu(ui, |ui| {
+                            if i != d.doc.active_index() {
+                                d.view.commit_edit(&mut d.doc);
+                                d.doc.set_active(i);
+                                d.view.reset();
+                            }
+                            if ui.button(t("Rename Sheet")).clicked() {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::RenameSheet);
+                            }
+                            if ui.button(t("Duplicate Sheet")).clicked() {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::DuplicateSheet);
+                            }
+                            ui.separator();
+                            for (label, command) in [
+                                ("Copy Sheet", Cmd::CopySheet),
+                                ("Paste Sheet", Cmd::PasteSheet),
+                                ("Save Sheet As…", Cmd::SaveSheetAs),
+                                ("New Sheet", Cmd::NewSheet),
+                            ] {
+                                if ui.button(t(label)).clicked() {
+                                    cmd = Some(command);
+                                }
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(i > 0, egui::Button::new(t("Move Left")))
+                                .clicked()
+                            {
+                                d.view.commit_edit(&mut d.doc);
+                                if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                                    self.toasts
+                                        .error(format!("{}: {e}", t("Not possible here")));
+                                }
+                                d.view.reset();
+                            }
+                            if ui
+                                .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
+                                .clicked()
+                            {
+                                d.view.commit_edit(&mut d.doc);
+                                if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                                    self.toasts
+                                        .error(format!("{}: {e}", t("Not possible here")));
+                                }
+                                d.view.reset();
+                            }
+                            if ui
+                                .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
+                                .clicked()
+                            {
+                                d.doc.set_active(i);
+                                cmd = Some(Cmd::DeleteSheet);
+                            }
+                        });
+                    });
+                }
+            });
+            ui.allocate_ui_with_layout(
+                vec2(add_width, height),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    if ui
+                        .small_button(icons::ADD)
+                        .on_hover_text(t("New Sheet"))
+                        .accessible_name(t("New Sheet"))
+                        .clicked()
+                    {
+                        cmd = Some(Cmd::NewSheet);
+                    }
+                },
+            );
+            if self.settings.show_status_bar {
+                scroll_row(ui, "bottom_controls", width - tabs_width, |ui| {
+                    let minus = ui
+                        .small_button("−")
+                        .on_hover_text(t("Zoom Out"))
+                        .accessible_name(t("Zoom Out"));
+                    if minus.gained_focus() {
+                        minus.scroll_to_me(None);
+                    }
+                    if minus.clicked() {
+                        cmd = Some(Cmd::Canvas(Action::ZoomOut));
+                    }
+                    let current = d.view.zoom_percent();
+                    let zoom = menu_button(ui, format!("{current}%"), |ui| {
+                        let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
+                        if !presets.contains(&current) {
+                            presets.push(current);
+                            presets.sort_unstable_by(|a, b| b.cmp(a));
+                        }
+                        for percent in presets {
+                            if ui
+                                .selectable_label(current == percent, format!("{percent}%"))
+                                .clicked()
+                            {
+                                d.view.set_zoom(percent as f32 / 100.0);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button(t("Fit Map")).clicked() {
+                            cmd = Some(Cmd::Canvas(Action::Fit));
                             ui.close();
                         }
+                    })
+                    .response
+                    .accessible_name(t("Zoom"));
+                    if zoom.gained_focus() {
+                        zoom.scroll_to_me(None);
                     }
-                    ui.separator();
-                    if ui.button(t("Fit Map")).clicked() {
+                    let plus = ui
+                        .small_button("+")
+                        .on_hover_text(t("Zoom In"))
+                        .accessible_name(t("Zoom In"));
+                    if plus.gained_focus() {
+                        plus.scroll_to_me(None);
+                    }
+                    if plus.clicked() {
+                        cmd = Some(Cmd::Canvas(Action::ZoomIn));
+                    }
+                    let fit = ui
+                        .small_button(icons::FIT)
+                        .on_hover_text(t("Fit Map"))
+                        .accessible_name(t("Fit Map"));
+                    if fit.gained_focus() {
+                        fit.scroll_to_me(None);
+                    }
+                    if fit.clicked() {
                         cmd = Some(Cmd::Canvas(Action::Fit));
-                        ui.close();
                     }
-                })
-                .response
-                .accessible_name(t("Zoom"));
-                if ui.small_button("−").on_hover_text(t("Zoom Out")).clicked() {
-                    cmd = Some(Cmd::Canvas(Action::ZoomOut));
-                }
-                widgets::vdivider(ui);
-                let sheet = d.doc.sheet();
-                widgets::caption(
-                    ui,
-                    format!(
-                        "{}: {}",
-                        t("Words"),
-                        thinoda_core::search::word_count(sheet)
-                    ),
-                );
-                menu_button(
+                    widgets::vdivider(ui);
+                    let sheet = d.doc.sheet();
+                    widgets::caption(
+                        ui,
+                        format!(
+                            "{}: {}",
+                            t("Words"),
+                            thinoda_core::search::word_count(sheet)
+                        ),
+                    );
+                    let statistics = menu_button(
                     ui,
                     format!("{}: {}", t("Topics"), sheet.topics.len()),
                     |ui| {
@@ -2010,21 +2105,25 @@ impl ThinodaApp {
                 )
                 .response
                 .accessible_name(t("Statistics"));
-                widgets::vdivider(ui);
-                if let Some(c) = d.path.as_ref().and_then(|p| {
-                    thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
-                }) {
-                    widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
-                }
-                widgets::caption(
-                    ui,
-                    if d.is_dirty() {
-                        t("Unsaved changes")
-                    } else {
-                        t("Saved")
-                    },
-                );
-            });
+                    if statistics.gained_focus() {
+                        statistics.scroll_to_me(None);
+                    }
+                    widgets::vdivider(ui);
+                    if let Some(c) = d.path.as_ref().and_then(|p| {
+                        thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
+                    }) {
+                        widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
+                    }
+                    widgets::caption(
+                        ui,
+                        if d.is_dirty() {
+                            t("Unsaved changes")
+                        } else {
+                            t("Saved")
+                        },
+                    );
+                });
+            }
         });
         if let Some(c) = cmd {
             self.exec(&ctx, c);

@@ -335,6 +335,9 @@ those system-owned controls. WinGet publishing remains paused.
   the last structure/theme for new blank maps without changing named templates.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
+  Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
+  stays visible. Long tab names are shortened visually, with full names in tooltips.
+  Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently
