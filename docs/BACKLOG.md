@@ -69,6 +69,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 deep Outline reachability: a 30-level branch reproduced an unreachable
+  title even after scrolling. Both-axis scrolling now exposes deep rows, with
+  document/sheet-scoped offsets, changed-primary/focus reveal and viewport-bounded
+  title editors. Stable selection does not snap manual browsing back. A 66-case
+  shipped-locale/Auto, light/dark and measured viewport/scale matrix exercises
+  50-level trees, unclipped title paint, pointer selection, arrow navigation,
+  typing/commit/undo and cross-document scroll retention. Existing Outline/title/
+  e2e suites (70 cases total) and native/WASM lint pass. Planning/finished
+  rubber-duck reviews found no blockers. Very short action-toolbar layout, native
+  input/assistive technology and broader Outline presentation polish remain open.
 - R11 Apple ticket retry hardening: failed Intel release jobs were traced to
   CloudKit connection loss after accepted notarization, not failed compilation
   or missing signing credentials. App packaging and DMG stapling now opt into

@@ -1624,6 +1624,18 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        let outline_id = egui::Id::unique((
+            "outline_topics",
+            &d.key,
+            d.doc.workbook().active_sheet,
+            d.doc.sheet().root,
+        ));
+        let primary = d.view.primary();
+        let reveal_primary = ui.data_mut(|data| {
+            let previous = data.get_temp::<Option<TopicId>>(outline_id.with("primary"));
+            data.insert_temp(outline_id.with("primary"), primary);
+            previous.is_some_and(|previous| previous != primary)
+        });
         let mut action: Option<Action> = None;
         let selected_title = d
             .view
@@ -1673,7 +1685,11 @@ impl ThinodaApp {
             .inner_margin(Margin::symmetric(48, 24))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                egui::ScrollArea::vertical()
+                let edit_width = ui.available_width().clamp(120.0, 320.0);
+                egui::ScrollArea::both()
+                    .id_salt(outline_id)
+                    .min_scrolled_width(0.0)
+                    .min_scrolled_height(0.0)
                     .auto_shrink(false)
                     .show(ui, |ui| {
                         ui.set_max_width(820.0);
@@ -1747,7 +1763,7 @@ impl ThinodaApp {
                                             TextEdit::singleline(&mut text)
                                                 .id(te_id)
                                                 .hint_text(t("Topic title"))
-                                                .desired_width(f32::INFINITY),
+                                                .desired_width(edit_width),
                                         )
                                         .accessible_name(t("Topic title"));
                                     if !r.has_focus() && !r.lost_focus() {
@@ -1782,6 +1798,9 @@ impl ThinodaApp {
                                         RichText::new(title)
                                     };
                                     let r = ui.selectable_label(selected, text);
+                                    if primary == Some(id) && reveal_primary {
+                                        r.scroll_to_me(None);
+                                    }
                                     if r.clicked() {
                                         d.view.select_only(id);
                                     }
@@ -1795,6 +1814,7 @@ impl ThinodaApp {
                                 }
                             });
                         }
+                        reveal_changed_focus(ui);
                     });
             });
         // Keyboard in outliner when not editing.

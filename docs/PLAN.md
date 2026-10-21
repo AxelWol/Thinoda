@@ -678,6 +678,24 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - deep Outline reachability:** a 30-level branch at
+640x700 remained outside the viewport even after an explicit scroll request.
+The topic list now scrolls in both axes, with offsets scoped to document key,
+active sheet index and root. Fixed frame spacing and existing editing actions
+remain unchanged. Title editors use a finite viewport-derived width rather than
+infinity, so they can be revealed within the horizontal region. New primary
+selection and newly focused controls reveal themselves; stable selection does
+not override manual scrolling. First observation preserves the stored offset.
+The 66-case sequential shipped-locale/Auto, light/dark and measured viewport/
+scale matrix covers 50-level branches, full title paint/clip containment, pointer
+selection, arrow-key reveal, editor focus/typing/commit/undo and independent
+new-document/restored-document scroll positions. Existing Outline toolbar,
+title-lifecycle and e2e regressions pass (70 cases across four suites), as do
+native all-target and WASM lint. Planning/finished rubber-duck reviews found no
+blockers. This does not claim sheet-reorder scroll identity, very short
+action-toolbar layout, full Outline visual parity or native input/accessibility
+acceptance.
+
 **R11 release reliability follow-up - Apple ticket lookup:** investigation of
 Release Please run `39566899330` (v0.6.0) and artifact-only Release run
 `39562303098` found Intel macOS stapling failures after Apple accepted

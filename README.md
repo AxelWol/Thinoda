@@ -346,6 +346,9 @@ those system-owned controls. WinGet publishing remains paused.
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use
   Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.
+  Deep Outline trees scroll in both directions. Keyboard selection and focused
+  title editors reveal themselves without pinning manual scrolling; scroll
+  positions are scoped to each document and sheet.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
   and standalone `.xmmap`
 - XMind reopening honors edits made by other applications rather than silently
