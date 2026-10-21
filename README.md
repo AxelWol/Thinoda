@@ -300,6 +300,8 @@ those system-owned controls. WinGet publishing remains paused.
   replacement drafts survive resizing. The compact card may temporarily cover
   the inspector. Outline shortcuts yield while search is open, so Tab navigates
   controls rather than adding topics.
+  In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
+  focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
   and Style/Map tabs stay visible while their contents scroll independently.

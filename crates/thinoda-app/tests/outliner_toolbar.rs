@@ -116,6 +116,82 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                 assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
                 assert_eq!(h.state().doc().unwrap().view.primary(), Some(selected));
 
+                h.get_by_role_and_label(Role::Button, t("Add Child"))
+                    .focus();
+                h.run_steps(3);
+                h.key_press(egui::Key::Tab);
+                h.run_steps(3);
+                assert_eq!(
+                    h.state().doc().unwrap().doc.sheet(),
+                    &before,
+                    "Tab from the action toolbar must not insert a topic"
+                );
+                for label in ["Move Up", "Format Panel"] {
+                    h.get_by_role_and_label(Role::Button, t(label)).focus();
+                    h.run_steps(3);
+                    let selection = h.state().doc().unwrap().view.selection.clone();
+                    for key in [egui::Key::Delete, egui::Key::F2, egui::Key::ArrowDown] {
+                        h.key_press(key);
+                        h.run_steps(3);
+                        assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+                        assert_eq!(h.state().doc().unwrap().view.selection, selection);
+                        assert!(h.state().doc().unwrap().view.editing_topic().is_none());
+                    }
+                }
+                h.get_by_role_and_label(Role::Button, t("Move Down"))
+                    .focus();
+                h.run_steps(3);
+                h.key_press(egui::Key::Enter);
+                h.run_steps(3);
+                let moved = h.state().doc().unwrap().doc.sheet();
+                assert_eq!(moved.topics.len(), before.topics.len());
+                assert_eq!(
+                    moved.index_in_parent(selected).unwrap(),
+                    before.index_in_parent(selected).unwrap() + 1
+                );
+                exec(&mut h, Cmd::Canvas(Action::Undo));
+                assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+                h.get_by_role_and_label(Role::Button, "Fixture B").click();
+                h.run_steps(3);
+                assert!(
+                    h.get_by_role_and_label(Role::Button, "Fixture B")
+                        .is_focused()
+                );
+                h.key_press(egui::Key::ArrowUp);
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().view.primary(), Some(preceding));
+                assert!(
+                    h.get_by_role_and_label(Role::Button, "Fixture A")
+                        .is_focused()
+                );
+                h.key_press(egui::Key::ArrowDown);
+                h.run_steps(3);
+                assert!(
+                    h.get_by_role_and_label(Role::Button, "Fixture B")
+                        .is_focused()
+                );
+                h.key_press(egui::Key::Tab);
+                h.run_steps(3);
+                assert_eq!(
+                    h.state()
+                        .doc()
+                        .unwrap()
+                        .doc
+                        .sheet()
+                        .children(selected)
+                        .len(),
+                    1
+                );
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                assert!(h.state().doc().unwrap().view.editing_topic().is_none());
+                h.get_by_role_and_label(Role::Button, t("Format Panel"))
+                    .focus();
+                h.run_steps(3);
+                h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+
                 for (label, action) in [
                     ("Move Up", Action::MoveUp),
                     ("Move Down", Action::MoveDown),

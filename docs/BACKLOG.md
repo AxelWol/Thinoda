@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 Outline keyboard ownership: structural shortcuts now belong to focused
+  topic rows/disclosures, not the action toolbar, sidebar or other chrome.
+  Stable topic-scoped IDs, explicit pointer focus and row-focus restoration
+  preserve intentional topic editing/navigation. Global non-text Undo/Redo
+  remains available without jumping focus away from the invoking control.
+  The 99-case locale/theme/scale/panel matrix covers toolbar no-edit keys,
+  actual button Enter, pointer/arrow focus, row Tab/edit Escape and sidebar Undo.
+  Full workspace CI and WASM lint pass; planning/finished rubber-duck reviews
+  found no blockers. Native input/accessibility acceptance remains open.
 - R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
   now inside a viewport-bounded, height-scrollable search card with adaptive
   fields, wrapped controls and keyboard focus reveal. Narrow windows may

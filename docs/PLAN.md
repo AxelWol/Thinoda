@@ -715,6 +715,25 @@ WASM lint pass. This does not close the daily-editing band: shortcut rebinding,
 spelling/CJK font work, canvas reference polish and native input/accessibility
 acceptance remain before claiming R1-R3 complete.
 
+**Delivered R1 follow-up - Outline keyboard ownership:** Tab from the Outline
+action toolbar reproduced an unintended child insertion, and global topic keys
+could override the focused control. Structural keys and arrow selection now
+require a topic-row/disclosure owner captured before rendering; toolbar/sidebar
+widgets keep their own keyboard behavior. Stable topic-scoped title/disclosure
+IDs survive reordering. Pointer selection explicitly focuses the row, entering
+Outline focuses the primary topic, and navigation/action/edit-Escape restores
+topic focus without moving focus away from a toolbar-origin Undo/Redo.
+Global non-text Undo/Redo remains available; activated buttons cannot be
+overridden by the later structural shortcut handler.
+The existing 99-case locale/Auto, light/dark/System and scale/panel matrix now
+checks toolbar Tab/Delete/F2/arrows without edits, Enter activating only Move
+Down, pointer/arrow row focus, topic Tab insertion, edit Escape and sidebar-focus
+Undo. Adjacent Outline, search, title, menu and sidebar regressions pass; full
+workspace CI with live AI disabled and WASM lint pass.
+Planning/finished-step rubber-duck reviews found no blockers. An unrendered
+focused topic fails closed rather than dispatching a structural edit; native
+accessibility/input acceptance and complete daily-editing parity remain open.
+
 **Publishing status (2026-10-21):** v0.6.0 Release Please run
 [`39566899330`](https://github.com/AxelWol/Thinoda/actions/runs/39566899330)
 attempt 2 failed Intel macOS DMG creation because `hdiutil` could not eject

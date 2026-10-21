@@ -1630,6 +1630,20 @@ impl ThinodaApp {
             d.doc.workbook().active_sheet,
             d.doc.sheet().root,
         ));
+        let focused = ctx.memory(|memory| memory.focused());
+        let mut topic_focus = false;
+        let frame = ctx.cumulative_frame_nr();
+        let entering = ui.data_mut(|data| {
+            let previous = data.get_temp::<u64>(outline_id.with("last_frame"));
+            data.insert_temp(outline_id.with("last_frame"), frame);
+            previous.is_none_or(|previous| previous.saturating_add(1) < frame)
+        });
+        let mut focus_topic = ui
+            .data_mut(|data| data.remove_temp::<Option<TopicId>>(outline_id.with("focus_topic")))
+            .flatten();
+        if entering && !self.search.open {
+            focus_topic = d.view.primary();
+        }
         let primary = d.view.primary();
         let reveal_primary = ui.data_mut(|data| {
             let previous = data.get_temp::<Option<TopicId>>(outline_id.with("primary"));
@@ -1650,6 +1664,7 @@ impl ThinodaApp {
                     response.scroll_to_me(None);
                 }
                 if response.clicked() {
+                    response.request_focus();
                     action = Some(command.clone());
                 }
             }
@@ -1740,18 +1755,23 @@ impl ThinodaApp {
                                 };
                                 if has_kids {
                                     let response =
-                                        ui.add(
-                                            egui::Button::new(chevron)
-                                                .frame(false)
-                                                .min_size(vec2(16.0, 16.0)),
-                                        )
+                                        ui.push_id(("outline_disclosure", id), |ui| {
+                                            ui.add(
+                                                egui::Button::new(chevron)
+                                                    .frame(false)
+                                                    .min_size(vec2(16.0, 16.0)),
+                                            )
+                                        })
+                                        .inner
                                         .accessible_name(
                                             format!("{}: {}", t("Collapse / Expand"), topic.title),
                                         );
+                                    topic_focus |= focused == Some(response.id);
                                     if response.gained_focus() {
                                         response.scroll_to_me(None);
                                     }
                                     if response.clicked() {
+                                        response.request_focus();
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
                                     }
@@ -1796,6 +1816,14 @@ impl ThinodaApp {
                                     });
                                     if enter || tab || esc || r.lost_focus() {
                                         d.view.commit_edit(&mut d.doc);
+                                        if esc {
+                                            ui.data_mut(|data| {
+                                                data.insert_temp(
+                                                    outline_id.with("focus_topic"),
+                                                    Some(id),
+                                                );
+                                            });
+                                        }
                                         if enter {
                                             action = Some(Action::InsertSibling);
                                         } else if tab {
@@ -1814,11 +1842,21 @@ impl ThinodaApp {
                                     } else {
                                         RichText::new(title)
                                     };
-                                    let r = ui.selectable_label(selected, text);
+                                    let r = ui
+                                        .push_id(("outline_title", id), |ui| {
+                                            ui.selectable_label(selected, text)
+                                        })
+                                        .inner;
+                                    topic_focus |= focused == Some(r.id);
+                                    if focus_topic == Some(id) {
+                                        r.request_focus();
+                                        topic_focus = true;
+                                    }
                                     if (primary == Some(id) && reveal_primary) || r.gained_focus() {
                                         r.scroll_to_me(None);
                                     }
                                     if r.clicked() {
+                                        r.request_focus();
                                         d.view.select_only(id);
                                     }
                                     if r.double_clicked() {
@@ -1841,22 +1879,25 @@ impl ThinodaApp {
             && !egui::Popup::is_any_open(&ctx)
         {
             let keys = [
+                (Modifiers::COMMAND, Key::Z, Action::Undo),
+                (Modifiers::COMMAND, Key::Y, Action::Redo),
                 (Modifiers::NONE, Key::Enter, Action::InsertSibling),
                 (Modifiers::NONE, Key::Tab, Action::InsertChild),
                 (Modifiers::NONE, Key::Delete, Action::Delete),
                 (Modifiers::NONE, Key::F2, Action::StartEdit),
                 (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
                 (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
-                (Modifiers::COMMAND, Key::Z, Action::Undo),
-                (Modifiers::COMMAND, Key::Y, Action::Redo),
             ];
             for (m, k, a) in keys {
-                if ctx.input_mut(|i| i.consume_key(m, k)) {
+                if (topic_focus || matches!(a, Action::Undo | Action::Redo))
+                    && action.is_none()
+                    && ctx.input_mut(|i| i.consume_key(m, k))
+                {
                     action = Some(a);
                     break;
                 }
             }
-            if action.is_none() {
+            if topic_focus && action.is_none() {
                 let (up, down) = ctx.input_mut(|i| {
                     (
                         i.consume_key(Modifiers::NONE, Key::ArrowUp),
@@ -1879,14 +1920,25 @@ impl ThinodaApp {
                             (i + 1).min(order.len() - 1)
                         };
                         d.view.select_only(order[j]);
+                        ui.data_mut(|data| {
+                            data.insert_temp(outline_id.with("focus_topic"), Some(order[j]));
+                        });
                     }
                 }
             }
         }
-        if let Some(a) = action
-            && let Err(_e) = thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a)
-        {
-            self.toasts.warning(t("Not possible here"));
+        if let Some(a) = action {
+            match thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a) {
+                Ok(_) if topic_focus && d.view.editing_topic().is_none() => {
+                    ui.data_mut(|data| {
+                        data.insert_temp(outline_id.with("focus_topic"), d.view.primary());
+                    });
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    self.toasts.warning(t("Not possible here"));
+                }
+            }
         }
     }
 
