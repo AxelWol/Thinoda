@@ -333,6 +333,8 @@ those system-owned controls. WinGet publishing remains paused.
 - Settings categories for General, Editor, AI and Cloud. Editor preferences independently
   control the topic toolbar and add buttons, set initial map zoom and optionally reuse
   the last structure/theme for new blank maps without changing named templates.
+  Settings stays inside short/narrow windows with both-axis scrolling and focus
+  reveal; API-key actions and long cloud-folder paths no longer push actions offscreen.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet

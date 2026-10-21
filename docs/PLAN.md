@@ -678,6 +678,26 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**Delivered R2 follow-up - reachable Settings:** the nonmodal preferences window
+is constrained to the measured viewport with a stable, locale-independent ID,
+both-axis scrolling and focus reveal. Its minimum content width remains 440
+points; narrow viewports scroll horizontally rather than squeezing existing
+labelled controls. Title/close controls remain outside the scroll region.
+At 320x180, attempted scrolling reproduced negative-coordinate API-key buttons
+and, with a long preferred-folder path, an unreachable Choose action. The nested
+right-to-left key row is replaced with labelled wrapping controls, and the default
+folder uses a stacked label/path/action; detected folder rows wrap. Credentials,
+drafts, nonmodal behavior and event-driven settings saves retain their semantics.
+The 66-case sequential locale/theme/viewport-scale matrix covers all four
+categories, actual button paint/clip bounds, real Tab focus reveal, long preferred
+and detected paths, Cloud Use, resize/live scale, close and unchanged workbook/
+history. AI draft retention is checked without invoking credential storage,
+network testing or file pickers. Existing settings/sidebar regressions and native
+all-target/WASM lint pass. Planning and finished-step rubber-duck reviews found
+no blockers; the finished review's keyboard-coverage suggestion was addressed
+with real Tab traversal. GPU/OS input and picker acceptance remain manual work.
+This does not complete the broader preferences shell or shortcut rebinding.
+
 **Delivered R2 follow-up - compact Map/Outliner switching:** the bounded bottom
 controls begin with a current-view icon/label button reusing `ToggleOutliner`.
 Pointer, Enter and Space agree with toolbar/menu/palette/shortcut semantics;

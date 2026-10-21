@@ -389,22 +389,21 @@ impl ThinodaApp {
             widgets::property_field(ui, t("Model"), |ui| {
                 ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
             });
-            widgets::property_field(ui, t("API Key"), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut api_key_draft)
-                            .password(true)
-                            .hint_text(thinoda_ai::API_KEY_ENV),
-                    );
-                    if ui.button(t("Save API Key")).clicked() {
-                        save_api_key = true;
-                    }
-                    if ui.button(t("Clear")).clicked() {
-                        api_key_draft.clear();
-                        clear_api_key = true;
-                    }
-                })
-                .response
+            let key_label = ui.label(t("API Key"));
+            ui.horizontal_wrapped(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut api_key_draft)
+                        .password(true)
+                        .hint_text(thinoda_ai::API_KEY_ENV),
+                )
+                .labelled_by(key_label.id);
+                if ui.button(t("Save API Key")).clicked() {
+                    save_api_key = true;
+                }
+                if ui.button(t("Clear")).clicked() {
+                    api_key_draft.clear();
+                    clear_api_key = true;
+                }
             });
             widgets::caption(
                 ui,

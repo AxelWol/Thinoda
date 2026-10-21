@@ -69,6 +69,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R2 bounded Settings: the window is constrained to the current viewport with
+  both-axis scrolling, keyboard-focus reveal and a locale-independent identity.
+  Wrapped API-key controls and stacked default-folder controls remove reproduced
+  negative-coordinate overflow; detected cloud-folder rows wrap. All shipped
+  languages/Auto, light/dark and three measured viewport/scale cases cover button
+  ink/clip bounds, real Tab navigation, all categories, long paths, Cloud Use,
+  close, resize/live scale and unsaved key-draft retention without credential,
+  network or picker calls. Existing preference regressions and native/WASM lint
+  pass; planning/finished rubber-duck reviews found no blockers. Native input/
+  renderer acceptance and the broader preferences/shortcut editor remain open.
 - R2 compact Map/Outliner switch: bottom controls now show the current view and
   reuse the existing toolbar/menu/palette/shortcut command. Pointer, Enter and
   Space work; localized shortcut hints use the platform modifier. Long current-

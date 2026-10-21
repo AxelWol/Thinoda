@@ -3396,12 +3396,18 @@ impl ThinodaApp {
         let mut open = true;
         let before = self.settings.clone();
         let mut credentials_saved = false;
+        let bounds = ctx.content_rect().shrink(8.0);
         egui::Window::new(t("Settings"))
+            .id(egui::Id::unique("thinoda_settings"))
             .open(&mut open)
+            .min_size(egui::Vec2::ZERO)
+            .max_size(bounds.size())
+            .constrain_to(bounds)
             .default_width(440.0)
             .collapsible(false)
-            .vscroll(true)
+            .scroll([true, true])
             .show(ctx, |ui| {
+                ui.set_min_width(440.0);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (SettingsTab::General, "General"),
@@ -3568,7 +3574,7 @@ impl ThinodaApp {
                             widgets::caption(ui, t("No cloud folders detected"));
                         }
                         for f in self.services.cloud.clone() {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 let sel =
                                     self.settings.cloud.preferred_folder.as_ref() == Some(&f.path);
                                 ui.label(format!("{} {}", icons::CLOUD, f.name));
@@ -3578,7 +3584,8 @@ impl ThinodaApp {
                                 }
                             });
                         }
-                        widgets::property_row(ui, t("Default save folder"), |ui| {
+                        ui.label(t("Default save folder"));
+                        ui.vertical(|ui| {
                             let label = self
                                 .settings
                                 .cloud
@@ -3596,6 +3603,7 @@ impl ThinodaApp {
                         });
                     });
                 }
+                reveal_changed_focus(ui);
             });
         if self.settings != before && !credentials_saved {
             self.save_settings();
