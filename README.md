@@ -488,7 +488,11 @@ secure timestamps, then notarizes and staples the app before embedding it in the
 signed DMG. The workflow also notarizes and staples the DMG before creating downloads
 and checksums. Extracted and installed apps must pass signature, stapling and
 Gatekeeper checks before upload. Missing credentials or rejected notarization fail
-the release; credentials are removed even on failure. Local `cargo xtask package`
+the release; credentials are removed even on failure. Confirmed Apple CloudKit
+connection-loss errors during app packaging or DMG stapling get up to five attempts,
+with 15/30/60/120-second backoff. DMG retries reuse the accepted submission instead
+of resubmitting it. Other errors and exhausted retries still fail the release;
+signature, stapling and Gatekeeper checks are never bypassed. Local `cargo xtask package`
 builds retain ad-hoc signing and do not require these secrets.
 
 ## Docs

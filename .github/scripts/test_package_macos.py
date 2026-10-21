@@ -1,15 +1,25 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import call, patch
 
-from package_macos import ROOT, notarize_dmg, package, package_config, run_packager
+from package_macos import (
+    ROOT, TICKET_RETRY_DELAYS, notarize_dmg, package, package_config,
+    run_with_ticket_retry,
+)
 from verify_macos_packages import ARCHITECTURES
 
 
 IDENTITY = "Developer ID Application: Example Developer (EXAMPLE123)"
+TICKET_FAILURE = (
+    'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost." '
+    "NSErrorFailingURLStringKey=https://api.apple-cloudkit.com/database/1/"
+    "com.apple.gk.ticket-delivery/production/public/records/lookup\n"
+    "The staple and validate action failed! Error 68.\n"
+)
 
 
 class PackageConfigTests(unittest.TestCase):
@@ -41,6 +51,20 @@ class PackageConfigTests(unittest.TestCase):
 
 class PackageTests(unittest.TestCase):
     @patch("package_macos.time.sleep")
+    def test_stderr_ticket_failure_is_seen_from_a_real_subprocess(self, sleep):
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "attempted"
+            script = (
+                "import pathlib,sys; "
+                f"marker=pathlib.Path({str(marker)!r}); "
+                "failed=not marker.exists(); marker.touch(); "
+                f"print({TICKET_FAILURE!r} if failed else 'Recovered', file=sys.stderr); "
+                "sys.exit(68 if failed else 0)"
+            )
+            run_with_ticket_retry([sys.executable, "-c", script], timeout=120)
+        sleep.assert_called_once_with(15)
+
+    @patch("package_macos.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_retries_cargo_packager_after_transient_ticket_lookup_failure(
         self, command, sleep,
@@ -54,24 +78,55 @@ class PackageTests(unittest.TestCase):
             subprocess.CompletedProcess(["cargo-packager"], 0, stdout="Packaged\n"),
         ]
         with tempfile.TemporaryDirectory() as temporary:
-            run_packager(["cargo-packager"], Path(temporary))
+            run_with_ticket_retry(["cargo-packager"], cwd=Path(temporary))
 
         self.assertEqual(command.call_count, 2)
         self.assertEqual(command.call_args_list[0], call(
             ["cargo-packager"], cwd=Path(temporary), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, check=False,
+            stderr=subprocess.STDOUT, text=True, check=False, timeout=None,
         ))
-        sleep.assert_called_once_with(5)
+        sleep.assert_called_once_with(15)
 
     @patch("package_macos.time.sleep")
     @patch("package_macos.subprocess.run")
     def test_does_not_retry_non_transient_packager_failure(self, command, sleep):
+        for output in (
+            "https://notapi.apple-cloudkit.com/lookup: NSURLErrorDomain Code=-1005",
+            "https://api.apple-cloudkit.com.example.com/lookup: network connection was lost",
+            "https://api.apple-cloudkit.com/lookup: invalid signature",
+            "No ticket found. The staple and validate action failed! Error 68.",
+            "NSURLErrorDomain Code=-1005",
+            "Notarization status Invalid: missing secure timestamp",
+        ):
+            with self.subTest(output=output):
+                command.reset_mock()
+                command.return_value = subprocess.CompletedProcess(
+                    ["cargo-packager"], 1, stdout=output,
+                )
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_with_ticket_retry(["cargo-packager"], cwd=Path("."))
+                command.assert_called_once()
+                sleep.assert_not_called()
+
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_transient_failure_budget_is_bounded_and_preserves_final_error(self, command, sleep):
         command.return_value = subprocess.CompletedProcess(
-            ["cargo-packager"], 1,
-            stdout="https://notapi.apple-cloudkit.com/lookup: NSURLErrorDomain Code=-1005",
+            ["cargo-packager"], 68, stdout=TICKET_FAILURE,
         )
-        with self.assertRaises(subprocess.CalledProcessError):
-            run_packager(["cargo-packager"], Path("."))
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            run_with_ticket_retry(["cargo-packager"], cwd=ROOT)
+        self.assertEqual(command.call_count, 5)
+        self.assertEqual(sleep.call_args_list, [call(delay) for delay in TICKET_RETRY_DELAYS])
+        self.assertEqual(error.exception.returncode, 68)
+        self.assertEqual(error.exception.output, TICKET_FAILURE)
+
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
+    def test_timeout_is_not_treated_as_confirmed_ticket_failure(self, command, sleep):
+        command.side_effect = subprocess.TimeoutExpired(["xcrun"], 120)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_with_ticket_retry(["xcrun", "stapler", "staple", "Thinoda.dmg"], timeout=120)
         command.assert_called_once()
         sleep.assert_not_called()
 
@@ -102,7 +157,7 @@ class PackageTests(unittest.TestCase):
                     patch.dict("os.environ", env, clear=True),
                     patch("package_macos.package_config", return_value={"macos": {"signing-identity": IDENTITY}}),
                     patch("package_macos.subprocess.run") as command,
-                    patch("package_macos.run_packager") as pack,
+                    patch("package_macos.run_with_ticket_retry") as pack,
                     patch("package_macos.run") as check,
                     patch("package_macos.notarize_dmg") as notarize,
                 ):
@@ -134,22 +189,64 @@ class PackageTests(unittest.TestCase):
     "APPLE_API_ISSUER": "issuer",
 }, clear=True)
 class NotarizationTests(unittest.TestCase):
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
     @patch("package_macos.run")
-    def test_accepted_image_is_stapled_and_validated(self, command):
+    def test_dmg_ticket_recovery_does_not_resubmit_or_skip_validation(self, command, staple, sleep):
+        command.return_value = '{"id": "submission", "status": "Accepted"}'
+        staple.side_effect = [
+            subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE),
+            subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE),
+            subprocess.CompletedProcess(["xcrun"], 0, stdout="The staple action worked!\n"),
+        ]
+        notarize_dmg(Path("Thinoda.dmg"))
+        self.assertEqual(command.call_count, 2)
+        self.assertEqual(command.call_args_list[0].args[:3], ("xcrun", "notarytool", "submit"))
+        self.assertEqual(
+            command.call_args_list[1].args,
+            ("xcrun", "stapler", "validate", "Thinoda.dmg"),
+        )
+        self.assertEqual(staple.call_count, 3)
+        for invocation in staple.call_args_list:
+            self.assertEqual(invocation, call(
+                ["xcrun", "stapler", "staple", "Thinoda.dmg"],
+                cwd=None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, check=False, timeout=120,
+            ))
+        self.assertEqual(sleep.call_args_list, [call(15), call(30)])
+
+    @patch("package_macos.time.sleep")
+    @patch("package_macos.subprocess.run")
+    @patch("package_macos.run")
+    def test_dmg_ticket_exhaustion_fails_without_validating(self, command, staple, sleep):
+        command.return_value = '{"id": "submission", "status": "Accepted"}'
+        staple.return_value = subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE)
+        with self.assertRaises(subprocess.CalledProcessError):
+            notarize_dmg(Path("Thinoda.dmg"))
+        command.assert_called_once()
+        self.assertEqual(staple.call_count, 5)
+        self.assertEqual(sleep.call_count, 4)
+
+    @patch("package_macos.run_with_ticket_retry")
+    @patch("package_macos.run")
+    def test_accepted_image_is_stapled_and_validated(self, command, staple):
         command.return_value = '{"id": "submission", "status": "Accepted"}'
         image = Path("Thinoda.dmg")
         notarize_dmg(image)
-        submit, staple, validate = command.call_args_list
+        submit, validate = command.call_args_list
         self.assertEqual(submit.args[:4], ("xcrun", "notarytool", "submit", str(image)))
         self.assertIn("--wait", submit.args)
         self.assertIn("--output-format", submit.args)
         self.assertIn("AuthKey.p8", submit.args)
         self.assertEqual(submit.kwargs, {"timeout": 2100})
-        self.assertEqual(staple.args, ("xcrun", "stapler", "staple", str(image)))
+        staple.assert_called_once_with(
+            ["xcrun", "stapler", "staple", str(image)], timeout=120,
+        )
         self.assertEqual(validate.args, ("xcrun", "stapler", "validate", str(image)))
 
+    @patch("package_macos.run_with_ticket_retry")
     @patch("package_macos.run")
-    def test_rejected_image_reports_apple_log_and_is_never_stapled(self, command):
+    def test_rejected_image_reports_apple_log_and_is_never_stapled(self, command, staple):
         command.side_effect = [
             '{"id": "submission", "status": "Invalid"}', "Missing secure timestamp",
         ]
@@ -157,9 +254,11 @@ class NotarizationTests(unittest.TestCase):
             notarize_dmg(Path("Thinoda.dmg"))
         self.assertEqual(command.call_count, 2)
         self.assertEqual(command.call_args.args[:4], ("xcrun", "notarytool", "log", "submission"))
+        staple.assert_not_called()
 
+    @patch("package_macos.run_with_ticket_retry")
     @patch("package_macos.run")
-    def test_timeout_or_malformed_response_never_staples(self, command):
+    def test_timeout_or_malformed_response_never_staples(self, command, staple):
         for failure in (subprocess.TimeoutExpired("notarytool", 2100), "not json"):
             with self.subTest(failure=failure):
                 command.reset_mock()
@@ -167,6 +266,7 @@ class NotarizationTests(unittest.TestCase):
                 with self.assertRaises((subprocess.TimeoutExpired, json.JSONDecodeError)):
                     notarize_dmg(Path("Thinoda.dmg"))
                 self.assertEqual(command.call_count, 1)
+                staple.assert_not_called()
 
 
 if __name__ == "__main__":

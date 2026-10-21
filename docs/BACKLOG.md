@@ -69,6 +69,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R11 Apple ticket retry hardening: failed Intel release jobs were traced to
+  CloudKit connection loss after accepted notarization, not failed compilation
+  or missing signing credentials. App packaging and DMG stapling now opt into
+  five bounded attempts with 15/30/60/120-second backoff for the confirmed
+  CloudKit network-loss signature only. DMG retries do not resubmit notarization;
+  exhausted retries and all other errors fail, with mandatory signature/stapling/
+  Gatekeeper checks unchanged. Recovery, exhaustion, rejection and real stderr
+  capture regressions pass; planning/finished rubber-duck reviews found no
+  blockers. Fixed-branch live packaging remains to be verified; no repaired
+  v0.6.0 release assets or completed distribution acceptance is claimed.
 - R2 shortcut-reference navigation: Settings now opens the existing searchable
   Keyboard Shortcuts reference from its category row. It is an action, not an
   empty preferences tab or a shortcut editor. Settings is disabled beneath the

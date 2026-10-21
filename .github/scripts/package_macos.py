@@ -14,7 +14,7 @@ from verify_macos_packages import ARCHITECTURES, run
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGER_RETRY_DELAYS = (5, 15)
+TICKET_RETRY_DELAYS = (15, 30, 60, 120)
 
 
 def is_apple_cloudkit_url(value: str) -> bool:
@@ -24,11 +24,13 @@ def is_apple_cloudkit_url(value: str) -> bool:
         return False
 
 
-def run_packager(command: list[str], cwd: Path) -> None:
-    for attempt, delay in enumerate((*PACKAGER_RETRY_DELAYS, None), start=1):
+def run_with_ticket_retry(
+    command: list[str], *, cwd: Path | None = None, timeout: int | None = None,
+) -> None:
+    for attempt, delay in enumerate((*TICKET_RETRY_DELAYS, None), start=1):
         result = subprocess.run(
             command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, check=False,
+            text=True, check=False, timeout=timeout,
         )
         if result.stdout:
             print(
@@ -49,8 +51,8 @@ def run_packager(command: list[str], cwd: Path) -> None:
         if not transient_stapling_failure or delay is None:
             raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
         print(
-            f"Transient Apple ticket lookup failure; retrying cargo-packager "
-            f"({attempt}/{len(PACKAGER_RETRY_DELAYS) + 1}) in {delay}s.",
+            f"Transient Apple ticket lookup failure; retrying {command[0]} "
+            f"({attempt}/{len(TICKET_RETRY_DELAYS) + 1}) in {delay}s.",
             flush=True,
         )
         time.sleep(delay)
@@ -87,7 +89,9 @@ def notarize_dmg(image: Path) -> None:
     if response["status"] != "Accepted":
         log = run("xcrun", "notarytool", "log", response["id"], *credentials)
         raise RuntimeError(f"DMG notarization was not accepted: {response}\n{log}")
-    run("xcrun", "stapler", "staple", str(image))
+    run_with_ticket_retry(
+        ["xcrun", "stapler", "staple", str(image)], timeout=120,
+    )
     run("xcrun", "stapler", "validate", str(image))
 
 
@@ -107,7 +111,7 @@ def package(root: Path, target: str) -> None:
     ], cwd=root, check=True)
     # Packager 0.11.8 signs Mach-O files and the bundle inside-out with hardened
     # runtime + timestamps, then notarizes/staples the app BEFORE creating the DMG.
-    run_packager([
+    run_with_ticket_retry([
         "cargo-packager", "--config", json.dumps(config),
         "--target", target, "--formats", "app,dmg",
     ], cwd=root / "crates" / "thinoda-app")

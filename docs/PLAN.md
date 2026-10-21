@@ -678,6 +678,23 @@ workspace CI with live AI disabled and WASM lint pass. Native file-picker/Save A
 Copy interaction and actual renderer/window-manager close behavior remain manual
 acceptance work; no multi-window or pending-editor crash-recovery parity is claimed.
 
+**R11 release reliability follow-up - Apple ticket lookup:** investigation of
+Release Please run `39566899330` (v0.6.0) and artifact-only Release run
+`39562303098` found Intel macOS stapling failures after Apple accepted
+notarization: CloudKit dropped the connection (`NSURLErrorDomain -1005`, stapler
+68). Windows x64/ARM64, Linux and Apple silicon packages succeeded in the release
+run, but publication was correctly blocked; the release currently has no assets.
+The earlier release-PR CI lockfile failure (`39563802807`) was superseded by green
+follow-up and main CI runs, not an application regression.
+Packaging and the previously unguarded DMG staple now share opt-in, bounded
+CloudKit-only retries (15/30/60/120 seconds, five attempts). The helper merges
+stdout/stderr and keeps failure logs; no verification runner or credential behavior
+changes. DMG submission is not repeated, final validation remains mandatory and
+rejected notarization, signature errors and exhausted retries still fail.
+Deterministic recovery/exhaustion/nonretry tests include actual subprocess stderr
+capture. Live fixed-branch packaging verification is tracked separately; this
+does not yet claim repaired v0.6.0 assets or full R11 signing/distribution acceptance.
+
 **Delivered R2 follow-up - shortcut-reference entry in Settings:** a plain
 Keyboard Shortcuts action beside the existing category tabs reuses `Cmd::Shortcuts`
 and its searchable/filterable reference. No new empty category or pretend rebinding
