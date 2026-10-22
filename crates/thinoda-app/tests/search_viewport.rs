@@ -46,6 +46,8 @@ fn find_and_replace_remain_reachable_in_short_windows() {
             for (size, scale) in [
                 (egui::vec2(320.0, 180.0), 2.0),
                 (egui::vec2(640.0, 360.0), 1.5),
+                (egui::vec2(960.0, 600.0), 1.0),
+                (egui::vec2(1280.0, 800.0), 1.5),
                 (egui::vec2(1280.0, 800.0), 1.0),
             ] {
                 let mut app = ThinodaApp::new(
@@ -87,6 +89,18 @@ fn find_and_replace_remain_reachable_in_short_windows() {
                 h.state_mut().search.dim = true;
                 h.run_steps(3);
                 assert_eq!(h.state().search.hits.len(), 2);
+                if size.y / scale >= 500.0 {
+                    assert_visible(&h, Role::TextInput, "Search");
+                    assert_visible(&h, Role::TextInput, "Replace with");
+                    assert_visible(&h, Role::Button, "Replace All");
+                    h.state_mut().search.show_replace = false;
+                    h.run_steps(4);
+                    h.state_mut().search.show_replace = true;
+                    h.run_steps(4);
+                    assert_visible(&h, Role::TextInput, "Search");
+                    assert_visible(&h, Role::TextInput, "Replace with");
+                    assert_visible(&h, Role::Button, "Replace All");
+                }
 
                 for (mode, panel) in [(CenterMode::Map, true), (CenterMode::Outliner, false)] {
                     h.state_mut().mode = mode;

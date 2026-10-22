@@ -74,6 +74,17 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- User-directed R1/R2 priority: Escape exits Zen with focused Map/Outline topics,
+  preserving selection and yielding to editor/search/popup/modal/relationship
+  cancellation first. Localized hints advertise Escape rather than relying on
+  browser-owned F11. Search Escape is routed before canvas/text handling, so
+  closing search does not also exit Zen. Search & Replace now grows from actual
+  available height instead of inheriting its old compact Area size; normal
+  viewports expose all controls without scrolling, while short/scaled windows
+  retain bounded overflow. Direct planning/finished review was user-approved
+  after reviewer startup failed. Full workspace CI with live AI disabled and
+  WASM lint pass; real browser fullscreen/native input acceptance
+  remains separate.
 - R1 shortcut-conflict prerequisite: read-only default-dispatch diagnostics
   distinguish exact duplicates from modifier shadowing in actual global ->
   insertion -> Map/Outline order, excluding redundant same-command aliases.

@@ -902,8 +902,8 @@ const DE: &[(&str, &str)] = &[
         "Eine Map öffnen oder auswählen, um den Formatbereich anzuzeigen",
     ),
     (
-        "Zen Mode: press F11 to exit",
-        "Zen-Modus: F11 zum Beenden drücken",
+        "Zen Mode: press Escape to exit",
+        "Zen-Modus: Escape zum Beenden drücken",
     ),
     ("Expand ideas", "Ideen ausbauen"),
     ("Add subtopic", "Unterthema hinzufügen"),

@@ -329,6 +329,16 @@ impl ThinodaApp {
         if popup_was_open && !egui::Popup::is_any_open(&ctx) {
             ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
         }
+        if self.search.open
+            && !self.palette.open
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+            && !popup_was_open
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.search.open = false;
+            self.apply_search_filter();
+        }
 
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -3005,6 +3015,9 @@ impl ThinodaApp {
                 let margin = frame.total_margin().sum();
                 frame.show(ui, |ui| {
                     ui.set_width((width - margin.x).max(0.0));
+                    // Recompute room each frame instead of inheriting the Area's
+                    // previous compact height when replacement controls appear.
+                    ui.set_max_height((bounds.bottom() - position.y - margin.y).max(0.0));
                     egui::ScrollArea::vertical()
                         .id_salt("search_scroll")
                         .max_height((bounds.bottom() - position.y - margin.y).max(0.0))
@@ -3100,7 +3113,7 @@ impl ThinodaApp {
                         });
                 });
             });
-        if close || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        if close {
             self.search.open = false;
         }
         self.apply_search_filter();

@@ -596,7 +596,7 @@ impl ThinodaApp {
             Cmd::ToggleZen => {
                 self.zen = !self.zen;
                 if self.zen {
-                    self.toasts.info(t("Zen Mode: press F11 to exit"));
+                    self.toasts.info(t("Zen Mode: press Escape to exit"));
                 }
             }
             Cmd::ToggleFormatPanel => {
@@ -1678,7 +1678,13 @@ impl ThinodaApp {
             }
         }
         if self.zen
-            && ctx.memory(|m| m.focused()).is_none()
+            && !self.search.open
+            && !self.dialogs.settings
+            && !ctx.text_edit_focused()
+            && !ctx.input(|input| input.pointer.any_down())
+            && self.doc().is_none_or(|doc| {
+                doc.view.editing_topic().is_none() && doc.view.relationship_from.is_none()
+            })
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.zen = false;

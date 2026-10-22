@@ -195,6 +195,14 @@ unknown needed by the next package. Never bypass OS application-control policy.
 
 ### R1 - Commands, menus, shortcuts and sheet/window lifecycle
 
+**User-directed priority, 2026-10-22:** make Escape a reliable Zen exit with
+focused Map/Outline topics, including the shared WASM UI where F11 may be owned
+by browser fullscreen. Preserve editor/search/popup/modal cancellation precedence,
+selection and document state. Increase Search & Replace's effective height so
+normal viewports show all controls without scrolling; retain bounded overflow
+for short/scaled windows. Both are delivered in the follow-up below rather than
+deferred behind shortcut customization or P4.
+
 1. Audit a single source of command identity, availability, execution and shortcut
    hints across menus, toolbar, context menu and command palette; extract shared
    metadata only where needed to remove inconsistency.
@@ -1176,6 +1184,32 @@ disabled and WASM lint pass. This closes the metadata follow-up,
 not R1: editable bindings, modifier/reserved-key conflict auditing (including
 existing Outline modified-key matching), presets/reset, native keyboard-layout/
 IME/accessibility acceptance and OS-integrated P4 menus remain open.
+
+**Delivered R1/R2 user follow-up - Zen Escape and Search & Replace height:**
+Zen now exits on Escape with a focused Map canvas or Outline topic, not only
+when no widget owns focus. Existing F11 dispatch remains compatible, but the
+ten-locale entry hint advertises Escape so web users need not rely on a browser
+fullscreen key. Topic/text edits, relationship creation, pointer gestures,
+search, settings, popups, palette and modals retain Escape ownership before Zen;
+exiting Zen consumes the event before it can clear the canvas selection.
+Focused search previously lost Escape to text/canvas handling. Search dismissal
+now consumes it before the center view, clears the filter and leaves Zen active;
+a subsequent Escape exits Zen without changing the document/selection.
+
+Search & Replace inherited egui Area's earlier compact height, causing clipped
+Replace All content even with room available. The content now recalculates its
+maximum height from actual remaining viewport space every frame, allowing
+replacement controls to expand naturally instead of increasing a fixed constant.
+Overflow scrolling is retained only when content genuinely exceeds available
+height. The shipped-locale/light/dark matrix includes normal and high-scale
+viewports with simultaneous Search/Replace/Replace All paint visibility,
+replacement toggle expansion, short-window focus reveal, edits/Undo and dismissal.
+Zen tests exercise real focused topics, inline editors, search, palette/modal,
+relationship cancellation and context-menu Escape priority. Direct planning/
+finished review was user-approved after reviewer startup failed; no rubber-duck
+review is claimed. Full workspace CI with live AI disabled and WASM lint pass.
+Browser fullscreen and native OS input acceptance remain
+separate from these shared UI regressions.
 
 **Delivered R1 prerequisite - default shortcut conflict audit:** read-only
 diagnostics now compose the real global -> insertion -> Map/Outline action

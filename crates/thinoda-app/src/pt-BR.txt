@@ -86,7 +86,7 @@ Focused handles: arrows move controls by 1 map unit (Shift: 10); endpoint arrows
 Link|Link
 Hyperlink|Hiperlink
 Open Link|Abrir link
-Zen Mode: press F11 to exit|Modo Zen: pressione F11 para sair
+Zen Mode: press Escape to exit|Modo Zen: pressione Escape para sair
 Add child topic|Adicionar tópico filho
 Edit hyperlink|Editar hiperlink
 File|Arquivo

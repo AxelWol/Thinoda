@@ -126,7 +126,11 @@ those system-owned controls. WinGet publishing remains paused.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
-- Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts.
+  Escape exits Zen after closing any active editor, search or popup first;
+  it does not rely on F11, which browsers may reserve for fullscreen.
+- Search & Replace grows to show its controls without internal scrolling when
+  space permits; short/high-scale windows retain bounded scrolling.
 - Settings > Editor > Show alignment guides optionally shows nearby matching
   topic-group edges/centers during free-placement dragging. It is off by default,
   does not snap positions, and does not change document styles or Undo history.
