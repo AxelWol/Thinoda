@@ -250,6 +250,8 @@ pub struct Settings {
     pub last_export_format: Option<String>,
     pub cloud: CloudSettings,
     pub ai: AiSettings,
+    /// Preserved but inactive. Stable app shortcut IDs use names such as
+    /// `file.save`; legacy/numeric/unknown keys are not guessed or migrated.
     pub shortcuts_overrides: BTreeMap<String, String>,
 }
 impl Default for Settings {

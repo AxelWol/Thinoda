@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod app;
 pub mod brand;
+mod command_ids;
 pub mod doc;
 pub mod files;
 mod help;

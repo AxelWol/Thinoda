@@ -9,11 +9,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-22 after incorporating main through `cba3a52`:
+GitHub was refreshed on 2026-10-22 after incorporating main through `ba05910`:
 there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
-contains the ongoing R1 shortcut-catalog work; release preparation
-[PR #63](https://github.com/AxelWol/Thinoda/pull/63) is also open. Neither is
-claimed merged or released. [PR #64](https://github.com/AxelWol/Thinoda/pull/64)
+merged the R1 shortcut-catalog, conflict-audit and Zen/search improvements at
+`679c85a`; its final head CI passed. Release preparation
+[PR #63](https://github.com/AxelWol/Thinoda/pull/63) merged version 0.8.0 metadata
+at `ba05910`. The release entry exists, but artifact publication was still
+running at this inventory check; complete downloadable assets are not claimed.
+[PR #64](https://github.com/AxelWol/Thinoda/pull/64)
 merged the native CJK preference, nested symbol picker and alignment-guide slices.
 Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
 
@@ -74,6 +77,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 stable shortcut-target identities: explicit nonlocalized IDs are separate
+  from unchanged palette row IDs. The registry covers static palette/default
+  bindings and reference-only targets, resolving Close Tab to the active document
+  and generic Paste to an OS request rather than clipboard contents. Arbitrary
+  payloads cannot alias generic commands. Tests pin the namespace across locale,
+  view and order changes and preserve stable/legacy/numeric/unknown inactive
+  overrides through settings roundtrip. Targeted tests and native/WASM lint pass.
+  Direct planning/finished review was performed under autopilot after reviewer
+  startup failed. Versioned migration, binding capture/apply/reset, conflicts,
+  reserved-key decisions and native/P4 acceptance remain open.
 - R1 reachable shortcut hints: menu/palette/reference metadata now excludes
   declared gestures intercepted by another default handler, using the real
   dispatch audit and runtime host/view. Fit Map is correctly unassigned instead

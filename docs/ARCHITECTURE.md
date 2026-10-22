@@ -38,6 +38,17 @@ graph TD
   Metal or Vulkan, and is testable headlessly with `egui_kittest` (AccessKit tree).
 - **Commands**: every menu item, shortcut and palette entry maps to one `Cmd`; e2e tests call
   `ThinodaApp::exec` or press real keys.
+  `Cmd::shortcut_id()` supplies explicit, nonlocalized built-in identities such as
+  `file.save`, independently of numeric palette row IDs. `shortcut_commands()` and
+  `shortcut_command(id)` expose the shortcut target registry without adding
+  palette actions; Close Tab resolves to the active tab at lookup time.
+  Payload-specific paths/templates/styles/clipboard text are not generic targets.
+  `edit.paste` resolves to `MenuPaste` (request OS clipboard), not stored content.
+  Registry membership is not availability or key ownership: callers must still
+  use the command/focus guards. `Settings.shortcuts_overrides` remains inactive
+  and preserves stable, legacy, numeric and unknown keys without guessing a
+  migration. Activating overrides still requires a versioned binding format,
+  conflict/reserved-key policy and explicit editor/reset behavior.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies

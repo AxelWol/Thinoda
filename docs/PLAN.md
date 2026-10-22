@@ -222,7 +222,8 @@ deferred behind shortcut customization or P4.
    Rebinding/conflict editing and native keyboard-layout audits remain open.
    The default-dispatch conflict audit below is a prerequisite, not an editable
    keymap or OS-reserved-key validator. Resolve the recorded keymap decisions and
-   define stable override identities/migration before activating saved overrides.
+   stable built-in identities are delivered below. Define the versioned override
+   format/migration before activating saved overrides.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -1262,6 +1263,30 @@ and Fit execution tests plus native all-target/WASM lint pass. Direct planning/
 finished review was user-approved after reviewer startup failed; no rubber-duck
 review is claimed. Editable bindings, keymap decisions, reserved keys and native
 input/accessibility/P4 acceptance remain open.
+
+**Delivered R1 prerequisite - stable shortcut target identities:** built-in
+commands now have explicit, nonlocalized IDs such as `file.save` and
+`topic.delete-only`, separate from existing numeric palette UI IDs. A lookup
+registry covers the static palette, global/Map/Outline bindings, reference-only
+editing/navigation/priorities/clipboard targets, and supported export formats.
+It does not add palette actions or enable shortcuts. Close Tab normalizes to one
+identity and resolves the active tab at lookup time; availability/focus checks
+remain the existing dispatcher's responsibility. Generic Paste resolves to the
+OS request command, never persisted clipboard content. Arbitrary file paths,
+templates, custom styles/themes, marker-instance edits and clipboard payloads
+cannot silently alias a generic target.
+
+The namespace is pinned in regression coverage and survives display reordering,
+all shipped locales and Map/Outline changes. Tests cover complete command/binding
+coverage, uniqueness, active/Home Close Tab resolution, unsupported payloads and
+unchanged palette IDs/count. Settings roundtrip preserves stable, legacy,
+numeric and unknown override entries exactly; they remain inactive. Existing
+numeric IDs and the legacy `save` key are not guessed into the new namespace.
+Targeted command-ID/shortcut/menu/settings tests and native all-target/WASM lint
+pass. The configured reviewer could not start; direct planning/finished review
+was performed under autopilot, not claimed as a rubber-duck review. Remaining:
+versioned override schema and migration, key capture, specificity/conflict and
+reserved-key decisions, apply/reset UI, native input/accessibility and P4.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
