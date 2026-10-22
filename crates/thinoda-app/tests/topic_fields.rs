@@ -123,19 +123,9 @@ fn topic_fields_share_selection_guards_and_preserve_inline_edits() {
                 (CenterMode::Outliner, 1.5),
                 (CenterMode::Outliner, 2.0),
             ] {
-                for (field, label, shortcut, value) in [
-                    (
-                        FocusField::Notes,
-                        "Notes",
-                        "Ctrl+Shift+N",
-                        "A durable topic note",
-                    ),
-                    (
-                        FocusField::Hyperlink,
-                        "Hyperlink",
-                        "Ctrl+K",
-                        "https://example.com/",
-                    ),
+                for (field, label, value) in [
+                    (FocusField::Notes, "Notes", "A durable topic note"),
+                    (FocusField::Hyperlink, "Hyperlink", "https://example.com/"),
                 ] {
                     let mut app = ThinodaApp::new(
                         Settings {
@@ -161,7 +151,11 @@ fn topic_fields_share_selection_guards_and_preserve_inline_edits() {
                     h.run_steps(4);
                     let before = h.state().doc().unwrap().doc.sheet().clone();
                     let selected = h.state().doc().unwrap().view.primary().unwrap();
-                    let menu_label = format!("{} {shortcut}", t(label));
+                    let menu_label = format!(
+                        "{} {}",
+                        t(label),
+                        ThinodaApp::shortcut_hint(&h.ctx, &Cmd::EditField(field)).unwrap()
+                    );
                     open_insert(&mut h);
                     let node = h.get_by_role_and_label(Role::Button, &menu_label);
                     assert!(!node.accesskit_node().is_disabled());

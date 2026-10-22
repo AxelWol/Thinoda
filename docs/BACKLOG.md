@@ -9,8 +9,13 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-20 after incorporating main through `07fec3c`:
-there are no open issues or pull requests. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
+GitHub was refreshed on 2026-10-22 after incorporating main through `cba3a52`:
+there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
+contains the ongoing R1 shortcut-catalog work; release preparation
+[PR #63](https://github.com/AxelWol/Thinoda/pull/63) is also open. Neither is
+claimed merged or released. [PR #64](https://github.com/AxelWol/Thinoda/pull/64)
+merged the native CJK preference, nested symbol picker and alignment-guide slices.
+Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
 
 The former WIP pull requests are now merged:
 
@@ -69,6 +74,78 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 reachable shortcut hints: menu/palette/reference metadata now excludes
+  declared gestures intercepted by another default handler, using the real
+  dispatch audit and runtime host/view. Fit Map is correctly unassigned instead
+  of advertising Ctrl/Cmd+Shift+H (Find & Replace), while remaining clickable.
+  Keys, availability, IDs and raw audit inventories are unchanged; no saved
+  overrides are enabled. Targeted three-host metadata/menu/reference/audit and
+  Fit execution tests plus native/WASM lint pass. User-approved direct reviews
+  followed reviewer startup failure. Keymap conflict decisions, shortcut editing,
+  reserved-key validation and native/P4 acceptance remain open.
+- User-directed R1/R2 priority: Escape exits Zen with focused Map/Outline topics,
+  preserving selection and yielding to editor/search/popup/modal/relationship
+  cancellation first. Localized hints advertise Escape rather than relying on
+  browser-owned F11. Search Escape is routed before canvas/text handling, so
+  closing search does not also exit Zen. Search & Replace now grows from actual
+  available height instead of inheriting its old compact Area size; normal
+  viewports expose all controls without scrolling, while short/scaled windows
+  retain bounded overflow. Direct planning/finished review was user-approved
+  after reviewer startup failed. Full workspace CI with live AI disabled and
+  WASM lint pass; real browser fullscreen/native input acceptance
+  remains separate.
+- R1 shortcut-conflict prerequisite: read-only default-dispatch diagnostics
+  distinguish exact duplicates from modifier shadowing in actual global ->
+  insertion -> Map/Outline order, excluding redundant same-command aliases.
+  Three-host modifier/egui-consumption tests and actual app frames reproduce
+  Fit's Ctrl/Cmd+Shift+H interception by Find & Replace and Outline's existing
+  Ctrl/Cmd+Shift+Z Undo behavior (Map uses Redo). Keys/hints/settings are unchanged.
+  Targeted tests and native/WASM lint pass; direct planning/finished review was
+  user-approved after reviewer startup failed. Editable overrides, stable
+  persisted IDs/migration, conflict decisions and OS/browser-reserved keys remain
+  open; this diagnostic is not a claim of native keyboard acceptance.
+- R1 view-aware Outline shortcut metadata: the existing eight action bindings
+  now supply both Outline dispatch and live menu/palette/reference hints.
+  Separate Up/Down descriptors retain visible-row traversal, including collapsed
+  branches; they do not invoke geometric canvas navigation. The reference names
+  the current view and retains shared insertion/priority keys, but no longer
+  advertises Map-only aliases, clipboard events or canvas Escape in Outline.
+  Command IDs, keys/order, focus/search/modal guards and toolbar ownership are
+  unchanged. Direct planning/finished review was user-approved after reviewer
+  startup failed; no rubber-duck review is claimed. Full workspace CI with live
+  AI disabled and WASM lint pass. Rebinding, reserved-key
+  conflicts, native input/accessibility acceptance and P4 remain open.
+- R1 command-aware menu hints: main File/Edit/Insert/AI/Tools/View/Help and canvas
+  context buttons derive hints from the same binding lookup as the catalog.
+  Nested Select/Arrange entries show existing central-topic, selection and move
+  bindings instead of omitting them. egui supplies platform formatting, removing
+  duplicated key strings and manual Ctrl/Cmd substitutions. Command order,
+  handlers, availability and context accessible names are preserved.
+  Cut/Copy/Paste are documented as read-only event metadata, not new palette
+  actions or key dispatch. Three-platform simulations check actual hint paint/
+  clip bounds, availability and nested menus down to 640x240; existing localized
+  geometry matrices remain. Direct planning/finished review was user-approved
+  after reviewer startup failed. Outline-specific metadata, shortcut editing,
+  reserved-key conflicts and native/P4 acceptance remain open.
+- R1 contextual-shortcut inventory: map and insertion dispatch tables now supply
+  contextual palette hints and every alias in the searchable reference. Redo,
+  Insert/Backspace, central-topic, zoom, boundary and priority aliases are visible;
+  Move Up/Down and Select None no longer appear unassigned. Escape remains a
+  separate Cancel interaction, not a replacement for its existing cleanup path.
+  Keys, ordering, clipboard/text-input/modal guards and command IDs are preserved.
+  Tests cover inventory parity, real alias execution/Undo and long hint paint
+  within compact localized viewports. Direct planning/finished review was
+  user-approved after reviewer startup failed. Outline metadata, rebinding,
+  reserved-key conflicts and native acceptance remain open.
+- R1 global-shortcut catalog consistency: the palette and searchable reference
+  now derive all 24 global bindings from the ordered dispatch table. Close Tab,
+  Next Document and Command Palette are included; live Close Tab resolves the
+  active document and retains unsaved-work prompts. Platform-aware hints use
+  egui formatting for global commands and Cmd/Option names for contextual/menu
+  hints on macOS. Existing command IDs and key precedence remain unchanged.
+  Custom rebinding, conflicts/reserved keys, unified Outline metadata
+  and native keyboard-layout acceptance remain open; this is not P4 delivery.
+  The user approved direct planning/finished review after reviewer startup failed.
 - R1 Outline keyboard ownership: structural shortcuts now belong to focused
   topic rows/disclosures, not the action toolbar, sidebar or other chrome.
   Stable topic-scoped IDs, explicit pointer focus and row-focus restoration

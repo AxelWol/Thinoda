@@ -596,7 +596,7 @@ impl ThinodaApp {
             Cmd::ToggleZen => {
                 self.zen = !self.zen;
                 if self.zen {
-                    self.toasts.info(t("Zen Mode: press F11 to exit"));
+                    self.toasts.info(t("Zen Mode: press Escape to exit"));
                 }
             }
             Cmd::ToggleFormatPanel => {
@@ -1668,9 +1668,38 @@ impl ThinodaApp {
 
     /// Global keyboard shortcuts that work regardless of canvas focus.
     pub fn global_shortcuts(&mut self, ctx: &Context) {
+        for (sc, c) in Self::global_shortcut_bindings(self.active) {
+            if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
+                continue;
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
+                self.exec(ctx, c);
+                return;
+            }
+        }
+        if self.zen
+            && !self.search.open
+            && !self.dialogs.settings
+            && !ctx.text_edit_focused()
+            && !ctx.input(|input| input.pointer.any_down())
+            && self.doc().is_none_or(|doc| {
+                doc.view.editing_topic().is_none() && doc.view.relationship_from.is_none()
+            })
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.zen = false;
+        }
+        // Drag & drop of files onto the window.
+        for p in files::dropped_files(ctx) {
+            self.open_path(&p);
+        }
+    }
+
+    /// Ordered dispatch bindings, also used by command-palette and shortcut hints.
+    pub fn global_shortcut_bindings(active: usize) -> Vec<(KeyboardShortcut, Cmd)> {
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
-        let table: Vec<(KeyboardShortcut, Cmd)> = vec![
+        vec![
             (
                 KeyboardShortcut::new(Modifiers::NONE, Key::F7),
                 Cmd::MapShot,
@@ -1694,10 +1723,7 @@ impl ThinodaApp {
             (KeyboardShortcut::new(cmd, Key::N), Cmd::New),
             (KeyboardShortcut::new(cs, Key::O), Cmd::ToggleOutliner),
             (KeyboardShortcut::new(cmd, Key::O), Cmd::Open),
-            (
-                KeyboardShortcut::new(cmd, Key::W),
-                Cmd::CloseTab(self.active),
-            ),
+            (KeyboardShortcut::new(cmd, Key::W), Cmd::CloseTab(active)),
             (KeyboardShortcut::new(cmd, Key::Q), Cmd::Quit),
             (KeyboardShortcut::new(cmd, Key::F), Cmd::Find),
             (KeyboardShortcut::new(cmd, Key::H), Cmd::FindReplace),
@@ -1722,26 +1748,7 @@ impl ThinodaApp {
                 KeyboardShortcut::new(Modifiers::NONE, Key::F1),
                 Cmd::Shortcuts,
             ),
-        ];
-        for (sc, c) in table {
-            if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
-                continue;
-            }
-            if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
-                self.exec(ctx, c);
-                return;
-            }
-        }
-        if self.zen
-            && ctx.memory(|m| m.focused()).is_none()
-            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
-        {
-            self.zen = false;
-        }
-        // Drag & drop of files onto the window.
-        for p in files::dropped_files(ctx) {
-            self.open_path(&p);
-        }
+        ]
     }
 
     /// Recomputes search hits when the query or document changed.
@@ -1891,40 +1898,111 @@ impl ThinodaApp {
         self.update_search();
     }
 
-    /// The commands listed in the command palette.
+    /// The live catalog resolves active-document commands and platform modifier names.
+    pub fn command_catalog(&self, ctx: &Context) -> Vec<(Cmd, thinoda_ui::Command)> {
+        Self::palette_commands()
+            .into_iter()
+            .map(|(mut command, mut metadata)| {
+                if matches!(command, Cmd::CloseTab(_)) {
+                    command = Cmd::CloseTab(self.active);
+                }
+                metadata.shortcut = Self::shortcut_hint_for_mode(ctx, &command, self.mode);
+                (command, metadata)
+            })
+            .collect()
+    }
+
+    /// Clipboard metadata describes OS events; it does not add key dispatch.
+    pub fn shortcut_binding(command: &Cmd) -> Option<KeyboardShortcut> {
+        Self::shortcut_binding_for_mode(command, CenterMode::Map)
+    }
+
+    pub fn shortcut_binding_for_mode(command: &Cmd, mode: CenterMode) -> Option<KeyboardShortcut> {
+        Self::shortcut_binding_for_platform(command, mode, egui::os::OperatingSystem::Windows)
+    }
+
+    pub fn shortcut_binding_for_platform(
+        command: &Cmd,
+        mode: CenterMode,
+        os: egui::os::OperatingSystem,
+    ) -> Option<KeyboardShortcut> {
+        static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
+        static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+            std::sync::OnceLock::new();
+        let defaults = match mode {
+            CenterMode::Map => &MAP,
+            CenterMode::Outliner => &OUTLINE,
+        };
+        let bindings = defaults.get_or_init(|| {
+            let mut bindings = Self::global_shortcut_bindings(0);
+            bindings.extend(
+                Self::contextual_shortcut_bindings_for_mode(mode)
+                    .into_iter()
+                    .map(|(shortcut, action)| (shortcut, Cmd::Canvas(action))),
+            );
+            if mode == CenterMode::Map {
+                for (key, command) in [
+                    (Key::X, Cmd::Canvas(Action::Cut)),
+                    (Key::C, Cmd::Canvas(Action::Copy)),
+                    (Key::V, Cmd::MenuPaste),
+                ] {
+                    bindings.push((KeyboardShortcut::new(Modifiers::COMMAND, key), command));
+                }
+            }
+            bindings
+        });
+        let normalized = match command {
+            Cmd::CloseTab(_) => &Cmd::CloseTab(0),
+            Cmd::Canvas(Action::Paste(_)) => &Cmd::MenuPaste,
+            _ => command,
+        };
+        bindings
+            .iter()
+            .find(|(shortcut, bound)| {
+                bound == normalized
+                    && !Self::default_shortcut_command(mode, os, *shortcut)
+                        .is_some_and(|dispatched| dispatched != *normalized)
+            })
+            .map(|(binding, _)| *binding)
+    }
+
+    pub fn shortcut_hint(ctx: &Context, command: &Cmd) -> Option<String> {
+        Self::shortcut_hint_for_mode(ctx, command, CenterMode::Map)
+    }
+
+    pub fn shortcut_hint_for_mode(
+        ctx: &Context,
+        command: &Cmd,
+        mode: CenterMode,
+    ) -> Option<String> {
+        Self::shortcut_binding_for_platform(command, mode, ctx.os())
+            .map(|binding| ctx.format_shortcut(&binding))
+    }
+
+    /// Platform-neutral catalog with default non-macOS shortcut names.
     pub fn palette_commands() -> Vec<(Cmd, thinoda_ui::Command)> {
         use thinoda_ui::Command as C;
         let mut v: Vec<(Cmd, &str, &str, &str)> = vec![
-            (Cmd::New, "New", "Ctrl+N", "File"),
-            (Cmd::Open, "Open…", "Ctrl+O", "File"),
-            (Cmd::Quit, "Quit", "Ctrl+Q", "File"),
-            (Cmd::Save, "Save", "Ctrl+S", "File"),
-            (Cmd::SaveAs, "Save As…", "Ctrl+Shift+S", "File"),
+            (Cmd::New, "New", "", "File"),
+            (Cmd::Open, "Open…", "", "File"),
+            (Cmd::Quit, "Quit", "", "File"),
+            (Cmd::Save, "Save", "", "File"),
+            (Cmd::SaveAs, "Save As…", "", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
-            (Cmd::Settings, "Settings…", "Ctrl+,", "Edit"),
-            (
-                Cmd::Canvas(Action::InsertChild),
-                "Subtopic",
-                "Tab",
-                "Insert",
-            ),
-            (
-                Cmd::Canvas(Action::InsertSibling),
-                "Topic",
-                "Enter",
-                "Insert",
-            ),
+            (Cmd::Settings, "Settings…", "", "Edit"),
+            (Cmd::Canvas(Action::InsertChild), "Subtopic", "", "Insert"),
+            (Cmd::Canvas(Action::InsertSibling), "Topic", "", "Insert"),
             (
                 Cmd::Canvas(Action::InsertSiblingBefore),
                 "Topic Before",
-                "Shift+Enter",
+                "",
                 "Insert",
             ),
             (
                 Cmd::Canvas(Action::InsertParent),
                 "Parent Topic",
-                "Ctrl+Enter",
+                "",
                 "Insert",
             ),
             (
@@ -1936,85 +2014,60 @@ impl ThinodaApp {
             (
                 Cmd::Canvas(Action::StartRelationship),
                 "Relationship",
-                "Ctrl+Shift+L",
+                "",
                 "Insert",
             ),
-            (
-                Cmd::Canvas(Action::AddSummary),
-                "Summary",
-                "Ctrl+]",
-                "Insert",
-            ),
-            (
-                Cmd::Canvas(Action::AddBoundary),
-                "Boundary",
-                "Ctrl+B",
-                "Insert",
-            ),
+            (Cmd::Canvas(Action::AddSummary), "Summary", "", "Insert"),
+            (Cmd::Canvas(Action::AddBoundary), "Boundary", "", "Insert"),
             (
                 Cmd::EditField(FocusField::Hyperlink),
                 "Hyperlink",
-                "Ctrl+K",
+                "",
                 "Insert",
             ),
-            (
-                Cmd::EditField(FocusField::Notes),
-                "Notes",
-                "Ctrl+Shift+N",
-                "Insert",
-            ),
+            (Cmd::EditField(FocusField::Notes), "Notes", "", "Insert"),
             (Cmd::Canvas(Action::ToggleTodo), "To-Do", "", "Insert"),
-            (Cmd::Canvas(Action::Undo), "Undo", "Ctrl+Z", "Edit"),
-            (Cmd::Canvas(Action::Redo), "Redo", "Ctrl+Shift+Z", "Edit"),
-            (Cmd::Canvas(Action::Delete), "Delete", "Del", "Edit"),
+            (Cmd::Canvas(Action::Undo), "Undo", "", "Edit"),
+            (Cmd::Canvas(Action::Redo), "Redo", "", "Edit"),
+            (Cmd::Canvas(Action::Delete), "Delete", "", "Edit"),
             (
                 Cmd::Canvas(Action::DeleteKeepChildren),
                 "Delete Topic Only",
-                "Ctrl+Del",
+                "",
                 "Edit",
             ),
             (
                 Cmd::Canvas(Action::SelectRoot),
                 "Go to Central Topic",
-                "Ctrl+R",
+                "",
                 "Edit",
             ),
-            (
-                Cmd::Canvas(Action::Duplicate),
-                "Duplicate",
-                "Ctrl+D",
-                "Edit",
-            ),
-            (
-                Cmd::Canvas(Action::SelectAll),
-                "Select All",
-                "Ctrl+A",
-                "Edit",
-            ),
-            (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
-            (Cmd::FindReplace, "Find and Replace…", "Ctrl+H", "Edit"),
-            (Cmd::CopyStyle, "Copy Style", "Ctrl+Alt+C", "Edit"),
-            (Cmd::PasteStyle, "Paste Style", "Ctrl+Alt+V", "Edit"),
+            (Cmd::Canvas(Action::Duplicate), "Duplicate", "", "Edit"),
+            (Cmd::Canvas(Action::SelectAll), "Select All", "", "Edit"),
+            (Cmd::Find, "Find…", "", "Edit"),
+            (Cmd::FindReplace, "Find and Replace…", "", "Edit"),
+            (Cmd::CopyStyle, "Copy Style", "", "Edit"),
+            (Cmd::PasteStyle, "Paste Style", "", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
             (Cmd::SaveQuickStyle, "Save Quick Style…", "", "Style"),
             (Cmd::EditCustomTheme, "Edit Custom Theme…", "", "Style"),
             (Cmd::Canvas(Action::Indent), "Indent", "", "Edit"),
             (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
-            (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),
-            (Cmd::NextSheet, "Next Sheet", "Ctrl+PageDown", "View"),
+            (Cmd::PreviousSheet, "Previous Sheet", "", "View"),
+            (Cmd::NextSheet, "Next Sheet", "", "View"),
             (Cmd::CopySheet, "Copy Sheet", "", "File"),
             (Cmd::PasteSheet, "Paste Sheet", "", "File"),
             (Cmd::SaveSheetAs, "Save Sheet As…", "", "File"),
             (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
             (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
-            (Cmd::MapShot, "Map Shot", "F7", "Tools"),
-            (Cmd::Print, "Print", "Ctrl+P", "File"),
+            (Cmd::MapShot, "Map Shot", "", "Tools"),
+            (Cmd::Print, "Print", "", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",
-                "Ctrl+Shift+I",
+                "",
                 "AI",
             ),
             (
@@ -2041,37 +2094,27 @@ impl ThinodaApp {
                 "",
                 "AI",
             ),
-            (Cmd::ToggleOutliner, "Outliner", "Ctrl+Shift+O", "View"),
-            (Cmd::ToggleZen, "Zen Mode", "F11", "View"),
-            (
-                Cmd::ToggleFormatPanel,
-                "Format Panel",
-                "Ctrl+Shift+R",
-                "View",
-            ),
+            (Cmd::ToggleOutliner, "Outliner", "", "View"),
+            (Cmd::ToggleZen, "Zen Mode", "", "View"),
+            (Cmd::ToggleFormatPanel, "Format Panel", "", "View"),
             (Cmd::ToggleStatusBar, "Status Bar", "", "View"),
             (Cmd::ToggleSymbolsPanel, "Symbols", "", "View"),
-            (Cmd::Canvas(Action::ZoomIn), "Zoom In", "Ctrl++", "View"),
-            (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "Ctrl+-", "View"),
-            (
-                Cmd::Canvas(Action::ZoomReset),
-                "Actual Size",
-                "Ctrl+0",
-                "View",
-            ),
-            (Cmd::Canvas(Action::Fit), "Fit Map", "Ctrl+Shift+H", "View"),
+            (Cmd::Canvas(Action::ZoomIn), "Zoom In", "", "View"),
+            (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "", "View"),
+            (Cmd::Canvas(Action::ZoomReset), "Actual Size", "", "View"),
+            (Cmd::Canvas(Action::Fit), "Fit Map", "", "View"),
             (Cmd::Canvas(Action::ExpandAll), "Expand All", "", "View"),
             (Cmd::Canvas(Action::CollapseAll), "Collapse All", "", "View"),
             (
                 Cmd::Canvas(Action::ToggleCollapse),
                 "Collapse / Expand",
-                "Ctrl+/",
+                "",
                 "View",
             ),
             (
                 Cmd::Canvas(Action::ToggleCollapseAll),
                 "Collapse / Expand All",
-                "Ctrl+Alt+/",
+                "",
                 "View",
             ),
             (Cmd::NewSheet, "New Sheet", "", "Sheet"),
@@ -2091,7 +2134,7 @@ impl ThinodaApp {
                 "Appearance",
             ),
             (Cmd::SetTheme(SettingsTheme::Dark), "Dark", "", "Appearance"),
-            (Cmd::Shortcuts, "Keyboard Shortcuts", "F1", "Help"),
+            (Cmd::Shortcuts, "Keyboard Shortcuts", "", "Help"),
             (Cmd::UserGuide, "User Guide", "", "Help"),
             (Cmd::QuickStart, "Quick Start", "", "Help"),
             (Cmd::Feedback, "Send Feedback…", "", "Help"),
@@ -2112,6 +2155,11 @@ impl ThinodaApp {
                 v.push((Cmd::Canvas(action), label, "", "Edit"));
             }
         }
+        v.extend([
+            (Cmd::CloseTab(0), "Close Tab", "", "File"),
+            (Cmd::NextDoc, "Next Document", "", "View"),
+            (Cmd::Palette, "Command Palette…", "", "Edit"),
+        ]);
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {
@@ -2121,7 +2169,9 @@ impl ThinodaApp {
                     t(title).to_string()
                 };
                 let mut c = C::new(i.to_string(), title).category(t(cat));
-                if !sc.is_empty() {
+                if let Some(binding) = Self::shortcut_binding(&cmd) {
+                    c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
+                } else if !sc.is_empty() {
                     c = c.shortcut(sc);
                 }
                 (cmd, c)
@@ -2134,8 +2184,17 @@ impl ThinodaApp {
         if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.text_edit_focused() {
             return;
         }
+        for (shortcut, action) in Self::insertion_shortcut_bindings() {
+            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                self.canvas_action(ctx, action);
+                return;
+            }
+        }
+    }
+
+    pub fn insertion_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
-        let table = [
+        [
             (cs, Key::L, Action::StartRelationship),
             (cs, Key::B, Action::AddBoundary),
             (Modifiers::COMMAND, Key::B, Action::AddBoundary),
@@ -2160,13 +2219,63 @@ impl ThinodaApp {
                 Key::Num3,
                 Action::ToggleMarker("priority-3".into()),
             ),
-        ];
-        for (m, k, a) in table {
-            if ctx.input_mut(|i| i.consume_key(m, k)) {
-                self.canvas_action(ctx, a);
-                return;
+        ]
+        .into_iter()
+        .map(|(modifiers, key, action)| (KeyboardShortcut::new(modifiers, key), action))
+        .collect()
+    }
+
+    /// Display inventory only: each dispatcher keeps its existing focus and modal guards.
+    pub fn contextual_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
+        Self::contextual_shortcut_bindings_for_mode(CenterMode::Map)
+    }
+
+    pub fn outline_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
+        [
+            (Modifiers::COMMAND, Key::Z, Action::Undo),
+            (Modifiers::COMMAND, Key::Y, Action::Redo),
+            (Modifiers::NONE, Key::Enter, Action::InsertSibling),
+            (Modifiers::NONE, Key::Tab, Action::InsertChild),
+            (Modifiers::NONE, Key::Delete, Action::Delete),
+            (Modifiers::NONE, Key::F2, Action::StartEdit),
+            (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
+            (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
+        ]
+        .into_iter()
+        .map(|(modifiers, key, action)| (KeyboardShortcut::new(modifiers, key), action))
+        .collect()
+    }
+
+    /// These keys traverse visible Outline rows, not canvas geometry.
+    pub fn outline_navigation_bindings() -> [KeyboardShortcut; 2] {
+        [Key::ArrowUp, Key::ArrowDown].map(|key| KeyboardShortcut::new(Modifiers::NONE, key))
+    }
+
+    pub fn contextual_shortcut_bindings_for_mode(
+        mode: CenterMode,
+    ) -> Vec<(KeyboardShortcut, Action)> {
+        let mut bindings = match mode {
+            CenterMode::Map => thinoda_canvas::shortcut_bindings(),
+            CenterMode::Outliner => {
+                let mut bindings = Self::outline_shortcut_bindings();
+                bindings.extend(
+                    Self::outline_navigation_bindings()
+                        .into_iter()
+                        .zip([
+                            thinoda_core::navigation::Direction::Up,
+                            thinoda_core::navigation::Direction::Down,
+                        ])
+                        .map(|(shortcut, direction)| (shortcut, Action::Navigate(direction))),
+                );
+                bindings
+            }
+        };
+        for binding in Self::insertion_shortcut_bindings() {
+            if !bindings.contains(&binding) {
+                bindings.push(binding);
             }
         }
+        bindings
     }
 }
 

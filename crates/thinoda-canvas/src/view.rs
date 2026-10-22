@@ -1164,12 +1164,8 @@ fn run(doc: &mut Document, view: &mut MapView, action: Action, out: &mut CanvasO
     }
 }
 
-fn handle_keys(
-    ctx: &egui::Context,
-    doc: &mut Document,
-    view: &mut MapView,
-    out: &mut CanvasOutput,
-) {
+/// Ordered map key bindings, excluding clipboard events and Escape cancellation.
+pub fn shortcut_bindings() -> Vec<(egui::KeyboardShortcut, Action)> {
     const CMD: Modifiers = Modifiers::COMMAND;
     let shift_cmd = Modifiers::COMMAND.plus(Modifiers::SHIFT);
     let shortcuts: &[(Modifiers, Key, Action)] = &[
@@ -1229,9 +1225,26 @@ fn handle_keys(
         (CMD, Key::Num0, Action::ZoomReset),
         (shift_cmd, Key::H, Action::Fit),
     ];
-    for (m, k, a) in shortcuts {
-        if ctx.input_mut(|i| i.consume_key(*m, *k)) {
-            run(doc, view, a.clone(), out);
+    shortcuts
+        .iter()
+        .map(|(modifiers, key, action)| {
+            (
+                egui::KeyboardShortcut::new(*modifiers, *key),
+                action.clone(),
+            )
+        })
+        .collect()
+}
+
+fn handle_keys(
+    ctx: &egui::Context,
+    doc: &mut Document,
+    view: &mut MapView,
+    out: &mut CanvasOutput,
+) {
+    for (shortcut, action) in shortcut_bindings() {
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+            run(doc, view, action, out);
             return;
         }
     }
@@ -2255,6 +2268,51 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         h.run();
         assert!(h.state().doc.sheet().topic(first).is_some());
+    }
+
+    #[test]
+    fn contextual_aliases_dispatch_without_changing_edit_and_undo_semantics() {
+        for insert in [Key::Tab, Key::Insert] {
+            for delete in [Key::Delete, Key::Backspace] {
+                for redo in [
+                    egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Y),
+                    egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
+                ] {
+                    let mut h = harness();
+                    let root = h.state().doc.sheet().root;
+                    h.state_mut().view.select_only(root);
+                    let before = h.state().doc.workbook().clone();
+                    h.key_press(insert);
+                    h.run();
+                    let child = h.state().view.primary().unwrap();
+                    assert_ne!(child, root);
+                    assert_eq!(h.state().view.editing_topic(), Some(child));
+                    h.key_press(Key::Escape);
+                    h.run();
+                    assert_eq!(h.state().view.editing_topic(), None);
+                    let inserted = h.state().doc.workbook().clone();
+                    assert_ne!(inserted, before);
+                    h.key_press(delete);
+                    h.run();
+                    assert!(!h.state().doc.sheet().contains(child));
+                    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+                    h.run();
+                    assert_eq!(h.state().doc.workbook(), &inserted);
+                    h.key_press_modifiers(redo.modifiers, redo.logical_key);
+                    h.run();
+                    assert!(!h.state().doc.sheet().contains(child));
+                    for home in [
+                        egui::KeyboardShortcut::new(Modifiers::NONE, Key::Home),
+                        egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::R),
+                    ] {
+                        h.state_mut().view.selection.clear();
+                        h.key_press_modifiers(home.modifiers, home.logical_key);
+                        h.run();
+                        assert_eq!(h.state().view.selection, vec![root]);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

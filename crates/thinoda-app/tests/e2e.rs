@@ -1958,9 +1958,9 @@ fn outliner_and_zen_toggle() {
         h.state()
             .toasts
             .texts()
-            .any(|text| text == "Zen Mode: press F11 to exit")
+            .any(|text| text == "Zen Mode: press Escape to exit")
     );
-    h.get_by_label("Zen Mode: press F11 to exit");
+    h.get_by_label("Zen Mode: press Escape to exit");
     assert!(
         h.query_by_role_and_label(Role::Button, "Outliner")
             .is_none(),

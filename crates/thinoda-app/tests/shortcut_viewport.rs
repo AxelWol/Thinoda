@@ -149,7 +149,7 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                     h.get_by_role_and_label(Role::CheckBox, t("Unassigned only"))
                         .is_focused()
                 );
-                reveal(&mut h, t("Central Topic"));
+                reveal(&mut h, t("Priority 3"));
                 reveal(&mut h, t("Navigate"));
                 reveal(&mut h, t("New"));
 
@@ -207,6 +207,18 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                 h.set_size(size);
                 h.run_steps(5);
                 assert_fit(&h);
+                for title in ["Delete Topic Only", "Navigate"] {
+                    let entry = h
+                        .state()
+                        .shortcut_reference(&h.ctx)
+                        .into_iter()
+                        .find(|entry| entry.title == t(title))
+                        .unwrap();
+                    let hint = entry.shortcut.unwrap_or_else(|| t("Unassigned").into());
+                    h.state_mut().dialogs.shortcut_browser.query = t(title).into();
+                    h.run_steps(5);
+                    reveal(&mut h, &hint);
+                }
                 h.key_press(Key::Escape);
                 h.run_steps(3);
                 assert!(!h.state().dialogs.shortcuts);

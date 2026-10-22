@@ -195,6 +195,14 @@ unknown needed by the next package. Never bypass OS application-control policy.
 
 ### R1 - Commands, menus, shortcuts and sheet/window lifecycle
 
+**User-directed priority, 2026-10-22:** make Escape a reliable Zen exit with
+focused Map/Outline topics, including the shared WASM UI where F11 may be owned
+by browser fullscreen. Preserve editor/search/popup/modal cancellation precedence,
+selection and document state. Increase Search & Replace's effective height so
+normal viewports show all controls without scrolling; retain bounded overflow
+for short/scaled windows. Both are delivered in the follow-up below rather than
+deferred behind shortcut customization or P4.
+
 1. Audit a single source of command identity, availability, execution and shortcut
    hints across menus, toolbar, context menu and command palette; extract shared
    metadata only where needed to remove inconsistency.
@@ -210,8 +218,11 @@ unknown needed by the next package. Never bypass OS application-control policy.
    conflicts, reserved keys and reset-all. Preserve current bindings by default;
    offer an XMind-compatible preset only after approval of conflicting mappings.
    The searchable/category-filtered read-only reference, unassigned-command
-   visibility and navigation aliases are delivered. Rebinding/conflict editing
-   and native keyboard-layout audits remain open.
+   visibility and map/insertion aliases derived from dispatch are delivered.
+   Rebinding/conflict editing and native keyboard-layout audits remain open.
+   The default-dispatch conflict audit below is a prerequisite, not an editable
+   keymap or OS-reserved-key validator. Resolve the recorded keymap decisions and
+   define stable override identities/migration before activating saved overrides.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -1073,6 +1084,184 @@ ambiguity with newly named background New Sheet/Fit buttons. Planning and finish
 rubber-duck reviews found no blockers; full workspace CI with live AI disabled and
 WASM lint pass. Actual native GPU/touch/screen-reader checks,
 the floating view bar and remaining R2 preferences are not claimed complete.
+
+**Delivered R1 follow-up - global-shortcut catalog consistency:** one ordered
+binding table now drives global dispatch and the palette/reference's global
+shortcut hints. All 24 existing global bindings are represented exactly once;
+Close Tab, Next Document and Command Palette were previously absent from the
+catalog. The live catalog resolves Close Tab to the current active document,
+including normal dirty-close prompting, rather than embedding tab zero.
+Existing catalog IDs are preserved by appending the new commands. Dispatch
+precedence, text-input style-copy/paste guards, modal ownership, Escape and
+file-drop handling remain unchanged. Global hints use egui's platform formatter;
+contextual and menu hints display Cmd/Option rather than Ctrl/Alt on macOS.
+Three-platform simulated tests cover catalog completeness/uniqueness, exact
+global hints, menu labels and real global dispatch; actual palette keyboard
+activation closes the active clean tab and preserves the active dirty tab with
+its save prompt. Shipped-locale/appearance/scale viewport regressions remain in
+place. These simulations do not replace native keyboard-layout/OS acceptance.
+The configured reviewer could not start; the user approved direct planning and
+finished-step review. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled and WASM lint pass.
+This is groundwork, not the complete shared command model or shortcut editor:
+menu layout/labels and Outline bindings still have separate definitions, saved
+`shortcuts_overrides` remain inactive, and conflict validation, reserved-key
+handling, rebinding/reset UI and P4 native menu backends remain open.
+
+**Delivered R1 follow-up - contextual shortcut inventory and aliases:** the map
+and host insertion dispatchers now expose their existing ordered binding tables.
+Palette contextual hints derive from those tables instead of duplicated strings;
+the read-only reference lists every map/insertion alias, including Redo Ctrl/Cmd+Y,
+Subtopic Insert, Delete Backspace, topic-only deletion, central-topic Home,
+zoom aliases, boundary aliases and priority 1/2/3. Move Up/Down and Select None
+now show their real bindings instead of appearing unassigned. Edit/navigation
+reference rows also derive their keys from dispatch. Escape remains a separate
+Cancel reference entry: it clears interaction state as well as selection, and
+is not converted into an ordinary action. Clipboard events and type-to-edit also
+retain their separate event paths. Existing palette IDs, key order, action guards
+and Undo behavior are unchanged. This is a map/insertion inventory, not a claim
+that every binding applies in Outline or focused text controls.
+Three-platform simulated inventory tests check every alias, deduplication,
+catalog/reference agreement and stable unique IDs. Real key tests cover
+Tab/Insert, Delete/Backspace, both Redo keys, Home/Ctrl-R, priority edits with
+Undo, modal isolation and preservation of pending title input. The compact
+shipped-locale/appearance/scale matrix now measures long alias paint/clip bounds,
+in addition to filters, keyboard traversal, live resize and footer reachability.
+The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled passed; final reference/viewport
+regressions, native all-target lint and WASM lint also passed.
+Menu layout/labels, Outline-specific shortcuts, conflict/reserved-key auditing,
+custom rebinding/reset and native input/accessibility acceptance remain open.
+
+**Delivered R1 follow-up - command-aware menu shortcut hints:** main File/Edit/
+Insert/AI/Tools/View/Help buttons and canvas topic-context buttons now resolve
+shortcut hints by command identity using the shared global/contextual binding
+inventory. Nested Select/Arrange entries reveal their existing bindings too.
+Catalog and menu hints share egui's platform formatter rather than duplicating
+key strings or replacing Ctrl/Alt text manually. Non-character key names and
+macOS modifier symbols follow egui; existing catalog IDs, dispatch order,
+command handlers, availability, context accessible names and popup wrappers are
+unchanged. Clipboard Ctrl/Cmd+X/C/V are explicit metadata for existing OS events,
+also visible in the read-only reference; they are not added to key dispatch or
+the command palette. Direct review narrowed an initial palette addition to
+metadata only, avoiding an unrequested clipboard focus/view behavior change.
+Tests simulate Windows/macOS/Linux in 640x240, 640x360 and 1200x800 viewports,
+checking actual hint paint/clip bounds, catalog/reference parity, availability,
+nested Select/Arrange and context labels. Existing locale/theme/scale matrices
+retain popup geometry, focus/activation, Escape and unchanged documents.
+Clipboard metadata tests preserve copy/cut output, OS paste requests, real paste
+events and Undo. Host-dependent expectations in adjacent menu tests now use the
+same platform formatter instead of assuming Ctrl on every target.
+The configured reviewer could not start; the user approved direct planning/
+finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled passed before the final clipboard
+metadata-only narrowing; final menu/reference/viewport/palette regressions and
+native all-target/WASM lint passed after that narrowing.
+This is not completion of R1 or P4: menu layout/labels, Outline-specific shortcut
+metadata, custom rebinding/conflict/reserved-key/reset handling and native
+keyboard-layout/accessibility acceptance remain open. Default hint metadata is
+immutable; inactive saved shortcut overrides are not applied.
+
+**Delivered R1 follow-up - view-aware Outline shortcut metadata:** the eight
+existing Outline action bindings now supply dispatch and live menu, palette and
+reference hints. Map defaults remain compatible for static catalog consumers;
+runtime metadata uses the current view without changing command IDs, handlers,
+availability, key order or focus guards. Outline advertises Ctrl/Cmd+Y for Redo,
+Tab for child insertion, Delete and F2, not Map-only aliases. Shared insertion/
+priority bindings remain visible in both views. Up/Down descriptors are reused
+by the original visible-row traversal, never geometric canvas navigation.
+The read-only reference names its current view using existing localized labels;
+Map-only clipboard-event and canvas-Escape rows are omitted from Outline.
+
+Three-platform simulations cover binding completeness, IDs, aliases and actual
+menu hint paint. Outline regressions exercise collapsed-row navigation, Delete,
+sidebar-focus Undo/Redo and focus preservation; the existing locale/theme/scale
+toolbar and compact-reference matrices retain their coverage. The configured
+reviewer could not start; the user approved direct planning/finished review for
+this slice. No rubber-duck review is claimed. Full workspace CI with live AI
+disabled and WASM lint pass. This closes the metadata follow-up,
+not R1: editable bindings, modifier/reserved-key conflict auditing (including
+existing Outline modified-key matching), presets/reset, native keyboard-layout/
+IME/accessibility acceptance and OS-integrated P4 menus remain open.
+
+**Delivered R1/R2 user follow-up - Zen Escape and Search & Replace height:**
+Zen now exits on Escape with a focused Map canvas or Outline topic, not only
+when no widget owns focus. Existing F11 dispatch remains compatible, but the
+ten-locale entry hint advertises Escape so web users need not rely on a browser
+fullscreen key. Topic/text edits, relationship creation, pointer gestures,
+search, settings, popups, palette and modals retain Escape ownership before Zen;
+exiting Zen consumes the event before it can clear the canvas selection.
+Focused search previously lost Escape to text/canvas handling. Search dismissal
+now consumes it before the center view, clears the filter and leaves Zen active;
+a subsequent Escape exits Zen without changing the document/selection.
+
+Search & Replace inherited egui Area's earlier compact height, causing clipped
+Replace All content even with room available. The content now recalculates its
+maximum height from actual remaining viewport space every frame, allowing
+replacement controls to expand naturally instead of increasing a fixed constant.
+Overflow scrolling is retained only when content genuinely exceeds available
+height. The shipped-locale/light/dark matrix includes normal and high-scale
+viewports with simultaneous Search/Replace/Replace All paint visibility,
+replacement toggle expansion, short-window focus reveal, edits/Undo and dismissal.
+Zen tests exercise real focused topics, inline editors, search, palette/modal,
+relationship cancellation and context-menu Escape priority. Direct planning/
+finished review was user-approved after reviewer startup failed; no rubber-duck
+review is claimed. Full workspace CI with live AI disabled and WASM lint pass.
+Browser fullscreen and native OS input acceptance remain
+separate from these shared UI regressions.
+
+**Delivered R1 prerequisite - default shortcut conflict audit:** read-only
+diagnostics now compose the real global -> insertion -> Map/Outline action
+tables in dispatch order. They distinguish an exact duplicate from a declared
+gesture shadowed by a less-specific earlier command, ignore same-command
+aliases, and use egui's actual logical modifier matching with host Ctrl/Cmd
+normalization. A separate diagnostic resolves an arbitrary gesture without
+executing it. Scope is an idle, focused topic with no modal/popup/search/editor;
+Outline visible-row traversal, clipboard events, type-to-edit and OS/browser
+reserved keys are not falsely modeled as command bindings.
+
+The current Map inventory has one cross-command declared collision:
+Ctrl/Cmd+Shift+H advertises Fit but the earlier Ctrl/Cmd+H Find & Replace handler
+consumes it. Outline has no declared collision, but probing Ctrl/Cmd+Shift+Z
+confirms its existing Undo handler consumes that undeclared modifier variant;
+the same gesture is an explicit Redo binding in Map. These are recorded
+behavioral decisions, not silently changed defaults. Fit remains available by
+menu/palette. Future editor work must choose the modifier-specificity policy,
+reconcile hints for unreachable bindings, assign stable persisted command
+identities (catalog row numbers are not a migration contract), and separately
+validate reserved host/browser keys before applying overrides.
+
+Tests compare every declared binding plus extra Shift/Alt variants against
+egui InputState consumption on three simulated hosts, distinguish physical
+Ctrl from Cmd on macOS, and reproduce Find & Replace interception and Map/
+Outline Undo/Redo behavior through real app frames. Targeted audit/UI tests
+and native all-target/WASM lint pass. The configured reviewer could not start;
+the user approved direct planning/finished review for this audit slice.
+No rubber-duck review is claimed. No dispatch, hints, preferences or saved
+overrides are changed; R1 shortcut editing and P4 remain open.
+
+**Delivered R1 follow-up - reachable shortcut hints:** main/context menus,
+runtime palette and reference aliases now exclude declared gestures intercepted
+by a different command in the actual default dispatch order. The static legacy
+catalog uses the same rule with Windows Map defaults; runtime hints use the
+current view and host modifier semantics. Fit Map no longer advertises
+Ctrl/Cmd+Shift+H, and appears under Unassigned in the read-only reference.
+It remains available through menu/palette; no dispatch order, key mapping,
+availability, command ID or saved override changes. Raw inventories and the
+conflict report retain the declared collision for the future keymap decision.
+Clipboard-event and navigation reference metadata are retained outside the
+command-key audit. Immutable dispatch tables are cached rather than rebuilt
+for every hint/alias lookup.
+
+Three-host inventory tests verify intercepted gestures are absent while other
+aliases/IDs remain consistent. Tests cover Fit's unassigned state, enabled
+main/context menu entries, real click execution, actual painted menu hints and
+existing compact reference geometry. Targeted shortcut/audit/menu/reference
+and Fit execution tests plus native all-target/WASM lint pass. Direct planning/
+finished review was user-approved after reviewer startup failed; no rubber-duck
+review is claimed. Editable bindings, keymap decisions, reserved keys and native
+input/accessibility/P4 acceptance remain open.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

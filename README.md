@@ -126,7 +126,11 @@ those system-owned controls. WinGet publishing remains paused.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
-- Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts.
+  Escape exits Zen after closing any active editor, search or popup first;
+  it does not rely on F11, which browsers may reserve for fullscreen.
+- Search & Replace grows to show its controls without internal scrolling when
+  space permits; short/high-scale windows retain bounded scrolling.
 - Settings > Editor > Show alignment guides optionally shows nearby matching
   topic-group edges/centers during free-placement dragging. It is off by default,
   does not snap positions, and does not change document styles or Undo history.
@@ -134,7 +138,15 @@ those system-owned controls. WinGet publishing remains paused.
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
-  windows while keeping Close visible. Bindings are read-only for now.
+  windows while keeping Close visible. Global bindings come from the dispatch
+  table, with platform-specific hints in the reference and command palette.
+  Main/context menu hints use the same command-aware binding lookup and platform
+  formatter, including nested Select/Arrange actions. Hints follow the current
+  Map/Outliner view; the reference names that view and lists only its bindings.
+  Outline retains its existing topic-row focus rules and Ctrl/Cmd+Y redo.
+  Intercepted bindings are not advertised: Fit Map remains clickable and appears
+  unassigned because Ctrl/Cmd+Shift+H currently opens Find & Replace.
+  Bindings remain read-only.
 - The command palette keeps search visible above scrollable results on small
   windows. Arrow keys reveal the selected result; Escape closes without clearing
   the map selection or changing a pending title edit.
@@ -198,8 +210,13 @@ those system-owned controls. WinGet publishing remains paused.
   stay offline. Remote images are not fetched (alternative text is shown), and
   raw HTML is displayed as inert text rather than executed.
 - F1 opens a searchable keyboard reference with category and unassigned-command
-  filters, including navigation aliases. It is read-only; custom rebinding and
-  conflict editing are not yet available. Ctrl+Q requests normal window closing,
+  filters. Map/insertion hints and aliases come from dispatch, including Redo
+  Ctrl/Cmd+Y, Subtopic Insert, Delete Backspace and priority keys. These contextual
+  bindings are not active in every view or focused text field.
+  Cut/Copy/Paste shortcut metadata describes existing clipboard events; it does
+  not add new palette actions or intercept clipboard keys.
+  It is read-only; custom rebinding and conflict editing are not yet available.
+  Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
 
 - Home offers rendered previews of 35 original templates across eight categories.

@@ -71,6 +71,85 @@ fn assert_outline_controls(h: &Harness<'_, ThinodaApp>) {
 }
 
 #[test]
+fn outline_navigation_skips_hidden_rows_and_declared_redo_restores_edits() {
+    let mut app = ThinodaApp::headless();
+    app.mode = CenterMode::Outliner;
+    app.settings.show_format_panel = false;
+    let doc = app.doc_mut().unwrap();
+    doc.doc
+        .edit_sheet("Collapsed fixture", |sheet| {
+            let branch = sheet.add_child(sheet.root, None, "Collapsed branch");
+            sheet.add_child(branch, None, "Hidden descendant");
+            sheet.set_collapsed(branch, true)?;
+            sheet.add_child(sheet.root, None, "Visible sibling");
+            Ok(())
+        })
+        .unwrap();
+    let branch = doc
+        .doc
+        .sheet()
+        .topics
+        .values()
+        .find(|topic| topic.title == "Collapsed branch")
+        .unwrap()
+        .id;
+    let sibling = doc
+        .doc
+        .sheet()
+        .topics
+        .values()
+        .find(|topic| topic.title == "Visible sibling")
+        .unwrap()
+        .id;
+    doc.view.select_only(branch);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Collapsed branch")
+        .click();
+    h.run_steps(3);
+    h.key_press(egui::Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.primary(), Some(sibling));
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Visible sibling")
+            .is_focused()
+    );
+    h.key_press(egui::Key::ArrowUp);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().view.primary(), Some(branch));
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Collapsed branch")
+            .is_focused()
+    );
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.key_press(egui::Key::Delete);
+    h.run_steps(3);
+    let deleted = h.state().doc().unwrap().doc.workbook().clone();
+    assert_ne!(before, deleted);
+    h.get_by_role_and_label(Role::Button, t("Format Panel"))
+        .focus();
+    h.run_steps(3);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Format Panel"))
+            .is_focused()
+    );
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Y);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &deleted);
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Format Panel"))
+            .is_focused()
+    );
+}
+
+#[test]
 fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {

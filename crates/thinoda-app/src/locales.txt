@@ -418,7 +418,7 @@ Friday|Viernes|Vendredi|Fredag|Vrijdag|Sexta-feira|Venerdì|Piątek
 Saturday|Sábado|Samedi|Lørdag|Zaterdag|Sábado|Sabato|Sobota
 Sunday|Domingo|Dimanche|Søndag|Zondag|Domingo|Domenica|Niedziela
 Open or select a map to show the Format Panel|Abre o selecciona un mapa para mostrar el panel de formato|Ouvrez ou sélectionnez une carte pour afficher le volet de format|Åbn eller vælg et kort for at vise formatpanelet|Open of selecteer een map om het opmaakpaneel te tonen|Abra ou selecione um mapa para mostrar o painel de formato|Apri o seleziona una mappa per mostrare il pannello formato|Otwórz lub wybierz mapę, aby pokazać panel formatowania
-Zen Mode: press F11 to exit|Modo Zen: pulsa F11 para salir|Mode Zen : appuyez sur F11 pour quitter|Zen-tilstand: tryk F11 for at afslutte|Zenmodus: druk op F11 om af te sluiten|Modo Zen: prima F11 para sair|Modalità Zen: premi F11 per uscire|Tryb Zen: naciśnij F11, aby wyjść
+Zen Mode: press Escape to exit|Modo Zen: pulsa Escape para salir|Mode Zen : appuyez sur Échap pour quitter|Zen-tilstand: tryk Escape for at afslutte|Zenmodus: druk op Escape om af te sluiten|Modo Zen: prima Escape para sair|Modalità Zen: premi Esc per uscire|Tryb Zen: naciśnij Escape, aby wyjść
 Expand ideas|Desarrollar ideas|Développer les idées|Udbyg idéer|Ideeën uitbreiden|Desenvolver ideias|Sviluppa idee|Rozwiń pomysły
 Add subtopic|Añadir subtema|Ajouter un sous-sujet|Tilføj underemne|Subonderwerp toevoegen|Adicionar subtópico|Aggiungi sottonodo|Dodaj podwęzeł
 Add child topic|Añadir tema hijo|Ajouter un sujet enfant|Tilføj underordnet emne|Onderliggend onderwerp toevoegen|Adicionar tópico descendente|Aggiungi nodo figlio|Dodaj węzeł podrzędny
