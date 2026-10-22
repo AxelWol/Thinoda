@@ -1074,6 +1074,29 @@ rubber-duck reviews found no blockers; full workspace CI with live AI disabled a
 WASM lint pass. Actual native GPU/touch/screen-reader checks,
 the floating view bar and remaining R2 preferences are not claimed complete.
 
+**Delivered R1 follow-up - global-shortcut catalog consistency:** one ordered
+binding table now drives global dispatch and the palette/reference's global
+shortcut hints. All 24 existing global bindings are represented exactly once;
+Close Tab, Next Document and Command Palette were previously absent from the
+catalog. The live catalog resolves Close Tab to the current active document,
+including normal dirty-close prompting, rather than embedding tab zero.
+Existing catalog IDs are preserved by appending the new commands. Dispatch
+precedence, text-input style-copy/paste guards, modal ownership, Escape and
+file-drop handling remain unchanged. Global hints use egui's platform formatter;
+contextual and menu hints display Cmd/Option rather than Ctrl/Alt on macOS.
+Three-platform simulated tests cover catalog completeness/uniqueness, exact
+global hints, menu labels and real global dispatch; actual palette keyboard
+activation closes the active clean tab and preserves the active dirty tab with
+its save prompt. Shipped-locale/appearance/scale viewport regressions remain in
+place. These simulations do not replace native keyboard-layout/OS acceptance.
+The configured reviewer could not start; the user approved direct planning and
+finished-step review. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled and WASM lint pass.
+This is groundwork, not the complete shared command model or shortcut editor:
+contextual bindings/menu metadata still have separate definitions, saved
+`shortcuts_overrides` remain inactive, and conflict validation, reserved-key
+handling, rebinding/reset UI and P4 native menu backends remain open.
+
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
 budget. Its frame is bounded by the current logical viewport and actual frame

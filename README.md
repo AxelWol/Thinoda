@@ -134,7 +134,9 @@ those system-owned controls. WinGet publishing remains paused.
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
-  windows while keeping Close visible. Bindings are read-only for now.
+  windows while keeping Close visible. Global bindings come from the dispatch
+  table, with platform-specific hints in the reference and command palette.
+  Menus show Cmd/Option on macOS instead of Ctrl/Alt. Bindings remain read-only.
 - The command palette keeps search visible above scrollable results on small
   windows. Arrow keys reveal the selected result; Escape closes without clearing
   the map selection or changing a pending title edit.

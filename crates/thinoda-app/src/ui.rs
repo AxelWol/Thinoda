@@ -367,7 +367,7 @@ impl ThinodaApp {
         self.update_search();
 
         // Command palette.
-        let mut cmds = Self::palette_commands();
+        let mut cmds = self.command_catalog(&ctx);
         self.add_quick_style_commands(&mut cmds);
         self.add_custom_theme_commands(&mut cmds);
         let list: Vec<thinoda_ui::Command> = cmds
@@ -573,8 +573,12 @@ impl ThinodaApp {
 
     fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
-        let item =
-            |ui: &mut Ui, label: &str, sc: &str| ui.add(egui::Button::new(label).shortcut_text(sc));
+        let item = |ui: &mut Ui, label: &str, sc: &str| {
+            ui.add(
+                egui::Button::new(label)
+                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc)),
+            )
+        };
         if item(ui, t("New"), "Ctrl+N").clicked() {
             *cmd = Some(Cmd::New);
         }
@@ -629,7 +633,8 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Save),
-                egui::Button::new(t("Save")).shortcut_text("Ctrl+S"),
+                egui::Button::new(t("Save"))
+                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+S")),
             )
             .clicked()
         {
@@ -638,7 +643,9 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::SaveAs),
-                egui::Button::new(t("Save As…")).shortcut_text("Ctrl+Shift+S"),
+                egui::Button::new(t("Save As…")).shortcut_text(
+                    crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+Shift+S"),
+                ),
             )
             .clicked()
         {
@@ -679,7 +686,8 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Print),
-                egui::Button::new(t("Print")).shortcut_text("Ctrl+P"),
+                egui::Button::new(t("Print"))
+                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+P")),
             )
             .clicked()
         {
@@ -703,7 +711,7 @@ impl ThinodaApp {
             ui.add(if sc.is_empty() {
                 button
             } else {
-                button.shortcut_text(sc)
+                button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
             })
         };
         menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
@@ -726,7 +734,7 @@ impl ThinodaApp {
                 let button = if sc.is_empty() {
                     button
                 } else {
-                    button.shortcut_text(sc)
+                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
                 };
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
@@ -780,7 +788,7 @@ impl ThinodaApp {
                 let button = if shortcut.is_empty() {
                     button
                 } else {
-                    button.shortcut_text(shortcut)
+                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), shortcut))
                 };
                 if ui
                     .add_enabled(self.command_available(&command), button)
@@ -841,7 +849,7 @@ impl ThinodaApp {
                 let button = if sc.is_empty() {
                     button
                 } else {
-                    button.shortcut_text(sc)
+                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
                 };
                 if ui
                     .add_enabled(self.command_available(&command), button)
@@ -859,7 +867,9 @@ impl ThinodaApp {
                 if ui
                     .add_enabled(
                         self.command_available(&command),
-                        egui::Button::new(t(label)).shortcut_text(shortcut),
+                        egui::Button::new(t(label)).shortcut_text(
+                            crate::shortcut_browser::platform_hint(ui.ctx(), shortcut),
+                        ),
                     )
                     .clicked()
                 {
@@ -944,7 +954,7 @@ impl ThinodaApp {
                 let button = if sc.is_empty() {
                     button
                 } else {
-                    button.shortcut_text(sc)
+                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
                 };
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
@@ -1304,7 +1314,11 @@ impl ThinodaApp {
         });
         let mut item = |ui: &mut Ui, label: &str, sc: &str, c: Cmd, enabled: bool| {
             if ui
-                .add_enabled(enabled, egui::Button::new(label).shortcut_text(sc))
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(label)
+                        .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc)),
+                )
                 .accessible_name(label)
                 .clicked()
             {

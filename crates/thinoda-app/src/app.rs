@@ -1668,9 +1668,32 @@ impl ThinodaApp {
 
     /// Global keyboard shortcuts that work regardless of canvas focus.
     pub fn global_shortcuts(&mut self, ctx: &Context) {
+        for (sc, c) in Self::global_shortcut_bindings(self.active) {
+            if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
+                continue;
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
+                self.exec(ctx, c);
+                return;
+            }
+        }
+        if self.zen
+            && ctx.memory(|m| m.focused()).is_none()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.zen = false;
+        }
+        // Drag & drop of files onto the window.
+        for p in files::dropped_files(ctx) {
+            self.open_path(&p);
+        }
+    }
+
+    /// Ordered dispatch bindings, also used by command-palette and shortcut hints.
+    pub fn global_shortcut_bindings(active: usize) -> Vec<(KeyboardShortcut, Cmd)> {
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
-        let table: Vec<(KeyboardShortcut, Cmd)> = vec![
+        vec![
             (
                 KeyboardShortcut::new(Modifiers::NONE, Key::F7),
                 Cmd::MapShot,
@@ -1694,10 +1717,7 @@ impl ThinodaApp {
             (KeyboardShortcut::new(cmd, Key::N), Cmd::New),
             (KeyboardShortcut::new(cs, Key::O), Cmd::ToggleOutliner),
             (KeyboardShortcut::new(cmd, Key::O), Cmd::Open),
-            (
-                KeyboardShortcut::new(cmd, Key::W),
-                Cmd::CloseTab(self.active),
-            ),
+            (KeyboardShortcut::new(cmd, Key::W), Cmd::CloseTab(active)),
             (KeyboardShortcut::new(cmd, Key::Q), Cmd::Quit),
             (KeyboardShortcut::new(cmd, Key::F), Cmd::Find),
             (KeyboardShortcut::new(cmd, Key::H), Cmd::FindReplace),
@@ -1722,26 +1742,7 @@ impl ThinodaApp {
                 KeyboardShortcut::new(Modifiers::NONE, Key::F1),
                 Cmd::Shortcuts,
             ),
-        ];
-        for (sc, c) in table {
-            if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
-                continue;
-            }
-            if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
-                self.exec(ctx, c);
-                return;
-            }
-        }
-        if self.zen
-            && ctx.memory(|m| m.focused()).is_none()
-            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
-        {
-            self.zen = false;
-        }
-        // Drag & drop of files onto the window.
-        for p in files::dropped_files(ctx) {
-            self.open_path(&p);
-        }
+        ]
     }
 
     /// Recomputes search hits when the query or document changed.
@@ -1891,18 +1892,37 @@ impl ThinodaApp {
         self.update_search();
     }
 
-    /// The commands listed in the command palette.
+    /// The live catalog resolves active-document commands and platform modifier names.
+    pub fn command_catalog(&self, ctx: &Context) -> Vec<(Cmd, thinoda_ui::Command)> {
+        let bindings = Self::global_shortcut_bindings(self.active);
+        Self::palette_commands()
+            .into_iter()
+            .map(|(mut command, mut metadata)| {
+                if matches!(command, Cmd::CloseTab(_)) {
+                    command = Cmd::CloseTab(self.active);
+                }
+                if let Some((binding, _)) = bindings.iter().find(|(_, c)| *c == command) {
+                    metadata.shortcut = Some(ctx.format_shortcut(binding));
+                } else if let Some(shortcut) = &mut metadata.shortcut {
+                    *shortcut = crate::shortcut_browser::platform_hint(ctx, shortcut);
+                }
+                (command, metadata)
+            })
+            .collect()
+    }
+
+    /// Platform-neutral catalog with default non-macOS shortcut names.
     pub fn palette_commands() -> Vec<(Cmd, thinoda_ui::Command)> {
         use thinoda_ui::Command as C;
         let mut v: Vec<(Cmd, &str, &str, &str)> = vec![
-            (Cmd::New, "New", "Ctrl+N", "File"),
-            (Cmd::Open, "Open…", "Ctrl+O", "File"),
-            (Cmd::Quit, "Quit", "Ctrl+Q", "File"),
-            (Cmd::Save, "Save", "Ctrl+S", "File"),
-            (Cmd::SaveAs, "Save As…", "Ctrl+Shift+S", "File"),
+            (Cmd::New, "New", "", "File"),
+            (Cmd::Open, "Open…", "", "File"),
+            (Cmd::Quit, "Quit", "", "File"),
+            (Cmd::Save, "Save", "", "File"),
+            (Cmd::SaveAs, "Save As…", "", "File"),
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
-            (Cmd::Settings, "Settings…", "Ctrl+,", "Edit"),
+            (Cmd::Settings, "Settings…", "", "Edit"),
             (
                 Cmd::Canvas(Action::InsertChild),
                 "Subtopic",
@@ -1954,15 +1974,10 @@ impl ThinodaApp {
             (
                 Cmd::EditField(FocusField::Hyperlink),
                 "Hyperlink",
-                "Ctrl+K",
+                "",
                 "Insert",
             ),
-            (
-                Cmd::EditField(FocusField::Notes),
-                "Notes",
-                "Ctrl+Shift+N",
-                "Insert",
-            ),
+            (Cmd::EditField(FocusField::Notes), "Notes", "", "Insert"),
             (Cmd::Canvas(Action::ToggleTodo), "To-Do", "", "Insert"),
             (Cmd::Canvas(Action::Undo), "Undo", "Ctrl+Z", "Edit"),
             (Cmd::Canvas(Action::Redo), "Redo", "Ctrl+Shift+Z", "Edit"),
@@ -1991,30 +2006,30 @@ impl ThinodaApp {
                 "Ctrl+A",
                 "Edit",
             ),
-            (Cmd::Find, "Find…", "Ctrl+F", "Edit"),
-            (Cmd::FindReplace, "Find and Replace…", "Ctrl+H", "Edit"),
-            (Cmd::CopyStyle, "Copy Style", "Ctrl+Alt+C", "Edit"),
-            (Cmd::PasteStyle, "Paste Style", "Ctrl+Alt+V", "Edit"),
+            (Cmd::Find, "Find…", "", "Edit"),
+            (Cmd::FindReplace, "Find and Replace…", "", "Edit"),
+            (Cmd::CopyStyle, "Copy Style", "", "Edit"),
+            (Cmd::PasteStyle, "Paste Style", "", "Edit"),
             (Cmd::ResetStyle, "Reset Style", "", "Edit"),
             (Cmd::SaveQuickStyle, "Save Quick Style…", "", "Style"),
             (Cmd::EditCustomTheme, "Edit Custom Theme…", "", "Style"),
             (Cmd::Canvas(Action::Indent), "Indent", "", "Edit"),
             (Cmd::Canvas(Action::Outdent), "Outdent", "", "Edit"),
-            (Cmd::PreviousSheet, "Previous Sheet", "Ctrl+PageUp", "View"),
-            (Cmd::NextSheet, "Next Sheet", "Ctrl+PageDown", "View"),
+            (Cmd::PreviousSheet, "Previous Sheet", "", "View"),
+            (Cmd::NextSheet, "Next Sheet", "", "View"),
             (Cmd::CopySheet, "Copy Sheet", "", "File"),
             (Cmd::PasteSheet, "Paste Sheet", "", "File"),
             (Cmd::SaveSheetAs, "Save Sheet As…", "", "File"),
             (Cmd::MergeFiles, "Merge Map Files…", "", "File"),
             (Cmd::MaskedCopy, "Create Masked Copy…", "", "File"),
-            (Cmd::MapShot, "Map Shot", "F7", "Tools"),
-            (Cmd::Print, "Print", "Ctrl+P", "File"),
+            (Cmd::MapShot, "Map Shot", "", "Tools"),
+            (Cmd::Print, "Print", "", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",
-                "Ctrl+Shift+I",
+                "",
                 "AI",
             ),
             (
@@ -2041,14 +2056,9 @@ impl ThinodaApp {
                 "",
                 "AI",
             ),
-            (Cmd::ToggleOutliner, "Outliner", "Ctrl+Shift+O", "View"),
-            (Cmd::ToggleZen, "Zen Mode", "F11", "View"),
-            (
-                Cmd::ToggleFormatPanel,
-                "Format Panel",
-                "Ctrl+Shift+R",
-                "View",
-            ),
+            (Cmd::ToggleOutliner, "Outliner", "", "View"),
+            (Cmd::ToggleZen, "Zen Mode", "", "View"),
+            (Cmd::ToggleFormatPanel, "Format Panel", "", "View"),
             (Cmd::ToggleStatusBar, "Status Bar", "", "View"),
             (Cmd::ToggleSymbolsPanel, "Symbols", "", "View"),
             (Cmd::Canvas(Action::ZoomIn), "Zoom In", "Ctrl++", "View"),
@@ -2091,7 +2101,7 @@ impl ThinodaApp {
                 "Appearance",
             ),
             (Cmd::SetTheme(SettingsTheme::Dark), "Dark", "", "Appearance"),
-            (Cmd::Shortcuts, "Keyboard Shortcuts", "F1", "Help"),
+            (Cmd::Shortcuts, "Keyboard Shortcuts", "", "Help"),
             (Cmd::UserGuide, "User Guide", "", "Help"),
             (Cmd::QuickStart, "Quick Start", "", "Help"),
             (Cmd::Feedback, "Send Feedback…", "", "Help"),
@@ -2112,6 +2122,12 @@ impl ThinodaApp {
                 v.push((Cmd::Canvas(action), label, "", "Edit"));
             }
         }
+        v.extend([
+            (Cmd::CloseTab(0), "Close Tab", "", "File"),
+            (Cmd::NextDoc, "Next Document", "", "View"),
+            (Cmd::Palette, "Command Palette…", "", "Edit"),
+        ]);
+        let bindings = Self::global_shortcut_bindings(0);
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {
@@ -2121,7 +2137,9 @@ impl ThinodaApp {
                     t(title).to_string()
                 };
                 let mut c = C::new(i.to_string(), title).category(t(cat));
-                if !sc.is_empty() {
+                if let Some((binding, _)) = bindings.iter().find(|(_, command)| *command == cmd) {
+                    c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
+                } else if !sc.is_empty() {
                     c = c.shortcut(sc);
                 }
                 (cmd, c)

@@ -1,5 +1,13 @@
 use crate::{app::ThinodaApp, i18n::t};
 
+pub(crate) fn platform_hint(ctx: &egui::Context, shortcut: &str) -> String {
+    if ctx.os().is_mac() {
+        shortcut.replace("Ctrl+", "Cmd+").replace("Alt+", "Option+")
+    } else {
+        shortcut.to_owned()
+    }
+}
+
 #[derive(Default)]
 pub struct ShortcutBrowser {
     pub query: String,
@@ -19,7 +27,8 @@ impl ThinodaApp {
             self.dialogs.shortcuts = false;
             return;
         }
-        let mut commands: Vec<_> = Self::palette_commands()
+        let mut commands: Vec<_> = self
+            .command_catalog(ctx)
             .into_iter()
             .map(|(_, command)| command)
             .collect();
@@ -33,7 +42,7 @@ impl ThinodaApp {
             commands.push(
                 thinoda_ui::Command::new(binding, t(title))
                     .category(t("Navigation"))
-                    .shortcut(binding),
+                    .shortcut(platform_hint(ctx, binding)),
             );
         }
         let categories: std::collections::BTreeSet<_> = commands

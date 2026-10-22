@@ -69,6 +69,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 global-shortcut catalog consistency: the palette and searchable reference
+  now derive all 24 global bindings from the ordered dispatch table. Close Tab,
+  Next Document and Command Palette are included; live Close Tab resolves the
+  active document and retains unsaved-work prompts. Platform-aware hints use
+  egui formatting for global commands and Cmd/Option names for contextual/menu
+  hints on macOS. Existing command IDs and key precedence remain unchanged.
+  Custom rebinding, conflicts/reserved keys, unified contextual/menu metadata
+  and native keyboard-layout acceptance remain open; this is not P4 delivery.
+  The user approved direct planning/finished review after reviewer startup failed.
 - R1 Outline keyboard ownership: structural shortcuts now belong to focused
   topic rows/disclosures, not the action toolbar, sidebar or other chrome.
   Stable topic-scoped IDs, explicit pointer focus and row-focus restoration
