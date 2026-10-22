@@ -74,6 +74,18 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 command-aware menu hints: main File/Edit/Insert/AI/Tools/View/Help and canvas
+  context buttons derive hints from the same binding lookup as the catalog.
+  Nested Select/Arrange entries show existing central-topic, selection and move
+  bindings instead of omitting them. egui supplies platform formatting, removing
+  duplicated key strings and manual Ctrl/Cmd substitutions. Command order,
+  handlers, availability and context accessible names are preserved.
+  Cut/Copy/Paste are documented as read-only event metadata, not new palette
+  actions or key dispatch. Three-platform simulations check actual hint paint/
+  clip bounds, availability and nested menus down to 640x240; existing localized
+  geometry matrices remain. Direct planning/finished review was user-approved
+  after reviewer startup failed. Outline-specific metadata, shortcut editing,
+  reserved-key conflicts and native/P4 acceptance remain open.
 - R1 contextual-shortcut inventory: map and insertion dispatch tables now supply
   contextual palette hints and every alias in the searchable reference. Redo,
   Insert/Backspace, central-topic, zoom, boundary and priority aliases are visible;
@@ -82,7 +94,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   Keys, ordering, clipboard/text-input/modal guards and command IDs are preserved.
   Tests cover inventory parity, real alias execution/Undo and long hint paint
   within compact localized viewports. Direct planning/finished review was
-  user-approved after reviewer startup failed. Menu/Outline metadata, rebinding,
+  user-approved after reviewer startup failed. Outline metadata, rebinding,
   reserved-key conflicts and native acceptance remain open.
 - R1 global-shortcut catalog consistency: the palette and searchable reference
   now derive all 24 global bindings from the ordered dispatch table. Close Tab,
@@ -90,7 +102,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   active document and retains unsaved-work prompts. Platform-aware hints use
   egui formatting for global commands and Cmd/Option names for contextual/menu
   hints on macOS. Existing command IDs and key precedence remain unchanged.
-  Custom rebinding, conflicts/reserved keys, unified menu/Outline metadata
+  Custom rebinding, conflicts/reserved keys, unified Outline metadata
   and native keyboard-layout acceptance remain open; this is not P4 delivery.
   The user approved direct planning/finished review after reviewer startup failed.
 - R1 Outline keyboard ownership: structural shortcuts now belong to focused

@@ -1093,7 +1093,7 @@ The configured reviewer could not start; the user approved direct planning and
 finished-step review. No rubber-duck review is claimed.
 Full workspace CI with live AI disabled and WASM lint pass.
 This is groundwork, not the complete shared command model or shortcut editor:
-menu metadata and Outline bindings still have separate definitions, saved
+menu layout/labels and Outline bindings still have separate definitions, saved
 `shortcuts_overrides` remain inactive, and conflict validation, reserved-key
 handling, rebinding/reset UI and P4 native menu backends remain open.
 
@@ -1120,8 +1120,37 @@ The configured reviewer could not start; the user explicitly approved direct
 planning/finished review for this slice. No rubber-duck review is claimed.
 Full workspace CI with live AI disabled passed; final reference/viewport
 regressions, native all-target lint and WASM lint also passed.
-Menu hint definitions, Outline-specific shortcuts, conflict/reserved-key auditing,
+Menu layout/labels, Outline-specific shortcuts, conflict/reserved-key auditing,
 custom rebinding/reset and native input/accessibility acceptance remain open.
+
+**Delivered R1 follow-up - command-aware menu shortcut hints:** main File/Edit/
+Insert/AI/Tools/View/Help buttons and canvas topic-context buttons now resolve
+shortcut hints by command identity using the shared global/contextual binding
+inventory. Nested Select/Arrange entries reveal their existing bindings too.
+Catalog and menu hints share egui's platform formatter rather than duplicating
+key strings or replacing Ctrl/Alt text manually. Non-character key names and
+macOS modifier symbols follow egui; existing catalog IDs, dispatch order,
+command handlers, availability, context accessible names and popup wrappers are
+unchanged. Clipboard Ctrl/Cmd+X/C/V are explicit metadata for existing OS events,
+also visible in the read-only reference; they are not added to key dispatch or
+the command palette. Direct review narrowed an initial palette addition to
+metadata only, avoiding an unrequested clipboard focus/view behavior change.
+Tests simulate Windows/macOS/Linux in 640x240, 640x360 and 1200x800 viewports,
+checking actual hint paint/clip bounds, catalog/reference parity, availability,
+nested Select/Arrange and context labels. Existing locale/theme/scale matrices
+retain popup geometry, focus/activation, Escape and unchanged documents.
+Clipboard metadata tests preserve copy/cut output, OS paste requests, real paste
+events and Undo. Host-dependent expectations in adjacent menu tests now use the
+same platform formatter instead of assuming Ctrl on every target.
+The configured reviewer could not start; the user approved direct planning/
+finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled passed before the final clipboard
+metadata-only narrowing; final menu/reference/viewport/palette regressions and
+native all-target/WASM lint passed after that narrowing.
+This is not completion of R1 or P4: menu layout/labels, Outline-specific shortcut
+metadata, custom rebinding/conflict/reserved-key/reset handling and native
+keyboard-layout/accessibility acceptance remain open. Default hint metadata is
+immutable; inactive saved shortcut overrides are not applied.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

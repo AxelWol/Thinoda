@@ -83,36 +83,43 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                         "{language:?}/{theme:?}/{scale}: {category}: {rect:?}"
                     );
                 }
-                let settings_label = format!("{} Ctrl+,", t("Settings…"));
+                let settings_label = format!(
+                    "{} {}",
+                    t("Settings…"),
+                    ThinodaApp::shortcut_hint(&h.ctx, &Cmd::Settings).unwrap()
+                );
                 h.key_press(egui::Key::Escape);
                 h.run_steps(2);
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
-                for (category, first, shortcut, last) in [
-                    ("Sheet", "New Sheet", "", "Delete Sheet"),
-                    ("Insert", "Topic", "Enter", "Labels"),
+                for (category, first, command, last) in [
+                    ("Sheet", "New Sheet", Cmd::NewSheet, "Delete Sheet"),
+                    (
+                        "Insert",
+                        "Topic",
+                        Cmd::Canvas(thinoda_canvas::Action::InsertSibling),
+                        "Labels",
+                    ),
                     (
                         "AI",
                         thinoda_app::ai::AiCommand::Brainstorm.label(),
-                        "Ctrl+Shift+I",
+                        Cmd::Ai(thinoda_app::ai::AiCommand::Brainstorm),
                         thinoda_app::ai::AiCommand::ALL.last().unwrap().label(),
                     ),
-                    ("Tools", "Map Shot", "F7", "Merge Map Files…"),
-                    ("View", "Previous Sheet", "Ctrl+PageUp", "Collapse All"),
-                    ("Help", "Quick Start", "", "About Thinoda"),
+                    ("Tools", "Map Shot", Cmd::MapShot, "Merge Map Files…"),
+                    ("View", "Previous Sheet", Cmd::PreviousSheet, "Collapse All"),
+                    ("Help", "Quick Start", Cmd::QuickStart, "About Thinoda"),
                 ] {
                     h.get_by_label(thinoda_ui::icons::MENU).click();
                     h.run_steps(3);
                     reveal(&mut h, t(category));
                     h.get_by_role_and_label(Role::Button, t(category)).click();
                     h.run_steps(3);
-                    for (label, shortcut) in [(last, ""), (first, shortcut)] {
-                        let label = if shortcut.is_empty() {
-                            t(label).to_owned()
-                        } else {
-                            format!("{} {shortcut}", t(label))
-                        };
-                        reveal(&mut h, &label);
-                    }
+                    reveal(&mut h, t(last));
+                    let label = ThinodaApp::shortcut_hint(&h.ctx, &command).map_or_else(
+                        || t(first).to_owned(),
+                        |hint| format!("{} {hint}", t(first)),
+                    );
+                    reveal(&mut h, &label);
                     h.key_press(egui::Key::Escape);
                     h.run_steps(3);
                 }
@@ -121,7 +128,11 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 reveal(&mut h, t("File"));
                 h.get_by_role_and_label(Role::Button, t("File")).click();
                 h.run_steps(3);
-                let quit = format!("{} Ctrl+Q", t("Quit"));
+                let quit = format!(
+                    "{} {}",
+                    t("Quit"),
+                    ThinodaApp::shortcut_hint(&h.ctx, &Cmd::Quit).unwrap()
+                );
                 reveal(&mut h, &quit);
                 let templates = t("New from Template…");
                 reveal(&mut h, templates);
@@ -159,7 +170,13 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 reveal(&mut h, t("Edit"));
                 h.get_by_role_and_label(Role::Button, t("Edit")).click();
                 h.run_steps(3);
-                reveal(&mut h, &format!("{} Ctrl+Z", t("Undo")));
+                let undo = format!(
+                    "{} {}",
+                    t("Undo"),
+                    ThinodaApp::shortcut_hint(&h.ctx, &Cmd::Canvas(thinoda_canvas::Action::Undo))
+                        .unwrap()
+                );
+                reveal(&mut h, &undo);
                 h.get_by_role_and_label(Role::Button, &settings_label)
                     .focus();
                 h.run_steps(8);
@@ -171,7 +188,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                     "Focused Settings out of view: {rect:?}"
                 );
                 let settings_focus = h.ctx.memory(|memory| memory.focused()).unwrap();
-                reveal(&mut h, &format!("{} Ctrl+Z", t("Undo")));
+                reveal(&mut h, &undo);
                 h.key_press(egui::Key::ArrowUp);
                 h.run_steps(8);
                 let previous_focus = h.ctx.memory(|memory| memory.focused()).unwrap();

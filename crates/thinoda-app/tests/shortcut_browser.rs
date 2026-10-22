@@ -251,13 +251,13 @@ fn platform_menu_hints_and_global_dispatch_keep_the_same_commands() {
         h.run_steps(3);
         h.get_by_role_and_label(Role::Button, "Edit").click();
         h.run_steps(3);
-        let modifier = if os == OperatingSystem::Mac {
-            "Cmd"
-        } else {
-            "Ctrl"
-        };
-        h.get_by_role_and_label(Role::Button, &format!("Settings… {modifier}+,"));
-        h.get_by_role_and_label(Role::Button, &format!("Undo {modifier}+Z"));
+        for (label, command) in [
+            ("Settings…", Cmd::Settings),
+            ("Undo", Cmd::Canvas(thinoda_canvas::Action::Undo)),
+        ] {
+            let hint = ThinodaApp::shortcut_hint(&h.ctx, &command).unwrap();
+            h.get_by_role_and_label(Role::Button, &format!("{label} {hint}"));
+        }
         h.key_press(Key::Escape);
         h.run_steps(3);
         h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::P);

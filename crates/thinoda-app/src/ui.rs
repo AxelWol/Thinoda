@@ -23,6 +23,14 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+fn command_button<'a>(ctx: &Context, label: &'a str, command: &Cmd) -> egui::Button<'a> {
+    let button = egui::Button::new(label);
+    match ThinodaApp::shortcut_hint(ctx, command) {
+        Some(hint) => button.shortcut_text(hint),
+        None => button,
+    }
+}
+
 pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
     let margin = egui::Frame::menu(ui.style()).total_margin().sum().y;
     let height = (ui.ctx().content_rect().height() - margin).max(0.0);
@@ -573,13 +581,10 @@ impl ThinodaApp {
 
     fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
-        let item = |ui: &mut Ui, label: &str, sc: &str| {
-            ui.add(
-                egui::Button::new(label)
-                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc)),
-            )
+        let item = |ui: &mut Ui, label: &str, command: &Cmd| {
+            ui.add(command_button(ui.ctx(), label, command))
         };
-        if item(ui, t("New"), "Ctrl+N").clicked() {
+        if item(ui, t("New"), &Cmd::New).clicked() {
             *cmd = Some(Cmd::New);
         }
         menu_button(ui, t("New from Template…"), |ui| {
@@ -597,7 +602,7 @@ impl ThinodaApp {
                 });
             }
         });
-        if item(ui, t("Open…"), "Ctrl+O").clicked() {
+        if item(ui, t("Open…"), &Cmd::Open).clicked() {
             *cmd = Some(Cmd::Open);
         }
         menu_button(ui, t("Open Recent"), |ui| {
@@ -633,8 +638,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Save),
-                egui::Button::new(t("Save"))
-                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+S")),
+                command_button(ui.ctx(), t("Save"), &Cmd::Save),
             )
             .clicked()
         {
@@ -643,9 +647,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::SaveAs),
-                egui::Button::new(t("Save As…")).shortcut_text(
-                    crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+Shift+S"),
-                ),
+                command_button(ui.ctx(), t("Save As…"), &Cmd::SaveAs),
             )
             .clicked()
         {
@@ -686,8 +688,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Print),
-                egui::Button::new(t("Print"))
-                    .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), "Ctrl+P")),
+                command_button(ui.ctx(), t("Print"), &Cmd::Print),
             )
             .clicked()
         {
@@ -699,43 +700,33 @@ impl ThinodaApp {
             *cmd = Some(Cmd::ShowInFolder);
         }
         ui.separator();
-        if item(ui, t("Quit"), "Ctrl+Q").clicked() {
+        if item(ui, t("Quit"), &Cmd::Quit).clicked() {
             *cmd = Some(Cmd::Quit);
         }
     }
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         ui.set_min_width(220.0);
-        let item = |ui: &mut Ui, label: &str, sc: &str| {
-            let button = egui::Button::new(label);
-            ui.add(if sc.is_empty() {
-                button
-            } else {
-                button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
-            })
+        let item = |ui: &mut Ui, label: &str, command: &Cmd| {
+            ui.add(command_button(ui.ctx(), label, command))
         };
         menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
         menu_button(ui, t("Edit"), |ui| {
             let e = [
-                ("Undo", "Ctrl+Z", Cmd::Canvas(Action::Undo)),
-                ("Redo", "Ctrl+Shift+Z", Cmd::Canvas(Action::Redo)),
-                ("Cut", "Ctrl+X", Cmd::Canvas(Action::Cut)),
-                ("Copy", "Ctrl+C", Cmd::Canvas(Action::Copy)),
-                ("Paste", "Ctrl+V", Cmd::MenuPaste),
-                ("Duplicate", "Ctrl+D", Cmd::Canvas(Action::Duplicate)),
-                ("Delete", "Del", Cmd::Canvas(Action::Delete)),
-                ("Select All", "Ctrl+A", Cmd::Canvas(Action::SelectAll)),
-                ("Find…", "Ctrl+F", Cmd::Find),
-                ("Find and Replace…", "Ctrl+H", Cmd::FindReplace),
-                ("Command Palette…", "Ctrl+Shift+P", Cmd::Palette),
+                ("Undo", Cmd::Canvas(Action::Undo)),
+                ("Redo", Cmd::Canvas(Action::Redo)),
+                ("Cut", Cmd::Canvas(Action::Cut)),
+                ("Copy", Cmd::Canvas(Action::Copy)),
+                ("Paste", Cmd::MenuPaste),
+                ("Duplicate", Cmd::Canvas(Action::Duplicate)),
+                ("Delete", Cmd::Canvas(Action::Delete)),
+                ("Select All", Cmd::Canvas(Action::SelectAll)),
+                ("Find…", Cmd::Find),
+                ("Find and Replace…", Cmd::FindReplace),
+                ("Command Palette…", Cmd::Palette),
             ];
-            for (l, sc, c) in e {
-                let button = egui::Button::new(t(l));
-                let button = if sc.is_empty() {
-                    button
-                } else {
-                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
-                };
+            for (l, c) in e {
+                let button = command_button(ui.ctx(), t(l), &c);
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
@@ -746,7 +737,7 @@ impl ThinodaApp {
                     if ui
                         .add_enabled(
                             self.command_available(&command),
-                            egui::Button::new(t(label)),
+                            command_button(ui.ctx(), t(label), &command),
                         )
                         .clicked()
                     {
@@ -760,7 +751,7 @@ impl ThinodaApp {
                     if ui
                         .add_enabled(
                             self.command_available(&command),
-                            egui::Button::new(t(label)),
+                            command_button(ui.ctx(), t(label), &command),
                         )
                         .clicked()
                     {
@@ -775,21 +766,16 @@ impl ThinodaApp {
                 );
             });
             ui.separator();
-            for (label, shortcut, command) in [
-                ("Indent", "", Cmd::Canvas(Action::Indent)),
-                ("Outdent", "", Cmd::Canvas(Action::Outdent)),
-                ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
-                ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
-                ("Reset Style", "", Cmd::ResetStyle),
-                ("Save Quick Style…", "", Cmd::SaveQuickStyle),
-                ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
+            for (label, command) in [
+                ("Indent", Cmd::Canvas(Action::Indent)),
+                ("Outdent", Cmd::Canvas(Action::Outdent)),
+                ("Copy Style", Cmd::CopyStyle),
+                ("Paste Style", Cmd::PasteStyle),
+                ("Reset Style", Cmd::ResetStyle),
+                ("Save Quick Style…", Cmd::SaveQuickStyle),
+                ("New Sheet from Topic", Cmd::NewSheetFromTopic),
             ] {
-                let button = egui::Button::new(t(label));
-                let button = if shortcut.is_empty() {
-                    button
-                } else {
-                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), shortcut))
-                };
+                let button = command_button(ui.ctx(), t(label), &command);
                 if ui
                     .add_enabled(self.command_available(&command), button)
                     .clicked()
@@ -802,7 +788,7 @@ impl ThinodaApp {
                 t("Copies explicit overrides; inherited theme styles stay automatic."),
             );
             ui.separator();
-            if item(ui, t("Settings…"), "Ctrl+,").clicked() {
+            if item(ui, t("Settings…"), &Cmd::Settings).clicked() {
                 *cmd = Some(Cmd::Settings);
             }
         });
@@ -829,28 +815,22 @@ impl ThinodaApp {
         });
         menu_button(ui, t("Insert"), |ui| {
             let e = [
-                ("Topic", "Enter", Action::InsertSibling),
-                ("Subtopic", "Tab", Action::InsertChild),
-                ("Topic Before", "Shift+Enter", Action::InsertSiblingBefore),
-                ("Parent Topic", "Ctrl+Enter", Action::InsertParent),
+                ("Topic", Action::InsertSibling),
+                ("Subtopic", Action::InsertChild),
+                ("Topic Before", Action::InsertSiblingBefore),
+                ("Parent Topic", Action::InsertParent),
                 (
                     "Floating Topic",
-                    "",
                     Action::InsertFloating(thinoda_core::Vec2::new(0.0, -260.0)),
                 ),
-                ("Relationship", "Ctrl+Shift+L", Action::StartRelationship),
-                ("Summary", "Ctrl+]", Action::AddSummary),
-                ("Boundary", "Ctrl+B", Action::AddBoundary),
-                ("To-Do", "", Action::ToggleTodo),
+                ("Relationship", Action::StartRelationship),
+                ("Summary", Action::AddSummary),
+                ("Boundary", Action::AddBoundary),
+                ("To-Do", Action::ToggleTodo),
             ];
-            for (l, sc, a) in e {
+            for (l, a) in e {
                 let command = Cmd::Canvas(a);
-                let button = egui::Button::new(t(l));
-                let button = if sc.is_empty() {
-                    button
-                } else {
-                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
-                };
+                let button = command_button(ui.ctx(), t(l), &command);
                 if ui
                     .add_enabled(self.command_available(&command), button)
                     .clicked()
@@ -859,17 +839,15 @@ impl ThinodaApp {
                 }
             }
             ui.separator();
-            for (label, shortcut, field) in [
-                ("Notes", "Ctrl+Shift+N", FocusField::Notes),
-                ("Hyperlink", "Ctrl+K", FocusField::Hyperlink),
+            for (label, field) in [
+                ("Notes", FocusField::Notes),
+                ("Hyperlink", FocusField::Hyperlink),
             ] {
                 let command = Cmd::EditField(field);
                 if ui
                     .add_enabled(
                         self.command_available(&command),
-                        egui::Button::new(t(label)).shortcut_text(
-                            crate::shortcut_browser::platform_hint(ui.ctx(), shortcut),
-                        ),
+                        command_button(ui.ctx(), t(label), &command),
                     )
                     .clicked()
                 {
@@ -888,12 +866,7 @@ impl ThinodaApp {
         });
         menu_button(ui, t("AI"), |ui| {
             for a in crate::ai::AiCommand::ALL {
-                let sc = if a == crate::ai::AiCommand::Brainstorm {
-                    "Ctrl+Shift+I"
-                } else {
-                    ""
-                };
-                if item(ui, t(a.label()), sc).clicked() {
+                if item(ui, t(a.label()), &Cmd::Ai(a)).clicked() {
                     *cmd = Some(Cmd::Ai(a));
                 }
             }
@@ -902,7 +875,7 @@ impl ThinodaApp {
             if ui
                 .add_enabled(
                     self.command_available(&Cmd::MapShot),
-                    egui::Button::new(t("Map Shot")).shortcut_text("F7"),
+                    command_button(ui.ctx(), t("Map Shot"), &Cmd::MapShot),
                 )
                 .clicked()
             {
@@ -935,27 +908,22 @@ impl ThinodaApp {
         });
         menu_button(ui, t("View"), |ui| {
             let e = [
-                ("Previous Sheet", "Ctrl+PageUp", Cmd::PreviousSheet),
-                ("Next Sheet", "Ctrl+PageDown", Cmd::NextSheet),
-                ("Outliner", "Ctrl+Shift+O", Cmd::ToggleOutliner),
-                ("Zen Mode", "F11", Cmd::ToggleZen),
-                ("Format Panel", "Ctrl+Shift+R", Cmd::ToggleFormatPanel),
-                ("Symbols", "", Cmd::ToggleSymbolsPanel),
-                ("Status Bar", "", Cmd::ToggleStatusBar),
-                ("Zoom In", "Ctrl++", Cmd::Canvas(Action::ZoomIn)),
-                ("Zoom Out", "Ctrl+-", Cmd::Canvas(Action::ZoomOut)),
-                ("Actual Size", "Ctrl+0", Cmd::Canvas(Action::ZoomReset)),
-                ("Fit Map", "Ctrl+Shift+H", Cmd::Canvas(Action::Fit)),
-                ("Expand All", "", Cmd::Canvas(Action::ExpandAll)),
-                ("Collapse All", "", Cmd::Canvas(Action::CollapseAll)),
+                ("Previous Sheet", Cmd::PreviousSheet),
+                ("Next Sheet", Cmd::NextSheet),
+                ("Outliner", Cmd::ToggleOutliner),
+                ("Zen Mode", Cmd::ToggleZen),
+                ("Format Panel", Cmd::ToggleFormatPanel),
+                ("Symbols", Cmd::ToggleSymbolsPanel),
+                ("Status Bar", Cmd::ToggleStatusBar),
+                ("Zoom In", Cmd::Canvas(Action::ZoomIn)),
+                ("Zoom Out", Cmd::Canvas(Action::ZoomOut)),
+                ("Actual Size", Cmd::Canvas(Action::ZoomReset)),
+                ("Fit Map", Cmd::Canvas(Action::Fit)),
+                ("Expand All", Cmd::Canvas(Action::ExpandAll)),
+                ("Collapse All", Cmd::Canvas(Action::CollapseAll)),
             ];
-            for (l, sc, c) in e {
-                let button = egui::Button::new(t(l));
-                let button = if sc.is_empty() {
-                    button
-                } else {
-                    button.shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc))
-                };
+            for (l, c) in e {
+                let button = command_button(ui.ctx(), t(l), &c);
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
@@ -973,7 +941,7 @@ impl ThinodaApp {
                 }
             }
             ui.separator();
-            if item(ui, t("Keyboard Shortcuts"), "F1").clicked() {
+            if item(ui, t("Keyboard Shortcuts"), &Cmd::Shortcuts).clicked() {
                 *cmd = Some(Cmd::Shortcuts);
             }
             if ui.button(t("About Thinoda")).clicked() {
@@ -1312,13 +1280,9 @@ impl ThinodaApp {
                 .and_then(|id| d.doc.sheet().topic(id))
                 .is_some_and(|t| t.hyperlink.is_some())
         });
-        let mut item = |ui: &mut Ui, label: &str, sc: &str, c: Cmd, enabled: bool| {
+        let mut item = |ui: &mut Ui, label: &str, c: Cmd, enabled: bool| {
             if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(label)
-                        .shortcut_text(crate::shortcut_browser::platform_hint(ui.ctx(), sc)),
-                )
+                .add_enabled(enabled, command_button(ui.ctx(), label, &c))
                 .accessible_name(label)
                 .clicked()
             {
@@ -1326,24 +1290,11 @@ impl ThinodaApp {
                 ui.close();
             }
         };
-        item(
-            ui,
-            t("Topic"),
-            "Enter",
-            Cmd::Canvas(Action::InsertSibling),
-            has_sel,
-        );
-        item(
-            ui,
-            t("Subtopic"),
-            "Tab",
-            Cmd::Canvas(Action::InsertChild),
-            has_sel,
-        );
+        item(ui, t("Topic"), Cmd::Canvas(Action::InsertSibling), has_sel);
+        item(ui, t("Subtopic"), Cmd::Canvas(Action::InsertChild), has_sel);
         item(
             ui,
             t("Parent Topic"),
-            "Ctrl+Enter",
             Cmd::Canvas(Action::InsertParent),
             single && non_root,
         );
@@ -1351,112 +1302,79 @@ impl ThinodaApp {
         item(
             ui,
             t("Relationship"),
-            "Ctrl+Shift+L",
             Cmd::Canvas(Action::StartRelationship),
             single,
         );
-        item(
-            ui,
-            t("Summary"),
-            "Ctrl+]",
-            Cmd::Canvas(Action::AddSummary),
-            has_sel,
-        );
-        item(
-            ui,
-            t("Boundary"),
-            "Ctrl+B",
-            Cmd::Canvas(Action::AddBoundary),
-            has_sel,
-        );
-        item(ui, t("To-Do"), "", Cmd::Canvas(Action::ToggleTodo), has_sel);
+        item(ui, t("Summary"), Cmd::Canvas(Action::AddSummary), has_sel);
+        item(ui, t("Boundary"), Cmd::Canvas(Action::AddBoundary), has_sel);
+        item(ui, t("To-Do"), Cmd::Canvas(Action::ToggleTodo), has_sel);
         if single {
             ui.separator();
             item(
                 ui,
                 t("Edit hyperlink"),
-                "Ctrl+K",
                 Cmd::EditField(FocusField::Hyperlink),
                 self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
             );
             item(
                 ui,
                 t("Edit notes"),
-                "Ctrl+Shift+N",
                 Cmd::EditField(FocusField::Notes),
                 self.command_available(&Cmd::EditField(FocusField::Notes)),
             );
-            item(ui, t("Topic style"), "", Cmd::TopicStyle, true);
+            item(ui, t("Topic style"), Cmd::TopicStyle, true);
             item(
                 ui,
                 t("Labels"),
-                "",
                 Cmd::Labels,
                 self.command_available(&Cmd::Labels),
             );
         }
         ui.separator();
-        for (label, shortcut, command) in [
-            ("Indent", "", Cmd::Canvas(Action::Indent)),
-            ("Outdent", "", Cmd::Canvas(Action::Outdent)),
-            ("Copy Style", "Ctrl+Alt+C", Cmd::CopyStyle),
-            ("Paste Style", "Ctrl+Alt+V", Cmd::PasteStyle),
-            ("Reset Style", "", Cmd::ResetStyle),
-            ("Save Quick Style…", "", Cmd::SaveQuickStyle),
-            ("New Sheet from Topic", "", Cmd::NewSheetFromTopic),
+        for (label, command) in [
+            ("Indent", Cmd::Canvas(Action::Indent)),
+            ("Outdent", Cmd::Canvas(Action::Outdent)),
+            ("Copy Style", Cmd::CopyStyle),
+            ("Paste Style", Cmd::PasteStyle),
+            ("Reset Style", Cmd::ResetStyle),
+            ("Save Quick Style…", Cmd::SaveQuickStyle),
+            ("New Sheet from Topic", Cmd::NewSheetFromTopic),
         ] {
             let available = self.command_available(&command);
-            item(ui, t(label), shortcut, command, available);
+            item(ui, t(label), command, available);
         }
         ui.separator();
         menu_button(ui, t("Select"), |ui| {
             for (action, label) in Self::selection_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
-                item(ui, t(label), "", command, available);
+                item(ui, t(label), command, available);
             }
         });
         menu_button(ui, t("Arrange"), |ui| {
             for (action, label) in Self::arrangement_commands() {
                 let command = Cmd::Canvas(action);
                 let available = self.command_available(&command);
-                item(ui, t(label), "", command, available);
+                item(ui, t(label), command, available);
             }
         });
         if self.settings.ai.enabled {
             ui.menu_button(format!("✨ {}", t("AI")), |ui| {
                 scroll_menu(ui, |ui| {
                     for a in crate::ai::AiCommand::ALL {
-                        let sc = if a == crate::ai::AiCommand::Brainstorm {
-                            "Ctrl+Shift+I"
-                        } else {
-                            ""
-                        };
-                        item(
-                            ui,
-                            t(a.label()),
-                            sc,
-                            Cmd::Ai(a),
-                            has_sel || !a.needs_topic(),
-                        );
+                        item(ui, t(a.label()), Cmd::Ai(a), has_sel || !a.needs_topic());
                     }
                 });
             });
         }
         if has_link {
-            item(ui, t("Open Link"), "", Cmd::OpenLink, true);
+            item(ui, t("Open Link"), Cmd::OpenLink, true);
         }
         ui.separator();
-        item(ui, t("Cut"), "Ctrl+X", Cmd::Canvas(Action::Cut), non_root);
-        item(ui, t("Copy"), "Ctrl+C", Cmd::Canvas(Action::Copy), has_sel);
-        item(ui, t("Paste"), "Ctrl+V", Cmd::MenuPaste, true);
-        item(
-            ui,
-            t("Duplicate"),
-            "Ctrl+D",
-            Cmd::Canvas(Action::Duplicate),
-            non_root,
-        );
+        item(ui, t("Cut"), Cmd::Canvas(Action::Cut), non_root);
+        item(ui, t("Copy"), Cmd::Canvas(Action::Copy), has_sel);
+        item(ui, t("Paste"), Cmd::MenuPaste, true);
+        item(ui, t("Duplicate"), Cmd::Canvas(Action::Duplicate), non_root);
         if summary_topic {
             widgets::caption(
                 ui,
@@ -1470,14 +1388,12 @@ impl ThinodaApp {
             } else {
                 "Delete"
             }),
-            "Del",
             Cmd::Canvas(Action::Delete),
             non_root,
         );
         item(
             ui,
             t("Delete Topic Only"),
-            "Ctrl+Del",
             Cmd::Canvas(Action::DeleteKeepChildren),
             has_parent,
         );
@@ -1485,31 +1401,17 @@ impl ThinodaApp {
         item(
             ui,
             t("Collapse / Expand"),
-            "Ctrl+/",
             Cmd::Canvas(Action::ToggleCollapse),
             has_children,
         );
-        item(
-            ui,
-            t("Expand All"),
-            "",
-            Cmd::Canvas(Action::ExpandAll),
-            true,
-        );
+        item(ui, t("Expand All"), Cmd::Canvas(Action::ExpandAll), true);
         item(
             ui,
             t("Collapse All"),
-            "",
             Cmd::Canvas(Action::CollapseAll),
             true,
         );
-        item(
-            ui,
-            t("Fit Map"),
-            "Ctrl+Shift+H",
-            Cmd::Canvas(Action::Fit),
-            true,
-        );
+        item(ui, t("Fit Map"), Cmd::Canvas(Action::Fit), true);
     }
 
     fn home(&mut self, ui: &mut Ui) {

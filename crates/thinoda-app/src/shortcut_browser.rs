@@ -4,14 +4,6 @@ use crate::{
 };
 use thinoda_canvas::Action;
 
-pub(crate) fn platform_hint(ctx: &egui::Context, shortcut: &str) -> String {
-    if ctx.os().is_mac() {
-        shortcut.replace("Ctrl+", "Cmd+").replace("Alt+", "Option+")
-    } else {
-        shortcut.to_owned()
-    }
-}
-
 #[derive(Default)]
 pub struct ShortcutBrowser {
     pub query: String,
@@ -91,6 +83,15 @@ impl ThinodaApp {
                     egui::Key::Escape,
                 ))),
         );
+        for (id, title, command) in [
+            ("map-cut", "Cut", Cmd::Canvas(Action::Cut)),
+            ("map-copy", "Copy", Cmd::Canvas(Action::Copy)),
+            ("map-paste", "Paste", Cmd::MenuPaste),
+        ] {
+            let mut metadata = thinoda_ui::Command::new(id, t(title)).category(t("Edit"));
+            metadata.shortcut = Self::shortcut_hint(ctx, &command);
+            commands.push(metadata);
+        }
         commands
     }
 

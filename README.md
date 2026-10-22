@@ -136,7 +136,8 @@ those system-owned controls. WinGet publishing remains paused.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
   windows while keeping Close visible. Global bindings come from the dispatch
   table, with platform-specific hints in the reference and command palette.
-  Menus show Cmd/Option on macOS instead of Ctrl/Alt. Bindings remain read-only.
+  Main/context menu hints use the same command-aware binding lookup and platform
+  formatter, including nested Select/Arrange actions. Bindings remain read-only.
 - The command palette keeps search visible above scrollable results on small
   windows. Arrow keys reveal the selected result; Escape closes without clearing
   the map selection or changing a pending title edit.
@@ -203,6 +204,8 @@ those system-owned controls. WinGet publishing remains paused.
   filters. Map/insertion hints and aliases come from dispatch, including Redo
   Ctrl/Cmd+Y, Subtopic Insert, Delete Backspace and priority keys. These contextual
   bindings are not active in every view or focused text field.
+  Cut/Copy/Paste shortcut metadata describes existing clipboard events; it does
+  not add new palette actions or intercept clipboard keys.
   It is read-only; custom rebinding and conflict editing are not yet available.
   Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.

@@ -168,16 +168,15 @@ fn file_commands_require_active_documents_and_save_all_preserves_home() {
                 h.run_steps(3);
                 h.get_by_role_and_label(Role::Button, t("File")).click();
                 h.run_steps(3);
-                for (label, shortcut, enabled) in [
-                    ("Save", "Ctrl+S", active),
-                    ("Save As…", "Ctrl+Shift+S", active),
-                    ("Save All", "", save_all),
+                for (label, command, enabled) in [
+                    ("Save", Cmd::Save, active),
+                    ("Save As…", Cmd::SaveAs, active),
+                    ("Save All", Cmd::SaveAll, save_all),
                 ] {
-                    let accessible = if shortcut.is_empty() {
-                        t(label).to_owned()
-                    } else {
-                        format!("{} {shortcut}", t(label))
-                    };
+                    let accessible = ThinodaApp::shortcut_hint(&h.ctx, &command).map_or_else(
+                        || t(label).to_owned(),
+                        |hint| format!("{} {hint}", t(label)),
+                    );
                     assert_eq!(
                         h.get_by_role_and_label(Role::Button, &accessible)
                             .accesskit_node()

@@ -1894,28 +1894,51 @@ impl ThinodaApp {
 
     /// The live catalog resolves active-document commands and platform modifier names.
     pub fn command_catalog(&self, ctx: &Context) -> Vec<(Cmd, thinoda_ui::Command)> {
-        let bindings = Self::global_shortcut_bindings(self.active);
-        let contextual = Self::contextual_shortcut_bindings();
         Self::palette_commands()
             .into_iter()
             .map(|(mut command, mut metadata)| {
                 if matches!(command, Cmd::CloseTab(_)) {
                     command = Cmd::CloseTab(self.active);
                 }
-                if let Some((binding, _)) = bindings.iter().find(|(_, c)| *c == command) {
-                    metadata.shortcut = Some(ctx.format_shortcut(binding));
-                } else if let Cmd::Canvas(action) = &command
-                    && let Some((binding, _)) = contextual
-                        .iter()
-                        .find(|(_, bound_action)| bound_action == action)
-                {
-                    metadata.shortcut = Some(ctx.format_shortcut(binding));
-                } else if let Some(shortcut) = &mut metadata.shortcut {
-                    *shortcut = crate::shortcut_browser::platform_hint(ctx, shortcut);
-                }
+                metadata.shortcut = Self::shortcut_hint(ctx, &command);
                 (command, metadata)
             })
             .collect()
+    }
+
+    /// Clipboard metadata describes OS events; it does not add key dispatch.
+    pub fn shortcut_binding(command: &Cmd) -> Option<KeyboardShortcut> {
+        static DEFAULTS: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+            std::sync::OnceLock::new();
+        let bindings = DEFAULTS.get_or_init(|| {
+            let mut bindings = Self::global_shortcut_bindings(0);
+            bindings.extend(
+                Self::contextual_shortcut_bindings()
+                    .into_iter()
+                    .map(|(shortcut, action)| (shortcut, Cmd::Canvas(action))),
+            );
+            for (key, command) in [
+                (Key::X, Cmd::Canvas(Action::Cut)),
+                (Key::C, Cmd::Canvas(Action::Copy)),
+                (Key::V, Cmd::MenuPaste),
+            ] {
+                bindings.push((KeyboardShortcut::new(Modifiers::COMMAND, key), command));
+            }
+            bindings
+        });
+        let normalized = match command {
+            Cmd::CloseTab(_) => &Cmd::CloseTab(0),
+            Cmd::Canvas(Action::Paste(_)) => &Cmd::MenuPaste,
+            _ => command,
+        };
+        bindings
+            .iter()
+            .find(|(_, bound)| bound == normalized)
+            .map(|(binding, _)| *binding)
+    }
+
+    pub fn shortcut_hint(ctx: &Context, command: &Cmd) -> Option<String> {
+        Self::shortcut_binding(command).map(|binding| ctx.format_shortcut(&binding))
     }
 
     /// Platform-neutral catalog with default non-macOS shortcut names.
@@ -2099,8 +2122,6 @@ impl ThinodaApp {
             (Cmd::NextDoc, "Next Document", "", "View"),
             (Cmd::Palette, "Command Palette…", "", "Edit"),
         ]);
-        let bindings = Self::global_shortcut_bindings(0);
-        let contextual = Self::contextual_shortcut_bindings();
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {
@@ -2110,11 +2131,7 @@ impl ThinodaApp {
                     t(title).to_string()
                 };
                 let mut c = C::new(i.to_string(), title).category(t(cat));
-                if let Some((binding, _)) = bindings.iter().find(|(_, command)| *command == cmd) {
-                    c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
-                } else if let Cmd::Canvas(action) = &cmd
-                    && let Some((binding, _)) = contextual.iter().find(|(_, a)| a == action)
-                {
+                if let Some(binding) = Self::shortcut_binding(&cmd) {
                     c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
                 } else if !sc.is_empty() {
                     c = c.shortcut(sc);
