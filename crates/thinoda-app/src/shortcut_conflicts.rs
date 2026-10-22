@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnosed_collisions_reproduce_in_the_real_ui_without_changing_defaults() {
+    fn diagnosed_collisions_and_redo_specificity_reproduce_in_the_real_ui() {
         use egui_kittest::Harness;
         for os in [
             OperatingSystem::Windows,
@@ -191,19 +191,13 @@ mod tests {
                 let modifiers = pressed_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, os);
                 harness.key_press_modifiers(modifiers, Key::Z);
                 harness.run_steps(3);
-                assert_eq!(
-                    harness.state().doc().unwrap().doc.workbook(),
-                    if mode == CenterMode::Outliner {
-                        &before
-                    } else {
-                        &edited
-                    }
-                );
-                if mode == CenterMode::Outliner {
-                    harness.key_press_modifiers(pressed_modifiers(Modifiers::COMMAND, os), Key::Y);
-                    harness.run_steps(3);
-                    assert_eq!(harness.state().doc().unwrap().doc.workbook(), &edited);
-                }
+                assert_eq!(harness.state().doc().unwrap().doc.workbook(), &edited);
+                harness.key_press_modifiers(pressed_modifiers(Modifiers::COMMAND, os), Key::Z);
+                harness.run_steps(3);
+                assert_eq!(harness.state().doc().unwrap().doc.workbook(), &before);
+                harness.key_press_modifiers(modifiers, Key::Z);
+                harness.run_steps(3);
+                assert_eq!(harness.state().doc().unwrap().doc.workbook(), &edited);
                 harness.key_press_modifiers(modifiers, Key::H);
                 harness.run_steps(3);
                 assert!(harness.state().search.open && harness.state().search.show_replace);
@@ -330,7 +324,7 @@ mod tests {
                     os,
                     KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                 ),
-                Some(Cmd::Canvas(Action::Undo))
+                Some(Cmd::Canvas(Action::Redo))
             );
             assert_eq!(
                 ThinodaApp::default_shortcut_command(

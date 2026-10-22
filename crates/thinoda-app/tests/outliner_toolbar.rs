@@ -147,6 +147,19 @@ fn outline_navigation_skips_hidden_rows_and_declared_redo_restores_edits() {
         h.get_by_role_and_label(Role::Button, t("Format Panel"))
             .is_focused()
     );
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::Z,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &deleted);
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Format Panel"))
+            .is_focused()
+    );
 }
 
 #[test]

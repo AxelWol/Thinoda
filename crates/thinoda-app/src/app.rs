@@ -2232,8 +2232,9 @@ impl ThinodaApp {
 
     pub fn outline_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
         [
-            (Modifiers::COMMAND, Key::Z, Action::Undo),
             (Modifiers::COMMAND, Key::Y, Action::Redo),
+            (Modifiers::COMMAND | Modifiers::SHIFT, Key::Z, Action::Redo),
+            (Modifiers::COMMAND, Key::Z, Action::Undo),
             (Modifiers::NONE, Key::Enter, Action::InsertSibling),
             (Modifiers::NONE, Key::Tab, Action::InsertChild),
             (Modifiers::NONE, Key::Delete, Action::Delete),
