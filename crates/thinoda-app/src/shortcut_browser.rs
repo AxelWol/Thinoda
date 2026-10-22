@@ -1,5 +1,5 @@
 use crate::{
-    app::{Cmd, ThinodaApp},
+    app::{CenterMode, Cmd, ThinodaApp},
     i18n::t,
 };
 use thinoda_canvas::Action;
@@ -14,7 +14,7 @@ pub struct ShortcutBrowser {
 
 impl ThinodaApp {
     pub fn shortcut_reference(&self, ctx: &egui::Context) -> Vec<thinoda_ui::Command> {
-        let bindings = Self::contextual_shortcut_bindings();
+        let bindings = Self::contextual_shortcut_bindings_for_mode(self.mode);
         let hint = |actions: &[Action]| {
             bindings
                 .iter()
@@ -75,22 +75,24 @@ impl ThinodaApp {
                     .shortcut(hint(&actions)),
             );
         }
-        commands.push(
-            thinoda_ui::Command::new("map-cancel", t("Cancel"))
-                .category(t("Navigation"))
-                .shortcut(ctx.format_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::NONE,
-                    egui::Key::Escape,
-                ))),
-        );
-        for (id, title, command) in [
-            ("map-cut", "Cut", Cmd::Canvas(Action::Cut)),
-            ("map-copy", "Copy", Cmd::Canvas(Action::Copy)),
-            ("map-paste", "Paste", Cmd::MenuPaste),
-        ] {
-            let mut metadata = thinoda_ui::Command::new(id, t(title)).category(t("Edit"));
-            metadata.shortcut = Self::shortcut_hint(ctx, &command);
-            commands.push(metadata);
+        if self.mode == CenterMode::Map {
+            commands.push(
+                thinoda_ui::Command::new("map-cancel", t("Cancel"))
+                    .category(t("Navigation"))
+                    .shortcut(ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::NONE,
+                        egui::Key::Escape,
+                    ))),
+            );
+            for (id, title, command) in [
+                ("map-cut", "Cut", Cmd::Canvas(Action::Cut)),
+                ("map-copy", "Copy", Cmd::Canvas(Action::Copy)),
+                ("map-paste", "Paste", Cmd::MenuPaste),
+            ] {
+                let mut metadata = thinoda_ui::Command::new(id, t(title)).category(t("Edit"));
+                metadata.shortcut = Self::shortcut_hint_for_mode(ctx, &command, self.mode);
+                commands.push(metadata);
+            }
         }
         commands
     }
@@ -106,6 +108,10 @@ impl ThinodaApp {
             return;
         }
         let commands = self.shortcut_reference(ctx);
+        let scope = t(match self.mode {
+            CenterMode::Map => "Mind Map",
+            CenterMode::Outliner => "Outliner",
+        });
         let categories: std::collections::BTreeSet<_> = commands
             .iter()
             .filter_map(|command| command.category.clone())
@@ -145,6 +151,7 @@ impl ThinodaApp {
                         }
                         scroll.show(ui, |ui| {
                             ui.heading(t("Keyboard Shortcuts"));
+                            ui.label(format!("{}: {scope}", t("View")));
                             let search = ui
                                 .add(
                                     egui::TextEdit::singleline(&mut state.query)

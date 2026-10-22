@@ -3,7 +3,7 @@ use egui_kittest::{
     Harness,
     kittest::{NodeT, Queryable},
 };
-use thinoda_app::app::{Cmd, FocusField, ThinodaApp};
+use thinoda_app::app::{CenterMode, Cmd, FocusField, ThinodaApp};
 use thinoda_canvas::Action;
 
 mod support;
@@ -195,6 +195,64 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
             assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
             assert_eq!(h.state().doc().unwrap().view.selection, vec![child]);
         }
+    }
+}
+
+#[test]
+fn outline_menus_use_outline_redo_and_leave_map_only_shortcuts_unassigned() {
+    for os in [
+        OperatingSystem::Windows,
+        OperatingSystem::Mac,
+        OperatingSystem::Nix,
+    ] {
+        let mut app = ThinodaApp::headless();
+        app.mode = CenterMode::Outliner;
+        app.settings.show_format_panel = false;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(640.0, 360.0))
+            .build_ui_state(
+                move |ui, app: &mut ThinodaApp| {
+                    ui.ctx().set_os(os);
+                    app.draw(ui);
+                },
+                app,
+            );
+        h.run_steps(4);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.run_steps(3);
+        menu_action(&h, "Edit").click();
+        h.run_steps(3);
+        let command = Cmd::Canvas(Action::Redo);
+        let hint =
+            ThinodaApp::shortcut_hint_for_mode(&h.ctx, &command, CenterMode::Outliner).unwrap();
+        assert_eq!(
+            hint,
+            h.ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                Key::Y
+            ))
+        );
+        let label = format!("Redo {hint}");
+        menu_action(&h, &label).scroll_to_me();
+        h.run_steps(5);
+        paint_hint(&h, &hint, menu_action(&h, &label).rect());
+        menu_action(&h, "Cut");
+        menu_action(&h, "Copy");
+        menu_action(&h, "Paste");
+        h.key_press(Key::Escape);
+        h.run_steps(3);
+        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.run_steps(3);
+        menu_action(&h, "View").scroll_to_me();
+        h.run_steps(5);
+        menu_action(&h, "View").click();
+        h.run_steps(3);
+        menu_action(&h, "Zoom In");
+        menu_action(&h, "Fit Map");
+        h.key_press(Key::Escape);
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
     }
 }
 

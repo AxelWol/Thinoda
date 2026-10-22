@@ -74,6 +74,17 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 view-aware Outline shortcut metadata: the existing eight action bindings
+  now supply both Outline dispatch and live menu/palette/reference hints.
+  Separate Up/Down descriptors retain visible-row traversal, including collapsed
+  branches; they do not invoke geometric canvas navigation. The reference names
+  the current view and retains shared insertion/priority keys, but no longer
+  advertises Map-only aliases, clipboard events or canvas Escape in Outline.
+  Command IDs, keys/order, focus/search/modal guards and toolbar ownership are
+  unchanged. Direct planning/finished review was user-approved after reviewer
+  startup failed; no rubber-duck review is claimed. Full workspace CI with live
+  AI disabled and WASM lint pass. Rebinding, reserved-key
+  conflicts, native input/accessibility acceptance and P4 remain open.
 - R1 command-aware menu hints: main File/Edit/Insert/AI/Tools/View/Help and canvas
   context buttons derive hints from the same binding lookup as the catalog.
   Nested Select/Arrange entries show existing central-topic, selection and move

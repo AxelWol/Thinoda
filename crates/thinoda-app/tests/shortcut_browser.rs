@@ -155,6 +155,144 @@ fn contextual_dispatch_inventory_and_reference_include_every_alias_once() {
 }
 
 #[test]
+fn outline_inventory_uses_only_its_declared_bindings_and_keeps_catalog_ids() {
+    use egui::{KeyboardShortcut, os::OperatingSystem};
+    use thinoda_canvas::Action;
+    let expected: Vec<_> = [
+        (Modifiers::COMMAND, Key::Z, Action::Undo),
+        (Modifiers::COMMAND, Key::Y, Action::Redo),
+        (Modifiers::NONE, Key::Enter, Action::InsertSibling),
+        (Modifiers::NONE, Key::Tab, Action::InsertChild),
+        (Modifiers::NONE, Key::Delete, Action::Delete),
+        (Modifiers::NONE, Key::F2, Action::StartEdit),
+        (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
+        (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
+    ]
+    .into_iter()
+    .map(|(modifiers, key, action)| (KeyboardShortcut::new(modifiers, key), action))
+    .collect();
+    assert_eq!(ThinodaApp::outline_shortcut_bindings(), expected);
+    for os in [
+        OperatingSystem::Windows,
+        OperatingSystem::Mac,
+        OperatingSystem::Nix,
+    ] {
+        let mut app = ThinodaApp::headless();
+        let ctx = egui::Context::default();
+        ctx.set_os(os);
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        let map_catalog = app.command_catalog(&ctx);
+        app.mode = CenterMode::Outliner;
+        let catalog = app.command_catalog(&ctx);
+        let reference = app.shortcut_reference(&ctx);
+        assert_eq!(
+            map_catalog
+                .iter()
+                .map(|(c, m)| (c, &m.id))
+                .collect::<Vec<_>>(),
+            catalog.iter().map(|(c, m)| (c, &m.id)).collect::<Vec<_>>()
+        );
+        let bindings = ThinodaApp::contextual_shortcut_bindings_for_mode(app.mode);
+        for (index, (shortcut, action)) in bindings.iter().enumerate() {
+            assert!(!bindings[..index].iter().any(|(other, _)| other == shortcut));
+            let hint = ctx.format_shortcut(shortcut);
+            assert!(
+                reference.iter().any(|entry| entry
+                    .shortcut
+                    .as_deref()
+                    .is_some_and(|aliases| aliases.split(" / ").any(|alias| alias == hint))),
+                "Missing Outline binding: {shortcut:?} -> {action:?}"
+            );
+        }
+        for (index, entry) in reference.iter().enumerate() {
+            assert!(!reference[..index].iter().any(|other| other.id == entry.id));
+        }
+        for action in [
+            Action::DeleteKeepChildren,
+            Action::SelectRoot,
+            Action::SelectAll,
+            Action::ZoomIn,
+            Action::ZoomOut,
+            Action::Fit,
+            Action::ToggleCollapse,
+        ] {
+            let command = Cmd::Canvas(action);
+            assert!(ThinodaApp::shortcut_binding_for_mode(&command, app.mode).is_none());
+            assert!(
+                catalog
+                    .iter()
+                    .filter(|(c, _)| c == &command)
+                    .all(|(_, m)| m.shortcut.is_none())
+            );
+        }
+        for id in ["map-cancel", "map-cut", "map-copy", "map-paste"] {
+            assert!(!reference.iter().any(|entry| entry.id == id));
+        }
+        for (action, key) in [
+            (Action::Redo, Key::Y),
+            (Action::InsertChild, Key::Tab),
+            (Action::Delete, Key::Delete),
+        ] {
+            let shortcut = KeyboardShortcut::new(
+                if action == Action::Redo {
+                    Modifiers::COMMAND
+                } else {
+                    Modifiers::NONE
+                },
+                key,
+            );
+            let command = Cmd::Canvas(action);
+            let entry = catalog.iter().find(|(c, _)| c == &command).unwrap();
+            assert_eq!(entry.1.shortcut, Some(ctx.format_shortcut(&shortcut)));
+            assert_eq!(
+                reference
+                    .iter()
+                    .find(|m| m.id == entry.1.id)
+                    .unwrap()
+                    .shortcut,
+                entry.1.shortcut
+            );
+        }
+        let navigation = reference.iter().find(|m| m.id == "map-navigate").unwrap();
+        assert_eq!(
+            navigation.shortcut,
+            Some(
+                ThinodaApp::outline_navigation_bindings()
+                    .iter()
+                    .map(|shortcut| ctx.format_shortcut(shortcut))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            )
+        );
+        assert_eq!(
+            ThinodaApp::shortcut_binding(&Cmd::Canvas(Action::Redo)),
+            ThinodaApp::shortcut_binding_for_mode(&Cmd::Canvas(Action::Redo), CenterMode::Map)
+        );
+    }
+}
+
+#[test]
+fn outline_reference_shows_scope_and_does_not_advertise_map_aliases() {
+    let mut h = harness(CenterMode::Outliner, egui::vec2(640.0, 360.0));
+    h.get_by_role_and_label(Role::Label, "View: Outliner");
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    for query in ["Backspace", "Insert", "Ctrl+Shift+Z"] {
+        h.state_mut().dialogs.shortcut_browser.category = Some("Edit".into());
+        h.state_mut().dialogs.shortcut_browser.query = query.into();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Label, "No matching commands");
+    }
+    h.state_mut().dialogs.shortcut_browser.query = "Ctrl+Y".into();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Label, "Redo");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Y);
+    h.key_press(Key::Delete);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+}
+
+#[test]
 fn reference_search_finds_aliases_without_dispatching_into_the_map() {
     let mut h = harness(CenterMode::Map, egui::vec2(640.0, 360.0));
     let before = h.state().doc().unwrap().doc.workbook().clone();

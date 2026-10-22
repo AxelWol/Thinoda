@@ -1900,7 +1900,7 @@ impl ThinodaApp {
                 if matches!(command, Cmd::CloseTab(_)) {
                     command = Cmd::CloseTab(self.active);
                 }
-                metadata.shortcut = Self::shortcut_hint(ctx, &command);
+                metadata.shortcut = Self::shortcut_hint_for_mode(ctx, &command, self.mode);
                 (command, metadata)
             })
             .collect()
@@ -1908,21 +1908,32 @@ impl ThinodaApp {
 
     /// Clipboard metadata describes OS events; it does not add key dispatch.
     pub fn shortcut_binding(command: &Cmd) -> Option<KeyboardShortcut> {
-        static DEFAULTS: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+        Self::shortcut_binding_for_mode(command, CenterMode::Map)
+    }
+
+    pub fn shortcut_binding_for_mode(command: &Cmd, mode: CenterMode) -> Option<KeyboardShortcut> {
+        static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
+        static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
             std::sync::OnceLock::new();
-        let bindings = DEFAULTS.get_or_init(|| {
+        let defaults = match mode {
+            CenterMode::Map => &MAP,
+            CenterMode::Outliner => &OUTLINE,
+        };
+        let bindings = defaults.get_or_init(|| {
             let mut bindings = Self::global_shortcut_bindings(0);
             bindings.extend(
-                Self::contextual_shortcut_bindings()
+                Self::contextual_shortcut_bindings_for_mode(mode)
                     .into_iter()
                     .map(|(shortcut, action)| (shortcut, Cmd::Canvas(action))),
             );
-            for (key, command) in [
-                (Key::X, Cmd::Canvas(Action::Cut)),
-                (Key::C, Cmd::Canvas(Action::Copy)),
-                (Key::V, Cmd::MenuPaste),
-            ] {
-                bindings.push((KeyboardShortcut::new(Modifiers::COMMAND, key), command));
+            if mode == CenterMode::Map {
+                for (key, command) in [
+                    (Key::X, Cmd::Canvas(Action::Cut)),
+                    (Key::C, Cmd::Canvas(Action::Copy)),
+                    (Key::V, Cmd::MenuPaste),
+                ] {
+                    bindings.push((KeyboardShortcut::new(Modifiers::COMMAND, key), command));
+                }
             }
             bindings
         });
@@ -1938,7 +1949,15 @@ impl ThinodaApp {
     }
 
     pub fn shortcut_hint(ctx: &Context, command: &Cmd) -> Option<String> {
-        Self::shortcut_binding(command).map(|binding| ctx.format_shortcut(&binding))
+        Self::shortcut_hint_for_mode(ctx, command, CenterMode::Map)
+    }
+
+    pub fn shortcut_hint_for_mode(
+        ctx: &Context,
+        command: &Cmd,
+        mode: CenterMode,
+    ) -> Option<String> {
+        Self::shortcut_binding_for_mode(command, mode).map(|binding| ctx.format_shortcut(&binding))
     }
 
     /// Platform-neutral catalog with default non-macOS shortcut names.
@@ -2189,7 +2208,49 @@ impl ThinodaApp {
 
     /// Display inventory only: each dispatcher keeps its existing focus and modal guards.
     pub fn contextual_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
-        let mut bindings = thinoda_canvas::shortcut_bindings();
+        Self::contextual_shortcut_bindings_for_mode(CenterMode::Map)
+    }
+
+    pub fn outline_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
+        [
+            (Modifiers::COMMAND, Key::Z, Action::Undo),
+            (Modifiers::COMMAND, Key::Y, Action::Redo),
+            (Modifiers::NONE, Key::Enter, Action::InsertSibling),
+            (Modifiers::NONE, Key::Tab, Action::InsertChild),
+            (Modifiers::NONE, Key::Delete, Action::Delete),
+            (Modifiers::NONE, Key::F2, Action::StartEdit),
+            (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
+            (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
+        ]
+        .into_iter()
+        .map(|(modifiers, key, action)| (KeyboardShortcut::new(modifiers, key), action))
+        .collect()
+    }
+
+    /// These keys traverse visible Outline rows, not canvas geometry.
+    pub fn outline_navigation_bindings() -> [KeyboardShortcut; 2] {
+        [Key::ArrowUp, Key::ArrowDown].map(|key| KeyboardShortcut::new(Modifiers::NONE, key))
+    }
+
+    pub fn contextual_shortcut_bindings_for_mode(
+        mode: CenterMode,
+    ) -> Vec<(KeyboardShortcut, Action)> {
+        let mut bindings = match mode {
+            CenterMode::Map => thinoda_canvas::shortcut_bindings(),
+            CenterMode::Outliner => {
+                let mut bindings = Self::outline_shortcut_bindings();
+                bindings.extend(
+                    Self::outline_navigation_bindings()
+                        .into_iter()
+                        .zip([
+                            thinoda_core::navigation::Direction::Up,
+                            thinoda_core::navigation::Direction::Down,
+                        ])
+                        .map(|(shortcut, direction)| (shortcut, Action::Navigate(direction))),
+                );
+                bindings
+            }
+        };
         for binding in Self::insertion_shortcut_bindings() {
             if !bindings.contains(&binding) {
                 bindings.push(binding);

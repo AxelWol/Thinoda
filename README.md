@@ -137,7 +137,10 @@ those system-owned controls. WinGet publishing remains paused.
   windows while keeping Close visible. Global bindings come from the dispatch
   table, with platform-specific hints in the reference and command palette.
   Main/context menu hints use the same command-aware binding lookup and platform
-  formatter, including nested Select/Arrange actions. Bindings remain read-only.
+  formatter, including nested Select/Arrange actions. Hints follow the current
+  Map/Outliner view; the reference names that view and lists only its bindings.
+  Outline retains its existing topic-row focus rules and Ctrl/Cmd+Y redo.
+  Bindings remain read-only.
 - The command palette keeps search visible above scrollable results on small
   windows. Arrow keys reveal the selected result; Escape closes without clearing
   the map selection or changing a pending title edit.

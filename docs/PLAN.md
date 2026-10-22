@@ -1152,6 +1152,28 @@ metadata, custom rebinding/conflict/reserved-key/reset handling and native
 keyboard-layout/accessibility acceptance remain open. Default hint metadata is
 immutable; inactive saved shortcut overrides are not applied.
 
+**Delivered R1 follow-up - view-aware Outline shortcut metadata:** the eight
+existing Outline action bindings now supply dispatch and live menu, palette and
+reference hints. Map defaults remain compatible for static catalog consumers;
+runtime metadata uses the current view without changing command IDs, handlers,
+availability, key order or focus guards. Outline advertises Ctrl/Cmd+Y for Redo,
+Tab for child insertion, Delete and F2, not Map-only aliases. Shared insertion/
+priority bindings remain visible in both views. Up/Down descriptors are reused
+by the original visible-row traversal, never geometric canvas navigation.
+The read-only reference names its current view using existing localized labels;
+Map-only clipboard-event and canvas-Escape rows are omitted from Outline.
+
+Three-platform simulations cover binding completeness, IDs, aliases and actual
+menu hint paint. Outline regressions exercise collapsed-row navigation, Delete,
+sidebar-focus Undo/Redo and focus preservation; the existing locale/theme/scale
+toolbar and compact-reference matrices retain their coverage. The configured
+reviewer could not start; the user approved direct planning/finished review for
+this slice. No rubber-duck review is claimed. Full workspace CI with live AI
+disabled and WASM lint pass. This closes the metadata follow-up,
+not R1: editable bindings, modifier/reserved-key conflict auditing (including
+existing Outline modified-key matching), presets/reset, native keyboard-layout/
+IME/accessibility acceptance and OS-integrated P4 menus remain open.
+
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
 budget. Its frame is bounded by the current logical viewport and actual frame

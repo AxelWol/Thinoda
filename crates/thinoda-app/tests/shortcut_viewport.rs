@@ -214,7 +214,7 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                         .into_iter()
                         .find(|entry| entry.title == t(title))
                         .unwrap();
-                    let hint = entry.shortcut.unwrap();
+                    let hint = entry.shortcut.unwrap_or_else(|| t("Unassigned").into());
                     h.state_mut().dialogs.shortcut_browser.query = t(title).into();
                     h.run_steps(5);
                     reveal(&mut h, &hint);

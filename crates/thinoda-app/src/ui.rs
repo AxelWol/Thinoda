@@ -23,9 +23,14 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
-fn command_button<'a>(ctx: &Context, label: &'a str, command: &Cmd) -> egui::Button<'a> {
+fn command_button<'a>(
+    ctx: &Context,
+    mode: CenterMode,
+    label: &'a str,
+    command: &Cmd,
+) -> egui::Button<'a> {
     let button = egui::Button::new(label);
-    match ThinodaApp::shortcut_hint(ctx, command) {
+    match ThinodaApp::shortcut_hint_for_mode(ctx, command, mode) {
         Some(hint) => button.shortcut_text(hint),
         None => button,
     }
@@ -580,9 +585,10 @@ impl ThinodaApp {
     }
 
     fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        let mode = self.mode;
         ui.set_min_width(220.0);
         let item = |ui: &mut Ui, label: &str, command: &Cmd| {
-            ui.add(command_button(ui.ctx(), label, command))
+            ui.add(command_button(ui.ctx(), mode, label, command))
         };
         if item(ui, t("New"), &Cmd::New).clicked() {
             *cmd = Some(Cmd::New);
@@ -638,7 +644,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Save),
-                command_button(ui.ctx(), t("Save"), &Cmd::Save),
+                command_button(ui.ctx(), mode, t("Save"), &Cmd::Save),
             )
             .clicked()
         {
@@ -647,7 +653,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::SaveAs),
-                command_button(ui.ctx(), t("Save As…"), &Cmd::SaveAs),
+                command_button(ui.ctx(), mode, t("Save As…"), &Cmd::SaveAs),
             )
             .clicked()
         {
@@ -688,7 +694,7 @@ impl ThinodaApp {
         if ui
             .add_enabled(
                 self.command_available(&Cmd::Print),
-                command_button(ui.ctx(), t("Print"), &Cmd::Print),
+                command_button(ui.ctx(), mode, t("Print"), &Cmd::Print),
             )
             .clicked()
         {
@@ -706,9 +712,10 @@ impl ThinodaApp {
     }
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        let mode = self.mode;
         ui.set_min_width(220.0);
         let item = |ui: &mut Ui, label: &str, command: &Cmd| {
-            ui.add(command_button(ui.ctx(), label, command))
+            ui.add(command_button(ui.ctx(), mode, label, command))
         };
         menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
         menu_button(ui, t("Edit"), |ui| {
@@ -726,7 +733,7 @@ impl ThinodaApp {
                 ("Command Palette…", Cmd::Palette),
             ];
             for (l, c) in e {
-                let button = command_button(ui.ctx(), t(l), &c);
+                let button = command_button(ui.ctx(), mode, t(l), &c);
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
@@ -737,7 +744,7 @@ impl ThinodaApp {
                     if ui
                         .add_enabled(
                             self.command_available(&command),
-                            command_button(ui.ctx(), t(label), &command),
+                            command_button(ui.ctx(), mode, t(label), &command),
                         )
                         .clicked()
                     {
@@ -751,7 +758,7 @@ impl ThinodaApp {
                     if ui
                         .add_enabled(
                             self.command_available(&command),
-                            command_button(ui.ctx(), t(label), &command),
+                            command_button(ui.ctx(), mode, t(label), &command),
                         )
                         .clicked()
                     {
@@ -775,7 +782,7 @@ impl ThinodaApp {
                 ("Save Quick Style…", Cmd::SaveQuickStyle),
                 ("New Sheet from Topic", Cmd::NewSheetFromTopic),
             ] {
-                let button = command_button(ui.ctx(), t(label), &command);
+                let button = command_button(ui.ctx(), mode, t(label), &command);
                 if ui
                     .add_enabled(self.command_available(&command), button)
                     .clicked()
@@ -830,7 +837,7 @@ impl ThinodaApp {
             ];
             for (l, a) in e {
                 let command = Cmd::Canvas(a);
-                let button = command_button(ui.ctx(), t(l), &command);
+                let button = command_button(ui.ctx(), mode, t(l), &command);
                 if ui
                     .add_enabled(self.command_available(&command), button)
                     .clicked()
@@ -847,7 +854,7 @@ impl ThinodaApp {
                 if ui
                     .add_enabled(
                         self.command_available(&command),
-                        command_button(ui.ctx(), t(label), &command),
+                        command_button(ui.ctx(), mode, t(label), &command),
                     )
                     .clicked()
                 {
@@ -875,7 +882,7 @@ impl ThinodaApp {
             if ui
                 .add_enabled(
                     self.command_available(&Cmd::MapShot),
-                    command_button(ui.ctx(), t("Map Shot"), &Cmd::MapShot),
+                    command_button(ui.ctx(), mode, t("Map Shot"), &Cmd::MapShot),
                 )
                 .clicked()
             {
@@ -923,7 +930,7 @@ impl ThinodaApp {
                 ("Collapse All", Cmd::Canvas(Action::CollapseAll)),
             ];
             for (l, c) in e {
-                let button = command_button(ui.ctx(), t(l), &c);
+                let button = command_button(ui.ctx(), mode, t(l), &c);
                 if ui.add_enabled(self.command_available(&c), button).clicked() {
                     *cmd = Some(c);
                 }
@@ -1280,9 +1287,10 @@ impl ThinodaApp {
                 .and_then(|id| d.doc.sheet().topic(id))
                 .is_some_and(|t| t.hyperlink.is_some())
         });
+        let mode = self.mode;
         let mut item = |ui: &mut Ui, label: &str, c: Cmd, enabled: bool| {
             if ui
-                .add_enabled(enabled, command_button(ui.ctx(), label, &c))
+                .add_enabled(enabled, command_button(ui.ctx(), mode, label, &c))
                 .accessible_name(label)
                 .clicked()
             {
@@ -1832,31 +1840,19 @@ impl ThinodaApp {
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
         {
-            let keys = [
-                (Modifiers::COMMAND, Key::Z, Action::Undo),
-                (Modifiers::COMMAND, Key::Y, Action::Redo),
-                (Modifiers::NONE, Key::Enter, Action::InsertSibling),
-                (Modifiers::NONE, Key::Tab, Action::InsertChild),
-                (Modifiers::NONE, Key::Delete, Action::Delete),
-                (Modifiers::NONE, Key::F2, Action::StartEdit),
-                (Modifiers::ALT, Key::ArrowUp, Action::MoveUp),
-                (Modifiers::ALT, Key::ArrowDown, Action::MoveDown),
-            ];
-            for (m, k, a) in keys {
+            for (shortcut, a) in Self::outline_shortcut_bindings() {
                 if (topic_focus || matches!(a, Action::Undo | Action::Redo))
                     && action.is_none()
-                    && ctx.input_mut(|i| i.consume_key(m, k))
+                    && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
                 {
                     action = Some(a);
                     break;
                 }
             }
             if topic_focus && action.is_none() {
-                let (up, down) = ctx.input_mut(|i| {
-                    (
-                        i.consume_key(Modifiers::NONE, Key::ArrowUp),
-                        i.consume_key(Modifiers::NONE, Key::ArrowDown),
-                    )
+                let [up, down] = ctx.input_mut(|i| {
+                    Self::outline_navigation_bindings()
+                        .map(|shortcut| i.consume_shortcut(&shortcut))
                 });
                 if (up || down)
                     && let Some(cur) = d.view.primary()
