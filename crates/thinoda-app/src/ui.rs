@@ -1768,10 +1768,12 @@ impl ThinodaApp {
                                     let mut text =
                                         d.view.editing_text().unwrap_or_default().to_string();
                                     let te_id = egui::Id::unique(("outliner_edit", id));
+                                    d.view.protect_title_ime(ui.ctx(), te_id);
                                     let r = ui
                                         .add(
                                             TextEdit::singleline(&mut text)
                                                 .id(te_id)
+                                                .lock_focus(true)
                                                 .hint_text(t("Topic title"))
                                                 .desired_width(edit_width),
                                         )

@@ -598,6 +598,19 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**Delivered priority-1 follow-up, 2026-10-22 - title composition key safety:**
+an event-level regression reproduced Enter committing a provisional topic title
+before the IME final text arrived. Map and Outline now reuse a per-title-edit
+composition guard, invoked before their text widget and commit/insert handling.
+Enter, Tab and Escape (including Shift variants) belong to candidate navigation
+while composing and on the final commit/dismissal frame. Outline locks editor
+focus so candidate Tab cannot move focus and commit the title. Empty preedit or
+commit clears composition; normal editing keys then resume. Tests cover both
+views, CJK final text, candidate-key isolation, same-frame final commit, dismissal,
+subsequent ordinary Tab insertion and document Undo. This is an input-routing
+fix, not proof of platform-specific IME, font rendering or AT acceptance; those
+remain in the priority-1 native/browser matrix.
+
 **Delivered priority-1 follow-up, 2026-10-22 - inspector draft safety:**
 a new real-key regression reproduced saving a focused Notes field without its
 typed text. Its private egui buffer was invisible to saving, dirty detection and

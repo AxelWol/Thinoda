@@ -84,6 +84,7 @@ struct EditState {
     original: String,
     select_all: bool,
     focus_requested: bool,
+    ime_composing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -350,6 +351,7 @@ impl MapView {
             original: t.title.clone(),
             select_all,
             focus_requested: false,
+            ime_composing: false,
         });
         self.pending_reveal = Some(id);
     }
@@ -368,6 +370,47 @@ impl MapView {
 
     pub fn editing_text(&self) -> Option<&str> {
         self.editing.as_ref().map(|e| e.text.as_str())
+    }
+
+    /// Call before drawing a title editor so IME candidate keys cannot finish the edit.
+    pub fn protect_title_ime(&mut self, ctx: &egui::Context, editor_id: egui::Id) {
+        let Some(edit) = self.editing.as_mut() else {
+            return;
+        };
+        let ime_frame = ctx.input(|input| {
+            let mut active = edit.ime_composing;
+            for event in &input.events {
+                if let egui::Event::Ime(event) = event {
+                    #[allow(deprecated)]
+                    match event {
+                        egui::ImeEvent::Preedit { text, .. } => {
+                            active = true;
+                            edit.ime_composing = !text.is_empty();
+                        }
+                        egui::ImeEvent::Commit(_) | egui::ImeEvent::Disabled => {
+                            active = true;
+                            edit.ime_composing = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            active
+        });
+        if ime_frame {
+            let candidate_key = ctx.input_mut(|input| {
+                let mut consumed = false;
+                for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                    for key in [Key::Enter, Key::Tab, Key::Escape] {
+                        consumed |= input.consume_key(modifiers, key);
+                    }
+                }
+                consumed
+            });
+            if candidate_key {
+                ctx.memory_mut(|memory| memory.request_focus(editor_id));
+            }
+        }
     }
 
     pub fn set_editing_text(&mut self, text: &str) {
@@ -1311,6 +1354,7 @@ fn show_editor(
     let color = color32(style.text_color);
     let edit_id = MapCanvas::id().with("edit");
 
+    view.protect_title_ime(ui.ctx(), edit_id);
     // Enter commits, Shift+Enter inserts a line break, Tab commits and adds a child.
     let (enter, tab, esc) = ui.input_mut(|i| {
         (
@@ -1549,6 +1593,56 @@ mod tests {
                 },
                 State { doc, view },
             )
+    }
+
+    #[test]
+    fn ime_candidate_keys_do_not_finish_topic_title_editing() {
+        for key in [Key::Enter, Key::Tab, Key::Escape] {
+            let mut h = harness();
+            h.ctx
+                .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+            let root = h.state().doc.sheet().root;
+            let original = h.state().doc.sheet().root_topic().title.clone();
+            let children = h.state().doc.sheet().children(root).len();
+            {
+                let state = h.state_mut();
+                state.view.begin_edit(state.doc.sheet(), root, true);
+            }
+            h.run_steps(4);
+            h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "nihon".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(2);
+            assert_eq!(
+                h.state().view.editing_topic(),
+                Some(root),
+                "{key:?} belongs to IME candidate selection, not the map"
+            );
+            assert_eq!(h.state().doc.sheet().root_topic().title, original);
+            assert_eq!(h.state().doc.sheet().children(root).len(), children);
+            h.input_mut().events.extend([
+                egui::Event::Ime(egui::ImeEvent::Commit("日本".into())),
+                egui::Event::Key {
+                    key: Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(2);
+            assert_eq!(h.state().view.editing_topic(), Some(root));
+            assert_eq!(h.state().view.editing_text(), Some("日本"));
+            h.key_press(Key::Enter);
+            h.run_steps(3);
+            assert_eq!(h.state().view.editing_topic(), None);
+            assert_eq!(h.state().doc.sheet().root_topic().title, "日本");
+            assert!(h.state_mut().doc.undo());
+            assert_eq!(h.state().doc.sheet().root_topic().title, original);
+        }
     }
 
     #[test]

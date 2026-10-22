@@ -88,6 +88,104 @@ fn choose(h: &mut Harness<'_, ThinodaApp>, label: &str) {
 }
 
 #[test]
+fn ime_candidate_confirmation_keeps_both_title_editors_open() {
+    use egui::{Event, ImeEvent, Key, Modifiers};
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for key in [Key::Enter, Key::Tab, Key::Escape] {
+            for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut app = saved_app(dir.path(), mode);
+                let doc = app.doc_mut().unwrap();
+                let root = doc.doc.sheet().root;
+                let before = doc.doc.sheet().clone();
+                doc.view.begin_edit(doc.doc.sheet(), root, true);
+                doc.view.set_editing_text("");
+                let mut h = harness(app);
+                h.event(Event::Ime(ImeEvent::Preedit {
+                    text: "nihon".into(),
+                    active_range_chars: Some(0..5),
+                }));
+                h.run_steps(3);
+                h.key_press_modifiers(modifiers, key);
+                h.run_steps(3);
+                assert_eq!(
+                    h.state().doc().unwrap().view.editing_topic(),
+                    Some(root),
+                    "{mode:?}: {modifiers:?}+{key:?} must stay in composition"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+                h.input_mut().events.extend([
+                    Event::Ime(ImeEvent::Commit("日本".into())),
+                    Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().view.editing_text(), Some("日本"));
+                assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+                h.key_press(Key::Escape);
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().view.editing_topic(), None);
+                assert_eq!(title(h.state().doc().unwrap()), "日本");
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
+            }
+        }
+    }
+}
+
+#[test]
+fn dismissing_ime_restores_normal_title_tab_behavior() {
+    use egui::{Event, ImeEvent, Key, Modifiers};
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for cancellation in [
+            ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            },
+            ImeEvent::Commit(String::new()),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = saved_app(dir.path(), mode);
+            draft(&mut app, 0, "Keep");
+            let root = app.doc().unwrap().doc.sheet().root;
+            let child_count = app.doc().unwrap().doc.sheet().children(root).len();
+            let mut h = harness(app);
+            h.event(Event::Ime(ImeEvent::Preedit {
+                text: "candidate".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(3);
+            h.input_mut().events.extend([
+                Event::Ime(cancellation),
+                Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(3);
+            assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(root));
+            assert_eq!(h.state().doc().unwrap().view.editing_text(), Some("Keep"));
+            h.key_press(Key::Tab);
+            h.run_steps(3);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(title(doc), "Keep");
+            assert_eq!(doc.doc.sheet().children(root).len(), child_count + 1);
+            assert_ne!(doc.view.editing_topic(), Some(root));
+        }
+    }
+}
+
+#[test]
 fn title_only_edits_are_saved_before_dirty_checks_without_losing_home_or_undo() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         for home in [false, true] {

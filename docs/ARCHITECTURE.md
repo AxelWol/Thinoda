@@ -62,6 +62,11 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
+- **Title input ownership**: Map and Outline use `MapView`'s per-edit IME
+  composition guard before drawing their title text widgets. Candidate
+  Enter/Tab/Escape cannot trigger document commit or insertion, including the
+  final composition-event frame. Dismissal restores ordinary title shortcuts;
+  the Outline editor locks focus while its explicit Tab handling owns insertion.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

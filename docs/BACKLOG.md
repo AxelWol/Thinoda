@@ -77,6 +77,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0/R1 topic-title IME key safety: reproduced candidate-confirmation Enter
+  prematurely closing inline editing. Map and Outline now share a per-edit
+  composition guard for Enter/Tab/Escape and their Shift variants, including
+  final commit/dismissal events delivered in the same frame. Outline retains
+  keyboard focus during candidate navigation. Composition does not commit the
+  provisional title or insert topics; after dismissal, ordinary editing keys
+  resume. Regressions cover both views, final CJK text, empty preedit/commit
+  cancellation, normal Tab insertion and document Undo. Actual native/browser
+  IME, font rendering and assistive-technology acceptance remain open.
 - R0/R1 inspector draft save safety: reproduced Ctrl/Cmd+S silently omitting
   focused Notes in both center views. Notes/Hyperlink drafts now belong to the
   document, count as unsaved work and participate in idle tracking. Save,
