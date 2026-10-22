@@ -51,6 +51,17 @@ graph TD
   conflict/reserved-key policy and explicit editor/reset behavior.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
+  Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
+  text buffer. They contribute to dirty/close detection and idle tracking.
+  Commands, saves and native close handling commit them as one undo step;
+  recovery overlays their current value on a copy without committing history.
+  Drafts bind to the document, sheet index/root and topic, since duplicated
+  sheets can share topic IDs. Changed or missing source fields fail explicitly
+  and retain the draft instead of overwriting newer content. Single-line
+  Hyperlink Escape still cancels rather than commits.
+  Command-boundary flushes invalidate committed UI buffers, and unchanged field
+  buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
+  Undo/Redo availability accounts for pending inspector changes.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

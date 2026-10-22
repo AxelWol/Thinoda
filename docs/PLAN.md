@@ -145,7 +145,7 @@ Data-loss, security, launch and release regressions override the ranking.
 
 | Rank | Phase / packages | Prioritized remaining tasks | End-user benefit |
 |---|---|---|---|
-| 1 | Reliable daily editing / R0-R3 | Outline Shift+Ctrl/Cmd+Z correction delivered below; next verify text-input/focus and native save/cancel/close boundaries, compact navigation and accessibility. Preserve ordinary Undo and Ctrl/Cmd+Y. | Prevent surprising edits and lost work in the most frequent interactions. |
+| 1 | Reliable daily editing / R0-R3 | Outline Redo and focused inspector save/recovery corrections delivered below; next verify remaining native picker/save/close, IME and assistive-technology boundaries, compact navigation and keyboard focus. | Prevent surprising edits and lost work in the most frequent interactions. |
 | 2 | Discoverable, adaptable commands / R1-R2 | Finish command parity; define versioned shortcut overrides, capture/conflict/reserved-key handling, apply/reset and persistence; validate keyboard-only navigation. Do not silently migrate inactive legacy values or remap the Fit collision. | Users can find commands and adapt shortcuts without breaking editing or browser controls. |
 | 3 | Trustworthy file, output and installation workflows / R6, R11 | User-requested web PWA installation/settings/icons/offline shell; verify native pickers, cross-sheet search and sheet exchange; close export/print fidelity and MindManager reverse-roundtrip gaps; verify install/update artifacts and recovery. | Easier access to the app and confidence that maps can be saved and exchanged faithfully. |
 | 4 | Richer maps with less effort / R3-R5 | Finish relationship/placement and rich-content editing, searchable assets, template previews and theme authoring; cover undo and roundtrip before expanding catalogs. | Faster creation of readable, useful maps. |
@@ -598,9 +598,35 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**Delivered priority-1 follow-up, 2026-10-22 - inspector draft safety:**
+a new real-key regression reproduced saving a focused Notes field without its
+typed text. Its private egui buffer was invisible to saving, dirty detection and
+recovery until focus loss. Notes and Hyperlink now keep a document-owned draft,
+scoped to the sheet index/root and topic as well as document identity; duplicated
+sheets may share topic IDs and must not alias. Dirty detection and idle timing
+include the draft. Commands, Save/Save All and native close handling commit it
+in one undoable step; autosave's normal save path includes it too. Separate-sheet
+output overlays a copy without marking/retargeting the source. Recovery overlays
+a copy and tracks draft revisions even when the underlying model revision has
+not changed. It does not create undo entries just to take a snapshot.
+
+Regressions exercise both Map/Outline, real Save keys while the field retains
+focus, ordinary one-step Undo/Redo, Hyperlink Escape cancellation, insertion/
+priority-key isolation, native close-request cancellation and dialog Cancel,
+repeated recovery loads, identical-document ownership, duplicated-sheet targets,
+failed writes and changed/missing sources. Stale source conflicts surface
+explicitly and retain the draft rather than overwriting newer content.
+Command-boundary flushes clear committed UI buffers, and unchanged buffers
+follow model updates. Direct and toolbar Undo of an uncommitted draft, and
+Save after Undo while the field remains focused, cannot resurrect stale text;
+toolbar Undo/Redo availability includes pending inspector changes.
+The existing inspector focus/locale/scale and Save All continuation coverage is
+preserved. Native picker interactions, actual OS window-manager/IME/AT acceptance
+remain open; this is a delivered data-loss fix, not completion of R0-R3 or P4.
+
 **Current continuation, 2026-10-22:** follow the value-ranked task list above.
-Stable shortcut IDs are locally committed at `9052a01`. The next daily-editing
-slice corrects Outline Ctrl/Cmd+Shift+Z from Undo to Redo while preserving the
+Stable shortcut IDs are locally committed at `9052a01`. The daily-editing
+slice at `8566fc7` corrected Outline Ctrl/Cmd+Shift+Z from Undo to Redo while preserving the
 existing Ctrl/Cmd+Y primary hint, ordinary Undo and current focus guards.
 Tests exercise actual Map/Outline frames with Windows/macOS/Linux modifier
 models, both reference aliases, menu hints and sidebar focus. This intentionally

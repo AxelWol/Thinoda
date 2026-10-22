@@ -412,6 +412,13 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
+        for doc in &mut self.docs {
+            if let Err(error) = doc.flush_inspector_edit(ctx) {
+                log::warn!("inspector commit before {cmd:?}: {error}");
+                self.toasts.error(error);
+                return;
+            }
+        }
         if matches!(
             cmd,
             Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_) | Cmd::Quit
@@ -1583,6 +1590,14 @@ impl ThinodaApp {
     /// Handles a window close request (asks to save dirty documents).
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
+            for doc in &mut self.docs {
+                if let Err(error) = doc.flush_inspector_edit(ctx) {
+                    log::warn!("inspector commit before window close: {error}");
+                    self.toasts.error(error);
+                    ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                    return;
+                }
+            }
             if self.save_all.is_some() {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                 return;

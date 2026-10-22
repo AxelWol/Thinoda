@@ -77,6 +77,21 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0/R1 inspector draft save safety: reproduced Ctrl/Cmd+S silently omitting
+  focused Notes in both center views. Notes/Hyperlink drafts now belong to the
+  document, count as unsaved work and participate in idle tracking. Save,
+  Save All, command transitions and native close handling commit them without
+  requiring a click elsewhere; recovery captures draft revisions without
+  committing history. Separate-sheet output includes the draft without
+  retargeting the source. Field buffers are document/sheet/topic-scoped,
+  including duplicated sheets with shared IDs. Source conflicts and failed
+  saves preserve edits; existing Hyperlink Escape cancellation and one-step
+  Undo/Redo remain. Undo also handles an uncommitted draft without stale text
+  returning on the next frame or Save. New UI regressions cover focused saves, insertion-key
+  isolation, native close/Cancel, repeated recovery and identical documents;
+  model tests cover duplicate sheets, stale targets and failed writes.
+  This closes the reproduced inspector data-loss case, not the full R1
+  native picker/window-manager/IME/accessibility acceptance matrix.
 - Web PWA installation (R11, user-directed): web-only Settings > General >
   Install web app opens an accessible browser install panel. Chromium's one-shot
   prompt is invoked only by a real panel-button click; Safari/iOS/iPadOS and
