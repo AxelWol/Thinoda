@@ -476,6 +476,13 @@ tab taxonomy or File/Options placement. Settings in Edit is a user-directed
 choice even where a host normally uses another location. Standard host aliases
 may coexist without changing command identity. Context menus expose relevant
 subsets rather than repeating every top-level category.
+This deliberately differs from Windows Office's File/Options and Ubuntu
+desktop-specific Preferences placement; P4.1 audits and documents that settled
+choice rather than reopening it. Command parity does not require identical
+group layouts, but Windows tab names must remain the eight shared categories.
+P4.4 cannot enter multi-window acceptance until the IPC/startup mechanism selected
+by P4.1 is implemented, allowing the primary process to create additional native
+viewports instead of only forwarding files into its existing window.
 
 | Step | Deliverable and dependency | Acceptance before marking finished |
 |---|---|---|
@@ -1118,8 +1125,38 @@ Follow with the broader P4.2 grouping/accessibility audit (including text-contro
 menus owned by egui); do not claim native OS menus or full P4.2 acceptance here.
 Toolbar-triggered symbol/marker, export, zoom and statistics popovers remain a
 separate audit (toolbar roots are now covered by the follow-up below).
-The symbol context menu's nested egui color picker still needs
-dedicated short-window interaction QA; planning review identified that edge case.
+The user-supplied review explicitly requires opening the nested symbol picker after
+scrolling the parent, checking its anchor, editing a color, contrast actions,
+Escape/focus isolation and document/selection preservation with Undo; the
+delivered follow-up below covers this instance-menu case.
+Toolbar roots are not covered by this context-menu slice: marker/symbol insertion,
+Export, New-from-Template categories, Zoom and topic statistics require separate
+P4.2 evidence. The follow-up below covers named toolbar roots and the earlier
+main-menu matrix covers template categories; neither closes nested popup or
+native/browser accessibility acceptance.
+
+**Delivered R2 follow-up - nested symbol-instance color picker (2026-10-22):**
+the requested interaction test reproduced a functional failure, not merely an
+untested edge: egui's standard color button opens a memory-backed root popup,
+replacing the context menu's open state and making both disappear. Symbol instance
+menus now use an actual egui submenu with the shared height/focus scroll helper
+and outside-click dismissal, containing the existing egui color editor.
+Sidebar/insertion color buttons are unchanged. The sequential shipped-locale/Auto,
+light/dark, 100/150/200% matrix opens the real symbol context menu, shrinks the
+viewport to 120 logical points, proves the parent actually scrolls, then opens
+the nested picker and checks bounded geometry and unchanged anchor position when
+focus moves to the child layer. It changes an actual numeric color channel,
+verifies the picker stays open, dismisses with Escape and restores the workbook
+with one Undo; a separate contrast action also restores with one Undo.
+Selection remains unchanged. Extremely short app chrome and other color-picker
+surfaces are not accepted by this fixture; it specifically tests open-menu resize
+and scrolling. Text-control menus and native/browser/accessibility checks remain
+open. The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Direct review caught the shared sidebar/instance rendering path; the submenu is
+explicitly context-only, and sidebar color-well roles are regression-checked.
+Full workspace CI with live AI disabled, final targeted symbol/context/toolbar
+regressions and native all-target/WASM lint pass.
 
 **Delivered R2 follow-up - toolbar popup bounds:** top-bar Export, Map insertion
 Marker/More, and status-bar Zoom/Statistics now reuse the same viewport-height

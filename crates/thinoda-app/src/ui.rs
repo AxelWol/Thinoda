@@ -1144,7 +1144,7 @@ impl ThinodaApp {
         out.response.context_menu(|ui| {
             scroll_menu(ui, |ui| {
                 if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
-                    if let Some(command) = self.symbol_instance(ui, id, index) {
+                    if let Some(command) = self.symbol_instance(ui, id, index, true) {
                         cmd = Some(command);
                     }
                 } else {

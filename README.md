@@ -325,6 +325,8 @@ those system-owned controls. WinGet publishing remains paused.
   from either Symbols surface. Placed symbols expose individual color, default-color
   reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
   right-click a particular canvas symbol for the same editor/removal action.
+  In that context menu, **Symbol color** opens a scrollable color submenu that
+  remains usable in short windows; the sidebar retains its color swatch picker.
   Changes are undoable, keep the one-per-category semantics and preserve legacy
   default rendering. Contrast uses WCAG relative luminance against the composited
   topic fill/sheet background (including boundary overlays): graphics require 3:1,

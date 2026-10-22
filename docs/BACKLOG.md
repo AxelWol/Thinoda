@@ -297,8 +297,23 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
   existing command/symbol/quick-style tests pass. Planning and finished-step reviews
   found no blockers. Full grouping/text-control/native-accessibility acceptance,
-  short-window nested color-picker QA remain open; toolbar roots are covered by
+  other color-picker surfaces remain open; the nested symbol-instance follow-up
+  is delivered below and toolbar roots are covered by
   the completed follow-up below.
+  Scope boundary: this context-menu mitigation does not cover toolbar-triggered
+  marker/symbol insertion, Export, New-from-Template categories, Zoom or topic
+  statistics. Their separate toolbar/main-menu matrices are recorded below/above;
+  nested color-picker interaction and the full P4.2 audit remain distinct gates.
+- Nested symbol-instance color picker (user review, 2026-10-22): **Delivered.**
+  Opening egui's root color popup replaced the context-menu open state and closed
+  both. Use a proper height-bounded submenu for symbol instances, leaving other
+  picker surfaces unchanged. The shipped-locale/Auto, light/dark, 100-200% matrix
+  proves parent scrolling after shrinking an open menu, checks child bounds and
+  anchor/focus stability, edits a numeric color channel, verifies Escape and
+  selection preservation, and restores color/contrast changes with single Undo.
+  The unavailable reviewer was replaced by explicitly user-approved direct
+  planning/finished review for this slice. Other nested pickers, text-control
+  menus and native/browser/accessibility acceptance remain open.
 - Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
   **Delivered:** pointer-drag reproduction isolated theme-grid cell expansion.
   Reused fixed-size preview cards with responsive columns instead of allowing

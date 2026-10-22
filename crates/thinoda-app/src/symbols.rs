@@ -11,16 +11,36 @@ use crate::{
 
 pub(crate) const EXPORT_WARNING: &str = "Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.";
 
-fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color) -> bool {
+fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color, submenu: bool) -> bool {
     let before = *color;
     ui.horizontal_wrapped(|ui| {
         let label = ui.label(t("Symbol color"));
         let mut value = thinoda_canvas::color32(color.unwrap_or(fallback));
-        if ui
-            .color_edit_button_srgba(&mut value)
-            .labelled_by(label.id)
-            .changed()
-        {
+        let changed = if submenu {
+            // The standard color button replaces the context menu's root popup state.
+            let mut changed = false;
+            let mut button = egui::containers::menu::SubMenuButton::new(t("Symbol color"));
+            button.sub_menu = button.sub_menu.config(
+                egui::containers::menu::MenuConfig::new()
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+            );
+            button.ui(ui, |ui| {
+                ui.spacing_mut().slider_width = 275.0;
+                crate::ui::scroll_menu(ui, |ui| {
+                    changed = egui::color_picker::color_picker_color32(
+                        ui,
+                        &mut value,
+                        egui::color_picker::Alpha::BlendOrAdditive,
+                    );
+                });
+            });
+            changed
+        } else {
+            ui.color_edit_button_srgba(&mut value)
+                .labelled_by(label.id)
+                .changed()
+        };
+        if changed {
             let [r, g, b, a] = value.to_srgba_unmultiplied();
             *color = Some(Color::rgba(r, g, b, a));
         }
@@ -72,6 +92,7 @@ impl ThinodaApp {
             ui,
             &mut self.symbol_color,
             markers::default_color("symbol-plus"),
+            false,
         );
         ui.small(t("Graphical symbols: 3:1; month and week text: 4.5:1."));
         ui.small(t(EXPORT_WARNING));
@@ -158,7 +179,13 @@ impl ThinodaApp {
         response.clicked()
     }
 
-    pub(crate) fn symbol_instance(&self, ui: &mut Ui, id: TopicId, index: usize) -> Option<Cmd> {
+    pub(crate) fn symbol_instance(
+        &self,
+        ui: &mut Ui,
+        id: TopicId,
+        index: usize,
+        submenu: bool,
+    ) -> Option<Cmd> {
         let d = self.doc()?;
         let topic = d.doc.sheet().topic(id)?;
         let marker = topic.markers.get(index)?;
@@ -184,7 +211,7 @@ impl ThinodaApp {
                         .strong(),
                 );
             });
-            if color_control(ui, &mut color, fallback) {
+            if color_control(ui, &mut color, fallback, submenu) {
                 command = Some(Cmd::Canvas(Action::SetMarkerColor(id, index, color)));
             }
             if let Some(improved) = contrast(ui, marker, color.unwrap_or(fallback), bg) {
@@ -215,7 +242,7 @@ impl ThinodaApp {
             ui.label(&topic.title);
             for index in 0..topic.markers.len() {
                 ui.group(|ui| {
-                    if let Some(cmd) = self.symbol_instance(ui, *id, index) {
+                    if let Some(cmd) = self.symbol_instance(ui, *id, index, false) {
                         *command = Some(cmd);
                     }
                 });
