@@ -13,6 +13,37 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.8.0](https://github.com/AxelWol/Thinoda/compare/v0.7.0...v0.8.0) (2026-10-22)
+
+
+### Features
+
+* **canvas:** add opt-in visual alignment guides ([b4eb525](https://github.com/AxelWol/Thinoda/commit/b4eb52525a00873e5d6704fbd370b922801d0be6))
+* **editor:** add preferred native CJK fallback font ([a8bcbff](https://github.com/AxelWol/Thinoda/commit/a8bcbff406f858dc583186665240eadb3091f830))
+* **editor:** CJK fallback, symbol menu safety and alignment guides ([#64](https://github.com/AxelWol/Thinoda/issues/64)) ([cfb3b03](https://github.com/AxelWol/Thinoda/commit/cfb3b03e3897da51148e69b732d5a7b39965f30e))
+
+
+### Bug Fixes
+
+* **menus:** derive shortcut hints from shared command bindings ([4b792f7](https://github.com/AxelWol/Thinoda/commit/4b792f700e543897fdd52acd63883fc5b24b990e))
+* **shortcuts:** derive contextual hints and aliases from dispatch ([8c2dfd2](https://github.com/AxelWol/Thinoda/commit/8c2dfd2e4c2f1a8da7b5cda3f3f781dd8816019d))
+* **shortcuts:** omit intercepted bindings from command hints ([66785fb](https://github.com/AxelWol/Thinoda/commit/66785fb9054526f5b53687bc09af1d0c4e10b67c))
+* **shortcuts:** scope live hints to Map and Outline ([813d51f](https://github.com/AxelWol/Thinoda/commit/813d51f5871496964e1c7d3c53906b0c2aca37c0))
+* **shortcuts:** share global bindings with command catalogs ([d207987](https://github.com/AxelWol/Thinoda/commit/d20798700aaa4287a3812fa11dc059c92fd19419))
+* **ui:** enable native mixed-script font fallback ([7d45d41](https://github.com/AxelWol/Thinoda/commit/7d45d41b98346f5cb9a842640fd0e4d4fb436788))
+* **ui:** improve search, Outline and inspector keyboard safety ([#62](https://github.com/AxelWol/Thinoda/issues/62)) ([f909c21](https://github.com/AxelWol/Thinoda/commit/f909c2191f7e03007372401d70708b7c1c9c8cdb))
+* **ui:** keep nested symbol color menus usable ([df8971f](https://github.com/AxelWol/Thinoda/commit/df8971f7998e9d7c6df0b8c37e3ba0cb7e3553a6))
+* **ui:** make Zen Escape reliable and expand search controls ([196e86d](https://github.com/AxelWol/Thinoda/commit/196e86dfcf3b7ecb2300f23f453df06a860605e3))
+* **ui:** reveal inspector keyboard focus within its scroll region ([f5cdde0](https://github.com/AxelWol/Thinoda/commit/f5cdde0ef77bca9699fda8798e14e2e606361345))
+* **ui:** scope Outline keyboard edits to topic focus ([e1bcc27](https://github.com/AxelWol/Thinoda/commit/e1bcc271e5122d166923eb8d1c79d68cf331385d))
+* **ui:** unify shortcuts and improve Zen and search ([#65](https://github.com/AxelWol/Thinoda/issues/65)) ([679c85a](https://github.com/AxelWol/Thinoda/commit/679c85ad902de22431f8c0f7cd5beee6ca0919f3))
+
+
+### Documentation
+
+* confirm 0.7.0 assets and download checksums ([a215a44](https://github.com/AxelWol/Thinoda/commit/a215a44b07d435090cf63e70d6354607a97838f5))
+* track 0.7.0 publication and post-release UX work ([f2bf5f6](https://github.com/AxelWol/Thinoda/commit/f2bf5f63b1e94206838fdc52201a4c153b4f323d))
+
 ## [0.7.0](https://github.com/AxelWol/Thinoda/compare/v0.6.0...v0.7.0) (2026-10-21)
 
 
