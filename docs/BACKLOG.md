@@ -9,8 +9,13 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-20 after incorporating main through `07fec3c`:
-there are no open issues or pull requests. Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
+GitHub was refreshed on 2026-10-22 after incorporating main through `cba3a52`:
+there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
+contains the ongoing R1 shortcut-catalog work; release preparation
+[PR #63](https://github.com/AxelWol/Thinoda/pull/63) is also open. Neither is
+claimed merged or released. [PR #64](https://github.com/AxelWol/Thinoda/pull/64)
+merged the native CJK preference, nested symbol picker and alignment-guide slices.
+Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
 
 The former WIP pull requests are now merged:
 
@@ -69,13 +74,23 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 contextual-shortcut inventory: map and insertion dispatch tables now supply
+  contextual palette hints and every alias in the searchable reference. Redo,
+  Insert/Backspace, central-topic, zoom, boundary and priority aliases are visible;
+  Move Up/Down and Select None no longer appear unassigned. Escape remains a
+  separate Cancel interaction, not a replacement for its existing cleanup path.
+  Keys, ordering, clipboard/text-input/modal guards and command IDs are preserved.
+  Tests cover inventory parity, real alias execution/Undo and long hint paint
+  within compact localized viewports. Direct planning/finished review was
+  user-approved after reviewer startup failed. Menu/Outline metadata, rebinding,
+  reserved-key conflicts and native acceptance remain open.
 - R1 global-shortcut catalog consistency: the palette and searchable reference
   now derive all 24 global bindings from the ordered dispatch table. Close Tab,
   Next Document and Command Palette are included; live Close Tab resolves the
   active document and retains unsaved-work prompts. Platform-aware hints use
   egui formatting for global commands and Cmd/Option names for contextual/menu
   hints on macOS. Existing command IDs and key precedence remain unchanged.
-  Custom rebinding, conflicts/reserved keys, unified contextual/menu metadata
+  Custom rebinding, conflicts/reserved keys, unified menu/Outline metadata
   and native keyboard-layout acceptance remain open; this is not P4 delivery.
   The user approved direct planning/finished review after reviewer startup failed.
 - R1 Outline keyboard ownership: structural shortcuts now belong to focused

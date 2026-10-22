@@ -78,6 +78,157 @@ fn global_dispatch_catalog_is_complete_unique_and_platform_aware() {
 }
 
 #[test]
+fn contextual_dispatch_inventory_and_reference_include_every_alias_once() {
+    use egui::os::OperatingSystem;
+    use thinoda_canvas::Action;
+    for os in [
+        OperatingSystem::Windows,
+        OperatingSystem::Mac,
+        OperatingSystem::Nix,
+    ] {
+        let app = ThinodaApp::headless();
+        let ctx = egui::Context::default();
+        ctx.set_os(os);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let bindings = ThinodaApp::contextual_shortcut_bindings();
+        let reference = app.shortcut_reference(&ctx);
+        let catalog = app.command_catalog(&ctx);
+        let static_catalog = ThinodaApp::palette_commands();
+        for (index, (shortcut, action)) in bindings.iter().enumerate() {
+            assert!(!bindings[..index].iter().any(|(other, _)| other == shortcut));
+            let hint = ctx.format_shortcut(shortcut);
+            assert!(
+                reference.iter().any(|entry| entry
+                    .shortcut
+                    .as_deref()
+                    .is_some_and(|value| value.split(" / ").any(|alias| alias == hint))),
+                "Missing reference binding: {shortcut:?} -> {action:?}"
+            );
+            if let Some((_, metadata)) = catalog
+                .iter()
+                .find(|(c, _)| *c == Cmd::Canvas(action.clone()))
+            {
+                let entry = reference
+                    .iter()
+                    .find(|entry| entry.id == metadata.id)
+                    .unwrap();
+                assert!(
+                    entry
+                        .shortcut
+                        .as_deref()
+                        .unwrap()
+                        .split(" / ")
+                        .any(|alias| alias == hint)
+                );
+                let first = bindings.iter().find(|(_, a)| a == action).unwrap();
+                assert_eq!(metadata.shortcut, Some(ctx.format_shortcut(&first.0)));
+                let static_entry = static_catalog
+                    .iter()
+                    .find(|(_, c)| c.id == metadata.id)
+                    .unwrap();
+                assert_eq!(
+                    static_entry.1.shortcut,
+                    Some(first.0.format(&egui::ModifierNames::NAMES, false))
+                );
+            }
+        }
+        for (index, entry) in reference.iter().enumerate() {
+            assert!(!reference[..index].iter().any(|other| other.id == entry.id));
+        }
+        for (action, aliases) in [
+            (Action::Redo, 2),
+            (Action::InsertChild, 2),
+            (Action::Delete, 2),
+            (Action::DeleteKeepChildren, 3),
+            (Action::SelectRoot, 2),
+            (Action::ToggleCollapseAll, 2),
+            (Action::ZoomIn, 2),
+            (Action::AddBoundary, 2),
+        ] {
+            assert_eq!(
+                bindings.iter().filter(|(_, a)| *a == action).count(),
+                aliases
+            );
+        }
+    }
+}
+
+#[test]
+fn reference_search_finds_aliases_without_dispatching_into_the_map() {
+    let mut h = harness(CenterMode::Map, egui::vec2(640.0, 360.0));
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    for (query, title) in [
+        ("Ctrl+Y", "Redo"),
+        ("Insert", "Subtopic"),
+        ("Ctrl+3", "Priority 3"),
+    ] {
+        h.state_mut().dialogs.shortcut_browser.query = query.into();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Label, title).scroll_to_me();
+        h.run_steps(4);
+        assert!(
+            h.ctx
+                .content_rect()
+                .contains_rect(h.get_by_role_and_label(Role::Label, title).rect())
+        );
+    }
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Num3);
+    h.key_press(Key::Insert);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(h.state().dialogs.shortcuts);
+}
+
+#[test]
+fn insertion_marker_bindings_preserve_title_input_and_undo() {
+    let app = ThinodaApp::headless();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.run_steps(3);
+    let root = h.state().doc().unwrap().doc.sheet().root;
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let ctx = h.ctx.clone();
+    for (key, marker) in [
+        (Key::Num1, "priority-1"),
+        (Key::Num2, "priority-2"),
+        (Key::Num3, "priority-3"),
+    ] {
+        h.key_press_modifiers(Modifiers::COMMAND, key);
+        h.run_steps(3);
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(root)
+                .unwrap()
+                .markers,
+            vec![marker]
+        );
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+        h.run_steps(3);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    let doc = h.state_mut().doc_mut().unwrap();
+    doc.view.begin_edit(doc.doc.sheet(), root, false);
+    doc.view.set_editing_text("Uncommitted title");
+    h.run_steps(3);
+    for key in [Key::Num1, Key::Num2, Key::Num3, Key::B, Key::L] {
+        h.key_press_modifiers(Modifiers::COMMAND, key);
+        h.run_steps(3);
+    }
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.workbook(), &before);
+    assert_eq!(doc.view.editing_text(), Some("Uncommitted title"));
+}
+
+#[test]
 fn platform_menu_hints_and_global_dispatch_keep_the_same_commands() {
     use egui::os::OperatingSystem;
     for os in [

@@ -1,4 +1,8 @@
-use crate::{app::ThinodaApp, i18n::t};
+use crate::{
+    app::{Cmd, ThinodaApp},
+    i18n::t,
+};
+use thinoda_canvas::Action;
 
 pub(crate) fn platform_hint(ctx: &egui::Context, shortcut: &str) -> String {
     if ctx.os().is_mac() {
@@ -17,6 +21,79 @@ pub struct ShortcutBrowser {
 }
 
 impl ThinodaApp {
+    pub fn shortcut_reference(&self, ctx: &egui::Context) -> Vec<thinoda_ui::Command> {
+        let bindings = Self::contextual_shortcut_bindings();
+        let hint = |actions: &[Action]| {
+            bindings
+                .iter()
+                .filter(|(_, action)| actions.contains(action))
+                .map(|(shortcut, _)| ctx.format_shortcut(shortcut))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
+        let mut commands: Vec<_> = self
+            .command_catalog(ctx)
+            .into_iter()
+            .map(|(command, mut metadata)| {
+                if let Cmd::Canvas(action) = command {
+                    let aliases = hint(&[action]);
+                    if !aliases.is_empty() {
+                        metadata.shortcut = Some(aliases);
+                    }
+                }
+                metadata
+            })
+            .collect();
+        use thinoda_core::navigation::Direction;
+        for (id, title, category, actions) in [
+            ("map-edit", "Edit", "Navigation", vec![Action::StartEdit]),
+            (
+                "map-navigate",
+                "Navigate",
+                "Navigation",
+                vec![
+                    Action::Navigate(Direction::Up),
+                    Action::Navigate(Direction::Down),
+                    Action::Navigate(Direction::Left),
+                    Action::Navigate(Direction::Right),
+                ],
+            ),
+            (
+                "map-priority-1",
+                "Priority 1",
+                "Insert",
+                vec![Action::ToggleMarker("priority-1".into())],
+            ),
+            (
+                "map-priority-2",
+                "Priority 2",
+                "Insert",
+                vec![Action::ToggleMarker("priority-2".into())],
+            ),
+            (
+                "map-priority-3",
+                "Priority 3",
+                "Insert",
+                vec![Action::ToggleMarker("priority-3".into())],
+            ),
+        ] {
+            commands.push(
+                thinoda_ui::Command::new(id, t(title))
+                    .category(t(category))
+                    .shortcut(hint(&actions)),
+            );
+        }
+        commands.push(
+            thinoda_ui::Command::new("map-cancel", t("Cancel"))
+                .category(t("Navigation"))
+                .shortcut(ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::NONE,
+                    egui::Key::Escape,
+                ))),
+        );
+        commands
+    }
+
     pub(crate) fn shortcuts_dialog(&mut self, ctx: &egui::Context) {
         if !self.dialogs.shortcuts {
             return;
@@ -27,24 +104,7 @@ impl ThinodaApp {
             self.dialogs.shortcuts = false;
             return;
         }
-        let mut commands: Vec<_> = self
-            .command_catalog(ctx)
-            .into_iter()
-            .map(|(_, command)| command)
-            .collect();
-        for (binding, title) in [
-            ("Space / F2", "Edit"),
-            ("Arrows", "Navigate"),
-            ("Alt+↑/↓", "Move"),
-            ("Esc", "Select none"),
-            ("Home", "Central Topic"),
-        ] {
-            commands.push(
-                thinoda_ui::Command::new(binding, t(title))
-                    .category(t("Navigation"))
-                    .shortcut(platform_hint(ctx, binding)),
-            );
-        }
+        let commands = self.shortcut_reference(ctx);
         let categories: std::collections::BTreeSet<_> = commands
             .iter()
             .filter_map(|command| command.category.clone())

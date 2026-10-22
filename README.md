@@ -200,8 +200,11 @@ those system-owned controls. WinGet publishing remains paused.
   stay offline. Remote images are not fetched (alternative text is shown), and
   raw HTML is displayed as inert text rather than executed.
 - F1 opens a searchable keyboard reference with category and unassigned-command
-  filters, including navigation aliases. It is read-only; custom rebinding and
-  conflict editing are not yet available. Ctrl+Q requests normal window closing,
+  filters. Map/insertion hints and aliases come from dispatch, including Redo
+  Ctrl/Cmd+Y, Subtopic Insert, Delete Backspace and priority keys. These contextual
+  bindings are not active in every view or focused text field.
+  It is read-only; custom rebinding and conflict editing are not yet available.
+  Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
 
 - Home offers rendered previews of 35 original templates across eight categories.

@@ -1895,6 +1895,7 @@ impl ThinodaApp {
     /// The live catalog resolves active-document commands and platform modifier names.
     pub fn command_catalog(&self, ctx: &Context) -> Vec<(Cmd, thinoda_ui::Command)> {
         let bindings = Self::global_shortcut_bindings(self.active);
+        let contextual = Self::contextual_shortcut_bindings();
         Self::palette_commands()
             .into_iter()
             .map(|(mut command, mut metadata)| {
@@ -1902,6 +1903,12 @@ impl ThinodaApp {
                     command = Cmd::CloseTab(self.active);
                 }
                 if let Some((binding, _)) = bindings.iter().find(|(_, c)| *c == command) {
+                    metadata.shortcut = Some(ctx.format_shortcut(binding));
+                } else if let Cmd::Canvas(action) = &command
+                    && let Some((binding, _)) = contextual
+                        .iter()
+                        .find(|(_, bound_action)| bound_action == action)
+                {
                     metadata.shortcut = Some(ctx.format_shortcut(binding));
                 } else if let Some(shortcut) = &mut metadata.shortcut {
                     *shortcut = crate::shortcut_browser::platform_hint(ctx, shortcut);
@@ -1923,28 +1930,18 @@ impl ThinodaApp {
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
-            (
-                Cmd::Canvas(Action::InsertChild),
-                "Subtopic",
-                "Tab",
-                "Insert",
-            ),
-            (
-                Cmd::Canvas(Action::InsertSibling),
-                "Topic",
-                "Enter",
-                "Insert",
-            ),
+            (Cmd::Canvas(Action::InsertChild), "Subtopic", "", "Insert"),
+            (Cmd::Canvas(Action::InsertSibling), "Topic", "", "Insert"),
             (
                 Cmd::Canvas(Action::InsertSiblingBefore),
                 "Topic Before",
-                "Shift+Enter",
+                "",
                 "Insert",
             ),
             (
                 Cmd::Canvas(Action::InsertParent),
                 "Parent Topic",
-                "Ctrl+Enter",
+                "",
                 "Insert",
             ),
             (
@@ -1956,21 +1953,11 @@ impl ThinodaApp {
             (
                 Cmd::Canvas(Action::StartRelationship),
                 "Relationship",
-                "Ctrl+Shift+L",
+                "",
                 "Insert",
             ),
-            (
-                Cmd::Canvas(Action::AddSummary),
-                "Summary",
-                "Ctrl+]",
-                "Insert",
-            ),
-            (
-                Cmd::Canvas(Action::AddBoundary),
-                "Boundary",
-                "Ctrl+B",
-                "Insert",
-            ),
+            (Cmd::Canvas(Action::AddSummary), "Summary", "", "Insert"),
+            (Cmd::Canvas(Action::AddBoundary), "Boundary", "", "Insert"),
             (
                 Cmd::EditField(FocusField::Hyperlink),
                 "Hyperlink",
@@ -1979,33 +1966,23 @@ impl ThinodaApp {
             ),
             (Cmd::EditField(FocusField::Notes), "Notes", "", "Insert"),
             (Cmd::Canvas(Action::ToggleTodo), "To-Do", "", "Insert"),
-            (Cmd::Canvas(Action::Undo), "Undo", "Ctrl+Z", "Edit"),
-            (Cmd::Canvas(Action::Redo), "Redo", "Ctrl+Shift+Z", "Edit"),
-            (Cmd::Canvas(Action::Delete), "Delete", "Del", "Edit"),
+            (Cmd::Canvas(Action::Undo), "Undo", "", "Edit"),
+            (Cmd::Canvas(Action::Redo), "Redo", "", "Edit"),
+            (Cmd::Canvas(Action::Delete), "Delete", "", "Edit"),
             (
                 Cmd::Canvas(Action::DeleteKeepChildren),
                 "Delete Topic Only",
-                "Ctrl+Del",
+                "",
                 "Edit",
             ),
             (
                 Cmd::Canvas(Action::SelectRoot),
                 "Go to Central Topic",
-                "Ctrl+R",
+                "",
                 "Edit",
             ),
-            (
-                Cmd::Canvas(Action::Duplicate),
-                "Duplicate",
-                "Ctrl+D",
-                "Edit",
-            ),
-            (
-                Cmd::Canvas(Action::SelectAll),
-                "Select All",
-                "Ctrl+A",
-                "Edit",
-            ),
+            (Cmd::Canvas(Action::Duplicate), "Duplicate", "", "Edit"),
+            (Cmd::Canvas(Action::SelectAll), "Select All", "", "Edit"),
             (Cmd::Find, "Find…", "", "Edit"),
             (Cmd::FindReplace, "Find and Replace…", "", "Edit"),
             (Cmd::CopyStyle, "Copy Style", "", "Edit"),
@@ -2061,27 +2038,22 @@ impl ThinodaApp {
             (Cmd::ToggleFormatPanel, "Format Panel", "", "View"),
             (Cmd::ToggleStatusBar, "Status Bar", "", "View"),
             (Cmd::ToggleSymbolsPanel, "Symbols", "", "View"),
-            (Cmd::Canvas(Action::ZoomIn), "Zoom In", "Ctrl++", "View"),
-            (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "Ctrl+-", "View"),
-            (
-                Cmd::Canvas(Action::ZoomReset),
-                "Actual Size",
-                "Ctrl+0",
-                "View",
-            ),
-            (Cmd::Canvas(Action::Fit), "Fit Map", "Ctrl+Shift+H", "View"),
+            (Cmd::Canvas(Action::ZoomIn), "Zoom In", "", "View"),
+            (Cmd::Canvas(Action::ZoomOut), "Zoom Out", "", "View"),
+            (Cmd::Canvas(Action::ZoomReset), "Actual Size", "", "View"),
+            (Cmd::Canvas(Action::Fit), "Fit Map", "", "View"),
             (Cmd::Canvas(Action::ExpandAll), "Expand All", "", "View"),
             (Cmd::Canvas(Action::CollapseAll), "Collapse All", "", "View"),
             (
                 Cmd::Canvas(Action::ToggleCollapse),
                 "Collapse / Expand",
-                "Ctrl+/",
+                "",
                 "View",
             ),
             (
                 Cmd::Canvas(Action::ToggleCollapseAll),
                 "Collapse / Expand All",
-                "Ctrl+Alt+/",
+                "",
                 "View",
             ),
             (Cmd::NewSheet, "New Sheet", "", "Sheet"),
@@ -2128,6 +2100,7 @@ impl ThinodaApp {
             (Cmd::Palette, "Command Palette…", "", "Edit"),
         ]);
         let bindings = Self::global_shortcut_bindings(0);
+        let contextual = Self::contextual_shortcut_bindings();
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {
@@ -2138,6 +2111,10 @@ impl ThinodaApp {
                 };
                 let mut c = C::new(i.to_string(), title).category(t(cat));
                 if let Some((binding, _)) = bindings.iter().find(|(_, command)| *command == cmd) {
+                    c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
+                } else if let Cmd::Canvas(action) = &cmd
+                    && let Some((binding, _)) = contextual.iter().find(|(_, a)| a == action)
+                {
                     c = c.shortcut(binding.format(&egui::ModifierNames::NAMES, false));
                 } else if !sc.is_empty() {
                     c = c.shortcut(sc);
@@ -2152,8 +2129,17 @@ impl ThinodaApp {
         if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.text_edit_focused() {
             return;
         }
+        for (shortcut, action) in Self::insertion_shortcut_bindings() {
+            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                self.canvas_action(ctx, action);
+                return;
+            }
+        }
+    }
+
+    pub fn insertion_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
-        let table = [
+        [
             (cs, Key::L, Action::StartRelationship),
             (cs, Key::B, Action::AddBoundary),
             (Modifiers::COMMAND, Key::B, Action::AddBoundary),
@@ -2178,13 +2164,21 @@ impl ThinodaApp {
                 Key::Num3,
                 Action::ToggleMarker("priority-3".into()),
             ),
-        ];
-        for (m, k, a) in table {
-            if ctx.input_mut(|i| i.consume_key(m, k)) {
-                self.canvas_action(ctx, a);
-                return;
+        ]
+        .into_iter()
+        .map(|(modifiers, key, action)| (KeyboardShortcut::new(modifiers, key), action))
+        .collect()
+    }
+
+    /// Display inventory only: each dispatcher keeps its existing focus and modal guards.
+    pub fn contextual_shortcut_bindings() -> Vec<(KeyboardShortcut, Action)> {
+        let mut bindings = thinoda_canvas::shortcut_bindings();
+        for binding in Self::insertion_shortcut_bindings() {
+            if !bindings.contains(&binding) {
+                bindings.push(binding);
             }
         }
+        bindings
     }
 }
 

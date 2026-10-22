@@ -210,8 +210,8 @@ unknown needed by the next package. Never bypass OS application-control policy.
    conflicts, reserved keys and reset-all. Preserve current bindings by default;
    offer an XMind-compatible preset only after approval of conflicting mappings.
    The searchable/category-filtered read-only reference, unassigned-command
-   visibility and navigation aliases are delivered. Rebinding/conflict editing
-   and native keyboard-layout audits remain open.
+   visibility and map/insertion aliases derived from dispatch are delivered.
+   Rebinding/conflict editing and native keyboard-layout audits remain open.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -1093,9 +1093,35 @@ The configured reviewer could not start; the user approved direct planning and
 finished-step review. No rubber-duck review is claimed.
 Full workspace CI with live AI disabled and WASM lint pass.
 This is groundwork, not the complete shared command model or shortcut editor:
-contextual bindings/menu metadata still have separate definitions, saved
+menu metadata and Outline bindings still have separate definitions, saved
 `shortcuts_overrides` remain inactive, and conflict validation, reserved-key
 handling, rebinding/reset UI and P4 native menu backends remain open.
+
+**Delivered R1 follow-up - contextual shortcut inventory and aliases:** the map
+and host insertion dispatchers now expose their existing ordered binding tables.
+Palette contextual hints derive from those tables instead of duplicated strings;
+the read-only reference lists every map/insertion alias, including Redo Ctrl/Cmd+Y,
+Subtopic Insert, Delete Backspace, topic-only deletion, central-topic Home,
+zoom aliases, boundary aliases and priority 1/2/3. Move Up/Down and Select None
+now show their real bindings instead of appearing unassigned. Edit/navigation
+reference rows also derive their keys from dispatch. Escape remains a separate
+Cancel reference entry: it clears interaction state as well as selection, and
+is not converted into an ordinary action. Clipboard events and type-to-edit also
+retain their separate event paths. Existing palette IDs, key order, action guards
+and Undo behavior are unchanged. This is a map/insertion inventory, not a claim
+that every binding applies in Outline or focused text controls.
+Three-platform simulated inventory tests check every alias, deduplication,
+catalog/reference agreement and stable unique IDs. Real key tests cover
+Tab/Insert, Delete/Backspace, both Redo keys, Home/Ctrl-R, priority edits with
+Undo, modal isolation and preservation of pending title input. The compact
+shipped-locale/appearance/scale matrix now measures long alias paint/clip bounds,
+in addition to filters, keyboard traversal, live resize and footer reachability.
+The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled passed; final reference/viewport
+regressions, native all-target lint and WASM lint also passed.
+Menu hint definitions, Outline-specific shortcuts, conflict/reserved-key auditing,
+custom rebinding/reset and native input/accessibility acceptance remain open.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
