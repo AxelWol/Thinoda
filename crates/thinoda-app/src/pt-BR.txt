@@ -11,6 +11,8 @@ Additional or unsupported links|Links adicionais ou não suportados
 Font Family|Fonte
 Global Font|Fonte global
 Default CJK font|Fonte CJK padrão
+Show alignment guides|Mostrar guias de alinhamento
+Visual guides while moving topics freely; positions do not snap.|Guias visuais ao mover tópicos livremente; as posições não se ajustam automaticamente.
 Fallback only; choose an installed font covering your script. Document fonts stay unchanged.|Somente alternativa; escolha uma fonte instalada compatível com sua escrita. As fontes do documento não mudam.
 Default|Padrão
 Font unavailable|Fonte indisponível

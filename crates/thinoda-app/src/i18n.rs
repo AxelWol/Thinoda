@@ -1138,6 +1138,11 @@ const DE: &[(&str, &str)] = &[
     ("Font Family", "Schriftart"),
     ("Global Font", "Globale Schriftart"),
     ("Default CJK font", "Standard-CJK-Schriftart"),
+    ("Show alignment guides", "Ausrichtungshilfen anzeigen"),
+    (
+        "Visual guides while moving topics freely; positions do not snap.",
+        "Visuelle Hilfen beim freien Verschieben von Themen; Positionen rasten nicht ein.",
+    ),
     (
         "Fallback only; choose an installed font covering your script. Document fonts stay unchanged.",
         "Nur Ersatzschrift; wählen Sie eine installierte Schrift für Ihr Schriftsystem. Dokumentschriften bleiben unverändert.",

@@ -956,7 +956,12 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   distinguish automatic update installation from checking for updates.
 - P2 General: optional usage statistics with explicit consent, a documented data
   inventory and no document contents; no telemetry is authorized by these screenshots.
-- P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
+- P2 Editor: visual alignment-guide visibility is implemented as an opt-in
+  Settings preference for free-placement topic dragging: nearest matching group
+  edge/center within four screen points, no snapping/history changes. Canvas
+  threshold/group/paint/drop/cancel/Undo and localized Settings persistence checks
+  cover this slice; equal-spacing/snap/native visual parity remain open.
+  Initial canvas zoom and opt-in reuse of
   the last structure/theme for new blank maps are implemented; skeleton-specific
   variants still need the layout-gallery research.
 - P2 Editor: browser font provisioning, IME and remaining macOS/Linux font

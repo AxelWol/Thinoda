@@ -230,6 +230,8 @@ pub struct Settings {
     pub format_tab: FormatTab,
     pub show_topic_toolbar: bool,
     pub show_topic_add_buttons: bool,
+    /// Visual free-placement alignment feedback; does not snap or change positions.
+    pub show_alignment_guides: bool,
     /// Optional installed fallback face; never replaces a document's configured font.
     pub default_cjk_font: Option<String>,
     /// Sort label drafts by Unicode code-point order; disabled to preserve insertion order.
@@ -273,6 +275,7 @@ impl Default for Settings {
             format_tab: FormatTab::default(),
             show_topic_toolbar: true,
             show_topic_add_buttons: true,
+            show_alignment_guides: false,
             default_cjk_font: None,
             label_auto_sort: false,
             initial_canvas_zoom: 1.0,

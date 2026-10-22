@@ -748,6 +748,34 @@ with live AI disabled and WASM lint pass.
 Native keyboard/assistive-technology
 acceptance remains open; this does not close the daily-editing band.
 
+**Delivered R2/R3 follow-up - visual alignment guides:** Settings > Editor >
+Show alignment guides is an opt-in persisted view preference, shared by native
+and browser canvases. During free-placement topic dragging, at most one vertical
+and one horizontal guide mark the nearest matching left/center/right or
+top/center/bottom coordinate within four logical screen points. The moving
+group uses its visible topic bounds (including visible descendants); collapsed
+topics and all dragged members are excluded as stationary candidates.
+Equal-distance ties follow stable layout order. Guides use the clipped canvas
+painter and disappear on drop/cancel; hierarchy-drop previews retain priority.
+This is visual feedback only: no snapping, no position correction, no document
+style/history changes, and no reassignment of the command-palette shortcut.
+The existing persisted `snap_to_grid`/`smooth_zoom` fields are not activated or
+advertised by this slice. Keyboard Arrange alignment commands remain available.
+Tests cover exact threshold behavior at 50/100/200% canvas zoom, multi-root group
+bounds, nearest/tie selection, hidden/self exclusion, actual pointer-drag paint
+on/off, unchanged pre-drop documents, unsnapped drop geometry, Escape, one-step
+Undo and reparenting with guides enabled. A 66-case shipped-locale/Auto,
+light/dark/System and compact/normal Settings matrix checks focus, keyboard
+activation, disk persistence, propagation across documents and unchanged revisions.
+This does not claim full XMind guideline parity, equal-spacing/distance guides,
+snap behavior or manual native visual/accessibility acceptance.
+The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled, final Settings interaction regression
+and native all-target/WASM lint pass. R1-R3 remain open: spelling, shortcut
+rebinding/conflict handling, remaining canvas/reference polish and native input/
+accessibility acceptance are not moved into a completed phase.
+
 **Delivered R2 follow-up - preferred native CJK fallback:** Settings > Editor now
 offers an optional installed-font preference; Auto restores automatic fallback.
 It follows all configured/default/named faces but precedes native on-demand

@@ -1125,6 +1125,7 @@ impl ThinodaApp {
         ]
         .map(|label| t(label).to_string());
         d.view.show_add_controls = self.settings.show_topic_add_buttons;
+        d.view.show_alignment_guides = self.settings.show_alignment_guides;
         if paste {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
             ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
@@ -3676,15 +3677,30 @@ impl ThinodaApp {
                 }
                 if self.dialogs.settings_tab == SettingsTab::Editor {
                     widgets::section(ui, t("Editor"), true, |ui| {
+                        let control_width = (bounds.width()
+                            - frame.total_margin().sum().x
+                            - style.spacing.scroll.allocated_width()
+                            - ui.spacing().indent)
+                            .max(40.0)
+                            .min(ui.available_width());
+                        ui.push_id("alignment_guides", |ui| {
+                            ui.set_width(control_width);
+                            ui.horizontal_wrapped(|ui| {
+                                widgets::toggle(
+                                    ui,
+                                    &mut self.settings.show_alignment_guides,
+                                    t("Show alignment guides"),
+                                );
+                                ui.label(t("Show alignment guides"));
+                            });
+                            widgets::caption(
+                                ui,
+                                t("Visual guides while moving topics freely; positions do not snap."),
+                            );
+                        });
                         if !crate::files::is_web() {
                             ui.push_id("default_cjk_font", |ui| {
-                                let width = (bounds.width()
-                                    - frame.total_margin().sum().x
-                                    - style.spacing.scroll.allocated_width()
-                                    - ui.spacing().indent)
-                                    .max(40.0)
-                                    .min(ui.available_width());
-                                ui.set_width(width);
+                                ui.set_width(control_width);
                                 let label = ui.label(t("Default CJK font"));
                                 let selected = self.settings.default_cjk_font.clone()
                                     .unwrap_or_else(|| t("Auto").to_owned());

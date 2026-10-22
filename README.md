@@ -127,6 +127,9 @@ those system-owned controls. WinGet publishing remains paused.
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Settings > Editor > Show alignment guides optionally shows nearby matching
+  topic-group edges/centers during free-placement dragging. It is off by default,
+  does not snap positions, and does not change document styles or Undo history.
 - Style, Map and Symbols sidebars reveal newly focused controls during keyboard
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.

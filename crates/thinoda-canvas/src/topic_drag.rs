@@ -286,6 +286,58 @@ fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<TopicId>) -> 
     }
 }
 
+fn alignment_guides(
+    layout: &Layout,
+    members: &BTreeSet<TopicId>,
+    delta: Vec2,
+    tolerance: f32,
+) -> [Option<[Vec2; 2]>; 2] {
+    let moving = layout
+        .order
+        .iter()
+        .filter(|id| members.contains(id))
+        .filter_map(|id| layout.rect(*id))
+        .reduce(|a, b| a.union(&b));
+    let Some(moving) = moving.map(|rect| rect.translate(delta)) else {
+        return [None, None];
+    };
+    let coordinates = |rect: thinoda_core::Rect| [rect.min, rect.center(), rect.max()];
+    let mut nearest = [tolerance; 2];
+    let mut guides = [None, None];
+    for rect in layout
+        .order
+        .iter()
+        .filter(|id| !members.contains(id))
+        .filter_map(|id| layout.rect(*id))
+    {
+        for (source, reference) in coordinates(moving).into_iter().zip(coordinates(rect)) {
+            let distances = [
+                (source.x - reference.x).abs(),
+                (source.y - reference.y).abs(),
+            ];
+            for axis in 0..2 {
+                if distances[axis] <= tolerance
+                    && (guides[axis].is_none() || distances[axis] < nearest[axis])
+                {
+                    nearest[axis] = distances[axis];
+                    guides[axis] = Some(if axis == 0 {
+                        [
+                            Vec2::new(reference.x, moving.min.y.min(rect.min.y)),
+                            Vec2::new(reference.x, moving.max().y.max(rect.max().y)),
+                        ]
+                    } else {
+                        [
+                            Vec2::new(moving.min.x.min(rect.min.x), reference.y),
+                            Vec2::new(moving.max().x.max(rect.max().x), reference.y),
+                        ]
+                    });
+                }
+            }
+        }
+    }
+    guides
+}
+
 pub(crate) fn paint(
     painter: &Painter,
     sheet: &Sheet,
@@ -314,6 +366,17 @@ pub(crate) fn paint(
     );
     let target = target(sheet, layout, members, current);
     if matches!(target, Ok(None)) {
+        if view.show_alignment_guides {
+            for guide in alignment_guides(layout, members, delta, 4.0 / xf.zoom)
+                .into_iter()
+                .flatten()
+            {
+                painter.line_segment(
+                    guide.map(|point| xf.pos(point)),
+                    Stroke::new(1.0, view.accent),
+                );
+            }
+        }
         return;
     }
     let Some(topic) = layout.hit_test(current) else {
@@ -359,6 +422,72 @@ pub(crate) fn paint(
 mod tests {
     use super::*;
     use thinoda_core::{ApproxMeasure, layout_sheet};
+
+    #[test]
+    fn alignment_uses_group_bounds_and_stable_nearest_reference_per_axis() {
+        let mut sheet = Sheet::new("Guides", "Root");
+        let a = sheet.add_floating("Topic", Vec2::new(-400.0, -200.0));
+        let b = sheet.add_floating("Topic", Vec2::new(-200.0, -200.0));
+        let first = sheet.add_floating("Topic", Vec2::new(400.0, 200.0));
+        let second = sheet.add_floating("Topic", Vec2::new(404.0, 300.0));
+        let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        layout.order = vec![a, b, first, second];
+        let group = layout.rect(a).unwrap().union(&layout.rect(b).unwrap());
+        let first_rect = layout.rect(first).unwrap();
+        let second_rect = layout.rect(second).unwrap();
+        let moving = [a, b].into_iter().collect();
+        let delta = Vec2::new(first_rect.center().x - group.center().x + 2.0, 0.0);
+        let guide = alignment_guides(&layout, &moving, delta, 4.0)[0].unwrap();
+        assert_eq!(guide[0].x, first_rect.center().x, "Ties follow paint order");
+        let delta = Vec2::new(second_rect.center().x - group.center().x - 0.5, 0.0);
+        let guide = alignment_guides(&layout, &moving, delta, 4.0)[0].unwrap();
+        assert_eq!(guide[0].x, second_rect.center().x, "Nearest reference wins");
+        assert_eq!(guide[0].y, group.min.y);
+        assert_eq!(guide[1].y, second_rect.max().y);
+    }
+
+    #[test]
+    fn alignment_matches_visible_group_edges_and_centers_without_self_matches() {
+        let mut sheet = Sheet::new("Guides", "Center");
+        let moving = sheet.add_floating("Topic", Vec2::new(-400.0, -200.0));
+        let reference = sheet.add_floating("Topic", Vec2::new(400.0, 200.0));
+        let hidden = sheet.insert_child(reference, "Hidden").unwrap();
+        sheet.set_collapsed(reference, true).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        assert!(!layout.order.contains(&hidden));
+        let owned = members(&sheet, &[moving]);
+        let a = layout.rect(moving).unwrap();
+        let b = layout.rect(reference).unwrap();
+        for zoom in [0.5, 1.0, 2.0] {
+            let tolerance = 4.0 / zoom;
+            let delta = Vec2::new(b.center().x - a.center().x + 3.9 / zoom, 0.0);
+            let guides = alignment_guides(&layout, &owned, delta, tolerance);
+            assert!(guides[0].is_some());
+            assert!(guides[1].is_none());
+            let delta = Vec2::new(b.center().x - a.center().x + 4.1 / zoom, 0.0);
+            assert!(alignment_guides(&layout, &owned, delta, tolerance)[0].is_none());
+            let delta = Vec2::new(0.0, b.min.y - a.min.y);
+            let horizontal = alignment_guides(&layout, &owned, delta, tolerance)[1].unwrap();
+            assert_eq!(horizontal[0].y, b.min.y);
+            assert_eq!(horizontal[1].y, b.min.y);
+        }
+        let all = layout.order.iter().copied().collect();
+        assert_eq!(
+            alignment_guides(&layout, &all, Vec2::ZERO, 4.0),
+            [None, None]
+        );
+        assert_eq!(
+            alignment_guides(&layout, &BTreeSet::new(), Vec2::ZERO, 4.0),
+            [None, None]
+        );
+        // Hidden topics cannot contribute guides even if a layout map retains their rectangles.
+        let mut hidden_only = layout.clone();
+        hidden_only.order.retain(|id| *id == moving);
+        assert_eq!(
+            alignment_guides(&hidden_only, &owned, Vec2::ZERO, 4.0),
+            [None, None]
+        );
+    }
 
     #[test]
     fn ghost_contains_owned_annotations_and_internal_links_only() {
