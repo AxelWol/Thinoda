@@ -1137,6 +1137,11 @@ const DE: &[(&str, &str)] = &[
     ("Font Size", "Schriftgröße"),
     ("Font Family", "Schriftart"),
     ("Global Font", "Globale Schriftart"),
+    ("Default CJK font", "Standard-CJK-Schriftart"),
+    (
+        "Fallback only; choose an installed font covering your script. Document fonts stay unchanged.",
+        "Nur Ersatzschrift; wählen Sie eine installierte Schrift für Ihr Schriftsystem. Dokumentschriften bleiben unverändert.",
+    ),
     ("Branches", "Zweige"),
     ("Automatic branch width", "Automatische Zweigbreite"),
     ("Branch Line Width", "Zweiglinienbreite"),

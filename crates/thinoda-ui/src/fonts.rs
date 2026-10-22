@@ -10,6 +10,8 @@ pub struct SystemFonts {
     database: Option<fontdb::Database>,
     names: Vec<String>,
     attempted: std::collections::BTreeSet<String>,
+    preferred_fallback: Option<String>,
+    pending: Option<(u64, FontDefinitions)>,
 }
 
 impl SystemFonts {
@@ -32,16 +34,68 @@ impl SystemFonts {
         &self.names
     }
 
+    pub fn preferred_fallback(&self) -> Option<&str> {
+        self.preferred_fallback.as_deref()
+    }
+
+    fn face_data(&mut self, name: &str) -> Option<FontData> {
+        let db = self.database();
+        let family = match name {
+            "serif" => fontdb::Family::Serif,
+            "cursive" => fontdb::Family::Cursive,
+            "fantasy" => fontdb::Family::Fantasy,
+            _ => fontdb::Family::Name(name),
+        };
+        let id = db.query(&fontdb::Query {
+            families: &[family],
+            ..Default::default()
+        })?;
+        db.with_face_data(id, |bytes, index| {
+            let mut data = FontData::from_owned(bytes.to_vec());
+            data.index = index;
+            data
+        })
+    }
+
     /// Register selected system faces without replacing the application's fallback fonts.
+    /// The preferred fallback follows every configured face, including newly registered
+    /// named families. Changes and removals update all families together.
     /// Unavailable families are reported once; the document's requested name is unchanged.
     pub fn ensure(
         &mut self,
         ctx: &Context,
         names: impl IntoIterator<Item = String>,
+        preferred_fallback: Option<&str>,
     ) -> Vec<String> {
-        let mut defs = ctx.fonts(|fonts| fonts.definitions().clone());
+        // set_fonts is deferred: a theme preview can register more faces in this pass.
+        let pass = ctx.cumulative_pass_nr();
+        let mut defs = self
+            .pending
+            .take()
+            .filter(|(pending_pass, _)| *pending_pass == pass)
+            .map(|(_, defs)| defs)
+            .unwrap_or_else(|| ctx.fonts(|fonts| fonts.definitions().clone()));
         let mut changed = false;
         let mut errors = Vec::new();
+        if self.preferred_fallback() != preferred_fallback {
+            const KEY: &str = "thinoda-preferred-cjk";
+            changed |= defs.font_data.remove(KEY).is_some();
+            for chain in defs.families.values_mut() {
+                chain.retain(|key| key != KEY);
+            }
+            self.preferred_fallback = preferred_fallback.map(str::to_owned);
+            if let Some(name) = preferred_fallback {
+                if let Some(data) = self.face_data(name) {
+                    defs.font_data.insert(KEY.into(), Arc::new(data));
+                    for chain in defs.families.values_mut() {
+                        chain.push(KEY.into());
+                    }
+                    changed = true;
+                } else {
+                    errors.push(name.to_owned());
+                }
+            }
+        }
         for name in names {
             if matches!(name.as_str(), "" | "sans-serif" | "monospace")
                 || defs
@@ -51,24 +105,7 @@ impl SystemFonts {
             {
                 continue;
             }
-            let db = self.database();
-            let family = match name.as_str() {
-                "serif" => fontdb::Family::Serif,
-                "cursive" => fontdb::Family::Cursive,
-                "fantasy" => fontdb::Family::Fantasy,
-                _ => fontdb::Family::Name(&name),
-            };
-            let face = db.query(&fontdb::Query {
-                families: &[family],
-                ..Default::default()
-            });
-            let data = face.and_then(|id| {
-                db.with_face_data(id, |bytes, index| {
-                    let mut data = FontData::from_owned(bytes.to_vec());
-                    data.index = index;
-                    data
-                })
-            });
+            let data = self.face_data(&name);
             if let Some(data) = data {
                 let mut fallback = defs.families[&FontFamily::Proportional].clone();
                 let key = format!("thinoda-system:{name}");
@@ -82,9 +119,10 @@ impl SystemFonts {
             }
         }
         if changed {
-            ctx.set_fonts(defs);
+            ctx.set_fonts(defs.clone());
             ctx.request_repaint();
         }
+        self.pending = Some((pass, defs));
         errors
     }
 }
@@ -150,6 +188,101 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preferred_fallback_changes_all_chains_without_replacing_primary_faces() {
+        let ctx = Context::default();
+        let mut db = fontdb::Database::new();
+        let defaults = FontDefinitions::default();
+        for name in ["Hack", "Ubuntu-Light"] {
+            db.load_font_data(defaults.font_data[name].bytes().to_vec());
+        }
+        let mut names: Vec<_> = db.faces().map(|face| face.families[0].0.clone()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 2);
+        let mut configured = defaults;
+        for chain in configured.families.values_mut() {
+            *chain = vec!["Hack".into()];
+        }
+        ctx.set_fonts(configured);
+        let mut fonts = SystemFonts {
+            database: Some(db),
+            ..Default::default()
+        };
+        ctx.begin_pass(Default::default());
+        let original = ctx.fonts(|f| f.definitions().clone());
+        assert!(!ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::default(), '\u{018f}')));
+        assert!(fonts.ensure(&ctx, [names[0].clone()], None).is_empty());
+        ctx.end_pass().textures_delta.clear();
+        ctx.begin_pass(Default::default());
+        let named = FontFamily::Name(names[0].clone().into());
+        let primary = ctx.fonts(|f| f.definitions().families[&named][0].clone());
+        assert!(fonts.ensure(&ctx, [], Some(&names[1])).is_empty());
+        assert!(
+            fonts
+                .ensure(&ctx, [names[1].clone()], Some(&names[1]))
+                .is_empty()
+        );
+        ctx.end_pass().textures_delta.clear();
+        ctx.begin_pass(Default::default());
+        let installed = ctx.fonts(|f| f.definitions().clone());
+        assert!(
+            installed
+                .families
+                .contains_key(&FontFamily::Name(names[1].clone().into()))
+        );
+        assert!(ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::default(), '\u{018f}')));
+        for (family, chain) in &installed.families {
+            assert_eq!(chain.last().unwrap(), "thinoda-preferred-cjk", "{family:?}");
+            assert_eq!(
+                chain
+                    .iter()
+                    .filter(|s| *s == "thinoda-preferred-cjk")
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(installed.families[&named][0], primary);
+        assert_eq!(
+            &installed.families[&FontFamily::Proportional]
+                [..original.families[&FontFamily::Proportional].len()],
+            &original.families[&FontFamily::Proportional]
+        );
+        assert!(fonts.ensure(&ctx, [], Some(&names[1])).is_empty());
+        assert_eq!(fonts.preferred_fallback(), Some(names[1].as_str()));
+        assert!(fonts.ensure(&ctx, [], Some(&names[0])).is_empty());
+        ctx.end_pass().textures_delta.clear();
+        ctx.begin_pass(Default::default());
+        assert!(!ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::default(), '\u{018f}')));
+        assert_eq!(
+            ctx.fonts(|f| f.definitions().families[&named][0].clone()),
+            primary
+        );
+        assert_eq!(
+            fonts.ensure(&ctx, [], Some("Thinoda Missing CJK Family")),
+            ["Thinoda Missing CJK Family"]
+        );
+        ctx.end_pass().textures_delta.clear();
+        ctx.begin_pass(Default::default());
+        assert!(ctx.fonts(|f| {
+            !f.definitions()
+                .font_data
+                .contains_key("thinoda-preferred-cjk")
+        }));
+        assert!(
+            fonts
+                .ensure(&ctx, [], Some("Thinoda Missing CJK Family"))
+                .is_empty()
+        );
+        assert!(fonts.ensure(&ctx, [], None).is_empty());
+        assert!(fonts.preferred_fallback().is_none());
+        assert_eq!(
+            ctx.fonts(|f| f.definitions().families[&FontFamily::Proportional].clone()),
+            original.families[&FontFamily::Proportional]
+        );
+        ctx.end_pass().textures_delta.clear();
+    }
+
+    #[test]
     fn named_faces_register_once_with_existing_fallbacks_and_report_missing_names() {
         let ctx = Context::default();
         let mut db = fontdb::Database::new();
@@ -165,7 +298,7 @@ mod tests {
         };
         ctx.begin_pass(Default::default());
         let original = ctx.fonts(|f| f.definitions().clone());
-        assert!(fonts.ensure(&ctx, [name.clone()]).is_empty());
+        assert!(fonts.ensure(&ctx, [name.clone()], None).is_empty());
         ctx.end_pass().textures_delta.clear();
         ctx.begin_pass(Default::default());
         let installed = ctx.fonts(|f| f.definitions().clone());
@@ -183,14 +316,14 @@ mod tests {
             &installed.families[&family][1..],
             &original.families[&FontFamily::Proportional]
         );
-        assert!(fonts.ensure(&ctx, [name]).is_empty());
+        assert!(fonts.ensure(&ctx, [name], None).is_empty());
         assert_eq!(
-            fonts.ensure(&ctx, ["Thinoda Missing Family".into()]),
+            fonts.ensure(&ctx, ["Thinoda Missing Family".into()], None),
             ["Thinoda Missing Family"]
         );
         assert!(
             fonts
-                .ensure(&ctx, ["Thinoda Missing Family".into()])
+                .ensure(&ctx, ["Thinoda Missing Family".into()], None)
                 .is_empty()
         );
         assert_eq!(

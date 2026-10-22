@@ -87,6 +87,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   clipped paint bounds, Outline isolation, document/history preservation and
   Notes draft/commit/one-step undo. Native assistive-technology acceptance remains
   separate; this does not close R2.
+- R2 preferred native CJK fallback: native Settings > Editor lists installed
+  faces; Auto resets. The preference follows configured faces and precedes
+  automatic discovery, preserving document font names/history. Missing names
+  warn once and stay stored. Browser builds omit/ignore this native preference.
+  Compact localized picker bounds, Home initialization, settings roundtrips,
+  actual missing-glyph availability, same-pass theme-font registration and
+  installed Windows collection-font/two-document cache checks are covered.
+  Direct planning/finished review was explicitly user-approved after the planning
+  reviewer could not start; no rubber-duck review is claimed for this slice.
 - R2 native mixed-script fallback: enable eframe 0.37's existing `system_fonts`
   provider, previously excluded by the default-feature override. Missing glyphs
   resolve to installed OS faces on demand, after configured fonts, without
@@ -94,7 +103,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   first measurement/cache reuse and font-definition changes; opt-in Windows
   installed-CJK acceptance covers real glyphs, title drafts/undo, documents and
   Outline. No font download/embedding or new locale. Native macOS/Linux CJK,
-  default CJK preferences, IME, browser fonts and vector-export matching remain
+  IME, browser fonts and vector-export matching remain
   open; Ubuntu users need installed coverage such as `fonts-noto-cjk`.
 - R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
   now inside a viewport-bounded, height-scrollable search card with adaptive
@@ -935,10 +944,10 @@ Reuse existing persisted settings where applicable rather than introducing dupli
 - P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
   the last structure/theme for new blank maps are implemented; skeleton-specific
   variants still need the layout-gallery research.
-- P2 Editor: explicit default CJK-font preference, browser font provisioning,
-  IME and remaining macOS/Linux font acceptance. Native automatic mixed-script
-  fallback is implemented; configured font priority, layout/cache behavior,
-  open-document switching and installed Windows CJK coverage are verified.
+- P2 Editor: browser font provisioning, IME and remaining macOS/Linux font
+  acceptance. Native automatic mixed-script fallback and the optional default
+  CJK-font preference are implemented; configured font priority, layout/cache
+  behavior, open-document switching and installed Windows CJK coverage are verified.
 - P2 Calendar: selectable base/work calendars, month navigation, working-weekday
   toggles, non-working-day shading and dated exceptions; integrate with Gantt scheduling.
   Calendar management operations behind the reference overflow menu still need research.

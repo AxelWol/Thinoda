@@ -118,8 +118,11 @@ those system-owned controls. WinGet publishing remains paused.
   names and undo history are unchanged. Coverage depends on installed fonts (for
   example, `fonts-noto-cjk` on Ubuntu); this does not install or download fonts.
   Browser builds do not gain access to OS fonts through this native fallback.
-  Default CJK-font preferences, native IME acceptance and exact vector-export
-  font matching remain separate work.
+  Native Settings > Editor > Default CJK font optionally puts an installed face
+  after configured fonts and before automatic discovery. Auto removes this
+  preference; choose a face covering your script. It does not override existing
+  glyphs or change document fonts/history. Browser builds omit this control.
+  Native IME acceptance and exact vector-export font matching remain separate work.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.

@@ -108,6 +108,16 @@ pub(crate) fn font_selector(
     value: &mut Option<String>,
     default_label: &str,
 ) -> egui::Response {
+    font_choice(ui, fonts, value, default_label, true)
+}
+
+fn font_choice(
+    ui: &mut Ui,
+    fonts: &mut thinoda_ui::fonts::SystemFonts,
+    value: &mut Option<String>,
+    default_label: &str,
+    generic_monospace: bool,
+) -> egui::Response {
     egui::ComboBox::from_id_salt("font_family")
         .selected_text(match value.as_deref() {
             None => default_label,
@@ -115,9 +125,12 @@ pub(crate) fn font_selector(
             Some(name) => name,
         })
         .width(ui.available_width())
+        .truncate()
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, default_label);
-            ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+            if generic_monospace {
+                ui.selectable_value(value, Some("monospace".into()), t("Monospace"));
+            }
             for name in fonts.names() {
                 ui.selectable_value(value, Some(name.clone()), name);
             }
@@ -184,7 +197,11 @@ impl ThinodaApp {
         }
         let ctx = ui.ctx().clone();
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
-        if font_source != self.font_source {
+        let preferred_fallback = (!crate::files::is_web())
+            .then_some(self.settings.default_cjk_font.as_deref())
+            .flatten();
+        if font_source != self.font_source || self.fonts.preferred_fallback() != preferred_fallback
+        {
             let families: std::collections::BTreeSet<_> =
                 self.doc()
                     .into_iter()
@@ -210,7 +227,7 @@ impl ThinodaApp {
                     )
                     .cloned()
                     .collect();
-            for name in self.fonts.ensure(&ctx, families) {
+            for name in self.fonts.ensure(&ctx, families, preferred_fallback) {
                 log::warn!("Font unavailable: {name}");
                 self.toasts.warning(format!(
                     "{}: {name}. {}",
@@ -3659,6 +3676,33 @@ impl ThinodaApp {
                 }
                 if self.dialogs.settings_tab == SettingsTab::Editor {
                     widgets::section(ui, t("Editor"), true, |ui| {
+                        if !crate::files::is_web() {
+                            ui.push_id("default_cjk_font", |ui| {
+                                let width = (bounds.width()
+                                    - frame.total_margin().sum().x
+                                    - style.spacing.scroll.allocated_width()
+                                    - ui.spacing().indent)
+                                    .max(40.0)
+                                    .min(ui.available_width());
+                                ui.set_width(width);
+                                let label = ui.label(t("Default CJK font"));
+                                let selected = self.settings.default_cjk_font.clone()
+                                    .unwrap_or_else(|| t("Auto").to_owned());
+                                font_choice(
+                                    ui,
+                                    &mut self.fonts,
+                                    &mut self.settings.default_cjk_font,
+                                    t("Auto"),
+                                    false,
+                                )
+                                .labelled_by(label.id)
+                                .on_hover_text(selected);
+                            });
+                            widgets::caption(
+                                ui,
+                                t("Fallback only; choose an installed font covering your script. Document fonts stay unchanged."),
+                            );
+                        }
                         widgets::property_field(ui, t("Show topic toolbar"), |ui| {
                             widgets::toggle(
                                 ui,

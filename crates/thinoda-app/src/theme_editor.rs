@@ -269,7 +269,10 @@ impl ThinodaApp {
                     .chain(draft.theme.roles.fonts())
                     .cloned()
                     .collect::<Vec<_>>();
-                for name in self.fonts.ensure(ctx, families) {
+                let preferred_fallback = (!crate::files::is_web())
+                    .then_some(self.settings.default_cjk_font.as_deref())
+                    .flatten();
+                for name in self.fonts.ensure(ctx, families, preferred_fallback) {
                     log::warn!("Font unavailable in theme preview: {name}");
                     self.toasts
                         .warning(format!("{}: {name}", t("Font unavailable")));

@@ -10,6 +10,8 @@ Only the current sheet is exported. Colors, assets, relationships, advanced layo
 Additional or unsupported links|Links adicionais ou não suportados
 Font Family|Fonte
 Global Font|Fonte global
+Default CJK font|Fonte CJK padrão
+Fallback only; choose an installed font covering your script. Document fonts stay unchanged.|Somente alternativa; escolha uma fonte instalada compatível com sua escrita. As fontes do documento não mudam.
 Default|Padrão
 Font unavailable|Fonte indisponível
 Using the default font; the requested name is preserved.|A fonte padrão é usada; o nome solicitado é mantido.

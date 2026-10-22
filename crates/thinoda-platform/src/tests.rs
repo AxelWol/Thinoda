@@ -109,6 +109,7 @@ fn settings_defaults_and_empty_toml() {
     assert_eq!(defaults.language, Language::Auto);
     assert!(defaults.autosave && defaults.backup_on_save);
     assert!(!defaults.label_auto_sort);
+    assert!(defaults.default_cjk_font.is_none());
     assert!((1..=2).contains(&defaults.recovery_interval_secs));
 }
 
@@ -356,6 +357,7 @@ fn settings_roundtrip_every_field() {
         show_format_panel: false,
         show_topic_toolbar: false,
         show_topic_add_buttons: false,
+        default_cjk_font: Some("Noto Sans CJK JP".into()),
         label_auto_sort: true,
         initial_canvas_zoom: 0.8,
         reuse_last_structure: true,

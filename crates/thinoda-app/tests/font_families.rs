@@ -165,10 +165,27 @@ fn windows_system_fallback_renders_mixed_titles_and_uncommitted_edits_across_doc
     );
     assert_eq!(d.doc.workbook(), &before);
     assert!(!d.doc.is_dirty());
+    h.state_mut().settings.default_cjk_font = Some("Yu Gothic".into());
+    h.run_steps(4);
+    let preferred = h
+        .ctx
+        .fonts(|fonts| fonts.definitions().font_data["thinoda-preferred-cjk"].clone());
+    assert!(!preferred.bytes().is_empty());
+    let d = h.state_mut().doc_mut().unwrap();
+    assert!(!Arc::ptr_eq(&cached, &d.view.layout_for(&d.doc)));
+    assert_eq!(d.doc.workbook(), &before);
     // A new script in a title draft is not a document revision yet.
     let draft = format!("{MIXED} \u{30ab}\u{30ca}");
     d.view.begin_edit_with(d.doc.sheet(), root, &draft);
     h.run_steps(3);
+    for preferred in [None, Some("Yu Gothic".into())] {
+        h.state_mut().settings.default_cjk_font = preferred;
+        h.run_steps(4);
+        let d = h.state().doc().unwrap();
+        assert_eq!(d.view.editing_text(), Some(draft.as_str()));
+        assert_eq!(d.doc.workbook(), &before);
+        assert!(!d.doc.is_dirty());
+    }
     let d = h.state_mut().doc_mut().unwrap();
     assert_eq!(d.view.editing_text(), Some(draft.as_str()));
     assert_eq!(d.doc.workbook(), &before);
@@ -177,10 +194,35 @@ fn windows_system_fallback_renders_mixed_titles_and_uncommitted_edits_across_doc
     d.view.commit_edit(&mut d.doc);
     assert!(d.doc.undo());
     assert_eq!(d.doc.workbook(), &before);
+    h.run_steps(4);
+    let first_before_reset = {
+        let d = h.state_mut().doc_mut().unwrap();
+        d.view.layout_for(&d.doc)
+    };
     let other = before.clone();
     h.state_mut().new_doc(other);
     h.run_steps(3);
+    let second_cached = {
+        let d = h.state_mut().doc_mut().unwrap();
+        d.view.layout_for(&d.doc)
+    };
+    h.state_mut().settings.default_cjk_font = None;
+    h.run_steps(4);
+    assert!(h.ctx.fonts(|fonts| {
+        !fonts
+            .definitions()
+            .font_data
+            .contains_key("thinoda-preferred-cjk")
+    }));
+    let d = h.state_mut().doc_mut().unwrap();
+    assert!(!Arc::ptr_eq(&second_cached, &d.view.layout_for(&d.doc)));
     h.state_mut().active = 0;
+    h.run_steps(4);
+    let d = h.state_mut().doc_mut().unwrap();
+    assert!(!Arc::ptr_eq(
+        &first_before_reset,
+        &d.view.layout_for(&d.doc)
+    ));
     h.state_mut().mode = CenterMode::Outliner;
     h.run_steps(3);
     assert!(h.query_all_by_label(MIXED).count() >= 1);

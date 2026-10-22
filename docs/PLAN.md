@@ -245,7 +245,8 @@ assistive-technology coverage remain open.
    with remeasurement across open tabs and actual installed-font checks,
    retaining explicit default-CJK-font preferences and native/browser IME acceptance
    as separate requirements. Native automatic fallback is delivered below; browser
-   font provisioning and remaining preferences are still open.
+   font provisioning and IME acceptance are still open. The optional native
+   default-CJK-font preference is also delivered below.
 5. Add the floating bottom-right bar: statistics popover, zoom presets/current-value/
    Fit, Map/Outline switch and verified view actions. Wire Gantt/Pitch when ready.
    Define statistics scope and Unicode counting before exposing character totals.
@@ -740,6 +741,32 @@ with live AI disabled and WASM lint pass.
 Native keyboard/assistive-technology
 acceptance remains open; this does not close the daily-editing band.
 
+**Delivered R2 follow-up - preferred native CJK fallback:** Settings > Editor now
+offers an optional installed-font preference; Auto restores automatic fallback.
+It follows all configured/default/named faces but precedes native on-demand
+discovery, so it supplies missing glyphs rather than replacing document fonts.
+The installed list is not a coverage guarantee: choose a font covering the
+desired script. The selected font's collection index is preserved. Changes apply
+on Home and remeasure open documents when shown, without document/history edits.
+Unavailable names warn once and remain stored; older settings default to Auto.
+Browser builds omit the control and ignore, but preserve, this native preference.
+The localized picker fits compact viewports even though the surrounding Settings
+body can scroll horizontally; full selected names remain available on hover.
+Font registration now merges deferred writes within a pass, preventing a theme
+preview's additional named faces from discarding a simultaneous preference update.
+Deterministic tests cover real missing-glyph availability, configured precedence,
+switch/reset, idempotency and same-pass registration. The 44-case locale/Auto,
+light/dark and viewport/scale matrix covers picker focus/activation, missing-name
+warnings, reset and unchanged maps/revisions; Home startup is also covered.
+Settings roundtrips and opt-in installed Windows CJK checks cover persisted names,
+collection-backed faces, preference changes during active title drafts/Undo and
+two-document cache invalidation. Full workspace CI with live AI disabled and WASM
+lint pass; the installed Windows acceptance test also passes explicitly.
+The planning reviewer could not start (`Requested model not available for session`);
+the user explicitly approved direct planning/finished review for this slice.
+This is not a rubber-duck review claim. Spelling, IME, browser font provisioning,
+macOS/Linux native acceptance and vector-export matching remain open.
+
 **Delivered R2 follow-up - native mixed-script font fallback:** the workspace
 disabled eframe's default features without re-enabling `system_fonts`. This left
 Japanese/Chinese/Korean characters missing even with suitable installed fonts.
@@ -757,7 +784,7 @@ document/Outline switching. It passes on the development Windows host; CI does
 not assume every runner has optional CJK language fonts. Run it explicitly with
 `cargo test -p thinoda-app --test font_families -- --include-ignored --test-threads=1`.
 Fonts are neither downloaded nor redistributed. macOS/Linux native CJK acceptance,
-default CJK-font preferences, IME, browser font provisioning and exact vector-export
+IME, browser font provisioning and exact vector-export
 matching remain open; this slice does not close R2 or add a locale.
 Planning and finished-step rubber-duck reviews found no blockers. The final review
 identified the Linux Fontconfig build prerequisite; both CI and release workflows
@@ -803,8 +830,8 @@ passed signing, notarization and installed-copy verification. WinGet was skipped
 no package-manager publication is claimed. The later responsive-search
 (`311219a`) and Outline focus-ownership (`e1bcc27`) slices are post-release
 work, intentionally excluded from that tag. Main's v0.7.0 metadata is integrated
-into ongoing work. Current daily-editing work is still open; spelling/CJK font
-preferences, shortcut editing, canvas reference polish and native acceptance
+into ongoing work. Current daily-editing work is still open; spelling,
+shortcut editing, canvas reference polish and native acceptance
 are not silently deferred into a "completed" phase.
 
 **Prior publishing incident (2026-10-21):** v0.6.0 Release Please run
