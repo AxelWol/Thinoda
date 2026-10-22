@@ -59,6 +59,7 @@ fn click_at(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, button: PointerBut
 
 #[test]
 fn insertion_instance_contrast_context_removal_and_export_cancellation() {
+    nested_picker_in_short_context_menu();
     let languages: Vec<_> = Language::ALL
         .into_iter()
         .filter(|language| *language != Language::Auto)
@@ -97,6 +98,12 @@ fn insertion_instance_contrast_context_removal_and_export_cancellation() {
             let topic = h.state().doc().unwrap().doc.sheet().topic(root).unwrap();
             assert_eq!(topic.markers, ["priority-1"]);
             assert_eq!(topic.marker_colors[&0], Color::BLACK);
+            assert!(
+                h.query_all_by_role_and_label(Role::ColorWell, t("Symbol color"))
+                    .count()
+                    >= 2,
+                "Insertion and placed-symbol sidebar pickers must remain color wells"
+            );
             let ctx = h.ctx.clone();
             h.state_mut().exec(
                 &ctx,
@@ -241,6 +248,137 @@ fn insertion_instance_contrast_context_removal_and_export_cancellation() {
                 assert_eq!(i18n::t("Remove Symbol"), "Symbol entfernen");
             } else if language != Language::English {
                 assert_ne!(i18n::t("Remove Symbol"), "Remove Symbol");
+            }
+        }
+    }
+}
+
+fn nested_picker_in_short_context_menu() {
+    for language in Language::ALL {
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            for scale in [1.0, 1.5, 2.0] {
+                let mut h = harness(language, theme);
+                h.state_mut().settings.show_format_panel = false;
+                h.state_mut().settings.show_topic_toolbar = false;
+                h.state_mut().settings.ui_scale = scale;
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(
+                    &ctx,
+                    Cmd::Canvas(Action::ToggleMarkerColor(
+                        "flag-red".into(),
+                        Some(Color::WHITE),
+                    )),
+                );
+                h.run_steps(4);
+                h.set_size(egui::vec2(640.0, 360.0) * scale);
+                h.run_steps(6);
+                let d = h.state().doc().unwrap();
+                let root = d.doc.sheet().root;
+                let before = d.doc.workbook().clone();
+                let selection = d.view.selection.clone();
+                let position = d.view.symbol_rect(&d.doc, root, 0).unwrap().center();
+                click_at(&mut h, position, PointerButton::Secondary);
+                h.set_size(egui::vec2(640.0, 120.0));
+                h.run_steps(6);
+                let initial_anchor = h
+                    .get_by_role_and_label(Role::Button, t("Symbol color"))
+                    .rect();
+                h.get_by_role_and_label(Role::Button, t("Remove Symbol"))
+                    .scroll_to_me();
+                h.run_steps(6);
+                let scrolled_anchor = h
+                    .get_by_role_and_label(Role::Button, t("Symbol color"))
+                    .rect();
+                assert_ne!(
+                    initial_anchor,
+                    scrolled_anchor,
+                    "Parent menu did not scroll: {language:?}/{theme:?}/{scale}, {:?}",
+                    h.ctx.content_rect()
+                );
+                h.get_by_role_and_label(Role::Button, t("Symbol color"))
+                    .scroll_to_me();
+                h.run_steps(6);
+                let anchor = h
+                    .get_by_role_and_label(Role::Button, t("Symbol color"))
+                    .rect();
+                assert!(h.ctx.content_rect().contains_rect(anchor), "{anchor:?}");
+                h.get_by_role_and_label(Role::Button, t("Symbol color"))
+                    .click();
+                h.run_steps(6);
+                let picker = h.get_by_role_and_label(Role::Button, "📋").rect();
+                assert!(h.ctx.content_rect().contains_rect(picker), "{picker:?}");
+                let layer = h.ctx.layer_id_at(picker.center()).unwrap();
+                let popup = h.ctx.memory(|m| m.area_rect(layer.id).unwrap());
+                assert!(
+                    h.ctx
+                        .content_rect()
+                        .expand(1.0 / h.ctx.pixels_per_point())
+                        .contains_rect(popup),
+                    "{popup:?}"
+                );
+                h.get_by_role_and_label(Role::Button, "📋").focus();
+                h.run_steps(6);
+                assert_eq!(
+                    h.get_by_role_and_label(Role::Button, t("Symbol color"))
+                        .rect(),
+                    anchor,
+                    "Nested focus moved the parent menu"
+                );
+                assert_eq!(h.get_by_role_and_label(Role::Button, "📋").rect(), picker);
+                h.get_by_role_and_label(Role::Button, "📋").click();
+                h.run_steps(4);
+                h.get_by_role_and_label(Role::Button, "📋");
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                h.query_all_by_role(Role::SpinButton)
+                    .next()
+                    .unwrap()
+                    .focus();
+                h.key_press(egui::Key::ArrowDown);
+                h.run_steps(4);
+                assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().view.selection, selection);
+                h.get_by_role_and_label(Role::Button, "📋");
+                h.key_press(egui::Key::Escape);
+                h.run_steps(4);
+                assert_eq!(h.query_all_by_role_and_label(Role::Button, "📋").count(), 0);
+                assert_eq!(
+                    h.query_all_by_role_and_label(Role::Button, t("Remove Symbol"))
+                        .count(),
+                    0
+                );
+                h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+                h.run_steps(4);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().view.selection, selection);
+                h.set_size(egui::vec2(640.0, 360.0) * scale);
+                h.run_steps(6);
+                let position = {
+                    let d = h.state().doc().unwrap();
+                    d.view.symbol_rect(&d.doc, root, 0).unwrap().center()
+                };
+                click_at(&mut h, position, PointerButton::Secondary);
+                h.get_by_role_and_label(Role::Button, t("Improve contrast"))
+                    .scroll_to_me();
+                h.run_steps(6);
+                h.get_by_role_and_label(Role::Button, t("Improve contrast"))
+                    .click();
+                h.run_steps(4);
+                assert_eq!(
+                    h.state()
+                        .doc()
+                        .unwrap()
+                        .doc
+                        .sheet()
+                        .topic(root)
+                        .unwrap()
+                        .marker_colors[&0],
+                    Color::BLACK
+                );
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+                h.run_steps(3);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
             }
         }
     }

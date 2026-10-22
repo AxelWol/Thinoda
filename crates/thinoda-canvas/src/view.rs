@@ -127,6 +127,8 @@ pub struct MapView {
     pub add_control_labels: AddControlLabels,
     /// Whether the canvas exposes connector add buttons (keyboard actions remain available).
     pub show_add_controls: bool,
+    /// View-only alignment feedback during free-placement topic drags.
+    pub show_alignment_guides: bool,
     /// Internal clipboard (keeps full fidelity when pasting inside Thinoda).
     pub clipboard: Option<ClipboardPayload>,
     /// Text the host should place on the OS clipboard.
@@ -165,6 +167,7 @@ impl Default for MapView {
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
             show_add_controls: true,
+            show_alignment_guides: false,
             clipboard: None,
             clipboard_out: None,
             filter: None,

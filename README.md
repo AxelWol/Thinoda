@@ -118,12 +118,18 @@ those system-owned controls. WinGet publishing remains paused.
   names and undo history are unchanged. Coverage depends on installed fonts (for
   example, `fonts-noto-cjk` on Ubuntu); this does not install or download fonts.
   Browser builds do not gain access to OS fonts through this native fallback.
-  Default CJK-font preferences, native IME acceptance and exact vector-export
-  font matching remain separate work.
+  Native Settings > Editor > Default CJK font optionally puts an installed face
+  after configured fonts and before automatic discovery. Auto removes this
+  preference; choose a face covering your script. It does not override existing
+  glyphs or change document fonts/history. Browser builds omit this control.
+  Native IME acceptance and exact vector-export font matching remain separate work.
 - Map > Branches offers automatic or explicit map-wide stroke width (0.5-16).
   Per-topic line widths still override it. Confirm numeric drafts with Enter or
   blur; Escape cancels. Invalid values leave the map and undo history unchanged.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts
+- Settings > Editor > Show alignment guides optionally shows nearby matching
+  topic-group edges/centers during free-placement dragging. It is off by default,
+  does not snap positions, and does not change document styles or Undo history.
 - Style, Map and Symbols sidebars reveal newly focused controls during keyboard
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.
@@ -322,6 +328,8 @@ those system-owned controls. WinGet publishing remains paused.
   from either Symbols surface. Placed symbols expose individual color, default-color
   reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
   right-click a particular canvas symbol for the same editor/removal action.
+  In that context menu, **Symbol color** opens a scrollable color submenu that
+  remains usable in short windows; the sidebar retains its color swatch picker.
   Changes are undoable, keep the one-per-category semantics and preserve legacy
   default rendering. Contrast uses WCAG relative luminance against the composited
   topic fill/sheet background (including boundary overlays): graphics require 3:1,

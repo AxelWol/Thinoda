@@ -78,6 +78,83 @@ fn start_drag(h: &mut Harness<'_, State>, id: TopicId, end: Pos2) {
 }
 
 #[test]
+fn alignment_guides_are_opt_in_view_only_and_do_not_snap_drops() {
+    for zoom in [0.5, 1.0, 2.0] {
+        let mut h = harness(zoom);
+        let source = h.state().source;
+        let target = h.state().target;
+        let before = h.state().doc.workbook().clone();
+        let layout = {
+            let s = h.state_mut();
+            s.view.layout_for(&s.doc)
+        };
+        let owned = crate::topic_drag::members(h.state().doc.sheet(), &[source]);
+        let group = layout
+            .order
+            .iter()
+            .filter(|id| owned.contains(id))
+            .filter_map(|id| layout.rect(*id))
+            .reduce(|a, b| a.union(&b))
+            .unwrap();
+        let delta = Vec2::new(
+            layout.rect(target).unwrap().center().x - group.center().x + 2.0 / zoom,
+            -80.0,
+        );
+        let start = center(&mut h, source);
+        let end = start + vec2(delta.x, delta.y) * zoom;
+        start_drag(&mut h, source, end);
+        let count = |h: &Harness<'_, State>| {
+            h.output()
+                .shapes
+                .iter()
+                .filter(|shape| {
+                    matches!(
+                        &shape.shape, egui::Shape::LineSegment { stroke, .. }
+                        if stroke.width == 1.0 && stroke.color == h.state().view.accent
+                    )
+                })
+                .count()
+        };
+        let without = count(&h);
+        h.state_mut().view.show_alignment_guides = true;
+        h.run_steps(2);
+        assert!(count(&h) > without, "No alignment guide at zoom {zoom}");
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(!h.state().doc.is_dirty());
+        h.state_mut().view.show_alignment_guides = false;
+        h.run_steps(2);
+        assert_eq!(count(&h), without);
+        h.state_mut().view.show_alignment_guides = true;
+        h.run_steps(2);
+        h.drop_at(end);
+        h.run_steps(2);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        let actual = h
+            .state()
+            .doc
+            .sheet()
+            .topic(source)
+            .unwrap()
+            .position
+            .unwrap();
+        let expected = before.sheets[0].topic(source).unwrap().position.unwrap() + delta;
+        assert!(
+            (actual - expected).length() < 0.01,
+            "Guide snapped the position"
+        );
+        assert_eq!(count(&h), without);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        let start = center(&mut h, source);
+        start_drag(&mut h, source, start + vec2(delta.x, delta.y) * zoom);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(matches!(h.state().view.drag, Drag::None));
+    }
+}
+
+#[test]
 fn subtree_drag_paints_full_content_without_edits_then_moves_once_at_each_zoom() {
     for zoom in [0.5, 1.0, 2.0] {
         let mut h = harness(zoom);
@@ -157,6 +234,7 @@ fn moving_topic_to_another_hierarchy_level_preserves_its_visual_size() {
 #[test]
 fn reparenting_moves_only_selected_roots_and_retains_owned_content_and_links() {
     let mut h = harness(1.0);
+    h.state_mut().view.show_alignment_guides = true;
     let (source, child, summary, target) = (
         h.state().source,
         h.state().child,

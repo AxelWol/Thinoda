@@ -245,7 +245,8 @@ assistive-technology coverage remain open.
    with remeasurement across open tabs and actual installed-font checks,
    retaining explicit default-CJK-font preferences and native/browser IME acceptance
    as separate requirements. Native automatic fallback is delivered below; browser
-   font provisioning and remaining preferences are still open.
+   font provisioning and IME acceptance are still open. The optional native
+   default-CJK-font preference is also delivered below.
 5. Add the floating bottom-right bar: statistics popover, zoom presets/current-value/
    Fit, Map/Outline switch and verified view actions. Wire Gantt/Pitch when ready.
    Define statistics scope and Unicode counting before exposing character totals.
@@ -475,6 +476,13 @@ tab taxonomy or File/Options placement. Settings in Edit is a user-directed
 choice even where a host normally uses another location. Standard host aliases
 may coexist without changing command identity. Context menus expose relevant
 subsets rather than repeating every top-level category.
+This deliberately differs from Windows Office's File/Options and Ubuntu
+desktop-specific Preferences placement; P4.1 audits and documents that settled
+choice rather than reopening it. Command parity does not require identical
+group layouts, but Windows tab names must remain the eight shared categories.
+P4.4 cannot enter multi-window acceptance until the IPC/startup mechanism selected
+by P4.1 is implemented, allowing the primary process to create additional native
+viewports instead of only forwarding files into its existing window.
 
 | Step | Deliverable and dependency | Acceptance before marking finished |
 |---|---|---|
@@ -740,6 +748,60 @@ with live AI disabled and WASM lint pass.
 Native keyboard/assistive-technology
 acceptance remains open; this does not close the daily-editing band.
 
+**Delivered R2/R3 follow-up - visual alignment guides:** Settings > Editor >
+Show alignment guides is an opt-in persisted view preference, shared by native
+and browser canvases. During free-placement topic dragging, at most one vertical
+and one horizontal guide mark the nearest matching left/center/right or
+top/center/bottom coordinate within four logical screen points. The moving
+group uses its visible topic bounds (including visible descendants); collapsed
+topics and all dragged members are excluded as stationary candidates.
+Equal-distance ties follow stable layout order. Guides use the clipped canvas
+painter and disappear on drop/cancel; hierarchy-drop previews retain priority.
+This is visual feedback only: no snapping, no position correction, no document
+style/history changes, and no reassignment of the command-palette shortcut.
+The existing persisted `snap_to_grid`/`smooth_zoom` fields are not activated or
+advertised by this slice. Keyboard Arrange alignment commands remain available.
+Tests cover exact threshold behavior at 50/100/200% canvas zoom, multi-root group
+bounds, nearest/tie selection, hidden/self exclusion, actual pointer-drag paint
+on/off, unchanged pre-drop documents, unsnapped drop geometry, Escape, one-step
+Undo and reparenting with guides enabled. A 66-case shipped-locale/Auto,
+light/dark/System and compact/normal Settings matrix checks focus, keyboard
+activation, disk persistence, propagation across documents and unchanged revisions.
+This does not claim full XMind guideline parity, equal-spacing/distance guides,
+snap behavior or manual native visual/accessibility acceptance.
+The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Full workspace CI with live AI disabled, final Settings interaction regression
+and native all-target/WASM lint pass. R1-R3 remain open: spelling, shortcut
+rebinding/conflict handling, remaining canvas/reference polish and native input/
+accessibility acceptance are not moved into a completed phase.
+
+**Delivered R2 follow-up - preferred native CJK fallback:** Settings > Editor now
+offers an optional installed-font preference; Auto restores automatic fallback.
+It follows all configured/default/named faces but precedes native on-demand
+discovery, so it supplies missing glyphs rather than replacing document fonts.
+The installed list is not a coverage guarantee: choose a font covering the
+desired script. The selected font's collection index is preserved. Changes apply
+on Home and remeasure open documents when shown, without document/history edits.
+Unavailable names warn once and remain stored; older settings default to Auto.
+Browser builds omit the control and ignore, but preserve, this native preference.
+The localized picker fits compact viewports even though the surrounding Settings
+body can scroll horizontally; full selected names remain available on hover.
+Font registration now merges deferred writes within a pass, preventing a theme
+preview's additional named faces from discarding a simultaneous preference update.
+Deterministic tests cover real missing-glyph availability, configured precedence,
+switch/reset, idempotency and same-pass registration. The 44-case locale/Auto,
+light/dark and viewport/scale matrix covers picker focus/activation, missing-name
+warnings, reset and unchanged maps/revisions; Home startup is also covered.
+Settings roundtrips and opt-in installed Windows CJK checks cover persisted names,
+collection-backed faces, preference changes during active title drafts/Undo and
+two-document cache invalidation. Full workspace CI with live AI disabled and WASM
+lint pass; the installed Windows acceptance test also passes explicitly.
+The planning reviewer could not start (`Requested model not available for session`);
+the user explicitly approved direct planning/finished review for this slice.
+This is not a rubber-duck review claim. Spelling, IME, browser font provisioning,
+macOS/Linux native acceptance and vector-export matching remain open.
+
 **Delivered R2 follow-up - native mixed-script font fallback:** the workspace
 disabled eframe's default features without re-enabling `system_fonts`. This left
 Japanese/Chinese/Korean characters missing even with suitable installed fonts.
@@ -757,7 +819,7 @@ document/Outline switching. It passes on the development Windows host; CI does
 not assume every runner has optional CJK language fonts. Run it explicitly with
 `cargo test -p thinoda-app --test font_families -- --include-ignored --test-threads=1`.
 Fonts are neither downloaded nor redistributed. macOS/Linux native CJK acceptance,
-default CJK-font preferences, IME, browser font provisioning and exact vector-export
+IME, browser font provisioning and exact vector-export
 matching remain open; this slice does not close R2 or add a locale.
 Planning and finished-step rubber-duck reviews found no blockers. The final review
 identified the Linux Fontconfig build prerequisite; both CI and release workflows
@@ -803,8 +865,8 @@ passed signing, notarization and installed-copy verification. WinGet was skipped
 no package-manager publication is claimed. The later responsive-search
 (`311219a`) and Outline focus-ownership (`e1bcc27`) slices are post-release
 work, intentionally excluded from that tag. Main's v0.7.0 metadata is integrated
-into ongoing work. Current daily-editing work is still open; spelling/CJK font
-preferences, shortcut editing, canvas reference polish and native acceptance
+into ongoing work. Current daily-editing work is still open; spelling,
+shortcut editing, canvas reference polish and native acceptance
 are not silently deferred into a "completed" phase.
 
 **Prior publishing incident (2026-10-21):** v0.6.0 Release Please run
@@ -1091,8 +1153,38 @@ Follow with the broader P4.2 grouping/accessibility audit (including text-contro
 menus owned by egui); do not claim native OS menus or full P4.2 acceptance here.
 Toolbar-triggered symbol/marker, export, zoom and statistics popovers remain a
 separate audit (toolbar roots are now covered by the follow-up below).
-The symbol context menu's nested egui color picker still needs
-dedicated short-window interaction QA; planning review identified that edge case.
+The user-supplied review explicitly requires opening the nested symbol picker after
+scrolling the parent, checking its anchor, editing a color, contrast actions,
+Escape/focus isolation and document/selection preservation with Undo; the
+delivered follow-up below covers this instance-menu case.
+Toolbar roots are not covered by this context-menu slice: marker/symbol insertion,
+Export, New-from-Template categories, Zoom and topic statistics require separate
+P4.2 evidence. The follow-up below covers named toolbar roots and the earlier
+main-menu matrix covers template categories; neither closes nested popup or
+native/browser accessibility acceptance.
+
+**Delivered R2 follow-up - nested symbol-instance color picker (2026-10-22):**
+the requested interaction test reproduced a functional failure, not merely an
+untested edge: egui's standard color button opens a memory-backed root popup,
+replacing the context menu's open state and making both disappear. Symbol instance
+menus now use an actual egui submenu with the shared height/focus scroll helper
+and outside-click dismissal, containing the existing egui color editor.
+Sidebar/insertion color buttons are unchanged. The sequential shipped-locale/Auto,
+light/dark, 100/150/200% matrix opens the real symbol context menu, shrinks the
+viewport to 120 logical points, proves the parent actually scrolls, then opens
+the nested picker and checks bounded geometry and unchanged anchor position when
+focus moves to the child layer. It changes an actual numeric color channel,
+verifies the picker stays open, dismisses with Escape and restores the workbook
+with one Undo; a separate contrast action also restores with one Undo.
+Selection remains unchanged. Extremely short app chrome and other color-picker
+surfaces are not accepted by this fixture; it specifically tests open-menu resize
+and scrolling. Text-control menus and native/browser/accessibility checks remain
+open. The configured reviewer could not start; the user explicitly approved direct
+planning/finished review for this slice. No rubber-duck review is claimed.
+Direct review caught the shared sidebar/instance rendering path; the submenu is
+explicitly context-only, and sidebar color-well roles are regression-checked.
+Full workspace CI with live AI disabled, final targeted symbol/context/toolbar
+regressions and native all-target/WASM lint pass.
 
 **Delivered R2 follow-up - toolbar popup bounds:** top-bar Export, Map insertion
 Marker/More, and status-bar Zoom/Statistics now reuse the same viewport-height

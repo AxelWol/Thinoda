@@ -87,6 +87,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   clipped paint bounds, Outline isolation, document/history preservation and
   Notes draft/commit/one-step undo. Native assistive-technology acceptance remains
   separate; this does not close R2.
+- R2 preferred native CJK fallback: native Settings > Editor lists installed
+  faces; Auto resets. The preference follows configured faces and precedes
+  automatic discovery, preserving document font names/history. Missing names
+  warn once and stay stored. Browser builds omit/ignore this native preference.
+  Compact localized picker bounds, Home initialization, settings roundtrips,
+  actual missing-glyph availability, same-pass theme-font registration and
+  installed Windows collection-font/two-document cache checks are covered.
+  Direct planning/finished review was explicitly user-approved after the planning
+  reviewer could not start; no rubber-duck review is claimed for this slice.
 - R2 native mixed-script fallback: enable eframe 0.37's existing `system_fonts`
   provider, previously excluded by the default-feature override. Missing glyphs
   resolve to installed OS faces on demand, after configured fonts, without
@@ -94,7 +103,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   first measurement/cache reuse and font-definition changes; opt-in Windows
   installed-CJK acceptance covers real glyphs, title drafts/undo, documents and
   Outline. No font download/embedding or new locale. Native macOS/Linux CJK,
-  default CJK preferences, IME, browser fonts and vector-export matching remain
+  IME, browser fonts and vector-export matching remain
   open; Ubuntu users need installed coverage such as `fonts-noto-cjk`.
 - R1/R2 Find and Replace reachability: a reproduced x=-27 replacement field is
   now inside a viewport-bounded, height-scrollable search card with adaptive
@@ -288,8 +297,23 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   covers short/edge viewports, shipped locales, themes and 100/150/200% scaling;
   existing command/symbol/quick-style tests pass. Planning and finished-step reviews
   found no blockers. Full grouping/text-control/native-accessibility acceptance,
-  short-window nested color-picker QA remain open; toolbar roots are covered by
+  other color-picker surfaces remain open; the nested symbol-instance follow-up
+  is delivered below and toolbar roots are covered by
   the completed follow-up below.
+  Scope boundary: this context-menu mitigation does not cover toolbar-triggered
+  marker/symbol insertion, Export, New-from-Template categories, Zoom or topic
+  statistics. Their separate toolbar/main-menu matrices are recorded below/above;
+  nested color-picker interaction and the full P4.2 audit remain distinct gates.
+- Nested symbol-instance color picker (user review, 2026-10-22): **Delivered.**
+  Opening egui's root color popup replaced the context-menu open state and closed
+  both. Use a proper height-bounded submenu for symbol instances, leaving other
+  picker surfaces unchanged. The shipped-locale/Auto, light/dark, 100-200% matrix
+  proves parent scrolling after shrinking an open menu, checks child bounds and
+  anchor/focus stability, edits a numeric color channel, verifies Escape and
+  selection preservation, and restores color/contrast changes with single Undo.
+  The unavailable reviewer was replaced by explicitly user-approved direct
+  planning/finished review for this slice. Other nested pickers, text-control
+  menus and native/browser/accessibility acceptance remain open.
 - Map inspector maximum-resize corruption (user screenshot, 2026-10-20):
   **Delivered:** pointer-drag reproduction isolated theme-grid cell expansion.
   Reused fixed-size preview cards with responsive columns instead of allowing
@@ -932,13 +956,18 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   distinguish automatic update installation from checking for updates.
 - P2 General: optional usage statistics with explicit consent, a documented data
   inventory and no document contents; no telemetry is authorized by these screenshots.
-- P2 Editor: smart-guide visibility remains. Initial canvas zoom and opt-in reuse of
+- P2 Editor: visual alignment-guide visibility is implemented as an opt-in
+  Settings preference for free-placement topic dragging: nearest matching group
+  edge/center within four screen points, no snapping/history changes. Canvas
+  threshold/group/paint/drop/cancel/Undo and localized Settings persistence checks
+  cover this slice; equal-spacing/snap/native visual parity remain open.
+  Initial canvas zoom and opt-in reuse of
   the last structure/theme for new blank maps are implemented; skeleton-specific
   variants still need the layout-gallery research.
-- P2 Editor: explicit default CJK-font preference, browser font provisioning,
-  IME and remaining macOS/Linux font acceptance. Native automatic mixed-script
-  fallback is implemented; configured font priority, layout/cache behavior,
-  open-document switching and installed Windows CJK coverage are verified.
+- P2 Editor: browser font provisioning, IME and remaining macOS/Linux font
+  acceptance. Native automatic mixed-script fallback and the optional default
+  CJK-font preference are implemented; configured font priority, layout/cache
+  behavior, open-document switching and installed Windows CJK coverage are verified.
 - P2 Calendar: selectable base/work calendars, month navigation, working-weekday
   toggles, non-working-day shading and dated exceptions; integrate with Gantt scheduling.
   Calendar management operations behind the reference overflow menu still need research.
