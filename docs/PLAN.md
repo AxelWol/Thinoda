@@ -212,6 +212,9 @@ unknown needed by the next package. Never bypass OS application-control policy.
    The searchable/category-filtered read-only reference, unassigned-command
    visibility and map/insertion aliases derived from dispatch are delivered.
    Rebinding/conflict editing and native keyboard-layout audits remain open.
+   The default-dispatch conflict audit below is a prerequisite, not an editable
+   keymap or OS-reserved-key validator. Resolve the recorded keymap decisions and
+   define stable override identities/migration before activating saved overrides.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -1173,6 +1176,36 @@ disabled and WASM lint pass. This closes the metadata follow-up,
 not R1: editable bindings, modifier/reserved-key conflict auditing (including
 existing Outline modified-key matching), presets/reset, native keyboard-layout/
 IME/accessibility acceptance and OS-integrated P4 menus remain open.
+
+**Delivered R1 prerequisite - default shortcut conflict audit:** read-only
+diagnostics now compose the real global -> insertion -> Map/Outline action
+tables in dispatch order. They distinguish an exact duplicate from a declared
+gesture shadowed by a less-specific earlier command, ignore same-command
+aliases, and use egui's actual logical modifier matching with host Ctrl/Cmd
+normalization. A separate diagnostic resolves an arbitrary gesture without
+executing it. Scope is an idle, focused topic with no modal/popup/search/editor;
+Outline visible-row traversal, clipboard events, type-to-edit and OS/browser
+reserved keys are not falsely modeled as command bindings.
+
+The current Map inventory has one cross-command declared collision:
+Ctrl/Cmd+Shift+H advertises Fit but the earlier Ctrl/Cmd+H Find & Replace handler
+consumes it. Outline has no declared collision, but probing Ctrl/Cmd+Shift+Z
+confirms its existing Undo handler consumes that undeclared modifier variant;
+the same gesture is an explicit Redo binding in Map. These are recorded
+behavioral decisions, not silently changed defaults. Fit remains available by
+menu/palette. Future editor work must choose the modifier-specificity policy,
+reconcile hints for unreachable bindings, assign stable persisted command
+identities (catalog row numbers are not a migration contract), and separately
+validate reserved host/browser keys before applying overrides.
+
+Tests compare every declared binding plus extra Shift/Alt variants against
+egui InputState consumption on three simulated hosts, distinguish physical
+Ctrl from Cmd on macOS, and reproduce Find & Replace interception and Map/
+Outline Undo/Redo behavior through real app frames. Targeted audit/UI tests
+and native all-target/WASM lint pass. The configured reviewer could not start;
+the user approved direct planning/finished review for this audit slice.
+No rubber-duck review is claimed. No dispatch, hints, preferences or saved
+overrides are changed; R1 shortcut editing and P4 remain open.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

@@ -74,6 +74,16 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 shortcut-conflict prerequisite: read-only default-dispatch diagnostics
+  distinguish exact duplicates from modifier shadowing in actual global ->
+  insertion -> Map/Outline order, excluding redundant same-command aliases.
+  Three-host modifier/egui-consumption tests and actual app frames reproduce
+  Fit's Ctrl/Cmd+Shift+H interception by Find & Replace and Outline's existing
+  Ctrl/Cmd+Shift+Z Undo behavior (Map uses Redo). Keys/hints/settings are unchanged.
+  Targeted tests and native/WASM lint pass; direct planning/finished review was
+  user-approved after reviewer startup failed. Editable overrides, stable
+  persisted IDs/migration, conflict decisions and OS/browser-reserved keys remain
+  open; this diagnostic is not a claim of native keyboard acceptance.
 - R1 view-aware Outline shortcut metadata: the existing eight action bindings
   now supply both Outline dispatch and live menu/palette/reference hints.
   Separate Up/Down descriptors retain visible-row traversal, including collapsed

@@ -15,6 +15,7 @@ mod printing;
 mod quick_styles;
 mod save_all;
 mod shortcut_browser;
+pub mod shortcut_conflicts;
 pub mod startup;
 mod structure_picker;
 mod symbols;
