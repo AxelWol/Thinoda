@@ -8,6 +8,36 @@
 
 use base64::Engine as _;
 
+/// Open the web install panel; the browser prompt itself runs from a DOM click.
+#[cfg(target_arch = "wasm32")]
+pub fn install_app(
+    title: &str,
+    close: &str,
+    instructions: &str,
+    storage: &str,
+    unavailable: &str,
+) -> Result<(), String> {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(inline_js = "
+        export function thinoda_install_panel(...args) {
+            if (!window.thinodaPwa) throw new Error('Thinoda PWA integration is unavailable');
+            window.thinodaPwa.open(...args);
+        }
+    ")]
+    extern "C" {
+        #[wasm_bindgen(catch)]
+        fn thinoda_install_panel(
+            title: &str,
+            close: &str,
+            instructions: &str,
+            storage: &str,
+            unavailable: &str,
+        ) -> Result<(), JsValue>;
+    }
+    thinoda_install_panel(title, close, instructions, storage, unavailable)
+        .map_err(|error| format!("{error:?}"))
+}
+
 /// Escape text for HTML element content and double-quoted attributes.
 pub fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

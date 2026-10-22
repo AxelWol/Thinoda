@@ -137,6 +137,28 @@ as a defect in the planning deliverable.
 
 ### Delivery order and dependencies
 
+#### Active priorities by end-user value (2026-10-22)
+
+This ranks remaining work, not whole packages as unfinished. Reuse the delivered
+slices below; close each task with observable behavior before moving on.
+Data-loss, security, launch and release regressions override the ranking.
+
+| Rank | Phase / packages | Prioritized remaining tasks | End-user benefit |
+|---|---|---|---|
+| 1 | Reliable daily editing / R0-R3 | Outline Shift+Ctrl/Cmd+Z correction delivered below; next verify text-input/focus and native save/cancel/close boundaries, compact navigation and accessibility. Preserve ordinary Undo and Ctrl/Cmd+Y. | Prevent surprising edits and lost work in the most frequent interactions. |
+| 2 | Discoverable, adaptable commands / R1-R2 | Finish command parity; define versioned shortcut overrides, capture/conflict/reserved-key handling, apply/reset and persistence; validate keyboard-only navigation. Do not silently migrate inactive legacy values or remap the Fit collision. | Users can find commands and adapt shortcuts without breaking editing or browser controls. |
+| 3 | Trustworthy file, output and installation workflows / R6, R11 | User-requested web PWA installation/settings/icons/offline shell; verify native pickers, cross-sheet search and sheet exchange; close export/print fidelity and MindManager reverse-roundtrip gaps; verify install/update artifacts and recovery. | Easier access to the app and confidence that maps can be saved and exchanged faithfully. |
+| 4 | Richer maps with less effort / R3-R5 | Finish relationship/placement and rich-content editing, searchable assets, template previews and theme authoring; cover undo and roundtrip before expanding catalogs. | Faster creation of readable, useful maps. |
+| 5 | Presentation and planning / R7-R8 | Complete zones/Pitch and presentation export first; then calendars, task scheduling and Gantt with deterministic date rules. | Turn existing maps into communication and execution tools. |
+| 6 | Optional intelligent and connected work / R9-R10 | Credential/cancellation safety first, then responsive AI; protected files and synchronization only after conflict/recovery contracts. | Assistance and access across devices without compromising local work. |
+| 7 | Extensibility and language reach / R12 | Stabilize format/plugin contracts, collaboration convergence and remaining accepted locales. | Broader audiences and integrations without weakening compatibility. |
+| 8 | OS-integrated shell / R13, P4.1-P4.7 | Feasibility and shared command model first; then Windows ribbon, macOS global menus/multi-window, Ubuntu integration and WASM fallback; finish native acceptance. | Familiar platform behavior built on reliable editing and lifecycle contracts. |
+
+P4 remains explicitly scheduled, not completed or replaced by popup mitigations.
+Its dependencies and per-step review/native acceptance gates below still apply.
+Performance, localization, accessibility, signing and regression checks accompany
+each affected slice rather than waiting for their own final phase.
+
 | Package | Outcome | Prerequisites | Delivery band |
 |---|---|---|---|
 | R0 | Verified baseline, reference decisions and regression harness | None | Foundation |
@@ -221,8 +243,8 @@ deferred behind shortcut customization or P4.
    visibility and map/insertion aliases derived from dispatch are delivered.
    Rebinding/conflict editing and native keyboard-layout audits remain open.
    The default-dispatch conflict audit below is a prerequisite, not an editable
-   keymap or OS-reserved-key validator. Resolve the recorded keymap decisions and
-   stable built-in identities are delivered below. Define the versioned override
+   keymap or OS-reserved-key validator. Stable built-in identities are delivered
+   below. Resolve the recorded keymap decisions and define the versioned override
    format/migration before activating saved overrides.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
@@ -440,6 +462,13 @@ native QA are required for this package.
    restart and preserve unsaved maps/recovery across update failures.
 4. Run upgrade/downgrade compatibility checks, publish release notes and a truthful
    platform matrix. Cross-compilation alone is not native validation.
+5. User-directed web PWA slice (2026-10-22): installable scoped manifest, web-only
+   Settings install action with browser/Apple manual alternatives, Windows/Linux/
+   macOS/iOS/iPadOS icon assets, offline shell and non-disruptive updates.
+   Keep storage/backups and installation capability limitations explicit.
+   Verify subpath deployment, install/dismiss/error/standalone states, safe icon
+   zones, offline reload and old-worker lifetime. Do not equate installation with
+   native file associations, multi-window parity, unlimited storage or OS QA.
 
 **Exit:** signed/notarized packages install and launch on each advertised target;
 update verification rejects tampering, failed updates recover, and user files/settings
@@ -568,6 +597,32 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+**Current continuation, 2026-10-22:** follow the value-ranked task list above.
+Stable shortcut IDs are locally committed at `9052a01`. The next daily-editing
+slice corrects Outline Ctrl/Cmd+Shift+Z from Undo to Redo while preserving the
+existing Ctrl/Cmd+Y primary hint, ordinary Undo and current focus guards.
+Tests exercise actual Map/Outline frames with Windows/macOS/Linux modifier
+models, both reference aliases, menu hints and sidebar focus. This intentionally
+fixes a diagnosed default-key bug; it is not a shortcut preset migration or
+activation of saved overrides. Fit's separate collision still needs a keymap
+decision.
+
+The user-requested PWA slice is implemented alongside it: web-only Settings
+installation, manual browser/Apple alternatives, scoped manifest and generated
+192/512 standard, 512 maskable and 152/167/180 Apple touch icons. Trunk generates
+a content-versioned app-shell worker including matching WASM/JS/snippets.
+Only shell assets are cached; old clients are not force-reloaded, and maps remain
+in the existing browser storage with its limits and backup requirements.
+Full workspace CI (live AI disabled), WASM lint, Node install/error/cache tests,
+safe-zone/icon and build-generation tests pass. An isolated Edge profile
+executed the built WASM site under `/dist/`,
+validated its manifest and cache scope, clicked the actual Settings install
+action and closed the accessible panel with Escape, passed browser installability checks, then successfully
+reloaded the app offline. This did not
+install software or prove other platforms' installation/icon/AT acceptance.
+See [WEB.md](WEB.md#install-thinoda-as-an-app-pwa); R11 platform acceptance and
+all P4 native integration gates remain open.
 
 R0 execution resumed on 2026-10-20 after merging main through `07fec3c`.
 The startup harness now covers all ten shipped locales plus Auto, explicit

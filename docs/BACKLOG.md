@@ -77,6 +77,27 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- Web PWA installation (R11, user-directed): web-only Settings > General >
+  Install web app opens an accessible browser install panel. Chromium's one-shot
+  prompt is invoked only by a real panel-button click; Safari/iOS/iPadOS and
+  unsupported browsers receive manual instructions. The scoped manifest and
+  generated standard, maskable and Apple touch icons cover supported desktop and
+  mobile installation surfaces. An exact-build offline shell includes matching
+  JS/WASM/snippets, excludes documents/AI/other sites, and waits for old windows
+  to close before updating. Storage limits, backups and possible Safari storage
+  isolation remain explicit. Node lifecycle/cache tests, icon safe-zone/build
+  generation tests and actual isolated Edge WASM startup/offline reload under a
+  deployment subpath and browser installability checks pass. Full workspace CI
+  with live AI disabled and WASM lint pass. Actual OS installation/icon/assistive-technology
+  acceptance on Windows/Linux/macOS/iOS/iPadOS remains open; no store distribution
+  or P4 native-menu/window parity is claimed.
+- R1 Outline Redo specificity: Ctrl/Cmd+Shift+Z now invokes Redo before the broad
+  Ctrl/Cmd+Z Undo matcher can consume it, matching Map behavior. Ctrl/Cmd+Y and its
+  primary menu hint remain; the reference lists both Redo aliases. Actual app
+  frames cover Undo/Redo on three simulated host modifier models; Outline
+  coverage preserves sidebar focus, ordinary Undo, collapsed-row navigation and
+  document contents. Fit's separate Ctrl/Cmd+Shift+H collision remains unremapped.
+  The value-ranked remaining phase/task list is in PLAN.md.
 - R1 stable shortcut-target identities: explicit nonlocalized IDs are separate
   from unchanged palette row IDs. The registry covers static palette/default
   bindings and reference-only targets, resolving Close Tab to the active document

@@ -3510,6 +3510,19 @@ impl ThinodaApp {
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
+                    #[cfg(target_arch = "wasm32")]
+                    if ui.button(t("Install web app")).clicked()
+                        && let Err(error) = thinoda_platform::web::install_app(
+                            t("Install web app"),
+                            t("Close"),
+                            t("Install from your browser menu. On iPhone/iPad use Share > Add to Home Screen; on Mac Safari use Share > Add to Dock. On Windows/Linux use Chrome or Edge."),
+                            t("Installation keeps browser storage limits. Download backups; clearing site data can delete maps. Offline use needs one complete online load."),
+                            t("No install prompt is available. The app may already be installed, or your browser requires its menu. Use HTTPS or localhost."),
+                        )
+                    {
+                        log::error!("PWA install panel: {error}");
+                        self.toasts.error(error);
+                    }
                     widgets::section(ui, t("Appearance"), true, |ui| {
                         widgets::property_row(ui, t("Theme"), |ui| {
                             widgets::segmented(

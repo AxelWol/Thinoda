@@ -7,10 +7,13 @@ use std::{
 
 use anyhow::{Context, bail};
 
+mod web_pwa;
+
 const USAGE: &str = "cargo xtask <command>
 
 commands:
     icons                     regenerate assets/icon-*.png and assets/icon.ico from the built-in SVG
+    web-pwa                   generate the offline shell in Trunk's staging directory
     package [--target T] [--formats F,..]
                               build a release binary and create installers with cargo-packager
                               (nsis on Windows, app+dmg on macOS, deb+appimage on Linux)
@@ -246,6 +249,16 @@ fn icons() -> anyhow::Result<()> {
     }
     render_icon(1024)?.save(dir.join("icon.png"))?;
     render_style(IconStyle::MacOs, 512)?.save(dir.join("icon-macos-512.png"))?;
+    let pwa = dir.join("pwa-icons");
+    std::fs::create_dir_all(&pwa)?;
+    for size in [192, 512] {
+        render_icon(size)?.save(pwa.join(format!("icon-{size}.png")))?;
+    }
+    web_pwa::opaque_icon(180)?.save(pwa.join("apple-touch-icon.png"))?;
+    for size in [152, 167] {
+        web_pwa::opaque_icon(size)?.save(pwa.join(format!("apple-touch-icon-{size}.png")))?;
+    }
+    web_pwa::opaque_icon(512)?.save(pwa.join("maskable-512.png"))?;
     let mut ico = std::fs::File::create(dir.join("icon.ico"))?;
     let frames: Vec<_> = ICO_SIZES
         .into_iter()
@@ -356,6 +369,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("icons") => icons(),
+        Some("web-pwa") => web_pwa::build(),
         Some("package") => package(&args[1..]),
         Some("ci") => ci(),
         _ => {

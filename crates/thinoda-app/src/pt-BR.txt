@@ -1,6 +1,10 @@
 Default symbol color|Cor padrão do símbolo
 Editable exports lose symbol colors, except Thinoda and unchanged XMind files reopened in Thinoda. XMind itself shows standard icons; third-party edits can discard custom colors.|As exportações editáveis perdem as cores dos símbolos, exceto no formato Thinoda e nos arquivos XMind inalterados reabertos no Thinoda. O próprio XMind mostra ícones padrão; alterações em outros aplicativos podem eliminar as cores personalizadas.
 # Explicit Brazilian Portuguese regional wording; other entries intentionally share common Portuguese.
+Install web app|Instalar aplicativo web
+Install from your browser menu. On iPhone/iPad use Share > Add to Home Screen; on Mac Safari use Share > Add to Dock. On Windows/Linux use Chrome or Edge.|Instale pelo menu do navegador. No iPhone/iPad: Compartilhar > Adicionar à Tela de Início; no Safari do Mac: Compartilhar > Adicionar ao Dock. No Windows/Linux use Chrome ou Edge.
+Installation keeps browser storage limits. Download backups; clearing site data can delete maps. Offline use needs one complete online load.|Os limites de armazenamento do navegador continuam valendo. Baixe backups; limpar os dados do site pode apagar mapas. O uso offline exige um carregamento online completo.
+No install prompt is available. The app may already be installed, or your browser requires its menu. Use HTTPS or localhost.|Nenhum aviso de instalação disponível. O aplicativo pode já estar instalado ou o navegador exige seu menu. Use HTTPS ou localhost.
 Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.|Não foi possível ler este arquivo MindManager. Ele pode ser inválido, estar criptografado, ser grande demais ou não ser seguro.
 MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.|O MindManager salva uma única folha. Exporte a folha atual ou salve a pasta de trabalho completa como .thinoda.
 Choose a different destination to preserve the imported source.|Escolha outro destino para preservar o arquivo de origem importado.
