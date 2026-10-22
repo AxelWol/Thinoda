@@ -98,6 +98,17 @@ fn contextual_dispatch_inventory_and_reference_include_every_alias_once() {
         for (index, (shortcut, action)) in bindings.iter().enumerate() {
             assert!(!bindings[..index].iter().any(|(other, _)| other == shortcut));
             let hint = ctx.format_shortcut(shortcut);
+            if ThinodaApp::default_shortcut_command(CenterMode::Map, os, *shortcut)
+                .is_some_and(|command| command != Cmd::Canvas(action.clone()))
+            {
+                assert!(!reference.iter().any(|entry| {
+                    entry
+                        .shortcut
+                        .as_deref()
+                        .is_some_and(|value| value.split(" / ").any(|alias| alias == hint))
+                }));
+                continue;
+            }
             assert!(
                 reference.iter().any(|entry| entry
                     .shortcut
@@ -152,6 +163,63 @@ fn contextual_dispatch_inventory_and_reference_include_every_alias_once() {
             );
         }
     }
+}
+
+#[test]
+fn intercepted_fit_binding_is_unassigned_but_command_remains_available() {
+    use egui::os::OperatingSystem;
+    use thinoda_canvas::Action;
+    for os in [
+        OperatingSystem::Windows,
+        OperatingSystem::Mac,
+        OperatingSystem::Nix,
+    ] {
+        let app = ThinodaApp::headless();
+        let ctx = egui::Context::default();
+        ctx.set_os(os);
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        let command = Cmd::Canvas(Action::Fit);
+        assert!(app.command_available(&command));
+        assert_eq!(
+            ThinodaApp::shortcut_binding_for_platform(&command, CenterMode::Map, os),
+            None
+        );
+        assert_eq!(ThinodaApp::shortcut_hint(&ctx, &command), None);
+        let entry = app
+            .command_catalog(&ctx)
+            .into_iter()
+            .find(|(cmd, _)| cmd == &command)
+            .unwrap()
+            .1;
+        let reference = app.shortcut_reference(&ctx);
+        assert!(entry.shortcut.is_none());
+        assert!(
+            reference
+                .iter()
+                .find(|item| item.id == entry.id)
+                .unwrap()
+                .shortcut
+                .is_none()
+        );
+        let static_entry = ThinodaApp::palette_commands()
+            .into_iter()
+            .find(|(cmd, _)| cmd == &command)
+            .unwrap()
+            .1;
+        assert_eq!(static_entry.id, entry.id);
+        assert!(static_entry.shortcut.is_none());
+        assert_eq!(
+            ThinodaApp::default_shortcut_conflicts(CenterMode::Map, os).len(),
+            1
+        );
+    }
+    let mut h = harness(CenterMode::Map, egui::vec2(640.0, 360.0));
+    h.state_mut().dialogs.shortcut_browser.unassigned_only = true;
+    h.state_mut().dialogs.shortcut_browser.query = "Fit Map".into();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Label, "Fit Map");
+    h.get_by_role_and_label(Role::Label, "Unassigned");
 }
 
 #[test]

@@ -74,6 +74,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 reachable shortcut hints: menu/palette/reference metadata now excludes
+  declared gestures intercepted by another default handler, using the real
+  dispatch audit and runtime host/view. Fit Map is correctly unassigned instead
+  of advertising Ctrl/Cmd+Shift+H (Find & Replace), while remaining clickable.
+  Keys, availability, IDs and raw audit inventories are unchanged; no saved
+  overrides are enabled. Targeted three-host metadata/menu/reference/audit and
+  Fit execution tests plus native/WASM lint pass. User-approved direct reviews
+  followed reviewer startup failure. Keymap conflict decisions, shortcut editing,
+  reserved-key validation and native/P4 acceptance remain open.
 - User-directed R1/R2 priority: Escape exits Zen with focused Map/Outline topics,
   preserving selection and yielding to editor/search/popup/modal/relationship
   cancellation first. Localized hints advertise Escape rather than relying on

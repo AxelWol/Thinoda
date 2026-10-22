@@ -1918,6 +1918,14 @@ impl ThinodaApp {
     }
 
     pub fn shortcut_binding_for_mode(command: &Cmd, mode: CenterMode) -> Option<KeyboardShortcut> {
+        Self::shortcut_binding_for_platform(command, mode, egui::os::OperatingSystem::Windows)
+    }
+
+    pub fn shortcut_binding_for_platform(
+        command: &Cmd,
+        mode: CenterMode,
+        os: egui::os::OperatingSystem,
+    ) -> Option<KeyboardShortcut> {
         static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
         static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
             std::sync::OnceLock::new();
@@ -1950,7 +1958,11 @@ impl ThinodaApp {
         };
         bindings
             .iter()
-            .find(|(_, bound)| bound == normalized)
+            .find(|(shortcut, bound)| {
+                bound == normalized
+                    && !Self::default_shortcut_command(mode, os, *shortcut)
+                        .is_some_and(|dispatched| dispatched != *normalized)
+            })
             .map(|(binding, _)| *binding)
     }
 
@@ -1963,7 +1975,8 @@ impl ThinodaApp {
         command: &Cmd,
         mode: CenterMode,
     ) -> Option<String> {
-        Self::shortcut_binding_for_mode(command, mode).map(|binding| ctx.format_shortcut(&binding))
+        Self::shortcut_binding_for_platform(command, mode, ctx.os())
+            .map(|binding| ctx.format_shortcut(&binding))
     }
 
     /// Platform-neutral catalog with default non-macOS shortcut names.

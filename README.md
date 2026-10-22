@@ -144,6 +144,8 @@ those system-owned controls. WinGet publishing remains paused.
   formatter, including nested Select/Arrange actions. Hints follow the current
   Map/Outliner view; the reference names that view and lists only its bindings.
   Outline retains its existing topic-row focus rules and Ctrl/Cmd+Y redo.
+  Intercepted bindings are not advertised: Fit Map remains clickable and appears
+  unassigned because Ctrl/Cmd+Shift+H currently opens Find & Replace.
   Bindings remain read-only.
 - The command palette keeps search visible above scrollable results on small
   windows. Arrow keys reveal the selected result; Escape closes without clearing

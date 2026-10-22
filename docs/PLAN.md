@@ -1241,6 +1241,28 @@ the user approved direct planning/finished review for this audit slice.
 No rubber-duck review is claimed. No dispatch, hints, preferences or saved
 overrides are changed; R1 shortcut editing and P4 remain open.
 
+**Delivered R1 follow-up - reachable shortcut hints:** main/context menus,
+runtime palette and reference aliases now exclude declared gestures intercepted
+by a different command in the actual default dispatch order. The static legacy
+catalog uses the same rule with Windows Map defaults; runtime hints use the
+current view and host modifier semantics. Fit Map no longer advertises
+Ctrl/Cmd+Shift+H, and appears under Unassigned in the read-only reference.
+It remains available through menu/palette; no dispatch order, key mapping,
+availability, command ID or saved override changes. Raw inventories and the
+conflict report retain the declared collision for the future keymap decision.
+Clipboard-event and navigation reference metadata are retained outside the
+command-key audit. Immutable dispatch tables are cached rather than rebuilt
+for every hint/alias lookup.
+
+Three-host inventory tests verify intercepted gestures are absent while other
+aliases/IDs remain consistent. Tests cover Fit's unassigned state, enabled
+main/context menu entries, real click execution, actual painted menu hints and
+existing compact reference geometry. Targeted shortcut/audit/menu/reference
+and Fit execution tests plus native all-target/WASM lint pass. Direct planning/
+finished review was user-approved after reviewer startup failed; no rubber-duck
+review is claimed. Editable bindings, keymap decisions, reserved keys and native
+input/accessibility/P4 acceptance remain open.
+
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome
 budget. Its frame is bounded by the current logical viewport and actual frame

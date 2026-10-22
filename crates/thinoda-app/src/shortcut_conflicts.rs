@@ -72,7 +72,15 @@ impl ThinodaApp {
         os: OperatingSystem,
         shortcut: KeyboardShortcut,
     ) -> Option<Cmd> {
-        first_match(&ordered_bindings(mode), shortcut, os).map(|(_, command)| command.clone())
+        static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
+        static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+            std::sync::OnceLock::new();
+        let bindings = match mode {
+            CenterMode::Map => &MAP,
+            CenterMode::Outliner => &OUTLINE,
+        }
+        .get_or_init(|| ordered_bindings(mode));
+        first_match(bindings, shortcut, os).map(|(_, command)| command.clone())
     }
 
     /// Report declared gestures intercepted by a different earlier command.

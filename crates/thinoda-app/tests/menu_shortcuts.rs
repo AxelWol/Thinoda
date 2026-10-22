@@ -113,8 +113,10 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                 menu_action(&h, category).click();
                 h.run_steps(3);
                 for (label, command) in commands {
-                    let hint = ThinodaApp::shortcut_hint(&h.ctx, &command).unwrap();
-                    let full_label = format!("{label} {hint}");
+                    let hint = ThinodaApp::shortcut_hint(&h.ctx, &command);
+                    let full_label = hint
+                        .as_ref()
+                        .map_or_else(|| label.to_string(), |hint| format!("{label} {hint}"));
                     menu_action(&h, &full_label).scroll_to_me();
                     h.run_steps(6);
                     let button = menu_action(&h, &full_label);
@@ -122,10 +124,12 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                         button.accesskit_node().is_disabled(),
                         !h.state().command_available(&command)
                     );
-                    paint_hint(&h, &hint, button.rect());
+                    if let Some(hint) = &hint {
+                        paint_hint(&h, hint, button.rect());
+                    }
                     let catalog = h.state().command_catalog(&h.ctx);
                     if let Some((_, metadata)) = catalog.iter().find(|(c, _)| c == &command) {
-                        assert_eq!(metadata.shortcut.as_deref(), Some(hint.as_str()));
+                        assert_eq!(metadata.shortcut, hint);
                     } else {
                         let reference = h.state().shortcut_reference(&h.ctx);
                         assert_eq!(
@@ -135,7 +139,7 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                                 .unwrap()
                                 .shortcut
                                 .as_deref(),
-                            Some(hint.as_str())
+                            hint.as_deref()
                         );
                     }
                 }
@@ -187,8 +191,12 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
             ] {
                 menu_action(&h, label).scroll_to_me();
                 h.run_steps(6);
-                let hint = ThinodaApp::shortcut_hint(&h.ctx, &command).unwrap();
-                paint_hint(&h, &hint, menu_action(&h, label).rect());
+                if let Some(hint) = ThinodaApp::shortcut_hint(&h.ctx, &command) {
+                    paint_hint(&h, &hint, menu_action(&h, label).rect());
+                } else {
+                    assert_eq!(command, Cmd::Canvas(Action::Fit));
+                    assert!(!menu_action(&h, label).accesskit_node().is_disabled());
+                }
             }
             h.key_press(Key::Escape);
             h.run_steps(3);

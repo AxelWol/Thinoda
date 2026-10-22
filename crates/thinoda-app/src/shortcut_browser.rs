@@ -14,7 +14,13 @@ pub struct ShortcutBrowser {
 
 impl ThinodaApp {
     pub fn shortcut_reference(&self, ctx: &egui::Context) -> Vec<thinoda_ui::Command> {
-        let bindings = Self::contextual_shortcut_bindings_for_mode(self.mode);
+        let bindings: Vec<_> = Self::contextual_shortcut_bindings_for_mode(self.mode)
+            .into_iter()
+            .filter(|(shortcut, action)| {
+                !Self::default_shortcut_command(self.mode, ctx.os(), *shortcut)
+                    .is_some_and(|command| command != Cmd::Canvas(action.clone()))
+            })
+            .collect();
         let hint = |actions: &[Action]| {
             bindings
                 .iter()
