@@ -1,4 +1,4 @@
-_Last updated: 2026-10-22 13:49:14 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-23 07:22:57 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,13 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.9.0](https://github.com/AxelWol/Thinoda/compare/v0.8.0...v0.9.0) (2026-10-23)
+
+
+### Features
+
+* reliable editing, installable PWA and six-target releases ([ac3442b](https://github.com/AxelWol/Thinoda/commit/ac3442b9b2fa4d8f36718064a1260ceab8e10e65))
 
 ## [0.8.0](https://github.com/AxelWol/Thinoda/compare/v0.7.0...v0.8.0) (2026-10-22)
 
