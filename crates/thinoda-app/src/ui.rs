@@ -132,6 +132,7 @@ fn scroll_row_offset(
 }
 
 fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32)) {
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
     let state_id = ui.make_persistent_id("sheet_scroll_buttons");
     let (position, max_offset) =
         ui.data(|data| data.get_temp::<(f32, f32)>(state_id).unwrap_or_default());
@@ -161,6 +162,7 @@ fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32))
             .accessible_name(label)
             .on_hover_text(label)
             .clicked()
+            && touch_allowed
         {
             offset = Some(target);
         }
@@ -1990,6 +1992,7 @@ impl ThinodaApp {
 
     fn bottom_bar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let touch_allowed = widgets::touch_activation_allowed(&ctx);
         let mut cmd = None;
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
@@ -2050,12 +2053,12 @@ impl ThinodaApp {
                     if r.gained_focus() || (changed && i == active_index) {
                         r.scroll_to_me(None);
                     }
-                    if r.clicked() && i != d.doc.active_index() {
+                    if touch_allowed && r.clicked() && i != d.doc.active_index() {
                         d.view.commit_edit(&mut d.doc);
                         d.doc.set_active(i);
                         d.view.reset();
                     }
-                    if r.double_clicked() {
+                    if touch_allowed && r.double_clicked() {
                         if i != d.doc.active_index() {
                             d.view.commit_edit(&mut d.doc);
                             d.doc.set_active(i);
@@ -2063,18 +2066,22 @@ impl ThinodaApp {
                         }
                         cmd = Some(Cmd::RenameSheet);
                     }
-                    r.context_menu(|ui| {
+                    let mut popup = egui::Popup::context_menu(&r);
+                    if !touch_allowed {
+                        popup = popup.open_memory(None);
+                    }
+                    popup.show(|ui| {
                         scroll_menu(ui, |ui| {
-                            if i != d.doc.active_index() {
+                            if touch_allowed && i != d.doc.active_index() {
                                 d.view.commit_edit(&mut d.doc);
                                 d.doc.set_active(i);
                                 d.view.reset();
                             }
-                            if ui.button(t("Rename Sheet")).clicked() {
+                            if ui.button(t("Rename Sheet")).clicked() && touch_allowed {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::RenameSheet);
                             }
-                            if ui.button(t("Duplicate Sheet")).clicked() {
+                            if ui.button(t("Duplicate Sheet")).clicked() && touch_allowed {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::DuplicateSheet);
                             }
@@ -2085,7 +2092,7 @@ impl ThinodaApp {
                                 ("Save Sheet As…", Cmd::SaveSheetAs),
                                 ("New Sheet", Cmd::NewSheet),
                             ] {
-                                if ui.button(t(label)).clicked() {
+                                if ui.button(t(label)).clicked() && touch_allowed {
                                     cmd = Some(command);
                                 }
                             }
@@ -2093,6 +2100,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(i > 0, egui::Button::new(t("Move Left")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.commit_edit(&mut d.doc);
                                 if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
@@ -2108,6 +2116,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.commit_edit(&mut d.doc);
                                 if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
@@ -2123,6 +2132,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::DeleteSheet);
@@ -2140,6 +2150,7 @@ impl ThinodaApp {
                         .on_hover_text(t("New Sheet"))
                         .accessible_name(t("New Sheet"))
                         .clicked()
+                        && touch_allowed
                     {
                         cmd = Some(Cmd::NewSheet);
                     }

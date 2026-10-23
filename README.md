@@ -418,6 +418,9 @@ those system-owned controls. WinGet publishing remains paused.
   keyboard focus keep the actions reachable; focused or newly active sheets reveal
   themselves without pinning manual browsing. On small screens the status controls
   also scroll independently, rather than covering sheet names.
+  Canceled or multitouch releases cannot switch/create sheets, trigger rename,
+  scroll arrows or sheet context actions. Single-finger holds still open the
+  sheet menu; ordinary taps and keyboard navigation remain available.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use

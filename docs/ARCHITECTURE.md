@@ -101,7 +101,9 @@ graph TD
   activation with the same latch while retaining explicit keyboard activation;
   template double-click creation requires that guarded activation too. The
   structure launcher's popup toggle is guarded independently. This does not yet
-  guard every standard egui button, slider or combo box.
+  guard every standard egui button, slider or combo box. Sheet strip selection,
+  creation, rename, arrows, context opening and commands share the latch without
+  disabling scrolling or replacing egui's single-finger hold recognizer.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

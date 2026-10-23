@@ -88,6 +88,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 sheet-control touch safety: canceled/multitouch releases cannot create,
+  select, rename, duplicate, reorder or delete sheets, scroll arrows or open a
+  sheet context menu. Normal single-finger holds, tab clicks, keyboard creation/
+  scrolling and Undo remain covered alongside unchanged map/history checks.
 - R1 preview-picker touch safety: canceled/multitouch releases cannot apply Quick
   Styles, structure or theme previews, toggle the structure gallery or select/
   double-tap-create templates. Shared cards keep keyboard activation; actual-app

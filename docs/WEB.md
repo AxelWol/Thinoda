@@ -106,6 +106,12 @@ popup toggle use the guard too. Enter/Space activation remains available.
 Actual-app both-theme/scale regressions cover unchanged map history and template
 document count, ordinary application and Undo; real browser delivery remains open.
 
+Sheet creation/selection/rename, scroll arrows and sheet context commands also
+reject canceled/multitouch activation. Single-finger holds still open sheet
+context actions; two/three-finger holds do not. Both-theme/scale app regressions
+verify unchanged active sheet/content/history and normal click/keyboard/Undo
+recovery. Status controls and main-menu commands are not fully audited yet.
+
 Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
 varies; these shared input behaviors are not a claim of full hardware support.
 Keyboard shortcuts and visible zoom/Fit controls remain alternatives.

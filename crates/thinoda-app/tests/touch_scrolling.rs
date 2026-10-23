@@ -8,6 +8,9 @@ use thinoda_app::{
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+mod support;
+use support::menu_action;
+
 fn harness(theme: ThemeMode, scale: f32) -> Harness<'static, ThinodaApp> {
     let mut app = ThinodaApp::new(
         Settings {
@@ -62,6 +65,16 @@ fn swipe(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) 
 }
 
 fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64, cancel: bool) {
+    touch_release(h, pos, contacts, cancel, 2);
+}
+
+fn touch_release(
+    h: &mut Harness<'_, ThinodaApp>,
+    pos: egui::Pos2,
+    contacts: u64,
+    cancel: bool,
+    hold_steps: usize,
+) {
     h.event(Event::PointerMoved(pos));
     h.event(Event::PointerButton {
         pos,
@@ -86,7 +99,11 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
                 force: None,
             });
         }
-        h.run_steps(2);
+        h.run_steps(if phase == TouchPhase::Start {
+            hold_steps
+        } else {
+            2
+        });
     }
     h.event(Event::PointerButton {
         pos,
@@ -208,8 +225,155 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
             }
             inspector_symbols(&mut harness(theme, scale));
             inspector_previews(&mut harness(theme, scale));
+            sheet_controls(&mut harness(theme, scale));
         }
     }
+}
+
+fn sheet_controls(h: &mut Harness<'_, ThinodaApp>) {
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::NewSheet);
+    h.run_steps(8);
+    let doc = h.state().doc().unwrap();
+    let titles: Vec<_> = doc
+        .doc
+        .workbook()
+        .sheets
+        .iter()
+        .map(|s| s.title.clone())
+        .collect();
+    let before = doc.doc.workbook().clone();
+    let revision = doc.doc.state_id();
+    for label in [t("New Sheet"), titles[0].as_str(), titles[1].as_str()] {
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(8);
+        let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for _ in 0..2 {
+                rejected_tap(h, target, contacts, cancel);
+            }
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected sheet control must not create or edit sheets"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "rejected sheet control must not switch sheets"
+            );
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+        }
+    }
+    h.state_mut().settings.confirm_on_delete = false;
+    let tab = h
+        .get_by_role_and_label(Role::Button, &titles[1])
+        .rect()
+        .center();
+    for contacts in [2, 3] {
+        touch_release(h, tab, contacts, false, 60);
+        assert!(
+            !egui::Popup::is_any_open(&h.ctx),
+            "multitouch hold must not open sheet context actions"
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    touch_release(h, tab, 1, false, 60);
+    assert!(
+        egui::Popup::is_any_open(&h.ctx),
+        "ordinary single-finger hold must retain sheet context actions"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    for label in [
+        "Rename Sheet",
+        "Duplicate Sheet",
+        "New Sheet",
+        "Move Left",
+        "Delete Sheet",
+    ] {
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let tab = h
+                .get_by_role_and_label(Role::Button, &titles[1])
+                .rect()
+                .center();
+            h.event(Event::PointerMoved(tab));
+            for pressed in [true, false] {
+                h.event(Event::PointerButton {
+                    pos: tab,
+                    button: PointerButton::Secondary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(1);
+            }
+            h.run_steps(4);
+            menu_action(h, t(label)).scroll_to_me();
+            h.run_steps(8);
+            let target = menu_action(h, t(label)).rect().center();
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected sheet menu action: {label}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+        }
+    }
+    h.get_by_role_and_label(Role::Button, &titles[0]).click();
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    h.get_by_role_and_label(Role::Button, t("New Sheet"))
+        .focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 3);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook().sheets,
+        before.sheets
+    );
+    for _ in 0..12 {
+        h.state_mut().exec(&ctx, Cmd::NewSheet);
+    }
+    h.run_steps(8);
+    let doc = h.state().doc().unwrap();
+    let before_scroll = doc.doc.workbook().clone();
+    let revision = doc.doc.state_id();
+    h.get_by_role_and_label(Role::Button, &titles[0])
+        .scroll_to_me();
+    h.run_steps(8);
+    let tab = h.get_by_role_and_label(Role::Button, &titles[0]).rect();
+    let right = h
+        .get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, right, contacts, cancel);
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, &titles[0]).rect(),
+            tab,
+            "rejected arrow taps must not scroll the strip"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+        .focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, &titles[0])
+            .rect()
+            .left()
+            < tab.left()
+    );
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before_scroll);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
 }
 
 fn inspector_previews(h: &mut Harness<'_, ThinodaApp>) {

@@ -716,6 +716,17 @@ Space/Enter/click application and Undo. Existing quick-style/custom-theme,
 structure-gallery and template workflow regressions remain intact. Generic
 property sliders/combo boxes and other standard buttons remain under audit.
 
+**Delivered sheet-control touch safety slice:** reproduced canceled releases
+creating extra sheets. The shared activation guard now protects New Sheet,
+tab selection/double-click rename, scroll arrows and sheet context commands,
+including duplicate, reorder and delete. Rejected holds do not open a sheet
+context menu; ordinary one-finger holds still do. Both-theme/scale actual-app
+coverage verifies unchanged active sheet/content/history after canceled and
+two/three-finger taps/double taps, context actions and arrow taps, followed by
+ordinary tab clicks, Space creation, Enter scrolling and Undo. Existing clipping/
+layout/scrolling and rename input regressions remain intact. This does not yet
+cover all status controls, main-menu commands or generic property interactions.
+
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside
 the scrolling names. Arrows browse by 80% of the name viewport without changing
