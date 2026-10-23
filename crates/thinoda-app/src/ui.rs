@@ -100,6 +100,20 @@ fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(
     scroll_row_offset(ui, salt, width, None, content);
 }
 
+fn status_menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    let response = ui.button(label);
+    let mut menu = egui::Popup::menu(&response);
+    if !widgets::touch_activation_allowed(ui.ctx()) {
+        menu = menu.open_memory(None);
+    }
+    let inner = menu.show(|ui| scroll_menu(ui, content));
+    egui::InnerResponse::new(inner.map(|inner| inner.inner), response)
+}
+
 fn scroll_row_offset(
     ui: &mut Ui,
     salt: &'static str,
@@ -2188,7 +2202,7 @@ impl ThinodaApp {
                     if view.gained_focus() {
                         view.scroll_to_me(None);
                     }
-                    if view.clicked() {
+                    if view.clicked() && touch_allowed {
                         cmd = Some(Cmd::ToggleOutliner);
                     }
                     widgets::vdivider(ui);
@@ -2199,11 +2213,11 @@ impl ThinodaApp {
                     if minus.gained_focus() {
                         minus.scroll_to_me(None);
                     }
-                    if minus.clicked() {
+                    if minus.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::ZoomOut));
                     }
                     let current = d.view.zoom_percent();
-                    let zoom = menu_button(ui, format!("{current}%"), |ui| {
+                    let zoom = status_menu_button(ui, format!("{current}%"), |ui| {
                         let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
                         if !presets.contains(&current) {
                             presets.push(current);
@@ -2213,13 +2227,14 @@ impl ThinodaApp {
                             if ui
                                 .selectable_label(current == percent, format!("{percent}%"))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.set_zoom(percent as f32 / 100.0);
                                 ui.close();
                             }
                         }
                         ui.separator();
-                        if ui.button(t("Fit Map")).clicked() {
+                        if ui.button(t("Fit Map")).clicked() && touch_allowed {
                             cmd = Some(Cmd::Canvas(Action::Fit));
                             ui.close();
                         }
@@ -2236,7 +2251,7 @@ impl ThinodaApp {
                     if plus.gained_focus() {
                         plus.scroll_to_me(None);
                     }
-                    if plus.clicked() {
+                    if plus.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::ZoomIn));
                     }
                     let fit = ui
@@ -2246,7 +2261,7 @@ impl ThinodaApp {
                     if fit.gained_focus() {
                         fit.scroll_to_me(None);
                     }
-                    if fit.clicked() {
+                    if fit.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::Fit));
                     }
                     widgets::vdivider(ui);
@@ -2259,7 +2274,7 @@ impl ThinodaApp {
                             thinoda_core::search::word_count(sheet)
                         ),
                     );
-                    let statistics = menu_button(
+                    let statistics = status_menu_button(
                     ui,
                     format!("{}: {}", t("Topics"), sheet.topics.len()),
                     |ui| {

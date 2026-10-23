@@ -421,6 +421,8 @@ those system-owned controls. WinGet publishing remains paused.
   Canceled or multitouch releases cannot switch/create sheets, trigger rename,
   scroll arrows or sheet context actions. Single-finger holds still open the
   sheet menu; ordinary taps and keyboard navigation remain available.
+  Status view/zoom/Fit actions and Zoom/Statistics opening also reject canceled
+  or multitouch releases, including zoom-menu presets and Fit.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use

@@ -716,6 +716,16 @@ Space/Enter/click application and Undo. Existing quick-style/custom-theme,
 structure-gallery and template workflow regressions remain intact. Generic
 property sliders/combo boxes and other standard buttons remain under audit.
 
+**Delivered status-control touch safety slice:** reproduced a canceled release
+switching Map to Outline. Status view/zoom/Fit actions and zoom preset selections
+now use the shared activation guard; standalone Zoom/Statistics popups reject
+canceled and two/three-contact opening without changing other menu behavior.
+Both-theme/1x/1.5x/2x app coverage checks unchanged zoom, camera offset, mode and
+map history, including delayed pointer releases and Fit inside the zoom popup.
+Normal single-finger zoom, click Fit, keyboard view/preset/zoom actions and
+Statistics opening remain available. Standard buttons elsewhere, property
+sliders/combo boxes, browser zoom ownership and real-device acceptance remain open.
+
 **Delivered sheet-control touch safety slice:** reproduced canceled releases
 creating extra sheets. The shared activation guard now protects New Sheet,
 tab selection/double-click rename, scroll arrows and sheet context commands,

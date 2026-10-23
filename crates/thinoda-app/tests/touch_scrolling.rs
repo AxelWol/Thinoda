@@ -29,6 +29,8 @@ fn harness(theme: ThemeMode, scale: f32) -> Harness<'static, ThinodaApp> {
         .with_size(vec2(640.0, 360.0) * scale)
         .with_step_dt(1.0 / 60.0)
         .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
     h.run_steps(4);
     h.set_size(vec2(640.0, 360.0));
     h.run_steps(4);
@@ -226,8 +228,116 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
             inspector_symbols(&mut harness(theme, scale));
             inspector_previews(&mut harness(theme, scale));
             sheet_controls(&mut harness(theme, scale));
+            status_controls(&mut harness(theme, scale));
         }
     }
+}
+
+fn status_controls(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().doc_mut().unwrap().view.set_zoom(1.2);
+    h.state_mut().doc_mut().unwrap().view.offset = vec2(135.0, -80.0);
+    h.run_steps(4);
+    let mode = h.state().mode;
+    let zoom = h.state().doc().unwrap().view.zoom_percent();
+    let offset = h.state().doc().unwrap().view.offset;
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for label in [
+        format!("{}: {}", t("View"), t("Map")),
+        t("Zoom Out").into(),
+        t("Zoom In").into(),
+        t("Fit Map").into(),
+        t("Zoom").into(),
+        t("Statistics").into(),
+    ] {
+        h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+        h.run_steps(8);
+        let target = h
+            .get_by_role_and_label(Role::Button, &label)
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(h.state().mode, mode, "rejected status control: {label}");
+            assert_eq!(
+                h.state().doc().unwrap().view.zoom_percent(),
+                zoom,
+                "rejected zoom control: {label}"
+            );
+            assert!(
+                !egui::Popup::is_any_open(&h.ctx),
+                "rejected status menu: {label}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        }
+    }
+    h.get_by_role_and_label(Role::Button, t("Zoom"))
+        .scroll_to_me();
+    h.run_steps(8);
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        h.get_by_role_and_label(Role::Button, t("Zoom")).click();
+        h.run_steps(4);
+        let target = h.get_by_label("500%").rect().center();
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().view.zoom_percent(), zoom);
+        assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+    }
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        h.get_by_role_and_label(Role::Button, t("Zoom")).click();
+        h.run_steps(4);
+        menu_action(h, t("Fit Map")).scroll_to_me();
+        h.run_steps(8);
+        let target = menu_action(h, t("Fit Map")).rect().center();
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().view.zoom_percent(), zoom);
+        assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+    }
+    h.get_by_role_and_label(Role::Button, t("Zoom")).focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    h.get_by_label("500%").focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 500);
+    h.get_by_role_and_label(Role::Button, t("Zoom Out")).focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().view.zoom_percent() < 500);
+    let smaller = h.state().doc().unwrap().view.zoom_percent();
+    h.get_by_role_and_label(Role::Button, t("Zoom In"))
+        .scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, t("Zoom In"))
+        .rect()
+        .center();
+    touch_release(h, target, 1, false, 2);
+    assert!(h.state().doc().unwrap().view.zoom_percent() > smaller);
+    h.get_by_role_and_label(Role::Button, t("Fit Map")).click();
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().view.offset, offset);
+    h.get_by_role_and_label(Role::Button, &format!("{}: {}", t("View"), t("Map")))
+        .focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_ne!(h.state().mode, mode);
+    h.get_by_role_and_label(Role::Button, t("Statistics"))
+        .focus();
+    h.run_steps(8);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    h.get_by_label(t("Current sheet"));
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
 }
 
 fn sheet_controls(h: &mut Harness<'_, ThinodaApp>) {

@@ -88,6 +88,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 status-control touch safety: canceled/two/three-contact releases cannot switch
+  view, change zoom/Fit or open Zoom/Statistics. Popup presets and Fit also reject
+  these releases. Both-theme/scale tests preserve camera offset and map history,
+  then ordinary tap/click/keyboard recovery. Other controls and device acceptance
+  remain in the open gesture workstream.
 - R1 sheet-control touch safety: canceled/multitouch releases cannot create,
   select, rename, duplicate, reorder or delete sheets, scroll arrows or open a
   sheet context menu. Normal single-finger holds, tab clicks, keyboard creation/

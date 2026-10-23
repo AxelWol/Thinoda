@@ -106,6 +106,12 @@ popup toggle use the guard too. Enter/Space activation remains available.
 Actual-app both-theme/scale regressions cover unchanged map history and template
 document count, ordinary application and Undo; real browser delivery remains open.
 
+Status view/zoom/Fit controls, including zoom-menu presets and Fit, reject canceled
+and two/three-contact releases. Zoom/Statistics popup opening uses the same guard.
+Both-theme/scale app regressions check unchanged camera zoom/offset, view and map
+history, then ordinary tap/click/keyboard recovery. This is shared-input coverage,
+not real-browser or hardware acceptance.
+
 Sheet creation/selection/rename, scroll arrows and sheet context commands also
 reject canceled/multitouch activation. Single-finger holds still open sheet
 context actions; two/three-finger holds do not. Both-theme/scale app regressions
