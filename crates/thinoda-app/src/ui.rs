@@ -97,22 +97,86 @@ fn menu_button(
 }
 
 fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
+    scroll_row_offset(ui, salt, width, None, content);
+}
+
+fn scroll_row_offset(
+    ui: &mut Ui,
+    salt: &'static str,
+    width: f32,
+    offset: Option<f32>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::scroll_area::ScrollAreaOutput<()> {
     ui.allocate_ui_with_layout(
         vec2(width, ui.spacing().interact_size.y),
         Layout::left_to_right(Align::Center),
         |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
             ui.style_mut().always_scroll_the_only_direction = true;
-            egui::ScrollArea::horizontal()
+            let mut scroll = egui::ScrollArea::horizontal()
                 .id_salt(salt)
+                .scroll_source(egui::scroll_area::ScrollSource::ALL)
                 .max_width(width)
                 .auto_shrink([false, false])
                 .min_scrolled_width(0.0)
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal_centered(content);
-                });
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+            if let Some(offset) = offset {
+                scroll = scroll.horizontal_scroll_offset(offset);
+            }
+            scroll.show(ui, |ui| {
+                ui.horizontal_centered(content);
+            })
         },
-    );
+    )
+    .inner
+}
+
+fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32)) {
+    let state_id = ui.make_persistent_id("sheet_scroll_buttons");
+    let (position, max_offset) =
+        ui.data(|data| data.get_temp::<(f32, f32)>(state_id).unwrap_or_default());
+    let button_width = ui.spacing().interact_size.y;
+    let names_width = (width - 2.0 * (button_width + ui.spacing().item_spacing.x)).max(0.0);
+    let step = (names_width * 0.8).max(1.0);
+    let mut offset = None;
+    for (glyph, label, enabled, target) in [
+        (
+            "<",
+            t("Scroll sheets left"),
+            position > 0.5,
+            (position - step).max(0.0),
+        ),
+        (
+            ">",
+            t("Scroll sheets right"),
+            position < max_offset - 0.5,
+            (position + step).min(max_offset),
+        ),
+    ] {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(glyph).min_size(vec2(button_width, button_width)),
+            )
+            .accessible_name(label)
+            .on_hover_text(label)
+            .clicked()
+        {
+            offset = Some(target);
+        }
+    }
+    let output = scroll_row_offset(ui, "sheet_tabs", names_width, offset, |ui| {
+        content(ui, names_width)
+    });
+    ui.data_mut(|data| {
+        data.insert_temp(
+            state_id,
+            (
+                output.state.clamped_offset().x,
+                (output.content_size.x - output.inner_rect.width()).max(0.0),
+            ),
+        );
+    });
 }
 
 pub(crate) fn font_selector(
@@ -1939,18 +2003,18 @@ impl ThinodaApp {
             let width =
                 (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
             let tabs_width = if self.settings.show_status_bar {
-                width * 0.4
+                (width * 0.4).max(108.0_f32.min(width * 0.45))
             } else {
                 width
             };
-            scroll_row(ui, "sheet_tabs", tabs_width, |ui| {
+            sheet_scroll_row(ui, tabs_width, |ui, names_width| {
                 // Sheet tabs.
                 let n = d.doc.workbook().sheets.len();
                 let active_index = d.doc.active_index();
                 let active = egui::Id::unique((
                     &d.key,
                     active_index,
-                    tabs_width.to_bits(),
+                    names_width.to_bits(),
                     d.doc
                         .workbook()
                         .sheets
@@ -1964,7 +2028,7 @@ impl ThinodaApp {
                     data.insert_temp(active_key, active);
                     previous != Some(active)
                 });
-                let max_width = tabs_width.min(180.0);
+                let max_width = names_width.min(180.0);
                 for i in 0..n {
                     let title = d.doc.workbook().sheets[i].title.clone();
                     let text = egui::WidgetText::from(title.clone()).into_galley(

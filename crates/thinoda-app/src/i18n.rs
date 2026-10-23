@@ -1286,6 +1286,8 @@ const DE: &[(&str, &str)] = &[
     ("Duplicate Sheet", "Blatt duplizieren"),
     ("Delete Sheet", "Blatt löschen"),
     ("Move Left", "Nach links"),
+    ("Scroll sheets left", "Blattleiste nach links scrollen"),
+    ("Scroll sheets right", "Blattleiste nach rechts scrollen"),
     ("Move Right", "Nach rechts"),
     ("Topics", "Themen"),
     ("Words", "Wörter"),

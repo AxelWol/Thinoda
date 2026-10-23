@@ -401,8 +401,13 @@ those system-owned controls. WinGet publishing remains paused.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
-  stays visible. Long tab names are shortened visually, with full names in tooltips.
-  Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
+  stays visible. Fixed left/right arrows browse sheet names without switching the
+  active sheet, and disable at either end. Names are clipped away from the arrows,
+  New Sheet and status controls. Long tab names are shortened visually, with full
+  names in tooltips. Touch/mouse dragging, mouse wheels, horizontal scrolling and
+  keyboard focus keep the actions reachable; focused or newly active sheets reveal
+  themselves without pinning manual browsing. On small screens the status controls
+  also scroll independently, rather than covering sheet names.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use

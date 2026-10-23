@@ -602,8 +602,8 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
 Silicon and supported Ubuntu desktops, plus WASM/PWA on desktop and iOS/iPadOS/
 Android browsers. Native mobile packages are not existing deployment targets.
-Keep the compact sheet-strip task below active; integrate touch scrolling there
-instead of introducing competing gesture handlers.
+The compact sheet-strip implementation below includes touch scrolling through
+the shared scroll area rather than competing gesture handlers.
 
 1. Audit egui/eframe/winit and browser input delivery. Regress and fix two-finger
    pan plus simultaneous centroid-anchored pinch zoom, zoom limits, gesture
@@ -655,21 +655,24 @@ title-lifecycle and bottom-navigation regressions and native/WASM lint pass.
 This is not full gesture parity: real browser/device acceptance, all-surface
 touch controls, long-press/tap workflows and browser viewport zoom remain open.
 
-**User-directed priority-1 follow-up - compact sheet-strip navigation:**
-use the supplied Excel screenshot as an interaction reference, not copied artwork.
-The existing bounded horizontal sheet region is groundwork, not acceptance of
-this request. Add fixed previous/next scroll buttons outside the scrolling names;
-scrolling browses tabs without changing the active sheet. Keep New Sheet outside
-the name viewport and prevent tab paint/hit targets from bleeding into status/
-zoom controls. At narrow widths, reserve usable navigation/add controls and
-adapt the name/status allocation instead of shrinking tabs to unusable widths.
-Keep active-tab reveal, full-name tooltips/accessibility names, context actions,
-mouse wheel/trackpad/touch scrolling and keyboard focus reveal. Disable arrows
-at their respective ends; support keyboard activation and accessible names.
-Verify many long names, first/last-tab access, resize, rename/Undo and independent
-status interaction on small native/WASM viewports, shipped locales, both themes
-and scaling. Treat the user's bleeding report as open until reproduced and
-verified against paint, clipping and hit bounds; navigation must not edit maps.
+**Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
+the supplied Excel screenshot informed fixed previous/next scroll arrows outside
+the scrolling names. Arrows browse by 80% of the name viewport without changing
+the active sheet or map history; they disable at their respective ends, including
+both disabled when names fit. New Sheet stays outside the name viewport. Explicit
+region clipping prevents sheet-name paint/hit targets from crossing into arrows,
+New Sheet or independently scrolling status/zoom controls. Small windows retain
+fixed arrow/add slots and truncate names with full tooltips/accessibility names.
+Active/focus reveal, context actions, wheel/trackpad scrolling and rename/Undo/
+resize/document-switch behavior are preserved. Touch and mouse dragging use the
+same scroll area; a first-touch regression exposed a missing pre-registered drag
+target, fixed by enabling drag scrolling rather than adding an input recognizer.
+Tests cover arrow endpoint traversal with pointer/Enter/Space, touch swipe without
+selection or content changes, one-sheet end states, stable height and pinned Add.
+The existing 198-case shipped-locale/Auto, theme, scale and 320/640/1000-point
+viewport matrix now checks arrow/name/status separation and actual text clipping.
+Native/WASM lint passes. Real-device browser/touch and AT acceptance remains in
+the gesture workstream; this is not a claim of full small-device acceptance.
 
 **User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
 all repository Node scripts use Node.js 24 from `.node-version`; CI reads the

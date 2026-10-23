@@ -87,16 +87,13 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   remain desktop; iOS/iPadOS/Android apply to WASM/PWA. See PLAN's vendor research,
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
-- Add Excel-inspired fixed previous/next scroll arrows to the bottom sheet-name
-  strip, building on its existing horizontal-scroll region. Browsing must not
-  select another sheet. Keep New Sheet and status/zoom controls outside clipped
-  names, prevent paint/hit-target bleeding, and preserve usability on small
-  devices. Cover end-of-strip disabled states, keyboard/touch/wheel access,
-  active-tab reveal, long names, rename/Undo, resize, locales/themes/scaling and
-  independent status interaction. The supplied screenshot is the interaction
-  reference; the reported bleed remains open until reproduced and verified.
-
 ## Recently completed
+- R1 Excel-inspired sheet browsing: fixed left/right scroll arrows, disabled end
+  states and pinned New Sheet surround the clipped names. Arrows/touch/mouse drag
+  browse without switching sheets or editing maps. Region clipping and the
+  shipped-locale/theme/scale/small-viewport matrix cover name/status separation;
+  active/focus reveal, rename/Undo, wheel access and independent status scrolling
+  remain covered. Real-device touch/browser/AT acceptance remains open above.
 - R1 first gesture slice: one-finger background pan, centroid-anchored simultaneous
   two-finger pan/pinch and combined trackpad scroll/zoom. Pending drags cancel on
   multitouch/canceled touch instead of applying drops. Finger transitions and
