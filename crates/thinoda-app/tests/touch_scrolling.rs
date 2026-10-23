@@ -3,7 +3,7 @@ use egui::{
 };
 use egui_kittest::{Harness, kittest::Queryable};
 use thinoda_app::{
-    app::{Cmd, EXPORT_MENU, Services, SidebarFamily, ThinodaApp},
+    app::{Cmd, EXPORT_MENU, FormatTab, Services, SidebarFamily, ThinodaApp},
     i18n::t,
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
@@ -207,8 +207,131 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
                 }
             }
             inspector_symbols(&mut harness(theme, scale));
+            inspector_previews(&mut harness(theme, scale));
         }
     }
+}
+
+fn inspector_previews(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().settings.show_format_panel = true;
+    h.set_size(vec2(1000.0, 700.0));
+    h.run_steps(8);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    let label = format!("{}: {}", t("Quick Style"), t("Warning"));
+    h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, &label)
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not apply Quick Style"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, &label).focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    h.state_mut().format_tab = FormatTab::Map;
+    h.run_steps(8);
+    let picker = format!("{}: {}", t("Choose Structure"), t("Mind Map"));
+    h.get_by_role_and_label(Role::Button, &picker)
+        .scroll_to_me();
+    h.run_steps(8);
+    let launcher = h
+        .get_by_role_and_label(Role::Button, &picker)
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, launcher, contacts, cancel);
+        assert!(
+            !egui::Popup::is_any_open(&h.ctx),
+            "rejected touch must not open the structure gallery"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, &picker).click();
+    h.run_steps(4);
+    let label = t("Logic Chart (right)");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not change map structure"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, label).focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().structure,
+        thinoda_core::Structure::LogicRight
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let label = t("Classic");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not apply a sheet theme"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, label).click();
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().theme.theme_id,
+        "classic"
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let count = h.state().docs.len();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(8);
+    let label = t("Mind Map");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        for _ in 0..2 {
+            rejected_tap(h, target, contacts, cancel);
+        }
+        assert_eq!(
+            h.state().docs.len(),
+            count,
+            "rejected double tap must not create a document"
+        );
+        assert_eq!(h.state().template_choice, None);
+        assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    }
+    h.get_by_role_and_label(Role::Button, label).focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().template_choice, Some("mind-map"));
+    assert_eq!(h.state().docs.len(), count);
 }
 
 fn inspector_symbols(h: &mut Harness<'_, ThinodaApp>) {

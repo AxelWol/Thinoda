@@ -74,7 +74,7 @@ fn cards(
                     if activated {
                         *choice = Some(template.id);
                     }
-                    if ui.is_enabled() && response.double_clicked() {
+                    if activated && response.double_clicked() {
                         create = Some(template.id);
                     }
                 });

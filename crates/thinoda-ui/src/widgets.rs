@@ -54,6 +54,7 @@ pub fn preview_card(
     preview_height: f32,
     draw: impl FnOnce(&Ui, egui::Rect),
 ) -> (Response, bool) {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let galley = ui.painter().layout(
         label.to_string(),
         FontId::proportional(11.0),
@@ -100,7 +101,7 @@ pub fn preview_card(
             input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
         });
-    let activated = ui.is_enabled() && (response.clicked() || keyboard);
+    let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
     (response.on_hover_text(label), activated)
 }
 

@@ -97,8 +97,11 @@ graph TD
   segmented choices and color swatches use it. Symbol insertion/removal, default-
   color/contrast actions and color application share that guard in the inspector
   and context instance editor. Scroll areas and text inputs keep
-  upstream scrolling/text-selection behavior; this does not yet guard every
-  standard egui button, slider or combo box.
+  upstream scrolling/text-selection behavior. Preview cards gate pointer
+  activation with the same latch while retaining explicit keyboard activation;
+  template double-click creation requires that guarded activation too. The
+  structure launcher's popup toggle is guarded independently. This does not yet
+  guard every standard egui button, slider or combo box.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

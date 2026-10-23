@@ -88,6 +88,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 preview-picker touch safety: canceled/multitouch releases cannot apply Quick
+  Styles, structure or theme previews, toggle the structure gallery or select/
+  double-tap-create templates. Shared cards keep keyboard activation; actual-app
+  both-theme/scale tests preserve history and verify ordinary actions/Undo.
 - R1 Symbols-inspector touch safety: first swipes scroll without adding markers.
   Canceled/multitouch releases cannot insert/remove symbols or invoke default-color/
   contrast changes; color application uses the same guard. Both-theme/scale tests

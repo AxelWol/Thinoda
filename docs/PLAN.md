@@ -704,6 +704,18 @@ inspector focus/draft-save and native/WASM checks remain intact. This does not
 complete generic sliders, combo boxes, all inspector property widgets, browser
 zoom ownership or real-device acceptance.
 
+**Delivered preview-picker touch safety slice:** reproduced a canceled touch
+applying a Quick Style. Shared preview cards now reject canceled/multitouch
+pointer activation while retaining explicit Enter/Space activation. Quick Style,
+structure, built-in/custom theme and template previews inherit the guard;
+template double-click creation also requires guarded activation. Rejected
+structure-launcher taps do not toggle its popup. Both-theme/scale actual-app
+coverage verifies unchanged history for Quick Style/structure/theme cards,
+unchanged template choice/document count after rejected double taps, then normal
+Space/Enter/click application and Undo. Existing quick-style/custom-theme,
+structure-gallery and template workflow regressions remain intact. Generic
+property sliders/combo boxes and other standard buttons remain under audit.
+
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside
 the scrolling names. Arrows browse by 80% of the name viewport without changing

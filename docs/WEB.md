@@ -100,6 +100,12 @@ and contrast actions; color application shares the guard. Automated both-theme/
 scale coverage preserves ordinary keyboard/click actions and Undo. Other
 inspector property controls and actual device delivery remain open.
 
+Style, structure, theme and template preview cards reject canceled/multitouch
+pointer activation. Template double-tap creation and the structure launcher's
+popup toggle use the guard too. Enter/Space activation remains available.
+Actual-app both-theme/scale regressions cover unchanged map history and template
+document count, ordinary application and Undo; real browser delivery remains open.
+
 Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
 varies; these shared input behaviors are not a claim of full hardware support.
 Keyboard shortcuts and visible zoom/Fit controls remain alternatives.

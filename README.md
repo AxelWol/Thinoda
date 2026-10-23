@@ -406,6 +406,8 @@ those system-owned controls. WinGet publishing remains paused.
   Settings switches, segmented choices and color swatches reject canceled or
   multitouch releases, including delayed synthesized clicks. Ordinary clicks and
   keyboard activation remain available.
+  Style, structure, theme and template preview cards use the same protection;
+  rejected double taps cannot create a map from a template.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
