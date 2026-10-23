@@ -626,9 +626,20 @@ Regressions cover validation recovery/exhaustion, six distinct artifact sets,
 dependency ordering and Node runtime contracts. PRs #66 and #67 are merged after
 passing checks. The authorized v0.9.0 website deployment (run `39917339881`)
 succeeded and the live site returns HTTP 200. The native release (run
-`39917340014`) is still testing Intel macOS; its release entry has no installers
-yet. Real Linux ARM64 installation and successful Apple service validation remain
-acceptance gates.
+`39917340014`) passed Intel macOS packaging, signing/notarization and verification;
+Windows x64/ARM64 and Linux x86 are now running. The release entry has no
+installers yet. All remaining target builds/publication and real Linux ARM64
+installation remain acceptance gates.
+
+**Delivered priority-1 follow-up, 2026-10-23 - Labels composition safety:**
+reproduced candidate-confirmation Enter adding provisional IME text as a label.
+Labels now reuses the title editor's composition-key guard, with independent
+per-editor state, before menus can dismiss the popup. Candidate Enter/Tab/Escape
+and Shift variants neither add labels nor discard drafts, including same-frame
+final commits. Focus is retained during composition; dismissal restores ordinary
+Tab navigation and Escape cancellation. Both Map/Outline tests cover final CJK
+text, empty preedit/commit dismissal, Apply and one-step Undo. Actual native and
+browser IME/font/assistive-technology acceptance remains open.
 
 **Delivered priority-1 follow-up, 2026-10-23 - color-swatch keyboard focus:**
 shared color swatches now distinguish keyboard focus from the selected-color

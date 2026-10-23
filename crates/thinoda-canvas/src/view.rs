@@ -24,6 +24,44 @@ use crate::{
 pub const MIN_ZOOM: f32 = 0.1;
 pub const MAX_ZOOM: f32 = 5.0;
 
+/// Call before handling focused-editor shortcuts so IME candidate keys stay in composition.
+pub fn protect_ime_candidate_keys(ctx: &egui::Context, editor_id: Id, composing: &mut bool) {
+    let ime_frame = ctx.input(|input| {
+        let mut active = *composing;
+        for event in &input.events {
+            if let egui::Event::Ime(event) = event {
+                #[allow(deprecated)]
+                match event {
+                    egui::ImeEvent::Preedit { text, .. } => {
+                        active = true;
+                        *composing = !text.is_empty();
+                    }
+                    egui::ImeEvent::Commit(_) | egui::ImeEvent::Disabled => {
+                        active = true;
+                        *composing = false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        active
+    });
+    if ime_frame {
+        let candidate_key = ctx.input_mut(|input| {
+            let mut consumed = false;
+            for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                for key in [Key::Enter, Key::Tab, Key::Escape] {
+                    consumed |= input.consume_key(modifiers, key);
+                }
+            }
+            consumed
+        });
+        if candidate_key {
+            ctx.memory_mut(|memory| memory.request_focus(editor_id));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectSelection {
     Relationship(RelationshipId),
@@ -377,40 +415,7 @@ impl MapView {
         let Some(edit) = self.editing.as_mut() else {
             return;
         };
-        let ime_frame = ctx.input(|input| {
-            let mut active = edit.ime_composing;
-            for event in &input.events {
-                if let egui::Event::Ime(event) = event {
-                    #[allow(deprecated)]
-                    match event {
-                        egui::ImeEvent::Preedit { text, .. } => {
-                            active = true;
-                            edit.ime_composing = !text.is_empty();
-                        }
-                        egui::ImeEvent::Commit(_) | egui::ImeEvent::Disabled => {
-                            active = true;
-                            edit.ime_composing = false;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            active
-        });
-        if ime_frame {
-            let candidate_key = ctx.input_mut(|input| {
-                let mut consumed = false;
-                for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
-                    for key in [Key::Enter, Key::Tab, Key::Escape] {
-                        consumed |= input.consume_key(modifiers, key);
-                    }
-                }
-                consumed
-            });
-            if candidate_key {
-                ctx.memory_mut(|memory| memory.request_focus(editor_id));
-            }
-        }
+        protect_ime_candidate_keys(ctx, editor_id, &mut edit.ime_composing);
     }
 
     pub fn set_editing_text(&mut self, text: &str) {

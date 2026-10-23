@@ -77,6 +77,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R0/R1 Labels IME safety: candidate Enter no longer adds provisional text, and
+  candidate Escape no longer discards the popup draft. Labels and titles share
+  the composition-key guard with separate state. Map/Outline, Shift variants,
+  same-frame final CJK commits, dismissal, normal Tab/Escape and Apply/Undo are
+  covered; real native/browser IME acceptance remains open.
 - R1 color-swatch keyboard focus: visible focus is separate from color selection,
   disabled state reaches accessibility clients, and preset focus survives removal
   of a custom swatch. Both themes, Tab, Enter/Space and disabled controls have
@@ -95,8 +100,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
   Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
   the authorized v0.9.0 website deployment succeeded. Native release packaging
-  is still running with no published installers; its completion and real Ubuntu
-  ARM64 installation remain unverified.
+  passed Intel macOS signing/notarization/verification and is running the
+  Windows/Linux x86 stage with no published installers; its completion and real
+  Ubuntu ARM64 installation remain unverified.
 - R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
   focus outline in both themes and selected states. Tab/Enter/Space, disabled
   controls and keyboard Undo/Redo after focused Notes Save are covered. This is

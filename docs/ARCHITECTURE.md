@@ -62,11 +62,16 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
-- **Title input ownership**: Map and Outline use `MapView`'s per-edit IME
-  composition guard before drawing their title text widgets. Candidate
+- **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
+  state with the shared `protect_ime_candidate_keys` guard before drawing their
+  title text widgets. Candidate
   Enter/Tab/Escape cannot trigger document commit or insertion, including the
   final composition-event frame. Dismissal restores ordinary title shortcuts;
   the Outline editor locks focus while its explicit Tab handling owns insertion.
+  Labels keeps independent composition state and runs the same guard before
+  menus can dismiss its popup. Its input locks focus only during composition,
+  so ordinary Tab navigation resumes after dismissal; candidate keys cannot add
+  provisional labels or discard the draft.
 - **Toolbar focus**: shared icon/captioned toolbar buttons keep egui's standard
   keyboard activation and draw a two-logical-pixel focus outline in the semantic
   text color, independent of selection or user accent. Disabled parent UIs also

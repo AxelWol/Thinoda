@@ -209,6 +209,8 @@ impl ThinodaApp {
             return;
         }
         let ctx = ui.ctx().clone();
+        // Menus can dismiss an open popup before its own input field is drawn.
+        self.protect_labels_ime(&ctx);
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         let preferred_fallback = (!crate::files::is_web())
             .then_some(self.settings.default_cjk_font.as_deref())

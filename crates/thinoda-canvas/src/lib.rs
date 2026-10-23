@@ -28,5 +28,5 @@ pub use measure::EguiMeasure;
 pub use render::{PaintOptions, Xf, color32, paint_map, paint_marker_colored, paint_thumbnail};
 pub use view::{
     AddControlLabels, CanvasOutput, MapCanvas, MapView, NewTopicTitles, ObjectSelection,
-    shortcut_bindings,
+    protect_ime_candidate_keys, shortcut_bindings,
 };
