@@ -11,6 +11,20 @@ test("Node scripts use the repository's Node.js 24 runtime", () => {
     assert.equal(process.versions.node.split(".")[0], major);
 });
 
+test("mobile viewport metadata leaves browser zoom available", () => {
+    const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+    const viewport = html.match(/<meta\s+name=["']viewport["']\s+content=["']([^"']+)["']/i);
+    assert.ok(viewport, "viewport metadata is present");
+    const directives = new Map(viewport[1].split(",").map((directive) => {
+        const [name, value = ""] = directive.trim().split("=");
+        return [name.toLowerCase(), value.trim().toLowerCase()];
+    }));
+    assert.equal(directives.get("width"), "device-width");
+    assert.equal(directives.get("initial-scale"), "1");
+    assert.equal(directives.has("maximum-scale"), false);
+    assert.equal(directives.has("user-scalable"), false);
+});
+
 function installFixture({ standalone = false, register } = {}) {
     const listeners = {};
     const errors = [];

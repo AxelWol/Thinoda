@@ -664,6 +664,16 @@ history and release without edits. No custom long-press timer was introduced.
 This is not full gesture parity: real browser/device acceptance, all-surface
 touch controls and browser viewport zoom remain open.
 
+**Delivered browser-zoom metadata correction:** the mobile viewport no longer
+sets `maximum-scale=1` or `user-scalable=no`, so browser-controlled zoom is not
+disabled by page metadata. A web regression guards against restoring those
+restrictions. **Gesture ownership decision:** a pinch begun on the full-screen
+canvas belongs to map pan/zoom; page zoom remains available through browser
+controls and keyboard shortcuts, while the app's visible zoom controls remain an
+alternative. Eframe still prevents browser defaults for canvas touch events so
+the map gesture works. Browser/device acceptance must verify browser zoom
+controls/keyboard and map pinch separately without sacrificing low-vision access.
+
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
 swipe scrolls deep Outline content in both axes without selecting, editing or
 mutating topics. Reproduced a two-finger release collapsing a branch; Outline
