@@ -3,6 +3,7 @@
 use egui::{RichText, Ui};
 use thinoda_canvas::Action;
 use thinoda_core::{Color, TopicId, markers};
+use thinoda_ui::widgets::touch_activation_allowed;
 
 use crate::{
     app::{Cmd, ThinodaApp},
@@ -13,6 +14,7 @@ pub(crate) const EXPORT_WARNING: &str = "Editable exports lose symbol colors, ex
 
 fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color, submenu: bool) -> bool {
     let before = *color;
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     ui.horizontal_wrapped(|ui| {
         let label = ui.label(t("Symbol color"));
         let mut value = thinoda_canvas::color32(color.unwrap_or(fallback));
@@ -40,7 +42,7 @@ fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color, submen
                 .labelled_by(label.id)
                 .changed()
         };
-        if changed {
+        if touch_allowed && changed {
             let [r, g, b, a] = value.to_srgba_unmultiplied();
             *color = Some(Color::rgba(r, g, b, a));
         }
@@ -55,7 +57,8 @@ fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color, submen
         let response = ui
             .add(egui::TextEdit::singleline(&mut state.1).desired_width(90.0))
             .labelled_by(label.id);
-        if response.changed()
+        if touch_allowed
+            && response.changed()
             && let Some(c) = Color::from_hex(&state.1)
         {
             *color = Some(c);
@@ -65,7 +68,7 @@ fn color_control(ui: &mut Ui, color: &mut Option<Color>, fallback: Color, submen
             ui.label(t("Invalid color"));
         }
         ui.data_mut(|d| d.insert_temp(id, state));
-        if ui.button(t("Default symbol color")).clicked() {
+        if ui.button(t("Default symbol color")).clicked() && touch_allowed {
             *color = None;
             ui.data_mut(|d| d.remove::<(Color, String)>(id));
         }
@@ -80,7 +83,7 @@ fn contrast(ui: &mut Ui, id: &str, color: Color, background: Color) -> Option<Co
     let status = if pass { t("Pass") } else { t("Low contrast") };
     ui.label(format!("{}: {ratio:.2}:1 / {threshold}:1 — {status}", t("Contrast")))
         .on_hover_text(t("Contrast compares the symbol with its topic background; it is not an overall accessibility assessment."));
-    if !pass && ui.button(t("Improve contrast")).clicked() {
+    if !pass && ui.button(t("Improve contrast")).clicked() && touch_activation_allowed(ui.ctx()) {
         return Some(Color::highest_contrast_on(background));
     }
     None
@@ -176,7 +179,7 @@ impl ThinodaApp {
                 self.symbol_color,
             );
         }
-        response.clicked()
+        response.clicked() && touch_activation_allowed(ui.ctx())
     }
 
     pub(crate) fn symbol_instance(
@@ -221,7 +224,7 @@ impl ThinodaApp {
                     Some(improved),
                 )));
             }
-            if ui.button(t("Remove Symbol")).clicked() {
+            if ui.button(t("Remove Symbol")).clicked() && touch_activation_allowed(ui.ctx()) {
                 command = Some(Cmd::Canvas(Action::RemoveMarker(id, index)));
                 ui.close();
             }

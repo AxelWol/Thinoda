@@ -3,7 +3,7 @@ use egui::{
 };
 use egui_kittest::{Harness, kittest::Queryable};
 use thinoda_app::{
-    app::{Cmd, EXPORT_MENU, Services, ThinodaApp},
+    app::{Cmd, EXPORT_MENU, Services, SidebarFamily, ThinodaApp},
     i18n::t,
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
@@ -206,6 +206,134 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
                     assert_eq!(h.state().accent, egui::Color32::from_rgb(0, 0xA8, 0x9D));
                 }
             }
+            inspector_symbols(&mut harness(theme, scale));
         }
     }
+}
+
+fn inspector_symbols(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().settings.show_format_panel = true;
+    h.state_mut().sidebar_family = SidebarFamily::Symbols;
+    h.set_size(vec2(1000.0, 480.0));
+    h.run_steps(8);
+    let first = thinoda_core::markers::GROUPS
+        .first()
+        .unwrap()
+        .markers
+        .first()
+        .unwrap();
+    h.get_by_role_and_label(Role::Button, t(first.name))
+        .scroll_to_me();
+    h.run_steps(8);
+    let button = h.get_by_role_and_label(Role::Button, t(first.name)).rect();
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    swipe(h, button.center(), vec2(0.0, -70.0));
+    assert!(
+        h.get_by_role_and_label(Role::Button, t(first.name))
+            .rect()
+            .top()
+            < button.top(),
+        "first inspector swipe must scroll rather than apply a symbol"
+    );
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    h.get_by_role_and_label(Role::Button, t(first.name))
+        .scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, t(first.name))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected inspector release must not apply symbols"
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    h.get_by_role_and_label(Role::Button, t(first.name)).focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    let root = doc.doc.sheet().root;
+    assert!(
+        doc.doc
+            .sheet()
+            .topic(root)
+            .unwrap()
+            .markers
+            .iter()
+            .any(|m| m == first.id)
+    );
+    let placed = doc.doc.workbook().clone();
+    let placed_revision = doc.doc.state_id();
+    h.get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .scroll_to_me();
+    h.run_steps(8);
+    let remove = h
+        .get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, remove, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), placed_revision);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &placed);
+    }
+    h.get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .click();
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &placed);
+    let doc = h.state().doc().unwrap();
+    let background = doc.view.symbol_background(&doc.doc, root, Some(0));
+    h.state_mut().exec(
+        &ctx,
+        Cmd::Canvas(thinoda_canvas::Action::SetMarkerColor(
+            root,
+            0,
+            Some(background),
+        )),
+    );
+    h.run_steps(4);
+    let colored = h.state().doc().unwrap().doc.workbook().clone();
+    let colored_revision = h.state().doc().unwrap().doc.state_id();
+    for label in ["Default symbol color", "Improve contrast"] {
+        h.query_all_by_role_and_label(Role::Button, t(label))
+            .last()
+            .unwrap()
+            .scroll_to_me();
+        h.run_steps(8);
+        let target = h
+            .query_all_by_role_and_label(Role::Button, t(label))
+            .last()
+            .unwrap()
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                colored_revision,
+                "rejected symbol color action must not change map history"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
+        }
+    }
+    h.query_all_by_role_and_label(Role::Button, t("Improve contrast"))
+        .last()
+        .unwrap()
+        .focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().doc.state_id(), colored_revision);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
 }

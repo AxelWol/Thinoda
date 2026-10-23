@@ -94,7 +94,9 @@ graph TD
   `widgets::touch_activation_allowed` cancellation/multitouch latch is sampled
   each app frame, including while controls are hidden, and cached across layout
   passes. Outline title/disclosure/command activation and shared switches,
-  segmented choices and color swatches use it. Scroll areas and text inputs keep
+  segmented choices and color swatches use it. Symbol insertion/removal, default-
+  color/contrast actions and color application share that guard in the inspector
+  and context instance editor. Scroll areas and text inputs keep
   upstream scrolling/text-selection behavior; this does not yet guard every
   standard egui button, slider or combo box.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.

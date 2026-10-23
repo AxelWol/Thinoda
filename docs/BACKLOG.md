@@ -88,6 +88,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 Symbols-inspector touch safety: first swipes scroll without adding markers.
+  Canceled/multitouch releases cannot insert/remove symbols or invoke default-color/
+  contrast changes; color application uses the same guard. Both-theme/scale tests
+  cover unchanged history, ordinary keyboard/click actions and Undo recovery.
 - R1 menu/Settings touch slice: first swipes scroll, export-menu swipes reach the
   last format without executing it, and shared switches/segmented choices/color
   swatches reject canceled or multitouch releases. Extracted the Outline latch

@@ -94,6 +94,12 @@ canceled and two/three-finger taps, including delayed pointer releases; normal
 click/keyboard activation is preserved. Other button/slider/combo interactions
 and actual browser touch delivery remain separate acceptance work.
 
+Symbols-inspector first swipes also scroll without applying markers. Canceled
+and two/three-finger releases cannot insert/remove symbols or invoke default-color
+and contrast actions; color application shares the guard. Automated both-theme/
+scale coverage preserves ordinary keyboard/click actions and Undo. Other
+inspector property controls and actual device delivery remain open.
+
 Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
 varies; these shared input behaviors are not a claim of full hardware support.
 Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
@@ -105,7 +111,7 @@ Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
 | macOS trackpad | Native scroll/zoom event path preserved; real-device natural scroll, pinch, momentum and system-gesture acceptance remain open. |
 | Ubuntu Wayland / X11 | Separate touch/touchpad/backend runtime acceptance remains open; libinput touchpad support alone does not prove touchscreen behavior. |
 | iPhone/iPad Safari and Android Chrome, browser/PWA | Shared WASM code compiles; real browser gesture delivery, pointer cancellation, text input, orientation and installed-PWA behavior remain open. No native iOS/Android package is implied. |
-| All UI surfaces and accessibility | Shared canvas tap/double-tap/hold, sheet swipes and Outline first-swipe/cancel/multitouch-release safety have automated coverage. Device-delivered gestures, topic moves, menu/inspector scrolling, touch targets and AT/OS-reserved gestures still need the full acceptance matrix in PLAN. |
+| All UI surfaces and accessibility | Shared canvas tap/double-tap/hold, sheet/menu/Settings/Symbols-inspector swipes, Outline release safety and guarded Settings/Symbols actions have automated coverage. Device-delivered gestures, topic moves, remaining inspector properties, touch targets and AT/OS-reserved gestures still need the full acceptance matrix in PLAN. |
 | Browser zoom ownership | Existing restrictive viewport metadata and eframe touch-event default prevention still need a browser-tested accessibility/gesture-ownership change. Map pinch is not page zoom or proof of low-vision acceptance. |
 
 See [the gesture workstream](PLAN.md#immediate-next-work) for official platform

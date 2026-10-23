@@ -692,6 +692,18 @@ This is not a general input filter: standard egui buttons, sliders, combo boxes,
 text selection, inspector-specific workflows, browser zoom and hardware delivery
 remain part of the remaining audit.
 
+**Delivered Symbols-inspector touch safety slice:** first swipes scroll the
+Symbols inspector without applying markers. Reproduced canceled/multitouch
+releases inserting symbols; insertion, removal, default-color and contrast
+actions now share the activation guard. Symbol color-picker/hex changes use the
+same guard before applying color edits, including context-menu instance editors.
+Both-theme/1x/1.5x/2x tests cover first swipes, canceled and two/three-finger
+releases with unchanged map/history, normal Space insertion, click removal,
+Enter contrast improvement and Undo restoration. Existing symbol-color,
+inspector focus/draft-save and native/WASM checks remain intact. This does not
+complete generic sliders, combo boxes, all inspector property widgets, browser
+zoom ownership or real-device acceptance.
+
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside
 the scrolling names. Arrows browse by 80% of the name viewport without changing
