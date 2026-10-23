@@ -315,10 +315,17 @@ pub fn color_swatches(
             ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
             let custom = selected.filter(|c| !colors.contains(c));
             for c in custom.into_iter().chain(colors.iter().copied()) {
-                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                let resp = ui.interact(
+                    rect,
+                    ui.scope_id().with(("color-swatch", c)),
+                    Sense::click(),
+                );
                 let is_sel = selected == Some(c);
                 let label = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
-                resp.widget_info(|| WidgetInfo::selected(Role::ColorWell, true, is_sel, &label));
+                resp.widget_info(|| {
+                    WidgetInfo::selected(Role::ColorWell, ui.is_enabled(), is_sel, &label)
+                });
                 ui.painter()
                     .rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
                 let stroke = if is_sel {
@@ -334,6 +341,14 @@ pub fn color_swatches(
                     stroke,
                     StrokeKind::Inside,
                 );
+                if resp.has_focus() && ui.is_enabled() {
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::same(Tokens::RADIUS_S),
+                        Stroke::new(2.0, p.text),
+                        StrokeKind::Inside,
+                    );
+                }
                 if is_sel {
                     let contrast = if c.intensity() > 0.5 {
                         Color32::BLACK
@@ -631,6 +646,73 @@ mod tests {
         harness.get_by_label("#0000FF").click();
         harness.run();
         assert_eq!(*harness.state(), Some(Color32::BLUE));
+    }
+
+    #[test]
+    fn swatches_keep_visible_keyboard_focus_when_custom_color_disappears() {
+        use egui_kittest::kittest::NodeT;
+        for dark in [false, true] {
+            for key in [egui::Key::Enter, egui::Key::Space] {
+                let custom = Color32::from_rgb(0x12, 0x34, 0x56);
+                let mut h = Harness::new_ui_state(
+                    move |ui, state: &mut (bool, Option<Color32>, usize)| {
+                        ui.ctx().set_visuals(if dark {
+                            egui::Visuals::dark()
+                        } else {
+                            egui::Visuals::light()
+                        });
+                        ui.add_enabled_ui(state.0, |ui| {
+                            if let Some(color) =
+                                color_swatches(ui, &[Color32::RED, Color32::BLUE], state.1)
+                            {
+                                state.1 = Some(color);
+                                state.2 += 1;
+                            }
+                        });
+                    },
+                    (true, Some(custom), 0),
+                );
+                h.run_steps(2);
+                for label in ["#123456", "#FF0000", "#0000FF"] {
+                    h.key_press(egui::Key::Tab);
+                    h.run_steps(2);
+                    let node = h.get_by_role_and_label(Role::ColorWell, label);
+                    assert!(node.is_focused(), "Tab should reach {label}");
+                    let rect = node.rect();
+                    assert!(
+                        h.output().shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Rect(shape)
+                            if shape.rect == rect && shape.stroke.width >= 2.0
+                                && shape.stroke.color != Color32::TRANSPARENT)
+                        }),
+                        "Color swatches need a distinct keyboard-focus outline"
+                    );
+                }
+                h.key_press(key);
+                h.run_steps(3);
+                assert_eq!(h.state().1, Some(Color32::BLUE));
+                assert_eq!(h.state().2, 1);
+                assert!(
+                    h.query_by_role_and_label(Role::ColorWell, "#123456")
+                        .is_none()
+                );
+                assert!(
+                    h.get_by_role_and_label(Role::ColorWell, "#0000FF")
+                        .is_focused(),
+                    "Removing the custom swatch must not move focus off the chosen preset"
+                );
+                h.state_mut().0 = false;
+                h.run_steps(2);
+                assert!(
+                    h.get_by_role_and_label(Role::ColorWell, "#0000FF")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+                h.key_press(key);
+                h.run_steps(2);
+                assert_eq!(h.state().2, 1);
+            }
+        }
     }
 
     #[test]

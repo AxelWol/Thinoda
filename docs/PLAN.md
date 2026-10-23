@@ -624,10 +624,20 @@ it now retries only the recognized Apple CloudKit network failure. It does not
 resubmit accepted notarization, skip validation or retry invalid signatures.
 Regressions cover validation recovery/exhaustion, six distinct artifact sets,
 dependency ordering and Node runtime contracts. PRs #66 and #67 are merged after
-passing checks. The authorized v0.9.0 native release (run `39917340014`) and
-website deployment (run `39917339881`) are in progress; completion is not yet
-verified. Real Linux ARM64 installation and successful Apple service validation
-remain acceptance gates.
+passing checks. The authorized v0.9.0 website deployment (run `39917339881`)
+succeeded and the live site returns HTTP 200. The native release (run
+`39917340014`) is still testing Intel macOS; its release entry has no installers
+yet. Real Linux ARM64 installation and successful Apple service validation remain
+acceptance gates.
+
+**Delivered priority-1 follow-up, 2026-10-23 - color-swatch keyboard focus:**
+shared color swatches now distinguish keyboard focus from the selected-color
+border, expose disabled state correctly, and keep each color's identity stable
+when a non-preset color appears or disappears. Keyboard selection of a preset
+no longer loses focus when the old custom swatch is removed. Both themes, real
+Tab traversal, Enter/Space, single activation and disabled controls are covered.
+Existing inspector, custom-theme, quick-style and symbol-color workflows remain
+covered; actual OS/browser assistive-technology acceptance remains open.
 
 **Delivered priority-1 follow-up, 2026-10-23 - Settings control focus:**
 shared segmented tabs and toggle switches now paint a two-logical-pixel,

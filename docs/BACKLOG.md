@@ -77,6 +77,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 color-swatch keyboard focus: visible focus is separate from color selection,
+  disabled state reaches accessibility clients, and preset focus survives removal
+  of a custom swatch. Both themes, Tab, Enter/Space and disabled controls have
+  regressions; native/browser assistive-technology acceptance remains open.
 - R1 Settings control focus: shared segmented tabs and toggle switches show a
   theme-text-colored keyboard-focus outline. Disabled tabs expose their actual
   accessibility state. Both themes, Enter/Space, single activation and disabled
@@ -90,8 +94,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   Final DMG validation now uses the existing bounded retry for confirmed
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
   Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
-  the authorized v0.9.0 release and website deployment are running. Completion
-  and real Ubuntu ARM64 installation remain unverified.
+  the authorized v0.9.0 website deployment succeeded. Native release packaging
+  is still running with no published installers; its completion and real Ubuntu
+  ARM64 installation remain unverified.
 - R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
   focus outline in both themes and selected states. Tab/Enter/Space, disabled
   controls and keyboard Undo/Redo after focused Notes Save are covered. This is
