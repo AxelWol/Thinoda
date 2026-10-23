@@ -626,10 +626,12 @@ Regressions cover validation recovery/exhaustion, six distinct artifact sets,
 dependency ordering and Node runtime contracts. PRs #66 and #67 are merged after
 passing checks. The authorized v0.9.0 website deployment (run `39917339881`)
 succeeded and the live site returns HTTP 200. The native release (run
-`39917340014`) passed Intel macOS packaging, signing/notarization and verification;
-Windows x64/ARM64 and Linux x86 are now running. The release entry has no
-installers yet. All remaining target builds/publication and real Linux ARM64
-installation remain acceptance gates.
+`39917340014`) completed successfully for all six targets in the requested order,
+including both macOS signing/notarization/verification stages. The v0.9.0 release
+publishes all ten downloads and six SHA256 manifests; downloading the published
+assets and checking every digest succeeded. Real Linux ARM64 installation and
+other platform-specific runtime acceptance remain open; packaging success is not
+proof of an installed application's behavior.
 
 **Delivered priority-1 follow-up, 2026-10-23 - Labels composition safety:**
 reproduced candidate-confirmation Enter adding provisional IME text as a label.

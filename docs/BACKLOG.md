@@ -100,9 +100,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
   Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
   the authorized v0.9.0 website deployment succeeded. Native release packaging
-  passed Intel macOS signing/notarization/verification and is running the
-  Windows/Linux x86 stage with no published installers; its completion and real
-  Ubuntu ARM64 installation remain unverified.
+  succeeded for all six targets, including both macOS signing/notarization
+  stages. All ten published downloads match their six SHA256 manifests.
+  Real Ubuntu ARM64 installation and platform runtime acceptance remain open.
 - R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
   focus outline in both themes and selected states. Tab/Enter/Space, disabled
   controls and keyboard Undo/Redo after focused Notes Save are covered. This is

@@ -30,7 +30,7 @@ Installers for every platform are attached to each
 | Windows x64 / ARM64 | `Thinoda_<version>_*-setup-<target>.exe` (NSIS installer) |
 | macOS Apple silicon / Intel | `Thinoda_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
 | Ubuntu LTS (x64) | `.deb` or `.AppImage` for `x86_64-unknown-linux-gnu` |
-| Ubuntu LTS (ARM64, next release) | `.deb` or `.AppImage` for `aarch64-unknown-linux-gnu` |
+| Ubuntu LTS (ARM64) | `.deb` or `.AppImage` for `aarch64-unknown-linux-gnu` |
 
 `<target>` is `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
 `aarch64-apple-darwin` (Apple silicon), `x86_64-apple-darwin` (Intel) or
