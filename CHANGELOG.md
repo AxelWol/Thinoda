@@ -13,6 +13,34 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.10.0](https://github.com/AxelWol/Thinoda/compare/v0.9.0...v0.10.0) (2026-10-23)
+
+
+### Features
+
+* **ui:** add scrollable document tabs ([db428ae](https://github.com/AxelWol/Thinoda/commit/db428ae85c7b598e12c944cd3cce19da4b628616))
+
+
+### Bug Fixes
+
+* **a11y:** preserve keyboard focus on color swatches ([13a529f](https://github.com/AxelWol/Thinoda/commit/13a529ff1c732dbd534b315d979c4701cdf40fa8))
+* **a11y:** show focus on Settings tabs and switches ([b8c97d4](https://github.com/AxelWol/Thinoda/commit/b8c97d4c3e88d7cd5f29a3de2cf5af7d0f1cbfce))
+* **canvas:** support safe touch pan and simultaneous pinch ([d6e7b21](https://github.com/AxelWol/Thinoda/commit/d6e7b21c492dae81c52bf17d37c4c14679a82d49))
+* **editing:** protect label drafts from IME candidate keys ([ce31e4b](https://github.com/AxelWol/Thinoda/commit/ce31e4b38cce5f5fe97fc5dace47469ef1be3101))
+* **editing:** protect sheet rename input and keyboard navigation ([97e280e](https://github.com/AxelWol/Thinoda/commit/97e280edf92dbf41b70840eacd3743a5f8b18cf4))
+* **gestures:** guard preview pickers against rejected touch activation ([e81af6f](https://github.com/AxelWol/Thinoda/commit/e81af6f966995fe34a3af412ff9c1b67acd38d21))
+* **gestures:** guard Symbols inspector edits on rejected releases ([2112961](https://github.com/AxelWol/Thinoda/commit/211296110f4c325fb3b6431e1dd14d2bce23cae0))
+* **gestures:** prevent Outline and delayed release click-through ([afa8517](https://github.com/AxelWol/Thinoda/commit/afa85170590456a6875c933db4288c529cbcd313))
+* **gestures:** protect Settings choices from rejected touch releases ([f16cd91](https://github.com/AxelWol/Thinoda/commit/f16cd91b97c1d765dadb8afeb7f78d2af29c8afa))
+* **gestures:** protect sheet controls from rejected touch releases ([5c6d252](https://github.com/AxelWol/Thinoda/commit/5c6d25234cf1b7dfb5ba67fa136573a5906cb5e5))
+* **gestures:** suppress context menus during multitouch holds ([7c1cfc2](https://github.com/AxelWol/Thinoda/commit/7c1cfc21538755f329e53e78ae12ee585b25fb48))
+* **navigation:** add clipped sheet scrolling controls ([7c0ee62](https://github.com/AxelWol/Thinoda/commit/7c0ee6249e04bf59807266d637ad68003f486f0d))
+
+
+### Documentation
+
+* record verified six-target 0.9.0 publication ([4ec6618](https://github.com/AxelWol/Thinoda/commit/4ec661842310f74628c0f6822e7a31133dc5bb9d))
+
 ## [0.9.0](https://github.com/AxelWol/Thinoda/compare/v0.8.0...v0.9.0) (2026-10-23)
 
 
