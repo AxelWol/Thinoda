@@ -88,6 +88,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- User-directed R1 document navigation: top file tabs now use fixed scroll arrows,
+  a clipped scrollable name viewport, and pinned Close Tab/New Tab actions.
+  Arrow/drag browsing preserves the active document and its history; active/focus
+  reveal, keyboard selection, closing and new-tab behavior remain intact.
 - R1 status-control touch safety: canceled/two/three-contact releases cannot switch
   view, change zoom/Fit or open Zoom/Statistics. Popup presets and Fit also reject
   these releases. Both-theme/scale tests preserve camera offset and map history,

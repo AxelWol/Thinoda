@@ -418,6 +418,10 @@ those system-owned controls. WinGet publishing remains paused.
   keyboard focus keep the actions reachable; focused or newly active sheets reveal
   themselves without pinning manual browsing. On small screens the status controls
   also scroll independently, rather than covering sheet names.
+  Open-document tabs now use the same fixed-arrow, clipped-name pattern at the top;
+  Close Tab and New Tab stay pinned while file names scroll. Browsing does not
+  switch documents, and the narrow header prioritizes tabs over quick-action icons
+  that remain available in the main menu.
   Canceled or multitouch releases cannot switch/create sheets, trigger rename,
   scroll arrows or sheet context actions. Single-finger holds still open the
   sheet menu; ordinary taps and keyboard navigation remain available.

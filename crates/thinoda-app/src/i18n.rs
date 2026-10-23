@@ -1288,6 +1288,14 @@ const DE: &[(&str, &str)] = &[
     ("Move Left", "Nach links"),
     ("Scroll sheets left", "Blattleiste nach links scrollen"),
     ("Scroll sheets right", "Blattleiste nach rechts scrollen"),
+    (
+        "Scroll documents left",
+        "Dokumentleiste nach links scrollen",
+    ),
+    (
+        "Scroll documents right",
+        "Dokumentleiste nach rechts scrollen",
+    ),
     ("Move Right", "Nach rechts"),
     ("Topics", "Themen"),
     ("Words", "Wörter"),

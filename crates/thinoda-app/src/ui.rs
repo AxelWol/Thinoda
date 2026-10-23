@@ -105,12 +105,19 @@ fn status_menu_button(
     label: impl Into<egui::WidgetText>,
     content: impl FnOnce(&mut Ui),
 ) -> egui::InnerResponse<Option<()>> {
-    let response = ui.button(label);
-    let mut menu = egui::Popup::menu(&response);
+    guarded_menu_button(ui, label, content)
+}
+
+fn guarded_menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    let mut menu = egui::containers::menu::MenuButton::new(label.into());
     if !widgets::touch_activation_allowed(ui.ctx()) {
-        menu = menu.open_memory(None);
+        menu.button = menu.button.sense(Sense::hover());
     }
-    let inner = menu.show(|ui| scroll_menu(ui, content));
+    let (response, inner) = menu.ui(ui, |ui| scroll_menu(ui, content));
     egui::InnerResponse::new(inner.map(|inner| inner.inner), response)
 }
 
@@ -193,6 +200,101 @@ fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32))
             ),
         );
     });
+}
+
+fn document_tabs(
+    ui: &mut Ui,
+    width: f32,
+    docs: &[crate::doc::OpenDoc],
+    active: usize,
+) -> (Option<usize>, bool, bool, Option<usize>) {
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+    let state_id = ui.make_persistent_id("document_scroll_buttons");
+    let (position, max_offset, previous_active) = ui.data(|data| {
+        data.get_temp::<(f32, f32, String)>(state_id)
+            .unwrap_or_default()
+    });
+    let active_key = docs
+        .get(active)
+        .map_or_else(String::new, |doc| doc.key.clone());
+    let active_changed = previous_active != active_key;
+    let button_width = ui.spacing().interact_size.y;
+    let arrow_slot = button_width + ui.spacing().item_spacing.x;
+    let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+    let names_width = (width - 2.0 * arrow_slot - 2.0 * action_slot).max(0.0);
+    let step = (names_width * 0.8).max(1.0);
+    let mut offset = None;
+    let mut selected = None;
+    let mut middle_close = None;
+    for (glyph, label, enabled, target) in [
+        (
+            "<",
+            t("Scroll documents left"),
+            position > 0.5,
+            (position - step).max(0.0),
+        ),
+        (
+            ">",
+            t("Scroll documents right"),
+            position < max_offset - 0.5,
+            (position + step).min(max_offset),
+        ),
+    ] {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(glyph).min_size(vec2(button_width, button_width)),
+            )
+            .accessible_name(label)
+            .on_hover_text(label)
+            .clicked()
+            && touch_allowed
+        {
+            offset = Some(target);
+        }
+    }
+    let output = scroll_row_offset(ui, "document_tabs", names_width, offset, |ui| {
+        ui.horizontal(|ui| {
+            for (index, doc) in docs.iter().enumerate() {
+                let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
+                let response = ui
+                    .push_id(&doc.key, |ui| {
+                        ui.add(egui::Button::selectable(index == active, &label).truncate())
+                    })
+                    .inner
+                    .on_hover_text(
+                        doc.path
+                            .as_ref()
+                            .map_or_else(|| label.clone(), |p| p.display().to_string()),
+                    );
+                if (index == active && active_changed) || response.gained_focus() {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() && touch_allowed {
+                    selected = Some(index);
+                }
+                if response.middle_clicked() && touch_allowed {
+                    middle_close = Some(index);
+                }
+            }
+        });
+    });
+    let close_active = docs.get(active).is_some()
+        && widgets::icon_button(ui, icons::CLOSE, t("Close Tab"), false).clicked()
+        && touch_allowed;
+    let new_tab =
+        widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked() && touch_allowed;
+    ui.data_mut(|data| {
+        data.insert_temp(
+            state_id,
+            (
+                output.state.clamped_offset().x,
+                (output.content_size.x - output.inner_rect.width()).max(0.0),
+                active_key,
+            ),
+        );
+    });
+    (selected, close_active, new_tab, middle_close)
 }
 
 pub(crate) fn font_selector(
@@ -555,10 +657,14 @@ impl ThinodaApp {
     fn top_bar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let mut cmd: Option<Cmd> = None;
+        let touch_allowed = widgets::touch_activation_allowed(&ctx);
         ui.horizontal_centered(|ui| {
-            ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
-                scroll_menu(ui, |ui| self.main_menu(ui, &mut cmd));
+            guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
+                self.main_menu(ui, &mut cmd)
             });
+            let header_width = ctx.content_rect().width() * ctx.zoom_factor();
+            let compact_header = header_width < 640.0;
+            let very_compact_header = header_width < 480.0;
             let (can_undo, can_redo) = self.doc().map_or((false, false), |d| {
                 let draft_changed = d.has_inspector_changes();
                 (
@@ -566,127 +672,124 @@ impl ThinodaApp {
                     d.doc.can_redo() && !draft_changed,
                 )
             });
-            if ui
-                .add_enabled_ui(can_undo, |ui| {
-                    widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
-                })
-                .inner
-                .clicked()
-            {
-                cmd = Some(Cmd::Canvas(Action::Undo));
-            }
-            if ui
-                .add_enabled_ui(can_redo, |ui| {
-                    widgets::icon_button(ui, icons::REDO, t("Redo"), false)
-                })
-                .inner
-                .clicked()
-            {
-                cmd = Some(Cmd::Canvas(Action::Redo));
+            if !very_compact_header {
+                if ui
+                    .add_enabled_ui(can_undo, |ui| {
+                        widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    cmd = Some(Cmd::Canvas(Action::Undo));
+                }
+                if ui
+                    .add_enabled_ui(can_redo, |ui| {
+                        widgets::icon_button(ui, icons::REDO, t("Redo"), false)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    cmd = Some(Cmd::Canvas(Action::Redo));
+                }
             }
             widgets::vdivider(ui);
-            // Document tabs.
-            egui::ScrollArea::horizontal()
-                .max_width(ui.available_width() * 0.4)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for i in 0..self.docs.len() {
-                            let d = &self.docs[i];
-                            let label =
-                                format!("{}{}", if d.is_dirty() { "• " } else { "" }, d.title());
-                            let sel = i == self.active;
-                            let r = ui.selectable_label(sel, label);
-                            if r.clicked() {
-                                self.active = i;
-                            }
-                            if r.middle_clicked() {
-                                cmd = Some(Cmd::CloseTab(i));
-                            }
-                            if let Some(p) = &d.path {
-                                r.clone().on_hover_text(p.display().to_string());
-                            }
-                            if sel
-                                && widgets::icon_button(ui, icons::CLOSE, t("Close Tab"), false)
-                                    .clicked()
-                            {
-                                cmd = Some(Cmd::CloseTab(i));
-                            }
-                        }
-                        if widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked() {
-                            cmd = Some(Cmd::Home);
-                        }
-                    });
-                });
+            let tabs_width = if header_width < 600.0 {
+                ui.available_width().max(0.0)
+            } else {
+                let arrow_slot = ui.spacing().interact_size.y + ui.spacing().item_spacing.x;
+                let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+                let min_tabs_width = 2.0 * arrow_slot + 2.0 * action_slot;
+                (ui.available_width() * 0.4).max(min_tabs_width).min(560.0)
+            };
+            let (selected, close_active, new_tab, middle_close) =
+                document_tabs(ui, tabs_width, &self.docs, self.active);
+            if touch_allowed {
+                if let Some(index) = selected {
+                    self.active = index;
+                }
+                if close_active {
+                    cmd = Some(Cmd::CloseTab(self.active));
+                }
+                if let Some(index) = middle_close {
+                    cmd = Some(Cmd::CloseTab(index));
+                }
+                if new_tab {
+                    cmd = Some(Cmd::Home);
+                }
+            }
 
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::icon_button(
-                    ui,
-                    icons::FORMAT,
-                    t("Format Panel"),
-                    self.doc().is_some()
-                        && self.settings.show_format_panel
-                        && self.sidebar_family == SidebarFamily::Format,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleFormatPanel);
-                }
-                if widgets::icon_button(
-                    ui,
-                    icons::MARKER,
-                    t("Symbols"),
-                    self.doc().is_some()
-                        && self.settings.show_format_panel
-                        && self.sidebar_family == SidebarFamily::Symbols,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleSymbolsPanel);
-                }
-                ui.add_enabled_ui(
-                    EXPORT_MENU
-                        .iter()
-                        .any(|f| self.command_available(&Cmd::Export(*f))),
-                    |ui| {
-                        menu_button(ui, RichText::new(icons::EXPORT), |ui| {
-                            for f in EXPORT_MENU {
-                                if ui
-                                    .add_enabled(
-                                        self.command_available(&Cmd::Export(*f)),
-                                        egui::Button::new(t(f.label())),
-                                    )
-                                    .clicked()
-                                {
-                                    cmd = Some(Cmd::Export(*f));
-                                }
-                            }
-                        })
-                        .response
-                        .accessible_name(t("Export"))
-                        .on_hover_text(t("Export"));
-                    },
-                );
-                if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
-                    cmd = Some(Cmd::ToggleZen);
-                }
-                let outl = self.mode == CenterMode::Outliner;
-                if widgets::icon_button(
-                    ui,
-                    if outl { icons::MAP } else { icons::OUTLINER },
-                    t("Outliner"),
-                    outl,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleOutliner);
-                }
-                if widgets::icon_button(ui, icons::SEARCH, t("Find…"), self.search.open).clicked()
-                {
-                    cmd = Some(Cmd::Find);
-                }
-            });
+            if header_width >= 600.0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let format = widgets::icon_button(
+                        ui,
+                        icons::FORMAT,
+                        t("Format Panel"),
+                        self.doc().is_some()
+                            && self.settings.show_format_panel
+                            && self.sidebar_family == SidebarFamily::Format,
+                    );
+                    if format.clicked() {
+                        cmd = Some(Cmd::ToggleFormatPanel);
+                    }
+                    let symbols = widgets::icon_button(
+                        ui,
+                        icons::MARKER,
+                        t("Symbols"),
+                        self.doc().is_some()
+                            && self.settings.show_format_panel
+                            && self.sidebar_family == SidebarFamily::Symbols,
+                    );
+                    if symbols.clicked() {
+                        cmd = Some(Cmd::ToggleSymbolsPanel);
+                    }
+                    if !compact_header {
+                        ui.add_enabled_ui(
+                            EXPORT_MENU
+                                .iter()
+                                .any(|f| self.command_available(&Cmd::Export(*f))),
+                            |ui| {
+                                guarded_menu_button(ui, RichText::new(icons::EXPORT), |ui| {
+                                    for f in EXPORT_MENU {
+                                        if ui
+                                            .add_enabled(
+                                                self.command_available(&Cmd::Export(*f)),
+                                                egui::Button::new(t(f.label())),
+                                            )
+                                            .clicked()
+                                        {
+                                            cmd = Some(Cmd::Export(*f));
+                                        }
+                                    }
+                                })
+                                .response
+                                .accessible_name(t("Export"))
+                                .on_hover_text(t("Export"));
+                            },
+                        );
+                        if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
+                            cmd = Some(Cmd::ToggleZen);
+                        }
+                    }
+                    let outl = self.mode == CenterMode::Outliner;
+                    let outliner = widgets::icon_button(
+                        ui,
+                        if outl { icons::MAP } else { icons::OUTLINER },
+                        t("Outliner"),
+                        outl,
+                    );
+                    if outliner.clicked() {
+                        cmd = Some(Cmd::ToggleOutliner);
+                    }
+                    if !compact_header
+                        && widgets::icon_button(ui, icons::SEARCH, t("Find…"), self.search.open)
+                            .clicked()
+                    {
+                        cmd = Some(Cmd::Find);
+                    }
+                });
+            }
         });
-        if let Some(c) = cmd {
+        if touch_allowed && let Some(c) = cmd {
             self.exec(&ctx, c);
         }
     }
@@ -742,7 +845,8 @@ impl ThinodaApp {
                 }
             }
             ui.separator();
-            if ui.button(t("Clear Recent")).clicked() {
+            if ui.button(t("Clear Recent")).clicked() && widgets::touch_activation_allowed(ui.ctx())
+            {
                 self.settings.clear_recent();
                 self.save_settings();
             }

@@ -100,6 +100,12 @@ and contrast actions; color application shares the guard. Automated both-theme/
 scale coverage preserves ordinary keyboard/click actions and Undo. Other
 inspector property controls and actual device delivery remain open.
 
+Open-document tabs follow the same compact browsing model as sheet tabs: fixed
+left/right arrows scroll clipped names while Close Tab and New Tab stay pinned.
+Touch/mouse browsing does not switch documents; keyboard focus and active-tab
+changes reveal the selected file. Narrow layouts prioritize these controls over
+quick-action icons that remain in the main menu.
+
 Style, structure, theme and template preview cards reject canceled/multitouch
 pointer activation. Template double-tap creation and the structure launcher's
 popup toggle use the guard too. Enter/Space activation remains available.

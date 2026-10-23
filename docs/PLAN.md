@@ -756,6 +756,18 @@ viewport matrix now checks arrow/name/status separation and actual text clipping
 Native/WASM lint passes. Real-device browser/touch and AT acceptance remains in
 the gesture workstream; this is not a claim of full small-device acceptance.
 
+**User-directed follow-up - compact document-tab navigation:** the top document
+strip now mirrors the Excel-inspired sheet strip with fixed previous/next arrows,
+a clipped horizontally scrollable file-name viewport, and pinned Close Tab/New Tab
+actions. Browsing with arrows, mouse/touch drag or horizontal scrolling does not
+switch or modify documents. Selecting, closing, opening a new tab and keyboard
+focus/active-tab reveal retain their existing behavior; stable document keys keep
+tab widget identity. Narrow windows prioritize document navigation and move the
+other quick-action icons into the existing main menu. Automated coverage checks
+arrow endpoints, pinned controls and document contents/history across browsing,
+selection, close/new-tab behavior and narrow layouts. Hardware/browser/AT
+acceptance remains part of the wider interaction workstream.
+
 **User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
 all repository Node scripts use Node.js 24 from `.node-version`; CI reads the
 same file and PWA tests reject a different major. JavaScript Actions now use
