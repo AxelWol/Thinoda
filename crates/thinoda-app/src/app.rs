@@ -154,6 +154,14 @@ pub struct Services {
 }
 
 #[derive(Default)]
+pub struct RenameSheetDraft {
+    pub(crate) index: usize,
+    pub(crate) name: String,
+    pub(crate) ime_composing: bool,
+    pub(crate) focus_requested: bool,
+}
+
+#[derive(Default)]
 pub struct Dialogs {
     pub mindmanager_export: bool,
     pub mindmanager_symbol_color_loss: bool,
@@ -171,7 +179,7 @@ pub struct Dialogs {
     pub masked_copy: bool,
     pub close: Option<CloseIntent>,
     pub conflict: Option<String>,
-    pub rename_sheet: Option<(usize, String)>,
+    pub rename_sheet: Option<RenameSheetDraft>,
     pub recovery: Vec<OrphanSession>,
 }
 
@@ -689,8 +697,11 @@ impl ThinodaApp {
             Cmd::RenameSheet => {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
-                    self.dialogs.rename_sheet =
-                        Some((d.doc.active_index(), d.doc.sheet().title.clone()));
+                    self.dialogs.rename_sheet = Some(RenameSheetDraft {
+                        index: d.doc.active_index(),
+                        name: d.doc.sheet().title.clone(),
+                        ..Default::default()
+                    });
                 }
             }
             Cmd::PreviousSheet | Cmd::NextSheet => {

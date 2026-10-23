@@ -211,6 +211,16 @@ impl ThinodaApp {
         let ctx = ui.ctx().clone();
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
+        if let Some(draft) = &mut self.dialogs.rename_sheet {
+            thinoda_canvas::protect_ime_candidate_keys(
+                &ctx,
+                egui::Id::unique("thinoda_rename_input"),
+                &mut draft.ime_composing,
+            );
+            if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+                self.dialogs.rename_sheet = None;
+            }
+        }
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         let preferred_fallback = (!crate::files::is_web())
             .then_some(self.settings.default_cjk_font.as_deref())
@@ -3411,21 +3421,33 @@ impl ThinodaApp {
         }
 
         // Rename sheet.
-        if let Some((i, mut name)) = self.dialogs.rename_sheet.take() {
+        if let Some(mut draft) = self.dialogs.rename_sheet.take() {
             let mut done = None;
+            let edit_id = egui::Id::unique("thinoda_rename_input");
+            let enter = ctx.memory(|memory| memory.has_focus(edit_id))
+                && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
             egui::Modal::new(egui::Id::unique("thinoda_rename")).show(ctx, |ui| {
                 ui.heading(t("Rename Sheet"));
-                let r = ui.add(TextEdit::singleline(&mut name).desired_width(280.0));
-                r.request_focus();
+                let r = ui
+                    .add(
+                        TextEdit::singleline(&mut draft.name)
+                            .id(edit_id)
+                            .lock_focus(draft.ime_composing)
+                            .desired_width(280.0),
+                    )
+                    .accessible_name(t("Rename Sheet"));
+                if !draft.focus_requested {
+                    r.request_focus();
+                    draft.focus_requested = true;
+                }
+                if !r.has_focus() && !r.lost_focus() {
+                    draft.ime_composing = false;
+                }
                 ui.horizontal(|ui| {
-                    if widgets::primary_button(ui, t("OK")).clicked()
-                        || ui.input(|i| i.key_pressed(Key::Enter))
-                    {
+                    if widgets::primary_button(ui, t("OK")).clicked() || enter {
                         done = Some(true);
                     }
-                    if widgets::secondary_button(ui, t("Cancel")).clicked()
-                        || ui.input(|i| i.key_pressed(Key::Escape))
-                    {
+                    if widgets::secondary_button(ui, t("Cancel")).clicked() {
                         done = Some(false);
                     }
                 });
@@ -3434,8 +3456,8 @@ impl ThinodaApp {
                 Some(true) => {
                     if let Some(d) = self.docs.get_mut(self.active) {
                         let prev = d.doc.active_index();
-                        d.doc.set_active(i);
-                        let n = name.clone();
+                        d.doc.set_active(draft.index);
+                        let n = draft.name;
                         let _ = d.doc.edit_sheet("Rename Sheet", |s| {
                             s.title = n;
                             Ok(())
@@ -3444,7 +3466,7 @@ impl ThinodaApp {
                     }
                 }
                 Some(false) => {}
-                None => self.dialogs.rename_sheet = Some((i, name)),
+                None => self.dialogs.rename_sheet = Some(draft),
             }
         }
 

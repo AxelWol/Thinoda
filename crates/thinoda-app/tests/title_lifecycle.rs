@@ -88,6 +88,124 @@ fn choose(h: &mut Harness<'_, ThinodaApp>, label: &str) {
 }
 
 #[test]
+fn sheet_rename_keeps_ime_candidates_in_the_editor() {
+    use egui::{Event, ImeEvent, Key, Modifiers};
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for key in [Key::Enter, Key::Tab, Key::Escape] {
+            for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut h = harness(saved_app(dir.path(), mode));
+                let before = h.state().doc().unwrap().doc.workbook().clone();
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::RenameSheet);
+                h.run_steps(3);
+                h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+                h.run_steps(1);
+                h.event(Event::Ime(ImeEvent::Preedit {
+                    text: "nihon".into(),
+                    active_range_chars: Some(0..5),
+                }));
+                h.run_steps(3);
+                h.key_press_modifiers(modifiers, key);
+                h.run_steps(3);
+                assert!(
+                    h.state().dialogs.rename_sheet.is_some(),
+                    "{mode:?} {modifiers:?}+{key:?}"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                h.input_mut().events.extend([
+                    Event::Ime(ImeEvent::Commit("日本".into())),
+                    Event::Key {
+                        key: Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+                h.run_steps(3);
+                assert!(h.state().dialogs.rename_sheet.is_some());
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert!(
+                    h.get_by_role_and_label(Role::TextInput, "Rename Sheet")
+                        .is_focused(),
+                    "{mode:?} {modifiers:?}+{key:?} lost input focus"
+                );
+                h.key_press(Key::Enter);
+                h.run_steps(3);
+                assert!(
+                    h.state().dialogs.rename_sheet.is_none(),
+                    "{mode:?} {modifiers:?}+{key:?} blocked final Enter"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.sheet().title, "日本");
+                h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            }
+        }
+    }
+}
+
+#[test]
+fn sheet_rename_restores_navigation_and_cancellation_after_ime_dismissal() {
+    use egui::{Event, ImeEvent, Key, Modifiers};
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for cancellation in [
+            ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            },
+            ImeEvent::Commit(String::new()),
+        ] {
+            for tab_to_cancel in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut h = harness(saved_app(dir.path(), mode));
+                let before = h.state().doc().unwrap().doc.workbook().clone();
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::RenameSheet);
+                h.run_steps(3);
+                h.get_by_role_and_label(Role::TextInput, "Rename Sheet")
+                    .type_text(" Draft");
+                h.run_steps(2);
+                h.event(Event::Ime(ImeEvent::Preedit {
+                    text: "candidate".into(),
+                    active_range_chars: None,
+                }));
+                h.run_steps(3);
+                h.input_mut().events.extend([
+                    Event::Ime(cancellation.clone()),
+                    Event::Key {
+                        key: Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+                h.run_steps(3);
+                assert!(h.state().dialogs.rename_sheet.is_some());
+                if tab_to_cancel {
+                    h.key_press(Key::Tab);
+                    h.run_steps(3);
+                    assert!(h.get_by_role_and_label(Role::Button, "OK").is_focused());
+                    h.key_press(Key::Tab);
+                    h.run_steps(3);
+                    assert!(h.get_by_role_and_label(Role::Button, "Cancel").is_focused());
+                    h.key_press(Key::Enter);
+                } else {
+                    h.key_press(Key::Escape);
+                }
+                h.run_steps(3);
+                assert!(
+                    h.state().dialogs.rename_sheet.is_none(),
+                    "{mode:?} {cancellation:?} tab_to_cancel={tab_to_cancel}"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            }
+        }
+    }
+}
+
+#[test]
 fn ime_candidate_confirmation_keeps_both_title_editors_open() {
     use egui::{Event, ImeEvent, Key, Modifiers};
     for mode in [CenterMode::Map, CenterMode::Outliner] {

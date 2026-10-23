@@ -76,7 +76,23 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   do not schedule duplicate feature implementation. Future changes must extend
   validation to the full 13-locale matrix.
 
+## User-directed priority-1 navigation follow-up
+
+- Add Excel-inspired fixed previous/next scroll arrows to the bottom sheet-name
+  strip, building on its existing horizontal-scroll region. Browsing must not
+  select another sheet. Keep New Sheet and status/zoom controls outside clipped
+  names, prevent paint/hit-target bleeding, and preserve usability on small
+  devices. Cover end-of-strip disabled states, keyboard/touch/wheel access,
+  active-tab reveal, long names, rename/Undo, resize, locales/themes/scaling and
+  independent status interaction. The supplied screenshot is the interaction
+  reference; the reported bleed remains open until reproduced and verified.
+
 ## Recently completed
+- R0/R1 Rename Sheet input safety: IME candidate keys cannot apply provisional
+  names or cancel the draft. Final CJK commit, ordinary Enter/Undo, dismissal and
+  normal Tab-to-OK/Cancel/Escape are covered in Map/Outline. Opening-only focus
+  requests replace per-frame focus stealing; real OS/browser IME acceptance
+  remains open.
 - R0/R1 Labels IME safety: candidate Enter no longer adds provisional text, and
   candidate Escape no longer discards the popup draft. Labels and titles share
   the composition-key guard with separate state. Map/Outline, Shift variants,

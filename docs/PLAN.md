@@ -598,6 +598,22 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**User-directed priority-1 follow-up - compact sheet-strip navigation:**
+use the supplied Excel screenshot as an interaction reference, not copied artwork.
+The existing bounded horizontal sheet region is groundwork, not acceptance of
+this request. Add fixed previous/next scroll buttons outside the scrolling names;
+scrolling browses tabs without changing the active sheet. Keep New Sheet outside
+the name viewport and prevent tab paint/hit targets from bleeding into status/
+zoom controls. At narrow widths, reserve usable navigation/add controls and
+adapt the name/status allocation instead of shrinking tabs to unusable widths.
+Keep active-tab reveal, full-name tooltips/accessibility names, context actions,
+mouse wheel/trackpad/touch scrolling and keyboard focus reveal. Disable arrows
+at their respective ends; support keyboard activation and accessible names.
+Verify many long names, first/last-tab access, resize, rename/Undo and independent
+status interaction on small native/WASM viewports, shipped locales, both themes
+and scaling. Treat the user's bleeding report as open until reproduced and
+verified against paint, clipping and hit bounds; navigation must not edit maps.
+
 **User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
 all repository Node scripts use Node.js 24 from `.node-version`; CI reads the
 same file and PWA tests reject a different major. JavaScript Actions now use
@@ -632,6 +648,17 @@ publishes all ten downloads and six SHA256 manifests; downloading the published
 assets and checking every digest succeeded. Real Linux ARM64 installation and
 other platform-specific runtime acceptance remain open; packaging success is not
 proof of an installed application's behavior.
+
+**Delivered priority-1 follow-up - Rename Sheet input safety:**
+reproduced candidate-confirmation Enter prematurely applying a provisional sheet
+name. Rename Sheet now owns composition state and uses the shared IME guard
+before other UI handles candidate keys. Candidate Enter/Tab/Escape and Shift
+variants retain the draft through final CJK commit events; ordinary Enter then
+applies one undoable rename. Focus is requested only on opening, so Tab reaches
+OK and Cancel instead of being pulled back to the input every frame. Empty
+preedit/commit dismissal restores normal navigation and Escape cancellation.
+Map/Outline regressions cover these paths and unchanged documents on cancel;
+real platform IME/font/assistive-technology acceptance remains open.
 
 **Delivered priority-1 follow-up, 2026-10-23 - Labels composition safety:**
 reproduced candidate-confirmation Enter adding provisional IME text as a label.
