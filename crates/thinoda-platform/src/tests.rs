@@ -387,6 +387,11 @@ fn settings_roundtrip_every_field() {
     settings
         .shortcuts_overrides
         .insert("save".into(), "Ctrl+Shift+S".into());
+    settings.shortcuts_overrides.extend([
+        ("file.save".into(), "Ctrl+Alt+F8".into()),
+        ("0".into(), "".into()),
+        ("future.command".into(), "unknown-format".into()),
+    ]);
     settings.add_recent(dir.path().join("ÃƒÂ¤ map.xmind"));
     settings.pin_recent(dir.path().join("ÃƒÂ¤ map.xmind"), true);
     settings.save(&paths).unwrap();

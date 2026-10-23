@@ -9,7 +9,7 @@ from release_artifacts import collect
 
 
 class ReleaseArtifactsTests(unittest.TestCase):
-    def test_all_five_targets_have_distinct_downloads_and_matching_checksums(self):
+    def test_all_six_targets_have_distinct_downloads_and_matching_checksums(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             destination = root / "dist"
@@ -19,6 +19,7 @@ class ReleaseArtifactsTests(unittest.TestCase):
                 ("aarch64-apple-darwin", ["app", "dmg"]),
                 ("x86_64-apple-darwin", ["app", "dmg"]),
                 ("x86_64-unknown-linux-gnu", ["deb", "appimage"]),
+                ("aarch64-unknown-linux-gnu", ["deb", "appimage"]),
             ]:
                 source = root / target
                 source.mkdir()
@@ -54,7 +55,7 @@ class ReleaseArtifactsTests(unittest.TestCase):
                             self.assertTrue(
                                 archive.getmember("Thinoda.app/Contents/MacOS/thinoda-link").issym()
                             )
-            self.assertEqual(len(list(destination.iterdir())), 13)
+            self.assertEqual(len(list(destination.iterdir())), 16)
 
     def test_missing_requested_format_fails_before_creating_downloads(self):
         with tempfile.TemporaryDirectory() as temporary:

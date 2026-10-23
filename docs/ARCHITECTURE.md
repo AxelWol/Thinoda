@@ -38,8 +38,39 @@ graph TD
   Metal or Vulkan, and is testable headlessly with `egui_kittest` (AccessKit tree).
 - **Commands**: every menu item, shortcut and palette entry maps to one `Cmd`; e2e tests call
   `ThinodaApp::exec` or press real keys.
+  `Cmd::shortcut_id()` supplies explicit, nonlocalized built-in identities such as
+  `file.save`, independently of numeric palette row IDs. `shortcut_commands()` and
+  `shortcut_command(id)` expose the shortcut target registry without adding
+  palette actions; Close Tab resolves to the active tab at lookup time.
+  Payload-specific paths/templates/styles/clipboard text are not generic targets.
+  `edit.paste` resolves to `MenuPaste` (request OS clipboard), not stored content.
+  Registry membership is not availability or key ownership: callers must still
+  use the command/focus guards. `Settings.shortcuts_overrides` remains inactive
+  and preserves stable, legacy, numeric and unknown keys without guessing a
+  migration. Activating overrides still requires a versioned binding format,
+  conflict/reserved-key policy and explicit editor/reset behavior.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
+  Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
+  text buffer. They contribute to dirty/close detection and idle tracking.
+  Commands, saves and native close handling commit them as one undo step;
+  recovery overlays their current value on a copy without committing history.
+  Drafts bind to the document, sheet index/root and topic, since duplicated
+  sheets can share topic IDs. Changed or missing source fields fail explicitly
+  and retain the draft instead of overwriting newer content. Single-line
+  Hyperlink Escape still cancels rather than commits.
+  Command-boundary flushes invalidate committed UI buffers, and unchanged field
+  buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
+  Undo/Redo availability accounts for pending inspector changes.
+- **Title input ownership**: Map and Outline use `MapView`'s per-edit IME
+  composition guard before drawing their title text widgets. Candidate
+  Enter/Tab/Escape cannot trigger document commit or insertion, including the
+  final composition-event frame. Dismissal restores ordinary title shortcuts;
+  the Outline editor locks focus while its explicit Tab handling owns insertion.
+- **Toolbar focus**: shared icon/captioned toolbar buttons keep egui's standard
+  keyboard activation and draw a two-logical-pixel focus outline in the semantic
+  text color, independent of selection or user accent. Disabled parent UIs also
+  disable captioned controls' accessibility state and interaction.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

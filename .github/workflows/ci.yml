@@ -16,12 +16,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # The synthetic PR merge commit is not the source revision.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Test documentation metadata
@@ -42,11 +42,11 @@ jobs:
       group: docs-stamp-main
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       # Only metadata is committed. No force push, PR writes, secrets or bypass.
@@ -58,7 +58,7 @@ jobs:
     name: third-party notices
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: THIRD_PARTY_NOTICES.md matches Cargo.lock
         run: python3 .github/scripts/third_party_notices.py --check
@@ -68,14 +68,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-11-arm, macos-latest, ubuntu-24.04]
+        os: [windows-latest, windows-11-arm, macos-latest, ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - uses: Swatinem/rust-cache@v2
@@ -93,7 +93,7 @@ jobs:
       - run: cargo test -p thinoda-core --example layout_benchmark
       - name: CPU layout benchmark (not GPU frame timing)
         run: cargo run --quiet --release -p thinoda-core --example layout_benchmark -- --topics 10000 --samples 30 --output layout-benchmark.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: layout-benchmark-${{ matrix.os }}
           path: layout-benchmark.json
@@ -103,26 +103,32 @@ jobs:
     name: web app (wasm32)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Test PWA manifest, icons, install lifecycle and offline isolation
+        run: node --test crates/thinoda-web/tests/pwa.test.cjs
       - name: Install Trunk
         run: curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin
       - run: cargo clippy --locked --target wasm32-unknown-unknown -p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings
       - name: Build static site
         working-directory: crates/thinoda-web
         run: trunk build --release --locked
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: thinoda-web
           path: crates/thinoda-web/dist
           if-no-files-found: error
       - name: Package site for GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: crates/thinoda-web/dist
 
@@ -143,7 +149,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   fuzz-smoke:
     name: importer fuzz smoke
@@ -152,7 +158,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy

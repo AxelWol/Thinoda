@@ -5,7 +5,7 @@ use thinoda_platform::fs as pfs;
 use web_time::Instant;
 
 use thinoda_canvas::MapView;
-use thinoda_core::{Document, Workbook};
+use thinoda_core::{Document, TopicId, Workbook};
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
     fs::{FileFingerprint, atomic_write, fingerprint},
@@ -17,6 +17,71 @@ use crate::i18n::t;
 /// Formats that can be written back without losing Thinoda features.
 pub fn is_native(format: Format) -> bool {
     matches!(format, Format::Thinoda | Format::XMind)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InspectorField {
+    Hyperlink,
+    Notes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InspectorEdit {
+    pub buffer_id: Option<egui::Id>,
+    pub sheet_index: usize,
+    pub sheet_root: TopicId,
+    pub topic: TopicId,
+    pub field: InspectorField,
+    pub original: Option<String>,
+    pub text: String,
+}
+
+impl InspectorEdit {
+    fn value(&self) -> Option<&str> {
+        match self.field {
+            InspectorField::Hyperlink => (!self.text.trim().is_empty()).then(|| self.text.trim()),
+            InspectorField::Notes => (!self.text.trim().is_empty()).then_some(self.text.as_str()),
+        }
+    }
+
+    fn apply(&self, book: &mut Workbook) -> thinoda_core::EditResult<()> {
+        let sheet = book
+            .sheets
+            .get_mut(self.sheet_index)
+            .filter(|sheet| sheet.root == self.sheet_root)
+            .ok_or_else(|| {
+                thinoda_core::EditError::Invalid("Inspector source sheet no longer exists".into())
+            })?;
+        self.apply_to_sheet(sheet)
+    }
+
+    fn apply_to_sheet(&self, sheet: &mut thinoda_core::Sheet) -> thinoda_core::EditResult<()> {
+        if sheet.root != self.sheet_root {
+            return Err(thinoda_core::EditError::Invalid(
+                "Inspector source sheet changed".into(),
+            ));
+        }
+        let topic = sheet.topic(self.topic).ok_or_else(|| {
+            thinoda_core::EditError::Invalid("Inspector source topic no longer exists".into())
+        })?;
+        let current = match self.field {
+            InspectorField::Hyperlink => &topic.hyperlink,
+            InspectorField::Notes => &topic.notes,
+        };
+        let value = self.value();
+        if current.as_deref() == value {
+            return Ok(());
+        }
+        if current != &self.original {
+            return Err(thinoda_core::EditError::Invalid(
+                "Inspector source changed while editing; draft retained".into(),
+            ));
+        }
+        match self.field {
+            InspectorField::Hyperlink => sheet.set_hyperlink(self.topic, value.map(str::to_owned)),
+            InspectorField::Notes => sheet.set_notes(self.topic, value.map(str::to_owned)),
+        }
+    }
 }
 
 /// One open document (a tab).
@@ -36,6 +101,9 @@ pub struct OpenDoc {
     last_seen_state: u64,
     /// Set when the user accepted that the on-disk file may be overwritten.
     pub ignore_conflict: bool,
+    pub(crate) inspector_edit: Option<InspectorEdit>,
+    snapshot_inspector_edit: Option<InspectorEdit>,
+    last_seen_inspector_edit: Option<InspectorEdit>,
 }
 
 impl OpenDoc {
@@ -56,6 +124,9 @@ impl OpenDoc {
             last_change: Instant::now(),
             last_seen_state: state,
             ignore_conflict: false,
+            inspector_edit: None,
+            snapshot_inspector_edit: None,
+            last_seen_inspector_edit: None,
         }
     }
 
@@ -110,14 +181,48 @@ impl OpenDoc {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.doc.is_dirty()
+        self.doc.is_dirty() || self.has_inspector_changes()
+    }
+
+    pub(crate) fn has_inspector_changes(&self) -> bool {
+        self.inspector_edit
+            .as_ref()
+            .is_some_and(|edit| edit.value() != edit.original.as_deref())
+    }
+
+    pub(crate) fn commit_inspector_edit(&mut self) -> Result<(), String> {
+        if let Some(edit) = self.inspector_edit.clone() {
+            let label = match edit.field {
+                InspectorField::Hyperlink => "Hyperlink",
+                InspectorField::Notes => "Notes",
+            };
+            if edit.sheet_index == self.doc.active_index() {
+                self.doc
+                    .edit_sheet(label, |sheet| edit.apply_to_sheet(sheet))
+            } else {
+                self.doc.edit_book(label, |book| edit.apply(book))
+            }
+            .map_err(|error| error.to_string())?;
+            self.inspector_edit = None;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn flush_inspector_edit(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let buffer_id = self.inspector_edit.as_ref().and_then(|edit| edit.buffer_id);
+        self.commit_inspector_edit()?;
+        if let Some(id) = buffer_id {
+            ctx.data_mut(|data| data.remove::<String>(id));
+        }
+        Ok(())
     }
 
     /// Call once per frame to track when the document last changed.
     pub fn tick(&mut self) {
         let s = self.doc.state_id();
-        if s != self.last_seen_state {
+        if s != self.last_seen_state || self.inspector_edit != self.last_seen_inspector_edit {
             self.last_seen_state = s;
+            self.last_seen_inspector_edit = self.inspector_edit.clone();
             self.last_change = Instant::now();
         }
     }
@@ -136,6 +241,7 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
+        self.commit_inspector_edit()?;
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
             .filter(|f| is_native(*f) || *f == Format::MindManager)
@@ -174,9 +280,16 @@ impl OpenDoc {
                 return Err("choose a different path to preserve the source workbook".into());
             }
         }
+        let source = if let Some(edit) = &self.inspector_edit {
+            let mut source = self.doc.workbook().clone();
+            edit.apply(&mut source).map_err(|error| error.to_string())?;
+            std::borrow::Cow::Owned(source)
+        } else {
+            std::borrow::Cow::Borrowed(self.doc.workbook())
+        };
         let workbook = Workbook {
-            metadata: self.doc.workbook().metadata.clone(),
-            ..Workbook::new(self.doc.sheet().clone())
+            metadata: source.metadata.clone(),
+            ..Workbook::new(source.active().clone())
         };
         let bytes = thinoda_io::export_bytes(&workbook, format, &ExportOptions::default())
             .map_err(export_error)?;
@@ -197,12 +310,13 @@ impl OpenDoc {
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
         let s = self.doc.state_id();
-        if s == self.snapshot_state {
+        if s == self.snapshot_state && self.inspector_edit == self.snapshot_inspector_edit {
             return;
         }
         if !self.is_dirty() {
             let _ = recovery.remove(&self.key);
             self.snapshot_state = s;
+            self.snapshot_inspector_edit = self.inspector_edit.clone();
             return;
         }
         let meta = SnapshotMeta {
@@ -212,10 +326,21 @@ impl OpenDoc {
             dirty: true,
             ..Default::default()
         };
-        match Snapshot::to_bytes(meta, self.doc.workbook()) {
+        let workbook = if let Some(edit) = &self.inspector_edit {
+            let mut workbook = self.doc.workbook().clone();
+            if let Err(error) = edit.apply(&mut workbook) {
+                log::warn!("inspector recovery snapshot failed; draft retained: {error}");
+                return;
+            }
+            std::borrow::Cow::Owned(workbook)
+        } else {
+            std::borrow::Cow::Borrowed(self.doc.workbook())
+        };
+        match Snapshot::to_bytes(meta, &workbook) {
             Ok(bytes) => {
                 if recovery.queue_snapshot(&self.key, bytes).is_ok() {
                     self.snapshot_state = s;
+                    self.snapshot_inspector_edit = self.inspector_edit.clone();
                 }
             }
             Err(e) => log::warn!("snapshot failed: {e}"),
@@ -336,6 +461,111 @@ mod tests {
         );
         assert!(!e.is_dirty());
         assert!(!e.changed_on_disk());
+    }
+
+    #[test]
+    fn inspector_drafts_reject_changed_or_missing_sources_without_overwriting_them() {
+        for missing in [false, true] {
+            let mut doc = OpenDoc::new(Workbook::default());
+            let root = doc.doc.sheet().root;
+            let child = doc
+                .doc
+                .edit_sheet("Fixture", |sheet| Ok(sheet.add_child(root, None, "Child")))
+                .unwrap();
+            doc.inspector_edit = Some(InspectorEdit {
+                buffer_id: None,
+                sheet_index: 0,
+                sheet_root: root,
+                topic: child,
+                field: InspectorField::Notes,
+                original: None,
+                text: "Draft to preserve".into(),
+            });
+            doc.doc
+                .edit_sheet("Other change", |sheet| {
+                    if missing {
+                        sheet.remove_topics(&[child])?;
+                        Ok(())
+                    } else {
+                        sheet.set_notes(child, Some("Newer model value".into()))
+                    }
+                })
+                .unwrap();
+            let before = doc.doc.workbook().clone();
+            assert!(doc.commit_inspector_edit().is_err());
+            assert_eq!(doc.doc.workbook(), &before);
+            assert_eq!(
+                doc.inspector_edit.as_ref().unwrap().text,
+                "Draft to preserve"
+            );
+        }
+    }
+
+    #[test]
+    fn inspector_drafts_distinguish_duplicated_sheets_with_shared_topic_ids() {
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.doc.duplicate_sheet(0).unwrap();
+        let root = doc.doc.sheet().root;
+        assert_eq!(doc.doc.workbook().sheets[0].root, root);
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 1,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Notes,
+            original: None,
+            text: "Second sheet only".into(),
+        });
+        doc.doc.set_active(0);
+        doc.commit_inspector_edit().unwrap();
+        assert_eq!(doc.doc.workbook().sheets[0].root_topic().notes, None);
+        assert_eq!(
+            doc.doc.workbook().sheets[1].root_topic().notes.as_deref(),
+            Some("Second sheet only")
+        );
+        assert_eq!(doc.doc.active_index(), 0);
+    }
+
+    #[test]
+    fn inspector_drafts_survive_failed_save_and_are_included_in_separate_sheet_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let invalid = dir.path().join("directory.thinoda");
+        std::fs::create_dir(&invalid).unwrap();
+        let mut doc = OpenDoc::new(Workbook::default());
+        let root = doc.doc.sheet().root;
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 0,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Hyperlink,
+            original: None,
+            text: "  https://example.org/  ".into(),
+        });
+        let output = dir.path().join("separate.thinoda");
+        let before = doc.doc.workbook().clone();
+        doc.save_sheet_to(&output, false).unwrap();
+        assert_eq!(
+            OpenDoc::open(&output)
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .hyperlink
+                .as_deref(),
+            Some("https://example.org/")
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(doc.inspector_edit.is_some());
+        assert!(doc.path.is_none());
+        assert!(doc.save_to(&invalid, false).is_err());
+        assert!(doc.is_dirty());
+        assert_eq!(
+            doc.doc.sheet().root_topic().hyperlink.as_deref(),
+            Some("https://example.org/")
+        );
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.sheet().root_topic().hyperlink, None);
     }
 
     #[test]

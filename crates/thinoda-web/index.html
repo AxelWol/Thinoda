@@ -5,11 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta name="description" content="Thinoda - Give your thoughts shape. A mind mapping app that runs entirely in your browser.">
     <meta name="theme-color" content="#1f2430">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Thinoda">
     <title>Thinoda</title>
     <link data-trunk rel="rust" data-bin="thinoda-web" data-wasm-opt="2" data-wasm-opt-params="--enable-bulk-memory --enable-bulk-memory-opt --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types --enable-multivalue --enable-mutable-globals">
     <link data-trunk rel="icon" href="../../assets/icon-64.png">
     <link data-trunk rel="copy-file" href="../../assets/icon-256.png">
-    <link rel="apple-touch-icon" href="icon-256.png">
+    <link data-trunk rel="copy-file" href="manifest.webmanifest">
+    <link data-trunk rel="copy-file" href="pwa.js">
+    <link data-trunk rel="copy-dir" href="../../assets/pwa-icons">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" sizes="152x152" href="pwa-icons/apple-touch-icon-152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="pwa-icons/apple-touch-icon-167.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="pwa-icons/apple-touch-icon.png">
+    <script src="pwa.js" defer></script>
     <style>
         html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #1f2430; }
         canvas#thinoda_canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; outline: none; }
@@ -23,6 +32,14 @@
         #loading.error a { color: #8ab4f8; }
         #loading.error code { background: #2b3140; padding: 1px 4px; border-radius: 3px; }
         #loading.error pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #aab1bf; }
+        .pwa-install { color-scheme: dark; color: #e6e9ef; background: #1f2430;
+            font: 16px/1.5 system-ui, sans-serif; max-width: min(36rem, calc(100vw - 4rem));
+            max-height: calc(100dvh - 4rem); overflow: auto; border: 1px solid #8a93a5;
+            border-radius: 12px; padding: 24px; }
+        .pwa-install::backdrop { background: #0009; }
+        .pwa-install button { font: inherit; padding: 8px 16px; margin: 4px; }
+        .pwa-install button:focus-visible { outline: 3px solid #8ab4f8; outline-offset: 2px; }
+        .pwa-install [role="status"] { white-space: pre-wrap; overflow-wrap: anywhere; }
     </style>
 </head>
 <body>

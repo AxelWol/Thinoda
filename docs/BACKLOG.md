@@ -9,11 +9,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-22 after incorporating main through `cba3a52`:
+GitHub was refreshed on 2026-10-22 after incorporating main through `ba05910`:
 there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
-contains the ongoing R1 shortcut-catalog work; release preparation
-[PR #63](https://github.com/AxelWol/Thinoda/pull/63) is also open. Neither is
-claimed merged or released. [PR #64](https://github.com/AxelWol/Thinoda/pull/64)
+merged the R1 shortcut-catalog, conflict-audit and Zen/search improvements at
+`679c85a`; its final head CI passed. Release preparation
+[PR #63](https://github.com/AxelWol/Thinoda/pull/63) merged version 0.8.0 metadata
+at `ba05910`. The release entry exists, but artifact publication was still
+running at this inventory check; complete downloadable assets are not claimed.
+[PR #64](https://github.com/AxelWol/Thinoda/pull/64)
 merged the native CJK preference, nested symbol picker and alignment-guide slices.
 Issues [#47](https://github.com/AxelWol/Thinoda/issues/47) (topic size after moving), [#48](https://github.com/AxelWol/Thinoda/issues/48) (hover pointer), and [#50](https://github.com/AxelWol/Thinoda/issues/50) (long text in graphical exports) are closed. Merged [PR #54](https://github.com/AxelWol/Thinoda/pull/54) fixes #47.
 
@@ -74,6 +77,75 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R11 user-directed runtime/distribution changes: Node.js 24 is selected by
+  `.node-version` for scripts and web CI; JavaScript actions (including nested
+  Pages upload) use Node-24 runtimes without forcing older actions onto Node 24.
+  Release dependencies enforce Intel macOS first, Windows/Linux x86 next,
+  native Ubuntu ARM64 after Linux x86, and Apple Silicon last. Shared packaging
+  retains strict signing/notarization and gates publication on all six targets.
+  Final DMG validation now uses the existing bounded retry for confirmed
+  CloudKit network loss; invalid signatures and retry exhaustion still fail.
+  Workflow/Node/artifact/retry regressions are in place; hosted release execution
+  and real Ubuntu ARM64 installation remain open.
+- R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
+  focus outline in both themes and selected states. Tab/Enter/Space, disabled
+  controls and keyboard Undo/Redo after focused Notes Save are covered. This is
+  not a claim of full screen-reader or native keyboard acceptance.
+- R0/R1 topic-title IME key safety: reproduced candidate-confirmation Enter
+  prematurely closing inline editing. Map and Outline now share a per-edit
+  composition guard for Enter/Tab/Escape and their Shift variants, including
+  final commit/dismissal events delivered in the same frame. Outline retains
+  keyboard focus during candidate navigation. Composition does not commit the
+  provisional title or insert topics; after dismissal, ordinary editing keys
+  resume. Regressions cover both views, final CJK text, empty preedit/commit
+  cancellation, normal Tab insertion and document Undo. Actual native/browser
+  IME, font rendering and assistive-technology acceptance remain open.
+- R0/R1 inspector draft save safety: reproduced Ctrl/Cmd+S silently omitting
+  focused Notes in both center views. Notes/Hyperlink drafts now belong to the
+  document, count as unsaved work and participate in idle tracking. Save,
+  Save All, command transitions and native close handling commit them without
+  requiring a click elsewhere; recovery captures draft revisions without
+  committing history. Separate-sheet output includes the draft without
+  retargeting the source. Field buffers are document/sheet/topic-scoped,
+  including duplicated sheets with shared IDs. Source conflicts and failed
+  saves preserve edits; existing Hyperlink Escape cancellation and one-step
+  Undo/Redo remain. Undo also handles an uncommitted draft without stale text
+  returning on the next frame or Save. New UI regressions cover focused saves, insertion-key
+  isolation, native close/Cancel, repeated recovery and identical documents;
+  model tests cover duplicate sheets, stale targets and failed writes.
+  This closes the reproduced inspector data-loss case, not the full R1
+  native picker/window-manager/IME/accessibility acceptance matrix.
+- Web PWA installation (R11, user-directed): web-only Settings > General >
+  Install web app opens an accessible browser install panel. Chromium's one-shot
+  prompt is invoked only by a real panel-button click; Safari/iOS/iPadOS and
+  unsupported browsers receive manual instructions. The scoped manifest and
+  generated standard, maskable and Apple touch icons cover supported desktop and
+  mobile installation surfaces. An exact-build offline shell includes matching
+  JS/WASM/snippets, excludes documents/AI/other sites, and waits for old windows
+  to close before updating. Storage limits, backups and possible Safari storage
+  isolation remain explicit. Node lifecycle/cache tests, icon safe-zone/build
+  generation tests and actual isolated Edge WASM startup/offline reload under a
+  deployment subpath and browser installability checks pass. Full workspace CI
+  with live AI disabled and WASM lint pass. Actual OS installation/icon/assistive-technology
+  acceptance on Windows/Linux/macOS/iOS/iPadOS remains open; no store distribution
+  or P4 native-menu/window parity is claimed.
+- R1 Outline Redo specificity: Ctrl/Cmd+Shift+Z now invokes Redo before the broad
+  Ctrl/Cmd+Z Undo matcher can consume it, matching Map behavior. Ctrl/Cmd+Y and its
+  primary menu hint remain; the reference lists both Redo aliases. Actual app
+  frames cover Undo/Redo on three simulated host modifier models; Outline
+  coverage preserves sidebar focus, ordinary Undo, collapsed-row navigation and
+  document contents. Fit's separate Ctrl/Cmd+Shift+H collision remains unremapped.
+  The value-ranked remaining phase/task list is in PLAN.md.
+- R1 stable shortcut-target identities: explicit nonlocalized IDs are separate
+  from unchanged palette row IDs. The registry covers static palette/default
+  bindings and reference-only targets, resolving Close Tab to the active document
+  and generic Paste to an OS request rather than clipboard contents. Arbitrary
+  payloads cannot alias generic commands. Tests pin the namespace across locale,
+  view and order changes and preserve stable/legacy/numeric/unknown inactive
+  overrides through settings roundtrip. Targeted tests and native/WASM lint pass.
+  Direct planning/finished review was performed under autopilot after reviewer
+  startup failed. Versioned migration, binding capture/apply/reset, conflicts,
+  reserved-key decisions and native/P4 acceptance remain open.
 - R1 reachable shortcut hints: menu/palette/reference metadata now excludes
   declared gestures intercepted by another default handler, using the real
   dispatch audit and runtime host/view. Fit Map is correctly unassigned instead

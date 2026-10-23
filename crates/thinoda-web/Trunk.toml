@@ -9,3 +9,8 @@ filehash = true
 [serve]
 addresses = ["127.0.0.1"]
 port = 8080
+
+[[hooks]]
+stage = "post_build"
+command = "cargo"
+command_arguments = ["run", "--locked", "--package", "xtask", "--", "web-pwa"]

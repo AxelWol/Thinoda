@@ -227,8 +227,9 @@ fn outline_inventory_uses_only_its_declared_bindings_and_keeps_catalog_ids() {
     use egui::{KeyboardShortcut, os::OperatingSystem};
     use thinoda_canvas::Action;
     let expected: Vec<_> = [
-        (Modifiers::COMMAND, Key::Z, Action::Undo),
         (Modifiers::COMMAND, Key::Y, Action::Redo),
+        (Modifiers::COMMAND | Modifiers::SHIFT, Key::Z, Action::Redo),
+        (Modifiers::COMMAND, Key::Z, Action::Undo),
         (Modifiers::NONE, Key::Enter, Action::InsertSibling),
         (Modifiers::NONE, Key::Tab, Action::InsertChild),
         (Modifiers::NONE, Key::Delete, Action::Delete),
@@ -313,13 +314,25 @@ fn outline_inventory_uses_only_its_declared_bindings_and_keeps_catalog_ids() {
             let command = Cmd::Canvas(action);
             let entry = catalog.iter().find(|(c, _)| c == &command).unwrap();
             assert_eq!(entry.1.shortcut, Some(ctx.format_shortcut(&shortcut)));
+            let reference_hint = if command == Cmd::Canvas(Action::Redo) {
+                format!(
+                    "{} / {}",
+                    ctx.format_shortcut(&shortcut),
+                    ctx.format_shortcut(&KeyboardShortcut::new(
+                        Modifiers::COMMAND | Modifiers::SHIFT,
+                        Key::Z
+                    ))
+                )
+            } else {
+                ctx.format_shortcut(&shortcut)
+            };
             assert_eq!(
                 reference
                     .iter()
                     .find(|m| m.id == entry.1.id)
                     .unwrap()
                     .shortcut,
-                entry.1.shortcut
+                Some(reference_hint)
             );
         }
         let navigation = reference.iter().find(|m| m.id == "map-navigate").unwrap();
@@ -345,15 +358,17 @@ fn outline_reference_shows_scope_and_does_not_advertise_map_aliases() {
     let mut h = harness(CenterMode::Outliner, egui::vec2(640.0, 360.0));
     h.get_by_role_and_label(Role::Label, "View: Outliner");
     let before = h.state().doc().unwrap().doc.workbook().clone();
-    for query in ["Backspace", "Insert", "Ctrl+Shift+Z"] {
+    for query in ["Backspace", "Insert"] {
         h.state_mut().dialogs.shortcut_browser.category = Some("Edit".into());
         h.state_mut().dialogs.shortcut_browser.query = query.into();
         h.run_steps(4);
         h.get_by_role_and_label(Role::Label, "No matching commands");
     }
-    h.state_mut().dialogs.shortcut_browser.query = "Ctrl+Y".into();
-    h.run_steps(4);
-    h.get_by_role_and_label(Role::Label, "Redo");
+    for query in ["Ctrl+Y", "Ctrl+Shift+Z"] {
+        h.state_mut().dialogs.shortcut_browser.query = query.into();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Label, "Redo");
+    }
     h.key_press_modifiers(Modifiers::COMMAND, Key::Y);
     h.key_press(Key::Delete);
     h.run_steps(4);

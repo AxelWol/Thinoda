@@ -937,6 +937,19 @@ const DE: &[(&str, &str)] = &[
     ("Settings", "Einstellungen"),
     ("Help", "Hilfe"),
     ("Keyboard Shortcuts", "Tastenkürzel"),
+    ("Install web app", "Web-App installieren"),
+    (
+        "Install from your browser menu. On iPhone/iPad use Share > Add to Home Screen; on Mac Safari use Share > Add to Dock. On Windows/Linux use Chrome or Edge.",
+        "Installation über das Browsermenü. Auf iPhone/iPad: Teilen > Zum Home-Bildschirm; in Safari auf dem Mac: Teilen > Zum Dock hinzufügen. Unter Windows/Linux Chrome oder Edge verwenden.",
+    ),
+    (
+        "Installation keeps browser storage limits. Download backups; clearing site data can delete maps. Offline use needs one complete online load.",
+        "Die Speichergrenzen des Browsers gelten weiterhin. Sicherungen herunterladen; das Löschen von Website-Daten kann Maps löschen. Offline-Nutzung erfordert einmaliges vollständiges Online-Laden.",
+    ),
+    (
+        "No install prompt is available. The app may already be installed, or your browser requires its menu. Use HTTPS or localhost.",
+        "Kein Installationsdialog verfügbar. Die App ist möglicherweise bereits installiert oder erfordert das Browsermenü. HTTPS oder localhost verwenden.",
+    ),
     (
         "Search commands or shortcuts",
         "Befehle oder Tastenkürzel suchen",

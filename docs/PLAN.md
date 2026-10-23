@@ -137,6 +137,28 @@ as a defect in the planning deliverable.
 
 ### Delivery order and dependencies
 
+#### Active priorities by end-user value (2026-10-22)
+
+This ranks remaining work, not whole packages as unfinished. Reuse the delivered
+slices below; close each task with observable behavior before moving on.
+Data-loss, security, launch and release regressions override the ranking.
+
+| Rank | Phase / packages | Prioritized remaining tasks | End-user benefit |
+|---|---|---|---|
+| 1 | Reliable daily editing / R0-R3 | Outline Redo and focused inspector save/recovery corrections delivered below; next verify remaining native picker/save/close, IME and assistive-technology boundaries, compact navigation and keyboard focus. | Prevent surprising edits and lost work in the most frequent interactions. |
+| 2 | Discoverable, adaptable commands / R1-R2 | Finish command parity; define versioned shortcut overrides, capture/conflict/reserved-key handling, apply/reset and persistence; validate keyboard-only navigation. Do not silently migrate inactive legacy values or remap the Fit collision. | Users can find commands and adapt shortcuts without breaking editing or browser controls. |
+| 3 | Trustworthy file, output and installation workflows / R6, R11 | User-requested web PWA installation/settings/icons/offline shell; verify native pickers, cross-sheet search and sheet exchange; close export/print fidelity and MindManager reverse-roundtrip gaps; verify install/update artifacts and recovery. | Easier access to the app and confidence that maps can be saved and exchanged faithfully. |
+| 4 | Richer maps with less effort / R3-R5 | Finish relationship/placement and rich-content editing, searchable assets, template previews and theme authoring; cover undo and roundtrip before expanding catalogs. | Faster creation of readable, useful maps. |
+| 5 | Presentation and planning / R7-R8 | Complete zones/Pitch and presentation export first; then calendars, task scheduling and Gantt with deterministic date rules. | Turn existing maps into communication and execution tools. |
+| 6 | Optional intelligent and connected work / R9-R10 | Credential/cancellation safety first, then responsive AI; protected files and synchronization only after conflict/recovery contracts. | Assistance and access across devices without compromising local work. |
+| 7 | Extensibility and language reach / R12 | Stabilize format/plugin contracts, collaboration convergence and remaining accepted locales. | Broader audiences and integrations without weakening compatibility. |
+| 8 | OS-integrated shell / R13, P4.1-P4.7 | Feasibility and shared command model first; then Windows ribbon, macOS global menus/multi-window, Ubuntu integration and WASM fallback; finish native acceptance. | Familiar platform behavior built on reliable editing and lifecycle contracts. |
+
+P4 remains explicitly scheduled, not completed or replaced by popup mitigations.
+Its dependencies and per-step review/native acceptance gates below still apply.
+Performance, localization, accessibility, signing and regression checks accompany
+each affected slice rather than waiting for their own final phase.
+
 | Package | Outcome | Prerequisites | Delivery band |
 |---|---|---|---|
 | R0 | Verified baseline, reference decisions and regression harness | None | Foundation |
@@ -221,8 +243,9 @@ deferred behind shortcut customization or P4.
    visibility and map/insertion aliases derived from dispatch are delivered.
    Rebinding/conflict editing and native keyboard-layout audits remain open.
    The default-dispatch conflict audit below is a prerequisite, not an editable
-   keymap or OS-reserved-key validator. Resolve the recorded keymap decisions and
-   define stable override identities/migration before activating saved overrides.
+   keymap or OS-reserved-key validator. Stable built-in identities are delivered
+   below. Resolve the recorded keymap decisions and define the versioned override
+   format/migration before activating saved overrides.
 6. Help/User Guide/Quick Start/About and explicit feedback/news links are delivered.
    Research
    File cache without deleting recovery data. Account/gift-card commerce is excluded
@@ -439,6 +462,13 @@ native QA are required for this package.
    restart and preserve unsaved maps/recovery across update failures.
 4. Run upgrade/downgrade compatibility checks, publish release notes and a truthful
    platform matrix. Cross-compilation alone is not native validation.
+5. User-directed web PWA slice (2026-10-22): installable scoped manifest, web-only
+   Settings install action with browser/Apple manual alternatives, Windows/Linux/
+   macOS/iOS/iPadOS icon assets, offline shell and non-disruptive updates.
+   Keep storage/backups and installation capability limitations explicit.
+   Verify subpath deployment, install/dismiss/error/standalone states, safe icon
+   zones, offline reload and old-worker lifetime. Do not equate installation with
+   native file associations, multi-window parity, unlimited storage or OS QA.
 
 **Exit:** signed/notarized packages install and launch on each advertised target;
 update verification rejects tampering, failed updates recover, and user files/settings
@@ -567,6 +597,109 @@ accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
 ### Immediate next work
+
+**User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
+all repository Node scripts use Node.js 24 from `.node-version`; CI reads the
+same file and PWA tests reject a different major. JavaScript Actions now use
+vendor-declared Node-24 versions: checkout/setup-python/setup-node/upload-artifact
+v7, download-artifact v8, deploy-pages v5, release-please v5 and release publishing
+v3. Rust cache v2 already declares Node 24. Pages upload v5 delegates to a
+Node-24 artifact uploader; Rust toolchain and the paused WinGet action (including
+its cargo-binstall dependency) are shell-only composites. No forced runtime
+override, npm dependencies or publishing-permission expansion is introduced.
+
+Release packaging now enforces macOS Intel first, then Windows x64/ARM64 and
+Linux x86 in parallel, Linux ARM64 strictly after Linux x86, and Apple Silicon
+after Windows and both Linux builds. All six targets must pass before
+publication. A single reusable target workflow retains signing credentials,
+cleanup, native tests, signature/notarization checks and architecture-specific
+downloads/checksums. ARM64 uses the native `ubuntu-24.04-arm` runner and
+`aarch64-unknown-linux-gnu`, with DEB/AppImage output and Ubuntu 24.04 FUSE
+dependencies; normal CI also tests this native runner.
+
+The supplied Intel log shows accepted notarization followed by CloudKit
+`NSURLErrorDomain Code=-1005` during DMG validation, not evidence of rate limiting.
+That final validation call had bypassed the existing bounded ticket retry helper;
+it now retries only the recognized Apple CloudKit network failure. It does not
+resubmit accepted notarization, skip validation or retry invalid signatures.
+Regressions cover validation recovery/exhaustion, six distinct artifact sets,
+dependency ordering and Node runtime contracts. Hosted builds, real Linux ARM64
+installation and successful Apple service validation remain acceptance gates;
+no new release or deployment has been triggered locally.
+
+**Delivered priority-1 follow-up, 2026-10-23 - toolbar keyboard focus:**
+shared icon and captioned toolbar buttons now paint a two-logical-pixel,
+theme-text-colored focus outline, independent of custom accent/selection colors.
+Keyboard-only Tab/Enter/Space regressions verify focus, single activation and
+disabled semantics in both themes and selection states. Captioned controls also
+respect a disabled parent. Map/Outline regressions activate Undo/Redo from the
+keyboard after focused Notes Save. This improves shared toolbar affordances;
+it does not close the full OS/browser/assistive-technology acceptance matrix.
+
+**Delivered priority-1 follow-up, 2026-10-22 - title composition key safety:**
+an event-level regression reproduced Enter committing a provisional topic title
+before the IME final text arrived. Map and Outline now reuse a per-title-edit
+composition guard, invoked before their text widget and commit/insert handling.
+Enter, Tab and Escape (including Shift variants) belong to candidate navigation
+while composing and on the final commit/dismissal frame. Outline locks editor
+focus so candidate Tab cannot move focus and commit the title. Empty preedit or
+commit clears composition; normal editing keys then resume. Tests cover both
+views, CJK final text, candidate-key isolation, same-frame final commit, dismissal,
+subsequent ordinary Tab insertion and document Undo. This is an input-routing
+fix, not proof of platform-specific IME, font rendering or AT acceptance; those
+remain in the priority-1 native/browser matrix.
+
+**Delivered priority-1 follow-up, 2026-10-22 - inspector draft safety:**
+a new real-key regression reproduced saving a focused Notes field without its
+typed text. Its private egui buffer was invisible to saving, dirty detection and
+recovery until focus loss. Notes and Hyperlink now keep a document-owned draft,
+scoped to the sheet index/root and topic as well as document identity; duplicated
+sheets may share topic IDs and must not alias. Dirty detection and idle timing
+include the draft. Commands, Save/Save All and native close handling commit it
+in one undoable step; autosave's normal save path includes it too. Separate-sheet
+output overlays a copy without marking/retargeting the source. Recovery overlays
+a copy and tracks draft revisions even when the underlying model revision has
+not changed. It does not create undo entries just to take a snapshot.
+
+Regressions exercise both Map/Outline, real Save keys while the field retains
+focus, ordinary one-step Undo/Redo, Hyperlink Escape cancellation, insertion/
+priority-key isolation, native close-request cancellation and dialog Cancel,
+repeated recovery loads, identical-document ownership, duplicated-sheet targets,
+failed writes and changed/missing sources. Stale source conflicts surface
+explicitly and retain the draft rather than overwriting newer content.
+Command-boundary flushes clear committed UI buffers, and unchanged buffers
+follow model updates. Direct and toolbar Undo of an uncommitted draft, and
+Save after Undo while the field remains focused, cannot resurrect stale text;
+toolbar Undo/Redo availability includes pending inspector changes.
+The existing inspector focus/locale/scale and Save All continuation coverage is
+preserved. Native picker interactions, actual OS window-manager/IME/AT acceptance
+remain open; this is a delivered data-loss fix, not completion of R0-R3 or P4.
+
+**Current continuation, 2026-10-22:** follow the value-ranked task list above.
+Stable shortcut IDs are locally committed at `9052a01`. The daily-editing
+slice at `8566fc7` corrected Outline Ctrl/Cmd+Shift+Z from Undo to Redo while preserving the
+existing Ctrl/Cmd+Y primary hint, ordinary Undo and current focus guards.
+Tests exercise actual Map/Outline frames with Windows/macOS/Linux modifier
+models, both reference aliases, menu hints and sidebar focus. This intentionally
+fixes a diagnosed default-key bug; it is not a shortcut preset migration or
+activation of saved overrides. Fit's separate collision still needs a keymap
+decision.
+
+The user-requested PWA slice is implemented alongside it: web-only Settings
+installation, manual browser/Apple alternatives, scoped manifest and generated
+192/512 standard, 512 maskable and 152/167/180 Apple touch icons. Trunk generates
+a content-versioned app-shell worker including matching WASM/JS/snippets.
+Only shell assets are cached; old clients are not force-reloaded, and maps remain
+in the existing browser storage with its limits and backup requirements.
+Full workspace CI (live AI disabled), WASM lint, Node install/error/cache tests,
+safe-zone/icon and build-generation tests pass. An isolated Edge profile
+executed the built WASM site under `/dist/`,
+validated its manifest and cache scope, clicked the actual Settings install
+action and closed the accessible panel with Escape, passed browser installability checks, then successfully
+reloaded the app offline. This did not
+install software or prove other platforms' installation/icon/AT acceptance.
+See [WEB.md](WEB.md#install-thinoda-as-an-app-pwa); R11 platform acceptance and
+all P4 native integration gates remain open.
 
 R0 execution resumed on 2026-10-20 after merging main through `07fec3c`.
 The startup harness now covers all ten shipped locales plus Auto, explicit
@@ -1262,6 +1395,30 @@ and Fit execution tests plus native all-target/WASM lint pass. Direct planning/
 finished review was user-approved after reviewer startup failed; no rubber-duck
 review is claimed. Editable bindings, keymap decisions, reserved keys and native
 input/accessibility/P4 acceptance remain open.
+
+**Delivered R1 prerequisite - stable shortcut target identities:** built-in
+commands now have explicit, nonlocalized IDs such as `file.save` and
+`topic.delete-only`, separate from existing numeric palette UI IDs. A lookup
+registry covers the static palette, global/Map/Outline bindings, reference-only
+editing/navigation/priorities/clipboard targets, and supported export formats.
+It does not add palette actions or enable shortcuts. Close Tab normalizes to one
+identity and resolves the active tab at lookup time; availability/focus checks
+remain the existing dispatcher's responsibility. Generic Paste resolves to the
+OS request command, never persisted clipboard content. Arbitrary file paths,
+templates, custom styles/themes, marker-instance edits and clipboard payloads
+cannot silently alias a generic target.
+
+The namespace is pinned in regression coverage and survives display reordering,
+all shipped locales and Map/Outline changes. Tests cover complete command/binding
+coverage, uniqueness, active/Home Close Tab resolution, unsupported payloads and
+unchanged palette IDs/count. Settings roundtrip preserves stable, legacy,
+numeric and unknown override entries exactly; they remain inactive. Existing
+numeric IDs and the legacy `save` key are not guessed into the new namespace.
+Targeted command-ID/shortcut/menu/settings tests and native all-target/WASM lint
+pass. The configured reviewer could not start; direct planning/finished review
+was performed under autopilot, not claimed as a rubber-duck review. Remaining:
+versioned override schema and migration, key capture, specificity/conflict and
+reserved-key decisions, apply/reset UI, native input/accessibility and P4.
 
 **Delivered R1/R2 follow-up - shortcut-reference viewport safety:** the shortcut
 dialog no longer assumes a 100-point minimum list or a fixed 300-point chrome

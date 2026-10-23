@@ -466,9 +466,13 @@ impl ThinodaApp {
             ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
                 scroll_menu(ui, |ui| self.main_menu(ui, &mut cmd));
             });
-            let (can_undo, can_redo) = self
-                .doc()
-                .map_or((false, false), |d| (d.doc.can_undo(), d.doc.can_redo()));
+            let (can_undo, can_redo) = self.doc().map_or((false, false), |d| {
+                let draft_changed = d.has_inspector_changes();
+                (
+                    d.doc.can_undo() || draft_changed,
+                    d.doc.can_redo() && !draft_changed,
+                )
+            });
             if ui
                 .add_enabled_ui(can_undo, |ui| {
                     widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
@@ -1764,10 +1768,12 @@ impl ThinodaApp {
                                     let mut text =
                                         d.view.editing_text().unwrap_or_default().to_string();
                                     let te_id = egui::Id::unique(("outliner_edit", id));
+                                    d.view.protect_title_ime(ui.ctx(), te_id);
                                     let r = ui
                                         .add(
                                             TextEdit::singleline(&mut text)
                                                 .id(te_id)
+                                                .lock_focus(true)
                                                 .hint_text(t("Topic title"))
                                                 .desired_width(edit_width),
                                         )
@@ -2011,7 +2017,11 @@ impl ThinodaApp {
                                 .clicked()
                             {
                                 d.view.commit_edit(&mut d.doc);
-                                if let Err(e) = d.doc.move_sheet(i, i - 1) {
+                                if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
+                                    d.doc
+                                        .move_sheet(i, i - 1)
+                                        .map_err(|error| error.to_string())
+                                }) {
                                     self.toasts
                                         .error(format!("{}: {e}", t("Not possible here")));
                                 }
@@ -2022,7 +2032,11 @@ impl ThinodaApp {
                                 .clicked()
                             {
                                 d.view.commit_edit(&mut d.doc);
-                                if let Err(e) = d.doc.move_sheet(i, i + 1) {
+                                if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
+                                    d.doc
+                                        .move_sheet(i, i + 1)
+                                        .map_err(|error| error.to_string())
+                                }) {
                                     self.toasts
                                         .error(format!("{}: {e}", t("Not possible here")));
                                 }
@@ -2564,7 +2578,26 @@ impl ThinodaApp {
         widgets::section(ui, t("Topic Properties"), true, |ui| {
             let l = ui.label(t("Hyperlink"));
             let current = topic.hyperlink.clone().unwrap_or_default();
-            let (r, done) = buffered_text(ui, ("hyperlink", primary), &current, 0, "https://…");
+            let salt = (
+                "hyperlink",
+                &d.key,
+                d.doc.active_index(),
+                d.doc.sheet().root,
+                primary,
+            );
+            restore_inspector_buffer(d, ui, salt, primary, &crate::doc::InspectorField::Hyperlink);
+            let (r, done) = buffered_text(ui, salt, &current, 0, "https://…");
+            if let Err(error) = track_inspector_edit(
+                d,
+                ui,
+                &r,
+                crate::doc::InspectorField::Hyperlink,
+                topic.hyperlink.clone(),
+                done,
+            ) {
+                log::warn!("hyperlink draft: {error}");
+                self.toasts.error(error);
+            }
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Hyperlink) {
                 if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
@@ -2574,12 +2607,6 @@ impl ThinodaApp {
                     r.request_focus();
                     r.scroll_to_me(Some(egui::Align::Center));
                 }
-            }
-            if let Some(link) = done {
-                let v = (!link.trim().is_empty()).then(|| link.trim().to_string());
-                let _ = d
-                    .doc
-                    .edit_sheet("Hyperlink", |s| s.set_hyperlink(primary, v));
             }
             ui.label(t("Labels"));
             ui.horizontal_wrapped(|ui| {
@@ -2592,7 +2619,26 @@ impl ThinodaApp {
                 .clicked();
             let l = ui.label(t("Notes"));
             let current = topic.notes.clone().unwrap_or_default();
-            let (r, done) = buffered_text(ui, ("notes", primary), &current, 5, "");
+            let salt = (
+                "notes",
+                &d.key,
+                d.doc.active_index(),
+                d.doc.sheet().root,
+                primary,
+            );
+            restore_inspector_buffer(d, ui, salt, primary, &crate::doc::InspectorField::Notes);
+            let (r, done) = buffered_text(ui, salt, &current, 5, "");
+            if let Err(error) = track_inspector_edit(
+                d,
+                ui,
+                &r,
+                crate::doc::InspectorField::Notes,
+                topic.notes.clone(),
+                done,
+            ) {
+                log::warn!("notes draft: {error}");
+                self.toasts.error(error);
+            }
             let r = r.labelled_by(l.id);
             if focus == Some(FocusField::Notes) {
                 if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
@@ -2601,12 +2647,6 @@ impl ThinodaApp {
                 if ui.is_enabled() && !ui.is_sizing_pass() {
                     r.request_focus();
                     r.scroll_to_me(Some(egui::Align::Center));
-                }
-            }
-            if let Some(notes) = done {
-                let v = (!notes.trim().is_empty()).then_some(notes);
-                if v != topic.notes {
-                    let _ = d.doc.edit_sheet("Notes", |s| s.set_notes(primary, v));
                 }
             }
             if !topic.markers.is_empty() {
@@ -3510,6 +3550,19 @@ impl ThinodaApp {
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
+                    #[cfg(target_arch = "wasm32")]
+                    if ui.button(t("Install web app")).clicked()
+                        && let Err(error) = thinoda_platform::web::install_app(
+                            t("Install web app"),
+                            t("Close"),
+                            t("Install from your browser menu. On iPhone/iPad use Share > Add to Home Screen; on Mac Safari use Share > Add to Dock. On Windows/Linux use Chrome or Edge."),
+                            t("Installation keeps browser storage limits. Download backups; clearing site data can delete maps. Offline use needs one complete online load."),
+                            t("No install prompt is available. The app may already be installed, or your browser requires its menu. Use HTTPS or localhost."),
+                        )
+                    {
+                        log::error!("PWA install panel: {error}");
+                        self.toasts.error(error);
+                    }
                     widgets::section(ui, t("Appearance"), true, |ui| {
                         widgets::property_row(ui, t("Theme"), |ui| {
                             widgets::segmented(
@@ -3767,6 +3820,14 @@ pub(crate) fn buffered_text(
     let mut buf: String = ui
         .data(|d| d.get_temp(id))
         .unwrap_or_else(|| current.to_string());
+    let source_id = id.with("model_value");
+    if ui
+        .data(|data| data.get_temp::<String>(source_id))
+        .is_some_and(|previous| previous != current && buf == previous)
+    {
+        buf = current.to_owned();
+    }
+    ui.data_mut(|data| data.insert_temp(source_id, current.to_owned()));
     let edit = if rows == 0 {
         TextEdit::singleline(&mut buf)
     } else {
@@ -3791,4 +3852,77 @@ pub(crate) fn buffered_text(
         let done = (r.lost_focus() && buf != current).then_some(buf);
         (r, done)
     }
+}
+
+fn restore_inspector_buffer(
+    doc: &crate::doc::OpenDoc,
+    ui: &Ui,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    topic: TopicId,
+    field: &crate::doc::InspectorField,
+) {
+    if let Some(edit) = &doc.inspector_edit
+        && edit.sheet_index == doc.doc.active_index()
+        && edit.sheet_root == doc.doc.sheet().root
+        && edit.topic == topic
+        && &edit.field == field
+    {
+        let id = ui.make_persistent_id(("thinoda_buffered_text", salt));
+        ui.data_mut(|data| {
+            if data.get_temp::<String>(id).is_none() {
+                data.insert_temp(id, edit.text.clone());
+            }
+        });
+    }
+}
+
+fn track_inspector_edit(
+    doc: &mut crate::doc::OpenDoc,
+    ui: &Ui,
+    response: &egui::Response,
+    field: crate::doc::InspectorField,
+    original: Option<String>,
+    done: Option<String>,
+) -> Result<(), String> {
+    let sheet_root = doc.doc.sheet().root;
+    let sheet_index = doc.doc.active_index();
+    let topic = doc
+        .view
+        .primary()
+        .expect("inspector requires a selected topic");
+    let same_source = doc.inspector_edit.as_ref().is_some_and(|edit| {
+        edit.field == field
+            && edit.sheet_index == sheet_index
+            && edit.sheet_root == sheet_root
+            && edit.topic == topic
+    });
+    let text = if response.has_focus() {
+        ui.data(|data| data.get_temp::<String>(response.id))
+    } else {
+        done.clone()
+    };
+    if let Some(text) = text {
+        let original = if same_source {
+            doc.inspector_edit.as_ref().unwrap().original.clone()
+        } else {
+            doc.flush_inspector_edit(ui.ctx())?;
+            original
+        };
+        doc.inspector_edit =
+            (text != original.clone().unwrap_or_default()).then_some(crate::doc::InspectorEdit {
+                buffer_id: Some(response.id),
+                sheet_index,
+                sheet_root,
+                topic,
+                field,
+                original,
+                text,
+            });
+        if done.is_some() {
+            doc.flush_inspector_edit(ui.ctx())?;
+        }
+    } else if response.lost_focus() && same_source {
+        doc.inspector_edit = None;
+    }
+    Ok(())
 }

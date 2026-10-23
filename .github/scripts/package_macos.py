@@ -95,7 +95,9 @@ def notarize_dmg(image: Path) -> None:
     run_with_ticket_retry(
         ["xcrun", "stapler", "staple", str(image)], timeout=120,
     )
-    run("xcrun", "stapler", "validate", str(image))
+    run_with_ticket_retry(
+        ["xcrun", "stapler", "validate", str(image)], timeout=120,
+    )
 
 
 def package(root: Path, target: str) -> None:

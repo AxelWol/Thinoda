@@ -62,6 +62,57 @@ features work differently:
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 
+## Install Thinoda as an app (PWA)
+
+The web build includes a web app manifest, standard 192/512 px icons, an opaque
+maskable icon and 152/167/180 px Apple touch icons. Install from **Settings > General >
+Install web app**, or from the browser's own menu. The Settings action is
+web-only; it opens a keyboard-accessible installation panel, never silently
+installs software. HTTPS is required outside localhost/loopback; opening
+`index.html` directly from disk is not supported.
+
+| Platform | Installation |
+|---|---|
+| Windows / Linux | Chrome or Edge: use the Settings panel's install button when offered, or the browser menu/address-bar install action. Other browsers may not offer installation. |
+| macOS | Safari on supported macOS versions: Share > Add to Dock (also available from File in some versions). Chrome/Edge can offer their own install prompt. |
+| iOS / iPadOS | In Safari, Share > Add to Home Screen. The system owns this flow; websites cannot trigger Apple's installation sheet programmatically. |
+
+The panel always provides manual instructions when no browser install event is
+available, including already-installed/standalone use. Dismissing the browser
+prompt does not install anything or cause repeated prompts; a new browser event
+is needed to offer it again. This is browser installation, not App Store
+distribution, native file associations or native multi-window support.
+
+### Offline use and updates
+
+After a successful complete online load, the service worker precaches the built
+app shell, including the matching JavaScript, WASM and imported snippets. It
+caches **only build assets**, not maps, AI responses or other sites. Documents
+and recovery remain in the existing browser virtual file system. Offline
+editing works while that shell and site storage remain available; online AI,
+external links and remote services still need a connection.
+
+Trunk's post-build hook (`cargo xtask web-pwa`) creates `dist/sw.js` from the
+exact staged artifacts and a content-derived revision. URLs, manifest identity,
+worker scope and caches are relative to the deployment subpath, including
+GitHub Pages. A new worker waits until all existing app windows/tabs close
+before taking over; there is no forced reload or `skipWaiting` during editing.
+Save/download maps before closing and reopen online to receive updates.
+Activation removes only obsolete Thinoda shell caches for the same scope.
+Registration/cache failures appear in the browser console and install panel;
+installation alone is not proof that offline caching succeeded.
+
+Installation does **not** provide unlimited storage, synchronization or backups.
+Safari may isolate an installed app's storage from the original browser tab;
+do not assume existing maps transfer. Download maps before switching contexts,
+and open the downloaded files in the installed app. Browser eviction, private
+browsing, site-data clearing or uninstall options can remove local copies.
+
+References: [MDN installability and browser support](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable)
+and [Apple Safari web apps](https://support.apple.com/guide/safari/use-web-apps-ibrw9e991864/mac).
+Actual installation, icon appearance and platform assistive technology still need
+Windows/Linux/macOS/iOS/iPadOS acceptance; shared assets do not prove OS acceptance.
+
 ## Storage limits and privacy
 Local storage is per site origin and typically limited to about 5 MB. Large
 maps or many embedded images can exceed it; Thinoda then reports a save error,
@@ -113,6 +164,15 @@ the raw error under **Technical details**:
   retain precedence; desktop cursor behavior is unchanged.
 
 ## Testing
+- Use Node.js 24, selected by the repository root `.node-version` file. CI reads
+  that same file through the Node-24-based `actions/setup-node` action; the PWA
+  tests reject a different Node major. No npm install is needed.
+- `node --test crates/thinoda-web/tests/pwa.test.cjs` (Node 24, repository root)
+  checks real PNG dimensions/manifest scope, install/dismiss/error/standalone
+  states, and offline worker cache/update isolation without installing software.
+- `cargo test -p xtask` checks opaque maskable safe zones, complete/versioned
+  shell generation and icon generation. `cargo xtask icons` regenerates PWA
+  assets together with the existing desktop icons.
 - `cargo test -p thinoda-web` exercises browser hover feedback on the shared
   widgets, including disabled controls, theme changes and specialized cursors.
 - `cargo test --workspace` covers the shared code, including the virtual file
