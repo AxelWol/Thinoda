@@ -678,6 +678,20 @@ No custom Outline scroll recognizer or mouse-drag override was needed. Real
 device/backend delivery, remaining menu/inspector surfaces and browser zoom
 ownership remain open.
 
+**Delivered menu/Settings touch safety slice:** first swipes scroll menus and
+Settings without activating controls. Repeated export-menu swipes reach the last
+format; Escape still dismisses the menu. Reproduced canceled/multitouch releases
+changing Settings switches. Extracted the Outline release latch into
+`widgets::touch_activation_allowed`, sampled each app frame and cached across
+layout passes. Shared switches, segmented controls and color swatches now reject
+canceled and two/three-contact activation, including delayed pointer releases.
+Actual Settings tests cover unchanged deletion confirmation, theme and accent,
+then ordinary click/Space recovery in both themes at 1x/1.5x/2x scale. Existing
+Settings viewport/keyboard, Outline and widget regressions remain intact.
+This is not a general input filter: standard egui buttons, sliders, combo boxes,
+text selection, inspector-specific workflows, browser zoom and hardware delivery
+remain part of the remaining audit.
+
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside
 the scrolling names. Arrows browse by 80% of the name viewport without changing

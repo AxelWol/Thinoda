@@ -88,6 +88,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 menu/Settings touch slice: first swipes scroll, export-menu swipes reach the
+  last format without executing it, and shared switches/segmented choices/color
+  swatches reject canceled or multitouch releases. Extracted the Outline latch
+  for consistent per-frame tracking; Settings theme/accent/deletion confirmation
+  and ordinary click/keyboard recovery have both-theme/scale coverage.
 - R1 Outline touch safety: first swipes scroll both axes without editing. Canceled
   and multitouch sequences cannot activate disclosures, titles or toolbar actions;
   the guard survives delayed synthesized pointer release. The shared canvas now

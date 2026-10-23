@@ -87,6 +87,13 @@ disclosure buttons, titles or the command toolbar. Both Outline and canvas keep
 the rejection guard through a synthesized primary-pointer release delivered after
 the raw touch contacts end, preventing late click-through.
 
+Menu and Settings first-swipe scrolling has shared-input coverage in both themes
+at 1x/1.5x/2x scale; repeated export-menu swipes reach the last format without
+executing it. Settings switches, segmented theme choices and color swatches reject
+canceled and two/three-finger taps, including delayed pointer releases; normal
+click/keyboard activation is preserved. Other button/slider/combo interactions
+and actual browser touch delivery remain separate acceptance work.
+
 Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
 varies; these shared input behaviors are not a claim of full hardware support.
 Keyboard shortcuts and visible zoom/Fit controls remain alternatives.

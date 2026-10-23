@@ -90,10 +90,13 @@ graph TD
   clicks and closes menus for suppressed sequences. Single-touch holds retain
   the upstream recognizer; no duplicate timer or platform gesture is installed.
   Canvas ownership survives the final raw touch until the synthesized primary
-  pointer also releases, preventing late click-through. Outline title,
-  disclosure and command-toolbar activation use a matching cancellation/
-  multitouch latch, cached per frame across layout passes. Its scroll areas and
-  text inputs keep upstream scrolling/text-selection behavior.
+  pointer also releases, preventing late click-through. The shared
+  `widgets::touch_activation_allowed` cancellation/multitouch latch is sampled
+  each app frame, including while controls are hidden, and cached across layout
+  passes. Outline title/disclosure/command activation and shared switches,
+  segmented choices and color swatches use it. Scroll areas and text inputs keep
+  upstream scrolling/text-selection behavior; this does not yet guard every
+  standard egui button, slider or combo box.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

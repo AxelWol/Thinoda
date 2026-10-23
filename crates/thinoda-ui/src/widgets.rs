@@ -6,6 +6,45 @@ use egui::{
     StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
+/// Reject click activation through canceled/multitouch sequences and their pointer release.
+/// Call each frame, including when the guarded controls are hidden.
+pub fn touch_activation_allowed(ctx: &egui::Context) -> bool {
+    let (multi_touch, touching, primary_down, canceled) = ctx.input(|input| {
+        (
+            input.multi_touch().is_some(),
+            input.any_touches(),
+            input.pointer.primary_down(),
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Touch {
+                        phase: egui::TouchPhase::Cancel,
+                        ..
+                    }
+                )
+            }),
+        )
+    });
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        let id = egui::Id::unique("touch_activation_guard");
+        let previous = data.get_temp::<(u64, bool, bool)>(id);
+        if let Some((previous_frame, _, allowed)) = previous
+            && previous_frame == frame
+        {
+            return allowed;
+        }
+        let suppressed =
+            previous.is_some_and(|(_, suppressed, _)| suppressed) || multi_touch || canceled;
+        // Backends can deliver the synthesized pointer release after the final touch.
+        data.insert_temp(
+            id,
+            (frame, suppressed && (touching || primary_down), !suppressed),
+        );
+        !suppressed
+    })
+}
+
 /// Selectable preview with a wrapped caption, accessible name and keyboard activation.
 pub fn preview_card(
     ui: &mut Ui,
@@ -165,6 +204,7 @@ pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Re
 
 /// Segmented control (e.g. Format panel tabs "Style | Map"). Returns true when changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let p = Palette::of_ui(ui);
     let mut changed = false;
     let height = 28.0;
@@ -213,7 +253,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
             FontId::proportional(Tokens::FONT_BODY),
             if selected { p.text } else { p.text_muted },
         );
-        if resp.clicked() && !selected {
+        if touch_allowed && resp.clicked() && !selected {
             *value = *opt;
             changed = true;
         }
@@ -223,10 +263,11 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
 
 /// iOS-style toggle switch. Returns the response (changed when toggled).
 pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let p = Palette::of_ui(ui);
     let size = vec2(32.0, 18.0);
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    if resp.clicked() {
+    if touch_allowed && resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
@@ -364,7 +405,7 @@ pub fn color_swatches(
                         Stroke::new(2.0, contrast),
                     );
                 }
-                if resp.on_hover_text(label).clicked() {
+                if touch_activation_allowed(ui.ctx()) && resp.on_hover_text(label).clicked() {
                     picked = Some(c);
                 }
             }

@@ -269,6 +269,7 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 impl ThinodaApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
+        widgets::touch_activation_allowed(ui.ctx());
         if !self.launch_frame(ui) {
             return;
         }
@@ -1672,41 +1673,7 @@ impl ThinodaApp {
 
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        let (multi_touch, touching, primary_down, canceled) = ctx.input(|input| {
-            (
-                input.multi_touch().is_some(),
-                input.any_touches(),
-                input.pointer.primary_down(),
-                input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Touch {
-                            phase: egui::TouchPhase::Cancel,
-                            ..
-                        }
-                    )
-                }),
-            )
-        });
-        let touch_frame = ctx.cumulative_frame_nr();
-        let touch_actions_allowed = ctx.data_mut(|data| {
-            let id = egui::Id::unique("outline_touch_suppressed");
-            let frame = touch_frame;
-            let previous = data.get_temp::<(u64, bool, bool)>(id);
-            if let Some((previous_frame, _, allowed)) = previous
-                && previous_frame == frame
-            {
-                return allowed;
-            }
-            let suppressed =
-                previous.is_some_and(|(_, suppressed, _)| suppressed) || multi_touch || canceled;
-            // Backends can deliver the synthesized pointer release after the final touch.
-            data.insert_temp(
-                id,
-                (frame, suppressed && (touching || primary_down), !suppressed),
-            );
-            !suppressed
-        });
+        let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
