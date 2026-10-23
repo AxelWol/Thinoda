@@ -88,6 +88,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 Outline touch safety: first swipes scroll both axes without editing. Canceled
+  and multitouch sequences cannot activate disclosures, titles or toolbar actions;
+  the guard survives delayed synthesized pointer release. The shared canvas now
+  also suppresses late click-through. Locale/theme/scale/viewport, ordinary click/
+  keyboard/edit/Undo and document scroll-restoration regressions cover the change.
 - R1 context gesture safety: shared and full-app tests cover tap selection,
   double-tap title editing and single-finger context holds. Multitouch holds no
   longer leak synthesized secondary clicks into the host context menu; two/three

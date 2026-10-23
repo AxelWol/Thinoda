@@ -417,7 +417,10 @@ those system-owned controls. WinGet publishing remains paused.
   Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.
   Deep Outline trees scroll in both directions. Keyboard selection and focused
   title editors reveal themselves without pinning manual scrolling; scroll
-  positions are scoped to each document and sheet.
+  positions are scoped to each document and sheet. One-finger swipes scroll the
+  Outline without selecting or editing rows. Multitouch/canceled releases cannot
+  activate its disclosure buttons, topic rows or editing toolbar, including when
+  the synthesized pointer release arrives after the last touch contact.
   In short windows, Outline actions scroll separately from topics and the selected
   summary is shortened visually with full text on hover, keeping the list reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`

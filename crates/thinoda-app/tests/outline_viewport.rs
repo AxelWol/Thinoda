@@ -33,6 +33,70 @@ fn assert_visible(h: &Harness<'_, ThinodaApp>, label: &str) {
     );
 }
 
+fn swipe(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2) {
+    for (phase, pos) in [
+        (egui::TouchPhase::Start, start),
+        (egui::TouchPhase::Move, start - egui::vec2(12.0, 12.0)),
+        (egui::TouchPhase::Move, start - egui::vec2(70.0, 80.0)),
+        (egui::TouchPhase::End, start - egui::vec2(70.0, 80.0)),
+    ] {
+        h.event(egui::Event::PointerMoved(pos));
+        h.event(egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        });
+        if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::End) {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: phase == egui::TouchPhase::Start,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(8);
+}
+
+fn rejected_tap(
+    h: &mut Harness<'_, ThinodaApp>,
+    pos: egui::Pos2,
+    contacts: u64,
+    end: egui::TouchPhase,
+) {
+    h.event(egui::Event::PointerMoved(pos));
+    h.event(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    for phase in [egui::TouchPhase::Start, end] {
+        for id in 1..=contacts {
+            h.event(egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(id),
+                phase,
+                pos: pos + egui::vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        if phase == end {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(4);
+}
+
 #[test]
 fn deep_outline_topics_remain_reachable_for_scrolling_keyboard_and_editing() {
     for language in Language::ALL {
@@ -75,6 +139,7 @@ fn deep_outline_topics_remain_reachable_for_scrolling_keyboard_and_editing() {
                 let revision = doc.doc.state_id();
                 let mut h = Harness::builder()
                     .with_size(size * scale)
+                    .with_step_dt(1.0 / 60.0)
                     .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
                 h.ctx
                     .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
@@ -82,6 +147,69 @@ fn deep_outline_topics_remain_reachable_for_scrolling_keyboard_and_editing() {
                 h.set_size(size);
                 h.run_steps(4);
                 assert!((h.ctx.content_rect().width() - size.x).abs() < 0.01);
+                let disclosure = h
+                    .get_by_role_and_label(
+                        Role::Button,
+                        &format!("{}: Outline root", t("Collapse / Expand")),
+                    )
+                    .rect()
+                    .center();
+                for (contacts, end) in [
+                    (1, egui::TouchPhase::Cancel),
+                    (2, egui::TouchPhase::End),
+                    (3, egui::TouchPhase::End),
+                ] {
+                    rejected_tap(&mut h, disclosure, contacts, end);
+                    assert_eq!(
+                        h.state().doc().unwrap().doc.state_id(),
+                        revision,
+                        "rejected touch must not collapse the Outline"
+                    );
+                    let add = h
+                        .get_by_role_and_label(Role::Button, t("Add Child"))
+                        .rect()
+                        .center();
+                    rejected_tap(&mut h, add, contacts, end);
+                    assert_eq!(
+                        h.state().doc().unwrap().doc.state_id(),
+                        revision,
+                        "rejected touch must not activate Outline toolbar commands"
+                    );
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                }
+                h.get_by_role_and_label(
+                    Role::Button,
+                    &format!("{}: Outline root", t("Collapse / Expand")),
+                )
+                .click();
+                h.run_steps(4);
+                assert!(
+                    h.state()
+                        .doc()
+                        .unwrap()
+                        .doc
+                        .sheet()
+                        .topic(root)
+                        .unwrap()
+                        .collapsed
+                );
+                exec(&mut h, Cmd::Canvas(Action::Undo));
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                let root_rect = h.get_by_role_and_label(Role::Button, "Outline root").rect();
+                swipe(&mut h, root_rect.center());
+                let moved = h.get_by_role_and_label(Role::Button, "Outline root").rect();
+                assert!(
+                    moved.top() < root_rect.top(),
+                    "first touch must scroll vertically"
+                );
+                assert!(
+                    moved.left() < root_rect.left(),
+                    "first touch must scroll horizontally"
+                );
+                assert_eq!(h.state().doc().unwrap().view.primary(), Some(root));
+                assert_eq!(h.state().doc().unwrap().view.editing_topic(), None);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
                 h.get_by_role_and_label(Role::Button, "Outline depth 49")
                     .scroll_to_me();
                 h.run_steps(8);

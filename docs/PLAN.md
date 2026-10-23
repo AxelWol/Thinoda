@@ -664,6 +664,20 @@ history and release without edits. No custom long-press timer was introduced.
 This is not full gesture parity: real browser/device acceptance, all-surface
 touch controls and browser viewport zoom remain open.
 
+**Delivered Outline touch/release safety slice:** the first one-finger diagonal
+swipe scrolls deep Outline content in both axes without selecting, editing or
+mutating topics. Reproduced a two-finger release collapsing a branch; Outline
+now suppresses title/disclosure/toolbar activation after multitouch or cancel
+until raw contacts and the synthesized pointer have released. Per-frame caching
+preserves the guard during repeated layout passes. A related canvas regression
+showed a delayed pointer release selecting a topic after raw touch ended; canvas
+ownership now survives that interval too. The locale/theme/scale/viewport matrix
+covers first swipes, canceled and two/three-finger disclosure/toolbar taps, normal
+click recovery, rename/Undo, keyboard reveal and document-scoped scroll restoration.
+No custom Outline scroll recognizer or mouse-drag override was needed. Real
+device/backend delivery, remaining menu/inspector surfaces and browser zoom
+ownership remain open.
+
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside
 the scrolling names. Arrows browse by 80% of the name viewport without changing

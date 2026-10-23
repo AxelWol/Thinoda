@@ -1672,6 +1672,41 @@ impl ThinodaApp {
 
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let (multi_touch, touching, primary_down, canceled) = ctx.input(|input| {
+            (
+                input.multi_touch().is_some(),
+                input.any_touches(),
+                input.pointer.primary_down(),
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                }),
+            )
+        });
+        let touch_frame = ctx.cumulative_frame_nr();
+        let touch_actions_allowed = ctx.data_mut(|data| {
+            let id = egui::Id::unique("outline_touch_suppressed");
+            let frame = touch_frame;
+            let previous = data.get_temp::<(u64, bool, bool)>(id);
+            if let Some((previous_frame, _, allowed)) = previous
+                && previous_frame == frame
+            {
+                return allowed;
+            }
+            let suppressed =
+                previous.is_some_and(|(_, suppressed, _)| suppressed) || multi_touch || canceled;
+            // Backends can deliver the synthesized pointer release after the final touch.
+            data.insert_temp(
+                id,
+                (frame, suppressed && (touching || primary_down), !suppressed),
+            );
+            !suppressed
+        });
         let p = Palette::of_ui(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
@@ -1715,7 +1750,7 @@ impl ThinodaApp {
                 if response.gained_focus() {
                     response.scroll_to_me(None);
                 }
-                if response.clicked() {
+                if touch_actions_allowed && response.clicked() {
                     response.request_focus();
                     action = Some(command.clone());
                 }
@@ -1822,7 +1857,7 @@ impl ThinodaApp {
                                     if response.gained_focus() {
                                         response.scroll_to_me(None);
                                     }
-                                    if response.clicked() {
+                                    if touch_actions_allowed && response.clicked() {
                                         response.request_focus();
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
@@ -1909,11 +1944,11 @@ impl ThinodaApp {
                                     if (primary == Some(id) && reveal_primary) || r.gained_focus() {
                                         r.scroll_to_me(None);
                                     }
-                                    if r.clicked() {
+                                    if touch_actions_allowed && r.clicked() {
                                         r.request_focus();
                                         d.view.select_only(id);
                                     }
-                                    if r.double_clicked() {
+                                    if touch_actions_allowed && r.double_clicked() {
                                         d.view.select_only(id);
                                         d.view.begin_edit(&sheet, id, false);
                                     }

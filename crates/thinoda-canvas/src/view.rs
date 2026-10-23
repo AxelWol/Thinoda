@@ -1136,7 +1136,8 @@ impl MapCanvas {
             view.drag = Drag::None;
         }
 
-        if !any_touches {
+        // The synthesized pointer release can arrive after the final raw touch event.
+        if !any_touches && !ctx.input(|input| input.pointer.primary_down()) {
             view.touch_navigation = None;
         }
 
@@ -1802,6 +1803,37 @@ mod tests {
             click_at(&mut h, p, PointerButton::Secondary);
             assert!(egui::Popup::is_any_open(&h.ctx));
         }
+    }
+
+    #[test]
+    fn multitouch_tap_does_not_select_on_a_delayed_pointer_release() {
+        let mut h = context_harness();
+        h.run_steps(3);
+        let root = h.state().doc.sheet().root;
+        let layout = {
+            let ctx = h.ctx.clone();
+            let s = h.state_mut();
+            s.view.layout_with(&ctx, &s.doc)
+        };
+        let p = h.state().view.xf().pos(layout.topics[&root].rect.center());
+        touch_pointer(&mut h, egui::TouchPhase::Start, p);
+        touch(&mut h, 2, egui::TouchPhase::Start, p + vec2(60.0, 0.0));
+        h.run_steps(2);
+        touch(&mut h, 2, egui::TouchPhase::End, p + vec2(60.0, 0.0));
+        touch(&mut h, 1, egui::TouchPhase::End, p);
+        h.run_steps(2);
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(2);
+        assert!(h.state().view.selection.is_empty());
+        assert_eq!(h.state().view.editing_topic(), None);
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+        click_at(&mut h, p, PointerButton::Primary);
+        assert_eq!(h.state().view.selection, vec![root]);
     }
 
     #[test]
