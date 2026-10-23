@@ -67,6 +67,10 @@ graph TD
   Enter/Tab/Escape cannot trigger document commit or insertion, including the
   final composition-event frame. Dismissal restores ordinary title shortcuts;
   the Outline editor locks focus while its explicit Tab handling owns insertion.
+- **Toolbar focus**: shared icon/captioned toolbar buttons keep egui's standard
+  keyboard activation and draw a two-logical-pixel focus outline in the semantic
+  text color, independent of selection or user accent. Disabled parent UIs also
+  disable captioned controls' accessibility state and interaction.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

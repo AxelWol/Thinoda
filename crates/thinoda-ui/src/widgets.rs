@@ -81,6 +81,14 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
         };
         ui.painter()
             .rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), bg);
+        if resp.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(Tokens::RADIUS_M),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
+            );
+        }
         let color = if !ui.is_enabled() {
             p.text_muted.gamma_multiply(0.5)
         } else if selected {
@@ -101,6 +109,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
 
 /// A toolbar button with an icon above a small caption (like XMind's top toolbar).
 pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
+    let enabled = enabled && ui.is_enabled();
     let p = Palette::of_ui(ui);
     let font = FontId::proportional(Tokens::FONT_SMALL);
     let label_w = ui.fonts_mut(|f| {
@@ -122,6 +131,14 @@ pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Re
         if enabled && resp.hovered() {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(Tokens::RADIUS_M), p.surface_alt);
+        }
+        if enabled && resp.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(Tokens::RADIUS_M),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
+            );
         }
         let c = if enabled {
             p.text
@@ -586,6 +603,62 @@ mod tests {
         harness.get_by_label("Undo").click();
         harness.run();
         assert_eq!(*harness.state(), 1);
+    }
+
+    #[test]
+    fn toolbar_controls_show_focus_and_activate_once_from_the_keyboard() {
+        use egui_kittest::kittest::NodeT;
+        for captioned in [false, true] {
+            for dark in [false, true] {
+                for selected in [false, true] {
+                    for key in [egui::Key::Enter, egui::Key::Space] {
+                        let mut h = Harness::new_ui_state(
+                            move |ui, state: &mut (bool, u32)| {
+                                ui.ctx().set_visuals(if dark {
+                                    egui::Visuals::dark()
+                                } else {
+                                    egui::Visuals::light()
+                                });
+                                ui.add_enabled_ui(state.0, |ui| {
+                                    let response = if captioned {
+                                        toolbar_button(ui, crate::icons::UNDO, "Undo", true)
+                                    } else {
+                                        icon_button(ui, crate::icons::UNDO, "Undo", selected)
+                                    };
+                                    if response.clicked() {
+                                        state.1 += 1;
+                                    }
+                                });
+                            },
+                            (true, 0),
+                        );
+                        h.run_steps(2);
+                        h.key_press(egui::Key::Tab);
+                        h.run_steps(2);
+                        let node = h.get_by_role_and_label(Role::Button, "Undo");
+                        assert!(node.is_focused());
+                        let rect = node.rect();
+                        assert!(
+                            h.output().shapes.iter().any(|shape| {
+                                matches!(&shape.shape, egui::Shape::Rect(shape)
+                                if shape.rect == rect && shape.stroke.width >= 2.0
+                                    && shape.stroke.color != Color32::TRANSPARENT)
+                            }),
+                            "Focused toolbar control needs a visible outline"
+                        );
+                        h.key_press(key);
+                        h.run_steps(3);
+                        assert_eq!(h.state().1, 1);
+                        h.state_mut().0 = false;
+                        h.run_steps(2);
+                        assert!(h.get_by_label("Undo").accesskit_node().is_disabled());
+                        h.key_press(key);
+                        h.run_steps(3);
+                        assert_eq!(h.state().1, 1, "Disabled control must not activate");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

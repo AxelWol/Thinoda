@@ -128,6 +128,48 @@ fn save_includes_focused_notes_without_requiring_focus_loss() {
 }
 
 #[test]
+fn toolbar_undo_redo_accept_keyboard_activation_after_a_focused_save() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for key in [Key::Enter, Key::Space] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("keyboard-toolbar.thinoda");
+            let mut h = draft(
+                mode,
+                Role::MultilineTextInput,
+                "Notes",
+                "Keyboard-only notes",
+                &path,
+            );
+            h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::Button, "Undo").focus();
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(3);
+            assert_eq!(
+                h.state().doc().unwrap().doc.sheet().root_topic().notes,
+                None
+            );
+            h.get_by_role_and_label(Role::Button, "Redo").focus();
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(3);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .root_topic()
+                    .notes
+                    .as_deref(),
+                Some("Keyboard-only notes")
+            );
+        }
+    }
+}
+
+#[test]
 fn undoing_an_uncommitted_draft_does_not_restore_it_on_the_next_frame() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         for toolbar in [false, true] {
