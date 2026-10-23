@@ -598,6 +598,44 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
+all repository Node scripts use Node.js 24 from `.node-version`; CI reads the
+same file and PWA tests reject a different major. JavaScript Actions now use
+vendor-declared Node-24 versions: checkout/setup-python/setup-node/upload-artifact
+v7, download-artifact v8, deploy-pages v5, release-please v5 and release publishing
+v3. Rust cache v2 already declares Node 24. Pages upload v5 delegates to a
+Node-24 artifact uploader; Rust toolchain and the paused WinGet action (including
+its cargo-binstall dependency) are shell-only composites. No forced runtime
+override, npm dependencies or publishing-permission expansion is introduced.
+
+Release packaging now enforces macOS Intel first, then Windows x64/ARM64 and
+Linux x86 in parallel, Linux ARM64 strictly after Linux x86, and Apple Silicon
+after Windows and both Linux builds. All six targets must pass before
+publication. A single reusable target workflow retains signing credentials,
+cleanup, native tests, signature/notarization checks and architecture-specific
+downloads/checksums. ARM64 uses the native `ubuntu-24.04-arm` runner and
+`aarch64-unknown-linux-gnu`, with DEB/AppImage output and Ubuntu 24.04 FUSE
+dependencies; normal CI also tests this native runner.
+
+The supplied Intel log shows accepted notarization followed by CloudKit
+`NSURLErrorDomain Code=-1005` during DMG validation, not evidence of rate limiting.
+That final validation call had bypassed the existing bounded ticket retry helper;
+it now retries only the recognized Apple CloudKit network failure. It does not
+resubmit accepted notarization, skip validation or retry invalid signatures.
+Regressions cover validation recovery/exhaustion, six distinct artifact sets,
+dependency ordering and Node runtime contracts. Hosted builds, real Linux ARM64
+installation and successful Apple service validation remain acceptance gates;
+no new release or deployment has been triggered locally.
+
+**Delivered priority-1 follow-up, 2026-10-23 - toolbar keyboard focus:**
+shared icon and captioned toolbar buttons now paint a two-logical-pixel,
+theme-text-colored focus outline, independent of custom accent/selection colors.
+Keyboard-only Tab/Enter/Space regressions verify focus, single activation and
+disabled semantics in both themes and selection states. Captioned controls also
+respect a disabled parent. Map/Outline regressions activate Undo/Redo from the
+keyboard after focused Notes Save. This improves shared toolbar affordances;
+it does not close the full OS/browser/assistive-technology acceptance matrix.
+
 **Delivered priority-1 follow-up, 2026-10-22 - title composition key safety:**
 an event-level regression reproduced Enter committing a provisional topic title
 before the IME final text arrived. Map and Outline now reuse a per-title-edit

@@ -77,6 +77,20 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R11 user-directed runtime/distribution changes: Node.js 24 is selected by
+  `.node-version` for scripts and web CI; JavaScript actions (including nested
+  Pages upload) use Node-24 runtimes without forcing older actions onto Node 24.
+  Release dependencies enforce Intel macOS first, Windows/Linux x86 next,
+  native Ubuntu ARM64 after Linux x86, and Apple Silicon last. Shared packaging
+  retains strict signing/notarization and gates publication on all six targets.
+  Final DMG validation now uses the existing bounded retry for confirmed
+  CloudKit network loss; invalid signatures and retry exhaustion still fail.
+  Workflow/Node/artifact/retry regressions are in place; hosted release execution
+  and real Ubuntu ARM64 installation remain open.
+- R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
+  focus outline in both themes and selected states. Tab/Enter/Space, disabled
+  controls and keyboard Undo/Redo after focused Notes Save are covered. This is
+  not a claim of full screen-reader or native keyboard acceptance.
 - R0/R1 topic-title IME key safety: reproduced candidate-confirmation Enter
   prematurely closing inline editing. Map and Outline now share a per-edit
   composition guard for Enter/Tab/Escape and their Shift variants, including

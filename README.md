@@ -30,10 +30,11 @@ Installers for every platform are attached to each
 | Windows x64 / ARM64 | `Thinoda_<version>_*-setup-<target>.exe` (NSIS installer) |
 | macOS Apple silicon / Intel | `Thinoda_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
 | Ubuntu LTS (x64) | `.deb` or `.AppImage` for `x86_64-unknown-linux-gnu` |
+| Ubuntu LTS (ARM64, next release) | `.deb` or `.AppImage` for `aarch64-unknown-linux-gnu` |
 
 `<target>` is `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
 `aarch64-apple-darwin` (Apple silicon), `x86_64-apple-darwin` (Intel) or
-`x86_64-unknown-linux-gnu`.
+`x86_64-unknown-linux-gnu`, or `aarch64-unknown-linux-gnu` (Linux ARM64).
 
 Each platform also has a `SHA256SUMS-<target>.txt` checksum manifest. Windows
 installers are not code-signed yet and SmartScreen may block first launch.
@@ -58,7 +59,9 @@ the `WINGET_TOKEN` secret is still required.
 
 ### Installing on Ubuntu
 Requires Ubuntu 22.04 LTS or newer on x64 (`dpkg --print-architecture` prints `amd64`),
-including Ubuntu on WSL 2 with WSLg.
+including Ubuntu on WSL 2 with WSLg. The new native ARM64 release target requires
+Ubuntu 24.04 LTS or newer (`arm64`); its downloads become available with the first
+release built by the updated workflow.
 
 ```bash
 # Recommended: .deb (menu entry, icon, clean uninstall with `sudo apt remove thinoda`)
@@ -72,6 +75,12 @@ sudo apt install ./thinoda_<version>_amd64-x86_64-unknown-linux-gnu.deb
 chmod +x thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
 ./thinoda_<version>_x86_64-x86_64-unknown-linux-gnu.AppImage
 ```
+
+For ARM64, use `SHA256SUMS-aarch64-unknown-linux-gnu.txt` and the
+`thinoda_<version>_arm64-aarch64-unknown-linux-gnu.deb` download instead.
+The portable download is
+`thinoda_<version>_aarch64-aarch64-unknown-linux-gnu.AppImage`; it needs
+`libfuse2t64` on Ubuntu 24.04.
 
 If version 0.1.0 stops with `Library libxkbcommon-x11.so could not be loaded`,
 install the windowing libraries it did not declare yet:
@@ -427,9 +436,14 @@ not in `settings.toml`.
 
 ## Build & test
 
+JavaScript tooling and PWA tests use **Node.js 24**, selected by the root
+`.node-version` file. There are no npm dependencies or Node runtime requirements
+for the shipped desktop app; the web app runs WebAssembly/JavaScript in the browser.
+
 ```sh
 cargo run -p thinoda-app            # start the app
 cargo xtask ci                    # fmt + clippy + all tests
+node --test crates/thinoda-web/tests/pwa.test.cjs # Node.js 24
 cargo test -p thinoda-app --features gpu-tests --lib map_shot_gpu_readback # requires a GPU adapter
 cargo xtask package               # installers in target/packages
 thinoda --convert map.xmind map.md  # CLI conversion
@@ -446,6 +460,15 @@ AppKit SDK on macOS, GCC/Clang on Linux). Job-free native Linux integration chec
 They compile the bridge without a GTK link and check missing-display errors.
 With `xvfb-run` installed they open the real GTK printer dialog and **only cancel**
 it. Rust geometry, conversion, thread checks, modal UI and EN/DE tests never send jobs.
+
+Release packaging is ordered: macOS Intel first; Windows x64/ARM64 and Linux x86
+next (in parallel); Linux ARM64 after Linux x86; Apple Silicon after Windows and
+both Linux builds. Publication requires all six targets to pass. A shared reusable
+packaging workflow preserves signing, notarization, verification and per-target
+checksums. JavaScript GitHub Actions use their Node 24 runtime versions (including
+the nested Pages uploader); shell-only composite actions do not require Node.
+The current hosted runners support these actions; self-hosted runners would need
+at least Actions Runner 2.327.1 (2.329.0 for authenticated Git in container actions).
 
 The live AI test uses `THINODA_AI_TEST_URL` (or the known LM Studio hosts) and is skipped when no
 server answers or when `THINODA_AI_SKIP_LIVE=1`.

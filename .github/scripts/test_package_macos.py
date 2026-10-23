@@ -212,16 +212,17 @@ class NotarizationTests(unittest.TestCase):
             subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE),
             subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE),
             subprocess.CompletedProcess(["xcrun"], 0, stdout="The staple action worked!\n"),
+            subprocess.CompletedProcess(["xcrun"], 0, stdout="The validate action worked!\n"),
         ]
         notarize_dmg(Path("Thinoda.dmg"))
-        self.assertEqual(command.call_count, 2)
+        self.assertEqual(command.call_count, 1)
         self.assertEqual(command.call_args_list[0].args[:3], ("xcrun", "notarytool", "submit"))
         self.assertEqual(
-            command.call_args_list[1].args,
-            ("xcrun", "stapler", "validate", "Thinoda.dmg"),
+            staple.call_args_list[-1].args,
+            (["xcrun", "stapler", "validate", "Thinoda.dmg"],),
         )
-        self.assertEqual(staple.call_count, 3)
-        for invocation in staple.call_args_list:
+        self.assertEqual(staple.call_count, 4)
+        for invocation in staple.call_args_list[:-1]:
             self.assertEqual(invocation, call(
                 ["xcrun", "stapler", "staple", "Thinoda.dmg"],
                 cwd=None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -247,16 +248,54 @@ class NotarizationTests(unittest.TestCase):
         command.return_value = '{"id": "submission", "status": "Accepted"}'
         image = Path("Thinoda.dmg")
         notarize_dmg(image)
-        submit, validate = command.call_args_list
+        command.assert_called_once()
+        submit = command.call_args
         self.assertEqual(submit.args[:4], ("xcrun", "notarytool", "submit", str(image)))
         self.assertIn("--wait", submit.args)
         self.assertIn("--output-format", submit.args)
         self.assertIn("AuthKey.p8", submit.args)
         self.assertEqual(submit.kwargs, {"timeout": 2100})
-        staple.assert_called_once_with(
-            ["xcrun", "stapler", "staple", str(image)], timeout=120,
-        )
-        self.assertEqual(validate.args, ("xcrun", "stapler", "validate", str(image)))
+        self.assertEqual(staple.call_args_list, [
+            call(["xcrun", "stapler", "staple", str(image)], timeout=120),
+            call(["xcrun", "stapler", "validate", str(image)], timeout=120),
+        ])
+
+    @patch("verify_macos_packages.time.sleep")
+    @patch("package_macos.subprocess.run")
+    @patch("package_macos.run")
+    def test_validation_network_failure_retries_only_validation(self, command, ticket, sleep):
+        command.return_value = '{"id": "submission", "status": "Accepted"}'
+        ticket.side_effect = [
+            subprocess.CompletedProcess(["xcrun"], 0, stdout="Stapled\n"),
+            subprocess.CompletedProcess(["xcrun"], 68, stdout=TICKET_FAILURE),
+            subprocess.CompletedProcess(["xcrun"], 0, stdout="Validated\n"),
+        ]
+        notarize_dmg(Path("Thinoda.dmg"))
+        command.assert_called_once()
+        self.assertEqual([entry.args[0][2] for entry in ticket.call_args_list],
+                         ["staple", "validate", "validate"])
+        sleep.assert_called_once_with(15)
+
+    @patch("verify_macos_packages.time.sleep")
+    @patch("package_macos.subprocess.run")
+    @patch("package_macos.run")
+    def test_validation_rejection_or_exhaustion_still_fails(self, command, ticket, sleep):
+        for output, attempts in [("Invalid signature", 1), (TICKET_FAILURE, 5)]:
+            with self.subTest(output=output):
+                command.reset_mock()
+                ticket.reset_mock()
+                sleep.reset_mock()
+                command.return_value = '{"id": "submission", "status": "Accepted"}'
+                ticket.side_effect = [
+                    subprocess.CompletedProcess(["xcrun"], 0, stdout="Stapled\n"),
+                    *[subprocess.CompletedProcess(["xcrun"], 68, stdout=output)
+                      for _ in range(attempts)],
+                ]
+                with self.assertRaises(subprocess.CalledProcessError):
+                    notarize_dmg(Path("Thinoda.dmg"))
+                command.assert_called_once()
+                self.assertEqual(ticket.call_count, 1 + attempts)
+                self.assertEqual(sleep.call_count, attempts - 1)
 
     @patch("package_macos.run_with_ticket_retry")
     @patch("package_macos.run")

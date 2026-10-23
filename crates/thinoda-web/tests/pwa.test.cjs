@@ -5,6 +5,12 @@ const path = require("node:path");
 const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 
+test("Node scripts use the repository's Node.js 24 runtime", () => {
+    const major = fs.readFileSync(path.resolve(root, "..", "..", ".node-version"), "utf8").trim();
+    assert.equal(major, "24");
+    assert.equal(process.versions.node.split(".")[0], major);
+});
+
 function installFixture({ standalone = false, register } = {}) {
     const listeners = {};
     const errors = [];

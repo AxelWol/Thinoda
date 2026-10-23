@@ -164,6 +164,9 @@ the raw error under **Technical details**:
   retain precedence; desktop cursor behavior is unchanged.
 
 ## Testing
+- Use Node.js 24, selected by the repository root `.node-version` file. CI reads
+  that same file through the Node-24-based `actions/setup-node` action; the PWA
+  tests reject a different Node major. No npm install is needed.
 - `node --test crates/thinoda-web/tests/pwa.test.cjs` (Node 24, repository root)
   checks real PNG dimensions/manifest scope, install/dismiss/error/standalone
   states, and offline worker cache/update isolation without installing software.
