@@ -598,6 +598,63 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**User-directed priority-1 workstream - native/web touch and trackpad gestures:**
+deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
+Silicon and supported Ubuntu desktops, plus WASM/PWA on desktop and iOS/iPadOS/
+Android browsers. Native mobile packages are not existing deployment targets.
+Keep the compact sheet-strip task below active; integrate touch scrolling there
+instead of introducing competing gesture handlers.
+
+1. Audit egui/eframe/winit and browser input delivery. Regress and fix two-finger
+   pan plus simultaneous centroid-anchored pinch zoom, zoom limits, gesture
+   ownership and cancellation. Adding/removing fingers must not jump the map,
+   reparent topics, select objects or activate controls on release. Gestures
+   begun outside the canvas, disabled UI or dialogs must not manipulate the map.
+2. Verify tap selection/activation, double-tap editing, one-finger background
+   navigation versus intentional topic movement, long-press context actions,
+   touch scrolling in sheets/Outline/menus/inspectors/dialogs, and trackpad
+   two-finger scroll/pinch. Preserve mouse/pen/keyboard behavior, text selection,
+   visible alternatives and undoable edits. Test transitions/cancellation before
+   promising inertia, long-press drag, or other platform-specific recognizers.
+3. Respect platform/system ownership: Windows press-and-hold secondary actions;
+   Apple standard tap/drag/pinch and OS text-edit/multifinger/edge gestures;
+   Ubuntu Wayland/X11 backend differences; mobile browser navigation/zoom and
+   pointer cancellation. Do not map canvas rotation or three/four-finger system
+   gestures to destructive commands. Audit web touch-action/viewport zoom and
+   accessibility rather than globally disabling page zoom or browser gestures.
+4. Add deterministic raw touch, synthesized pointer and trackpad-event tests
+   across scale/theme/layout states: simultaneous pan/pinch, limits, transitions,
+   cancellation, overlays, unchanged model/history, and normal inputs afterward.
+   Add browser touch smoke coverage and a real-device acceptance matrix for
+   Windows touch/precision trackpad, macOS trackpad, Ubuntu Wayland/X11 touch/
+   touchpad, iPhone/iPad Safari/PWA and Android Chrome/PWA. Distinguish automated
+   event tests from hardware acceptance; document every unavailable host.
+
+Platform research references (2026-10-23):
+[Apple gestures](https://developer.apple.com/design/human-interface-guidelines/gestures),
+[Windows touch interactions](https://learn.microsoft.com/en-us/windows/apps/develop/input/touch-interactions),
+[Android drag/scale](https://developer.android.com/develop/ui/views/touch-and-input/gestures/scale),
+[libinput gestures](https://wayland.freedesktop.org/libinput/doc/latest/gestures.html),
+and [web touch-action](https://developer.mozilla.org/en-US/docs/Web/CSS/touch-action).
+Apple recommends familiar gestures, non-gesture alternatives and avoiding system
+conflicts; Android stresses stable pointer identity across finger transitions.
+libinput touchpad recognition is not touchscreen recognition. Browser gesture
+ownership/cancellation and low-vision page zoom require separate acceptance.
+
+**Delivered first gesture slice:** reproduced wrong first-finger pinch anchoring,
+missing simultaneous pan, and canceled touch topic drops mutating the map.
+The shared canvas now pans one-finger empty-background drags, pans and pinches
+around the two-finger centroid simultaneously, and accepts combined trackpad
+scroll/zoom. Multitouch cancels pending topic/relationship drags and blocks
+synthetic click/drop handling until all contacts lift. Canceled touches discard
+pending drops. Ownership is limited to gestures started over an enabled canvas;
+disabled/interrupted or three-finger sequences stay canceled until release.
+Raw-touch/synthesized-pointer regressions cover transform math, limits, transitions,
+cancel, unchanged model/history and normal clicks afterward. Existing canvas,
+title-lifecycle and bottom-navigation regressions and native/WASM lint pass.
+This is not full gesture parity: real browser/device acceptance, all-surface
+touch controls, long-press/tap workflows and browser viewport zoom remain open.
+
 **User-directed priority-1 follow-up - compact sheet-strip navigation:**
 use the supplied Excel screenshot as an interaction reference, not copied artwork.
 The existing bounded horizontal sheet region is groundwork, not acceptance of

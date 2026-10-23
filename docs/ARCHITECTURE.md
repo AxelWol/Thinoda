@@ -76,6 +76,16 @@ graph TD
   keyboard activation and draw a two-logical-pixel focus outline in the semantic
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
+- **Touch navigation ownership**: `MapView` latches an owned or rejected
+  multitouch sequence until all contacts lift. Owned two-finger input scales
+  about the previous centroid, then translates to the current centroid. It
+  bypasses the wheel/zoom fallback so synthesized zoom is not applied twice.
+  Multitouch or touch cancellation discards pending topic/relationship drags and
+  suppresses click/drop actions for that sequence. Single-finger blank-background
+  dragging pans; mouse blank-background dragging retains rubber-band selection.
+  Three-or-more-finger, popup and disabled states cancel ownership rather than
+  acquiring it halfway through a gesture. No gesture creates a navigation undo
+  entry. Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

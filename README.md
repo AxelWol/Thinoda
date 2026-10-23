@@ -299,6 +299,16 @@ those system-owned controls. WinGet publishing remains paused.
   guaranteed. The original document and its save destination are retained.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
+- Touch navigation in the shared desktop/web canvas: drag empty background with
+  one finger to pan; use two fingers to pan and pinch simultaneously, keeping the
+  map point under the gesture center. Pinch uses the same 10%-500% map-zoom limits
+  as other zoom controls. Trackpad scroll and pinch can also apply together.
+  Adding a second finger cancels a pending topic/relationship drag; navigation
+  remains separate from editing until all fingers lift. Canceled touch input
+  discards pending drops rather than moving topics. Mouse background dragging
+  retains rubber-band selection; keyboard and visible navigation controls remain
+  available. Full device/gesture acceptance is still in progress; see
+  [touch and trackpad coverage](docs/WEB.md#touch-and-trackpad-coverage).
 - Hierarchy drags show a translucent visible subtree, including owned Summary trees,
   boundaries and internal relationships, while dimming its source. Valid parents
   are highlighted; self/descendant and outside-canvas drops are rejected visibly.

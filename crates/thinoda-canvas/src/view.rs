@@ -178,6 +178,8 @@ pub struct MapView {
     pub accent: Color32,
     editing: Option<EditState>,
     drag: Drag,
+    // Some(false) keeps an unowned/canceled multitouch sequence blocked until all fingers lift.
+    touch_navigation: Option<bool>,
     cache: Option<LayoutCache>,
     pending_fit: bool,
     pending_reveal: Option<TopicId>,
@@ -214,6 +216,7 @@ impl Default for MapView {
             accent: Color32::from_rgb(0x2E, 0x7C, 0xF6),
             editing: None,
             drag: Drag::None,
+            touch_navigation: None,
             cache: None,
             pending_fit: false,
             pending_reveal: None,
@@ -785,7 +788,56 @@ impl MapCanvas {
             .filter(|p| rect.contains(*p))
             .and_then(|p| layout.hit_test(view.xf().sheet(p)));
 
-        if response.hovered()
+        let (multi_touch, any_touches, touch_canceled) = ctx.input(|input| {
+            (
+                input.multi_touch(),
+                input.any_touches(),
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Cancel,
+                            ..
+                        }
+                    )
+                }),
+            )
+        });
+        if touch_canceled {
+            view.touch_navigation = Some(false);
+        }
+        if let Some(touch) = multi_touch {
+            view.touch_navigation.get_or_insert_with(|| {
+                ui.is_enabled()
+                    && response.contains_pointer()
+                    && rect.contains(touch.start_pos)
+                    && touch.num_touches == 2
+                    && !egui::Popup::is_any_open(&ctx)
+            });
+        }
+        let touch_navigation = view.touch_navigation.is_some();
+        if touch_navigation {
+            view.drag = Drag::None;
+            view.relationship_drag = None;
+            if !ui.is_enabled()
+                || egui::Popup::is_any_open(&ctx)
+                || multi_touch.is_some_and(|touch| touch.num_touches != 2)
+            {
+                view.touch_navigation = Some(false);
+            }
+            if view.touch_navigation == Some(true)
+                && let Some(touch) = multi_touch
+            {
+                view.zoom_by(
+                    touch.zoom_delta,
+                    Some(touch.center_pos - touch.translation_delta),
+                );
+                view.offset += touch.translation_delta;
+            }
+        }
+        if !touch_navigation
+            && ui.is_enabled()
+            && response.hovered()
             && view.relationship_drag.is_none()
             && !matches!(view.drag, Drag::Topics { .. })
         {
@@ -793,7 +845,8 @@ impl MapCanvas {
                 ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
             if zoom_delta != 1.0 {
                 view.zoom_by(zoom_delta, pos);
-            } else if scroll != EVec2::ZERO {
+            }
+            if scroll != EVec2::ZERO {
                 view.offset += scroll;
             }
         }
@@ -806,9 +859,9 @@ impl MapCanvas {
             view,
             &mut layout,
             &mut out.error,
-            !space,
+            !space && !touch_navigation,
         );
-        let handles = if space || matches!(view.drag, Drag::Topics { .. }) {
+        let handles = if space || touch_navigation || matches!(view.drag, Drag::Topics { .. }) {
             Vec::new()
         } else {
             add_handles(view, doc.sheet(), &layout)
@@ -840,7 +893,8 @@ impl MapCanvas {
                 .on_hover_text(&handle.label)
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
         }
-        if response.drag_started()
+        if !touch_navigation
+            && response.drag_started()
             && (!press_on_handle
                 || response.dragged_by(PointerButton::Middle)
                 || response.dragged_by(PointerButton::Secondary))
@@ -873,6 +927,8 @@ impl MapCanvas {
                         sheet: doc.active_index(),
                     };
                 }
+            } else if any_touches {
+                view.drag = Drag::Pan;
             } else {
                 view.drag = Drag::Rubber {
                     start: origin,
@@ -917,7 +973,8 @@ impl MapCanvas {
         // ---- clicks --------------------------------------------------------------------
         let editing_before_click = view.editing.is_some();
         let mods = ctx.input(|i| i.modifiers);
-        if response.clicked()
+        if !touch_navigation
+            && response.clicked()
             && !over_handle
             && !press_on_handle
             && let Some(p) = response.interact_pointer_pos()
@@ -979,7 +1036,8 @@ impl MapCanvas {
                 }
             }
         }
-        if response.double_clicked()
+        if !touch_navigation
+            && response.double_clicked()
             && !editing_before_click
             && !over_handle
             && !press_on_handle
@@ -995,7 +1053,8 @@ impl MapCanvas {
                 run(doc, view, Action::InsertFloating(sp), &mut out);
             }
         }
-        if response.secondary_clicked()
+        if !touch_navigation
+            && response.secondary_clicked()
             && !over_handle
             && let Some(p) = response.interact_pointer_pos()
         {
@@ -1061,6 +1120,10 @@ impl MapCanvas {
             && !ctx.input(|i| i.pointer.primary_down())
         {
             view.drag = Drag::None;
+        }
+
+        if !any_touches {
+            view.touch_navigation = None;
         }
 
         // ---- keyboard ------------------------------------------------------------------
@@ -1598,6 +1661,338 @@ mod tests {
                 },
                 State { doc, view },
             )
+    }
+
+    fn touch(h: &mut Harness<'_, State>, id: u64, phase: egui::TouchPhase, pos: Pos2) {
+        h.event(egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(id),
+            phase,
+            pos,
+            force: None,
+        });
+    }
+
+    #[test]
+    fn two_finger_pan_and_pinch_follow_the_centroid_without_editing() {
+        for scale in [1.0, 1.5, 2.0] {
+            for dark in [false, true] {
+                let mut h = harness();
+                h.ctx.set_pixels_per_point(scale);
+                h.ctx.set_visuals(if dark {
+                    egui::Visuals::dark()
+                } else {
+                    egui::Visuals::light()
+                });
+                h.run_steps(3);
+                let before = h.state().doc.workbook().clone();
+                let selection = h.state().view.selection.clone();
+                let center = h.state().view.canvas_rect.center() + vec2(80.0, 50.0);
+                let sheet_point = h.state().view.xf().sheet(center);
+                let zoom = h.state().view.zoom;
+                h.event(egui::Event::PointerMoved(center - vec2(50.0, 0.0)));
+                touch(&mut h, 1, egui::TouchPhase::Start, center - vec2(50.0, 0.0));
+                touch(&mut h, 2, egui::TouchPhase::Start, center + vec2(50.0, 0.0));
+                h.run_steps(1);
+                let translation = vec2(30.0, 20.0);
+                touch(
+                    &mut h,
+                    1,
+                    egui::TouchPhase::Move,
+                    center + translation - vec2(75.0, 0.0),
+                );
+                touch(
+                    &mut h,
+                    2,
+                    egui::TouchPhase::Move,
+                    center + translation + vec2(75.0, 0.0),
+                );
+                h.event(egui::Event::Zoom(1.5));
+                h.run_steps(1);
+                assert!((h.state().view.zoom - zoom * 1.5).abs() < 0.001);
+                let after = h.state().view.xf().sheet(center + translation);
+                assert!((after.x - sheet_point.x).abs() < 0.01);
+                assert!((after.y - sheet_point.y).abs() < 0.01);
+                let offset = h.state().view.offset;
+                touch(
+                    &mut h,
+                    1,
+                    egui::TouchPhase::Move,
+                    center + translation * 2.0 - vec2(75.0, 0.0),
+                );
+                touch(
+                    &mut h,
+                    2,
+                    egui::TouchPhase::Move,
+                    center + translation * 2.0 + vec2(75.0, 0.0),
+                );
+                h.run_steps(1);
+                assert!((h.state().view.offset - offset - translation).length() < 0.01);
+                assert_eq!(h.state().doc.workbook(), &before);
+                assert_eq!(h.state().view.selection, selection);
+            }
+        }
+    }
+
+    #[test]
+    fn single_finger_background_drag_pans_instead_of_rubber_band_selection() {
+        let mut h = harness();
+        h.run_steps(3);
+        let before = h.state().doc.workbook().clone();
+        let selection = h.state().view.selection.clone();
+        let p = h.state().view.canvas_rect.left_top() + vec2(40.0, 40.0);
+        h.event(egui::Event::PointerMoved(p));
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        touch(&mut h, 1, egui::TouchPhase::Start, p);
+        h.run_steps(1);
+        h.event(egui::Event::PointerMoved(p + vec2(30.0, 20.0)));
+        touch(&mut h, 1, egui::TouchPhase::Move, p + vec2(30.0, 20.0));
+        h.run_steps(1);
+        assert!(matches!(h.state().view.drag, Drag::Pan));
+        let offset = h.state().view.offset;
+        h.event(egui::Event::PointerMoved(p + vec2(60.0, 40.0)));
+        touch(&mut h, 1, egui::TouchPhase::Move, p + vec2(60.0, 40.0));
+        h.run_steps(1);
+        assert!((h.state().view.offset - offset - vec2(30.0, 20.0)).length() < 0.01);
+        touch(&mut h, 1, egui::TouchPhase::End, p + vec2(60.0, 40.0));
+        h.event(egui::Event::PointerButton {
+            pos: p + vec2(60.0, 40.0),
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(3);
+        assert_eq!(h.state().view.selection, selection);
+        assert_eq!(h.state().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn trackpad_pan_and_zoom_apply_together_without_double_scaling_touch() {
+        let mut h = harness();
+        h.run_steps(3);
+        let anchor = h.state().view.canvas_rect.center();
+        let zoom = h.state().view.zoom;
+        let offset = h.state().view.offset;
+        h.event(egui::Event::PointerMoved(anchor));
+        h.event(egui::Event::Zoom(1.5));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(30.0, 20.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+        let expected_scroll = h.ctx.input(|input| input.smooth_scroll_delta);
+        assert!(expected_scroll.length() > 0.0);
+        assert!((h.state().view.zoom - zoom * 1.5).abs() < 0.001);
+        assert!((h.state().view.offset - offset * 1.5 - expected_scroll).length() < 0.01);
+    }
+
+    #[test]
+    fn multitouch_release_and_cancel_do_not_turn_into_clicks_or_topic_drags() {
+        for canceled in [false, true] {
+            let mut h = harness();
+            h.run_steps(3);
+            let before = h.state().doc.workbook().clone();
+            let state = h.state().doc.state_id();
+            let selection = h.state().view.selection.clone();
+            let p = h.state().view.canvas_rect.left_top() + vec2(60.0, 60.0);
+            h.event(egui::Event::PointerMoved(p));
+            h.event(egui::Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            touch(&mut h, 1, egui::TouchPhase::Start, p);
+            h.run_steps(1);
+            touch(&mut h, 2, egui::TouchPhase::Start, p + vec2(80.0, 0.0));
+            h.run_steps(1);
+            let offset = h.state().view.offset;
+            touch(&mut h, 2, egui::TouchPhase::End, p + vec2(80.0, 0.0));
+            h.run_steps(1);
+            assert_eq!(h.state().view.offset, offset);
+            h.event(egui::Event::PointerMoved(p + vec2(100.0, 80.0)));
+            touch(&mut h, 1, egui::TouchPhase::Move, p + vec2(100.0, 80.0));
+            h.run_steps(1);
+            assert!(matches!(h.state().view.drag, Drag::None));
+            let end = if canceled {
+                egui::TouchPhase::Cancel
+            } else {
+                egui::TouchPhase::End
+            };
+            touch(&mut h, 1, end, p + vec2(100.0, 80.0));
+            h.event(egui::Event::PointerButton {
+                pos: p + vec2(100.0, 80.0),
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(3);
+            assert_eq!(h.state().view.selection, selection);
+            assert_eq!(h.state().doc.workbook(), &before);
+            assert_eq!(h.state().doc.state_id(), state);
+            assert_eq!(h.state().view.touch_navigation, None);
+            click_at(&mut h, p, PointerButton::Primary);
+            assert!(
+                h.state().view.selection.is_empty(),
+                "Ordinary clicks must resume"
+            );
+        }
+    }
+
+    #[test]
+    fn canceled_touch_topic_drag_never_applies_the_pending_drop() {
+        let mut h = harness();
+        let root = h.state().doc.sheet().root;
+        let mut child = root;
+        h.state_mut()
+            .doc
+            .edit_sheet("Seed", |sheet| {
+                child = sheet.insert_child(root, "Child")?;
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(3);
+        let before = h.state().doc.workbook().clone();
+        let revision = h.state().doc.state_id();
+        let layout = {
+            let ctx = h.ctx.clone();
+            let state = h.state_mut();
+            state.view.layout_with(&ctx, &state.doc)
+        };
+        let p = h.state().view.xf().pos(layout.topics[&child].rect.center());
+        h.event(egui::Event::PointerMoved(p));
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        touch(&mut h, 1, egui::TouchPhase::Start, p);
+        h.run_steps(1);
+        let end = p + vec2(70.0, 60.0);
+        h.event(egui::Event::PointerMoved(end));
+        touch(&mut h, 1, egui::TouchPhase::Move, end);
+        h.run_steps(1);
+        assert!(matches!(h.state().view.drag, Drag::Topics { .. }));
+        touch(&mut h, 1, egui::TouchPhase::Cancel, end);
+        h.event(egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(3);
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert_eq!(h.state().doc.state_id(), revision);
+        assert!(matches!(h.state().view.drag, Drag::None));
+    }
+
+    #[test]
+    fn multitouch_respects_canvas_ownership_disabled_ui_and_zoom_limits() {
+        for outside in [false, true] {
+            for disabled in [false, true] {
+                let mut h = Harness::builder()
+                    .with_size(vec2(900.0, 600.0))
+                    .build_ui_state(
+                        move |ui, state: &mut State| {
+                            ui.add_enabled_ui(!disabled, |ui| {
+                                MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                            });
+                        },
+                        State {
+                            doc: Document::new(Workbook::default()),
+                            view: MapView::default(),
+                        },
+                    );
+                h.run_steps(3);
+                let center = if outside {
+                    pos2(-100.0, -100.0)
+                } else {
+                    h.state().view.canvas_rect.center()
+                };
+                let zoom = h.state().view.zoom;
+                let offset = h.state().view.offset;
+                h.event(egui::Event::PointerMoved(center));
+                touch(&mut h, 1, egui::TouchPhase::Start, center - vec2(1.0, 0.0));
+                touch(&mut h, 2, egui::TouchPhase::Start, center + vec2(1.0, 0.0));
+                h.run_steps(1);
+                let owned = !outside && !disabled;
+                assert_eq!(h.state().view.touch_navigation, Some(owned));
+                touch(&mut h, 1, egui::TouchPhase::Move, center - vec2(100.0, 0.0));
+                touch(&mut h, 2, egui::TouchPhase::Move, center + vec2(100.0, 0.0));
+                h.run_steps(1);
+                if owned {
+                    assert_eq!(h.state().view.zoom, MAX_ZOOM);
+                } else {
+                    assert_eq!(h.state().view.zoom, zoom);
+                    assert_eq!(h.state().view.offset, offset);
+                }
+                touch(&mut h, 1, egui::TouchPhase::Move, center - vec2(0.1, 0.0));
+                touch(&mut h, 2, egui::TouchPhase::Move, center + vec2(0.1, 0.0));
+                h.run_steps(1);
+                if owned {
+                    assert_eq!(h.state().view.zoom, MIN_ZOOM);
+                }
+                let offset = h.state().view.offset;
+                touch(&mut h, 3, egui::TouchPhase::Start, center);
+                h.run_steps(1);
+                assert_eq!(
+                    h.state().view.offset,
+                    offset,
+                    "Finger-count changes must not jump"
+                );
+                assert_eq!(h.state().view.touch_navigation, Some(false));
+            }
+        }
+    }
+
+    #[test]
+    fn disabling_canvas_during_multitouch_cancels_ownership_until_all_fingers_lift() {
+        let enabled = std::rc::Rc::new(std::cell::Cell::new(true));
+        let draw_enabled = enabled.clone();
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                move |ui, state: &mut State| {
+                    ui.add_enabled_ui(draw_enabled.get(), |ui| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    });
+                },
+                State {
+                    doc: Document::new(Workbook::default()),
+                    view: MapView::default(),
+                },
+            );
+        h.run_steps(3);
+        let center = h.state().view.canvas_rect.center();
+        h.event(egui::Event::PointerMoved(center));
+        touch(&mut h, 1, egui::TouchPhase::Start, center - vec2(40.0, 0.0));
+        touch(&mut h, 2, egui::TouchPhase::Start, center + vec2(40.0, 0.0));
+        h.run_steps(1);
+        assert_eq!(h.state().view.touch_navigation, Some(true));
+        let offset = h.state().view.offset;
+        let zoom = h.state().view.zoom;
+        enabled.set(false);
+        h.run_steps(1);
+        enabled.set(true);
+        touch(&mut h, 1, egui::TouchPhase::Move, center - vec2(80.0, 0.0));
+        touch(&mut h, 2, egui::TouchPhase::Move, center + vec2(80.0, 0.0));
+        h.run_steps(1);
+        assert_eq!(h.state().view.touch_navigation, Some(false));
+        assert_eq!(h.state().view.zoom, zoom);
+        assert_eq!(h.state().view.offset, offset);
+        touch(&mut h, 1, egui::TouchPhase::End, center);
+        touch(&mut h, 2, egui::TouchPhase::End, center);
+        h.run_steps(1);
+        assert_eq!(h.state().view.touch_navigation, None);
     }
 
     #[test]

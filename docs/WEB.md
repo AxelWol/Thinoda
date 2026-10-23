@@ -62,6 +62,38 @@ features work differently:
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 
+## Touch and trackpad coverage
+
+The shared canvas supports one-finger dragging on empty background to pan, and
+two-finger pan plus simultaneous pinch zoom. The map follows the fingers' center
+instead of zooming around the first finger. Zoom stays within 10%-500%.
+Mouse background drags still select a rectangle; dragging a topic is an edit.
+Adding a second finger cancels a pending edit drag and keeps the rest of that
+touch sequence in navigation mode until every finger lifts. Touch cancellation
+discards pending topic/relationship drops. Starting outside the canvas or in
+disabled UI does not acquire map navigation; disabling it during a gesture
+requires lifting all fingers before starting again. Three-or-more-finger
+sequences do not acquire map navigation, avoiding app mappings for system
+multifinger gestures.
+
+Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
+varies; these shared input behaviors are not a claim of full hardware support.
+Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
+
+| Acceptance surface | Current evidence / remaining work |
+|---|---|
+| Shared native/WASM canvas | Raw touch and synthesized-pointer tests cover pan/pinch math, zoom limits, finger changes, cancellation, outside/disabled ownership, unchanged maps/history, normal clicks afterward and trackpad scroll plus zoom. |
+| Windows touch / precision trackpad | Shared native code checked on Windows; real touchscreen/trackpad, press-and-hold context actions and pen coexistence remain open. |
+| macOS trackpad | Native scroll/zoom event path preserved; real-device natural scroll, pinch, momentum and system-gesture acceptance remain open. |
+| Ubuntu Wayland / X11 | Separate touch/touchpad/backend runtime acceptance remains open; libinput touchpad support alone does not prove touchscreen behavior. |
+| iPhone/iPad Safari and Android Chrome, browser/PWA | Shared WASM code compiles; real browser gesture delivery, pointer cancellation, text input, orientation and installed-PWA behavior remain open. No native iOS/Android package is implied. |
+| All UI surfaces and accessibility | Tap/double-tap/long-press, topic moves, sheet/Outline/menu/inspector scrolling, touch targets and AT/OS-reserved gestures need the full acceptance matrix in PLAN. |
+| Browser zoom ownership | Existing restrictive viewport metadata and eframe touch-event default prevention still need a browser-tested accessibility/gesture-ownership change. Map pinch is not page zoom or proof of low-vision acceptance. |
+
+See [the gesture workstream](PLAN.md#immediate-next-work) for official platform
+references and remaining tasks. Do not disable system accessibility gestures or
+add custom three/four-finger shortcuts to work around missing platform delivery.
+
 ## Install Thinoda as an app (PWA)
 
 The web build includes a web app manifest, standard 192/512 px icons, an opaque

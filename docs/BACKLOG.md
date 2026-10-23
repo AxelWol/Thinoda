@@ -78,6 +78,15 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
 
 ## User-directed priority-1 navigation follow-up
 
+- Deliver native/web touchscreen and trackpad gesture parity in tested slices:
+  two-finger pan/simultaneous pinch first, then tap/double-tap, background/topic
+  drag ownership, long-press context actions and touch scrolling throughout the
+  UI. Cover finger transitions/cancel, overlays, zoom limits and unchanged model/
+  history during navigation. Respect OS/browser text, accessibility, edge and
+  multifinger gestures; preserve keyboard/mouse/pen alternatives. Native targets
+  remain desktop; iOS/iPadOS/Android apply to WASM/PWA. See PLAN's vendor research,
+  backend/browser audit and real-device acceptance matrix. Synthetic events alone
+  do not establish full device support.
 - Add Excel-inspired fixed previous/next scroll arrows to the bottom sheet-name
   strip, building on its existing horizontal-scroll region. Browsing must not
   select another sheet. Keep New Sheet and status/zoom controls outside clipped
@@ -88,6 +97,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   reference; the reported bleed remains open until reproduced and verified.
 
 ## Recently completed
+- R1 first gesture slice: one-finger background pan, centroid-anchored simultaneous
+  two-finger pan/pinch and combined trackpad scroll/zoom. Pending drags cancel on
+  multitouch/canceled touch instead of applying drops. Finger transitions and
+  outside/disabled ownership have deterministic tests; full platform/all-surface
+  gesture parity remains in the priority-1 workstream above.
 - R0/R1 Rename Sheet input safety: IME candidate keys cannot apply provisional
   names or cancel the draft. Final CJK commit, ordinary Enter/Undo, dismissal and
   normal Tab-to-OK/Cancel/Escape are covered in Map/Outline. Opening-only focus
