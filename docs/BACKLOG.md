@@ -77,6 +77,10 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   validation to the full 13-locale matrix.
 
 ## Recently completed
+- R1 Settings control focus: shared segmented tabs and toggle switches show a
+  theme-text-colored keyboard-focus outline. Disabled tabs expose their actual
+  accessibility state. Both themes, Enter/Space, single activation and disabled
+  controls are covered; native screen-reader/browser acceptance remains open.
 - R11 user-directed runtime/distribution changes: Node.js 24 is selected by
   `.node-version` for scripts and web CI; JavaScript actions (including nested
   Pages upload) use Node-24 runtimes without forcing older actions onto Node 24.
@@ -85,8 +89,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   retains strict signing/notarization and gates publication on all six targets.
   Final DMG validation now uses the existing bounded retry for confirmed
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
-  Workflow/Node/artifact/retry regressions are in place; hosted release execution
-  and real Ubuntu ARM64 installation remain open.
+  Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
+  the authorized v0.9.0 release and website deployment are running. Completion
+  and real Ubuntu ARM64 installation remain unverified.
 - R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
   focus outline in both themes and selected states. Tab/Enter/Space, disabled
   controls and keyboard Undo/Redo after focused Notes Save are covered. This is

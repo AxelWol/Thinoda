@@ -181,7 +181,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         );
         let resp = ui.interact(r, outer_resp.id.with(("seg", i)), Sense::click());
         let selected = *value == *opt;
-        resp.widget_info(|| WidgetInfo::selected(Role::Tab, true, selected, *label));
+        resp.widget_info(|| WidgetInfo::selected(Role::Tab, ui.is_enabled(), selected, *label));
         if selected {
             ui.painter()
                 .rect_filled(r, CornerRadius::same(Tokens::RADIUS_M - 2), p.surface);
@@ -196,6 +196,14 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
                 r,
                 CornerRadius::same(Tokens::RADIUS_M - 2),
                 p.border.gamma_multiply(0.5),
+            );
+        }
+        if resp.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::same(Tokens::RADIUS_M - 2),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
             );
         }
         ui.painter().text(
@@ -233,6 +241,14 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         let x = egui::lerp((rect.left() + r)..=(rect.right() - r), t);
         ui.painter()
             .circle_filled(pos2(x, rect.center().y), r - 2.0, Color32::WHITE);
+        if resp.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(r as u8),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
+            );
+        }
     }
     resp
 }
@@ -530,6 +546,76 @@ mod tests {
         harness.get_by_label("Rainbow").click();
         harness.run();
         assert!(*harness.state());
+    }
+
+    #[test]
+    fn settings_controls_expose_focus_and_disabled_state() {
+        use egui_kittest::kittest::NodeT;
+        for switch in [false, true] {
+            for dark in [false, true] {
+                for key in [egui::Key::Enter, egui::Key::Space] {
+                    let mut h = Harness::new_ui_state(
+                        move |ui, state: &mut (bool, bool, Tab, usize)| {
+                            ui.ctx().set_visuals(if dark {
+                                egui::Visuals::dark()
+                            } else {
+                                egui::Visuals::light()
+                            });
+                            ui.add_enabled_ui(state.0, |ui| {
+                                let changed = if switch {
+                                    toggle(ui, &mut state.1, "Rainbow").changed()
+                                } else {
+                                    segmented(
+                                        ui,
+                                        &mut state.2,
+                                        &[(Tab::Style, "Style"), (Tab::Map, "Map")],
+                                    )
+                                };
+                                state.3 += usize::from(changed);
+                            });
+                        },
+                        (true, false, Tab::Style, 0),
+                    );
+                    h.run_steps(2);
+                    let (role, label) = if switch {
+                        (Role::Switch, "Rainbow")
+                    } else {
+                        (Role::Tab, "Map")
+                    };
+                    h.get_by_role_and_label(role, label).focus();
+                    h.run_steps(2);
+                    let node = h.get_by_role_and_label(role, label);
+                    assert!(node.is_focused());
+                    let rect = node.rect();
+                    assert!(
+                        h.output().shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Rect(shape)
+                            if shape.rect == rect && shape.stroke.width >= 2.0
+                                && shape.stroke.color != Color32::TRANSPARENT)
+                        }),
+                        "Settings controls need a visible focus indicator"
+                    );
+                    h.key_press(key);
+                    h.run_steps(3);
+                    assert_eq!(h.state().3, 1);
+                    if switch {
+                        assert!(h.state().1);
+                    } else {
+                        assert_eq!(h.state().2, Tab::Map);
+                    }
+                    h.state_mut().0 = false;
+                    h.run_steps(2);
+                    assert!(
+                        h.get_by_role_and_label(role, label)
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                    h.key_press(key);
+                    h.run_steps(2);
+                    assert_eq!(h.state().3, 1);
+                }
+            }
+        }
     }
 
     #[test]

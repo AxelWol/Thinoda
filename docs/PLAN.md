@@ -623,9 +623,19 @@ That final validation call had bypassed the existing bounded ticket retry helper
 it now retries only the recognized Apple CloudKit network failure. It does not
 resubmit accepted notarization, skip validation or retry invalid signatures.
 Regressions cover validation recovery/exhaustion, six distinct artifact sets,
-dependency ordering and Node runtime contracts. Hosted builds, real Linux ARM64
-installation and successful Apple service validation remain acceptance gates;
-no new release or deployment has been triggered locally.
+dependency ordering and Node runtime contracts. PRs #66 and #67 are merged after
+passing checks. The authorized v0.9.0 native release (run `39917340014`) and
+website deployment (run `39917339881`) are in progress; completion is not yet
+verified. Real Linux ARM64 installation and successful Apple service validation
+remain acceptance gates.
+
+**Delivered priority-1 follow-up, 2026-10-23 - Settings control focus:**
+shared segmented tabs and toggle switches now paint a two-logical-pixel,
+theme-text-colored keyboard-focus outline. Disabled segmented tabs report their
+disabled state to accessibility clients. Both themes, Enter/Space activation,
+single state changes and disabled controls have regression coverage, alongside
+Settings/sidebar integration checks. This does not replace native screen-reader
+or browser keyboard acceptance.
 
 **Delivered priority-1 follow-up, 2026-10-23 - toolbar keyboard focus:**
 shared icon and captioned toolbar buttons now paint a two-logical-pixel,
