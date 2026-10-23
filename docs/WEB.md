@@ -76,18 +76,23 @@ requires lifting all fingers before starting again. Three-or-more-finger
 sequences do not acquire map navigation, avoiding app mappings for system
 multifinger gestures.
 
+Tap a topic to select it, double-tap to edit, or hold one finger for its context
+actions. Two/three-finger holds do not open context menus or mutate maps, including
+after returning to one finger until every contact lifts. This uses egui's standard
+long-touch recognizer, not a separate platform-specific timer.
+
 Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
 varies; these shared input behaviors are not a claim of full hardware support.
 Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
 
 | Acceptance surface | Current evidence / remaining work |
 |---|---|
-| Shared native/WASM canvas | Raw touch and synthesized-pointer tests cover pan/pinch math, zoom limits, finger changes, cancellation, outside/disabled ownership, unchanged maps/history, normal clicks afterward and trackpad scroll plus zoom. |
+| Shared native/WASM canvas | Raw touch and synthesized-pointer tests cover pan/pinch math, zoom limits, finger changes, cancellation, outside/disabled ownership, unchanged maps/history, normal clicks afterward and trackpad scroll plus zoom. Tap selection, double-tap editing and single-touch context holds are covered; canvas and full-app regressions reject two/three-finger context holds without changing map history. |
 | Windows touch / precision trackpad | Shared native code checked on Windows; real touchscreen/trackpad, press-and-hold context actions and pen coexistence remain open. |
 | macOS trackpad | Native scroll/zoom event path preserved; real-device natural scroll, pinch, momentum and system-gesture acceptance remain open. |
 | Ubuntu Wayland / X11 | Separate touch/touchpad/backend runtime acceptance remains open; libinput touchpad support alone does not prove touchscreen behavior. |
 | iPhone/iPad Safari and Android Chrome, browser/PWA | Shared WASM code compiles; real browser gesture delivery, pointer cancellation, text input, orientation and installed-PWA behavior remain open. No native iOS/Android package is implied. |
-| All UI surfaces and accessibility | Tap/double-tap/long-press, topic moves, sheet/Outline/menu/inspector scrolling, touch targets and AT/OS-reserved gestures need the full acceptance matrix in PLAN. |
+| All UI surfaces and accessibility | Shared canvas tap/double-tap/hold and sheet swipes have automated coverage. Device-delivered gestures, topic moves, Outline/menu/inspector scrolling, touch targets and AT/OS-reserved gestures still need the full acceptance matrix in PLAN. |
 | Browser zoom ownership | Existing restrictive viewport metadata and eframe touch-event default prevention still need a browser-tested accessibility/gesture-ownership change. Map pinch is not page zoom or proof of low-vision acceptance. |
 
 See [the gesture workstream](PLAN.md#immediate-next-work) for official platform

@@ -608,6 +608,7 @@ impl MapView {
 /// Result of showing the canvas for one frame.
 pub struct CanvasOutput {
     pub response: Response,
+    context_menu_allowed: bool,
     /// Hyperlink the user clicked (host decides how to open it).
     pub open_link: Option<String>,
     /// Topic the context menu refers to (if the user right-clicked a topic).
@@ -615,6 +616,17 @@ pub struct CanvasOutput {
     pub selection_changed: bool,
     /// Last edit error (e.g. trying to delete the central topic).
     pub error: Option<thinoda_core::EditError>,
+}
+
+impl CanvasOutput {
+    /// Show context actions without interpreting canceled or multitouch holds as clicks.
+    pub fn context_menu(&self, content: impl FnOnce(&mut Ui)) -> Option<egui::InnerResponse<()>> {
+        let mut popup = egui::Popup::context_menu(&self.response);
+        if !self.context_menu_allowed {
+            popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(false)));
+        }
+        popup.show(content)
+    }
 }
 
 /// The canvas widget.
@@ -736,6 +748,7 @@ impl MapCanvas {
         let before_object = view.selected_object;
         let mut out = CanvasOutput {
             response: response.clone(),
+            context_menu_allowed: true,
             open_link: None,
             context_topic: None,
             selection_changed: false,
@@ -816,6 +829,7 @@ impl MapCanvas {
             });
         }
         let touch_navigation = view.touch_navigation.is_some();
+        out.context_menu_allowed = !touch_navigation && ui.is_enabled();
         if touch_navigation {
             view.drag = Drag::None;
             view.relationship_drag = None;
@@ -1671,6 +1685,123 @@ mod tests {
             pos,
             force: None,
         });
+    }
+
+    fn touch_pointer(h: &mut Harness<'_, State>, phase: egui::TouchPhase, pos: Pos2) {
+        h.event(egui::Event::PointerMoved(pos));
+        touch(h, 1, phase, pos);
+        if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::End) {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: phase == egui::TouchPhase::Start,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.run_steps(1);
+    }
+
+    fn context_harness() -> Harness<'static, State> {
+        Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui_state(
+                |ui, s: &mut State| {
+                    let out = MapCanvas::show(ui, &mut s.doc, &mut s.view);
+                    assert!(out.error.is_none(), "{:?}", out.error);
+                    out.context_menu(|ui| {
+                        ui.label("Topic context actions");
+                    });
+                },
+                State {
+                    doc: Document::new(Workbook::default()),
+                    view: MapView::default(),
+                },
+            )
+    }
+
+    #[test]
+    fn touch_tap_selects_and_double_tap_edits_without_changing_history() {
+        let mut h = context_harness();
+        h.run_steps(3);
+        let root = h.state().doc.sheet().root;
+        let before = h.state().doc.workbook().clone();
+        let revision = h.state().doc.state_id();
+        h.state_mut().view.selection.clear();
+        let layout = {
+            let ctx = h.ctx.clone();
+            let s = h.state_mut();
+            s.view.layout_with(&ctx, &s.doc)
+        };
+        let p = h.state().view.xf().pos(layout.topics[&root].rect.center());
+        touch_pointer(&mut h, egui::TouchPhase::Start, p);
+        touch_pointer(&mut h, egui::TouchPhase::End, p);
+        assert_eq!(h.state().view.selection, vec![root]);
+        assert_eq!(h.state().view.editing_topic(), None);
+        touch_pointer(&mut h, egui::TouchPhase::Start, p);
+        touch_pointer(&mut h, egui::TouchPhase::End, p);
+        assert_eq!(h.state().view.editing_topic(), Some(root));
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert_eq!(h.state().doc.state_id(), revision);
+    }
+
+    #[test]
+    fn touch_hold_opens_context_without_starting_a_topic_drag() {
+        let mut h = context_harness();
+        h.run_steps(3);
+        let root = h.state().doc.sheet().root;
+        let layout = {
+            let ctx = h.ctx.clone();
+            let s = h.state_mut();
+            s.view.layout_with(&ctx, &s.doc)
+        };
+        let p = h.state().view.xf().pos(layout.topics[&root].rect.center());
+        let before = h.state().doc.workbook().clone();
+        touch_pointer(&mut h, egui::TouchPhase::Start, p);
+        h.run_steps(60);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        assert_eq!(h.state().view.selection, vec![root]);
+        assert!(matches!(h.state().view.drag, Drag::None));
+        touch_pointer(&mut h, egui::TouchPhase::End, p);
+        assert_eq!(h.state().doc.workbook(), &before);
+    }
+
+    #[test]
+    fn two_finger_hold_never_opens_a_context_menu() {
+        for contacts in [2, 3] {
+            let mut h = context_harness();
+            h.run_steps(3);
+            let p = h.state().view.canvas_rect.center();
+            let before = h.state().doc.workbook().clone();
+            let revision = h.state().doc.state_id();
+            touch_pointer(&mut h, egui::TouchPhase::Start, p);
+            for id in 2..=contacts {
+                touch(
+                    &mut h,
+                    id,
+                    egui::TouchPhase::Start,
+                    p + vec2(60.0 * id as f32, 0.0),
+                );
+            }
+            h.run_steps(60);
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+            for id in 2..=contacts {
+                touch(
+                    &mut h,
+                    id,
+                    egui::TouchPhase::End,
+                    p + vec2(60.0 * id as f32, 0.0),
+                );
+            }
+            h.run_steps(60);
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+            touch_pointer(&mut h, egui::TouchPhase::End, p);
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+            assert_eq!(h.state().doc.workbook(), &before);
+            assert_eq!(h.state().doc.state_id(), revision);
+            click_at(&mut h, p, PointerButton::Secondary);
+            assert!(egui::Popup::is_any_open(&h.ctx));
+        }
     }
 
     #[test]

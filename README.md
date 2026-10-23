@@ -307,7 +307,10 @@ those system-owned controls. WinGet publishing remains paused.
   remains separate from editing until all fingers lift. Canceled touch input
   discards pending drops rather than moving topics. Mouse background dragging
   retains rubber-band selection; keyboard and visible navigation controls remain
-  available. Full device/gesture acceptance is still in progress; see
+  available. Tap a topic to select it, double-tap to edit its title, or hold one
+  finger for context actions. Multitouch holds cannot open context menus, even
+  after returning to one finger until all contacts lift.
+  Full device/gesture acceptance is still in progress; see
   [touch and trackpad coverage](docs/WEB.md#touch-and-trackpad-coverage).
 - Hierarchy drags show a translucent visible subtree, including owned Summary trees,
   boundaries and internal relationships, while dimming its source. Valid parents

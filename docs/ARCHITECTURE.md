@@ -85,7 +85,11 @@ graph TD
   dragging pans; mouse blank-background dragging retains rubber-band selection.
   Three-or-more-finger, popup and disabled states cancel ownership rather than
   acquiring it halfway through a gesture. No gesture creates a navigation undo
-  entry. Backend/browser and real-device acceptance is tracked in PLAN/WEB.
+  entry. Hosts use `CanvasOutput::context_menu`, not the raw response's menu:
+  it applies the same ownership guard to egui's synthesized long-touch secondary
+  clicks and closes menus for suppressed sequences. Single-touch holds retain
+  the upstream recognizer; no duplicate timer or platform gesture is installed.
+  Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

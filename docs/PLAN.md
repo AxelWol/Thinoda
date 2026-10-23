@@ -652,8 +652,17 @@ disabled/interrupted or three-finger sequences stay canceled until release.
 Raw-touch/synthesized-pointer regressions cover transform math, limits, transitions,
 cancel, unchanged model/history and normal clicks afterward. Existing canvas,
 title-lifecycle and bottom-navigation regressions and native/WASM lint pass.
+**Delivered context-gesture safety slice:** deterministic taps select topics and
+double taps start title editing without changing history; single-finger holds
+open context actions without a pending topic drag. Reproduced an egui long-touch
+secondary click opening the host context menu during a two-finger hold despite
+the canvas rejecting that action. `CanvasOutput::context_menu` now applies the
+same ownership/cancellation gate as canvas editing. Two/three-finger holds stay
+suppressed through contact removal until release; ordinary secondary clicks work
+afterward. Shared-canvas and actual app-menu regressions cover unchanged content/
+history and release without edits. No custom long-press timer was introduced.
 This is not full gesture parity: real browser/device acceptance, all-surface
-touch controls, long-press/tap workflows and browser viewport zoom remain open.
+touch controls and browser viewport zoom remain open.
 
 **Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
 the supplied Excel screenshot informed fixed previous/next scroll arrows outside

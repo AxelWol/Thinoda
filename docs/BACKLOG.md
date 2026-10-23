@@ -88,6 +88,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- R1 context gesture safety: shared and full-app tests cover tap selection,
+  double-tap title editing and single-finger context holds. Multitouch holds no
+  longer leak synthesized secondary clicks into the host context menu; two/three
+  contacts stay suppressed until full release without changing map history.
+  Ordinary right-click works afterward. Hardware/browser acceptance remains open.
 - R1 Excel-inspired sheet browsing: fixed left/right scroll arrows, disabled end
   states and pinned New Sheet surround the clipped names. Arrows/touch/mouse drag
   browse without switching sheets or editing maps. Region clipping and the

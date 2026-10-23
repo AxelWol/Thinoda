@@ -1209,15 +1209,15 @@ impl ThinodaApp {
         if let Some(text) = d.view.clipboard_out.take() {
             ctx.copy_text(text);
         }
-        if let Some(link) = out.open_link {
-            self.open_link(&link);
+        if let Some(link) = &out.open_link {
+            self.open_link(link);
         }
-        if let Some(error) = out.error {
+        if let Some(error) = &out.error {
             self.toasts
                 .warning(format!("{}: {error}", t("Not possible here")));
         }
         let mut cmd = None;
-        out.response.context_menu(|ui| {
+        out.context_menu(|ui| {
             scroll_menu(ui, |ui| {
                 if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
                     if let Some(command) = self.symbol_instance(ui, id, index, true) {
