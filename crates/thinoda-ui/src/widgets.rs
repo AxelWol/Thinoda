@@ -6,6 +6,45 @@ use egui::{
     StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
+/// Reject click activation through canceled/multitouch sequences and their pointer release.
+/// Call each frame, including when the guarded controls are hidden.
+pub fn touch_activation_allowed(ctx: &egui::Context) -> bool {
+    let (multi_touch, touching, primary_down, canceled) = ctx.input(|input| {
+        (
+            input.multi_touch().is_some(),
+            input.any_touches(),
+            input.pointer.primary_down(),
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Touch {
+                        phase: egui::TouchPhase::Cancel,
+                        ..
+                    }
+                )
+            }),
+        )
+    });
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        let id = egui::Id::unique("touch_activation_guard");
+        let previous = data.get_temp::<(u64, bool, bool)>(id);
+        if let Some((previous_frame, _, allowed)) = previous
+            && previous_frame == frame
+        {
+            return allowed;
+        }
+        let suppressed =
+            previous.is_some_and(|(_, suppressed, _)| suppressed) || multi_touch || canceled;
+        // Backends can deliver the synthesized pointer release after the final touch.
+        data.insert_temp(
+            id,
+            (frame, suppressed && (touching || primary_down), !suppressed),
+        );
+        !suppressed
+    })
+}
+
 /// Selectable preview with a wrapped caption, accessible name and keyboard activation.
 pub fn preview_card(
     ui: &mut Ui,
@@ -15,6 +54,7 @@ pub fn preview_card(
     preview_height: f32,
     draw: impl FnOnce(&Ui, egui::Rect),
 ) -> (Response, bool) {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let galley = ui.painter().layout(
         label.to_string(),
         FontId::proportional(11.0),
@@ -61,7 +101,7 @@ pub fn preview_card(
             input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
         });
-    let activated = ui.is_enabled() && (response.clicked() || keyboard);
+    let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
     (response.on_hover_text(label), activated)
 }
 
@@ -165,6 +205,7 @@ pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Re
 
 /// Segmented control (e.g. Format panel tabs "Style | Map"). Returns true when changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let p = Palette::of_ui(ui);
     let mut changed = false;
     let height = 28.0;
@@ -181,7 +222,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         );
         let resp = ui.interact(r, outer_resp.id.with(("seg", i)), Sense::click());
         let selected = *value == *opt;
-        resp.widget_info(|| WidgetInfo::selected(Role::Tab, true, selected, *label));
+        resp.widget_info(|| WidgetInfo::selected(Role::Tab, ui.is_enabled(), selected, *label));
         if selected {
             ui.painter()
                 .rect_filled(r, CornerRadius::same(Tokens::RADIUS_M - 2), p.surface);
@@ -198,6 +239,14 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
                 p.border.gamma_multiply(0.5),
             );
         }
+        if resp.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::same(Tokens::RADIUS_M - 2),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
+            );
+        }
         ui.painter().text(
             r.center(),
             Align2::CENTER_CENTER,
@@ -205,7 +254,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
             FontId::proportional(Tokens::FONT_BODY),
             if selected { p.text } else { p.text_muted },
         );
-        if resp.clicked() && !selected {
+        if touch_allowed && resp.clicked() && !selected {
             *value = *opt;
             changed = true;
         }
@@ -215,10 +264,11 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
 
 /// iOS-style toggle switch. Returns the response (changed when toggled).
 pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let touch_allowed = touch_activation_allowed(ui.ctx());
     let p = Palette::of_ui(ui);
     let size = vec2(32.0, 18.0);
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    if resp.clicked() {
+    if touch_allowed && resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
@@ -233,6 +283,14 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         let x = egui::lerp((rect.left() + r)..=(rect.right() - r), t);
         ui.painter()
             .circle_filled(pos2(x, rect.center().y), r - 2.0, Color32::WHITE);
+        if resp.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(r as u8),
+                Stroke::new(2.0, p.text),
+                StrokeKind::Inside,
+            );
+        }
     }
     resp
 }
@@ -299,10 +357,17 @@ pub fn color_swatches(
             ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
             let custom = selected.filter(|c| !colors.contains(c));
             for c in custom.into_iter().chain(colors.iter().copied()) {
-                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                let resp = ui.interact(
+                    rect,
+                    ui.scope_id().with(("color-swatch", c)),
+                    Sense::click(),
+                );
                 let is_sel = selected == Some(c);
                 let label = format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
-                resp.widget_info(|| WidgetInfo::selected(Role::ColorWell, true, is_sel, &label));
+                resp.widget_info(|| {
+                    WidgetInfo::selected(Role::ColorWell, ui.is_enabled(), is_sel, &label)
+                });
                 ui.painter()
                     .rect_filled(rect.shrink(2.0), CornerRadius::same(Tokens::RADIUS_S), c);
                 let stroke = if is_sel {
@@ -318,6 +383,14 @@ pub fn color_swatches(
                     stroke,
                     StrokeKind::Inside,
                 );
+                if resp.has_focus() && ui.is_enabled() {
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::same(Tokens::RADIUS_S),
+                        Stroke::new(2.0, p.text),
+                        StrokeKind::Inside,
+                    );
+                }
                 if is_sel {
                     let contrast = if c.intensity() > 0.5 {
                         Color32::BLACK
@@ -333,7 +406,7 @@ pub fn color_swatches(
                         Stroke::new(2.0, contrast),
                     );
                 }
-                if resp.on_hover_text(label).clicked() {
+                if touch_activation_allowed(ui.ctx()) && resp.on_hover_text(label).clicked() {
                     picked = Some(c);
                 }
             }
@@ -533,6 +606,76 @@ mod tests {
     }
 
     #[test]
+    fn settings_controls_expose_focus_and_disabled_state() {
+        use egui_kittest::kittest::NodeT;
+        for switch in [false, true] {
+            for dark in [false, true] {
+                for key in [egui::Key::Enter, egui::Key::Space] {
+                    let mut h = Harness::new_ui_state(
+                        move |ui, state: &mut (bool, bool, Tab, usize)| {
+                            ui.ctx().set_visuals(if dark {
+                                egui::Visuals::dark()
+                            } else {
+                                egui::Visuals::light()
+                            });
+                            ui.add_enabled_ui(state.0, |ui| {
+                                let changed = if switch {
+                                    toggle(ui, &mut state.1, "Rainbow").changed()
+                                } else {
+                                    segmented(
+                                        ui,
+                                        &mut state.2,
+                                        &[(Tab::Style, "Style"), (Tab::Map, "Map")],
+                                    )
+                                };
+                                state.3 += usize::from(changed);
+                            });
+                        },
+                        (true, false, Tab::Style, 0),
+                    );
+                    h.run_steps(2);
+                    let (role, label) = if switch {
+                        (Role::Switch, "Rainbow")
+                    } else {
+                        (Role::Tab, "Map")
+                    };
+                    h.get_by_role_and_label(role, label).focus();
+                    h.run_steps(2);
+                    let node = h.get_by_role_and_label(role, label);
+                    assert!(node.is_focused());
+                    let rect = node.rect();
+                    assert!(
+                        h.output().shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Rect(shape)
+                            if shape.rect == rect && shape.stroke.width >= 2.0
+                                && shape.stroke.color != Color32::TRANSPARENT)
+                        }),
+                        "Settings controls need a visible focus indicator"
+                    );
+                    h.key_press(key);
+                    h.run_steps(3);
+                    assert_eq!(h.state().3, 1);
+                    if switch {
+                        assert!(h.state().1);
+                    } else {
+                        assert_eq!(h.state().2, Tab::Map);
+                    }
+                    h.state_mut().0 = false;
+                    h.run_steps(2);
+                    assert!(
+                        h.get_by_role_and_label(role, label)
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                    h.key_press(key);
+                    h.run_steps(2);
+                    assert_eq!(h.state().3, 1);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn swatch_pick() {
         let mut harness = Harness::new_ui_state(
             |ui, c: &mut Option<Color32>| {
@@ -545,6 +688,73 @@ mod tests {
         harness.get_by_label("#0000FF").click();
         harness.run();
         assert_eq!(*harness.state(), Some(Color32::BLUE));
+    }
+
+    #[test]
+    fn swatches_keep_visible_keyboard_focus_when_custom_color_disappears() {
+        use egui_kittest::kittest::NodeT;
+        for dark in [false, true] {
+            for key in [egui::Key::Enter, egui::Key::Space] {
+                let custom = Color32::from_rgb(0x12, 0x34, 0x56);
+                let mut h = Harness::new_ui_state(
+                    move |ui, state: &mut (bool, Option<Color32>, usize)| {
+                        ui.ctx().set_visuals(if dark {
+                            egui::Visuals::dark()
+                        } else {
+                            egui::Visuals::light()
+                        });
+                        ui.add_enabled_ui(state.0, |ui| {
+                            if let Some(color) =
+                                color_swatches(ui, &[Color32::RED, Color32::BLUE], state.1)
+                            {
+                                state.1 = Some(color);
+                                state.2 += 1;
+                            }
+                        });
+                    },
+                    (true, Some(custom), 0),
+                );
+                h.run_steps(2);
+                for label in ["#123456", "#FF0000", "#0000FF"] {
+                    h.key_press(egui::Key::Tab);
+                    h.run_steps(2);
+                    let node = h.get_by_role_and_label(Role::ColorWell, label);
+                    assert!(node.is_focused(), "Tab should reach {label}");
+                    let rect = node.rect();
+                    assert!(
+                        h.output().shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Rect(shape)
+                            if shape.rect == rect && shape.stroke.width >= 2.0
+                                && shape.stroke.color != Color32::TRANSPARENT)
+                        }),
+                        "Color swatches need a distinct keyboard-focus outline"
+                    );
+                }
+                h.key_press(key);
+                h.run_steps(3);
+                assert_eq!(h.state().1, Some(Color32::BLUE));
+                assert_eq!(h.state().2, 1);
+                assert!(
+                    h.query_by_role_and_label(Role::ColorWell, "#123456")
+                        .is_none()
+                );
+                assert!(
+                    h.get_by_role_and_label(Role::ColorWell, "#0000FF")
+                        .is_focused(),
+                    "Removing the custom swatch must not move focus off the chosen preset"
+                );
+                h.state_mut().0 = false;
+                h.run_steps(2);
+                assert!(
+                    h.get_by_role_and_label(Role::ColorWell, "#0000FF")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+                h.key_press(key);
+                h.run_steps(2);
+                assert_eq!(h.state().2, 1);
+            }
+        }
     }
 
     #[test]

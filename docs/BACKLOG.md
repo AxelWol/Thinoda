@@ -76,7 +76,83 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   do not schedule duplicate feature implementation. Future changes must extend
   validation to the full 13-locale matrix.
 
+## User-directed priority-1 navigation follow-up
+
+- Deliver native/web touchscreen and trackpad gesture parity in tested slices:
+  two-finger pan/simultaneous pinch first, then tap/double-tap, background/topic
+  drag ownership, long-press context actions and touch scrolling throughout the
+  UI. Cover finger transitions/cancel, overlays, zoom limits and unchanged model/
+  history during navigation. Respect OS/browser text, accessibility, edge and
+  multifinger gestures; preserve keyboard/mouse/pen alternatives. Native targets
+  remain desktop; iOS/iPadOS/Android apply to WASM/PWA. See PLAN's vendor research,
+  backend/browser audit and real-device acceptance matrix. Synthetic events alone
+  do not establish full device support.
 ## Recently completed
+- User-directed R1 document navigation: top file tabs now use fixed scroll arrows,
+  a clipped scrollable name viewport, and pinned Close Tab/New Tab actions.
+  Arrow/drag browsing preserves the active document and its history; active/focus
+  reveal, keyboard selection, closing and new-tab behavior remain intact.
+- R1 status-control touch safety: canceled/two/three-contact releases cannot switch
+  view, change zoom/Fit or open Zoom/Statistics. Popup presets and Fit also reject
+  these releases. Both-theme/scale tests preserve camera offset and map history,
+  then ordinary tap/click/keyboard recovery. Other controls and device acceptance
+  remain in the open gesture workstream.
+- R1 sheet-control touch safety: canceled/multitouch releases cannot create,
+  select, rename, duplicate, reorder or delete sheets, scroll arrows or open a
+  sheet context menu. Normal single-finger holds, tab clicks, keyboard creation/
+  scrolling and Undo remain covered alongside unchanged map/history checks.
+- R1 preview-picker touch safety: canceled/multitouch releases cannot apply Quick
+  Styles, structure or theme previews, toggle the structure gallery or select/
+  double-tap-create templates. Shared cards keep keyboard activation; actual-app
+  both-theme/scale tests preserve history and verify ordinary actions/Undo.
+- R1 Symbols-inspector touch safety: first swipes scroll without adding markers.
+  Canceled/multitouch releases cannot insert/remove symbols or invoke default-color/
+  contrast changes; color application uses the same guard. Both-theme/scale tests
+  cover unchanged history, ordinary keyboard/click actions and Undo recovery.
+- R1 menu/Settings touch slice: first swipes scroll, export-menu swipes reach the
+  last format without executing it, and shared switches/segmented choices/color
+  swatches reject canceled or multitouch releases. Extracted the Outline latch
+  for consistent per-frame tracking; Settings theme/accent/deletion confirmation
+  and ordinary click/keyboard recovery have both-theme/scale coverage.
+- R1 Outline touch safety: first swipes scroll both axes without editing. Canceled
+  and multitouch sequences cannot activate disclosures, titles or toolbar actions;
+  the guard survives delayed synthesized pointer release. The shared canvas now
+  also suppresses late click-through. Locale/theme/scale/viewport, ordinary click/
+  keyboard/edit/Undo and document scroll-restoration regressions cover the change.
+- R1 context gesture safety: shared and full-app tests cover tap selection,
+  double-tap title editing and single-finger context holds. Multitouch holds no
+  longer leak synthesized secondary clicks into the host context menu; two/three
+  contacts stay suppressed until full release without changing map history.
+  Ordinary right-click works afterward. Hardware/browser acceptance remains open.
+- R1 Excel-inspired sheet browsing: fixed left/right scroll arrows, disabled end
+  states and pinned New Sheet surround the clipped names. Arrows/touch/mouse drag
+  browse without switching sheets or editing maps. Region clipping and the
+  shipped-locale/theme/scale/small-viewport matrix cover name/status separation;
+  active/focus reveal, rename/Undo, wheel access and independent status scrolling
+  remain covered. Real-device touch/browser/AT acceptance remains open above.
+- R1 first gesture slice: one-finger background pan, centroid-anchored simultaneous
+  two-finger pan/pinch and combined trackpad scroll/zoom. Pending drags cancel on
+  multitouch/canceled touch instead of applying drops. Finger transitions and
+  outside/disabled ownership have deterministic tests; full platform/all-surface
+  gesture parity remains in the priority-1 workstream above.
+- R0/R1 Rename Sheet input safety: IME candidate keys cannot apply provisional
+  names or cancel the draft. Final CJK commit, ordinary Enter/Undo, dismissal and
+  normal Tab-to-OK/Cancel/Escape are covered in Map/Outline. Opening-only focus
+  requests replace per-frame focus stealing; real OS/browser IME acceptance
+  remains open.
+- R0/R1 Labels IME safety: candidate Enter no longer adds provisional text, and
+  candidate Escape no longer discards the popup draft. Labels and titles share
+  the composition-key guard with separate state. Map/Outline, Shift variants,
+  same-frame final CJK commits, dismissal, normal Tab/Escape and Apply/Undo are
+  covered; real native/browser IME acceptance remains open.
+- R1 color-swatch keyboard focus: visible focus is separate from color selection,
+  disabled state reaches accessibility clients, and preset focus survives removal
+  of a custom swatch. Both themes, Tab, Enter/Space and disabled controls have
+  regressions; native/browser assistive-technology acceptance remains open.
+- R1 Settings control focus: shared segmented tabs and toggle switches show a
+  theme-text-colored keyboard-focus outline. Disabled tabs expose their actual
+  accessibility state. Both themes, Enter/Space, single activation and disabled
+  controls are covered; native screen-reader/browser acceptance remains open.
 - R11 user-directed runtime/distribution changes: Node.js 24 is selected by
   `.node-version` for scripts and web CI; JavaScript actions (including nested
   Pages upload) use Node-24 runtimes without forcing older actions onto Node 24.
@@ -85,8 +161,11 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   retains strict signing/notarization and gates publication on all six targets.
   Final DMG validation now uses the existing bounded retry for confirmed
   CloudKit network loss; invalid signatures and retry exhaustion still fail.
-  Workflow/Node/artifact/retry regressions are in place; hosted release execution
-  and real Ubuntu ARM64 installation remain open.
+  Workflow/Node/artifact/retry regressions are in place. PRs #66/#67 are merged;
+  the authorized v0.9.0 website deployment succeeded. Native release packaging
+  succeeded for all six targets, including both macOS signing/notarization
+  stages. All ten published downloads match their six SHA256 manifests.
+  Real Ubuntu ARM64 installation and platform runtime acceptance remain open.
 - R1 toolbar keyboard focus: shared icon/captioned toolbar buttons show a visible
   focus outline in both themes and selected states. Tab/Enter/Space, disabled
   controls and keyboard Undo/Redo after focused Notes Save are covered. This is

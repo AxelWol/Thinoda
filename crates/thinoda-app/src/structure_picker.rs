@@ -112,9 +112,12 @@ pub(crate) fn show(ui: &mut Ui, current: Structure) -> (Response, Option<Structu
     let mut chosen = None;
     let viewport = ui.ctx().content_rect();
     let popup_width = (viewport.width() - 32.0).clamp(80.0, 390.0);
-    let popup = egui::Popup::menu(&response)
+    let mut popup = egui::Popup::menu(&response)
         .width(popup_width)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    if !thinoda_ui::widgets::touch_activation_allowed(ui.ctx()) {
+        popup = popup.open_memory(None);
+    }
     let was_open = popup.is_open();
     let popup_id = popup.get_id();
     let escape = was_open && ui.input(|input| input.key_pressed(egui::Key::Escape));

@@ -598,6 +598,176 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
+**User-directed priority-1 workstream - native/web touch and trackpad gestures:**
+deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
+Silicon and supported Ubuntu desktops, plus WASM/PWA on desktop and iOS/iPadOS/
+Android browsers. Native mobile packages are not existing deployment targets.
+The compact sheet-strip implementation below includes touch scrolling through
+the shared scroll area rather than competing gesture handlers.
+
+1. Audit egui/eframe/winit and browser input delivery. Regress and fix two-finger
+   pan plus simultaneous centroid-anchored pinch zoom, zoom limits, gesture
+   ownership and cancellation. Adding/removing fingers must not jump the map,
+   reparent topics, select objects or activate controls on release. Gestures
+   begun outside the canvas, disabled UI or dialogs must not manipulate the map.
+2. Verify tap selection/activation, double-tap editing, one-finger background
+   navigation versus intentional topic movement, long-press context actions,
+   touch scrolling in sheets/Outline/menus/inspectors/dialogs, and trackpad
+   two-finger scroll/pinch. Preserve mouse/pen/keyboard behavior, text selection,
+   visible alternatives and undoable edits. Test transitions/cancellation before
+   promising inertia, long-press drag, or other platform-specific recognizers.
+3. Respect platform/system ownership: Windows press-and-hold secondary actions;
+   Apple standard tap/drag/pinch and OS text-edit/multifinger/edge gestures;
+   Ubuntu Wayland/X11 backend differences; mobile browser navigation/zoom and
+   pointer cancellation. Do not map canvas rotation or three/four-finger system
+   gestures to destructive commands. Audit web touch-action/viewport zoom and
+   accessibility rather than globally disabling page zoom or browser gestures.
+4. Add deterministic raw touch, synthesized pointer and trackpad-event tests
+   across scale/theme/layout states: simultaneous pan/pinch, limits, transitions,
+   cancellation, overlays, unchanged model/history, and normal inputs afterward.
+   Add browser touch smoke coverage and a real-device acceptance matrix for
+   Windows touch/precision trackpad, macOS trackpad, Ubuntu Wayland/X11 touch/
+   touchpad, iPhone/iPad Safari/PWA and Android Chrome/PWA. Distinguish automated
+   event tests from hardware acceptance; document every unavailable host.
+
+Platform research references (2026-10-23):
+[Apple gestures](https://developer.apple.com/design/human-interface-guidelines/gestures),
+[Windows touch interactions](https://learn.microsoft.com/en-us/windows/apps/develop/input/touch-interactions),
+[Android drag/scale](https://developer.android.com/develop/ui/views/touch-and-input/gestures/scale),
+[libinput gestures](https://wayland.freedesktop.org/libinput/doc/latest/gestures.html),
+and [web touch-action](https://developer.mozilla.org/en-US/docs/Web/CSS/touch-action).
+Apple recommends familiar gestures, non-gesture alternatives and avoiding system
+conflicts; Android stresses stable pointer identity across finger transitions.
+libinput touchpad recognition is not touchscreen recognition. Browser gesture
+ownership/cancellation and low-vision page zoom require separate acceptance.
+
+**Delivered first gesture slice:** reproduced wrong first-finger pinch anchoring,
+missing simultaneous pan, and canceled touch topic drops mutating the map.
+The shared canvas now pans one-finger empty-background drags, pans and pinches
+around the two-finger centroid simultaneously, and accepts combined trackpad
+scroll/zoom. Multitouch cancels pending topic/relationship drags and blocks
+synthetic click/drop handling until all contacts lift. Canceled touches discard
+pending drops. Ownership is limited to gestures started over an enabled canvas;
+disabled/interrupted or three-finger sequences stay canceled until release.
+Raw-touch/synthesized-pointer regressions cover transform math, limits, transitions,
+cancel, unchanged model/history and normal clicks afterward. Existing canvas,
+title-lifecycle and bottom-navigation regressions and native/WASM lint pass.
+**Delivered context-gesture safety slice:** deterministic taps select topics and
+double taps start title editing without changing history; single-finger holds
+open context actions without a pending topic drag. Reproduced an egui long-touch
+secondary click opening the host context menu during a two-finger hold despite
+the canvas rejecting that action. `CanvasOutput::context_menu` now applies the
+same ownership/cancellation gate as canvas editing. Two/three-finger holds stay
+suppressed through contact removal until release; ordinary secondary clicks work
+afterward. Shared-canvas and actual app-menu regressions cover unchanged content/
+history and release without edits. No custom long-press timer was introduced.
+This is not full gesture parity: real browser/device acceptance, all-surface
+touch controls and browser viewport zoom remain open.
+
+**Delivered Outline touch/release safety slice:** the first one-finger diagonal
+swipe scrolls deep Outline content in both axes without selecting, editing or
+mutating topics. Reproduced a two-finger release collapsing a branch; Outline
+now suppresses title/disclosure/toolbar activation after multitouch or cancel
+until raw contacts and the synthesized pointer have released. Per-frame caching
+preserves the guard during repeated layout passes. A related canvas regression
+showed a delayed pointer release selecting a topic after raw touch ended; canvas
+ownership now survives that interval too. The locale/theme/scale/viewport matrix
+covers first swipes, canceled and two/three-finger disclosure/toolbar taps, normal
+click recovery, rename/Undo, keyboard reveal and document-scoped scroll restoration.
+No custom Outline scroll recognizer or mouse-drag override was needed. Real
+device/backend delivery, remaining menu/inspector surfaces and browser zoom
+ownership remain open.
+
+**Delivered menu/Settings touch safety slice:** first swipes scroll menus and
+Settings without activating controls. Repeated export-menu swipes reach the last
+format; Escape still dismisses the menu. Reproduced canceled/multitouch releases
+changing Settings switches. Extracted the Outline release latch into
+`widgets::touch_activation_allowed`, sampled each app frame and cached across
+layout passes. Shared switches, segmented controls and color swatches now reject
+canceled and two/three-contact activation, including delayed pointer releases.
+Actual Settings tests cover unchanged deletion confirmation, theme and accent,
+then ordinary click/Space recovery in both themes at 1x/1.5x/2x scale. Existing
+Settings viewport/keyboard, Outline and widget regressions remain intact.
+This is not a general input filter: standard egui buttons, sliders, combo boxes,
+text selection, inspector-specific workflows, browser zoom and hardware delivery
+remain part of the remaining audit.
+
+**Delivered Symbols-inspector touch safety slice:** first swipes scroll the
+Symbols inspector without applying markers. Reproduced canceled/multitouch
+releases inserting symbols; insertion, removal, default-color and contrast
+actions now share the activation guard. Symbol color-picker/hex changes use the
+same guard before applying color edits, including context-menu instance editors.
+Both-theme/1x/1.5x/2x tests cover first swipes, canceled and two/three-finger
+releases with unchanged map/history, normal Space insertion, click removal,
+Enter contrast improvement and Undo restoration. Existing symbol-color,
+inspector focus/draft-save and native/WASM checks remain intact. This does not
+complete generic sliders, combo boxes, all inspector property widgets, browser
+zoom ownership or real-device acceptance.
+
+**Delivered preview-picker touch safety slice:** reproduced a canceled touch
+applying a Quick Style. Shared preview cards now reject canceled/multitouch
+pointer activation while retaining explicit Enter/Space activation. Quick Style,
+structure, built-in/custom theme and template previews inherit the guard;
+template double-click creation also requires guarded activation. Rejected
+structure-launcher taps do not toggle its popup. Both-theme/scale actual-app
+coverage verifies unchanged history for Quick Style/structure/theme cards,
+unchanged template choice/document count after rejected double taps, then normal
+Space/Enter/click application and Undo. Existing quick-style/custom-theme,
+structure-gallery and template workflow regressions remain intact. Generic
+property sliders/combo boxes and other standard buttons remain under audit.
+
+**Delivered status-control touch safety slice:** reproduced a canceled release
+switching Map to Outline. Status view/zoom/Fit actions and zoom preset selections
+now use the shared activation guard; standalone Zoom/Statistics popups reject
+canceled and two/three-contact opening without changing other menu behavior.
+Both-theme/1x/1.5x/2x app coverage checks unchanged zoom, camera offset, mode and
+map history, including delayed pointer releases and Fit inside the zoom popup.
+Normal single-finger zoom, click Fit, keyboard view/preset/zoom actions and
+Statistics opening remain available. Standard buttons elsewhere, property
+sliders/combo boxes, browser zoom ownership and real-device acceptance remain open.
+
+**Delivered sheet-control touch safety slice:** reproduced canceled releases
+creating extra sheets. The shared activation guard now protects New Sheet,
+tab selection/double-click rename, scroll arrows and sheet context commands,
+including duplicate, reorder and delete. Rejected holds do not open a sheet
+context menu; ordinary one-finger holds still do. Both-theme/scale actual-app
+coverage verifies unchanged active sheet/content/history after canceled and
+two/three-finger taps/double taps, context actions and arrow taps, followed by
+ordinary tab clicks, Space creation, Enter scrolling and Undo. Existing clipping/
+layout/scrolling and rename input regressions remain intact. This does not yet
+cover all status controls, main-menu commands or generic property interactions.
+
+**Delivered user-directed priority-1 follow-up - compact sheet-strip navigation:**
+the supplied Excel screenshot informed fixed previous/next scroll arrows outside
+the scrolling names. Arrows browse by 80% of the name viewport without changing
+the active sheet or map history; they disable at their respective ends, including
+both disabled when names fit. New Sheet stays outside the name viewport. Explicit
+region clipping prevents sheet-name paint/hit targets from crossing into arrows,
+New Sheet or independently scrolling status/zoom controls. Small windows retain
+fixed arrow/add slots and truncate names with full tooltips/accessibility names.
+Active/focus reveal, context actions, wheel/trackpad scrolling and rename/Undo/
+resize/document-switch behavior are preserved. Touch and mouse dragging use the
+same scroll area; a first-touch regression exposed a missing pre-registered drag
+target, fixed by enabling drag scrolling rather than adding an input recognizer.
+Tests cover arrow endpoint traversal with pointer/Enter/Space, touch swipe without
+selection or content changes, one-sheet end states, stable height and pinned Add.
+The existing 198-case shipped-locale/Auto, theme, scale and 320/640/1000-point
+viewport matrix now checks arrow/name/status separation and actual text clipping.
+Native/WASM lint passes. Real-device browser/touch and AT acceptance remains in
+the gesture workstream; this is not a claim of full small-device acceptance.
+
+**User-directed follow-up - compact document-tab navigation:** the top document
+strip now mirrors the Excel-inspired sheet strip with fixed previous/next arrows,
+a clipped horizontally scrollable file-name viewport, and pinned Close Tab/New Tab
+actions. Browsing with arrows, mouse/touch drag or horizontal scrolling does not
+switch or modify documents. Selecting, closing, opening a new tab and keyboard
+focus/active-tab reveal retain their existing behavior; stable document keys keep
+tab widget identity. Narrow windows prioritize document navigation and move the
+other quick-action icons into the existing main menu. Automated coverage checks
+arrow endpoints, pinned controls and document contents/history across browsing,
+selection, close/new-tab behavior and narrow layouts. Hardware/browser/AT
+acceptance remains part of the wider interaction workstream.
+
 **User-directed distribution follow-up, 2026-10-23 - Node 24 and ordered builds:**
 all repository Node scripts use Node.js 24 from `.node-version`; CI reads the
 same file and PWA tests reject a different major. JavaScript Actions now use
@@ -623,9 +793,53 @@ That final validation call had bypassed the existing bounded ticket retry helper
 it now retries only the recognized Apple CloudKit network failure. It does not
 resubmit accepted notarization, skip validation or retry invalid signatures.
 Regressions cover validation recovery/exhaustion, six distinct artifact sets,
-dependency ordering and Node runtime contracts. Hosted builds, real Linux ARM64
-installation and successful Apple service validation remain acceptance gates;
-no new release or deployment has been triggered locally.
+dependency ordering and Node runtime contracts. PRs #66 and #67 are merged after
+passing checks. The authorized v0.9.0 website deployment (run `39917339881`)
+succeeded and the live site returns HTTP 200. The native release (run
+`39917340014`) completed successfully for all six targets in the requested order,
+including both macOS signing/notarization/verification stages. The v0.9.0 release
+publishes all ten downloads and six SHA256 manifests; downloading the published
+assets and checking every digest succeeded. Real Linux ARM64 installation and
+other platform-specific runtime acceptance remain open; packaging success is not
+proof of an installed application's behavior.
+
+**Delivered priority-1 follow-up - Rename Sheet input safety:**
+reproduced candidate-confirmation Enter prematurely applying a provisional sheet
+name. Rename Sheet now owns composition state and uses the shared IME guard
+before other UI handles candidate keys. Candidate Enter/Tab/Escape and Shift
+variants retain the draft through final CJK commit events; ordinary Enter then
+applies one undoable rename. Focus is requested only on opening, so Tab reaches
+OK and Cancel instead of being pulled back to the input every frame. Empty
+preedit/commit dismissal restores normal navigation and Escape cancellation.
+Map/Outline regressions cover these paths and unchanged documents on cancel;
+real platform IME/font/assistive-technology acceptance remains open.
+
+**Delivered priority-1 follow-up, 2026-10-23 - Labels composition safety:**
+reproduced candidate-confirmation Enter adding provisional IME text as a label.
+Labels now reuses the title editor's composition-key guard, with independent
+per-editor state, before menus can dismiss the popup. Candidate Enter/Tab/Escape
+and Shift variants neither add labels nor discard drafts, including same-frame
+final commits. Focus is retained during composition; dismissal restores ordinary
+Tab navigation and Escape cancellation. Both Map/Outline tests cover final CJK
+text, empty preedit/commit dismissal, Apply and one-step Undo. Actual native and
+browser IME/font/assistive-technology acceptance remains open.
+
+**Delivered priority-1 follow-up, 2026-10-23 - color-swatch keyboard focus:**
+shared color swatches now distinguish keyboard focus from the selected-color
+border, expose disabled state correctly, and keep each color's identity stable
+when a non-preset color appears or disappears. Keyboard selection of a preset
+no longer loses focus when the old custom swatch is removed. Both themes, real
+Tab traversal, Enter/Space, single activation and disabled controls are covered.
+Existing inspector, custom-theme, quick-style and symbol-color workflows remain
+covered; actual OS/browser assistive-technology acceptance remains open.
+
+**Delivered priority-1 follow-up, 2026-10-23 - Settings control focus:**
+shared segmented tabs and toggle switches now paint a two-logical-pixel,
+theme-text-colored keyboard-focus outline. Disabled segmented tabs report their
+disabled state to accessibility clients. Both themes, Enter/Space activation,
+single state changes and disabled controls have regression coverage, alongside
+Settings/sidebar integration checks. This does not replace native screen-reader
+or browser keyboard acceptance.
 
 **Delivered priority-1 follow-up, 2026-10-23 - toolbar keyboard focus:**
 shared icon and captioned toolbar buttons now paint a two-logical-pixel,

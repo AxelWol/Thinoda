@@ -30,7 +30,7 @@ Installers for every platform are attached to each
 | Windows x64 / ARM64 | `Thinoda_<version>_*-setup-<target>.exe` (NSIS installer) |
 | macOS Apple silicon / Intel | `Thinoda_<version>_*-<target>.dmg` (or `.app.tar.gz`) |
 | Ubuntu LTS (x64) | `.deb` or `.AppImage` for `x86_64-unknown-linux-gnu` |
-| Ubuntu LTS (ARM64, next release) | `.deb` or `.AppImage` for `aarch64-unknown-linux-gnu` |
+| Ubuntu LTS (ARM64) | `.deb` or `.AppImage` for `aarch64-unknown-linux-gnu` |
 
 `<target>` is `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`,
 `aarch64-apple-darwin` (Apple silicon), `x86_64-apple-darwin` (Intel) or
@@ -299,6 +299,19 @@ those system-owned controls. WinGet publishing remains paused.
   guaranteed. The original document and its save destination are retained.
 - Floating editing toolbar with a `+` insert menu, selection-aware topic toolbar, child/sibling plus connectors,
   and contextual right-click actions
+- Touch navigation in the shared desktop/web canvas: drag empty background with
+  one finger to pan; use two fingers to pan and pinch simultaneously, keeping the
+  map point under the gesture center. Pinch uses the same 10%-500% map-zoom limits
+  as other zoom controls. Trackpad scroll and pinch can also apply together.
+  Adding a second finger cancels a pending topic/relationship drag; navigation
+  remains separate from editing until all fingers lift. Canceled touch input
+  discards pending drops rather than moving topics. Mouse background dragging
+  retains rubber-band selection; keyboard and visible navigation controls remain
+  available. Tap a topic to select it, double-tap to edit its title, or hold one
+  finger for context actions. Multitouch holds cannot open context menus, even
+  after returning to one finger until all contacts lift.
+  Full device/gesture acceptance is still in progress; see
+  [touch and trackpad coverage](docs/WEB.md#touch-and-trackpad-coverage).
 - Hierarchy drags show a translucent visible subtree, including owned Summary trees,
   boundaries and internal relationships, while dimming its source. Valid parents
   are highlighted; self/descendant and outside-canvas drops are rejected visibly.
@@ -354,6 +367,8 @@ those system-owned controls. WinGet publishing remains paused.
   from either Symbols surface. Placed symbols expose individual color, default-color
   reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
   right-click a particular canvas symbol for the same editor/removal action.
+  Canceled or multitouch releases cannot apply symbol insertion/removal or
+  default-color/contrast actions; swiping the Symbols inspector only scrolls.
   In that context menu, **Symbol color** opens a scrollable color submenu that
   remains usable in short windows; the sidebar retains its color swatch picker.
   Changes are undoable, keep the one-per-category semantics and preserve legacy
@@ -388,18 +403,40 @@ those system-owned controls. WinGet publishing remains paused.
   reveal; API-key actions and long cloud-folder paths no longer push actions offscreen.
   Keyboard Shortcuts in Settings opens the existing searchable reference; closing
   it returns to the same preferences category. Shortcut rebinding is not yet available.
+  Settings switches, segmented choices and color swatches reject canceled or
+  multitouch releases, including delayed synthesized clicks. Ordinary clicks and
+  keyboard activation remain available.
+  Style, structure, theme and template preview cards use the same protection;
+  rejected double taps cannot create a map from a template.
   The zoom menu offers 10–500% presets, the current value and Fit Map.
   The topic-count menu shows current-sheet topic, word and Unicode character statistics.
   Sheet tabs and bottom controls scroll independently in narrow windows; New Sheet
-  stays visible. Long tab names are shortened visually, with full names in tooltips.
-  Mouse wheels, horizontal scrolling and keyboard focus keep the actions reachable.
+  stays visible. Fixed left/right arrows browse sheet names without switching the
+  active sheet, and disable at either end. Names are clipped away from the arrows,
+  New Sheet and status controls. Long tab names are shortened visually, with full
+  names in tooltips. Touch/mouse dragging, mouse wheels, horizontal scrolling and
+  keyboard focus keep the actions reachable; focused or newly active sheets reveal
+  themselves without pinning manual browsing. On small screens the status controls
+  also scroll independently, rather than covering sheet names.
+  Open-document tabs now use the same fixed-arrow, clipped-name pattern at the top;
+  Close Tab and New Tab stay pinned while file names scroll. Browsing does not
+  switch documents, and the narrow header prioritizes tabs over quick-action icons
+  that remain available in the main menu.
+  Canceled or multitouch releases cannot switch/create sheets, trigger rename,
+  scroll arrows or sheet context actions. Single-finger holds still open the
+  sheet menu; ordinary taps and keyboard navigation remain available.
+  Status view/zoom/Fit actions and Zoom/Statistics opening also reject canceled
+  or multitouch releases, including zoom-menu presets and Fit.
   The sidebar remembers its Format/Symbols family and last Style/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use
   Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.
   Deep Outline trees scroll in both directions. Keyboard selection and focused
   title editors reveal themselves without pinning manual scrolling; scroll
-  positions are scoped to each document and sheet.
+  positions are scoped to each document and sheet. One-finger swipes scroll the
+  Outline without selecting or editing rows. Multitouch/canceled releases cannot
+  activate its disclosure buttons, topic rows or editing toolbar, including when
+  the synthesized pointer release arrives after the last touch contact.
   In short windows, Outline actions scroll separately from topics and the selected
   summary is shortened visually with full text on hover, keeping the list reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`

@@ -17,6 +17,7 @@ pub(crate) struct LabelEditor {
     topic: TopicId,
     labels: Vec<String>,
     input: String,
+    ime_composing: bool,
     focus: bool,
     auto_sort: bool,
     anchor: Rect,
@@ -40,6 +41,18 @@ impl LabelEditor {
 }
 
 impl ThinodaApp {
+    pub(crate) fn protect_labels_ime(&mut self, ctx: &Context) {
+        let Some(editor) = self.label_editor.as_mut() else {
+            return;
+        };
+        let input_id = Id::unique("topic-label-input");
+        if editor.ime_composing || ctx.memory(|memory| memory.has_focus(input_id)) {
+            thinoda_canvas::protect_ime_candidate_keys(ctx, input_id, &mut editor.ime_composing);
+        } else {
+            editor.ime_composing = false;
+        }
+    }
+
     pub(crate) fn begin_labels(&mut self, ctx: &Context) {
         if !self.command_available(&Cmd::Labels) {
             self.toasts.warning(t("Not possible here"));
@@ -64,6 +77,7 @@ impl ThinodaApp {
             topic,
             labels,
             input: String::new(),
+            ime_composing: false,
             focus: true,
             auto_sort,
             anchor,
@@ -184,7 +198,7 @@ fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTree
     if let Some(index) = remove {
         editor.labels.remove(index);
     }
-    let input_id = ui.make_persistent_id("label-input");
+    let input_id = Id::unique("topic-label-input");
     let enter = ui.memory(|m| m.has_focus(input_id))
         && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
     let label = ui.label(t("New labels"));
@@ -192,12 +206,16 @@ fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTree
         .add(
             egui::TextEdit::singleline(&mut editor.input)
                 .id(input_id)
+                .lock_focus(editor.ime_composing)
                 .hint_text(t("comma separated"))
                 .desired_width(f32::INFINITY),
         )
         .labelled_by(label.id);
     if std::mem::take(&mut editor.focus) {
         input.request_focus();
+    }
+    if !input.has_focus() {
+        editor.ime_composing = false;
     }
     if ui
         .add_enabled(
@@ -296,6 +314,124 @@ mod tests {
         h.run_steps(4);
         assert!(h.state().label_editor.is_some());
         h.get_by_label("New labels");
+    }
+
+    #[test]
+    fn label_ime_candidate_keys_do_not_add_or_discard_drafts() {
+        use egui::{Event, ImeEvent};
+        for mode in [CenterMode::Map, CenterMode::Outliner] {
+            for key in [Key::Enter, Key::Tab, Key::Escape] {
+                for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
+                    let mut h = harness();
+                    h.ctx
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    h.state_mut().mode = mode;
+                    let before = h.state().doc().unwrap().doc.workbook().clone();
+                    open(&mut h);
+                    let labels = h.state().label_editor.as_ref().unwrap().labels.clone();
+                    h.event(Event::Ime(ImeEvent::Preedit {
+                        text: "nihon".into(),
+                        active_range_chars: Some(0..5),
+                    }));
+                    h.run_steps(3);
+                    assert!(h.state().label_editor.as_ref().unwrap().ime_composing);
+                    assert!(h.get_by_label("New labels").is_focused());
+                    h.key_press_modifiers(modifiers, key);
+                    h.run_steps(3);
+                    let editor = h.state().label_editor.as_ref().unwrap_or_else(|| {
+                        panic!("{mode:?} {modifiers:?}+{key:?} closed the draft")
+                    });
+                    assert_eq!(
+                        editor.labels, labels,
+                        "{modifiers:?}+{key:?} added a candidate"
+                    );
+                    assert!(h.get_by_label("New labels").is_focused());
+                    h.input_mut().events.extend([
+                        Event::Ime(ImeEvent::Commit("日本".into())),
+                        Event::Key {
+                            key: Key::Enter,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ]);
+                    h.run_steps(3);
+                    let editor = h.state().label_editor.as_ref().unwrap();
+                    assert_eq!(editor.input, "日本");
+                    assert_eq!(editor.labels, labels);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    h.key_press(Key::Enter);
+                    h.run_steps(3);
+                    assert!(h.state().label_editor.as_ref().unwrap().input.is_empty());
+                    assert_eq!(
+                        h.state()
+                            .label_editor
+                            .as_ref()
+                            .unwrap()
+                            .labels
+                            .last()
+                            .unwrap(),
+                        "日本"
+                    );
+                    h.get_by_role_and_label(Role::Button, "Apply").click();
+                    h.run_steps(3);
+                    let ctx = h.ctx.clone();
+                    h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn label_ime_dismissal_restores_tab_navigation_and_escape_cancel() {
+        use egui::{Event, ImeEvent};
+        for mode in [CenterMode::Map, CenterMode::Outliner] {
+            for cancellation in [
+                ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                },
+                ImeEvent::Commit(String::new()),
+            ] {
+                let mut h = harness();
+                h.state_mut().mode = mode;
+                let before = h.state().doc().unwrap().doc.workbook().clone();
+                open(&mut h);
+                h.get_by_label("New labels").type_text("Keep");
+                h.run_steps(2);
+                h.event(Event::Ime(ImeEvent::Preedit {
+                    text: "candidate".into(),
+                    active_range_chars: None,
+                }));
+                h.run_steps(3);
+                h.input_mut().events.extend([
+                    Event::Ime(cancellation),
+                    Event::Key {
+                        key: Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+                h.run_steps(3);
+                let editor = h.state().label_editor.as_ref().unwrap();
+                assert!(!editor.ime_composing);
+                assert_eq!(editor.input, "Keep");
+                h.key_press(Key::Tab);
+                h.run_steps(3);
+                assert!(
+                    h.get_by_role_and_label(Role::Button, "Add labels")
+                        .is_focused()
+                );
+                h.key_press(Key::Escape);
+                h.run_steps(3);
+                assert!(h.state().label_editor.is_none());
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            }
+        }
     }
 
     #[test]

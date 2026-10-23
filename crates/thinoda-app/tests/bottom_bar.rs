@@ -1,5 +1,8 @@
 use egui::{Key, Modifiers, accesskit::Role};
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_app::{
     app::{Cmd, Services, ThinodaApp},
     i18n::t,
@@ -98,6 +101,26 @@ fn assert_paint(h: &Harness<'_, ThinodaApp>, text: &str, target: egui::Rect) {
     assert!(found, "{text}: no paint in {target:?}");
 }
 
+fn assert_sheet_paint_is_clipped(h: &Harness<'_, ThinodaApp>, left: f32, right: f32) {
+    fn contains_sheet(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.text().starts_with("Sheet "),
+            egui::Shape::Vec(shapes) => shapes.iter().any(contains_sheet),
+            _ => false,
+        }
+    }
+    let tolerance = 1.0 / h.ctx.pixels_per_point();
+    let mut found = false;
+    for shape in &h.output().shapes {
+        if contains_sheet(&shape.shape) {
+            found = true;
+            assert!(shape.clip_rect.left() >= left - tolerance);
+            assert!(shape.clip_rect.right() <= right + tolerance);
+        }
+    }
+    assert!(found, "Expected at least one painted sheet name");
+}
+
 #[test]
 fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_content() {
     let mut h = harness(
@@ -109,7 +132,139 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
     let before = h.state().doc().unwrap().doc.workbook().sheets.clone();
     let state = h.state().doc().unwrap().doc.state_id();
     let titles: Vec<_> = before.iter().map(|sheet| sheet.title.clone()).collect();
+    for label in ["Scroll sheets left", "Scroll sheets right"] {
+        assert_visible(&h, t(label));
+    }
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Scroll sheets left"))
+            .accesskit_node()
+            .is_disabled()
+    );
+    let first_position = h.get_by_role_and_label(Role::Button, &titles[0]).rect();
+    h.get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+        .click();
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, &titles[0])
+            .rect()
+            .left()
+            < first_position.left()
+    );
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), state);
+    h.get_by_role_and_label(Role::Button, t("Scroll sheets left"))
+        .focus();
+    h.key_press(Key::Enter);
+    h.run_steps(8);
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, &titles[0]).rect(),
+        first_position
+    );
+    for _ in 0..100 {
+        let right = h.get_by_role_and_label(Role::Button, t("Scroll sheets right"));
+        if right.accesskit_node().is_disabled() {
+            break;
+        }
+        right.focus();
+        h.key_press(Key::Space);
+        h.run_steps(3);
+    }
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+            .accesskit_node()
+            .is_disabled()
+    );
+    let arrow_end = assert_visible(&h, &titles[19]);
+    assert!(arrow_end.left() >= assert_visible(&h, t("Scroll sheets right")).right());
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets, before);
+    for _ in 0..100 {
+        let left = h.get_by_role_and_label(Role::Button, t("Scroll sheets left"));
+        if left.accesskit_node().is_disabled() {
+            break;
+        }
+        left.click();
+        h.run_steps(3);
+    }
+    assert!(
+        h.get_by_role_and_label(Role::Button, t("Scroll sheets left"))
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert_visible(&h, &titles[0]);
+    let swipe_start = h
+        .get_by_role_and_label(Role::Button, &titles[0])
+        .rect()
+        .center();
+    let before_swipe = h
+        .get_by_role_and_label(Role::Button, &titles[0])
+        .rect()
+        .left();
+    h.event(egui::Event::PointerMoved(swipe_start));
+    h.event(egui::Event::PointerButton {
+        pos: swipe_start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Start,
+        pos: swipe_start,
+        force: None,
+    });
+    h.run_steps(1);
+    let swipe_middle = swipe_start - egui::vec2(12.0, 0.0);
+    h.event(egui::Event::PointerMoved(swipe_middle));
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Move,
+        pos: swipe_middle,
+        force: None,
+    });
+    h.run_steps(1);
+    let swipe_end = swipe_start - egui::vec2(60.0, 0.0);
+    h.event(egui::Event::PointerMoved(swipe_end));
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Move,
+        pos: swipe_end,
+        force: None,
+    });
+    h.run_steps(2);
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::End,
+        pos: swipe_end,
+        force: None,
+    });
+    h.event(egui::Event::PointerButton {
+        pos: swipe_end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, &titles[0])
+            .rect()
+            .left()
+            < before_swipe
+    );
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets, before);
+    h.get_by_role_and_label(Role::Button, &titles[0])
+        .scroll_to_me();
+    h.run_steps(8);
     let add = assert_visible(&h, t("New Sheet"));
+    let right_arrow = assert_visible(&h, t("Scroll sheets right"));
+    assert_sheet_paint_is_clipped(&h, right_arrow.right(), add.left());
+    h.get_by_role_and_label(Role::Button, t("Zoom")).focus();
+    h.run_steps(8);
     assert_visible(&h, t("Zoom"));
     let height =
         h.ctx.content_rect().bottom() - h.state().doc().unwrap().view.canvas_rect().bottom();
@@ -121,7 +276,10 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
             .is_focused()
     );
     let last = assert_visible(&h, &titles[19]);
-    assert!(last.right() <= add.left());
+    assert!(
+        last.right() <= add.left() + 1.0 / h.ctx.pixels_per_point(),
+        "last={last:?}, add={add:?}"
+    );
     h.key_press(Key::Enter);
     h.run_steps(8);
     assert_eq!(h.state().doc().unwrap().doc.active_index(), 19);
@@ -282,6 +440,13 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
     h.run_steps(8);
     let title = h.state().doc().unwrap().doc.sheet().title.clone();
     assert_visible(&h, &title);
+    for label in ["Scroll sheets left", "Scroll sheets right"] {
+        assert!(
+            h.get_by_role_and_label(Role::Button, t(label))
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
     h.state_mut().active = 0;
     h.run_steps(8);
     assert_visible(&h, &new_title);
@@ -296,6 +461,11 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
                 ] {
                     let mut h = harness(size, scale, language, theme);
                     let add = assert_visible(&h, t("New Sheet"));
+                    let left = assert_visible(&h, t("Scroll sheets left"));
+                    let right = assert_visible(&h, t("Scroll sheets right"));
+                    assert!(left.right() <= right.left());
+                    assert!(right.right() < add.left());
+                    assert_sheet_paint_is_clipped(&h, right.right(), add.left());
                     h.get_by_role_and_label(Role::Button, t("Zoom")).focus();
                     h.run_steps(8);
                     let zoom = assert_visible(&h, t("Zoom"));

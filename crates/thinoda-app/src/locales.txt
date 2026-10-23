@@ -177,6 +177,10 @@ Rename Sheet|Renombrar hoja|Renommer la feuille|Omdøb ark|Blad hernoemen|Renome
 Duplicate Sheet|Duplicar hoja|Dupliquer la feuille|Duplikér ark|Blad dupliceren|Duplicar folha|Duplica foglio|Duplikuj arkusz
 Delete Sheet|Eliminar hoja|Supprimer la feuille|Slet ark|Blad verwijderen|Eliminar folha|Elimina foglio|Usuń arkusz
 Move Left|Mover a la izquierda|Déplacer à gauche|Flyt til venstre|Naar links verplaatsen|Mover para a esquerda|Sposta a sinistra|Przenieś w lewo
+Scroll sheets left|Desplazar hojas a la izquierda|Faire défiler les feuilles vers la gauche|Rul ark mod venstre|Bladen naar links schuiven|Deslocar folhas para a esquerda|Scorri i fogli a sinistra|Przewiń arkusze w lewo
+Scroll sheets right|Desplazar hojas a la derecha|Faire défiler les feuilles vers la droite|Rul ark mod højre|Bladen naar rechts schuiven|Deslocar folhas para a direita|Scorri i fogli a destra|Przewiń arkusze w prawo
+Scroll documents left|Desplazar documentos a la izquierda|Faire défiler les documents vers la gauche|Rul dokumenter mod venstre|Documenten naar links schuiven|Deslocar documentos para a esquerda|Scorri i documenti a sinistra|Przewiń dokumenty w lewo
+Scroll documents right|Desplazar documentos a la derecha|Faire défiler les documents vers la droite|Rul dokumenter mod højre|Documenten naar rechts schuiven|Deslocar documentos para a direita|Scorri i documenti a destra|Przewiń dokumenty w prawo
 Move Right|Mover a la derecha|Déplacer à droite|Flyt til højre|Naar rechts verplaatsen|Mover para a direita|Sposta a destra|Przenieś w prawo
 Topics|Temas|Sujets|Emner|Onderwerpen|Tópicos|Nodi|Węzły
 Words|Palabras|Mots|Ord|Woorden|Palavras|Parole|Słowa

@@ -97,22 +97,204 @@ fn menu_button(
 }
 
 fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
+    scroll_row_offset(ui, salt, width, None, content);
+}
+
+fn status_menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    guarded_menu_button(ui, label, content)
+}
+
+fn guarded_menu_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<Option<()>> {
+    let mut menu = egui::containers::menu::MenuButton::new(label.into());
+    if !widgets::touch_activation_allowed(ui.ctx()) {
+        menu.button = menu.button.sense(Sense::hover());
+    }
+    let (response, inner) = menu.ui(ui, |ui| scroll_menu(ui, content));
+    egui::InnerResponse::new(inner.map(|inner| inner.inner), response)
+}
+
+fn scroll_row_offset(
+    ui: &mut Ui,
+    salt: &'static str,
+    width: f32,
+    offset: Option<f32>,
+    content: impl FnOnce(&mut Ui),
+) -> egui::scroll_area::ScrollAreaOutput<()> {
     ui.allocate_ui_with_layout(
         vec2(width, ui.spacing().interact_size.y),
         Layout::left_to_right(Align::Center),
         |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
             ui.style_mut().always_scroll_the_only_direction = true;
-            egui::ScrollArea::horizontal()
+            let mut scroll = egui::ScrollArea::horizontal()
                 .id_salt(salt)
+                .scroll_source(egui::scroll_area::ScrollSource::ALL)
                 .max_width(width)
                 .auto_shrink([false, false])
                 .min_scrolled_width(0.0)
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal_centered(content);
-                });
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+            if let Some(offset) = offset {
+                scroll = scroll.horizontal_scroll_offset(offset);
+            }
+            scroll.show(ui, |ui| {
+                ui.horizontal_centered(content);
+            })
         },
-    );
+    )
+    .inner
+}
+
+fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32)) {
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+    let state_id = ui.make_persistent_id("sheet_scroll_buttons");
+    let (position, max_offset) =
+        ui.data(|data| data.get_temp::<(f32, f32)>(state_id).unwrap_or_default());
+    let button_width = ui.spacing().interact_size.y;
+    let names_width = (width - 2.0 * (button_width + ui.spacing().item_spacing.x)).max(0.0);
+    let step = (names_width * 0.8).max(1.0);
+    let mut offset = None;
+    for (glyph, label, enabled, target) in [
+        (
+            "<",
+            t("Scroll sheets left"),
+            position > 0.5,
+            (position - step).max(0.0),
+        ),
+        (
+            ">",
+            t("Scroll sheets right"),
+            position < max_offset - 0.5,
+            (position + step).min(max_offset),
+        ),
+    ] {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(glyph).min_size(vec2(button_width, button_width)),
+            )
+            .accessible_name(label)
+            .on_hover_text(label)
+            .clicked()
+            && touch_allowed
+        {
+            offset = Some(target);
+        }
+    }
+    let output = scroll_row_offset(ui, "sheet_tabs", names_width, offset, |ui| {
+        content(ui, names_width)
+    });
+    ui.data_mut(|data| {
+        data.insert_temp(
+            state_id,
+            (
+                output.state.clamped_offset().x,
+                (output.content_size.x - output.inner_rect.width()).max(0.0),
+            ),
+        );
+    });
+}
+
+fn document_tabs(
+    ui: &mut Ui,
+    width: f32,
+    docs: &[crate::doc::OpenDoc],
+    active: usize,
+) -> (Option<usize>, bool, bool, Option<usize>) {
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+    let state_id = ui.make_persistent_id("document_scroll_buttons");
+    let (position, max_offset, previous_active) = ui.data(|data| {
+        data.get_temp::<(f32, f32, String)>(state_id)
+            .unwrap_or_default()
+    });
+    let active_key = docs
+        .get(active)
+        .map_or_else(String::new, |doc| doc.key.clone());
+    let active_changed = previous_active != active_key;
+    let button_width = ui.spacing().interact_size.y;
+    let arrow_slot = button_width + ui.spacing().item_spacing.x;
+    let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+    let names_width = (width - 2.0 * arrow_slot - 2.0 * action_slot).max(0.0);
+    let step = (names_width * 0.8).max(1.0);
+    let mut offset = None;
+    let mut selected = None;
+    let mut middle_close = None;
+    for (glyph, label, enabled, target) in [
+        (
+            "<",
+            t("Scroll documents left"),
+            position > 0.5,
+            (position - step).max(0.0),
+        ),
+        (
+            ">",
+            t("Scroll documents right"),
+            position < max_offset - 0.5,
+            (position + step).min(max_offset),
+        ),
+    ] {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(glyph).min_size(vec2(button_width, button_width)),
+            )
+            .accessible_name(label)
+            .on_hover_text(label)
+            .clicked()
+            && touch_allowed
+        {
+            offset = Some(target);
+        }
+    }
+    let output = scroll_row_offset(ui, "document_tabs", names_width, offset, |ui| {
+        ui.horizontal(|ui| {
+            for (index, doc) in docs.iter().enumerate() {
+                let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
+                let response = ui
+                    .push_id(&doc.key, |ui| {
+                        ui.add(egui::Button::selectable(index == active, &label).truncate())
+                    })
+                    .inner
+                    .on_hover_text(
+                        doc.path
+                            .as_ref()
+                            .map_or_else(|| label.clone(), |p| p.display().to_string()),
+                    );
+                if (index == active && active_changed) || response.gained_focus() {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() && touch_allowed {
+                    selected = Some(index);
+                }
+                if response.middle_clicked() && touch_allowed {
+                    middle_close = Some(index);
+                }
+            }
+        });
+    });
+    let close_active = docs.get(active).is_some()
+        && widgets::icon_button(ui, icons::CLOSE, t("Close Tab"), false).clicked()
+        && touch_allowed;
+    let new_tab =
+        widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked() && touch_allowed;
+    ui.data_mut(|data| {
+        data.insert_temp(
+            state_id,
+            (
+                output.state.clamped_offset().x,
+                (output.content_size.x - output.inner_rect.width()).max(0.0),
+                active_key,
+            ),
+        );
+    });
+    (selected, close_active, new_tab, middle_close)
 }
 
 pub(crate) fn font_selector(
@@ -205,10 +387,23 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 impl ThinodaApp {
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
+        widgets::touch_activation_allowed(ui.ctx());
         if !self.launch_frame(ui) {
             return;
         }
         let ctx = ui.ctx().clone();
+        // Menus can dismiss an open popup before its own input field is drawn.
+        self.protect_labels_ime(&ctx);
+        if let Some(draft) = &mut self.dialogs.rename_sheet {
+            thinoda_canvas::protect_ime_candidate_keys(
+                &ctx,
+                egui::Id::unique("thinoda_rename_input"),
+                &mut draft.ime_composing,
+            );
+            if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+                self.dialogs.rename_sheet = None;
+            }
+        }
         let font_source = self.doc().map(|doc| (doc.key.clone(), doc.doc.state_id()));
         let preferred_fallback = (!crate::files::is_web())
             .then_some(self.settings.default_cjk_font.as_deref())
@@ -462,10 +657,14 @@ impl ThinodaApp {
     fn top_bar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let mut cmd: Option<Cmd> = None;
+        let touch_allowed = widgets::touch_activation_allowed(&ctx);
         ui.horizontal_centered(|ui| {
-            ui.menu_button(RichText::new(icons::MENU).size(18.0), |ui| {
-                scroll_menu(ui, |ui| self.main_menu(ui, &mut cmd));
+            guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
+                self.main_menu(ui, &mut cmd)
             });
+            let header_width = ctx.content_rect().width() * ctx.zoom_factor();
+            let compact_header = header_width < 640.0;
+            let very_compact_header = header_width < 480.0;
             let (can_undo, can_redo) = self.doc().map_or((false, false), |d| {
                 let draft_changed = d.has_inspector_changes();
                 (
@@ -473,127 +672,124 @@ impl ThinodaApp {
                     d.doc.can_redo() && !draft_changed,
                 )
             });
-            if ui
-                .add_enabled_ui(can_undo, |ui| {
-                    widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
-                })
-                .inner
-                .clicked()
-            {
-                cmd = Some(Cmd::Canvas(Action::Undo));
-            }
-            if ui
-                .add_enabled_ui(can_redo, |ui| {
-                    widgets::icon_button(ui, icons::REDO, t("Redo"), false)
-                })
-                .inner
-                .clicked()
-            {
-                cmd = Some(Cmd::Canvas(Action::Redo));
+            if !very_compact_header {
+                if ui
+                    .add_enabled_ui(can_undo, |ui| {
+                        widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    cmd = Some(Cmd::Canvas(Action::Undo));
+                }
+                if ui
+                    .add_enabled_ui(can_redo, |ui| {
+                        widgets::icon_button(ui, icons::REDO, t("Redo"), false)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    cmd = Some(Cmd::Canvas(Action::Redo));
+                }
             }
             widgets::vdivider(ui);
-            // Document tabs.
-            egui::ScrollArea::horizontal()
-                .max_width(ui.available_width() * 0.4)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for i in 0..self.docs.len() {
-                            let d = &self.docs[i];
-                            let label =
-                                format!("{}{}", if d.is_dirty() { "• " } else { "" }, d.title());
-                            let sel = i == self.active;
-                            let r = ui.selectable_label(sel, label);
-                            if r.clicked() {
-                                self.active = i;
-                            }
-                            if r.middle_clicked() {
-                                cmd = Some(Cmd::CloseTab(i));
-                            }
-                            if let Some(p) = &d.path {
-                                r.clone().on_hover_text(p.display().to_string());
-                            }
-                            if sel
-                                && widgets::icon_button(ui, icons::CLOSE, t("Close Tab"), false)
-                                    .clicked()
-                            {
-                                cmd = Some(Cmd::CloseTab(i));
-                            }
-                        }
-                        if widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked() {
-                            cmd = Some(Cmd::Home);
-                        }
-                    });
-                });
+            let tabs_width = if header_width < 600.0 {
+                ui.available_width().max(0.0)
+            } else {
+                let arrow_slot = ui.spacing().interact_size.y + ui.spacing().item_spacing.x;
+                let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
+                let min_tabs_width = 2.0 * arrow_slot + 2.0 * action_slot;
+                (ui.available_width() * 0.4).max(min_tabs_width).min(560.0)
+            };
+            let (selected, close_active, new_tab, middle_close) =
+                document_tabs(ui, tabs_width, &self.docs, self.active);
+            if touch_allowed {
+                if let Some(index) = selected {
+                    self.active = index;
+                }
+                if close_active {
+                    cmd = Some(Cmd::CloseTab(self.active));
+                }
+                if let Some(index) = middle_close {
+                    cmd = Some(Cmd::CloseTab(index));
+                }
+                if new_tab {
+                    cmd = Some(Cmd::Home);
+                }
+            }
 
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::icon_button(
-                    ui,
-                    icons::FORMAT,
-                    t("Format Panel"),
-                    self.doc().is_some()
-                        && self.settings.show_format_panel
-                        && self.sidebar_family == SidebarFamily::Format,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleFormatPanel);
-                }
-                if widgets::icon_button(
-                    ui,
-                    icons::MARKER,
-                    t("Symbols"),
-                    self.doc().is_some()
-                        && self.settings.show_format_panel
-                        && self.sidebar_family == SidebarFamily::Symbols,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleSymbolsPanel);
-                }
-                ui.add_enabled_ui(
-                    EXPORT_MENU
-                        .iter()
-                        .any(|f| self.command_available(&Cmd::Export(*f))),
-                    |ui| {
-                        menu_button(ui, RichText::new(icons::EXPORT), |ui| {
-                            for f in EXPORT_MENU {
-                                if ui
-                                    .add_enabled(
-                                        self.command_available(&Cmd::Export(*f)),
-                                        egui::Button::new(t(f.label())),
-                                    )
-                                    .clicked()
-                                {
-                                    cmd = Some(Cmd::Export(*f));
-                                }
-                            }
-                        })
-                        .response
-                        .accessible_name(t("Export"))
-                        .on_hover_text(t("Export"));
-                    },
-                );
-                if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
-                    cmd = Some(Cmd::ToggleZen);
-                }
-                let outl = self.mode == CenterMode::Outliner;
-                if widgets::icon_button(
-                    ui,
-                    if outl { icons::MAP } else { icons::OUTLINER },
-                    t("Outliner"),
-                    outl,
-                )
-                .clicked()
-                {
-                    cmd = Some(Cmd::ToggleOutliner);
-                }
-                if widgets::icon_button(ui, icons::SEARCH, t("Find…"), self.search.open).clicked()
-                {
-                    cmd = Some(Cmd::Find);
-                }
-            });
+            if header_width >= 600.0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let format = widgets::icon_button(
+                        ui,
+                        icons::FORMAT,
+                        t("Format Panel"),
+                        self.doc().is_some()
+                            && self.settings.show_format_panel
+                            && self.sidebar_family == SidebarFamily::Format,
+                    );
+                    if format.clicked() {
+                        cmd = Some(Cmd::ToggleFormatPanel);
+                    }
+                    let symbols = widgets::icon_button(
+                        ui,
+                        icons::MARKER,
+                        t("Symbols"),
+                        self.doc().is_some()
+                            && self.settings.show_format_panel
+                            && self.sidebar_family == SidebarFamily::Symbols,
+                    );
+                    if symbols.clicked() {
+                        cmd = Some(Cmd::ToggleSymbolsPanel);
+                    }
+                    if !compact_header {
+                        ui.add_enabled_ui(
+                            EXPORT_MENU
+                                .iter()
+                                .any(|f| self.command_available(&Cmd::Export(*f))),
+                            |ui| {
+                                guarded_menu_button(ui, RichText::new(icons::EXPORT), |ui| {
+                                    for f in EXPORT_MENU {
+                                        if ui
+                                            .add_enabled(
+                                                self.command_available(&Cmd::Export(*f)),
+                                                egui::Button::new(t(f.label())),
+                                            )
+                                            .clicked()
+                                        {
+                                            cmd = Some(Cmd::Export(*f));
+                                        }
+                                    }
+                                })
+                                .response
+                                .accessible_name(t("Export"))
+                                .on_hover_text(t("Export"));
+                            },
+                        );
+                        if widgets::icon_button(ui, icons::ZEN, t("Zen Mode"), self.zen).clicked() {
+                            cmd = Some(Cmd::ToggleZen);
+                        }
+                    }
+                    let outl = self.mode == CenterMode::Outliner;
+                    let outliner = widgets::icon_button(
+                        ui,
+                        if outl { icons::MAP } else { icons::OUTLINER },
+                        t("Outliner"),
+                        outl,
+                    );
+                    if outliner.clicked() {
+                        cmd = Some(Cmd::ToggleOutliner);
+                    }
+                    if !compact_header
+                        && widgets::icon_button(ui, icons::SEARCH, t("Find…"), self.search.open)
+                            .clicked()
+                    {
+                        cmd = Some(Cmd::Find);
+                    }
+                });
+            }
         });
-        if let Some(c) = cmd {
+        if touch_allowed && let Some(c) = cmd {
             self.exec(&ctx, c);
         }
     }
@@ -649,7 +845,8 @@ impl ThinodaApp {
                 }
             }
             ui.separator();
-            if ui.button(t("Clear Recent")).clicked() {
+            if ui.button(t("Clear Recent")).clicked() && widgets::touch_activation_allowed(ui.ctx())
+            {
                 self.settings.clear_recent();
                 self.save_settings();
             }
@@ -1133,15 +1330,15 @@ impl ThinodaApp {
         if let Some(text) = d.view.clipboard_out.take() {
             ctx.copy_text(text);
         }
-        if let Some(link) = out.open_link {
-            self.open_link(&link);
+        if let Some(link) = &out.open_link {
+            self.open_link(link);
         }
-        if let Some(error) = out.error {
+        if let Some(error) = &out.error {
             self.toasts
                 .warning(format!("{}: {error}", t("Not possible here")));
         }
         let mut cmd = None;
-        out.response.context_menu(|ui| {
+        out.context_menu(|ui| {
             scroll_menu(ui, |ui| {
                 if let Some((id, index)) = self.doc().and_then(|d| d.view.context_marker) {
                     if let Some(command) = self.symbol_instance(ui, id, index, true) {
@@ -1596,6 +1793,7 @@ impl ThinodaApp {
 
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
@@ -1639,7 +1837,7 @@ impl ThinodaApp {
                 if response.gained_focus() {
                     response.scroll_to_me(None);
                 }
-                if response.clicked() {
+                if touch_actions_allowed && response.clicked() {
                     response.request_focus();
                     action = Some(command.clone());
                 }
@@ -1746,7 +1944,7 @@ impl ThinodaApp {
                                     if response.gained_focus() {
                                         response.scroll_to_me(None);
                                     }
-                                    if response.clicked() {
+                                    if touch_actions_allowed && response.clicked() {
                                         response.request_focus();
                                         d.view.select_only(id);
                                         action = Some(Action::ToggleCollapse);
@@ -1833,11 +2031,11 @@ impl ThinodaApp {
                                     if (primary == Some(id) && reveal_primary) || r.gained_focus() {
                                         r.scroll_to_me(None);
                                     }
-                                    if r.clicked() {
+                                    if touch_actions_allowed && r.clicked() {
                                         r.request_focus();
                                         d.view.select_only(id);
                                     }
-                                    if r.double_clicked() {
+                                    if touch_actions_allowed && r.double_clicked() {
                                         d.view.select_only(id);
                                         d.view.begin_edit(&sheet, id, false);
                                     }
@@ -1912,6 +2110,7 @@ impl ThinodaApp {
 
     fn bottom_bar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let touch_allowed = widgets::touch_activation_allowed(&ctx);
         let mut cmd = None;
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
@@ -1927,18 +2126,18 @@ impl ThinodaApp {
             let width =
                 (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
             let tabs_width = if self.settings.show_status_bar {
-                width * 0.4
+                (width * 0.4).max(108.0_f32.min(width * 0.45))
             } else {
                 width
             };
-            scroll_row(ui, "sheet_tabs", tabs_width, |ui| {
+            sheet_scroll_row(ui, tabs_width, |ui, names_width| {
                 // Sheet tabs.
                 let n = d.doc.workbook().sheets.len();
                 let active_index = d.doc.active_index();
                 let active = egui::Id::unique((
                     &d.key,
                     active_index,
-                    tabs_width.to_bits(),
+                    names_width.to_bits(),
                     d.doc
                         .workbook()
                         .sheets
@@ -1952,7 +2151,7 @@ impl ThinodaApp {
                     data.insert_temp(active_key, active);
                     previous != Some(active)
                 });
-                let max_width = tabs_width.min(180.0);
+                let max_width = names_width.min(180.0);
                 for i in 0..n {
                     let title = d.doc.workbook().sheets[i].title.clone();
                     let text = egui::WidgetText::from(title.clone()).into_galley(
@@ -1972,12 +2171,12 @@ impl ThinodaApp {
                     if r.gained_focus() || (changed && i == active_index) {
                         r.scroll_to_me(None);
                     }
-                    if r.clicked() && i != d.doc.active_index() {
+                    if touch_allowed && r.clicked() && i != d.doc.active_index() {
                         d.view.commit_edit(&mut d.doc);
                         d.doc.set_active(i);
                         d.view.reset();
                     }
-                    if r.double_clicked() {
+                    if touch_allowed && r.double_clicked() {
                         if i != d.doc.active_index() {
                             d.view.commit_edit(&mut d.doc);
                             d.doc.set_active(i);
@@ -1985,18 +2184,22 @@ impl ThinodaApp {
                         }
                         cmd = Some(Cmd::RenameSheet);
                     }
-                    r.context_menu(|ui| {
+                    let mut popup = egui::Popup::context_menu(&r);
+                    if !touch_allowed {
+                        popup = popup.open_memory(None);
+                    }
+                    popup.show(|ui| {
                         scroll_menu(ui, |ui| {
-                            if i != d.doc.active_index() {
+                            if touch_allowed && i != d.doc.active_index() {
                                 d.view.commit_edit(&mut d.doc);
                                 d.doc.set_active(i);
                                 d.view.reset();
                             }
-                            if ui.button(t("Rename Sheet")).clicked() {
+                            if ui.button(t("Rename Sheet")).clicked() && touch_allowed {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::RenameSheet);
                             }
-                            if ui.button(t("Duplicate Sheet")).clicked() {
+                            if ui.button(t("Duplicate Sheet")).clicked() && touch_allowed {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::DuplicateSheet);
                             }
@@ -2007,7 +2210,7 @@ impl ThinodaApp {
                                 ("Save Sheet As…", Cmd::SaveSheetAs),
                                 ("New Sheet", Cmd::NewSheet),
                             ] {
-                                if ui.button(t(label)).clicked() {
+                                if ui.button(t(label)).clicked() && touch_allowed {
                                     cmd = Some(command);
                                 }
                             }
@@ -2015,6 +2218,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(i > 0, egui::Button::new(t("Move Left")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.commit_edit(&mut d.doc);
                                 if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
@@ -2030,6 +2234,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.commit_edit(&mut d.doc);
                                 if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
@@ -2045,6 +2250,7 @@ impl ThinodaApp {
                             if ui
                                 .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.doc.set_active(i);
                                 cmd = Some(Cmd::DeleteSheet);
@@ -2062,6 +2268,7 @@ impl ThinodaApp {
                         .on_hover_text(t("New Sheet"))
                         .accessible_name(t("New Sheet"))
                         .clicked()
+                        && touch_allowed
                     {
                         cmd = Some(Cmd::NewSheet);
                     }
@@ -2099,7 +2306,7 @@ impl ThinodaApp {
                     if view.gained_focus() {
                         view.scroll_to_me(None);
                     }
-                    if view.clicked() {
+                    if view.clicked() && touch_allowed {
                         cmd = Some(Cmd::ToggleOutliner);
                     }
                     widgets::vdivider(ui);
@@ -2110,11 +2317,11 @@ impl ThinodaApp {
                     if minus.gained_focus() {
                         minus.scroll_to_me(None);
                     }
-                    if minus.clicked() {
+                    if minus.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::ZoomOut));
                     }
                     let current = d.view.zoom_percent();
-                    let zoom = menu_button(ui, format!("{current}%"), |ui| {
+                    let zoom = status_menu_button(ui, format!("{current}%"), |ui| {
                         let mut presets = vec![500, 400, 300, 200, 150, 120, 100, 80, 50, 20, 10];
                         if !presets.contains(&current) {
                             presets.push(current);
@@ -2124,13 +2331,14 @@ impl ThinodaApp {
                             if ui
                                 .selectable_label(current == percent, format!("{percent}%"))
                                 .clicked()
+                                && touch_allowed
                             {
                                 d.view.set_zoom(percent as f32 / 100.0);
                                 ui.close();
                             }
                         }
                         ui.separator();
-                        if ui.button(t("Fit Map")).clicked() {
+                        if ui.button(t("Fit Map")).clicked() && touch_allowed {
                             cmd = Some(Cmd::Canvas(Action::Fit));
                             ui.close();
                         }
@@ -2147,7 +2355,7 @@ impl ThinodaApp {
                     if plus.gained_focus() {
                         plus.scroll_to_me(None);
                     }
-                    if plus.clicked() {
+                    if plus.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::ZoomIn));
                     }
                     let fit = ui
@@ -2157,7 +2365,7 @@ impl ThinodaApp {
                     if fit.gained_focus() {
                         fit.scroll_to_me(None);
                     }
-                    if fit.clicked() {
+                    if fit.clicked() && touch_allowed {
                         cmd = Some(Cmd::Canvas(Action::Fit));
                     }
                     widgets::vdivider(ui);
@@ -2170,7 +2378,7 @@ impl ThinodaApp {
                             thinoda_core::search::word_count(sheet)
                         ),
                     );
-                    let statistics = menu_button(
+                    let statistics = status_menu_button(
                     ui,
                     format!("{}: {}", t("Topics"), sheet.topics.len()),
                     |ui| {
@@ -3409,21 +3617,33 @@ impl ThinodaApp {
         }
 
         // Rename sheet.
-        if let Some((i, mut name)) = self.dialogs.rename_sheet.take() {
+        if let Some(mut draft) = self.dialogs.rename_sheet.take() {
             let mut done = None;
+            let edit_id = egui::Id::unique("thinoda_rename_input");
+            let enter = ctx.memory(|memory| memory.has_focus(edit_id))
+                && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
             egui::Modal::new(egui::Id::unique("thinoda_rename")).show(ctx, |ui| {
                 ui.heading(t("Rename Sheet"));
-                let r = ui.add(TextEdit::singleline(&mut name).desired_width(280.0));
-                r.request_focus();
+                let r = ui
+                    .add(
+                        TextEdit::singleline(&mut draft.name)
+                            .id(edit_id)
+                            .lock_focus(draft.ime_composing)
+                            .desired_width(280.0),
+                    )
+                    .accessible_name(t("Rename Sheet"));
+                if !draft.focus_requested {
+                    r.request_focus();
+                    draft.focus_requested = true;
+                }
+                if !r.has_focus() && !r.lost_focus() {
+                    draft.ime_composing = false;
+                }
                 ui.horizontal(|ui| {
-                    if widgets::primary_button(ui, t("OK")).clicked()
-                        || ui.input(|i| i.key_pressed(Key::Enter))
-                    {
+                    if widgets::primary_button(ui, t("OK")).clicked() || enter {
                         done = Some(true);
                     }
-                    if widgets::secondary_button(ui, t("Cancel")).clicked()
-                        || ui.input(|i| i.key_pressed(Key::Escape))
-                    {
+                    if widgets::secondary_button(ui, t("Cancel")).clicked() {
                         done = Some(false);
                     }
                 });
@@ -3432,8 +3652,8 @@ impl ThinodaApp {
                 Some(true) => {
                     if let Some(d) = self.docs.get_mut(self.active) {
                         let prev = d.doc.active_index();
-                        d.doc.set_active(i);
-                        let n = name.clone();
+                        d.doc.set_active(draft.index);
+                        let n = draft.name;
                         let _ = d.doc.edit_sheet("Rename Sheet", |s| {
                             s.title = n;
                             Ok(())
@@ -3442,7 +3662,7 @@ impl ThinodaApp {
                     }
                 }
                 Some(false) => {}
-                None => self.dialogs.rename_sheet = Some((i, name)),
+                None => self.dialogs.rename_sheet = Some(draft),
             }
         }
 

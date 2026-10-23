@@ -62,15 +62,49 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
-- **Title input ownership**: Map and Outline use `MapView`'s per-edit IME
-  composition guard before drawing their title text widgets. Candidate
+- **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
+  state with the shared `protect_ime_candidate_keys` guard before drawing their
+  title text widgets. Candidate
   Enter/Tab/Escape cannot trigger document commit or insertion, including the
   final composition-event frame. Dismissal restores ordinary title shortcuts;
   the Outline editor locks focus while its explicit Tab handling owns insertion.
+  Labels keeps independent composition state and runs the same guard before
+  menus can dismiss its popup. Its input locks focus only during composition,
+  so ordinary Tab navigation resumes after dismissal; candidate keys cannot add
+  provisional labels or discard the draft.
 - **Toolbar focus**: shared icon/captioned toolbar buttons keep egui's standard
   keyboard activation and draw a two-logical-pixel focus outline in the semantic
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
+- **Touch navigation ownership**: `MapView` latches an owned or rejected
+  multitouch sequence until all contacts lift. Owned two-finger input scales
+  about the previous centroid, then translates to the current centroid. It
+  bypasses the wheel/zoom fallback so synthesized zoom is not applied twice.
+  Multitouch or touch cancellation discards pending topic/relationship drags and
+  suppresses click/drop actions for that sequence. Single-finger blank-background
+  dragging pans; mouse blank-background dragging retains rubber-band selection.
+  Three-or-more-finger, popup and disabled states cancel ownership rather than
+  acquiring it halfway through a gesture. No gesture creates a navigation undo
+  entry. Hosts use `CanvasOutput::context_menu`, not the raw response's menu:
+  it applies the same ownership guard to egui's synthesized long-touch secondary
+  clicks and closes menus for suppressed sequences. Single-touch holds retain
+  the upstream recognizer; no duplicate timer or platform gesture is installed.
+  Canvas ownership survives the final raw touch until the synthesized primary
+  pointer also releases, preventing late click-through. The shared
+  `widgets::touch_activation_allowed` cancellation/multitouch latch is sampled
+  each app frame, including while controls are hidden, and cached across layout
+  passes. Outline title/disclosure/command activation and shared switches,
+  segmented choices and color swatches use it. Symbol insertion/removal, default-
+  color/contrast actions and color application share that guard in the inspector
+  and context instance editor. Scroll areas and text inputs keep
+  upstream scrolling/text-selection behavior. Preview cards gate pointer
+  activation with the same latch while retaining explicit keyboard activation;
+  template double-click creation requires that guarded activation too. The
+  structure launcher's popup toggle is guarded independently. This does not yet
+  guard every standard egui button, slider or combo box. Sheet strip selection,
+  creation, rename, arrows, context opening and commands share the latch without
+  disabling scrolling or replacing egui's single-finger hold recognizer.
+  Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.

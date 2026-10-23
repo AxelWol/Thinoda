@@ -1,0 +1,736 @@
+use egui::{
+    Event, Modifiers, PointerButton, TouchDeviceId, TouchId, TouchPhase, accesskit::Role, vec2,
+};
+use egui_kittest::{Harness, kittest::Queryable};
+use thinoda_app::{
+    app::{Cmd, EXPORT_MENU, FormatTab, Services, SidebarFamily, ThinodaApp},
+    i18n::t,
+};
+use thinoda_platform::settings::{Language, Settings, ThemeMode};
+
+mod support;
+use support::menu_action;
+
+fn harness(theme: ThemeMode, scale: f32) -> Harness<'static, ThinodaApp> {
+    let mut app = ThinodaApp::new(
+        Settings {
+            language: Language::English,
+            theme,
+            ui_scale: scale,
+            show_format_panel: false,
+            show_topic_toolbar: false,
+            ..Default::default()
+        },
+        Services::default(),
+        &[],
+    );
+    app.exec(&egui::Context::default(), Cmd::New);
+    let mut h = Harness::builder()
+        .with_size(vec2(640.0, 360.0) * scale)
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.run_steps(4);
+    h.set_size(vec2(640.0, 360.0));
+    h.run_steps(4);
+    h
+}
+
+fn swipe(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) {
+    for (phase, fraction) in [
+        (TouchPhase::Start, 0.0),
+        (TouchPhase::Move, 0.2),
+        (TouchPhase::Move, 1.0),
+        (TouchPhase::End, 1.0),
+    ] {
+        let pos = start + delta * fraction;
+        h.event(Event::PointerMoved(pos));
+        h.event(Event::Touch {
+            device_id: TouchDeviceId(1),
+            id: TouchId(1),
+            phase,
+            pos,
+            force: None,
+        });
+        if matches!(phase, TouchPhase::Start | TouchPhase::End) {
+            h.event(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: phase == TouchPhase::Start,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(8);
+}
+
+fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64, cancel: bool) {
+    touch_release(h, pos, contacts, cancel, 2);
+}
+
+fn touch_release(
+    h: &mut Harness<'_, ThinodaApp>,
+    pos: egui::Pos2,
+    contacts: u64,
+    cancel: bool,
+    hold_steps: usize,
+) {
+    h.event(Event::PointerMoved(pos));
+    h.event(Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    for phase in [
+        TouchPhase::Start,
+        if cancel {
+            TouchPhase::Cancel
+        } else {
+            TouchPhase::End
+        },
+    ] {
+        for id in 1..=contacts {
+            h.event(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(id),
+                phase,
+                pos: pos + vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        h.run_steps(if phase == TouchPhase::Start {
+            hold_steps
+        } else {
+            2
+        });
+    }
+    h.event(Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(4);
+}
+
+#[test]
+fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1.0, 1.5, 2.0] {
+            let mut h = harness(theme, scale);
+            h.get_by_role_and_label(Role::Button, t("Export")).click();
+            h.run_steps(4);
+            let first = t(EXPORT_MENU.first().unwrap().label());
+            let button = h.get_by_role_and_label(Role::Button, first).rect();
+            let layer = h.ctx.layer_id_at(button.center()).unwrap();
+            let popup = h.ctx.memory(|memory| memory.area_rect(layer.id)).unwrap();
+            let start = egui::pos2(popup.center().x, popup.bottom() - 24.0);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            swipe(&mut h, start, vec2(0.0, -90.0));
+            assert!(h.get_by_role_and_label(Role::Button, first).rect().top() < button.top());
+            assert!(
+                egui::Popup::is_any_open(&h.ctx),
+                "swipe must not execute an export"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            let last = t(EXPORT_MENU.last().unwrap().label());
+            for _ in 0..20 {
+                if popup.contains_rect(h.get_by_role_and_label(Role::Button, last).rect()) {
+                    break;
+                }
+                swipe(&mut h, start, vec2(0.0, -90.0));
+            }
+            assert!(
+                popup.contains_rect(h.get_by_role_and_label(Role::Button, last).rect()),
+                "touch scrolling must reach the last export format"
+            );
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+
+            let mut h = harness(theme, scale);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Settings);
+            h.run_steps(4);
+            let control = h.get_by_role_and_label(Role::Button, t("General")).rect();
+            let window = h
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
+                .unwrap();
+            swipe(
+                &mut h,
+                egui::pos2(window.center().x, window.bottom() - 24.0),
+                vec2(0.0, -90.0),
+            );
+            assert!(
+                h.get_by_role_and_label(Role::Button, t("General"))
+                    .rect()
+                    .top()
+                    < control.top()
+            );
+            assert!(h.state().dialogs.settings);
+            assert!(h.state().settings.confirm_on_delete);
+            assert!(h.state().ai.test.is_none());
+            h.get_by_role_and_label(Role::Switch, t("Confirm before deleting"))
+                .scroll_to_me();
+            h.run_steps(8);
+            let toggle = h
+                .get_by_role_and_label(Role::Switch, t("Confirm before deleting"))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, toggle, contacts, cancel);
+                assert!(
+                    h.state().settings.confirm_on_delete,
+                    "canceled/multitouch release must not change a Settings switch"
+                );
+            }
+            h.get_by_role_and_label(Role::Switch, t("Confirm before deleting"))
+                .click();
+            h.run_steps(4);
+            assert!(!h.state().settings.confirm_on_delete);
+            for (role, label) in [
+                (
+                    Role::Tab,
+                    if theme == ThemeMode::Light {
+                        t("Dark")
+                    } else {
+                        t("Light")
+                    },
+                ),
+                (Role::ColorWell, "#00A89D"),
+            ] {
+                h.get_by_role_and_label(role, label).scroll_to_me();
+                h.run_steps(8);
+                let target = h.get_by_role_and_label(role, label).rect().center();
+                let accent = h.state().accent;
+                for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                    rejected_tap(&mut h, target, contacts, cancel);
+                    assert_eq!(h.state().settings.theme, theme);
+                    assert_eq!(h.state().accent, accent);
+                }
+                h.get_by_role_and_label(role, label).focus();
+                h.key_press(egui::Key::Space);
+                h.run_steps(4);
+                if role == Role::Tab {
+                    assert_ne!(h.state().settings.theme, theme);
+                    h.state_mut().settings.theme = theme;
+                    h.run_steps(4);
+                } else {
+                    assert_eq!(h.state().accent, egui::Color32::from_rgb(0, 0xA8, 0x9D));
+                }
+            }
+            inspector_symbols(&mut harness(theme, scale));
+            inspector_previews(&mut harness(theme, scale));
+            sheet_controls(&mut harness(theme, scale));
+            status_controls(&mut harness(theme, scale));
+        }
+    }
+}
+
+fn status_controls(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().doc_mut().unwrap().view.set_zoom(1.2);
+    h.state_mut().doc_mut().unwrap().view.offset = vec2(135.0, -80.0);
+    h.run_steps(4);
+    let mode = h.state().mode;
+    let zoom = h.state().doc().unwrap().view.zoom_percent();
+    let offset = h.state().doc().unwrap().view.offset;
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for label in [
+        format!("{}: {}", t("View"), t("Map")),
+        t("Zoom Out").into(),
+        t("Zoom In").into(),
+        t("Fit Map").into(),
+        t("Zoom").into(),
+        t("Statistics").into(),
+    ] {
+        h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+        h.run_steps(8);
+        let target = h
+            .get_by_role_and_label(Role::Button, &label)
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(h.state().mode, mode, "rejected status control: {label}");
+            assert_eq!(
+                h.state().doc().unwrap().view.zoom_percent(),
+                zoom,
+                "rejected zoom control: {label}"
+            );
+            assert!(
+                !egui::Popup::is_any_open(&h.ctx),
+                "rejected status menu: {label}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        }
+    }
+    h.get_by_role_and_label(Role::Button, t("Zoom"))
+        .scroll_to_me();
+    h.run_steps(8);
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        h.get_by_role_and_label(Role::Button, t("Zoom")).click();
+        h.run_steps(4);
+        let target = h.get_by_label("500%").rect().center();
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().view.zoom_percent(), zoom);
+        assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+    }
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        h.get_by_role_and_label(Role::Button, t("Zoom")).click();
+        h.run_steps(4);
+        menu_action(h, t("Fit Map")).scroll_to_me();
+        h.run_steps(8);
+        let target = menu_action(h, t("Fit Map")).rect().center();
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().view.zoom_percent(), zoom);
+        assert_eq!(h.state().doc().unwrap().view.offset, offset);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+    }
+    h.get_by_role_and_label(Role::Button, t("Zoom")).focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    h.get_by_label("500%").focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().view.zoom_percent(), 500);
+    h.get_by_role_and_label(Role::Button, t("Zoom Out")).focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert!(h.state().doc().unwrap().view.zoom_percent() < 500);
+    let smaller = h.state().doc().unwrap().view.zoom_percent();
+    h.get_by_role_and_label(Role::Button, t("Zoom In"))
+        .scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, t("Zoom In"))
+        .rect()
+        .center();
+    touch_release(h, target, 1, false, 2);
+    assert!(h.state().doc().unwrap().view.zoom_percent() > smaller);
+    h.get_by_role_and_label(Role::Button, t("Fit Map")).click();
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().view.offset, offset);
+    h.get_by_role_and_label(Role::Button, &format!("{}: {}", t("View"), t("Map")))
+        .focus();
+    h.run_steps(4);
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_ne!(h.state().mode, mode);
+    h.get_by_role_and_label(Role::Button, t("Statistics"))
+        .focus();
+    h.run_steps(8);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    h.get_by_label(t("Current sheet"));
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+}
+
+fn sheet_controls(h: &mut Harness<'_, ThinodaApp>) {
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::NewSheet);
+    h.run_steps(8);
+    let doc = h.state().doc().unwrap();
+    let titles: Vec<_> = doc
+        .doc
+        .workbook()
+        .sheets
+        .iter()
+        .map(|s| s.title.clone())
+        .collect();
+    let before = doc.doc.workbook().clone();
+    let revision = doc.doc.state_id();
+    for label in [t("New Sheet"), titles[0].as_str(), titles[1].as_str()] {
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(8);
+        let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for _ in 0..2 {
+                rejected_tap(h, target, contacts, cancel);
+            }
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected sheet control must not create or edit sheets"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "rejected sheet control must not switch sheets"
+            );
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+        }
+    }
+    h.state_mut().settings.confirm_on_delete = false;
+    let tab = h
+        .get_by_role_and_label(Role::Button, &titles[1])
+        .rect()
+        .center();
+    for contacts in [2, 3] {
+        touch_release(h, tab, contacts, false, 60);
+        assert!(
+            !egui::Popup::is_any_open(&h.ctx),
+            "multitouch hold must not open sheet context actions"
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    touch_release(h, tab, 1, false, 60);
+    assert!(
+        egui::Popup::is_any_open(&h.ctx),
+        "ordinary single-finger hold must retain sheet context actions"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    for label in [
+        "Rename Sheet",
+        "Duplicate Sheet",
+        "New Sheet",
+        "Move Left",
+        "Delete Sheet",
+    ] {
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let tab = h
+                .get_by_role_and_label(Role::Button, &titles[1])
+                .rect()
+                .center();
+            h.event(Event::PointerMoved(tab));
+            for pressed in [true, false] {
+                h.event(Event::PointerButton {
+                    pos: tab,
+                    button: PointerButton::Secondary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(1);
+            }
+            h.run_steps(4);
+            menu_action(h, t(label)).scroll_to_me();
+            h.run_steps(8);
+            let target = menu_action(h, t(label)).rect().center();
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected sheet menu action: {label}"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+        }
+    }
+    h.get_by_role_and_label(Role::Button, &titles[0]).click();
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
+    h.get_by_role_and_label(Role::Button, t("New Sheet"))
+        .focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook().sheets.len(), 3);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook().sheets,
+        before.sheets
+    );
+    for _ in 0..12 {
+        h.state_mut().exec(&ctx, Cmd::NewSheet);
+    }
+    h.run_steps(8);
+    let doc = h.state().doc().unwrap();
+    let before_scroll = doc.doc.workbook().clone();
+    let revision = doc.doc.state_id();
+    h.get_by_role_and_label(Role::Button, &titles[0])
+        .scroll_to_me();
+    h.run_steps(8);
+    let tab = h.get_by_role_and_label(Role::Button, &titles[0]).rect();
+    let right = h
+        .get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, right, contacts, cancel);
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, &titles[0]).rect(),
+            tab,
+            "rejected arrow taps must not scroll the strip"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, t("Scroll sheets right"))
+        .focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(8);
+    assert!(
+        h.get_by_role_and_label(Role::Button, &titles[0])
+            .rect()
+            .left()
+            < tab.left()
+    );
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before_scroll);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+}
+
+fn inspector_previews(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().settings.show_format_panel = true;
+    h.set_size(vec2(1000.0, 700.0));
+    h.run_steps(8);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    let label = format!("{}: {}", t("Quick Style"), t("Warning"));
+    h.get_by_role_and_label(Role::Button, &label).scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, &label)
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not apply Quick Style"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, &label).focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    h.state_mut().format_tab = FormatTab::Map;
+    h.run_steps(8);
+    let picker = format!("{}: {}", t("Choose Structure"), t("Mind Map"));
+    h.get_by_role_and_label(Role::Button, &picker)
+        .scroll_to_me();
+    h.run_steps(8);
+    let launcher = h
+        .get_by_role_and_label(Role::Button, &picker)
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, launcher, contacts, cancel);
+        assert!(
+            !egui::Popup::is_any_open(&h.ctx),
+            "rejected touch must not open the structure gallery"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, &picker).click();
+    h.run_steps(4);
+    let label = t("Logic Chart (right)");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not change map structure"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, label).focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().structure,
+        thinoda_core::Structure::LogicRight
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let label = t("Classic");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected preview release must not apply a sheet theme"
+        );
+    }
+    h.get_by_role_and_label(Role::Button, label).click();
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().theme.theme_id,
+        "classic"
+    );
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let count = h.state().docs.len();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.run_steps(8);
+    let label = t("Mind Map");
+    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+    h.run_steps(8);
+    let target = h.get_by_role_and_label(Role::Button, label).rect().center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        for _ in 0..2 {
+            rejected_tap(h, target, contacts, cancel);
+        }
+        assert_eq!(
+            h.state().docs.len(),
+            count,
+            "rejected double tap must not create a document"
+        );
+        assert_eq!(h.state().template_choice, None);
+        assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    }
+    h.get_by_role_and_label(Role::Button, label).focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().template_choice, Some("mind-map"));
+    assert_eq!(h.state().docs.len(), count);
+}
+
+fn inspector_symbols(h: &mut Harness<'_, ThinodaApp>) {
+    h.state_mut().settings.show_format_panel = true;
+    h.state_mut().sidebar_family = SidebarFamily::Symbols;
+    h.set_size(vec2(1000.0, 480.0));
+    h.run_steps(8);
+    let first = thinoda_core::markers::GROUPS
+        .first()
+        .unwrap()
+        .markers
+        .first()
+        .unwrap();
+    h.get_by_role_and_label(Role::Button, t(first.name))
+        .scroll_to_me();
+    h.run_steps(8);
+    let button = h.get_by_role_and_label(Role::Button, t(first.name)).rect();
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    swipe(h, button.center(), vec2(0.0, -70.0));
+    assert!(
+        h.get_by_role_and_label(Role::Button, t(first.name))
+            .rect()
+            .top()
+            < button.top(),
+        "first inspector swipe must scroll rather than apply a symbol"
+    );
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    h.get_by_role_and_label(Role::Button, t(first.name))
+        .scroll_to_me();
+    h.run_steps(8);
+    let target = h
+        .get_by_role_and_label(Role::Button, t(first.name))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, target, contacts, cancel);
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected inspector release must not apply symbols"
+        );
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+    h.get_by_role_and_label(Role::Button, t(first.name)).focus();
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    let doc = h.state().doc().unwrap();
+    let root = doc.doc.sheet().root;
+    assert!(
+        doc.doc
+            .sheet()
+            .topic(root)
+            .unwrap()
+            .markers
+            .iter()
+            .any(|m| m == first.id)
+    );
+    let placed = doc.doc.workbook().clone();
+    let placed_revision = doc.doc.state_id();
+    h.get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .scroll_to_me();
+    h.run_steps(8);
+    let remove = h
+        .get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+        rejected_tap(h, remove, contacts, cancel);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), placed_revision);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &placed);
+    }
+    h.get_by_role_and_label(Role::Button, t("Remove Symbol"))
+        .click();
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &placed);
+    let doc = h.state().doc().unwrap();
+    let background = doc.view.symbol_background(&doc.doc, root, Some(0));
+    h.state_mut().exec(
+        &ctx,
+        Cmd::Canvas(thinoda_canvas::Action::SetMarkerColor(
+            root,
+            0,
+            Some(background),
+        )),
+    );
+    h.run_steps(4);
+    let colored = h.state().doc().unwrap().doc.workbook().clone();
+    let colored_revision = h.state().doc().unwrap().doc.state_id();
+    for label in ["Default symbol color", "Improve contrast"] {
+        h.query_all_by_role_and_label(Role::Button, t(label))
+            .last()
+            .unwrap()
+            .scroll_to_me();
+        h.run_steps(8);
+        let target = h
+            .query_all_by_role_and_label(Role::Button, t(label))
+            .last()
+            .unwrap()
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                colored_revision,
+                "rejected symbol color action must not change map history"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
+        }
+    }
+    h.query_all_by_role_and_label(Role::Button, t("Improve contrast"))
+        .last()
+        .unwrap()
+        .focus();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_ne!(h.state().doc().unwrap().doc.state_id(), colored_revision);
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+    h.run_steps(4);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
+}

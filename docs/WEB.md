@@ -62,6 +62,86 @@ features work differently:
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 
+## Touch and trackpad coverage
+
+The shared canvas supports one-finger dragging on empty background to pan, and
+two-finger pan plus simultaneous pinch zoom. The map follows the fingers' center
+instead of zooming around the first finger. Zoom stays within 10%-500%.
+Mouse background drags still select a rectangle; dragging a topic is an edit.
+Adding a second finger cancels a pending edit drag and keeps the rest of that
+touch sequence in navigation mode until every finger lifts. Touch cancellation
+discards pending topic/relationship drops. Starting outside the canvas or in
+disabled UI does not acquire map navigation; disabling it during a gesture
+requires lifting all fingers before starting again. Three-or-more-finger
+sequences do not acquire map navigation, avoiding app mappings for system
+multifinger gestures.
+
+Tap a topic to select it, double-tap to edit, or hold one finger for its context
+actions. Two/three-finger holds do not open context menus or mutate maps, including
+after returning to one finger until every contact lifts. This uses egui's standard
+long-touch recognizer, not a separate platform-specific timer.
+
+In Outline, one-finger swipes scroll deep content horizontally and vertically
+without activating rows. Canceled and two/three-finger sequences cannot activate
+disclosure buttons, titles or the command toolbar. Both Outline and canvas keep
+the rejection guard through a synthesized primary-pointer release delivered after
+the raw touch contacts end, preventing late click-through.
+
+Menu and Settings first-swipe scrolling has shared-input coverage in both themes
+at 1x/1.5x/2x scale; repeated export-menu swipes reach the last format without
+executing it. Settings switches, segmented theme choices and color swatches reject
+canceled and two/three-finger taps, including delayed pointer releases; normal
+click/keyboard activation is preserved. Other button/slider/combo interactions
+and actual browser touch delivery remain separate acceptance work.
+
+Symbols-inspector first swipes also scroll without applying markers. Canceled
+and two/three-finger releases cannot insert/remove symbols or invoke default-color
+and contrast actions; color application shares the guard. Automated both-theme/
+scale coverage preserves ordinary keyboard/click actions and Undo. Other
+inspector property controls and actual device delivery remain open.
+
+Open-document tabs follow the same compact browsing model as sheet tabs: fixed
+left/right arrows scroll clipped names while Close Tab and New Tab stay pinned.
+Touch/mouse browsing does not switch documents; keyboard focus and active-tab
+changes reveal the selected file. Narrow layouts prioritize these controls over
+quick-action icons that remain in the main menu.
+
+Style, structure, theme and template preview cards reject canceled/multitouch
+pointer activation. Template double-tap creation and the structure launcher's
+popup toggle use the guard too. Enter/Space activation remains available.
+Actual-app both-theme/scale regressions cover unchanged map history and template
+document count, ordinary application and Undo; real browser delivery remains open.
+
+Status view/zoom/Fit controls, including zoom-menu presets and Fit, reject canceled
+and two/three-contact releases. Zoom/Statistics popup opening uses the same guard.
+Both-theme/scale app regressions check unchanged camera zoom/offset, view and map
+history, then ordinary tap/click/keyboard recovery. This is shared-input coverage,
+not real-browser or hardware acceptance.
+
+Sheet creation/selection/rename, scroll arrows and sheet context commands also
+reject canceled/multitouch activation. Single-finger holds still open sheet
+context actions; two/three-finger holds do not. Both-theme/scale app regressions
+verify unchanged active sheet/content/history and normal click/keyboard/Undo
+recovery. Status controls and main-menu commands are not fully audited yet.
+
+Trackpad scroll and zoom events can apply together. OS/browser gesture delivery
+varies; these shared input behaviors are not a claim of full hardware support.
+Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
+
+| Acceptance surface | Current evidence / remaining work |
+|---|---|
+| Shared native/WASM canvas | Raw touch and synthesized-pointer tests cover pan/pinch math, zoom limits, finger changes, cancellation, outside/disabled ownership, unchanged maps/history, normal clicks afterward and trackpad scroll plus zoom. Tap selection, double-tap editing and single-touch context holds are covered; canvas and full-app regressions reject two/three-finger context holds without changing map history. |
+| Windows touch / precision trackpad | Shared native code checked on Windows; real touchscreen/trackpad, press-and-hold context actions and pen coexistence remain open. |
+| macOS trackpad | Native scroll/zoom event path preserved; real-device natural scroll, pinch, momentum and system-gesture acceptance remain open. |
+| Ubuntu Wayland / X11 | Separate touch/touchpad/backend runtime acceptance remains open; libinput touchpad support alone does not prove touchscreen behavior. |
+| iPhone/iPad Safari and Android Chrome, browser/PWA | Shared WASM code compiles; real browser gesture delivery, pointer cancellation, text input, orientation and installed-PWA behavior remain open. No native iOS/Android package is implied. |
+| All UI surfaces and accessibility | Shared canvas tap/double-tap/hold, sheet/menu/Settings/Symbols-inspector swipes, Outline release safety and guarded Settings/Symbols actions have automated coverage. Device-delivered gestures, topic moves, remaining inspector properties, touch targets and AT/OS-reserved gestures still need the full acceptance matrix in PLAN. |
+| Browser zoom ownership | Existing restrictive viewport metadata and eframe touch-event default prevention still need a browser-tested accessibility/gesture-ownership change. Map pinch is not page zoom or proof of low-vision acceptance. |
+
+See [the gesture workstream](PLAN.md#immediate-next-work) for official platform
+references and remaining tasks. Do not disable system accessibility gestures or
+add custom three/four-finger shortcuts to work around missing platform delivery.
+
 ## Install Thinoda as an app (PWA)
 
 The web build includes a web app manifest, standard 192/512 px icons, an opaque
