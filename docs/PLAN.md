@@ -430,6 +430,26 @@ then, not after the release is promised.
   settings unchanged; output decisions use the same gesture ownership. All 11
   print tests pass. Numeric keyboard/popup and real-device coverage remain part
   of final acceptance rather than a claim of comprehensive print-device testing.
+- **SS4/SS5/SS6 independent security review:** reviewed shipped input/asset,
+  credential/AI, native bridge and release boundaries. One high-confidence
+  HIGH finding concerns arbitrary `v*` tag builds receiving signing secrets;
+  no other confirmed exploitable findings were reported. This is not complete
+  scanner or device coverage. Read-only GitHub ruleset enumeration returned only
+  the active main-branch ruleset, with no active tag ruleset. No settings changed.
+  Owner-controlled release-tag/workflow/signing protections remain an unresolved
+  security gate: an in-workflow check alone can be removed by a writer who can
+  replace that workflow.
+- **SS6 release defense in depth:** a secret-free preflight checks out main,
+  resolves an exact tag/main ref, rejects missing/noncommit/unmerged refs and
+  emits its immutable commit SHA. All package jobs depend on it and use that SHA
+  rather than re-resolving a mutable tag. Publication rechecks the tag against
+  the packaged SHA. Manual feature-branch artifact runs are intentionally
+  rejected; the preflight script must land on main before the updated workflow
+  is used. Local git fixtures cover lightweight/annotated tags, main ancestry,
+  moved/unmerged/missing/malformed refs and unavailable main. Workflow contracts
+  cover preflight dependency and SHA wiring. This mitigates mistaken/untrusted
+  source selection while the workflow is intact; it does not close the owner
+  configuration finding or eliminate a later concurrent tag mutation.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

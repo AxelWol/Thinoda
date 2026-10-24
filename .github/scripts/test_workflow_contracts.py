@@ -28,10 +28,10 @@ class WorkflowContractTests(unittest.TestCase):
     def test_release_order_separates_apple_jobs_and_orders_linux_architectures(self):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         expected = {
-            "macos-intel": ([], "macos-15-intel", "x86_64-apple-darwin", "app,dmg"),
-            "linux-x86": (["macos-intel"], "ubuntu-22.04", "x86_64-unknown-linux-gnu", "deb,appimage"),
-            "linux-arm": (["linux-x86"], "ubuntu-24.04-arm", "aarch64-unknown-linux-gnu", "deb,appimage"),
-            "macos-silicon": (["windows", "linux-arm"], "macos-latest", "aarch64-apple-darwin", "app,dmg"),
+            "macos-intel": (["verify"], "macos-15-intel", "x86_64-apple-darwin", "app,dmg"),
+            "linux-x86": (["verify", "macos-intel"], "ubuntu-22.04", "x86_64-unknown-linux-gnu", "deb,appimage"),
+            "linux-arm": (["verify", "linux-x86"], "ubuntu-24.04-arm", "aarch64-unknown-linux-gnu", "deb,appimage"),
+            "macos-silicon": (["verify", "windows", "linux-arm"], "macos-latest", "aarch64-apple-darwin", "app,dmg"),
         }
         for name, (needs, os, target, formats) in expected.items():
             with self.subTest(job=name):
@@ -40,19 +40,30 @@ class WorkflowContractTests(unittest.TestCase):
                 for key, value in [("os", os), ("target", target), ("formats", formats)]:
                     self.assertIn(f"      {key}: {value}\n", block)
                 self.assertIn("uses: ./.github/workflows/package-target.yml", block)
-                self.assertIn("ref: ${{ inputs.tag || github.ref }}", block)
+                self.assertIn("ref: ${{ needs.verify.outputs.commit }}", block)
                 self.assertNotIn("if:", block, "A failed prerequisite must block later stages")
         windows = job(source, "windows")
-        self.assertEqual(dependencies(windows), ["macos-intel"])
+        self.assertEqual(dependencies(windows), ["verify", "macos-intel"])
         self.assertIn("fail-fast: false", windows)
         self.assertIn("target: x86_64-pc-windows-msvc", windows)
         self.assertIn("target: aarch64-pc-windows-msvc", windows)
         self.assertNotIn("secrets: inherit", windows)
         publish = job(source, "publish")
-        self.assertCountEqual(dependencies(publish), [*expected, "windows"])
+        self.assertCountEqual(dependencies(publish), ["verify", *expected, "windows"])
         self.assertNotIn("always()", publish)
         self.assertIn("pattern: thinoda-*", publish)
         self.assertIn("merge-multiple: true", publish)
+        self.assertIn("Release tag changed during packaging", publish)
+
+    def test_release_preflight_uses_main_without_signing_secrets(self):
+        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        verify = job(source, "verify")
+        self.assertIn("ref: main", verify)
+        self.assertIn("fetch-depth: 0", verify)
+        self.assertIn("persist-credentials: false", verify)
+        self.assertIn('verify_release_ref.py --ref "$ref"', verify)
+        self.assertNotIn("secrets.", verify)
+        self.assertNotIn("secrets: inherit", verify)
 
     def test_shared_packaging_preserves_verification_and_artifact_identity(self):
         source = (WORKFLOWS / "package-target.yml").read_text(encoding="utf-8")

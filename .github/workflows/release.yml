@@ -45,19 +45,41 @@ env:
   THINODA_AI_SKIP_LIVE: "1"
 
 jobs:
+  verify:
+    name: Verify release commit on main
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.verify.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve and verify release ref
+        id: verify
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          ref="$EVENT_REF"
+          if [[ -n "$RELEASE_TAG" ]]; then ref="refs/tags/$RELEASE_TAG"; fi
+          python .github/scripts/verify_release_ref.py --ref "$ref"
+
   macos-intel:
     name: macOS Intel first
+    needs: verify
     uses: ./.github/workflows/package-target.yml
     with:
       os: macos-15-intel
       target: x86_64-apple-darwin
       formats: app,dmg
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.verify.outputs.commit }}
     secrets: inherit
 
   windows:
     name: Windows
-    needs: macos-intel
+    needs: [verify, macos-intel]
     strategy:
       fail-fast: false
       matrix:
@@ -69,47 +91,63 @@ jobs:
       os: ${{ matrix.os }}
       target: ${{ matrix.target }}
       formats: ${{ matrix.formats }}
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.verify.outputs.commit }}
 
   linux-x86:
     name: Linux x86
-    needs: macos-intel
+    needs: [verify, macos-intel]
     uses: ./.github/workflows/package-target.yml
     with:
       # Oldest supported Ubuntu LTS for the widest x86 glibc compatibility.
       os: ubuntu-22.04
       target: x86_64-unknown-linux-gnu
       formats: deb,appimage
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.verify.outputs.commit }}
 
   linux-arm:
     name: Linux ARM64 after Linux x86
-    needs: linux-x86
+    needs: [verify, linux-x86]
     uses: ./.github/workflows/package-target.yml
     with:
       os: ubuntu-24.04-arm
       target: aarch64-unknown-linux-gnu
       formats: deb,appimage
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.verify.outputs.commit }}
 
   macos-silicon:
     name: Apple Silicon last
-    needs: [windows, linux-arm]
+    needs: [verify, windows, linux-arm]
     uses: ./.github/workflows/package-target.yml
     with:
       os: macos-latest
       target: aarch64-apple-darwin
       formats: app,dmg
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.verify.outputs.commit }}
     secrets: inherit
 
   publish:
-    needs: [macos-intel, windows, linux-x86, linux-arm, macos-silicon]
+    needs: [verify, macos-intel, windows, linux-x86, linux-arm, macos-silicon]
     if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release tag still selects the packaged commit
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          EXPECTED_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          python .github/scripts/verify_release_ref.py --ref "refs/tags/$RELEASE_TAG"
+          actual=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          if [[ "$actual" != "$EXPECTED_COMMIT" ]]; then
+            echo "::error::Release tag changed during packaging"
+            exit 1
+          fi
       - uses: actions/download-artifact@v8
         with:
           path: dist

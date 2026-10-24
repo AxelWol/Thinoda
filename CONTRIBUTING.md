@@ -263,6 +263,15 @@ installers for all platforms. You do not need to bump versions or edit
 `CHANGELOG.md` in your pull request. Details are in the
 [README](README.md#releasing).
 
+Packaging resolves the release tag to an immutable commit reachable from fetched
+`origin/main` before any signing job starts; publication checks that the tag still
+selects that commit. Manual artifact-only runs must also target `main`. This
+preflight must be merged to `main` before using the updated workflow.
+These checks do not replace owner-managed tag/branch protections or protected
+signing environments: a writer who can replace workflow code can remove its
+checks. Maintainers must restrict release-tag creation/update and privileged
+workflow changes before treating signing credentials as isolated from writers.
+
 ## Licensing of contributions
 
 Thinoda is licensed under the [European Union Public Licence v1.2 (EUPL-1.2)](LICENSE.md).
