@@ -177,6 +177,11 @@ graph TD
   rejected touches cannot create or cancel a preview. Guide/shortcut filters,
   legal-document selection/copy/links and auxiliary dialog decisions share the
   cancellation latch without changing text selection or typed searches.
+  Palette command selection/backdrop and Find/Replace navigation, options and
+  replacement use the same latch. Rejected gestures preserve queries, replacement
+  drafts, scope, selection and history. The palette's stable search input protects
+  IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
+  keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

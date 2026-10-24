@@ -467,6 +467,18 @@ impl ThinodaApp {
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
         self.protect_ai_prompt_input(&ctx);
+        if self.palette.open {
+            let id = egui::Id::unique("thinoda_command_palette_input");
+            if self.dialogs.palette_composing || ctx.memory(|memory| memory.has_focus(id)) {
+                thinoda_canvas::protect_ime_candidate_keys(
+                    &ctx,
+                    id,
+                    &mut self.dialogs.palette_composing,
+                );
+            }
+        } else {
+            self.dialogs.palette_composing = false;
+        }
         if let Some(draft) = &mut self.dialogs.rename_sheet {
             thinoda_canvas::protect_ime_candidate_keys(
                 &ctx,
@@ -3350,6 +3362,7 @@ impl ThinodaApp {
 
     fn search_bar(&mut self, ctx: &Context, canvas: egui::Rect) {
         let mut close = false;
+        let touch_allowed = widgets::touch_activation_allowed(ctx);
         let bounds = ctx.content_rect().shrink(8.0);
         let width = 354.0_f32.min(bounds.width());
         let right = if canvas.width() >= width {
@@ -3380,7 +3393,10 @@ impl ThinodaApp {
                                 self.search.focus = !r.has_focus();
                                 r.request_focus();
                             }
-                            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                            if r.lost_focus()
+                                && ui.input(|i| i.key_pressed(Key::Enter))
+                                && touch_allowed
+                            {
                                 let back = ui.input(|i| i.modifiers.shift);
                                 self.goto_hit(if back { -1 } else { 1 });
                                 r.request_focus();
@@ -3390,6 +3406,7 @@ impl ThinodaApp {
                                     .small_button("▲")
                                     .accessible_name(t("Previous result"))
                                     .clicked()
+                                    && touch_allowed
                                 {
                                     self.goto_hit(-1);
                                 }
@@ -3397,6 +3414,7 @@ impl ThinodaApp {
                                     .small_button("▼")
                                     .accessible_name(t("Next result"))
                                     .clicked()
+                                    && touch_allowed
                                 {
                                     self.goto_hit(1);
                                 }
@@ -3404,6 +3422,7 @@ impl ThinodaApp {
                                     .small_button(icons::CLOSE)
                                     .accessible_name(t("Close search"))
                                     .clicked()
+                                    && touch_allowed
                                 {
                                     close = true;
                                 }
@@ -3429,6 +3448,12 @@ impl ThinodaApp {
                                 ui.add(egui::Label::new(&title).truncate())
                                     .on_hover_text(title);
                             }
+                            let options = (
+                                self.search.all_sheets,
+                                self.search.opts.clone(),
+                                self.search.dim,
+                                self.search.show_replace,
+                            );
                             ui.horizontal_wrapped(|ui| {
                                 ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
                                 ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
@@ -3444,6 +3469,14 @@ impl ThinodaApp {
                                 ui.checkbox(&mut self.search.dim, t("Dim others"));
                                 ui.checkbox(&mut self.search.show_replace, t("Replace"));
                             });
+                            if !touch_allowed {
+                                (
+                                    self.search.all_sheets,
+                                    self.search.opts,
+                                    self.search.dim,
+                                    self.search.show_replace,
+                                ) = options;
+                            }
                             if self.search.show_replace {
                                 widgets::caption(ui, t("Replaces topic titles only."));
                                 ui.add(
@@ -3456,6 +3489,7 @@ impl ThinodaApp {
                                     if ui
                                         .add_enabled(n > 0, egui::Button::new(t("Replace All")))
                                         .clicked()
+                                        && touch_allowed
                                     {
                                         self.replace_all();
                                     }

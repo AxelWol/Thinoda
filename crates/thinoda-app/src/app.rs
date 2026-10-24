@@ -180,6 +180,7 @@ pub struct Dialogs {
     pub legal: crate::legal::LegalState,
     pub shortcuts: bool,
     pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
+    pub(crate) palette_composing: bool,
     pub masked_copy: bool,
     pub(crate) masked_copy_owner: Option<(String, usize, u64)>,
     pub close: Option<CloseIntent>,

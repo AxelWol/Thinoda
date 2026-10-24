@@ -596,6 +596,50 @@ then, not after the release is promised.
   6,169,806. All three evidence artifacts uploaded successfully. These runs were
   allowed to finish before publishing further application-only changes; they
   do not sign off the newer AI/auxiliary-dialog candidate.
+- **Exact AI/auxiliary candidate milestone:** full CI
+  [40086807314](https://github.com/AxelWol/Thinoda/actions/runs/40086807314)
+  and all three default-sanitized campaigns
+  [40086807315](https://github.com/AxelWol/Thinoda/actions/runs/40086807315)
+  passed at `8fbad47`. Each campaign ran 1,801 seconds: FreeMind 6,576,733
+  executions, XMind 6,891,062 and OPML 4,481,874; all evidence artifacts uploaded.
+  An attempted native Chrome fallback could launch but safe address-bar delivery
+  returned `no_viable_candidate`; perception then failed closed without a
+  verified URL. The CI-built artifact served HTTP 200 locally, but no candidate
+  page was navigated or tested. The temporary server was stopped. Browser/PWA
+  runtime acceptance remains open; artifact serving is not browser execution.
+  Private-reporting enablement was proposed but the user was unavailable; no
+  approval or permission change was inferred.
+- **SS3 palette and Find/Replace:** regressions failed against unguarded command
+  execution and Replace All: canceled input closed/executed the palette and
+  replaced topic titles. Shared cancellation guards now retain palette/query,
+  search/replacement drafts, options/scope, navigation selection and model/history.
+  Both-theme cases cover cancel and two/three-contact releases, backdrop retention,
+  deliberate command execution and replacement Undo. Stable palette input protects
+  IME candidate Enter/Tab/Escape including the final composition frame.
+  Targeted app touch/palette/search suites pass 31 tests; shared-UI units pass 21.
+  Native all-target and WASM clippy pass. The complete local native workspace
+  subsequently passes 658 tests with 1 pre-existing ignored across 74 suites;
+  live AI is disabled. All 25 documentation metadata contracts pass.
+
+#### Bounded SS3 inventory reconciliation
+
+This is the implementation inventory, not a substitute for the SS7 real-host
+acceptance matrix. Newly reproduced defects interrupt this list; broadening it
+to new product features is not required to close the current sprint.
+
+| Existing control family | Implemented safety evidence | Remaining acceptance |
+|---|---|---|
+| Canvas/Outline, sheet/document strips, main/context menus | Shared cancellation/ownership, stale-target and delayed-release regressions recorded above | Device-delivered touch/pen/trackpad and platform/AT matrix |
+| Style/Map/Symbols, theme and quick-style libraries | Target-bound edits, full pointer rollback, guarded commands and retained drafts | Free-form color-plane and actual secondary-pointer popup/device execution |
+| Settings and credential/connection controls | Provisional profile, stale-profile rollback, rejected side-effect tests in both themes | Native folder/install UI and device input delivery |
+| Recovery, save/close/conflict, rename/export consent | Stable ownership, durable handoff, error/retry, canceled decisions and source-preservation fixtures | Actual OS picker/quit/crash runtime and remaining supported hosts |
+| Print preview and screenshot editor | Full staged rollback, guarded output/decisions, same-frame cancellation | OS print/picker/clipboard/GPU and physical-device runtime; no print submission |
+| Labels, shortcuts, Guide, legal/About and masked preview | Guarded decisions/links/filter state, independent text drafts, source-bound preview | Native browser-launch/clipboard and AT/device behavior |
+| Command palette and Find/Replace | Canceled command/replacement regressions, retained query/scope/history, palette IME and clean execution/Undo | Real IME/AT and device-delivered gestures |
+| AI Generate and delayed results | Guarded prompt/IME, source revision/drafts, endpoint/key ownership, disable/re-enable and background Undo | Supported browser/native runtime against local mock; no external documents or credentials |
+
+At the latest read, the repository returned no open GitHub issues. This does not
+close unfinished work in PLAN/BACKLOG or waive owner/security/runtime gates.
 
 #### Completion gate - no partial-success closure
 

@@ -71,6 +71,170 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
 }
 
 #[test]
+fn rejected_palette_selection_preserves_query_and_document() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Palette);
+        h.state_mut().palette.set_query("New");
+        h.run_steps(4);
+        let commands: Vec<_> = ThinodaApp::palette_commands()
+            .into_iter()
+            .filter(|(cmd, _)| h.state().command_available(cmd))
+            .map(|(_, metadata)| metadata)
+            .collect();
+        let command = h.state().palette.filter(&commands)[0];
+        let label = format!(
+            "{} {}",
+            command.title,
+            command.shortcut.as_deref().unwrap_or_default()
+        );
+        let count = h.state().docs.len();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::Button, &label)
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(h.state().palette.open);
+            assert_eq!(h.state().palette.query(), "New");
+            rejected_tap(&mut h, egui::pos2(2.0, 2.0), contacts, cancel);
+            assert!(h.state().palette.open);
+            assert_eq!(h.state().docs.len(), count);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.get_by_role_and_label(Role::Button, &label).click();
+        h.run_steps(4);
+        assert!(!h.state().palette.open);
+        assert_eq!(h.state().docs.len(), count + 1);
+    }
+}
+
+#[test]
+fn rejected_search_actions_preserve_scope_replacement_and_history() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1100.0, 1000.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::FindReplace);
+        h.state_mut().search.query = "Topic".into();
+        h.state_mut().search.replace = "Replacement".into();
+        h.run_steps(4);
+        assert!(!h.state().search.hits.is_empty());
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in [
+                "All sheets",
+                "Match case",
+                "Whole word",
+                "Include notes",
+                "Include labels",
+                "Dim others",
+                "Replace",
+            ] {
+                let options = (
+                    h.state().search.all_sheets,
+                    h.state().search.opts.clone(),
+                    h.state().search.dim,
+                    h.state().search.show_replace,
+                );
+                let pos = h
+                    .get_by_role_and_label(Role::CheckBox, label)
+                    .rect()
+                    .center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(
+                    (
+                        h.state().search.all_sheets,
+                        h.state().search.opts.clone(),
+                        h.state().search.dim,
+                        h.state().search.show_replace,
+                    ),
+                    options,
+                    "{label}"
+                );
+            }
+            for label in [
+                "Previous result",
+                "Next result",
+                "Replace All",
+                "Close search",
+            ] {
+                let current = h.state().search.current;
+                let selection = h.state().doc().unwrap().view.selection.clone();
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().search.current, current, "{label}");
+                assert_eq!(
+                    h.state().doc().unwrap().view.selection,
+                    selection,
+                    "{label}"
+                );
+                assert!(h.state().search.open);
+                assert_eq!(h.state().search.query, "Topic");
+                assert_eq!(h.state().search.replace, "Replacement");
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+        }
+        h.get_by_role_and_label(Role::Button, "Replace All").click();
+        h.run_steps(4);
+        assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.state_mut().doc_mut().unwrap().doc.undo();
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.get_by_role_and_label(Role::Button, "Close search")
+            .click();
+        h.run_steps(4);
+        assert!(!h.state().search.open);
+    }
+}
+
+#[test]
+fn palette_candidate_keys_do_not_execute_or_discard_a_query() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for key in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 900.0));
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Palette);
+            h.state_mut().palette.set_query("New");
+            h.run_steps(4);
+            let count = h.state().docs.len();
+            h.event(Event::Ime(egui::ImeEvent::Preedit {
+                text: "candidate".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(2);
+            assert!(h.state().palette.open, "{key:?}");
+            assert_eq!(h.state().docs.len(), count);
+            h.input_mut().events.extend([
+                Event::Ime(egui::ImeEvent::Commit(String::new())),
+                Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(2);
+            assert!(h.state().palette.open, "{key:?}: final composition frame");
+            assert_eq!(h.state().docs.len(), count);
+            h.key_press(egui::Key::Escape);
+            h.run_steps(2);
+            assert!(!h.state().palette.open);
+        }
+    }
+}
+
+#[test]
 fn rejected_shortcut_reference_actions_preserve_filters_and_search() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         let mut h = harness(theme, 1.0);
