@@ -715,6 +715,61 @@ fn corrupted_and_invalid_workbooks_are_recoverable_errors_not_panics() {
 }
 
 #[test]
+fn recovery_after_process_exit_keeps_live_sessions_and_orphan_leases() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let live = RecoveryManager::start(&paths).unwrap();
+    live.snapshot("live", meta("Still editing"), &Workbook::default())
+        .unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::recovery_exit_child", "--test-threads=1"])
+        .env("THINODA_RECOVERY_EXIT_ROOT", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(73),
+        "child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].docs.len(), 1);
+    assert_eq!(orphans[0].docs[0].doc_key, "crashed");
+    assert_eq!(orphans[0].docs[0].meta.title, "Persisted before exit");
+    orphans[0].docs[0].load().unwrap();
+    assert!(RecoveryManager::find_orphans(&paths).is_empty());
+    let retained = orphans[0].docs[0].clone();
+    drop(orphans);
+    assert!(
+        RecoveryManager::find_orphans(&paths).is_empty(),
+        "a cloned recovery document must retain the orphan lease"
+    );
+    retained.discard().unwrap();
+    assert!(RecoveryManager::find_orphans(&paths).is_empty());
+    assert!(live.session_dir().join("docs").join("live.json").exists());
+    live.finish().unwrap();
+}
+
+#[test]
+fn recovery_exit_child() {
+    let Some(root) = std::env::var_os("THINODA_RECOVERY_EXIT_ROOT") else {
+        return;
+    };
+    let manager = RecoveryManager::start(&Paths::from_root(root)).unwrap();
+    manager
+        .queue_snapshot(
+            "crashed",
+            Snapshot::to_bytes(meta("Persisted before exit"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(manager.try_flush_for_crash());
+    // Exit without Rust destructors: the next process must discover the snapshot.
+    std::process::exit(73);
+}
+
+#[test]
 fn empty_orphan_sessions_and_clean_drop_are_removed() {
     let dir = directory();
     let paths = paths(&dir);

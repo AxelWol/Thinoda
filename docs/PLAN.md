@@ -237,6 +237,30 @@ Every newly discovered exploitable or data-loss defect interrupts lower-impact
 work. Day 6 is the scope checkpoint: escalate unresolved roots/access blockers
 then, not after the release is promised.
 
+#### Execution evidence - 2026-10-24
+
+- **SS1 in progress (implementation: current coding session):** reproduced a
+  deterministic recovery-lock lifetime defect. Holding a duplicated descriptor,
+  then dropping `fs::Lock`, left `try_acquire` returning `WouldBlock`. Native
+  locks now explicitly unlock before closing; a forked child's inherited open
+  description can no longer prolong the parent's released recovery lock.
+  The regression failed before the change and passes afterward; it also checks
+  that closing an old duplicate does not unlock a new owner's session. This
+  establishes the lock defect, not retrospective proof of every CI failure.
+- Added a real child-process exit without Rust destructors after snapshot
+  persistence. The parent must load/discard that orphan, skip a live session,
+  and honor a cloned orphan-document lease. The existing app restore test now
+  exercises 50 crash/restore cycles per invocation, including normal concurrent
+  workspace execution. Ubuntu ARM64 CI additionally runs those cycles alone.
+- Windows x64 validation: 196 tests across platform/app unit tests and app
+  e2e/inspector-save suites passed; all-target platform/app clippy and workflow
+  contract tests passed. The exact-candidate ARM64/native/WASM CI results remain
+  required before SS1 can close. Local Windows success is not ARM64 evidence.
+- **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
+  device acceptance evidence has been supplied; security scanner coverage and
+  repository protection/reporting configuration still require verification and
+  any necessary owner authorization. Do not mark the sprint or release ready.
+
 #### Completion gate - no partial-success closure
 
 1. All SS0-SS8 acceptance cases have recorded evidence against the candidate

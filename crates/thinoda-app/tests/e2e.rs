@@ -2497,6 +2497,12 @@ fn xmind_export_reimports_and_foreign_import_is_dirty() {
 
 #[test]
 fn crash_recovery_restores_unsaved_work() {
+    for _ in 0..50 {
+        assert_crash_recovery_restores_unsaved_work();
+    }
+}
+
+fn assert_crash_recovery_restores_unsaved_work() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::from_root(dir.path());
     paths.ensure().unwrap();

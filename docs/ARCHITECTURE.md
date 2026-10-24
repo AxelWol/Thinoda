@@ -51,6 +51,10 @@ graph TD
   conflict/reserved-key policy and explicit editor/reset behavior.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
+  Native recovery locks explicitly unlock before closing their file descriptor:
+  a concurrently forked child's duplicate must not delay orphan discovery after
+  the owning session releases its lock. Orphan documents retain a shared lease
+  until restoration/discard or the last handle is dropped.
   Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;
