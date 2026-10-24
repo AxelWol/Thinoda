@@ -44,10 +44,14 @@ pub static UNSAVED_CHANGES: std::sync::atomic::AtomicBool =
 
 impl eframe::App for ThinodaApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            self.desktop_ribbon = true;
+        }
+        #[cfg(target_os = "macos")]
         self.poll_native_menus(ui.ctx());
         self.draw(ui);
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.sync_native_menus(ui.ctx(), frame);
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {

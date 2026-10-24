@@ -243,6 +243,37 @@ ribbon slice, not completed P4.3 acceptance: native keyboard/AT, high-contrast
 and Windows ARM64 acceptance still need evidence. The other F1 OS/window work
 and F2-F6 remain open, and deferred stability work has not resumed.
 
+**Windows single-menu correction:** at the user's request, the Windows desktop
+now activates the ribbon directly, without attaching the native HMENU bar or
+showing the redundant hamburger. Short windows retain the ribbon's bounded menu
+fallback. macOS still supplies its native application menu alongside the ribbon;
+web/Linux keep the compact menu. Earlier HMENU attachment evidence above is
+historical, not the current Windows presentation.
+Ribbon explanations are hover tooltips rather than visible controls and do not
+consume layout/overflow slots. The user's subsequent Microsoft Ribbon design guide
+supersedes the intermediate uniform-icon layout: primary/labeled/compact controls
+now use 32/24/16-point icons, with a large primary action and two-row secondary
+columns, labeled footers and 44-point minimum targets. One combined tooltip per command prevents duplicate
+label/hint popups; style help is associated with the style commands, not the
+following sheet command.
+
+**Ribbon design-guide and map-capsule follow-up (2026-10-24):** Home/Capture task
+tabs and saved Quick Access Toolbar customization follow the
+[Microsoft Ribbon introduction](https://learn.microsoft.com/en-us/windows/win32/windowsribbon/windowsribbon-introduction);
+this remains an egui ribbon, not Windows COM/XML Ribbon Framework integration.
+Every command family has an explicit semantic icon mapping, including distinct
+Zoom In/Out/Reset/Fit, sheet operations and all five AI actions. Primary and
+secondary icons use different light/dark semantic colors; enabled icon contrast
+is checked against surfaces and composited selection backgrounds. Submenu arrows
+are sized and vertically centered against their captions; the expansion toggle
+shares the task-tab centerline. Document capsules now contain their own close
+button, with New Tab directly after the final capsule in the same scroll viewport.
+Fixed navigation arrows, keyboard focus reveal and shared unsaved-close decisions
+remain. Tests cover actual painted sibling-icon shapes, contrast, caption/chevron
+alignment, capsule geometry, inactive close, canceled touch and unsaved confirmation.
+PR #70 has merged; these refinements are follow-up changes, not edits to that PR.
+Real macOS/VoiceOver, multi-window and wider F1 host acceptance remain open.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes
@@ -1550,13 +1581,14 @@ the gesture workstream; this is not a claim of full small-device acceptance.
 
 **User-directed follow-up - compact document-tab navigation:** the top document
 strip now mirrors the Excel-inspired sheet strip with fixed previous/next arrows,
-a clipped horizontally scrollable file-name viewport, and pinned Close Tab/New Tab
-actions. Browsing with arrows, mouse/touch drag or horizontal scrolling does not
+a clipped horizontally scrollable file-name viewport. The later capsule follow-up
+places Close Tab inside each capsule and New Tab after the final capsule.
+Browsing with arrows, mouse/touch drag or horizontal scrolling does not
 switch or modify documents. Selecting, closing, opening a new tab and keyboard
 focus/active-tab reveal retain their existing behavior; stable document keys keep
 tab widget identity. Narrow windows prioritize document navigation and move the
 other quick-action icons into the existing main menu. Automated coverage checks
-arrow endpoints, pinned controls and document contents/history across browsing,
+arrow endpoints, inline controls and document contents/history across browsing,
 selection, close/new-tab behavior and narrow layouts. Hardware/browser/AT
 acceptance remains part of the wider interaction workstream.
 

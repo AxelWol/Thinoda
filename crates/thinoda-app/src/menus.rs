@@ -154,12 +154,12 @@ impl ThinodaApp {
             ("Paste Style", Cmd::PasteStyle),
             ("Reset Style", Cmd::ResetStyle),
             ("Save Quick Style…", Cmd::SaveQuickStyle),
-            ("New Sheet from Topic", Cmd::NewSheetFromTopic),
         ]));
         edit.push(MenuEntry::Caption(
             t("Copies explicit overrides; inherited theme styles stay automatic.").into(),
         ));
         edit.push(MenuEntry::Separator);
+        edit.push(item("New Sheet from Topic", Cmd::NewSheetFromTopic));
         edit.push(item("Settings…", Cmd::Settings));
         let mut help = items([
             ("Quick Start", Cmd::QuickStart),

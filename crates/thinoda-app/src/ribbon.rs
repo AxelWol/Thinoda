@@ -6,7 +6,7 @@ use crate::{
     menus::MenuEntry,
 };
 use egui::{Key, Modifiers, Ui};
-use thinoda_ui::ribbon::{Detail, Glyph, command_button};
+use thinoda_ui::ribbon::{CommandIcon, Detail, Glyph, IconTone, command_button, menu_button};
 use thinoda_ui::{tokens::Palette, widgets};
 
 #[derive(Default)]
@@ -16,6 +16,8 @@ pub(crate) struct RibbonState {
     snapshot: Option<crate::native_menus::MenuSnapshot>,
     rect: Option<egui::Rect>,
     pending: Option<(crate::native_menus::MenuSnapshot, Cmd)>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    qat_rect: Option<egui::Rect>,
 }
 
 #[cfg(test)]
@@ -24,11 +26,26 @@ mod tests;
 
 use crate::command_icons::command_glyph;
 
-fn entry_glyph(entry: &MenuEntry) -> Glyph {
+fn entry_glyph(entry: &MenuEntry) -> CommandIcon {
     match entry {
         MenuEntry::Command { command, .. } => command_glyph(command),
-        MenuEntry::Submenu { entries, .. } => entries.first().map_or(Glyph::Folder, entry_glyph),
-        _ => Glyph::Chevron,
+        MenuEntry::Submenu { label, .. } if label == t("New from Template…") => {
+            CommandIcon::from(Glyph::Template).with_tone(IconTone::File)
+        }
+        MenuEntry::Submenu { label, .. } if label == t("Open Recent") => {
+            CommandIcon::from(Glyph::History).with_tone(IconTone::File)
+        }
+        MenuEntry::Submenu { label, .. } if label == t("Export") => {
+            CommandIcon::from(Glyph::Export).with_tone(IconTone::File)
+        }
+        MenuEntry::Submenu { entries, .. } => entries
+            .first()
+            .map_or_else(|| Glyph::Folder.into(), entry_glyph),
+        MenuEntry::ClearRecent => {
+            CommandIcon::marked(Glyph::History, thinoda_ui::ribbon::Badge::Minus)
+                .with_tone(IconTone::Danger)
+        }
+        _ => Glyph::Chevron.into(),
     }
 }
 
@@ -39,12 +56,21 @@ enum GroupDetail {
     Menu,
 }
 
+const LABELED_COLUMN_WIDTH: f32 = 204.0;
+
 fn group_width(detail: GroupDetail, count: usize) -> f32 {
     match detail {
-        GroupDetail::Full => 84.0 + count.saturating_sub(1).div_ceil(3) as f32 * 146.0,
-        GroupDetail::Compact => 84.0 + count.saturating_sub(1).div_ceil(3) as f32 * 34.0,
-        GroupDetail::Menu => 78.0,
+        GroupDetail::Full => 120.0 + count.saturating_sub(1).div_ceil(2) as f32 * 212.0,
+        GroupDetail::Compact => 120.0 + count.saturating_sub(1).div_ceil(2) as f32 * 52.0,
+        GroupDetail::Menu => 120.0,
     }
+}
+
+fn control_count(entries: &[&MenuEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|entry| !matches!(entry, MenuEntry::Caption(_)))
+        .count()
 }
 
 fn group_details(counts: &[usize], available: f32) -> Vec<GroupDetail> {
@@ -53,7 +79,7 @@ fn group_details(counts: &[usize], available: f32) -> Vec<GroupDetail> {
         details
             .iter()
             .zip(counts)
-            .map(|(detail, count)| group_width(*detail, *count) + 12.0)
+            .map(|(detail, count)| group_width(*detail, *count) + 24.0)
             .sum::<f32>()
     };
     for next in [GroupDetail::Compact, GroupDetail::Menu] {
@@ -79,15 +105,15 @@ fn command_groups<'a>(
                 Cmd::New | Cmd::Open => t("Open…"),
                 Cmd::Save | Cmd::SaveAs | Cmd::SaveAll => t("Save"),
                 Cmd::Import | Cmd::Print | Cmd::ShowInFolder => t("Export"),
-                Cmd::Canvas(Action::Undo | Action::Redo) => t("Undo"),
+                Cmd::Canvas(Action::Undo | Action::Redo) => t("Editing"),
                 Cmd::Canvas(Action::Copy | Action::Cut | Action::Duplicate | Action::Delete)
-                | Cmd::MenuPaste => t("Copy"),
+                | Cmd::MenuPaste => t("Clipboard"),
                 Cmd::Canvas(Action::SelectAll) | Cmd::Find | Cmd::FindReplace | Cmd::Palette => {
                     t("Select")
                 }
                 Cmd::Canvas(Action::Indent | Action::Outdent) => t("Arrange"),
                 Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle | Cmd::SaveQuickStyle => {
-                    t("Copy Style")
+                    t("Styles")
                 }
                 Cmd::EditField(_) | Cmd::Labels => t("Notes"),
                 Cmd::Canvas(
@@ -108,6 +134,7 @@ fn command_groups<'a>(
                 Cmd::NextSheet
                 | Cmd::PreviousSheet
                 | Cmd::NewSheet
+                | Cmd::NewSheetFromTopic
                 | Cmd::RenameSheet
                 | Cmd::DuplicateSheet
                 | Cmd::CopySheet
@@ -135,16 +162,116 @@ fn command_groups<'a>(
             groups.push((label, vec![entry]));
         }
     }
+    for (_, entries) in &mut groups {
+        if let Some(index) = entries.iter().position(|entry| {
+            matches!(
+                entry,
+                MenuEntry::Command {
+                    command: Cmd::MenuPaste,
+                    ..
+                }
+            )
+        }) {
+            let primary = entries.remove(index);
+            entries.insert(0, primary);
+        }
+    }
     groups
 }
 
 impl ThinodaApp {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) fn quick_access_toolbar(&mut self, ui: &mut Ui) {
+        let snapshot = self
+            .ribbon
+            .snapshot
+            .clone()
+            .unwrap_or_else(|| self.native_menu_snapshot(ui.ctx()));
+        let preferences = self.settings.quick_access;
+        let response = ui.horizontal_centered(|ui| {
+            let narrow = ui.ctx().content_rect().width() < 640.0;
+            for (visible, command, label) in [
+                (preferences.save, Cmd::Save, t("Save")),
+                (
+                    preferences.undo,
+                    Cmd::Canvas(thinoda_canvas::Action::Undo),
+                    t("Undo"),
+                ),
+                (
+                    preferences.redo,
+                    Cmd::Canvas(thinoda_canvas::Action::Redo),
+                    t("Redo"),
+                ),
+                (preferences.print, Cmd::Print, t("Print")),
+            ] {
+                if !visible
+                    || (narrow
+                        && matches!(
+                            command,
+                            Cmd::Print | Cmd::Canvas(thinoda_canvas::Action::Redo)
+                        ))
+                {
+                    continue;
+                }
+                let hint = Self::shortcut_hint_for_mode(ui.ctx(), &command, self.mode);
+                let tooltip =
+                    hint.map_or_else(|| label.to_owned(), |hint| format!("{label} ({hint})"));
+                let (_, activated) = ui
+                    .add_enabled_ui(snapshot.command_enabled(&command), |ui| {
+                        command_button(
+                            ui,
+                            command_glyph(&command),
+                            label,
+                            Detail::Icon,
+                            false,
+                            Some(&tooltip),
+                        )
+                    })
+                    .inner;
+                if activated {
+                    self.ribbon.pending = Some((snapshot.clone(), command));
+                    ui.ctx().request_repaint();
+                }
+            }
+            let mut preferences = preferences;
+            let (response, activated) = command_button(
+                ui,
+                Glyph::Chevron,
+                t("Quick Access Toolbar"),
+                Detail::Icon,
+                false,
+                None,
+            );
+            let popup = egui::Popup::menu(&response).open_memory(None);
+            if activated {
+                if popup.is_open() {
+                    egui::Popup::close_id(ui.ctx(), popup.get_id());
+                } else {
+                    egui::Popup::open_id(ui.ctx(), popup.get_id());
+                }
+            }
+            popup.show(|ui| {
+                ui.label(t("Quick Access Toolbar"));
+                ui.checkbox(&mut preferences.save, t("Save"));
+                ui.checkbox(&mut preferences.undo, t("Undo"));
+                ui.checkbox(&mut preferences.redo, t("Redo"));
+                ui.checkbox(&mut preferences.print, t("Print"));
+            });
+            if preferences != self.settings.quick_access {
+                self.settings.quick_access = preferences;
+                self.save_settings();
+            }
+        });
+        self.ribbon.qat_rect = Some(response.response.rect);
+    }
+
     fn ribbon_entry(
         &mut self,
         ui: &mut Ui,
         entry: &MenuEntry,
         snapshot: &crate::native_menus::MenuSnapshot,
         detail: Detail,
+        help: &str,
         command: &mut Option<Cmd>,
     ) {
         match entry {
@@ -152,7 +279,14 @@ impl ThinodaApp {
                 label,
                 command: cmd,
             } => {
-                let (response, activated) = ui
+                let hint = Self::shortcut_hint_for_mode(ui.ctx(), cmd, self.mode);
+                let mut tooltip =
+                    hint.map_or_else(|| label.clone(), |hint| format!("{label} ({hint})"));
+                if !help.is_empty() {
+                    tooltip.push('\n');
+                    tooltip.push_str(help);
+                }
+                let (_, activated) = ui
                     .add_enabled_ui(snapshot.command_enabled(cmd), |ui| {
                         command_button(
                             ui,
@@ -160,13 +294,10 @@ impl ThinodaApp {
                             label,
                             detail,
                             snapshot.command_checked(cmd),
+                            Some(&tooltip),
                         )
                     })
                     .inner;
-                let hint = Self::shortcut_hint_for_mode(ui.ctx(), cmd, self.mode);
-                response.on_hover_text(
-                    hint.map_or_else(|| label.clone(), |hint| format!("{label} ({hint})")),
-                );
                 if activated {
                     *command = Some(cmd.clone());
                 }
@@ -174,14 +305,11 @@ impl ThinodaApp {
             MenuEntry::Submenu { label, entries } => {
                 ui.add_enabled_ui(self.menu_entries_available(entries), |ui| {
                     let (response, activated) =
-                        command_button(ui, entry_glyph(entry), label, detail, false);
+                        menu_button(ui, entry_glyph(entry), label, detail, None);
                     self.ribbon_popup(ui, &response, activated, entries, command);
                 });
             }
-            MenuEntry::Caption(text) => {
-                ui.add(egui::Label::new(text).truncate())
-                    .on_hover_text(text);
-            }
+            MenuEntry::Caption(_) => {}
             MenuEntry::Separator | MenuEntry::ClearRecent => {
                 self.render_menu_entries(ui, std::slice::from_ref(entry), command);
             }
@@ -196,14 +324,6 @@ impl ThinodaApp {
         entries: &[MenuEntry],
         command: &mut Option<Cmd>,
     ) {
-        Glyph::Chevron.paint(
-            ui,
-            egui::Rect::from_min_size(
-                response.rect.right_top() + egui::vec2(-11.0, 3.0),
-                egui::vec2(8.0, 8.0),
-            ),
-            ui.visuals().weak_text_color(),
-        );
         let popup = egui::Popup::menu(response).open_memory(None);
         if activated {
             if popup.is_open() {
@@ -226,31 +346,49 @@ impl ThinodaApp {
         snapshot: &crate::native_menus::MenuSnapshot,
         command: &mut Option<Cmd>,
     ) {
+        let help = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Caption(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let controls: Vec<_> = entries
+            .iter()
+            .copied()
+            .filter(|entry| !matches!(entry, MenuEntry::Caption(_)))
+            .collect();
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-            let width = group_width(detail, entries.len());
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+            let width = group_width(detail, controls.len());
             ui.set_width(width);
-            ui.allocate_ui(egui::vec2(width, 94.0), |ui| {
-                ui.set_min_height(94.0);
+            ui.allocate_ui(egui::vec2(width, 96.0), |ui| {
+                ui.set_min_height(96.0);
                 if detail == GroupDetail::Menu {
-                    let glyph = entries
+                    let glyph = controls
                         .first()
-                        .map_or(Glyph::Chevron, |entry| entry_glyph(entry));
-                    let (response, activated) =
-                        command_button(ui, glyph, &format!("{label}…"), Detail::Large, false);
-                    let entries: Vec<_> = entries.iter().map(|entry| (*entry).clone()).collect();
+                        .map_or_else(|| Glyph::Chevron.into(), |entry| entry_glyph(entry));
+                    let (response, activated) = menu_button(
+                        ui,
+                        glyph,
+                        &format!("{label}…"),
+                        Detail::Large,
+                        if help.is_empty() { None } else { Some(&help) },
+                    );
+                    let entries: Vec<_> = controls.iter().map(|entry| (*entry).clone()).collect();
                     self.ribbon_popup(ui, &response, activated, &entries, command);
                 } else {
-                    ui.horizontal_top(|ui| {
-                        if let Some(first) = entries.first() {
-                            self.ribbon_entry(ui, first, snapshot, Detail::Large, command);
+                    ui.horizontal(|ui| {
+                        if let Some(primary) = controls.first() {
+                            self.ribbon_entry(ui, primary, snapshot, Detail::Large, &help, command);
                         }
-                        for chunk in entries.get(1..).unwrap_or_default().chunks(3) {
+                        for chunk in controls.get(1..).unwrap_or_default().chunks(2) {
                             ui.vertical(|ui| {
                                 ui.set_width(if detail == GroupDetail::Full {
-                                    142.0
+                                    LABELED_COLUMN_WIDTH
                                 } else {
-                                    30.0
+                                    44.0
                                 });
                                 for entry in chunk {
                                     self.ribbon_entry(
@@ -262,6 +400,7 @@ impl ThinodaApp {
                                         } else {
                                             Detail::Icon
                                         },
+                                        &help,
                                         command,
                                     );
                                 }
@@ -270,15 +409,18 @@ impl ThinodaApp {
                     });
                 }
             });
-            ui.add_sized(
-                [width, 16.0],
+            let footer = ui.add_sized(
+                [width, 20.0],
                 egui::Label::new(
                     egui::RichText::new(label)
-                        .size(10.0)
+                        .size(11.0)
                         .color(Palette::of_ui(ui).text_muted),
                 )
                 .truncate(),
             );
+            if !help.is_empty() {
+                footer.on_hover_text(&help);
+            }
         });
     }
 
@@ -289,7 +431,16 @@ impl ThinodaApp {
         {
             self.dispatch_ribbon_command(&ctx, &snapshot, &command);
         }
-        let groups = self.main_menu_entries();
+        let mut groups = self.main_menu_entries();
+        for group in &mut groups {
+            if let MenuEntry::Submenu { label, .. } = group {
+                if label == t("Edit") {
+                    *label = t("Home").into();
+                } else if label == t("Tools") {
+                    *label = t("Capture").into();
+                }
+            }
+        }
         let mut snapshot = self.native_menu_snapshot(&ctx);
         // egui clears text focus on pointer press before the ribbon is drawn.
         // Keep the producing text owner through this ribbon pointer sequence.
@@ -298,10 +449,13 @@ impl ThinodaApp {
             && previous.has_text_focus()
             && ctx.input(|input| {
                 (input.pointer.any_down() || input.pointer.any_released())
-                    && input
-                        .pointer
-                        .interact_pos()
-                        .is_some_and(|pos| self.ribbon.rect.is_some_and(|rect| rect.contains(pos)))
+                    && input.pointer.interact_pos().is_some_and(|pos| {
+                        let ribbon = self.ribbon.rect.is_some_and(|rect| rect.contains(pos));
+                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        let ribbon =
+                            ribbon || self.ribbon.qat_rect.is_some_and(|rect| rect.contains(pos));
+                        ribbon
+                    })
             })
         {
             snapshot = previous.clone();
@@ -345,6 +499,11 @@ impl ThinodaApp {
             }
         }
         if let Some(tab) = selected {
+            ctx.memory_mut(|memory| {
+                if let Some(focused) = memory.focused() {
+                    memory.surrender_focus(focused);
+                }
+            });
             self.ribbon.tab = tab;
             self.ribbon.temporary = self.settings.ribbon_collapsed;
         }
@@ -353,7 +512,7 @@ impl ThinodaApp {
         let mut command: Option<Cmd> = None;
         if !room {
             let panel = egui::Panel::top("thinoda_ribbon_compact")
-                .exact_size(38.0)
+                .exact_size(60.0)
                 .show(ui, |ui| {
                     ui.add_enabled_ui(!blocked, |ui| {
                         crate::ui::guarded_menu_button(ui, t("Ribbon"), |ui| {
@@ -369,22 +528,22 @@ impl ThinodaApp {
             return;
         }
         let panel = egui::Panel::top("thinoda_ribbon")
-            .exact_size(if expanded { 162.0 } else { 38.0 })
+            .exact_size(if expanded { 200.0 } else { 60.0 })
             .frame(
                 egui::Frame::new()
                     .fill(Palette::of(&ctx).surface)
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
+                    .inner_margin(egui::Margin::symmetric(8, 8)),
             )
             .show(ui, |ui| {
                 ui.add_enabled_ui(!blocked, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_top(|ui| {
                         let label = if self.settings.ribbon_collapsed {
                             t("Expand Ribbon")
                         } else {
                             t("Collapse Ribbon")
                         };
                         let (_, toggle) =
-                            command_button(ui, Glyph::Chevron, label, Detail::Icon, expanded);
+                            command_button(ui, Glyph::Chevron, label, Detail::Icon, expanded, None);
                         if toggle {
                             self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
                             self.ribbon.temporary = false;
@@ -395,17 +554,78 @@ impl ThinodaApp {
                             .scroll_bar_visibility(
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             )
-                            .max_height(28.0)
+                            .max_height(44.0)
                             .show(ui, |ui| {
-                                ui.horizontal(|ui| {
+                                ui.horizontal_top(|ui| {
+                                    ui.spacing_mut().interact_size.y = 44.0;
                                     for (index, group) in groups.iter().enumerate() {
                                         let MenuEntry::Submenu { label, .. } = group else {
                                             continue;
                                         };
                                         let selected = self.ribbon.tab == index;
-                                        let response = ui
-                                            .selectable_label(selected, label)
-                                            .on_hover_text(format!("Alt+{}", index + 1));
+                                        let palette = Palette::of_ui(ui);
+                                        let color = if selected {
+                                            palette.accent
+                                        } else {
+                                            palette.text
+                                        };
+                                        let galley = ui.painter().layout_no_wrap(
+                                            label.clone(),
+                                            egui::FontId::proportional(14.0),
+                                            color,
+                                        );
+                                        let (rect, response) = ui.allocate_exact_size(
+                                            egui::vec2(galley.size().x + 16.0, 44.0),
+                                            egui::Sense::click(),
+                                        );
+                                        response.widget_info(|| {
+                                            egui::WidgetInfo::selected(
+                                                egui::Role::Button,
+                                                ui.is_enabled(),
+                                                selected,
+                                                label,
+                                            )
+                                        });
+                                        if selected || response.hovered() {
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                8,
+                                                if selected {
+                                                    palette.accent_soft
+                                                } else {
+                                                    palette.surface_alt
+                                                },
+                                            );
+                                        }
+                                        if response.has_focus() {
+                                            ui.painter().rect_stroke(
+                                                rect.shrink(1.0),
+                                                8,
+                                                egui::Stroke::new(2.0, palette.text),
+                                                egui::StrokeKind::Inside,
+                                            );
+                                        }
+                                        ui.painter().galley(
+                                            rect.center() - galley.size() * 0.5,
+                                            galley,
+                                            color,
+                                        );
+                                        let keyboard = response.has_focus()
+                                            && ui.input_mut(|input| {
+                                                input.consume_key(
+                                                    egui::Modifiers::NONE,
+                                                    egui::Key::Enter,
+                                                ) || input.consume_key(
+                                                    egui::Modifiers::NONE,
+                                                    egui::Key::Space,
+                                                )
+                                            });
+                                        let response =
+                                            response.on_hover_text(format!("Alt+{}", index + 1));
+                                        if response.has_focus() && self.ribbon.tab != index {
+                                            self.ribbon.tab = index;
+                                            self.ribbon.temporary = self.settings.ribbon_collapsed;
+                                        }
                                         if selected {
                                             let rect = response.rect;
                                             ui.painter().line_segment(
@@ -413,8 +633,9 @@ impl ThinodaApp {
                                                 egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
                                             );
                                         }
-                                        if response.clicked()
-                                            && widgets::touch_activation_allowed(&ctx)
+                                        if (response.clicked()
+                                            && widgets::touch_activation_allowed(&ctx))
+                                            || keyboard
                                         {
                                             self.ribbon.tab = index;
                                             self.ribbon.temporary = self.settings.ribbon_collapsed;
@@ -430,21 +651,23 @@ impl ThinodaApp {
                             groups.get(self.ribbon.tab)
                         {
                             let sections = command_groups(entries, label);
-                            let counts: Vec<_> =
-                                sections.iter().map(|(_, items)| items.len()).collect();
+                            let counts: Vec<_> = sections
+                                .iter()
+                                .map(|(_, items)| control_count(items))
+                                .collect();
                             let details = group_details(&counts, ui.available_width());
                             let total: f32 = details
                                 .iter()
                                 .zip(&counts)
-                                .map(|(detail, count)| group_width(*detail, *count) + 12.0)
+                                .map(|(detail, count)| group_width(*detail, *count) + 24.0)
                                 .sum();
                             let visible = if total <= ui.available_width() {
                                 sections.len()
                             } else {
-                                ((ui.available_width() - 90.0).max(0.0) / 90.0) as usize
+                                ((ui.available_width() - 144.0).max(0.0) / 144.0) as usize
                             };
                             ui.horizontal_top(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().item_spacing.x = 12.0;
                                 for (index, ((label, items), detail)) in
                                     sections.iter().zip(&details).take(visible).enumerate()
                                 {
@@ -472,12 +695,12 @@ impl ThinodaApp {
                                                 .collect(),
                                         })
                                         .collect();
-                                    let (response, activated) = command_button(
+                                    let (response, activated) = menu_button(
                                         ui,
                                         Glyph::Chevron,
                                         t("Ribbon"),
                                         Detail::Large,
-                                        false,
+                                        None,
                                     );
                                     self.ribbon_popup(
                                         ui,

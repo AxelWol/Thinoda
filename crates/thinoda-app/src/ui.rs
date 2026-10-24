@@ -279,7 +279,7 @@ fn document_tabs(
     width: f32,
     docs: &[crate::doc::OpenDoc],
     active: usize,
-) -> (Option<usize>, bool, bool, Option<usize>) {
+) -> (Option<usize>, bool, Option<usize>) {
     let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
     let state_id = ui.make_persistent_id("document_scroll_buttons");
     let (position, max_offset, previous_active) = ui.data(|data| {
@@ -292,12 +292,12 @@ fn document_tabs(
     let active_changed = previous_active != active_key;
     let button_width = ui.spacing().interact_size.y;
     let arrow_slot = button_width + ui.spacing().item_spacing.x;
-    let action_slot = Tokens::ICON_BUTTON + ui.spacing().item_spacing.x;
-    let names_width = (width - 2.0 * arrow_slot - 2.0 * action_slot).max(0.0);
+    let names_width = (width - 2.0 * arrow_slot).max(0.0);
     let step = (names_width * 0.8).max(1.0);
     let mut offset = None;
     let mut selected = None;
-    let mut middle_close = None;
+    let mut close_tab = None;
+    let mut new_tab = false;
     for (glyph, label, enabled, target) in [
         (
             "<",
@@ -329,33 +329,104 @@ fn document_tabs(
         ui.horizontal(|ui| {
             for (index, doc) in docs.iter().enumerate() {
                 let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
-                let response = ui
+                let (response, close) = ui
                     .push_id(&doc.key, |ui| {
-                        ui.add(egui::Button::selectable(index == active, &label).truncate())
+                        let palette = Palette::of_ui(ui);
+                        let font = egui::TextStyle::Button.resolve(ui.style());
+                        let text_width = ui
+                            .fonts_mut(|fonts| {
+                                fonts
+                                    .layout_no_wrap(label.clone(), font, palette.text)
+                                    .size()
+                                    .x
+                            })
+                            .min(
+                                (names_width - 2.0 * Tokens::ICON_BUTTON - 20.0).clamp(28.0, 240.0),
+                            );
+                        let (rect, _) = ui.allocate_exact_size(
+                            vec2(text_width + Tokens::ICON_BUTTON + 12.0, Tokens::ICON_BUTTON),
+                            Sense::hover(),
+                        );
+                        ui.painter().rect(
+                            rect,
+                            CornerRadius::same(Tokens::RADIUS_M),
+                            if index == active {
+                                palette.accent_soft
+                            } else {
+                                palette.surface_alt
+                            },
+                            egui::Stroke::new(
+                                1.0,
+                                if index == active {
+                                    palette.accent
+                                } else {
+                                    palette.border
+                                },
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                        let label_rect = egui::Rect::from_min_size(
+                            rect.min + vec2(6.0, 0.0),
+                            vec2(text_width, rect.height()),
+                        );
+                        let close_rect = egui::Rect::from_min_size(
+                            label_rect.right_top(),
+                            vec2(Tokens::ICON_BUTTON, rect.height()),
+                        );
+                        let response = ui.put(
+                            label_rect,
+                            egui::Button::new(RichText::new(&label).color(if index == active {
+                                palette.accent
+                            } else {
+                                palette.text
+                            }))
+                            .frame(false)
+                            .truncate(),
+                        );
+                        let close_label = format!("{}: {}", t("Close Tab"), doc.title());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::Role::Button,
+                                ui.is_enabled(),
+                                index == active,
+                                &label,
+                            )
+                        });
+                        let close = ui
+                            .put(
+                                close_rect,
+                                egui::Button::new(RichText::new(icons::CLOSE).size(16.0))
+                                    .frame(false),
+                            )
+                            .accessible_name(&close_label)
+                            .on_hover_text(close_label);
+                        (response, close)
                     })
-                    .inner
-                    .on_hover_text(
-                        doc.path
-                            .as_ref()
-                            .map_or_else(|| label.clone(), |p| p.display().to_string()),
-                    );
-                if (index == active && active_changed) || response.gained_focus() {
-                    response.scroll_to_me(None);
+                    .inner;
+                let response = response.on_hover_text(
+                    doc.path
+                        .as_ref()
+                        .map_or_else(|| label.clone(), |p| p.display().to_string()),
+                );
+                if (index == active && active_changed)
+                    || response.gained_focus()
+                    || close.gained_focus()
+                {
+                    ui.scroll_to_rect(response.rect.union(close.rect), None);
                 }
                 if response.clicked() && touch_allowed {
                     selected = Some(index);
                 }
-                if response.middle_clicked() && touch_allowed {
-                    middle_close = Some(index);
+                if (response.middle_clicked() || close.clicked() || close.middle_clicked())
+                    && touch_allowed
+                {
+                    close_tab = Some(index);
                 }
             }
+            new_tab = widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked()
+                && touch_allowed;
         });
     });
-    let close_active = docs.get(active).is_some()
-        && widgets::icon_button(ui, icons::CLOSE, t("Close Tab"), false).clicked()
-        && touch_allowed;
-    let new_tab =
-        widgets::icon_button(ui, icons::ADD, t("New Tab"), false).clicked() && touch_allowed;
     ui.data_mut(|data| {
         data.insert_temp(
             state_id,
@@ -366,7 +437,7 @@ fn document_tabs(
             ),
         );
     });
-    (selected, close_active, new_tab, middle_close)
+    (selected, new_tab, close_tab)
 }
 
 pub(crate) fn font_selector(
@@ -457,6 +528,15 @@ pub(crate) fn structure_label(s: Structure) -> &'static str {
 }
 
 impl ThinodaApp {
+    pub(crate) fn ribbon_active(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        return self.desktop_ribbon;
+        #[cfg(target_os = "macos")]
+        return self.native_menu_active();
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        false
+    }
+
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
         widgets::touch_activation_allowed(ui.ctx());
@@ -543,7 +623,11 @@ impl ThinodaApp {
         let show_doc = self.active < self.docs.len();
         if !self.zen {
             egui::Panel::top("thinoda_topbar")
-                .exact_size(Tokens::TOOLBAR_HEIGHT)
+                .exact_size(if self.ribbon_active() {
+                    56.0
+                } else {
+                    Tokens::TOOLBAR_HEIGHT
+                })
                 .frame(
                     egui::Frame::new()
                         .fill(Palette::of(&ctx).surface)
@@ -562,7 +646,7 @@ impl ThinodaApp {
                     self.top_bar(ui);
                 });
             #[cfg(any(target_os = "windows", target_os = "macos"))]
-            if self.native_menu_active() {
+            if self.ribbon_active() {
                 self.show_ribbon(ui);
             }
             if show_doc {
@@ -748,9 +832,11 @@ impl ThinodaApp {
         let mut cmd: Option<Cmd> = None;
         let touch_allowed = widgets::touch_activation_allowed(&ctx);
         ui.horizontal_centered(|ui| {
-            guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
-                self.main_menu(ui, &mut cmd)
-            });
+            if !cfg!(target_os = "windows") || !self.ribbon_active() {
+                guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
+                    self.main_menu(ui, &mut cmd)
+                });
+            }
             let header_width = ctx.content_rect().width() * ctx.zoom_factor();
             let compact_header = header_width < 640.0;
             let very_compact_header = header_width < 480.0;
@@ -761,7 +847,11 @@ impl ThinodaApp {
                     d.doc.can_redo() && !draft_changed,
                 )
             });
-            if !very_compact_header {
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            if self.ribbon_active() {
+                self.quick_access_toolbar(ui);
+            }
+            if !self.ribbon_active() && !very_compact_header {
                 if ui
                     .add_enabled_ui(can_undo, |ui| {
                         widgets::icon_button(ui, icons::UNDO, t("Undo"), false)
@@ -790,16 +880,13 @@ impl ThinodaApp {
                 let min_tabs_width = 2.0 * arrow_slot + 2.0 * action_slot;
                 (ui.available_width() * 0.4).max(min_tabs_width).min(560.0)
             };
-            let (selected, close_active, new_tab, middle_close) =
+            let (selected, new_tab, close_tab) =
                 document_tabs(ui, tabs_width, &self.docs, self.active);
             if touch_allowed {
                 if let Some(index) = selected {
                     self.active = index;
                 }
-                if close_active {
-                    cmd = Some(Cmd::CloseTab(self.active));
-                }
-                if let Some(index) = middle_close {
+                if let Some(index) = close_tab {
                     cmd = Some(Cmd::CloseTab(index));
                 }
                 if new_tab {
@@ -1595,9 +1682,9 @@ impl ThinodaApp {
             .primary()
             .and_then(|id| d.doc.sheet().topic(id))
             .map(|topic| topic.title.clone());
-        let detail = if ui.available_width() >= 850.0 {
+        let detail = if ui.available_width() >= 1160.0 {
             thinoda_ui::ribbon::Detail::Large
-        } else if ui.available_width() >= 650.0 {
+        } else if ui.available_width() >= 880.0 {
             thinoda_ui::ribbon::Detail::Labeled
         } else {
             thinoda_ui::ribbon::Detail::Icon
@@ -1613,6 +1700,7 @@ impl ThinodaApp {
                             t(label),
                             detail,
                             false,
+                            None,
                         )
                     })
                     .inner;
@@ -1626,6 +1714,13 @@ impl ThinodaApp {
             }
         };
         let header_height = ui.available_height().max(0.0) * 0.4;
+        let group_columns = if ui.available_width() >= 500.0 {
+            4
+        } else if ui.available_width() >= 220.0 {
+            2
+        } else {
+            1
+        };
         egui::ScrollArea::vertical()
             .id_salt(outline_id.with("actions"))
             .min_scrolled_height(0.0)
@@ -1641,65 +1736,90 @@ impl ThinodaApp {
                     .fill(p.surface)
                     .inner_margin(Margin::symmetric(6, 4))
                     .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for (caption, buttons) in [
-                                (
-                                    "Insert",
-                                    &[
-                                        ("Add Sibling", Action::InsertSibling),
-                                        ("Add Child", Action::InsertChild),
-                                    ][..],
-                                ),
-                                ("Edit", &[("Edit Topic", Action::StartEdit)][..]),
-                                (
-                                    "Arrange",
-                                    &[
-                                        ("Move Up", Action::MoveUp),
-                                        ("Move Down", Action::MoveDown),
-                                        ("Indent", Action::Indent),
-                                        ("Outdent", Action::Outdent),
-                                    ][..],
-                                ),
-                                (
-                                    "Delete",
-                                    &[
-                                        ("Delete Topic", Action::Delete),
-                                        ("Delete Topic Only", Action::DeleteKeepChildren),
-                                    ][..],
-                                ),
-                            ] {
-                                ui.vertical(|ui| {
-                                    let (width, height) = match detail {
-                                        thinoda_ui::ribbon::Detail::Large => {
-                                            (buttons.len() as f32 * 84.0 - 8.0, 78.0)
-                                        }
-                                        thinoda_ui::ribbon::Detail::Labeled => (142.0, 124.0),
-                                        thinoda_ui::ribbon::Detail::Icon => {
-                                            (buttons.len() as f32 * 40.0 - 8.0, 30.0)
-                                        }
-                                    };
-                                    ui.set_width(width);
-                                    ui.allocate_ui(egui::vec2(width, height), |ui| {
-                                        ui.set_min_height(height);
-                                        if detail == thinoda_ui::ribbon::Detail::Labeled {
-                                            ui.vertical(|ui| action_buttons(ui, buttons));
-                                        } else {
-                                            ui.horizontal(|ui| action_buttons(ui, buttons));
-                                        }
+                        egui::Grid::new(outline_id.with("ribbon_groups"))
+                            .num_columns(group_columns)
+                            .min_col_width(0.0)
+                            .spacing(egui::vec2(16.0, 8.0))
+                            .show(ui, |ui| {
+                                for (index, (caption, buttons)) in [
+                                    (
+                                        "Insert",
+                                        &[
+                                            ("Add Sibling", Action::InsertSibling),
+                                            ("Add Child", Action::InsertChild),
+                                        ][..],
+                                    ),
+                                    ("Edit", &[("Edit Topic", Action::StartEdit)][..]),
+                                    (
+                                        "Arrange",
+                                        &[
+                                            ("Move Up", Action::MoveUp),
+                                            ("Move Down", Action::MoveDown),
+                                            ("Indent", Action::Indent),
+                                            ("Outdent", Action::Outdent),
+                                        ][..],
+                                    ),
+                                    (
+                                        "Delete",
+                                        &[
+                                            ("Delete Topic", Action::Delete),
+                                            ("Delete Topic Only", Action::DeleteKeepChildren),
+                                        ][..],
+                                    ),
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                {
+                                    ui.vertical(|ui| {
+                                        let (width, height) = match detail {
+                                            thinoda_ui::ribbon::Detail::Large => {
+                                                (buttons.len() as f32 * 120.0 - 8.0, 96.0)
+                                            }
+                                            thinoda_ui::ribbon::Detail::Labeled => {
+                                                (204.0, 176.0 + ui.spacing().item_spacing.y * 3.0)
+                                            }
+                                            thinoda_ui::ribbon::Detail::Icon => {
+                                                if group_columns == 4 {
+                                                    (buttons.len() as f32 * 52.0 - 8.0, 44.0)
+                                                } else {
+                                                    (buttons.len().min(2) as f32 * 52.0 - 8.0, 96.0)
+                                                }
+                                            }
+                                        };
+                                        ui.set_width(width);
+                                        ui.allocate_ui(egui::vec2(width, height), |ui| {
+                                            ui.set_min_height(height);
+                                            if detail == thinoda_ui::ribbon::Detail::Labeled {
+                                                ui.vertical(|ui| action_buttons(ui, buttons));
+                                            } else if detail == thinoda_ui::ribbon::Detail::Icon
+                                                && group_columns < 4
+                                            {
+                                                ui.vertical(|ui| {
+                                                    for chunk in buttons.chunks(2) {
+                                                        ui.horizontal(|ui| {
+                                                            action_buttons(ui, chunk)
+                                                        });
+                                                    }
+                                                });
+                                            } else {
+                                                ui.horizontal(|ui| action_buttons(ui, buttons));
+                                            }
+                                        });
+                                        ui.add_sized(
+                                            [width, 16.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(t(caption))
+                                                    .size(10.0)
+                                                    .color(p.text_muted),
+                                            )
+                                            .truncate(),
+                                        );
                                     });
-                                    ui.add_sized(
-                                        [width, 16.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(t(caption))
-                                                .size(10.0)
-                                                .color(p.text_muted),
-                                        )
-                                        .truncate(),
-                                    );
-                                });
-                                ui.separator();
-                            }
-                        })
+                                    if (index + 1) % group_columns == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            })
                     });
             });
         let margin = Margin::symmetric(

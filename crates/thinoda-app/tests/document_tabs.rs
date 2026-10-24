@@ -41,7 +41,7 @@ fn harness(size: egui::Vec2) -> Harness<'static, ThinodaApp> {
 }
 
 #[test]
-fn document_tabs_scroll_without_switching_and_keep_actions_pinned() {
+fn document_tabs_scroll_without_switching_and_keep_actions_with_capsules() {
     let mut h = harness(egui::vec2(720.0, 480.0));
     let contents: Vec<_> = h
         .state()
@@ -54,7 +54,7 @@ fn document_tabs_scroll_without_switching_and_keep_actions_pinned() {
     let left = t("Scroll documents left");
     let right = t("Scroll documents right");
     let new_tab = t("New Tab");
-    let close_tab = t("Close Tab");
+    let close_tab = format!("{}: {last}", t("Close Tab"));
 
     assert!(
         h.get_by_role_and_label(Role::Button, left)
@@ -90,11 +90,12 @@ fn document_tabs_scroll_without_switching_and_keep_actions_pinned() {
     );
     let last_rect = h.get_by_role_and_label(Role::Button, last).rect();
     let right_rect = h.get_by_role_and_label(Role::Button, right).rect();
-    let close_rect = h.get_by_role_and_label(Role::Button, close_tab).rect();
+    let close_rect = h.get_by_role_and_label(Role::Button, &close_tab).rect();
     let new_rect = h.get_by_role_and_label(Role::Button, new_tab).rect();
     assert!(last_rect.left() >= right_rect.right());
     assert!(last_rect.right() <= close_rect.left());
     assert!(close_rect.right() <= new_rect.left());
+    assert!(new_rect.left() - close_rect.right() <= 20.0);
     for rect in [right_rect, close_rect, new_rect] {
         assert!(h.ctx.content_rect().contains_rect(rect));
     }
@@ -178,33 +179,31 @@ fn document_tabs_scroll_without_switching_and_keep_actions_pinned() {
     h.key_press(egui::Key::Enter);
     h.run_steps(4);
     assert_eq!(h.state().active, 19);
-    h.get_by_role_and_label(Role::Button, close_tab).click();
+    h.get_by_role_and_label(Role::Button, &close_tab).click();
     h.run_steps(8);
     assert_eq!(
         h.state().docs.len(),
         19,
-        "pinned Close Tab closes the active file"
+        "the capsule close button closes its file"
     );
     for (doc, (workbook, state_id)) in h.state().docs.iter().zip(contents.iter().take(19)) {
         assert_eq!(doc.doc.workbook(), workbook);
         assert_eq!(doc.doc.state_id(), *state_id);
     }
 
+    h.get_by_role_and_label(Role::Button, new_tab)
+        .scroll_to_me();
+    h.run_steps(4);
     h.get_by_role_and_label(Role::Button, new_tab).click();
     h.run_steps(4);
-    assert_eq!(h.state().active, 19, "New Tab remains pinned at the end");
+    assert_eq!(h.state().active, 19, "New Tab follows the final capsule");
     assert_eq!(h.state().docs.len(), 19);
 }
 
 #[test]
 fn document_tabs_keep_navigation_controls_reachable_in_narrow_windows() {
-    let h = harness(egui::vec2(320.0, 240.0));
-    for label in [
-        t("Scroll documents left"),
-        t("Scroll documents right"),
-        t("Close Tab"),
-        t("New Tab"),
-    ] {
+    let mut h = harness(egui::vec2(320.0, 240.0));
+    for label in [t("Scroll documents left"), t("Scroll documents right")] {
         let rect = h.get_by_role_and_label(Role::Button, label).rect();
         assert!(
             h.ctx.content_rect().contains_rect(rect),
@@ -212,8 +211,63 @@ fn document_tabs_keep_navigation_controls_reachable_in_narrow_windows() {
             h.ctx.content_rect()
         );
     }
+    h.get_by_role_and_label(Role::Button, t("New Tab"))
+        .scroll_to_me();
+    h.run_steps(4);
+    assert!(
+        h.ctx
+            .content_rect()
+            .contains_rect(h.get_by_role_and_label(Role::Button, t("New Tab")).rect())
+    );
     assert_eq!(h.state().active, 0);
     assert_eq!(h.state().docs.len(), 20);
+}
+
+#[test]
+fn close_is_inside_each_capsule_and_add_follows_the_last_capsule() {
+    let mut h = harness(egui::vec2(1200.0, 600.0));
+    h.state_mut().docs.truncate(2);
+    h.state_mut().docs[0].path = Some(PathBuf::from("A.thinoda"));
+    h.state_mut().docs[1].path = Some(PathBuf::from("B.thinoda"));
+    h.run_steps(4);
+    let mut final_capsule = egui::Rect::NOTHING;
+    for title in ["A", "B"] {
+        let label = h.get_by_role_and_label(Role::Button, title).rect();
+        let close = h
+            .get_by_role_and_label(Role::Button, &format!("{}: {title}", t("Close Tab")))
+            .rect();
+        assert_eq!(label.center().y, close.center().y);
+        assert!((close.left() - label.right()).abs() < 0.1);
+        let capsule = h
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Rect(shape) = &shape.shape
+                    && shape.rect.contains_rect(label)
+                    && shape.rect.contains_rect(close)
+                {
+                    return Some(shape.rect);
+                }
+                None
+            })
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("one capsule background must contain both its name and close button");
+        final_capsule = capsule;
+    }
+    let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();
+    assert!((add.center().y - final_capsule.center().y).abs() < 0.1);
+    assert!((0.0..=12.0).contains(&(add.left() - final_capsule.right())));
+    h.get_by_role_and_label(Role::Button, &format!("{}: B", t("Close Tab")))
+        .click();
+    h.run_steps(4);
+    assert_eq!(
+        h.state().active,
+        0,
+        "closing an inactive capsule must not select it"
+    );
+    assert_eq!(h.state().docs.len(), 1);
+    assert_eq!(h.state().docs[0].title(), "A");
 }
 
 fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64, cancel: bool) {
@@ -250,6 +304,57 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
         modifiers: Modifiers::NONE,
     });
     h.run_steps(4);
+}
+
+#[test]
+fn capsule_close_preserves_unsaved_decisions_and_rejects_canceled_touch() {
+    let mut h = harness(egui::vec2(1200.0, 600.0));
+    h.state_mut().docs.truncate(2);
+    h.state_mut().docs[0].path = Some(PathBuf::from("A.thinoda"));
+    h.state_mut().docs[1].path = Some(PathBuf::from("B.thinoda"));
+    let doc = &mut h.state_mut().docs[1];
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Rename", |sheet| sheet.set_title(root, "Unsaved"))
+        .unwrap();
+    let key = doc.key.clone();
+    h.run_steps(4);
+    let close = format!("{}: B", t("Close Tab"));
+    let target = h
+        .get_by_role_and_label(Role::Button, &close)
+        .rect()
+        .center();
+    for (contacts, cancel) in [(1, true), (2, false)] {
+        rejected_tap(&mut h, target, contacts, cancel);
+        assert_eq!(h.state().docs.len(), 2);
+        assert!(h.state().dialogs.close.is_none());
+    }
+    h.get_by_role_and_label(Role::Button, &close).focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().docs.len(), 2);
+    assert_eq!(
+        h.state().dialogs.close,
+        Some(thinoda_app::app::CloseIntent::Tab(key))
+    );
+}
+
+#[cfg(feature = "gpu-tests")]
+#[test]
+fn document_capsules_render_with_inline_actions() {
+    let Some(directory) = std::env::var_os("THINODA_RIBBON_VISUAL_DIR") else {
+        return;
+    };
+    let mut h = harness(egui::vec2(1200., 600.));
+    h.state_mut().docs.truncate(2);
+    h.state_mut().docs[0].path = Some(PathBuf::from("Project plan.thinoda"));
+    h.state_mut().docs[1].path = Some(PathBuf::from("Research.thinoda"));
+    h.run_steps(4);
+    let image = h.render().expect("GPU document capsule rendering failed");
+    image
+        .save(PathBuf::from(directory).join("document-capsules-dark.png"))
+        .unwrap();
 }
 
 #[test]

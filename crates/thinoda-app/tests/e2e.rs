@@ -1819,8 +1819,9 @@ fn undo_redo_via_commands() {
 fn closing_dirty_tab_asks_and_dont_save_closes() {
     let mut app = ThinodaApp::headless();
     rename_root(&mut app, "Dirty");
+    let close_label = format!("Close Tab: {}", app.docs[0].title());
     let mut h = harness(app);
-    h.get_by_role_and_label(Role::Button, "Close Tab").click();
+    h.get_by_role_and_label(Role::Button, &close_label).click();
     h.run_steps(2);
     assert_eq!(
         h.state().dialogs.close,
