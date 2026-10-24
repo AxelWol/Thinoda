@@ -1069,6 +1069,107 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn sheet_rename_rejects_canceled_and_multitouch_decisions() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["OK", "Cancel"] {
+            let mut h = harness(theme, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::RenameSheet);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                .type_text(" Draft");
+            h.run_steps(4);
+            let name = h
+                .get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                .value()
+                .unwrap();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert!(h.state().dialogs.rename_sheet.is_some());
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert_eq!(
+                    h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                        .value()
+                        .unwrap(),
+                    name
+                );
+            }
+            touch_release(&mut h, target, 1, false, 2);
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            if choice == "OK" {
+                assert_eq!(h.state().doc().unwrap().doc.sheet().title, name);
+                assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+            }
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+    }
+}
+
+#[test]
+fn sheet_rename_cannot_follow_a_changed_document_or_revision() {
+    for change in [
+        "active-document",
+        "removed-document",
+        "revision",
+        "active-sheet",
+    ] {
+        let mut h = harness(ThemeMode::Light, 1.0);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::New);
+        h.state_mut().active = 0;
+        if change == "active-sheet" {
+            h.state_mut().exec(&ctx, Cmd::NewSheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+        }
+        h.state_mut().exec(&ctx, Cmd::RenameSheet);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+            .type_text(" Stale");
+        h.run_steps(4);
+        let target = h
+            .get_by_role_and_label(Role::Button, t("OK"))
+            .rect()
+            .center();
+        match change {
+            "active-document" => h.state_mut().active = 1,
+            "removed-document" => {
+                h.state_mut().docs.remove(0);
+            }
+            "revision" => {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("External edit", |sheet| {
+                        sheet.set_title(sheet.root, "Newer work")
+                    })
+                    .unwrap();
+            }
+            "active-sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|doc| doc.doc.workbook().clone())
+            .collect();
+        touch_release(&mut h, target, 1, false, 2);
+        assert!(h.state().dialogs.rename_sheet.is_none());
+        for (doc, expected) in h.state().docs.iter().zip(before) {
+            assert_eq!(doc.doc.workbook(), &expected, "stale rename after {change}");
+        }
+    }
+}
+
+#[test]
 fn recovery_choices_reject_canceled_and_multitouch_releases() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         for choice in ["Restore", "Restore All", "Discard All"] {

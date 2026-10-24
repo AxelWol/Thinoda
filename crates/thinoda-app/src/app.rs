@@ -155,6 +155,8 @@ pub struct Services {
 
 #[derive(Default)]
 pub struct RenameSheetDraft {
+    pub(crate) document_key: String,
+    pub(crate) revision: u64,
     pub(crate) index: usize,
     pub(crate) name: String,
     pub(crate) ime_composing: bool,
@@ -698,6 +700,8 @@ impl ThinodaApp {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
                     self.dialogs.rename_sheet = Some(RenameSheetDraft {
+                        document_key: d.key.clone(),
+                        revision: d.doc.state_id(),
                         index: d.doc.active_index(),
                         name: d.doc.sheet().title.clone(),
                         ..Default::default()

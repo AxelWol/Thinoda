@@ -3727,6 +3727,16 @@ impl ThinodaApp {
 
         // Rename sheet.
         if let Some(mut draft) = self.dialogs.rename_sheet.take() {
+            let valid = self.doc().is_some_and(|doc| {
+                doc.key == draft.document_key
+                    && doc.doc.state_id() == draft.revision
+                    && doc.doc.active_index() == draft.index
+            });
+            if !valid {
+                self.toasts.warning(t("Not possible here"));
+                return;
+            }
+            let touch_allowed = widgets::touch_activation_allowed(ctx);
             let mut done = None;
             let edit_id = egui::Id::unique("thinoda_rename_input");
             let enter = ctx.memory(|memory| memory.has_focus(edit_id))
@@ -3749,10 +3759,10 @@ impl ThinodaApp {
                     draft.ime_composing = false;
                 }
                 ui.horizontal(|ui| {
-                    if widgets::primary_button(ui, t("OK")).clicked() || enter {
+                    if (widgets::primary_button(ui, t("OK")).clicked() || enter) && touch_allowed {
                         done = Some(true);
                     }
-                    if widgets::secondary_button(ui, t("Cancel")).clicked() {
+                    if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed {
                         done = Some(false);
                     }
                 });
@@ -3763,11 +3773,14 @@ impl ThinodaApp {
                         let prev = d.doc.active_index();
                         d.doc.set_active(draft.index);
                         let n = draft.name;
-                        let _ = d.doc.edit_sheet("Rename Sheet", |s| {
+                        let result = d.doc.edit_sheet("Rename Sheet", |s| {
                             s.title = n;
                             Ok(())
                         });
                         d.doc.set_active(prev);
+                        if let Err(error) = result {
+                            self.toasts.error(error.to_string());
+                        }
                     }
                 }
                 Some(false) => {}

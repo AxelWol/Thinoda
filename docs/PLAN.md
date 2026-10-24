@@ -399,6 +399,17 @@ then, not after the release is promised.
   transfer or failed rollback/old cleanup may leave extra copies rather than
   delete the last copy; this is not a deduplication or final-device acceptance
   claim. No full SS1 or sprint sign-off yet.
+- **SS2/SS3 sheet-rename ownership:** reproduced canceled confirmation applying a
+  rename and a switched document receiving another map's pending name. Rename
+  drafts now capture document key, active sheet index and revision. Changed or
+  missing owners dismiss with a warning; rejected OK/Cancel releases leave the
+  name draft, workbook and history unchanged. Rename failures are surfaced.
+  Both-theme actual-app cases cover canceled/two/three-contact decisions followed
+  by intentional touch confirmation/cancel and Undo. Stale-target cases cover
+  document switching/removal, revision changes and active-sheet switching.
+  All 103 affected unit/input/title/IME/sheet-strip/context-menu/shortcut tests
+  pass; native all-target and locked WASM lint pass. Remaining custom dialogs,
+  state-changing controls and real-device acceptance are still SS3 work.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

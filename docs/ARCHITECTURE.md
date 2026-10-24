@@ -148,6 +148,10 @@ graph TD
   (including the removal menu action) share this latch. The quick-style name
   dialog also gates Save, Cancel and backdrop dismissal, preserving typed
   draft text and persisted library contents across rejected releases.
+  Sheet-rename decisions use the same latch and a draft owner composed of the
+  document key, active sheet index and model revision. A changed owner dismisses
+  the dialog with a warning instead of renaming the current replacement target.
+  IME candidate keys retain their existing protection before final confirmation.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
