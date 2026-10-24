@@ -288,6 +288,21 @@ then, not after the release is promised.
   and retry. The affected app unit/save/inspector/title/MindManager run passes
   88 tests; native all-target and WASM lint pass. Native picker/close, source-alias
   and broader fault-injection acceptance remain open; SS2 is not complete.
+- **SS2 close/save continuation:** reproduced Close > Save leaving the tab open
+  after conflict resolution, and a stale close prompt saving/discarding the tab
+  that later occupied the same index. `CloseIntent::Tab` now stores the document
+  key, resolving its current index only at the action boundary. A key-scoped
+  pending close survives conflict and MindManager consent, closes only after
+  successful saving with no remaining dirty work, and clears on cancellation,
+  missing targets or write failure. The old conversion-only continuation is
+  replaced rather than duplicated.
+- Added regressions for native/MindManager conflict-to-close, target reordering
+  between dialogs, conflict cancellation, stale Save/Don't Save prompts, and
+  conversion cancel/failure followed by a later successful save that must not
+  revive the canceled close. The initial two regressions failed before the fix.
+  The affected app unit and seven integration suites pass 172 tests; all-target
+  native and WASM lint pass. Real native picker execution and exact-head CI
+  remain separate gates.
 - **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
   device acceptance evidence has been supplied; security scanner coverage and
   any necessary owner authorization remain open. Read-only API verification

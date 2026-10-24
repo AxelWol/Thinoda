@@ -67,6 +67,11 @@ graph TD
   external change: interactive saves require conflict resolution and autosave
   skips the write. Failed saves and canceled MindManager save consent revoke
   overwrite authorization so a later attempt asks again.
+  Tab-close prompts and save continuations target the stable document key,
+  never a retained vector index. Conflict/conversion decisions resume that same
+  close only after a successful save leaves no unsaved work. Cancellation,
+  failure or removal of the target ends the continuation, so subsequent saves
+  cannot revive it or close a replacement tab.
   Drafts bind to the document, sheet index/root and topic, since duplicated
   sheets can share topic IDs. Changed or missing source fields fail explicitly
   and retain the draft instead of overwriting newer content. Single-line

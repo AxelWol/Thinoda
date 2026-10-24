@@ -125,7 +125,7 @@ pub enum SettingsTab {
 /// What to do after the "save changes?" dialog.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloseIntent {
-    Tab(usize),
+    Tab(String),
     Quit,
 }
 
@@ -166,7 +166,7 @@ pub struct Dialogs {
     pub mindmanager_export: bool,
     pub mindmanager_symbol_color_loss: bool,
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
-    pub mindmanager_close: Option<CloseIntent>,
+    pub(crate) save_close_tab: Option<String>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub symbol_export: Option<(usize, Format)>,
     pub guide: crate::help::GuideState,
@@ -1427,7 +1427,7 @@ impl ThinodaApp {
         d.view.commit_edit(&mut d.doc);
         if self.docs[i].is_dirty() {
             self.active = i;
-            self.dialogs.close = Some(CloseIntent::Tab(i));
+            self.dialogs.close = Some(CloseIntent::Tab(self.docs[i].key.clone()));
         } else {
             self.close_tab_now(i);
         }
@@ -1448,6 +1448,29 @@ impl ThinodaApp {
             self.active -= 1;
         } else if self.active >= self.docs.len() {
             self.active = self.docs.len().saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn resolve_save_close_tab(&mut self, key: &str, saved: bool) {
+        if self.dialogs.save_close_tab.as_deref() != Some(key) {
+            return;
+        }
+        if !saved
+            && (self.dialogs.conflict.as_deref() == Some(key)
+                || self
+                    .dialogs
+                    .mindmanager_save
+                    .as_ref()
+                    .is_some_and(|(pending, _, sheet_only)| pending == key && !sheet_only))
+        {
+            return;
+        }
+        self.dialogs.save_close_tab = None;
+        if saved
+            && let Some(index) = self.docs.iter().position(|doc| doc.key == key)
+            && !self.docs[index].is_dirty()
+        {
+            self.close_tab_now(index);
         }
     }
 
@@ -2461,7 +2484,10 @@ mod tests {
         let root = d.doc.sheet().root;
         d.doc.edit_sheet("t", |s| s.set_title(root, "X")).unwrap();
         app.request_close_tab(0);
-        assert_eq!(app.dialogs.close, Some(CloseIntent::Tab(0)));
+        assert_eq!(
+            app.dialogs.close,
+            Some(CloseIntent::Tab(app.docs[0].key.clone()))
+        );
         assert_eq!(app.docs.len(), 1);
         app.close_tab_now(0);
         assert!(app.docs.is_empty());

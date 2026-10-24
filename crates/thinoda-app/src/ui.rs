@@ -3513,7 +3513,6 @@ impl ThinodaApp {
                 ],
             ) {
                 let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
-                let close = self.dialogs.mindmanager_close.take();
                 let index = self.docs.iter().position(|doc| doc.key == key);
                 let saved = if choice == 0 {
                     if let Some(index) = index {
@@ -3536,15 +3535,8 @@ impl ThinodaApp {
                 if self.resolve_save_all(ctx, &key, saved) {
                     return;
                 }
-                if saved
-                    && !sheet_only
-                    && let Some(index) = index
-                {
-                    match close {
-                        Some(CloseIntent::Tab(_)) => self.close_tab_now(index),
-                        Some(CloseIntent::Quit) => self.begin_save_all(ctx, true),
-                        None => {}
-                    }
+                if !sheet_only {
+                    self.resolve_save_close_tab(&key, saved);
                 }
             }
             return;
@@ -3665,15 +3657,23 @@ impl ThinodaApp {
             ) {
                 self.dialogs.close = None;
                 match (intent, b) {
-                    (CloseIntent::Tab(i), 0) => {
-                        self.active = i;
-                        if self.save_active(false) {
-                            self.close_tab_now(i);
-                        } else if self.dialogs.mindmanager_save.is_some() {
-                            self.dialogs.mindmanager_close = Some(CloseIntent::Tab(i));
+                    (CloseIntent::Tab(key), 0) => {
+                        if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
+                            self.active = index;
+                            self.dialogs.save_close_tab = Some(key.clone());
+                            let saved = self.save_active(false);
+                            self.resolve_save_close_tab(&key, saved);
+                        } else {
+                            self.toasts.warning(t("Not possible here"));
                         }
                     }
-                    (CloseIntent::Tab(i), 1) => self.close_tab_now(i),
+                    (CloseIntent::Tab(key), 1) => {
+                        if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
+                            self.close_tab_now(index);
+                        } else {
+                            self.toasts.warning(t("Not possible here"));
+                        }
+                    }
                     (CloseIntent::Quit, 0) => {
                         self.begin_save_all(ctx, true);
                     }
@@ -3718,7 +3718,9 @@ impl ThinodaApp {
                     self.toasts.warning(t("Not possible here"));
                     false
                 };
-                self.resolve_save_all(ctx, &key, saved);
+                if !self.resolve_save_all(ctx, &key, saved) {
+                    self.resolve_save_close_tab(&key, saved);
+                }
             }
         }
 

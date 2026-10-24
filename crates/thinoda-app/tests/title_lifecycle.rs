@@ -350,7 +350,10 @@ fn closing_a_background_tab_commits_only_its_title_and_honors_each_choice() {
             draft(&mut app, 1, "Keep the other draft");
             app.active = 1;
             app.request_close_tab(0);
-            assert_eq!(app.dialogs.close, Some(CloseIntent::Tab(0)));
+            assert_eq!(
+                app.dialogs.close,
+                Some(CloseIntent::Tab(app.docs[0].key.clone()))
+            );
             assert_eq!(title(&app.docs[0]), "Closing background title");
             assert_eq!(
                 app.docs[1].view.editing_text(),
