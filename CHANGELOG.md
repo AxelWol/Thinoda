@@ -13,6 +13,42 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.10.1](https://github.com/AxelWol/Thinoda/compare/v0.10.0...v0.10.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* bind close-save continuation to document identity ([2433751](https://github.com/AxelWol/Thinoda/commit/24337517c67370fa567351e7a9f544e84c6f3fa8))
+* bind lossy export consent to its source document ([aa3b927](https://github.com/AxelWol/Thinoda/commit/aa3b927e2c6cd081236d3362731c13840bbc33a4))
+* bind sheet rename decisions to their draft owner ([6074dca](https://github.com/AxelWol/Thinoda/commit/6074dcad53809089f7e4b5ebe03494eb116ac3b8))
+* discard stale inspector numeric drafts ([6b9f13e](https://github.com/AxelWol/Thinoda/commit/6b9f13e309d8b4b2b5e46bcdfcba107add560ef0))
+* explicitly release native recovery locks ([6cce6cb](https://github.com/AxelWol/Thinoda/commit/6cce6cb2ad3e102d08ca5777118cbc8057e2fff9))
+* guard theme and quick style library touch actions ([738ef13](https://github.com/AxelWol/Thinoda/commit/738ef13c398d6746e45fc6eaff7e32039cadd7f5))
+* persist recovery handoffs before deleting original snapshots ([496df0f](https://github.com/AxelWol/Thinoda/commit/496df0f5b413902fc56c7f7699a55113e7281879))
+* preserve conflict checks through save path aliases ([586112c](https://github.com/AxelWol/Thinoda/commit/586112ca6812198568fffe73e082dabb8a728284))
+* preserve label drafts through rejected touch actions ([e233bbf](https://github.com/AxelWol/Thinoda/commit/e233bbf918ef232546569e09bba9affc358b979d))
+* preserve recovery ownership across suspension ([093ba19](https://github.com/AxelWol/Thinoda/commit/093ba191e595e7027c4aa949589aa9dadc9ca10a))
+* preserve recovery sessions after rejected or failed actions ([c958c57](https://github.com/AxelWol/Thinoda/commit/c958c579e16dd2ac6e72a83567739c720fa265cf))
+* preserve screenshot drafts across interrupted gestures ([7d5a96b](https://github.com/AxelWol/Thinoda/commit/7d5a96be7c18e52bd967433d277e9220e35c5715))
+* reject canceled touch confirmation choices ([5dd542a](https://github.com/AxelWol/Thinoda/commit/5dd542a276f51352921e955896a0cd9bd2aecd76))
+* reject canceled touch print preview decisions ([186634d](https://github.com/AxelWol/Thinoda/commit/186634dc1511146fa4510d6232c9f2d2b84cdcf5))
+* require verified identity or fresh overwrite consent ([2c24824](https://github.com/AxelWol/Thinoda/commit/2c248243f5f428802b71960c8ffd2ffcae820828))
+* restore theme drafts across canceled pointer gestures ([43a243e](https://github.com/AxelWol/Thinoda/commit/43a243e303bd844f7a1379a26de049ee803dc9d4))
+* roll back interrupted print page setup gestures ([fee4171](https://github.com/AxelWol/Thinoda/commit/fee4171dc369bfb76d7862b3cb410f5bd1763a67))
+* **touch:** defer numeric inspector drags ([a936b8a](https://github.com/AxelWol/Thinoda/commit/a936b8a8e1a719a2e519143b83c5e725d8d9d8b9))
+* **touch:** discard canceled slider drags ([37a2236](https://github.com/AxelWol/Thinoda/commit/37a2236e8dccd428f4966887756ddfd6a78862d4))
+* **touch:** guard custom theme editor actions ([35acdeb](https://github.com/AxelWol/Thinoda/commit/35acdeb200816bc42d31fb3071180ab380c15787))
+* **touch:** guard map inspector theme commits ([0116202](https://github.com/AxelWol/Thinoda/commit/01162027f9959e50da9e5e6c30636bc474da12b7))
+* **touch:** guard style inspector releases ([5ec673e](https://github.com/AxelWol/Thinoda/commit/5ec673e08f6578c634277629e77e6672391258b7))
+* verify release ancestry and pin packaged source commits ([f85951d](https://github.com/AxelWol/Thinoda/commit/f85951dd77f55fae0dcbc6f769dae6bbd11ae270))
+* **web:** preserve browser zoom accessibility ([0e1d403](https://github.com/AxelWol/Thinoda/commit/0e1d4032b5de4590cd260d1c6a7c43806b0cdbd2))
+
+
+### Documentation
+
+* consolidate security and stability sprint ([fdeb1a6](https://github.com/AxelWol/Thinoda/commit/fdeb1a6d8683f91d55d6dff1b58cd50deacbe4f0))
+* record candidate acceptance evidence and access blockers ([a228e05](https://github.com/AxelWol/Thinoda/commit/a228e0534bcfa79d9d82ff44c4dc08df8c0c3f51))
+
 ## [0.10.0](https://github.com/AxelWol/Thinoda/compare/v0.9.0...v0.10.0) (2026-10-23)
 
 
