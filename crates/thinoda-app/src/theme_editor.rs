@@ -279,6 +279,9 @@ impl ThinodaApp {
                 }
                 let mut apply = false;
                 let mut save = false;
+                let touch_allowed = widgets::touch_activation_allowed(ctx);
+                let theme_before_controls = draft.theme.clone();
+                let role_before_controls = draft.role;
                 let response =
                     egui::Modal::new(egui::Id::unique("custom_theme_editor")).show(ctx, |ui| {
                         ui.set_width(600.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
@@ -411,14 +414,14 @@ impl ThinodaApp {
                                     edit_role(ui, style, &resolved, &mut self.fonts)
                                 });
                                 ui.horizontal(|ui| {
-                                    if ui.button(t("Reset role")).clicked() {
+                                    if ui.button(t("Reset role")).clicked() && touch_allowed {
                                         *style = TopicStyle::default();
                                     }
                                     egui::ComboBox::from_id_salt("role_preset")
                                         .selected_text(t("Role preset"))
                                         .show_ui(ui, |ui| {
                                             for name in PRESETS {
-                                                if ui.button(t(name)).clicked() {
+                                                if ui.button(t(name)).clicked() && touch_allowed {
                                                     *style = preset(name).unwrap().style;
                                                     ui.close();
                                                 }
@@ -432,13 +435,20 @@ impl ThinodaApp {
                             ui.colored_label(ui.visuals().error_fg_color, error);
                         }
                         ui.horizontal_wrapped(|ui| {
-                            apply = widgets::primary_button(ui, t("Apply Theme")).clicked();
-                            save = widgets::secondary_button(ui, t("Save to Library")).clicked();
-                            if widgets::secondary_button(ui, t("Cancel")).clicked() {
+                            apply = widgets::primary_button(ui, t("Apply Theme")).clicked()
+                                && touch_allowed;
+                            save = widgets::secondary_button(ui, t("Save to Library")).clicked()
+                                && touch_allowed;
+                            if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed
+                            {
                                 keep = false;
                             }
                         });
                     });
+                if !touch_allowed {
+                    draft.theme = theme_before_controls;
+                    draft.role = role_before_controls;
+                }
                 if response.should_close() {
                     keep = false;
                 }

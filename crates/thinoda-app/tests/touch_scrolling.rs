@@ -1015,3 +1015,55 @@ fn map_inspector_switch_rejects_canceled_and_multitouch_releases() {
         assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
     }
 }
+
+#[test]
+fn custom_theme_editor_discards_rejected_preset_activation() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+        h.run_steps(4);
+        h.get_by_label(t("Rectangle")).click();
+        h.run_steps(4);
+
+        h.get_by_label(t("Role preset")).scroll_to_me();
+        h.run_steps(8);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_label(t("Role preset")).click();
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t("Warning"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, target, contacts, cancel);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+
+        h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+            .click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.doc.state_id(), revision + 1);
+        assert_eq!(
+            doc.doc
+                .sheet()
+                .theme
+                .custom_theme
+                .as_ref()
+                .unwrap()
+                .roles
+                .central
+                .shape,
+            Some(thinoda_core::TopicShape::Rect),
+            "rejected preset activation must not overwrite the staged role style"
+        );
+    }
+}

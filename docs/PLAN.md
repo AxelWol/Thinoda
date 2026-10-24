@@ -685,9 +685,11 @@ sequences discard the draft. Tests cover canceled and two/three-contact drags,
 clean touch commit/Undo, Font Size numeric drags and ordinary mouse dragging.
 The Map inspector also rejects canceled/multitouch theme-switch releases and
 does not commit staged theme changes for rejected sequences; ordinary switch
-activation remains available. Other inspector families and combo boxes,
-text-selection behavior, browser/device gestures and hardware acceptance remain
-open.
+activation remains available. The custom-theme editor restores its staged role
+and theme after rejected touch sequences, including preset activation; Apply,
+Save and Cancel controls require a clean release. Other inspector families and
+combo boxes, theme-editor color-picker gestures, text-selection behavior,
+browser/device gestures and hardware acceptance remain open.
 
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
 swipe scrolls deep Outline content in both axes without selecting, editing or
