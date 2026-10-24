@@ -2496,6 +2496,37 @@ fn xmind_export_reimports_and_foreign_import_is_dirty() {
 }
 
 #[test]
+fn recovery_cleanup_retries_after_suspended_session_resumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut doc = thinoda_app::doc::OpenDoc::new(Workbook::default());
+    doc.doc
+        .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Unsaved"))
+        .unwrap();
+    doc.snapshot(&recovery);
+    recovery.suspend().unwrap();
+    let snapshot = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    assert!(snapshot.exists());
+    doc.doc
+        .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Saved"))
+        .unwrap();
+    doc.doc.mark_saved();
+    doc.snapshot(&recovery);
+    assert!(snapshot.exists(), "suspended cleanup cannot remove data");
+    recovery.resume().unwrap();
+    doc.snapshot(&recovery);
+    assert!(
+        !snapshot.exists(),
+        "failed cleanup must retry without requiring another edit"
+    );
+    recovery.finish().unwrap();
+}
+
+#[test]
 fn crash_recovery_restores_unsaved_work() {
     for _ in 0..50 {
         assert_crash_recovery_restores_unsaved_work();

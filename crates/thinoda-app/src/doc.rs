@@ -314,9 +314,13 @@ impl OpenDoc {
             return;
         }
         if !self.is_dirty() {
-            let _ = recovery.remove(&self.key);
-            self.snapshot_state = s;
-            self.snapshot_inspector_edit = self.inspector_edit.clone();
+            match recovery.remove(&self.key) {
+                Ok(()) => {
+                    self.snapshot_state = s;
+                    self.snapshot_inspector_edit = self.inspector_edit.clone();
+                }
+                Err(error) => log::warn!("recovery snapshot cleanup failed: {error}"),
+            }
             return;
         }
         let meta = SnapshotMeta {
@@ -337,12 +341,13 @@ impl OpenDoc {
             std::borrow::Cow::Borrowed(self.doc.workbook())
         };
         match Snapshot::to_bytes(meta, &workbook) {
-            Ok(bytes) => {
-                if recovery.queue_snapshot(&self.key, bytes).is_ok() {
+            Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
+                Ok(()) => {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                 }
-            }
+                Err(error) => log::warn!("recovery snapshot queue failed: {error}"),
+            },
             Err(e) => log::warn!("snapshot failed: {e}"),
         }
     }

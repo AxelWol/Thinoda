@@ -87,6 +87,8 @@ pub enum Error {
     Poisoned,
     #[error("recovery session has already finished")]
     Finished,
+    #[error("recovery session is suspended; resume it before modifying snapshots")]
+    Suspended,
     #[error("secure credential storage failed: {0}")]
     Credential(String),
 }

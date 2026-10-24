@@ -55,6 +55,10 @@ graph TD
   a concurrently forked child's duplicate must not delay orphan discovery after
   the owning session releases its lock. Orphan documents retain a shared lease
   until restoration/discard or the last handle is dropped.
+  Suspension flushes while holding ownership and releases only on success.
+  Suspended managers may queue in-memory work, but cannot flush/remove snapshots
+  before resuming; cleanup must reacquire ownership so it cannot delete another
+  process's claimed orphan.
   Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;

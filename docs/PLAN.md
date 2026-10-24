@@ -256,10 +256,31 @@ then, not after the release is promised.
   e2e/inspector-save suites passed; all-target platform/app clippy and workflow
   contract tests passed. The exact-candidate ARM64/native/WASM CI results remain
   required before SS1 can close. Local Windows success is not ARM64 evidence.
+- **SS1 ownership follow-through:** three further failing regressions established
+  that a suspended manager could write a claimed orphan, normal drop could
+  delete that orphan, and failed suspension released the live lock despite
+  unpersisted snapshots. Suspension now flushes and releases under one state
+  lock, retaining ownership on failure. Flush/remove/crash-flush reject suspended
+  ownership; explicit cleanup reacquires the lock before deleting anything.
+  Queued work survives until successful resume/flush. All three regressions pass;
+  the combined targeted native run passes 199 tests and native/WASM clippy pass.
+  Complete affected platform/app suites subsequently pass 314 tests with one
+  pre-existing ignored test across 56 suites. Browser event/device execution
+  remains separate acceptance work.
+- A follow-up app regression showed that failed snapshot cleanup advanced the
+  document's recovery watermark, suppressing retry after resume. The watermark
+  now advances only on successful cleanup, with failures logged; queue failures
+  are also logged without dropping the retry. That regression failed before the
+  change. The final targeted run passes 200 tests; native/WASM lint remains green.
 - **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
   device acceptance evidence has been supplied; security scanner coverage and
-  repository protection/reporting configuration still require verification and
-  any necessary owner authorization. Do not mark the sprint or release ready.
+  any necessary owner authorization remain open. Read-only API verification
+  reports private vulnerability reporting disabled. Main's active ruleset
+  prevents deletion and non-fast-forward pushes, but its effective rules do not
+  require CI checks or pull-request reviews; the classic protection endpoint
+  returns 404. This is not an entirely unprotected branch, nor enforcement of
+  the sprint's review/CI gate. Repository-owner approval is required before
+  changing those settings. Do not mark the sprint or release ready.
 
 #### Completion gate - no partial-success closure
 

@@ -1205,6 +1205,87 @@ fn failed_recovery_flush_retains_pending_bytes_for_retry() {
 }
 
 #[test]
+fn suspended_recovery_cannot_modify_a_claimed_orphan() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Before suspend"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    let snapshot = orphans[0].docs[0].path.clone();
+    let original = fs::read(&snapshot).unwrap();
+    manager
+        .queue_snapshot(
+            "doc",
+            Snapshot::to_bytes(meta("Queued while suspended"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(manager.flush(), Err(crate::Error::Suspended)));
+    assert!(!manager.try_flush_for_crash());
+    assert!(matches!(
+        manager.remove("doc"),
+        Err(crate::Error::Suspended)
+    ));
+    assert!(manager.finish().is_err());
+    assert_eq!(fs::read(&snapshot).unwrap(), original);
+    drop(orphans);
+    manager.resume().unwrap();
+    manager.flush().unwrap();
+    let restored: Snapshot = serde_json::from_slice(&fs::read(&snapshot).unwrap()).unwrap();
+    assert_eq!(restored.meta.title, "Queued while suspended");
+    manager.finish().unwrap();
+}
+
+#[test]
+fn dropping_suspended_recovery_does_not_delete_a_claimed_orphan() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Claimed elsewhere"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    drop(manager);
+    orphans[0].docs[0].load().unwrap();
+    orphans[0].discard().unwrap();
+}
+
+#[test]
+fn failed_suspend_retains_the_live_lock_and_pending_snapshot() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Last persisted"), &Workbook::default())
+        .unwrap();
+    let blocked = manager.session_dir().join("docs").join("blocked.json");
+    mkdir(&blocked);
+    manager
+        .queue_snapshot(
+            "blocked",
+            Snapshot::to_bytes(meta("Pending"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(manager.suspend().is_err());
+    assert!(
+        RecoveryManager::find_orphans(&paths).is_empty(),
+        "failed suspension must not expose stale snapshots as an orphan"
+    );
+    fs::remove_dir(&blocked).unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].docs.len(), 2);
+    assert_eq!(orphans[0].docs[0].meta.title, "Pending");
+    orphans[0].discard().unwrap();
+}
+
+#[test]
 fn fingerprint_detects_same_length_modified_time_change() {
     let dir = directory();
     let file = dir.path().join("map");
