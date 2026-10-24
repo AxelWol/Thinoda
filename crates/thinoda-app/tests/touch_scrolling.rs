@@ -971,3 +971,47 @@ fn style_inspector_numeric_drag_discards_canceled_and_multitouch_input() {
         assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
     }
 }
+
+#[test]
+fn map_inspector_switch_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Map;
+        h.run_steps(8);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let rainbow_before = h.state().doc().unwrap().doc.sheet().theme.rainbow;
+        h.get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let toggle = h
+            .get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(&mut h, toggle, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected Map inspector release must not commit a theme edit"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().theme.rainbow,
+            rainbow_before
+        );
+
+        h.get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .click();
+        h.run_steps(4);
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().theme.rainbow,
+            !rainbow_before
+        );
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+}

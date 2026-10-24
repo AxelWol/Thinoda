@@ -683,8 +683,11 @@ selection still applies the shape. Style width sliders now keep pointer-down
 changes provisional and commit them once on release; canceled or multitouch
 sequences discard the draft. Tests cover canceled and two/three-contact drags,
 clean touch commit/Undo, Font Size numeric drags and ordinary mouse dragging.
-Other inspector families and combo boxes, text-selection behavior,
-browser/device gestures and hardware acceptance remain open.
+The Map inspector also rejects canceled/multitouch theme-switch releases and
+does not commit staged theme changes for rejected sequences; ordinary switch
+activation remains available. Other inspector families and combo boxes,
+text-selection behavior, browser/device gestures and hardware acceptance remain
+open.
 
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
 swipe scrolls deep Outline content in both axes without selecting, editing or

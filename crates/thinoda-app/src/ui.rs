@@ -3093,6 +3093,7 @@ impl ThinodaApp {
     }
 
     fn map_tab(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         self.custom_theme_gallery(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
@@ -3105,7 +3106,7 @@ impl ThinodaApp {
 
         widgets::section(ui, t("Structure"), true, |ui| {
             let (_, chosen) = crate::structure_picker::show(ui, structure);
-            if let Some(s) = chosen.filter(|&s| s != structure) {
+            if touch_allowed && let Some(s) = chosen.filter(|&s| s != structure) {
                 d.view.commit_edit(&mut d.doc);
                 match d
                     .doc
@@ -3280,7 +3281,7 @@ impl ThinodaApp {
             }
         });
 
-        if ts != before {
+        if touch_allowed && ts != before {
             let result = d.doc.edit_sheet(t("Theme"), |s| {
                 ts.validate().map_err(thinoda_core::EditError::Invalid)?;
                 s.theme = ts;
