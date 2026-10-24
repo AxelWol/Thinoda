@@ -479,6 +479,18 @@ then, not after the release is promised.
   both failed during catalog verification with request timeouts. No browser
   acceptance was executed and no browser was installed. The published site and
   metadata are not substitutes for candidate runtime/persistence testing.
+- **Latest native candidate evidence:** complete locked workspace tests at
+  `e233bbf` passed 639 tests with 1 pre-existing ignored test across 79 suites,
+  with live AI requests disabled. CI run
+  [40080887181](https://github.com/AxelWol/Thinoda/actions/runs/40080887181)
+  remains in progress: WASM, fuzz smoke, notices and documentation jobs passed
+  at the latest read; native jobs were still running. Earlier candidates
+  `fee4171` and `f85951d` completed the full matrix successfully.
+- **SS5 audit-tool access blocker:** `cargo audit` is not installed. Installing
+  it was denied because specific authorization is required. No alternate
+  executable was installed or scanner coverage claimed. This joins disabled
+  repository scanners, owner-controlled signing/tag protections, long sanitized
+  fuzz execution and browser/device acceptance as unresolved release gates.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz
