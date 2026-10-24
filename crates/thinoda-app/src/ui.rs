@@ -3599,6 +3599,7 @@ impl ThinodaApp {
         }
         // Crash recovery.
         if !self.dialogs.recovery.is_empty() {
+            let touch_allowed = widgets::touch_activation_allowed(ctx);
             let mut action: Option<(bool, Option<usize>)> = None;
             egui::Modal::new(egui::Id::unique("thinoda_recovery")).show(ctx, |ui| {
                 ui.set_width(460.0);
@@ -3615,7 +3616,7 @@ impl ThinodaApp {
                                 widgets::caption(ui, p.display().to_string());
                             }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.button(t("Restore")).clicked() {
+                                if ui.button(t("Restore")).clicked() && touch_allowed {
                                     action = Some((true, Some(i)));
                                 }
                             });
@@ -3624,10 +3625,10 @@ impl ThinodaApp {
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if widgets::primary_button(ui, t("Restore All")).clicked() {
+                    if widgets::primary_button(ui, t("Restore All")).clicked() && touch_allowed {
                         action = Some((true, None));
                     }
-                    if widgets::secondary_button(ui, t("Discard All")).clicked() {
+                    if widgets::secondary_button(ui, t("Discard All")).clicked() && touch_allowed {
                         action = Some((false, None));
                     }
                 });

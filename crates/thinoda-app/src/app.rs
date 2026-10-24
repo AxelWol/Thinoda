@@ -1683,9 +1683,18 @@ impl ThinodaApp {
                 keep.push(s);
                 continue;
             }
-            for doc in &s.docs {
-                match doc.load() {
-                    Ok(wb) => {
+            let workbooks = s
+                .docs
+                .iter()
+                .map(|doc| {
+                    doc.load().map_err(|error| {
+                        format!("{} {}: {error}", t("Could not open"), doc.meta.title)
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match workbooks {
+                Ok(workbooks) => {
+                    for (doc, wb) in s.docs.iter().zip(workbooks) {
                         let mut d = OpenDoc::new(wb);
                         d.view.titles = new_topic_titles();
                         d.path = doc
@@ -1704,24 +1713,37 @@ impl ThinodaApp {
                         self.toasts
                             .success(format!("{}: {}", t("Restored"), doc.meta.title));
                     }
-                    Err(e) => {
-                        self.toasts.error(format!(
-                            "{} {}: {e}",
-                            t("Could not open"),
-                            doc.meta.title
-                        ));
-                    }
+                }
+                Err(message) => {
+                    log::warn!("Recovery restore failed: {message}");
+                    self.toasts.error(message);
+                    keep.push(s);
+                    continue;
                 }
             }
             // Recovered documents get fresh snapshots in the current session.
-            let _ = s.discard();
+            if let Err(error) = s.discard() {
+                log::warn!("Restored recovery cleanup failed: {error}");
+                self.toasts
+                    .error(format!("{}: {error}", t("Recover Unsaved Work")));
+            }
         }
         self.dialogs.recovery = keep;
     }
 
     pub fn discard_orphans(&mut self) {
-        for s in std::mem::take(&mut self.dialogs.recovery) {
-            let _ = s.discard();
+        for mut session in std::mem::take(&mut self.dialogs.recovery) {
+            session.docs.retain(|doc| match doc.discard() {
+                Ok(()) => false,
+                Err(error) => {
+                    log::warn!("Recovery discard failed for {}: {error}", doc.doc_key);
+                    self.toasts.error(format!("{}: {error}", t("Discard All")));
+                    true
+                }
+            });
+            if !session.docs.is_empty() {
+                self.dialogs.recovery.push(session);
+            }
         }
     }
 

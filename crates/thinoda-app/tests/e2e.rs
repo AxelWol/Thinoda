@@ -2580,6 +2580,93 @@ fn assert_crash_recovery_restores_unsaved_work() {
     );
 }
 
+#[test]
+fn failed_recovery_load_preserves_the_whole_session_for_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    for title in ["First unsaved map", "Second unsaved map"] {
+        source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+        rename_root(&mut source, title);
+        source.doc_mut().unwrap().snapshot(&recovery);
+    }
+    assert!(recovery.try_flush_for_crash());
+    recovery.suspend().unwrap();
+    drop(recovery);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    assert_eq!(app.dialogs.recovery[0].docs.len(), 2);
+    let snapshots: Vec<_> = app.dialogs.recovery[0]
+        .docs
+        .iter()
+        .map(|doc| {
+            (
+                doc.path.clone(),
+                std::fs::read(&doc.path).unwrap(),
+                doc.load().unwrap(),
+            )
+        })
+        .collect();
+    std::fs::write(&snapshots[1].0, b"temporarily unreadable snapshot").unwrap();
+    app.restore_orphans(None);
+    assert!(
+        app.docs.is_empty(),
+        "a failed session restore cannot partially consume its maps"
+    );
+    assert_eq!(app.dialogs.recovery.len(), 1);
+    assert_eq!(std::fs::read(&snapshots[0].0).unwrap(), snapshots[0].1);
+    std::fs::write(&snapshots[1].0, &snapshots[1].1).unwrap();
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert_eq!(app.docs.len(), 2);
+    for (doc, (_, _, expected)) in app.docs.iter().zip(&snapshots) {
+        assert_eq!(doc.doc.workbook(), expected);
+        assert!(doc.is_dirty());
+    }
+}
+
+#[test]
+fn failed_recovery_discard_retains_failed_snapshots_for_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    for title in ["First discard", "Second discard"] {
+        source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+        rename_root(&mut source, title);
+        source.doc_mut().unwrap().snapshot(&recovery);
+    }
+    assert!(recovery.try_flush_for_crash());
+    recovery.suspend().unwrap();
+    drop(recovery);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    let snapshot = app.dialogs.recovery[0].docs[0].path.clone();
+    let discarded = app.dialogs.recovery[0].docs[1].path.clone();
+    let bytes = std::fs::read(&snapshot).unwrap();
+    std::fs::remove_file(&snapshot).unwrap();
+    std::fs::create_dir(&snapshot).unwrap();
+    app.discard_orphans();
+    assert_eq!(
+        app.dialogs.recovery.len(),
+        1,
+        "failed deletion remains actionable"
+    );
+    assert_eq!(app.dialogs.recovery[0].docs.len(), 1);
+    assert_eq!(app.dialogs.recovery[0].docs[0].path, snapshot);
+    assert!(
+        !discarded.exists(),
+        "successful discards are not offered again"
+    );
+    std::fs::remove_dir(&snapshot).unwrap();
+    std::fs::write(&snapshot, bytes).unwrap();
+    assert!(app.dialogs.recovery[0].docs[0].load().is_ok());
+    app.discard_orphans();
+    assert!(app.dialogs.recovery.is_empty());
+    assert!(!snapshot.exists());
+}
+
 fn thinoda_bin() -> &'static str {
     env!("CARGO_BIN_EXE_thinoda")
 }

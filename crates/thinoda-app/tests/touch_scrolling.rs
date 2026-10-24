@@ -1069,6 +1069,60 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn recovery_choices_reject_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["Restore", "Restore All", "Discard All"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = thinoda_platform::Paths::from_root(dir.path());
+            let recovery = thinoda_platform::recovery::RecoveryManager::start(&paths).unwrap();
+            let mut h = harness(theme, 1.0);
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.doc
+                .edit_sheet("Unsaved", |sheet| {
+                    sheet.set_title(sheet.root, "Recovery must survive")
+                })
+                .unwrap();
+            let expected = doc.doc.workbook().clone();
+            doc.snapshot(&recovery);
+            assert!(recovery.try_flush_for_crash());
+            recovery.suspend().unwrap();
+            drop(recovery);
+            h.state_mut().docs.clear();
+            h.state_mut().dialogs.recovery =
+                thinoda_platform::recovery::RecoveryManager::find_orphans(&paths);
+            assert_eq!(h.state().dialogs.recovery.len(), 1);
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(
+                    h.state().dialogs.recovery.len(),
+                    1,
+                    "rejected {choice} preserves recovery"
+                );
+                assert!(h.state().docs.is_empty());
+                assert_eq!(
+                    h.state().dialogs.recovery[0].docs[0].load().unwrap(),
+                    expected
+                );
+            }
+            touch_release(&mut h, target, 1, false, 2);
+            assert!(h.state().dialogs.recovery.is_empty());
+            if choice == "Discard All" {
+                assert!(h.state().docs.is_empty());
+            } else {
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &expected);
+                assert!(h.state().doc().unwrap().is_dirty());
+            }
+            assert!(thinoda_platform::recovery::RecoveryManager::find_orphans(&paths).is_empty());
+        }
+    }
+}
+
+#[test]
 fn library_gallery_buttons_reject_canceled_and_multitouch_releases() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         for custom_theme in [false, true] {

@@ -367,6 +367,23 @@ then, not after the release is promised.
   WASM lint pass. Context-menu invocation with raw secondary-pointer input was
   not established by the gallery fixture, so that path has no new automated
   acceptance claim. Other custom modals and real-device acceptance remain open.
+- **SS1/SS3 recovery decisions and failure retention:** reproduced a canceled
+  Restore consuming its recovery session; Restore/Restore All/Discard All now
+  share the touch latch. Both-theme actual-app tests reject canceled and
+  two/three-contact actions while verifying the snapshots still load, then
+  exercise intentional single-contact restore/discard. Inspection also exposed
+  failed loads followed by unconditional session deletion and failed discards
+  silently removed from the UI. Failing regressions established both defects.
+  Restore now preloads/validates the whole selected session before mutation;
+  failure retains all its snapshots and opens no partial maps. Explicit discard
+  retains failed documents for retry while successful deletions leave the list.
+  Fault fixtures repair the blocked/corrupt path and verify successful retry,
+  original workbook contents and dirty restored maps. Errors are logged and
+  displayed, including post-restore cleanup errors. All 168 affected app
+  unit/e2e/input/save/theme/library tests pass, with native all-target and locked
+  WASM lint green. This is not full SS1 acceptance: persistence handoff between
+  restored documents and their new session still needs explicit crash-window
+  coverage, alongside final ARM64/candidate and native/device execution.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

@@ -59,6 +59,11 @@ graph TD
   Suspended managers may queue in-memory work, but cannot flush/remove snapshots
   before resuming; cleanup must reacquire ownership so it cannot delete another
   process's claimed orphan.
+  Restore validates every snapshot in a selected session before opening any of
+  its maps or deleting its snapshots. Failed sessions stay claimed and visible
+  for retry; other selected sessions can still restore. Explicit discard retains
+  only documents whose deletion failed, with visible errors and logging.
+  Post-restore cleanup errors are reported rather than silently ignored.
   Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;
