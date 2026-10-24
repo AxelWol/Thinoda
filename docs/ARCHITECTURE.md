@@ -134,7 +134,9 @@ graph TD
   additional menu dependency. It supplies the standard Thinoda/Services/Window
   menus, moves About/Settings/Quit into the application menu and leaves unsaved-work
   decisions in shared app commands. Key equivalents are derived from typed command
-  bindings, never parsed from file names or translated labels. NSMenu delegates
+  bindings, never parsed from file names or translated labels. macOS snapshots
+  omit formatted shortcut hints, so native menus can initialize before egui fonts.
+  NSMenu delegates
   retain the current tree during tracking; queued selections and generation
   ownership prevent old native items from invoking a replacement tree's commands.
   Detaching disables the callback and restores the previous AppKit menu tree.

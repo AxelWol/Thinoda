@@ -267,6 +267,23 @@ must be recorded separately. The earlier initial-ribbon workspace snapshot passe
 its own targeted app/backend checks. Do not represent that earlier run as covering
 the screenshot refinement or the AppKit adapter.
 
+**Ribbon follow-up evidence:** GPU fixtures render six width/theme combinations
+and assert aligned group footers and light/dark ribbon surface colors. The
+compact Outline regression checks unclipped vector icons and complete accessible
+names, not captions intentionally hidden at that width. Eight ribbon unit tests,
+five native-menu tests and five integration tests (including the 99-case layout
+matrix) pass on Windows after the final sizing corrections; native all-target
+clippy with GPU tests and WASM clippy also pass. The preceding full workspace
+run failed only its obsolete compact-caption assertion; its corrected regression
+passes separately, not as a claimed fresh full-suite pass.
+CI run `40100971593` passed real macOS Intel/ARM SDK bridge checks, NSMenu
+callback/lifecycle fixtures and native clippy, then exposed pre-frame shortcut
+formatting in four app snapshot tests. macOS snapshots now use typed key
+equivalents without initializing font-dependent display hints; a fresh Mac-context
+regression passes locally. The corrected macOS CI run and actual UI/VoiceOver
+acceptance remain outstanding. These source refinements do not replace or restart
+the user's running Windows app.
+
 #### Active priorities by end-user value (2026-10-24)
 
 **Historical ranking, superseded by the active feature phase plan above.**

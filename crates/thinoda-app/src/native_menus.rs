@@ -161,10 +161,10 @@ impl ThinodaApp {
                 .map(|entry| match entry {
                     MenuEntry::Command { label, command } => {
                         actions.push(MenuAction::Command(command.clone()));
-                        let hint = ThinodaApp::shortcut_hint_for_mode(ctx, command, app.mode);
-                        let label = if cfg!(target_os = "macos") {
+                        let label = if ctx.os() == egui::os::OperatingSystem::Mac {
                             label.clone()
                         } else {
+                            let hint = ThinodaApp::shortcut_hint_for_mode(ctx, command, app.mode);
                             hint.map_or_else(|| label.clone(), |hint| format!("{label}\t{hint}"))
                         };
                         let enabled = if text_focus && is_text_command(command) {
@@ -477,7 +477,9 @@ mod tests {
     #[test]
     fn macos_application_aliases_and_accelerators_use_shared_command_bindings() {
         let app = ThinodaApp::headless();
-        let snapshot = app.native_menu_snapshot(&Context::default());
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        let snapshot = app.native_menu_snapshot(&ctx);
         let model = app.macos_menu_model(&snapshot).unwrap();
         for (index, command) in [Cmd::About, Cmd::Settings, Cmd::Quit]
             .into_iter()

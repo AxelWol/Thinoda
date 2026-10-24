@@ -1669,17 +1669,26 @@ impl ThinodaApp {
                                 ),
                             ] {
                                 ui.vertical(|ui| {
-                                    let controls = if detail == thinoda_ui::ribbon::Detail::Labeled
-                                    {
-                                        ui.vertical(|ui| {
-                                            ui.set_width(142.0);
-                                            action_buttons(ui, buttons);
-                                        })
-                                    } else {
-                                        ui.horizontal(|ui| action_buttons(ui, buttons))
+                                    let (width, height) = match detail {
+                                        thinoda_ui::ribbon::Detail::Large => {
+                                            (buttons.len() as f32 * 84.0 - 8.0, 78.0)
+                                        }
+                                        thinoda_ui::ribbon::Detail::Labeled => (142.0, 124.0),
+                                        thinoda_ui::ribbon::Detail::Icon => {
+                                            (buttons.len() as f32 * 40.0 - 8.0, 30.0)
+                                        }
                                     };
+                                    ui.set_width(width);
+                                    ui.allocate_ui(egui::vec2(width, height), |ui| {
+                                        ui.set_min_height(height);
+                                        if detail == thinoda_ui::ribbon::Detail::Labeled {
+                                            ui.vertical(|ui| action_buttons(ui, buttons));
+                                        } else {
+                                            ui.horizontal(|ui| action_buttons(ui, buttons));
+                                        }
+                                    });
                                     ui.add_sized(
-                                        [controls.response.rect.width(), 16.0],
+                                        [width, 16.0],
                                         egui::Label::new(
                                             egui::RichText::new(t(caption))
                                                 .size(10.0)

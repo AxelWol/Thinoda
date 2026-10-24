@@ -179,7 +179,8 @@ impl ThinodaApp {
                 });
             }
             MenuEntry::Caption(text) => {
-                ui.add(egui::Label::new(text).truncate());
+                ui.add(egui::Label::new(text).truncate())
+                    .on_hover_text(text);
             }
             MenuEntry::Separator | MenuEntry::ClearRecent => {
                 self.render_menu_entries(ui, std::slice::from_ref(entry), command);
@@ -230,6 +231,7 @@ impl ThinodaApp {
             let width = group_width(detail, entries.len());
             ui.set_width(width);
             ui.allocate_ui(egui::vec2(width, 94.0), |ui| {
+                ui.set_min_height(94.0);
                 if detail == GroupDetail::Menu {
                     let glyph = entries
                         .first()
