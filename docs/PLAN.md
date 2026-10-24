@@ -420,8 +420,16 @@ then, not after the release is promised.
   still pass without opening an OS dialog or submitting a physical job. All 102
   affected unit/input/shortcut/title tests pass; native all-target and locked
   WASM lint pass.
-  Print page-setup numeric/selection gestures, screenshot-editor controls and
+  Print page-setup coverage follows below; screenshot-editor controls and
   real native/browser dialog execution remain separate SS3/SS6 acceptance work.
+- **SS3 print page setup:** page settings now retain a full pointer-sequence
+  snapshot, with cancellation latched across multitouch, focus loss and skipped
+  frames through release. Both-theme multi-frame margin tests verify earlier
+  drag changes roll back on cancel/added finger/focus loss and remain on clean
+  release. Rejected orientation/background/dark/grayscale choices leave staged
+  settings unchanged; output decisions use the same gesture ownership. All 11
+  print tests pass. Numeric keyboard/popup and real-device coverage remain part
+  of final acceptance rather than a claim of comprehensive print-device testing.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz
