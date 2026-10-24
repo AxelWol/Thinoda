@@ -324,6 +324,27 @@ then, not after the release is promised.
   including the additional isolated 50-cycle Ubuntu ARM64 recovery step. This
   verifies the first explicit-unlock patch only; later ownership/lifecycle
   revisions and final-candidate review/acceptance still gate SS1 closure.
+- **SS3 custom-theme gesture lifecycle:** reproduced canceled numeric dragging
+  leaving Font Size at 38 rather than its pre-drag 30. The editor now keeps a
+  pointer-sequence snapshot of the full staged theme/role, restores it across
+  all frames of cancellation or multitouch, and latches rejection through
+  pointer release. Window-focus loss and skipped editor frames cancel the
+  sequence too; repeated egui layout passes share its frame identity. No rejected
+  pointer sequence can Apply, save to the library or dismiss the editor through
+  a synthetic outside click.
+- Actual-app numeric and color-picker channel regressions cover canceled and
+  two/three-contact drags, clean touch/mouse dragging, focus loss, retention of
+  prior keyboard edits, Save to Library/Apply agreement, unchanged workbook while
+  staging and single-step Undo after Apply in both themes. The initial numeric
+  rollback test failed before the fix; the focus-loss case caught an additional
+  event-frame gap before correction. All 97 affected unit/theme/input/lifecycle
+  tests pass, with native all-target and WASM lint green. Free-form color-plane
+  gestures, remaining control families and real devices still need SS3 acceptance.
+- **SS1 ownership CI milestone:** run
+  [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
+  at `093ba19` also completed successfully across all native jobs, WASM and fuzz
+  smoke, including Ubuntu ARM64 isolated recovery cycles. This includes the
+  suspension/cleanup retry fixes, but does not replace final-candidate acceptance.
 - **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
   device acceptance evidence has been supplied; security scanner coverage and
   any necessary owner authorization remain open. Read-only API verification
@@ -922,11 +943,13 @@ creating history entries or applying the draft to a different target. Opening
 Settings or another app-blocking modal also cancels provisional numeric values.
 The Map inspector also rejects canceled/multitouch theme-switch releases and
 does not commit staged theme changes for rejected sequences; ordinary switch
-activation remains available. The custom-theme editor restores per-frame staged
-role/theme changes after rejected touch input, including preset activation;
-Apply, Save and Cancel controls require a clean release. This does not undo
-changes from earlier drag frames: numeric/color drag lifecycle rollback remains
-open in SS3. Other inspector families and combo boxes, text-selection behavior,
+activation remains available. The custom-theme editor now snapshots staged
+role/theme values for the whole pointer sequence, restoring earlier drag frames
+after cancel, multitouch, focus loss or skipped editor frames. Numeric/color
+channel tests verify the restored draft reaches library saves and Apply; clean
+touch/mouse editing remains available. Apply, Save and Cancel controls require
+a clean release. Free-form color-plane/device gestures, other inspector families
+and combo boxes, text-selection behavior,
 browser/device gestures and hardware acceptance remain open.
 
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal

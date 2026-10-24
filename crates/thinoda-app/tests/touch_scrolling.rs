@@ -1069,6 +1069,186 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn custom_theme_numeric_drag_restores_the_entire_rejected_gesture() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (contacts, cancel, lose_focus) in [
+            (1, true, false),
+            (2, false, false),
+            (3, false, false),
+            (1, false, false),
+            (0, false, false),
+            (0, false, true),
+        ] {
+            let mut h = harness(theme, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::TextInput, t("Theme name"))
+                .focus();
+            h.get_by_role_and_label(Role::TextInput, t("Theme name"))
+                .type_text(" Keyboard");
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::CheckBox, t("Override Font Size"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::CheckBox, t("Override Font Size"))
+                .click();
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::SpinButton, t("Override Font Size"))
+                .scroll_to_me();
+            h.run_steps(8);
+            let control = h.get_by_role_and_label(Role::SpinButton, t("Override Font Size"));
+            let before = control.value().unwrap().to_owned();
+            let rect = control.rect();
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            if lose_focus {
+                let start = rect.center();
+                let moved = start + vec2(80.0, 0.0);
+                h.event(Event::PointerMoved(start));
+                h.event(Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(2);
+                h.event(Event::PointerMoved(moved));
+                h.run_steps(2);
+                h.event(Event::WindowFocused(false));
+                h.run_steps(2);
+                h.event(Event::WindowFocused(true));
+                h.event(Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(4);
+            } else if contacts == 0 {
+                drag_control_with_mouse(&mut h, rect.center(), vec2(80.0, 0.0));
+            } else {
+                drag_control_with_touch(&mut h, rect.center(), vec2(80.0, 0.0), contacts, cancel);
+            }
+            let after = h
+                .get_by_role_and_label(Role::SpinButton, t("Override Font Size"))
+                .value()
+                .unwrap()
+                .to_owned();
+            if cancel || contacts > 1 || lose_focus {
+                assert_eq!(after, before, "rejected drag must restore earlier frames");
+            } else {
+                assert_ne!(after, before, "clean touch drag must remain usable");
+            }
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            h.get_by_role_and_label(Role::Button, t("Save to Library"))
+                .click();
+            h.run_steps(4);
+            assert_eq!(h.state().settings.custom_themes.len(), 1);
+            assert!(
+                h.state().settings.custom_themes[0]
+                    .name
+                    .contains("Keyboard")
+            );
+            h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+                .click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(
+                doc.doc.sheet().theme.custom_theme.as_ref(),
+                h.state().settings.custom_themes.first()
+            );
+            assert_eq!(doc.doc.state_id(), revision + 1);
+            let size = doc
+                .doc
+                .sheet()
+                .theme
+                .custom_theme
+                .as_ref()
+                .unwrap()
+                .roles
+                .central
+                .font_size
+                .unwrap();
+            let before: f32 = before.parse().unwrap();
+            if cancel || contacts > 1 || lose_focus {
+                assert_eq!(size, before);
+            } else {
+                assert_ne!(size, before);
+            }
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+        }
+    }
+}
+
+#[test]
+fn custom_theme_color_drag_restores_rejected_gesture() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (contacts, cancel) in [(1, true), (2, false), (3, false), (1, false)] {
+            let mut h = harness(theme, 1.0);
+            let before = thinoda_core::custom_theme::CustomTheme::from_settings(
+                &h.state().doc().unwrap().doc.sheet().theme,
+            );
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ColorWell, t("Light background"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ColorWell, t("Light background"))
+                .click();
+            h.run_steps(4);
+            let rect = h
+                .query_all_by_role(Role::SpinButton)
+                .find(|control| control.value().is_some_and(|value| value.starts_with("R ")))
+                .expect("color picker red channel")
+                .rect();
+            drag_control_with_touch(&mut h, rect.center(), vec2(-80.0, 0.0), contacts, cancel);
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            h.get_by_role_and_label(Role::Button, t("Save to Library"))
+                .click();
+            h.run_steps(4);
+            let saved = &h.state().settings.custom_themes[0];
+            if cancel || contacts > 1 {
+                assert_eq!(
+                    saved, &before,
+                    "canceled picker drag must restore all color changes"
+                );
+            } else {
+                assert_ne!(saved.light_background, before.light_background);
+            }
+            h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+                .click();
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .theme
+                    .custom_theme
+                    .as_ref(),
+                h.state().settings.custom_themes.first()
+            );
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+        }
+    }
+}
+
+#[test]
 fn numeric_drag_drafts_cannot_outlive_their_inspector_context() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         for interruption in [
@@ -1117,6 +1297,7 @@ fn numeric_drag_drafts_cannot_outlive_their_inspector_context() {
                     let child = doc.doc.sheet().children(doc.doc.sheet().root)[0];
                     doc.view.selection = vec![child];
                 }
+
                 "revision" => {
                     let doc = h.state_mut().doc_mut().unwrap();
                     doc.doc

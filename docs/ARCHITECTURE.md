@@ -125,6 +125,10 @@ graph TD
   guard every standard egui button, slider or combo box. Sheet strip selection,
   creation, rename, arrows, context opening and commands share the latch without
   disabling scrolling or replacing egui's single-finger hold recognizer.
+  The custom-theme editor retains a full staged-theme/role snapshot across each
+  pointer sequence. Cancel, multitouch, focus loss or skipped editor frames restore
+  its starting values through release, including changes made on earlier drag
+  frames; rejected releases cannot save/apply or dismiss it via outside clicks.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
