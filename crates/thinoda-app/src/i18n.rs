@@ -1058,6 +1058,14 @@ const DE: &[(&str, &str)] = &[
     ("Select a topic first", "Bitte zuerst ein Thema auswählen"),
     ("AI map created", "KI-Map erstellt"),
     (
+        "AI settings changed. Test the connection again.",
+        "Die KI-Einstellungen wurden geändert. Bitte die Verbindung erneut testen.",
+    ),
+    (
+        "The document changed. Try again.",
+        "Das Dokument wurde geändert. Bitte erneut versuchen.",
+    ),
+    (
         "The topic no longer exists",
         "Das Thema existiert nicht mehr",
     ),

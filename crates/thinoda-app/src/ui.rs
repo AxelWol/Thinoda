@@ -466,6 +466,7 @@ impl ThinodaApp {
         let ctx = ui.ctx().clone();
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
+        self.protect_ai_prompt_input(&ctx);
         if let Some(draft) = &mut self.dialogs.rename_sheet {
             thinoda_canvas::protect_ime_candidate_keys(
                 &ctx,
@@ -3810,6 +3811,7 @@ impl ThinodaApp {
         }
         if self.dialogs.about {
             let mut open = true;
+            let touch_allowed = widgets::touch_activation_allowed(ctx);
             egui::Window::new(t("About Thinoda"))
                 .open(&mut open)
                 .collapsible(false)
@@ -3826,11 +3828,17 @@ impl ThinodaApp {
                     ui.add_space(6.0);
                     ui.label(t("A fast, open mind mapping app."));
                     ui.label(format!("{} Axel Wolters", t("Written by")));
-                    ui.hyperlink_to(
-                        format!("{}: {}", t("Contact"), crate::brand::CONTACT_EMAIL),
-                        format!("mailto:{}", crate::brand::CONTACT_EMAIL),
-                    )
-                    .on_hover_text(t("Write an email"));
+                    if ui
+                        .link(format!("{}: {}", t("Contact"), crate::brand::CONTACT_EMAIL))
+                        .on_hover_text(t("Write an email"))
+                        .clicked()
+                        && touch_allowed
+                    {
+                        ctx.open_url(egui::OpenUrl::new_tab(format!(
+                            "mailto:{}",
+                            crate::brand::CONTACT_EMAIL
+                        )));
+                    }
                     ui.label(format!(
                         "{} {} · {} {}",
                         t("Version"),
@@ -3838,19 +3846,35 @@ impl ThinodaApp {
                         thinoda_platform::system::os_name(),
                         thinoda_platform::system::arch()
                     ));
-                    ui.hyperlink_to(crate::brand::PROJECT_URL, crate::brand::PROJECT_URL)
-                        .on_hover_text(t("Open in web browser"));
+                    if ui
+                        .link(crate::brand::PROJECT_URL)
+                        .on_hover_text(t("Open in web browser"))
+                        .clicked()
+                        && touch_allowed
+                    {
+                        ctx.open_url(egui::OpenUrl::new_tab(crate::brand::PROJECT_URL));
+                    }
                     ui.separator();
-                    if ui.button(t("Legal documents")).clicked() {
+                    if ui.button(t("Legal documents")).clicked() && touch_allowed {
                         self.dialogs.legal.open = true;
                     }
                 });
-            self.dialogs.about = open;
+            self.dialogs.about = open || !touch_allowed;
         }
         if self.dialogs.masked_copy {
+            let source = self
+                .doc()
+                .map(|d| (d.key.clone(), d.doc.active_index(), d.doc.state_id()));
+            if source.is_none() || source != self.dialogs.masked_copy_owner {
+                self.dialogs.masked_copy = false;
+                self.dialogs.masked_copy_owner = None;
+                self.toasts.warning(t("The document changed. Try again."));
+                return;
+            }
             let mut open = true;
             let mut create = false;
             let mut cancel = false;
+            let touch_allowed = widgets::touch_activation_allowed(ctx);
             egui::Window::new(t("Create Masked Copy…"))
                 .open(&mut open)
                 .collapsible(false)
@@ -3860,11 +3884,14 @@ impl ThinodaApp {
                     ui.label(t("Replaces all topic, sheet and relationship titles. Removes notes, labels, links, images, markers, custom font names, boundary titles and document metadata."));
                     ui.label(t("Structure, colors and task states remain visible. This does not guarantee anonymity; inspect every sheet before sharing."));
                     ui.horizontal(|ui| {
-                        if ui.button(t("Cancel")).clicked() { cancel = true; }
-                        if ui.button(t("Create Preview")).clicked() { create = true; }
+                        if ui.button(t("Cancel")).clicked() && touch_allowed { cancel = true; }
+                        if ui.button(t("Create Preview")).clicked() && touch_allowed { create = true; }
                     });
                 });
-            self.dialogs.masked_copy = open && !cancel;
+            self.dialogs.masked_copy = (open || !touch_allowed) && !cancel;
+            if !self.dialogs.masked_copy {
+                self.dialogs.masked_copy_owner = None;
+            }
             if create {
                 self.create_masked_copy();
             }

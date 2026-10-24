@@ -181,6 +181,7 @@ pub struct Dialogs {
     pub shortcuts: bool,
     pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
     pub masked_copy: bool,
+    pub(crate) masked_copy_owner: Option<(String, usize, u64)>,
     pub close: Option<CloseIntent>,
     pub conflict: Option<String>,
     pub rename_sheet: Option<RenameSheetDraft>,
@@ -550,7 +551,10 @@ impl ThinodaApp {
                 }
             }
             Cmd::MaskedCopy => {
-                if self.doc().is_some() {
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
+                    self.dialogs.masked_copy_owner =
+                        Some((d.key.clone(), d.doc.active_index(), d.doc.state_id()));
                     self.dialogs.masked_copy = true;
                 } else {
                     self.toasts.warning(t("Not possible here"));
@@ -1096,6 +1100,7 @@ impl ThinodaApp {
         self.new_doc(workbook);
         self.doc_mut().unwrap().doc.mark_dirty();
         self.dialogs.masked_copy = false;
+        self.dialogs.masked_copy_owner = None;
         self.toasts.info(t(
             "Masked copy created; inspect it before saving or sharing",
         ));

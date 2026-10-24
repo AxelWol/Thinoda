@@ -57,6 +57,7 @@ pub struct PendingAi {
     /// Recovery key of the target document (`None` for new maps).
     pub doc_key: Option<String>,
     pub topic: Option<TopicId>,
+    pub(crate) source: Option<(usize, TopicId, u64)>,
 }
 
 #[derive(Default)]
@@ -64,11 +65,13 @@ pub struct AiState {
     pub pending: Option<PendingAi>,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
+    prompt_composing: bool,
     /// Unsaved API key text; credentials are committed only on explicit save.
     pub api_key_draft: Option<String>,
     /// Running "Test connection" request.
     pub test: Option<AiJob<Vec<String>>>,
     pub test_result: Option<Result<Vec<String>, String>>,
+    test_owner: Option<(String, String)>,
 }
 
 pub fn config(s: &AiSettings) -> AiConfig {
@@ -153,6 +156,21 @@ fn error_text(e: &AiError) -> String {
 }
 
 impl ThinodaApp {
+    pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
+        if self.ai.prompt.is_some() {
+            let id = egui::Id::unique("thinoda_ai_prompt");
+            if self.ai.prompt_composing || ctx.memory(|memory| memory.has_focus(id)) {
+                thinoda_canvas::protect_ime_candidate_keys(ctx, id, &mut self.ai.prompt_composing);
+            }
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.ai.prompt = None;
+                self.ai.prompt_composing = false;
+            }
+        } else {
+            self.ai.prompt_composing = false;
+        }
+    }
+
     /// Starts an AI command for the current selection.
     pub fn start_ai(&mut self, cmd: AiCommand) {
         if !self.settings.ai.enabled {
@@ -168,6 +186,9 @@ impl ThinodaApp {
             self.ai.prompt.get_or_insert_with(String::new);
             return;
         }
+        if let Some(d) = self.doc_mut() {
+            d.view.commit_edit(&mut d.doc);
+        }
         let Some(d) = self.doc() else { return };
         let Some(id) = d.view.primary() else {
             self.toasts.warning(t("Select a topic first"));
@@ -182,16 +203,23 @@ impl ThinodaApp {
             AiCommand::GenerateMap => unreachable!(),
         };
         let doc_key = Some(d.key.clone());
+        let source = Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()));
         self.ai.pending = Some(PendingAi {
             job: AiJob::spawn(config(&self.settings.ai), task),
             command: cmd,
             doc_key,
             topic: Some(id),
+            source,
         });
     }
 
     /// Starts generating a new map from a free-text prompt.
     pub fn start_generate_map(&mut self, prompt: String) {
+        if !self.settings.ai.enabled {
+            self.toasts
+                .warning(t("AI assistant is disabled in Settings"));
+            return;
+        }
         if prompt.trim().is_empty() || self.ai.pending.is_some() {
             return;
         }
@@ -200,11 +228,31 @@ impl ThinodaApp {
             command: AiCommand::GenerateMap,
             doc_key: None,
             topic: None,
+            source: None,
         });
     }
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
+        if !self.settings.ai.enabled && self.ai.pending.take().is_some() {
+            self.toasts
+                .warning(t("AI assistant is disabled in Settings"));
+        }
+        if let Some(owner) = &self.ai.test_owner {
+            let draft = self
+                .ai
+                .api_key_draft
+                .as_deref()
+                .unwrap_or(&self.settings.ai.api_key);
+            let config = config_with_api_key(&self.settings.ai, draft);
+            if !self.settings.ai.enabled || owner != &(config.base_url, config.api_key) {
+                self.ai.test = None;
+                self.ai.test_result = None;
+                self.ai.test_owner = None;
+                self.toasts
+                    .warning(t("AI settings changed. Test the connection again."));
+            }
+        }
         if let Some(job) = &self.ai.test {
             if let Some(r) = job.poll() {
                 self.ai.test_result = Some(r.map_err(|e| error_text(&e)));
@@ -230,6 +278,11 @@ impl ThinodaApp {
 
     /// Applies a finished result (one undo step).
     pub fn apply_ai(&mut self, p: &PendingAi, r: AiResult) {
+        if !self.settings.ai.enabled {
+            self.toasts
+                .warning(t("AI assistant is disabled in Settings"));
+            return;
+        }
         if r.kind == OutputKind::Map {
             if let AiOutput::Outline(o) = &r.output {
                 self.new_doc(workbook_from_outline(o));
@@ -244,9 +297,17 @@ impl ThinodaApp {
             return;
         };
         let Some(i) = self.docs.iter().position(|d| &d.key == key) else {
+            self.toasts.warning(t("The topic no longer exists"));
             return;
         };
         let d = &mut self.docs[i];
+        if p.source != Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()))
+            || d.inspector_edit.is_some()
+            || d.view.editing_topic().is_some()
+        {
+            self.toasts.warning(t("The document changed. Try again."));
+            return;
+        }
         if d.doc.sheet().topic(topic).is_none() {
             self.toasts.warning(t("The topic no longer exists"));
             return;
@@ -300,6 +361,9 @@ impl ThinodaApp {
         };
         let mut open = true;
         let mut go = false;
+        let touch_allowed = widgets::touch_activation_allowed(ctx);
+        let escape =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new(t("Generate Map with AI"))
             .open(&mut open)
             .collapsible(false)
@@ -310,6 +374,7 @@ impl ThinodaApp {
                 let l = ui.label(t("Describe the topic of your mind map:"));
                 let r = ui.add(
                     egui::TextEdit::multiline(&mut text)
+                        .id(egui::Id::unique("thinoda_ai_prompt"))
                         .hint_text(t("e.g. Launch plan for a mobile app"))
                         .desired_rows(3)
                         .desired_width(f32::INFINITY),
@@ -322,10 +387,16 @@ impl ThinodaApp {
                     && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!text.trim().is_empty(), egui::Button::new(t("Generate")))
+                    if (ui
+                        .add_enabled(
+                            self.settings.ai.enabled
+                                && self.ai.pending.is_none()
+                                && !text.trim().is_empty(),
+                            egui::Button::new(t("Generate")),
+                        )
                         .clicked()
-                        || enter
+                        || (enter && self.settings.ai.enabled && self.ai.pending.is_none()))
+                        && touch_allowed
                     {
                         go = true;
                     }
@@ -337,7 +408,7 @@ impl ThinodaApp {
             });
         if go {
             self.start_generate_map(text);
-        } else if open && !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        } else if (open || !touch_allowed) && !escape {
             self.ai.prompt = Some(text);
         }
     }
@@ -421,15 +492,17 @@ impl ThinodaApp {
             ui.horizontal(|ui| {
                 let busy = self.ai.test.is_some();
                 if ui
-                    .add_enabled(!busy, egui::Button::new(t("Test Connection")))
+                    .add_enabled(
+                        !busy && self.settings.ai.enabled,
+                        egui::Button::new(t("Test Connection")),
+                    )
                     .clicked()
                     && activation_allowed
                 {
                     self.ai.test_result = None;
-                    self.ai.test = Some(AiJob::models(config_with_api_key(
-                        &self.settings.ai,
-                        &api_key_draft,
-                    )));
+                    let config = config_with_api_key(&self.settings.ai, &api_key_draft);
+                    self.ai.test_owner = Some((config.base_url.clone(), config.api_key.clone()));
+                    self.ai.test = Some(AiJob::models(config));
                 }
                 if busy {
                     ui.spinner();
@@ -500,6 +573,77 @@ impl ThinodaApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn finished_ai_does_not_overwrite_an_uncommitted_inspector_draft() {
+        use crate::doc::{InspectorEdit, InspectorField};
+        for field in [InspectorField::Notes, InspectorField::Hyperlink] {
+            let mut app = ThinodaApp::headless();
+            let d = app.doc_mut().unwrap();
+            let root = d.doc.sheet().root;
+            let pending = PendingAi {
+                job: AiJob::spawn_with(AiConfig::default(), |_| Err(AiError::Empty)),
+                command: AiCommand::Explain,
+                doc_key: Some(d.key.clone()),
+                topic: Some(root),
+                source: Some((d.doc.active_index(), root, d.doc.state_id())),
+            };
+            let draft = InspectorEdit {
+                buffer_id: None,
+                sheet_index: d.doc.active_index(),
+                sheet_root: root,
+                topic: root,
+                field,
+                original: None,
+                text: "Local inspector draft".into(),
+            };
+            d.inspector_edit = Some(draft.clone());
+            let before = (d.doc.workbook().clone(), d.doc.state_id());
+            app.apply_ai(
+                &pending,
+                AiResult {
+                    kind: OutputKind::Note,
+                    output: AiOutput::Text("Delayed AI note".into()),
+                    model: "local-mock".into(),
+                },
+            );
+            let d = app.doc().unwrap();
+            assert_eq!((d.doc.workbook().clone(), d.doc.state_id()), before);
+            assert_eq!(d.inspector_edit.as_ref(), Some(&draft));
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn connection_results_are_bound_to_endpoint_and_credential_draft() {
+        for change in ["endpoint", "key", "disabled", "model", "unchanged"] {
+            let mut app = ThinodaApp::headless();
+            app.ai.api_key_draft = Some("local-test-key".into());
+            app.ai.test_owner = Some((app.settings.ai.base_url.clone(), "local-test-key".into()));
+            app.ai.test_result = Some(Ok(vec!["old-model".into()]));
+            app.ai.test = Some(AiJob::spawn_with(AiConfig::default(), |_| {
+                Ok(vec!["completed-model".into()])
+            }));
+            match change {
+                "endpoint" => app.settings.ai.base_url = "http://127.0.0.1:9/v1".into(),
+                "key" => app.ai.api_key_draft = Some("new-local-test-key".into()),
+                "disabled" => app.settings.ai.enabled = false,
+                "model" => app.settings.ai.model = "chosen-model".into(),
+                "unchanged" => {}
+                _ => unreachable!(),
+            }
+            app.poll_ai(&Context::default());
+            if matches!(change, "endpoint" | "key" | "disabled") {
+                assert!(app.ai.test.is_none(), "{change}");
+                assert!(app.ai.test_result.is_none(), "{change}");
+                assert!(app.ai.test_owner.is_none(), "{change}");
+            } else {
+                assert!(app.ai.test_owner.is_some(), "{change}");
+                assert!(app.ai.test_result.as_ref().unwrap().is_ok(), "{change}");
+            }
+        }
+    }
 
     #[test]
     fn context_contains_path_children_and_subtree() {

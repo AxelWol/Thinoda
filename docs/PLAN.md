@@ -560,6 +560,42 @@ then, not after the release is promised.
   [40082010570](https://github.com/AxelWol/Thinoda/actions/runs/40082010570)
   at `75ed5d9` passed the full configured native matrix, WASM, fuzz smoke, notices
   and Markdown checks. This precedes the Settings/screenshot follow-through.
+- **SS3 remaining auxiliary-dialog implementation pass:** shortcut-reference
+  filters/Close/backdrop, Guide filters/Close/backdrop, legal-document selection,
+  copy/links/Close, About links/legal navigation and masked-copy decisions now
+  use the shared cancellation latch. Typed searches and text selection remain
+  independent. Actual-app tests cover canceled and two/three-contact actions
+  in both themes, retained decisions/model/history and deliberate follow-through.
+  Masked-copy consent additionally binds to document/sheet/revision; changed or
+  removed sources dismiss it visibly instead of previewing another source.
+  This closes those implementation gaps, not the remaining native/device input
+  acceptance gate.
+- **SS5 AI result ownership:** a local-mock regression failed without the new
+  source guard because a delayed response mutated a locally edited document.
+  Requests now bind to document key, sheet/root and revision after title commit.
+  Changed/closed sources, active title/Notes/Hyperlink drafts and disabled AI
+  reject late results visibly without mutation or history entries. An unchanged
+  background document still receives its own result with one-step Undo without
+  activating another tab. Connection-test jobs and model lists are invalidated
+  when endpoint/credential draft changes, but not by model selection.
+  Generate rejects canceled/multitouch input and keeps its prompt; a stable
+  editor protects IME candidate Escape before global shortcuts, then restores
+  deliberate dismissal. New messages are translated in all supported catalogs.
+  Tests use local mock endpoints or no-network worker closures, not live providers.
+- **Latest local candidate validation:** complete native workspace tests pass
+  655 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. Native all-target and WASM clippy pass; the prior metadata run passed
+  all 25 documentation contracts. This includes the auxiliary-dialog, masked-copy
+  ownership, AI source/draft/disable, connection-list and prompt IME changes.
+- **Settings candidate CI/acceptance milestone:** both
+  [40084433631](https://github.com/AxelWol/Thinoda/actions/runs/40084433631)
+  (full configured CI) and
+  [40084433630](https://github.com/AxelWol/Thinoda/actions/runs/40084433630)
+  (all three sanitized campaigns) passed at `02153c8`. Each campaign ran
+  1,801 seconds: FreeMind 7,582,132 executions, OPML 4,123,832 and XMind
+  6,169,806. All three evidence artifacts uploaded successfully. These runs were
+  allowed to finish before publishing further application-only changes; they
+  do not sign off the newer AI/auxiliary-dialog candidate.
 
 #### Completion gate - no partial-success closure
 

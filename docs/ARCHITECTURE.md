@@ -173,10 +173,25 @@ graph TD
   revision after committing title edits. Switching/removing/changing the source
   revokes both decisions and symbol-loss authorization; tab-vector reordering
   alone does not transfer consent to the tab now occupying its old index.
+  Masked-copy preview consent uses the same document/sheet/revision boundary;
+  rejected touches cannot create or cancel a preview. Guide/shortcut filters,
+  legal-document selection/copy/links and auxiliary dialog decisions share the
+  cancellation latch without changing text selection or typed searches.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
+  Topic requests capture document key, active sheet/root and revision after title
+  commit. Results for closed, changed or draft-editing sources are rejected with
+  a visible warning; unchanged background documents retain their original target
+  without activating a different tab. Disabling AI drops pending result ownership
+  so re-enabling it cannot revive that result; already-running bounded HTTP work
+  is not forcibly aborted.
+  Connection-test work and model lists belong to their endpoint and credential
+  draft; changing either discards them, while choosing a model keeps the list.
+  Generate requires accepted activation and retains rejected prompt drafts.
+  Its stable text editor protects IME candidate keys before global shortcuts;
+  deliberate Escape dismisses the prompt only after composition has ended.
 - **Printing**: `thinoda-io::print` fits the complete current-sheet export SVG onto
   physical paper, rendering directly at 150/300 dpi with bounded page allocation
   (no viewport screenshots or full-map intermediate raster clipping). The app

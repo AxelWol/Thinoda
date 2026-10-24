@@ -107,6 +107,7 @@ impl ThinodaApp {
         if !self.dialogs.shortcuts {
             return;
         }
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         if !egui::Popup::is_any_open(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
@@ -182,6 +183,9 @@ impl ThinodaApp {
                                     .accessible_name(t("Shortcut category"));
                                 ui.checkbox(&mut state.unassigned_only, t("Unassigned only"));
                             });
+                            if !touch_allowed {
+                                (state.category, state.unassigned_only) = previous.clone();
+                            }
                             let query = state.query.trim().to_lowercase();
                             let entries: Vec<_> = commands
                                 .iter()
@@ -230,12 +234,12 @@ impl ThinodaApp {
                             crate::ui::reveal_changed_focus(ui);
                         });
                     });
-                    if ui.put(close_rect, egui::Button::new(close_label)).clicked() {
+                    if ui.put(close_rect, egui::Button::new(close_label)).clicked() && touch_allowed {
                         close = true;
                     }
                 });
             });
-        if close || response.should_close() {
+        if close || (response.should_close() && touch_allowed) {
             self.dialogs.shortcuts = false;
         }
     }

@@ -90,6 +90,7 @@ impl ThinodaApp {
         if !self.dialogs.guide.open {
             return;
         }
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         if !egui::Popup::is_any_open(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
@@ -127,6 +128,9 @@ impl ThinodaApp {
                     state.section = None;
                 }
             });
+            if !touch_allowed {
+                state.section = previous;
+            }
             let search_changed = ui
                 .add(egui::TextEdit::singleline(&mut state.query).hint_text(t("Search the guide")))
                 .accessible_name(t("Search the guide"))
@@ -165,11 +169,11 @@ impl ThinodaApp {
                     ui.label(t("No matching guide sections"));
                 }
             });
-            if ui.button(t("Close")).clicked() {
+            if ui.button(t("Close")).clicked() && touch_allowed {
                 state.open = false;
             }
         });
-        if response.should_close() {
+        if response.should_close() && touch_allowed {
             state.open = false;
         }
     }

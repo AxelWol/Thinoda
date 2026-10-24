@@ -2986,11 +2986,97 @@ fn ai_generate_map_opens_new_document() {
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::GenerateMap));
     h.run_steps(2);
     assert!(h.state().ai.prompt.is_some(), "prompt dialog opens");
-    h.state_mut().start_generate_map("Trip".into());
-    h.state_mut().ai.prompt = None;
+    h.state_mut().ai.prompt = Some("Trip".into());
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Generate").click();
+    h.run_steps(2);
+    assert!(h.state().ai.prompt.is_none());
     wait_for_ai(&mut h);
     assert_eq!(h.state().docs.len(), docs + 1);
     assert_eq!(root_children(h.state()), 3);
+}
+
+#[test]
+fn stale_ai_results_preserve_changed_sheets_and_drafts() {
+    use thinoda_app::ai::AiCommand;
+    for change in ["revision", "sheet", "title", "disabled", "closed"] {
+        let (mut h, _server) = ai_harness("- Stale suggestion");
+        let ctx = h.ctx.clone();
+        if change == "sheet" {
+            let d = h.state_mut().doc_mut().unwrap();
+            d.doc.duplicate_sheet(0).unwrap();
+            d.doc.set_active(0);
+        }
+        h.state_mut().exec(&ctx, Cmd::Ai(AiCommand::Brainstorm));
+        assert!(h.state().ai.pending.is_some());
+        match change {
+            "revision" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                d.doc
+                    .edit_sheet("Local edit", |s| s.set_title(s.root, "Local title"))
+                    .unwrap();
+            }
+            "sheet" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                d.doc.set_active(1);
+            }
+            "title" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                let root = d.doc.sheet().root;
+                d.view
+                    .begin_edit_with(d.doc.sheet(), root, "Uncommitted title");
+            }
+            "disabled" => {
+                h.state_mut().settings.ai.enabled = false;
+                h.state_mut().poll_ai(&ctx);
+                assert!(h.state().ai.pending.is_none());
+                h.state_mut().settings.ai.enabled = true;
+            }
+            "closed" => h.state_mut().docs.clear(),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        wait_for_ai(&mut h);
+        let after: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        assert_eq!(after, before, "{change}");
+        if change == "title" {
+            assert_eq!(
+                h.state().doc().unwrap().view.editing_text(),
+                Some("Uncommitted title")
+            );
+        }
+    }
+}
+
+#[test]
+fn ai_result_keeps_its_document_when_another_tab_is_active() {
+    use thinoda_app::ai::AiCommand;
+    let (mut h, _server) = ai_harness("- Background suggestion");
+    let ctx = h.ctx.clone();
+    let source = h.state().active;
+    let before_children = root_children(h.state());
+    h.state_mut().exec(&ctx, Cmd::Ai(AiCommand::Brainstorm));
+    h.state_mut().exec(&ctx, Cmd::New);
+    let active = h.state().active;
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    wait_for_ai(&mut h);
+    assert_eq!(h.state().active, active);
+    assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
+    let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children + 1);
+    h.state_mut().docs[source].doc.undo();
+    let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children);
 }
 
 #[test]

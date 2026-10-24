@@ -71,6 +71,227 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
 }
 
 #[test]
+fn rejected_shortcut_reference_actions_preserve_filters_and_search() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Settings);
+        h.state_mut().exec(&ctx, Cmd::Shortcuts);
+        h.state_mut().dialogs.shortcut_browser.query = "save".into();
+        h.run_steps(4);
+        let settings = h.state().settings.clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for (role, label) in [(Role::CheckBox, "Unassigned only"), (Role::Button, "Close")] {
+                h.get_by_role_and_label(role, label).scroll_to_me();
+                h.run_steps(4);
+                let pos = h.get_by_role_and_label(role, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert!(h.state().dialogs.shortcuts);
+                assert!(h.state().dialogs.settings);
+                assert!(!h.state().dialogs.shortcut_browser.unassigned_only);
+                assert_eq!(h.state().dialogs.shortcut_browser.query, "save");
+            }
+            rejected_tap(&mut h, egui::pos2(2.0, 2.0), contacts, cancel);
+            assert!(h.state().dialogs.shortcuts);
+            assert_eq!(h.state().settings, settings);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.get_by_role_and_label(Role::CheckBox, "Unassigned only")
+            .scroll_to_me();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::CheckBox, "Unassigned only")
+            .click();
+        h.run_steps(4);
+        assert!(h.state().dialogs.shortcut_browser.unassigned_only);
+        h.get_by_role_and_label(Role::Button, "Close").click();
+        h.run_steps(4);
+        assert!(!h.state().dialogs.shortcuts);
+        assert!(h.state().dialogs.settings);
+        assert_eq!(h.state().settings, settings);
+        assert_eq!(h.state().dialogs.shortcut_browser.query, "save");
+    }
+}
+
+#[test]
+fn rejected_ai_generation_keeps_prompt_without_starting_request() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().ai.prompt = Some("Local prompt draft".into());
+        h.run_steps(4);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::Button, "Generate")
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(h.state().ai.pending.is_none());
+            assert_eq!(h.state().ai.prompt.as_deref(), Some("Local prompt draft"));
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+        assert!(h.state().ai.prompt.is_none());
+        assert!(h.state().ai.pending.is_none());
+    }
+}
+
+#[test]
+fn ai_prompt_keeps_ime_candidate_escape_and_restores_deliberate_dismissal() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().ai.prompt = Some(String::new());
+        h.run_steps(4);
+        h.event(Event::Ime(egui::ImeEvent::Preedit {
+            text: "candidate".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(2);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_some());
+        assert!(h.state().ai.pending.is_none());
+        h.input_mut().events.extend([
+            Event::Ime(egui::ImeEvent::Commit(String::new())),
+            Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_some());
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_none());
+        assert!(h.state().ai.pending.is_none());
+    }
+}
+
+#[test]
+fn rejected_auxiliary_dialog_actions_preserve_their_decisions() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for family in ["guide", "legal", "about", "masked"] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1100.0, 1000.0));
+            let ctx = h.ctx.clone();
+            match family {
+                "guide" => h.state_mut().exec(&ctx, Cmd::QuickStart),
+                "legal" => h.state_mut().dialogs.legal.open = true,
+                "about" => h.state_mut().exec(&ctx, Cmd::About),
+                "masked" => h.state_mut().exec(&ctx, Cmd::MaskedCopy),
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            let count = h.state().docs.len();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let labels: &[&str] = match family {
+                "guide" => &["All sections", "Close"],
+                "legal" => &["Copy", "Close"],
+                "about" => &["Legal documents"],
+                "masked" => &["Create Preview", "Cancel"],
+                _ => unreachable!(),
+            };
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                for label in labels {
+                    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+                    h.run_steps(4);
+                    let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                    rejected_tap(&mut h, pos, contacts, cancel);
+                    match family {
+                        "guide" => {
+                            assert!(h.state().dialogs.guide.open);
+                            assert_eq!(h.state().dialogs.guide.section, Some(0));
+                        }
+                        "legal" => assert!(h.state().dialogs.legal.open),
+                        "about" => {
+                            assert!(h.state().dialogs.about);
+                            assert!(!h.state().dialogs.legal.open);
+                        }
+                        "masked" => assert!(h.state().dialogs.masked_copy),
+                        _ => unreachable!(),
+                    }
+                    assert_eq!(h.state().docs.len(), count);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                }
+            }
+            let clean = match family {
+                "guide" | "legal" => "Close",
+                "about" => "Legal documents",
+                "masked" => "Create Preview",
+                _ => unreachable!(),
+            };
+            h.get_by_role_and_label(Role::Button, clean).click();
+            h.run_steps(4);
+            match family {
+                "guide" => assert!(!h.state().dialogs.guide.open),
+                "legal" => assert!(!h.state().dialogs.legal.open),
+                "about" => assert!(h.state().dialogs.legal.open),
+                "masked" => {
+                    assert!(!h.state().dialogs.masked_copy);
+                    assert_eq!(h.state().docs.len(), count + 1);
+                    assert_eq!(h.state().docs[count - 1].doc.workbook(), &before);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+fn masked_copy_consent_expires_when_its_source_changes() {
+    for change in ["document", "revision", "sheet", "removed"] {
+        let mut h = harness(ThemeMode::Light, 1.0);
+        h.set_size(vec2(1100.0, 1000.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+        h.run_steps(3);
+        assert!(h.state().dialogs.masked_copy);
+        match change {
+            "document" => h.state_mut().exec(&ctx, Cmd::New),
+            "revision" => {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Local edit", |s| s.set_title(s.root, "Local title"))
+                    .unwrap();
+            }
+            "sheet" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                let index = d.doc.duplicate_sheet(0).unwrap();
+                d.doc.set_active(index);
+            }
+            "removed" => h.state_mut().docs.clear(),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        h.run_steps(4);
+        assert!(!h.state().dialogs.masked_copy, "{change}");
+        let after: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        assert_eq!(before, after, "{change}");
+    }
+}
+
+#[test]
 fn rejected_settings_actions_preserve_profile_and_network_drafts() {
     use thinoda_app::app::SettingsTab;
     use thinoda_platform::Paths;
