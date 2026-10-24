@@ -152,6 +152,9 @@ graph TD
   document key, active sheet index and model revision. A changed owner dismisses
   the dialog with a warning instead of renaming the current replacement target.
   IME candidate keys retain their existing protection before final confirmation.
+  Print-preview output, retry and close decisions also share the latch,
+  including backdrop dismissal; canceled input cannot initiate a print/PDF
+  handoff. Page-setup gesture staging is a separate acceptance surface.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

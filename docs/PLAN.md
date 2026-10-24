@@ -410,6 +410,18 @@ then, not after the release is promised.
   All 103 affected unit/input/title/IME/sheet-strip/context-menu/shortcut tests
   pass; native all-target and locked WASM lint pass. Remaining custom dialogs,
   state-changing controls and real-device acceptance are still SS3 work.
+- **SS3 print-preview decisions:** reproduced a canceled touch starting print
+  output preparation. Print/PDF-save, preview retry, Close and backdrop dismissal
+  now share the touch latch. The print harness explicitly uses 60 Hz input steps:
+  its previous default cadence failed to reproduce the same canceled click.
+  Both-theme actual-app coverage rejects canceled/two/three-contact output and
+  dismissal choices, preserves workbook/history and verifies later keyboard
+  closing. Existing deliberate mouse preparation and cancel/error retry cases
+  still pass without opening an OS dialog or submitting a physical job. All 102
+  affected unit/input/shortcut/title tests pass; native all-target and locked
+  WASM lint pass.
+  Print page-setup numeric/selection gestures, screenshot-editor controls and
+  real native/browser dialog execution remain separate SS3/SS6 acceptance work.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz
