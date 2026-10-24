@@ -137,6 +137,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn custom_theme_gallery(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         let mut apply = None;
         let mut edit = None;
         let mut remove = None;
@@ -153,6 +154,7 @@ impl ThinodaApp {
                     egui::Button::new(t("Edit Custom Theme…")),
                 )
                 .clicked()
+                && touch_allowed
             {
                 self.begin_theme_editor();
             }
@@ -193,10 +195,10 @@ impl ThinodaApp {
                                 apply = Some(theme.clone());
                             }
                             ui.horizontal(|ui| {
-                                if ui.small_button(t("Edit…")).clicked() {
+                                if ui.small_button(t("Edit…")).clicked() && touch_allowed {
                                     edit = Some(theme.clone());
                                 }
-                                if ui.small_button(t("Remove…")).clicked() {
+                                if ui.small_button(t("Remove…")).clicked() && touch_allowed {
                                     remove = Some(theme.name.clone());
                                 }
                             });

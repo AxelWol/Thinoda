@@ -95,6 +95,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn quick_styles(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         let enabled = self.command_available(&Cmd::ApplyQuickStyle(TopicStyle::default()));
         let styles: Vec<_> = PRESETS
             .into_iter()
@@ -167,7 +168,9 @@ impl ThinodaApp {
                                 if *custom {
                                     response.context_menu(|ui| {
                                         crate::ui::scroll_menu(ui, |ui| {
-                                            if ui.button(t("Remove Quick Style…")).clicked() {
+                                            if ui.button(t("Remove Quick Style…")).clicked()
+                                                && touch_allowed
+                                            {
                                                 remove = Some(style.name.clone());
                                                 ui.close();
                                             }
@@ -175,7 +178,8 @@ impl ThinodaApp {
                                     });
                                 }
                             });
-                            if *custom && ui.small_button(t("Remove…")).clicked() {
+                            if *custom && ui.small_button(t("Remove…")).clicked() && touch_allowed
+                            {
                                 remove = Some(style.name.clone());
                             }
                         });
@@ -189,7 +193,8 @@ impl ThinodaApp {
                     self.command_available(&Cmd::SaveQuickStyle),
                     egui::Button::new(t("Save Quick Style…")),
                 )
-                .clicked();
+                .clicked()
+                && touch_allowed;
         });
         if let Some(style) = apply {
             self.apply_quick_style(style);
@@ -203,6 +208,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn quick_style_dialog(&mut self, ctx: &Context) {
+        let touch_allowed = widgets::touch_activation_allowed(ctx);
         let Some(mut dialog) = self.quick_style_dialog.take() else {
             return;
         };
@@ -228,17 +234,19 @@ impl ThinodaApp {
                             ui.colored_label(ui.visuals().error_fg_color, error);
                         }
                         ui.horizontal(|ui| {
-                            save = widgets::primary_button(ui, t("Save")).clicked()
+                            save = (widgets::primary_button(ui, t("Save")).clicked()
                                 || (edit.lost_focus()
                                     && ui.input_mut(|input| {
                                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                                    }));
-                            if widgets::secondary_button(ui, t("Cancel")).clicked() {
+                                    })))
+                                && touch_allowed;
+                            if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed
+                            {
                                 keep = false;
                             }
                         });
                     });
-                if response.should_close() {
+                if response.should_close() && touch_allowed {
                     keep = false;
                 }
                 if save && keep {

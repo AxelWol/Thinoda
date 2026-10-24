@@ -133,6 +133,10 @@ graph TD
   with the same touch latch, so rejected releases cannot authorize saving,
   discarding, overwriting or canceling a pending decision. Clean mouse/touch
   and keyboard activation retain the normal confirmation behavior.
+  Theme-library edit/remove launchers and quick-style save/remove launchers
+  (including the removal menu action) share this latch. The quick-style name
+  dialog also gates Save, Cancel and backdrop dismissal, preserving typed
+  draft text and persisted library contents across rejected releases.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

@@ -1069,6 +1069,146 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn library_gallery_buttons_reject_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for custom_theme in [false, true] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1280.0, 1000.0));
+            h.state_mut().settings.show_format_panel = true;
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.selection = vec![doc.doc.sheet().root];
+            h.state_mut().format_tab = if custom_theme {
+                FormatTab::Map
+            } else {
+                FormatTab::Style
+            };
+            if custom_theme {
+                let mut saved = thinoda_core::custom_theme::CustomTheme::from_settings(
+                    &h.state().doc().unwrap().doc.sheet().theme,
+                );
+                saved.name = "Saved theme".into();
+                h.state_mut().settings.custom_themes.push(saved);
+            } else {
+                let mut saved = thinoda_core::quick_styles::preset("Warning").unwrap();
+                saved.name = "Saved style".into();
+                h.state_mut().settings.quick_styles.push(saved);
+            }
+            h.run_steps(8);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let labels: &[&str] = if custom_theme {
+                &["Edit Custom Theme…", "Edit…", "Remove…"]
+            } else {
+                &["Save Quick Style…", "Remove…"]
+            };
+            for label in labels {
+                h.get_by_role_and_label(Role::Button, t(label))
+                    .scroll_to_me();
+                h.run_steps(8);
+                let target = h
+                    .get_by_role_and_label(Role::Button, t(label))
+                    .rect()
+                    .center();
+                for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                    rejected_tap(&mut h, target, contacts, cancel);
+                    assert!(
+                        h.state().command_available(&Cmd::Palette),
+                        "rejected {label} cannot open a modal"
+                    );
+                    assert_eq!(
+                        h.state().settings.custom_themes.len(),
+                        usize::from(custom_theme)
+                    );
+                    assert_eq!(
+                        h.state().settings.quick_styles.len(),
+                        usize::from(!custom_theme)
+                    );
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                }
+                h.get_by_role_and_label(Role::Button, t(label)).click();
+                h.run_steps(4);
+                assert!(
+                    !h.state().command_available(&Cmd::Palette),
+                    "clean {label} opens a modal"
+                );
+                h.key_press(egui::Key::Escape);
+                h.run_steps(4);
+            }
+        }
+    }
+}
+
+#[test]
+fn quick_style_save_dialog_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["Save", "Cancel", "backdrop"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = thinoda_platform::Paths::from_root(dir.path());
+            let mut h = harness(theme, 1.0);
+            h.state().settings.save(&paths).unwrap();
+            h.state_mut().services.paths = Some(paths.clone());
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::SaveQuickStyle);
+            h.run_steps(4);
+            h.get_by_label(t("Style name")).click();
+            h.get_by_label(t("Style name")).type_text("Keep my draft");
+            h.run_steps(4);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let target = if choice == "backdrop" {
+                egui::pos2(5.0, 5.0)
+            } else {
+                h.get_by_role_and_label(Role::Button, t(choice))
+                    .rect()
+                    .center()
+            };
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert!(h.state().settings.quick_styles.is_empty());
+                assert!(
+                    thinoda_platform::Settings::load(&paths)
+                        .unwrap()
+                        .quick_styles
+                        .is_empty()
+                );
+                assert!(!h.state().command_available(&Cmd::Palette));
+                assert_eq!(
+                    h.get_by_label(t("Style name")).value().as_deref(),
+                    Some("Keep my draft")
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+            match choice {
+                "Save" => h.get_by_role_and_label(Role::Button, t("Save")).click(),
+                "Cancel" => {
+                    h.get_by_label(t("Style name")).click();
+                    h.key_press(egui::Key::Enter);
+                }
+                "backdrop" => {
+                    let target = h
+                        .get_by_role_and_label(Role::Button, t("Save"))
+                        .rect()
+                        .center();
+                    touch_release(&mut h, target, 1, false, 2);
+                }
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            assert_eq!(h.state().settings.quick_styles[0].name, "Keep my draft");
+            assert_eq!(
+                thinoda_platform::Settings::load(&paths)
+                    .unwrap()
+                    .quick_styles,
+                h.state().settings.quick_styles
+            );
+            assert!(h.state().command_available(&Cmd::Palette));
+        }
+    }
+}
+
+#[test]
 fn conflict_confirmation_rejects_canceled_and_multitouch_overwrites() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         let dir = tempfile::tempdir().unwrap();

@@ -353,6 +353,20 @@ then, not after the release is promised.
   unit/input/save/theme/lifecycle tests and 21 shared-UI unit tests pass, with
   native all-target and locked WASM lint green. This covers shared confirmation
   dialogs, not arbitrary custom modals or every standard egui control.
+- **SS3 library controls:** reproduced a rejected gallery release opening a
+  quick-style modal and a canceled Save persisting its draft. Theme-library
+  edit/remove launchers, quick-style save/remove launchers and the quick-style
+  removal menu action now share the touch latch. The custom quick-style name
+  dialog guards Save/Enter, Cancel and backdrop dismissal too. Both-theme
+  actual-app tests cover canceled and two/three-contact gallery releases,
+  subsequent deliberate opening, unchanged map/history and library counts.
+  Name-dialog tests retain earlier keyboard text and unchanged persisted
+  settings through rejected Save/Cancel/backdrop releases, then verify mouse,
+  Enter and clean-touch saves agree with reloaded settings. All 108 affected
+  unit/input/quick-style/theme/lifecycle tests pass; native all-target and locked
+  WASM lint pass. Context-menu invocation with raw secondary-pointer input was
+  not established by the gallery fixture, so that path has no new automated
+  acceptance claim. Other custom modals and real-device acceptance remain open.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz
