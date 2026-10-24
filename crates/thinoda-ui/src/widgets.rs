@@ -360,7 +360,7 @@ pub fn color_swatches(
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
                 let resp = ui.interact(
                     rect,
-                    ui.scope_id().with(("color-swatch", c)),
+                    ui.unique_id().with(("color-swatch", c)),
                     Sense::click(),
                 );
                 let is_sel = selected == Some(c);
@@ -688,6 +688,50 @@ mod tests {
         harness.get_by_label("#0000FF").click();
         harness.run();
         assert_eq!(*harness.state(), Some(Color32::BLUE));
+    }
+
+    #[test]
+    fn adjacent_swatch_rows_edit_only_their_own_color() {
+        for dark in [false, true] {
+            let mut h = Harness::new_ui_state(
+                move |ui, colors: &mut [Option<Color32>; 2]| {
+                    ui.ctx().set_visuals(if dark {
+                        egui::Visuals::dark()
+                    } else {
+                        egui::Visuals::light()
+                    });
+                    for (label, color) in ["Fill", "Border"].into_iter().zip(colors) {
+                        property_row(ui, label, |ui| {
+                            if let Some(picked) =
+                                color_swatches(ui, &[Color32::RED, Color32::BLUE], *color)
+                            {
+                                *color = Some(picked);
+                            }
+                        });
+                    }
+                },
+                [Some(Color32::RED), Some(Color32::RED)],
+            );
+            h.run_steps(3);
+            assert_eq!(
+                h.query_all_by_role_and_label(Role::ColorWell, "#0000FF")
+                    .count(),
+                2,
+                "Fill and Border must expose separate swatches"
+            );
+            h.query_all_by_role_and_label(Role::ColorWell, "#0000FF")
+                .next()
+                .unwrap()
+                .click();
+            h.run_steps(3);
+            assert_eq!(*h.state(), [Some(Color32::BLUE), Some(Color32::RED)]);
+            h.query_all_by_role_and_label(Role::ColorWell, "#0000FF")
+                .nth(1)
+                .unwrap()
+                .click();
+            h.run_steps(3);
+            assert_eq!(*h.state(), [Some(Color32::BLUE), Some(Color32::BLUE)]);
+        }
     }
 
     #[test]

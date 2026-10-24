@@ -128,7 +128,10 @@ graph TD
   passes. Outline title/disclosure/command activation and shared switches,
   segmented choices and color swatches use it. Symbol insertion/removal, default-
   color/contrast actions and color application share that guard in the inspector
-  and context instance editor. Scroll areas and text inputs keep
+  and context instance editor. Swatch IDs combine the individual layout UI's
+  unique ID with the color, not the inherited scope ID: adjacent Fill/Border/
+  Text/Line palettes must not capture one another's input. Color-based suffixes
+  preserve keyboard focus when a custom swatch disappears. Scroll areas and text inputs keep
   upstream scrolling/text-selection behavior. Preview cards gate pointer
   activation with the same latch while retaining explicit keyboard activation;
   template double-click creation requires that guarded activation too. The

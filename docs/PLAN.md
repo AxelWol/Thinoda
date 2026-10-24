@@ -137,8 +137,78 @@ as a defect in the planning deliverable.
 
 ### Delivery order and dependencies
 
+#### Active feature phase plan - user-directed, 2026-10-24
+
+**This is the current execution order.** The user's latest instruction supersedes
+the stabilization-first ranking and feature-restart restrictions below: finish
+the reported Fill/color-picker regression, then implement and test only native
+OS menus, configurable keyboard mappings, task planning/Gantt, Zones/Pitch and
+enhanced AI. Resume the existing security/stability backlog only after all five
+feature workstreams are implemented, tested and complete. Preserve the unfinished
+sprint evidence; deferral is not completion or acceptance of its risks.
+
+Do not start additional security scans, tool-download hardening, old device-audit
+campaigns, unrelated UX polish, rich-asset/cloud/updater/collaboration projects or
+release preparation during this feature sequence. Existing CI can finish; normal
+feature-specific testing and fixing defects introduced by these changes remain
+part of delivering each feature, not a restart of the suspended sprint. This
+sequencing change does not authorize permission/account changes, external data
+transmission or publication with unresolved release prerequisites.
+
+| Phase | Outcome and implementation sequence | Main components | Completion evidence / dependency |
+|---|---|---|---|
+| F0 - finish current fix | Repair selected-topic Fill ("Füllung") without breaking Border, Text Color or Line Color; retain custom-color selection, keyboard focus and canceled-touch behavior. Publish with this phase-plan update. | `thinoda-ui/src/widgets.rs`; app inspector integration tests | **Implementation and local verification complete:** two-row regression fails before/passes after; English/German, both themes/scales, multi-selection and Undo/Redo covered. Full workspace: 661 passed, 1 pre-existing ignored, 75 suites; native all-target/WASM clippy and 25 documentation contracts pass. Native-device acceptance is not claimed. |
+| F1 - native OS menus | Reuse stable command IDs and shared availability/execution; finish the grouped menu model and native event routing. Deliver Windows shell/menu behavior, real macOS global menus and Ubuntu desktop integration, retaining the web hamburger. Implement focused-window routing and lifecycle required by the existing P4 contract. | `thinoda-app` command catalog/native host; `thinoda-platform`; reusable `thinoda-ui` shell | All enabled native entries execute the same command exactly once and target the focused document; text editing, Settings aliases, Close Window versus Quit and unsaved-work decisions work. Follow P4.1-P4.7's Windows ribbon/native-menu distinctions and per-step review. Depends on F0; no dependency on completing deferred SS0-SS8 or unrelated R0-R12 work. |
+| F2 - keyboard mappings | Offer built-in Thinoda Standard and XMind-compatible mappings; preserve the current default unless a preset is explicitly chosen. Add named, user-created mappings with capture, assign/unassign, conflict/reserved-key feedback, Apply/Cancel, save/duplicate/rename/delete and reset. Resolve all command dispatch and hints from the active profile. | `thinoda-platform/src/settings.rs`; app command/shortcut catalog, conflict checks and Settings; canvas/Outline dispatch; native menu accelerators | Saved mappings survive restart and work across Map/Outline, menus, palette and help. Conflicting presets show their changed bindings before application; no silent activation of legacy inactive overrides. Keyboard/IME/text-entry/browser ownership tests pass. Depends on F1's command/menu routing; preserves existing bindings throughout migration. |
+| F3 - task planning and Gantt | Define versioned task/calendar/dependency data, keeping simple To-do checkboxes compatible. Add task inspector editing and work-calendar Settings, then a separate native Gantt window with synchronized task table/timeline, date/duration/progress edits, dependencies, zoom and export/print. Provide a browser alternate view without claiming an OS window. | `thinoda-core` model/edit/calendar logic; `thinoda-io` persistence; app task/Gantt view and native viewport host; shared controls | Task edits synchronize with Map/Outline/Gantt and Undo/Redo. Working days, exceptions, leap days and dependency propagation are deterministic; invalid/cyclic dependencies are rejected visibly. Save/reopen/recovery roundtrips retain schedules; closing Gantt preserves the map. Depends on F1 window routing and F2 command bindings. |
+| F4 - Zones and Pitch | Add persisted, named Zones for floating-topic groups, with create/rename/order/move/resize/delete and Undo. Then add branch/zone slide generation, frame/order editing, windowed/fullscreen Pitch, presenter workflow and explicit navigation/exit. Export the same presentation framing to PDF and ordered slide images. | `thinoda-core` Zone/presentation state; canvas framing/rendering; app Pitch inspector/player; `thinoda-io` exports | Zones stay distinct from boundaries and reject central-tree membership. Save/reopen/recovery retain membership/order/framing; cross-zone relationships render correctly. Keyboard and pointer playback/exit work; exports match frames without mutating maps. Depends on F1/F2 commands; no Gantt dependency beyond the chosen delivery order. |
+| F5 - enhanced AI | Deliver bounded SSE streaming with preview/cancel and deliberate Apply; then a persistent chat panel with Quick/Balanced/Deep modes and selected-topic/sheet scope. Add rewrite, translation, prompted idea growth, reorganize/refine, editable saved prompts and model-configured semantic search/clustering. Finish AI Pitch outline suggestions against F4. | `thinoda-ai` transport/parsers/jobs; app preview/chat/prompt/search UI; existing credential/endpoint settings; core undoable batch edits | Local mock streams cover partial/malformed/error/cancel responses; canceled/stale previews never mutate maps. Apply is one undoable change and checks source identity/revision. Prompt profiles persist, embeddings invalidate on edits/model changes, unsupported model capabilities are explicit, and Pitch suggestions remain reviewable. Depends on F2; Pitch assistance also depends on F4. No live endpoint calls without explicit authorization. |
+| F6 - integrated feature completion | Finish focused cross-feature testing and docs for F1-F5: native menu/keymap parity, Gantt window ownership, Zones/Pitch persistence/export and AI review/apply. Reconcile each feature's remaining acceptance, not the suspended sprint's entire matrix. | Existing feature tests, relevant native/web hosts and user documentation | All five feature rows have real implementation plus recorded applicable tests/host evidence. Unavailable native hosts remain open limitations, never counted as passes; other feature implementation can continue independently. Only after all five close may SS0-SS8 resume. No merge/release is implied. |
+
+**Starting design contracts (verify against the cited references before schema/UI
+implementation):**
+
+- **Menus:** retain the already-approved P4 shared File/Edit/Sheet/Insert/AI/Tools/
+  View/Help taxonomy, Settings in Edit with standard native aliases, Windows ribbon
+  behavior, macOS global menu and Ubuntu fallback. Native host actions must be real,
+  not egui popups relabeled "native". Reuse the existing command IDs and preserve
+  focused text editing. Add new feature commands to this model as F3-F5 ship.
+- **Keymaps:** use a versioned active-profile identifier and named bindings keyed
+  by stable command IDs, with platform/context-aware combinations. Thinoda Standard
+  is the safe default; XMind compatibility is opt-in, not a claim that every OS or
+  browser-reserved key can be rebound. Show Home/Find-Replace, Fit and other known
+  conflicts explicitly. Keep inactive legacy values preserved, not automatically
+  interpreted as valid bindings. Every profile operation has an unsaved-draft path;
+  changing profiles updates native accelerators and visible hints together.
+- **Planning:** use date-only scheduling rather than UTC-midnight timestamps,
+  explicit work weekdays/dated exceptions and one consistent duration convention.
+  Start with finish-to-start dependencies and visible cycle/invalid-date errors;
+  document unsupported scheduling constraints rather than silently approximating.
+  Existing `todo: Option<bool>` data must still load and remain a simple checkbox
+  unless scheduling is explicitly added. Do not invent reference behavior for
+  unlabeled calendar/Gantt toolbar controls.
+- **Presentation:** preserve the guide's floating-topic-only Zone membership.
+  Pitch entry is a named rebindable command; choose its default through the same
+  conflict audit, not an unverified XMind F5 claim. Deliver PDF/slide-image export
+  first; PPTX and AI-generated video are not implied by "Pitch".
+- **AI:** build on existing local/OpenAI-compatible endpoints and credential
+  handling. Response depth is request guidance, not a promised provider reasoning
+  API. Semantic features require an explicitly selected embedding-capable model;
+  cache by source/model and keep unsupported endpoints actionable. Selected content
+  and destination are visible before sending; never send maps to external test
+  services. Vision/image/video generation, web-search services, hosted accounts
+  and billing are outside this text/embedding-focused phase.
+
+**Execution rules:** finish F0 first, then F1 -> F2 -> F3 -> F4 -> F5 -> F6.
+Implement complete vertical slices, not disconnected buttons or placeholders.
+Persist/migrate only the data each feature needs; use existing document history,
+command availability and error reporting. Test each feature while building it,
+update completion status honestly, and do not interleave deferred stability work.
+No staffing or calendar promises are inferred from these phases.
+
 #### Active priorities by end-user value (2026-10-24)
 
+**Historical ranking, superseded by the active feature phase plan above.**
 This ranks remaining work, not whole packages as unfinished. Reuse the delivered
 slices below; close each task with observable behavior before moving on.
 Data-loss, security, launch and release regressions override the ranking.
@@ -162,6 +232,11 @@ Performance, localization, accessibility, signing and regression checks accompan
 each affected slice rather than waiting for their own final phase.
 
 ### Security and stability sprint - draft, 2026-10-24
+
+**Deferred by user instruction on 2026-10-24.** Keep this finite backlog and its
+evidence, but do not execute further SS0-SS8 work until F1-F5 and integrated
+feature acceptance above are complete. The earlier stabilization-first
+instructions below are historical and no longer determine implementation order.
 
 **User-directed sequencing change:** consolidate the remaining safety work into
 one stabilization sprint, then resume the value-ranked improvements above.
@@ -665,6 +740,23 @@ then, not after the release is promised.
 
 #### Bounded SS3 inventory reconciliation
 
+**User-reported priority regression: selected-topic Fill ("Füllung") locked.**
+Added to SS3 ahead of further hardening/feature work. A failing shared-widget
+fixture established that adjacent palettes reused IDs for matching colors;
+later palettes captured the earlier Fill controls. Swatches now combine their
+individual layout UI's unique ID with the color, rather than the inherited
+scope ID. Fill, Border, Text Color and Line Color remain independent, including
+when a custom swatch disappears. Actual-app coverage exercises English/German,
+both themes, 1x/1.5x/2x scale, single/multiple selected topics, canceled/two/three-
+contact releases, visible resolved fill, unchanged other color fields and
+one-step Undo/Redo. The original two-row fixture fails before the fix and passes
+after it. German UI checks run in a separate integration-test executable because
+the application locale is process-wide; they must not race English-only tests.
+The complete touch suite and isolated German suite pass 31 tests together;
+the full workspace then passes 661 tests with 1 pre-existing ignored across 75
+suites. Native all-target and WASM clippy and 25 documentation contracts pass.
+Real-device/browser delivery remains deferred with the existing separate gate.
+
 This is the implementation inventory, not a substitute for the SS7 real-host
 acceptance matrix. Newly reproduced defects interrupt this list; broadening it
 to new product features is not required to close the current sprint.
@@ -712,6 +804,9 @@ close unfinished work in PLAN/BACKLOG or waive owner/security/runtime gates.
    feature work with hidden safety debt.
 
 #### Feature restart after the sprint
+
+**Superseded:** the active feature phase plan above now runs before completing
+this suspended sprint. The following order is retained only as historical context.
 
 Return to the existing value ranking without another indefinite hardening loop.
 New defects retain the normal stop-the-line rule; unrelated polish does not
@@ -1073,10 +1168,11 @@ application itself is separate scope; these interfaces enable it.
 
 User-directed addition, 2026-10-20. **P4** is this new future workstream, not the
 already-delivered legacy **Phase 4 - AI assistant** above and not a P1/P2/P3
-priority rating. Track it as **R13** in the delivery order. Continue the existing
-R0-R12 work first; do not introduce a ribbon or native menu backend in the current
-R0 regression slice. Shared command and menu-overflow fixes may land earlier in
-R1/R2 and must be reused here. R13 does not depend on completing CRDTs/plugins.
+priority rating. Track it as **R13** in the delivery order. The latest
+user-directed feature sequence promotes this work to F1, directly after the
+Fill/color-picker fix; the previous requirement to finish R0-R12 first is
+superseded. Reuse delivered R1/R2 command/menu work. R13 does not depend on
+completing the deferred sprint, CRDTs or plugins.
 
 Use one command identity/availability/shortcut/execution model across native
 menus, ribbon, hamburger, palette and context menus. A workbook remains a document
@@ -1173,9 +1269,11 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
-The security and stability sprint above is the current delivery gate. The
-gesture checklist and delivered slices below remain its SS3 evidence and
-acceptance inventory, not a separate endless workstream.
+Finish and publish the Fill/color-picker fix (F0), then execute the active
+feature phase plan: native menus, saved configurable keymaps, planning/Gantt,
+Zones/Pitch and enhanced AI. The security/stability sprint and gesture checklist
+below are deferred evidence/inventory, not work to resume before those features
+are implemented, tested and complete.
 
 **User-directed workstream - native/web touch and trackpad gestures:**
 deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
