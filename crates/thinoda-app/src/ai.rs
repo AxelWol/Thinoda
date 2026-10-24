@@ -365,7 +365,7 @@ impl ThinodaApp {
     }
 
     /// AI section of the settings window.
-    pub fn ai_settings_section(&mut self, ui: &mut Ui) -> bool {
+    pub fn ai_settings_section(&mut self, ui: &mut Ui, activation_allowed: bool) -> bool {
         let mut api_key_draft = self
             .ai
             .api_key_draft
@@ -397,10 +397,10 @@ impl ThinodaApp {
                         .hint_text(thinoda_ai::API_KEY_ENV),
                 )
                 .labelled_by(key_label.id);
-                if ui.button(t("Save API Key")).clicked() {
+                if ui.button(t("Save API Key")).clicked() && activation_allowed {
                     save_api_key = true;
                 }
-                if ui.button(t("Clear")).clicked() {
+                if ui.button(t("Clear")).clicked() && activation_allowed {
                     api_key_draft.clear();
                     clear_api_key = true;
                 }
@@ -423,6 +423,7 @@ impl ThinodaApp {
                 if ui
                     .add_enabled(!busy, egui::Button::new(t("Test Connection")))
                     .clicked()
+                    && activation_allowed
                 {
                     self.ai.test_result = None;
                     self.ai.test = Some(AiJob::models(config_with_api_key(

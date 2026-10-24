@@ -3805,6 +3805,8 @@ impl ThinodaApp {
 
         if self.dialogs.settings {
             self.settings_window(ctx);
+        } else {
+            self.dialogs.settings_gesture = None;
         }
         if self.dialogs.about {
             let mut open = true;
@@ -3872,6 +3874,52 @@ impl ThinodaApp {
     fn settings_window(&mut self, ctx: &Context) {
         let mut open = true;
         let before = self.settings.clone();
+        let touch_allowed = widgets::touch_activation_allowed(ctx);
+        let frame_number = ctx.cumulative_frame_nr();
+        let (pointer_down, focused) = ctx.input(|input| {
+            (
+                input.pointer.primary_down(),
+                input.focused
+                    && !input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::WindowFocused(false))),
+            )
+        });
+        if pointer_down && self.dialogs.settings_gesture.is_none() {
+            self.dialogs.settings_gesture = Some(SettingsGesture {
+                settings: before.clone(),
+                accent: self.accent,
+                staged: before.clone(),
+                staged_accent: self.accent,
+                frame: frame_number,
+                canceled: false,
+            });
+        }
+        if let Some(gesture) = &mut self.dialogs.settings_gesture {
+            gesture.canceled |= !touch_allowed
+                || !focused
+                || frame_number > gesture.frame.saturating_add(1)
+                || self.dialogs.shortcuts
+                || self.settings != gesture.settings
+                || self.accent != gesture.accent;
+            gesture.frame = frame_number;
+        }
+        let mut activation_allowed = touch_allowed
+            && focused
+            && self
+                .dialogs
+                .settings_gesture
+                .as_ref()
+                .is_none_or(|gesture| !gesture.canceled);
+        let before_accent = self.accent;
+        let before_tab = self.dialogs.settings_tab;
+        if let Some(gesture) = &self.dialogs.settings_gesture
+            && activation_allowed
+        {
+            self.settings = gesture.staged.clone();
+            self.accent = gesture.staged_accent;
+        }
         let mut credentials_saved = false;
         let mut open_shortcuts = false;
         let bounds = ctx.content_rect().shrink(8.0);
@@ -3893,6 +3941,12 @@ impl ThinodaApp {
             .collapsible(false)
             .scroll([true, true])
             .show(ctx, |ui| {
+                if !ui.is_enabled() {
+                    activation_allowed = false;
+                    if let Some(gesture) = &mut self.dialogs.settings_gesture {
+                        gesture.canceled = true;
+                    }
+                }
                 ui.set_min_width(CONTENT_WIDTH);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
@@ -3903,12 +3957,17 @@ impl ThinodaApp {
                     ] {
                         ui.selectable_value(&mut self.dialogs.settings_tab, tab, t(label));
                     }
-                    open_shortcuts = ui.button(t("Keyboard Shortcuts")).clicked();
+                    if !activation_allowed {
+                        self.dialogs.settings_tab = before_tab;
+                    }
+                    open_shortcuts =
+                        ui.button(t("Keyboard Shortcuts")).clicked() && activation_allowed;
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
                     #[cfg(target_arch = "wasm32")]
                     if ui.button(t("Install web app")).clicked()
+                        && activation_allowed
                         && let Err(error) = thinoda_platform::web::install_app(
                             t("Install web app"),
                             t("Close"),
@@ -3964,11 +4023,6 @@ impl ThinodaApp {
                                 .accessible_name(t("Language"));
                             if l != self.settings.language {
                                 self.settings.language = l;
-                                i18n::set_lang(i18n::resolve(l));
-                                let titles = crate::app::new_topic_titles();
-                                for d in &mut self.docs {
-                                    d.view.titles = titles.clone();
-                                }
                             }
                         });
                         widgets::property_field(ui, t("UI Scale"), |ui| {
@@ -4005,8 +4059,12 @@ impl ThinodaApp {
                         if let Some(p) = &self.services.paths
                             && !crate::files::is_web()
                             && ui.button(t("Open settings folder")).clicked()
+                            && activation_allowed
+                            && let Err(error) =
+                                thinoda_platform::system::reveal_in_file_manager(&p.config_dir)
                         {
-                            let _ = thinoda_platform::system::reveal_in_file_manager(&p.config_dir);
+                            log::error!("open settings folder: {error}");
+                            self.toasts.error(error.to_string());
                         }
                     });
                 }
@@ -4107,7 +4165,8 @@ impl ThinodaApp {
                     });
                 }
                 if self.dialogs.settings_tab == SettingsTab::Ai {
-                    credentials_saved = self.ai_settings_section(ui);
+                    credentials_saved =
+                        self.ai_settings_section(ui, activation_allowed && !pointer_down);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Cloud {
                     widgets::section(ui, t("Cloud"), true, |ui| {
@@ -4138,6 +4197,7 @@ impl ThinodaApp {
                             widgets::caption(ui, label);
                             #[cfg(not(target_arch = "wasm32"))]
                             if ui.button(t("Choose…")).clicked()
+                                && activation_allowed
                                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
                             {
                                 self.settings.cloud.preferred_folder = Some(dir);
@@ -4147,7 +4207,28 @@ impl ThinodaApp {
                 }
                 reveal_changed_focus(ui);
             });
-        if self.settings != before && !credentials_saved {
+        if !activation_allowed {
+            self.settings = before.clone();
+            self.accent = before_accent;
+            open = true;
+        }
+        if pointer_down && let Some(gesture) = &mut self.dialogs.settings_gesture {
+            gesture.staged = self.settings.clone();
+            gesture.staged_accent = self.accent;
+            self.settings = before.clone();
+            self.accent = before_accent;
+        }
+        if !pointer_down {
+            self.dialogs.settings_gesture = None;
+        }
+        if self.settings.language != before.language && !pointer_down {
+            i18n::set_lang(i18n::resolve(self.settings.language));
+            let titles = crate::app::new_topic_titles();
+            for d in &mut self.docs {
+                d.view.titles = titles.clone();
+            }
+        }
+        if self.settings != before && !credentials_saved && !pointer_down {
             self.save_settings();
         }
         self.dialogs.settings = open;
@@ -4155,6 +4236,15 @@ impl ThinodaApp {
             self.exec(ctx, Cmd::Shortcuts);
         }
     }
+}
+
+pub(crate) struct SettingsGesture {
+    settings: thinoda_platform::settings::Settings,
+    accent: Color32,
+    staged: thinoda_platform::settings::Settings,
+    staged_accent: Color32,
+    frame: u64,
+    canceled: bool,
 }
 
 /// Paints a colored dot (used for sheet tab status etc.).

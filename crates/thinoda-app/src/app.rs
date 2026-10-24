@@ -175,6 +175,7 @@ pub struct Dialogs {
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
+    pub(crate) settings_gesture: Option<crate::ui::SettingsGesture>,
     pub about: bool,
     pub legal: crate::legal::LegalState,
     pub shortcuts: bool,

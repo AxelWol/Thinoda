@@ -435,6 +435,7 @@ impl ThinodaApp {
                 .gesture
                 .as_ref()
                 .is_none_or(|gesture| !gesture.canceled);
+        let before_controls = (editor.crop, editor.square, editor.frame, editor.frame_color);
         let mut close = false;
         egui::Modal::new(egui::Id::unique("map-shot-editor")).show(ctx, |ui| {
             ui.set_width(660.0_f32.min((ctx.content_rect().width()-64.0).max(180.0)));
@@ -444,11 +445,11 @@ impl ThinodaApp {
                 editor.preview(ui);
                 editor.controls(ui);
             });
-            if !activation_allowed && let Some(gesture) = &editor.gesture {
-                editor.crop = gesture.crop;
-                editor.square = gesture.square;
-                editor.frame = gesture.frame;
-                editor.frame_color = gesture.frame_color;
+            if !activation_allowed {
+                let original = editor.gesture.as_ref().map_or(before_controls, |gesture| {
+                    (gesture.crop, gesture.square, gesture.frame, gesture.frame_color)
+                });
+                (editor.crop, editor.square, editor.frame, editor.frame_color) = original;
                 editor.drag_start = None;
             }
             ui.horizontal_wrapped(|ui| {
@@ -517,6 +518,47 @@ mod tests {
                 _ => None,
             })
             .expect("native readback requested")
+    }
+
+    #[test]
+    #[cfg(not(feature = "gpu-tests"))]
+    fn batched_canceled_screenshot_click_cannot_change_settings() {
+        use egui::{Event, Modifiers, PointerButton, TouchDeviceId, TouchId, TouchPhase};
+        let mut h = harness();
+        h.state_mut().map_shot.editor = Some(ShotEditor::new(
+            &h.ctx,
+            ColorImage::filled([240, 180], Color32::GREEN),
+        ));
+        h.run_steps(4);
+        let original = h.state().map_shot.editor.as_ref().unwrap().crop;
+        h.get_by_label("Square (1:1)").scroll_to_me();
+        h.run_steps(4);
+        let pos = h.get_by_label("Square (1:1)").rect().center();
+        let mut events = vec![Event::PointerMoved(pos)];
+        for pressed in [true, false] {
+            events.push(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            events.push(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(1),
+                pos,
+                force: None,
+                phase: if pressed {
+                    TouchPhase::Start
+                } else {
+                    TouchPhase::Cancel
+                },
+            });
+        }
+        h.input_mut().events.extend(events);
+        h.run_steps(4);
+        let editor = h.state().map_shot.editor.as_ref().unwrap();
+        assert!(!editor.square);
+        assert_eq!(editor.crop, original);
     }
 
     #[test]

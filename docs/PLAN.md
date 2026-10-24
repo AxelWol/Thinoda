@@ -522,6 +522,44 @@ then, not after the release is promised.
   returns 404. This is not an entirely unprotected branch, nor enforcement of
   the sprint's review/CI gate. Repository-owner approval is required before
   changing those settings. Do not mark the sprint or release ready.
+- **SS3 Settings and batched screenshot input:** Settings now keeps pointer
+  edits outside the live/persisted profile until clean release. Cancel,
+  multitouch, focus loss, hidden/disabled windows, skipped frames and intervening
+  profile changes reject staged edits; newer profile changes remain intact.
+  Rejected tab/shortcut, credential save/clear, connection-test, folder-picker
+  and web-install activation cannot trigger those actions. API-key text remains
+  independently staged. Existing language/keyboard behavior remains supported;
+  settings-folder launch failures are now visible instead of ignored.
+  Both-theme actual-app cases exercise rejected toggles/actions and multi-frame
+  slider cancel/multitouch/focus/hide/modal/profile-change paths, plus deliberate
+  release/persistence. They do not execute native pickers or live AI requests.
+  A separate one-frame screenshot press/cancel fixture fails against the original
+  rollback and passes with a pre-controls fallback when no gesture snapshot exists.
+- **SS5 partial dependency evidence:** GitHub advisory queries for 22 selected
+  locked parser/image/TLS/credential/UI package versions returned no matching
+  advisories. This is neither a full-lockfile audit nor a secret scan; the
+  audit/scanner access gates above remain unresolved.
+- **Candidate evidence before Settings follow-through:** the complete native
+  workspace run after source-bound export consent and batched screenshot rollback
+  passed 644 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. This precedes the Settings changes and is not their full-suite result.
+- **Settings candidate validation:** the complete native workspace now passes
+  646 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. Native all-target and WASM clippy pass; 25 documentation metadata
+  contracts also pass.
+- **SS4 sanitized campaign milestone:** run
+  [40082010663](https://github.com/AxelWol/Thinoda/actions/runs/40082010663)
+  at `75ed5d9` completed all three default-sanitized Linux campaigns successfully.
+  Each log records 1,801 seconds: FreeMind 6,482,358 executions, XMind 6,005,049
+  and OPML 4,246,033. All three log/corpus/reproducer artifacts uploaded
+  successfully with 14-day retention. No crashes were reported in these bounded
+  runs; this is not proof of absence of importer defects. The subsequent
+  Settings/screenshot changes do not modify importer sources, fuzz targets or
+  dependencies; exact final-candidate acceptance remains required at release.
+- **CI milestone:** run
+  [40082010570](https://github.com/AxelWol/Thinoda/actions/runs/40082010570)
+  at `75ed5d9` passed the full configured native matrix, WASM, fuzz smoke, notices
+  and Markdown checks. This precedes the Settings/screenshot follow-through.
 
 #### Completion gate - no partial-success closure
 

@@ -70,6 +70,205 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
     touch_release(h, pos, contacts, cancel, 2);
 }
 
+#[test]
+fn rejected_settings_actions_preserve_profile_and_network_drafts() {
+    use thinoda_app::app::SettingsTab;
+    use thinoda_platform::Paths;
+
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(root.path());
+        paths.ensure().unwrap();
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().services.paths = Some(paths.clone());
+        h.state_mut().save_settings();
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Settings);
+        h.run_steps(4);
+        let original = h.state().settings.clone();
+        let persisted = Settings::load(&paths).unwrap();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in ["Autosave", "Keep backup on save", "Confirm before deleting"] {
+                let pos = h.get_by_role_and_label(Role::Switch, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().settings, original, "{label}");
+                assert_eq!(Settings::load(&paths).unwrap(), persisted, "{label}");
+            }
+            for label in ["Editor", "AI Assistant", "Cloud", "Keyboard Shortcuts"] {
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().dialogs.settings_tab, SettingsTab::General);
+                assert!(!h.state().dialogs.shortcuts);
+            }
+        }
+        h.get_by_role_and_label(Role::Switch, "Autosave").click();
+        h.run_steps(4);
+        assert_ne!(h.state().settings.autosave, original.autosave);
+        assert_eq!(
+            Settings::load(&paths).unwrap().autosave,
+            h.state().settings.autosave
+        );
+        h.get_by_role_and_label(Role::Button, "AI Assistant")
+            .click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::DisclosureTriangle, "AI Assistant")
+            .click();
+        h.run_steps(4);
+        h.state_mut().ai.api_key_draft = Some("local-test-draft".into());
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in ["Save API Key", "Clear", "Test Connection"] {
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(
+                    h.state().ai.api_key_draft.as_deref(),
+                    Some("local-test-draft")
+                );
+                assert!(h.state().ai.test.is_none());
+                assert_eq!(
+                    Settings::load(&paths).unwrap().autosave,
+                    h.state().settings.autosave
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn settings_slider_waits_for_release_and_rolls_back_interrupted_gestures() {
+    use thinoda_platform::Paths;
+
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for interruption in [
+            "cancel",
+            "multitouch",
+            "focus",
+            "hidden",
+            "modal",
+            "profile",
+            "clean",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = Paths::from_root(root.path());
+            paths.ensure().unwrap();
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 900.0));
+            h.state_mut().services.paths = Some(paths.clone());
+            h.state_mut().save_settings();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Settings);
+            h.run_steps(4);
+            let mut original = h.state().settings.clone();
+            let mut persisted = Settings::load(&paths).unwrap();
+            let slider = h.get_by_role_and_label(Role::Slider, "UI Scale").rect();
+            let start = egui::pos2(slider.left() + 10.0, slider.center().y);
+            let end = start + vec2(60.0, 0.0);
+            h.input_mut().events.extend([
+                Event::PointerMoved(start),
+                Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Start,
+                    pos: start,
+                    force: None,
+                },
+            ]);
+            h.run_steps(2);
+            h.input_mut().events.extend([
+                Event::PointerMoved(end),
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Move,
+                    pos: end,
+                    force: None,
+                },
+            ]);
+            h.run_steps(2);
+            assert_eq!(h.state().settings, original, "{interruption}: provisional");
+            assert_eq!(Settings::load(&paths).unwrap(), persisted);
+            match interruption {
+                "multitouch" => {
+                    h.input_mut().events.push(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::Start,
+                        pos: end + vec2(40.0, 0.0),
+                        force: None,
+                    });
+                    h.run_steps(2);
+                    h.input_mut().events.push(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::End,
+                        pos: end + vec2(40.0, 0.0),
+                        force: None,
+                    });
+                }
+                "focus" => {
+                    h.input_mut().events.push(Event::WindowFocused(false));
+                    h.run_steps(2);
+                }
+                "hidden" => {
+                    h.state_mut().dialogs.settings = false;
+                    h.run_steps(2);
+                }
+                "modal" => {
+                    h.state_mut().dialogs.shortcuts = true;
+                    h.run_steps(2);
+                }
+                "profile" => {
+                    h.state_mut()
+                        .settings
+                        .recent_templates
+                        .push("external-change".into());
+                    h.state_mut().save_settings();
+                    original = h.state().settings.clone();
+                    persisted = Settings::load(&paths).unwrap();
+                    h.run_steps(2);
+                }
+                _ => {}
+            }
+            h.input_mut().events.extend([
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: if interruption == "cancel" {
+                        TouchPhase::Cancel
+                    } else {
+                        TouchPhase::End
+                    },
+                    pos: end,
+                    force: None,
+                },
+                Event::PointerButton {
+                    pos: end,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(4);
+            if interruption == "clean" {
+                assert_ne!(h.state().settings.ui_scale, original.ui_scale);
+                assert_eq!(
+                    Settings::load(&paths).unwrap().ui_scale,
+                    h.state().settings.ui_scale
+                );
+            } else {
+                assert_eq!(h.state().settings, original, "{interruption}");
+                assert_eq!(Settings::load(&paths).unwrap(), persisted);
+            }
+        }
+    }
+}
+
 fn touch_release(
     h: &mut Harness<'_, ThinodaApp>,
     pos: egui::Pos2,

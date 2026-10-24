@@ -140,6 +140,13 @@ graph TD
   pointer sequence. Cancel, multitouch, focus loss or skipped editor frames restore
   its starting values through release, including changes made on earlier drag
   frames; rejected releases cannot save/apply or dismiss it via outside clicks.
+  Settings pointer edits live in a separate staged profile until clean release;
+  ordinary app behavior and settings writes continue to see the committed profile.
+  Cancel, multitouch, focus loss, a disabled/hidden window, skipped frames or an
+  intervening profile change reject the draft without replacing newer preferences.
+  Language/title defaults update only after acceptance. Credential save/clear,
+  connection tests, folder/install actions and shortcut navigation require accepted
+  activation; rejected input retains the independent API-key text draft.
   Shared confirmation dialogs gate every button kind and backdrop dismissal
   with the same touch latch, so rejected releases cannot authorize saving,
   discarding, overwriting or canceling a pending decision. Clean mouse/touch
