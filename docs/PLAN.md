@@ -464,6 +464,21 @@ then, not after the release is promised.
   executed. The probe exposed an out-of-date separate fuzz lockfile (workspace
   versions/dependencies); it was synchronized by Cargo. Long sanitized campaigns
   remain an explicit Linux/compatible-host gate, not satisfied by CI smoke.
+- **SS3 label popup:** guarded add/remove/suggestion/sort/apply/cancel actions
+  and preserved the popup through rejected outside releases. Both-theme tests
+  cover canceled/two/three-contact sequences with retained input, staged sort,
+  workbook/history and subsequent deliberate Apply/Undo. Existing IME protection
+  remains ahead of popup input handling.
+- **SS7 focused independent QA:** at `7d5a96b`, the QA agent executed 31 focused
+  Windows headless recovery/handoff/discard/rename/print/screenshot checks without
+  reproduced defects. This does not satisfy the cross-platform/device/browser
+  matrix or the unresolved security gate. A complete local native workspace run
+  at that revision passed 638 tests with 1 pre-existing ignored across 79 suites.
+  The separate PWA Node suite passed all 7 contracts.
+- **SS6 browser execution blocker:** Playwright and Chrome DevTools MCP navigation
+  both failed during catalog verification with request timeouts. No browser
+  acceptance was executed and no browser was installed. The published site and
+  metadata are not substitutes for candidate runtime/persistence testing.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

@@ -160,6 +160,8 @@ graph TD
   Screenshot-editor crop, square/frame/color settings retain the same
   sequence-scoped rollback contract. Rejected releases cannot copy/save output
   or dismiss the editor; a canceled crop clears its provisional drag origin.
+  Label-popup add/remove/suggestion/sort/apply/cancel actions use the touch latch;
+  rejected outside releases retain the popup and its typed draft.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

@@ -120,6 +120,7 @@ impl ThinodaApp {
         editor.normalize();
         let mut apply = false;
         let mut cancel = false;
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         // Consume Escape before Popup closes so it cannot reach the map/outliner.
         let escape = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         let popup = egui::Popup::new(id, ctx.clone(), editor.anchor, egui::LayerId::background())
@@ -135,14 +136,17 @@ impl ThinodaApp {
                     .show(ui, |ui| label_fields(ui, &mut editor, &suggestions));
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
-                    cancel = ui.button(t("Cancel")).clicked();
-                    apply = ui.button(t("Apply")).clicked();
+                    cancel = ui.button(t("Cancel")).clicked() && touch_allowed;
+                    apply = ui.button(t("Apply")).clicked() && touch_allowed;
                 });
             });
         if let Some(popup) = popup
             && editor.anchor.width() > 0.0
         {
             pointer(ctx, &popup.response, editor.anchor);
+        }
+        if !touch_allowed && !escape {
+            egui::Popup::open_id(ctx, id);
         }
         if apply {
             editor.add_input();
@@ -174,10 +178,15 @@ impl ThinodaApp {
 }
 
 fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTreeSet<String>) {
+    let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ui.ctx());
+    let auto_sort = editor.auto_sort;
     ui.checkbox(&mut editor.auto_sort, t("Auto sort"))
         .on_hover_text(t(
             "Sort labels by Unicode code-point order (case-sensitive).",
         ));
+    if !touch_allowed {
+        editor.auto_sort = auto_sort;
+    }
     if !editor.auto_sort {
         ui.label(t(
             "Label order is kept. Matching is case-sensitive; empty and duplicate labels are removed.",
@@ -190,6 +199,7 @@ fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTree
                 .add(egui::Button::new(format!("{label} ×")).wrap())
                 .accessible_name(format!("{}: {label}", t("Remove label")))
                 .clicked()
+                && touch_allowed
             {
                 remove = Some(index);
             }
@@ -217,13 +227,14 @@ fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTree
     if !input.has_focus() {
         editor.ime_composing = false;
     }
-    if ui
+    if (ui
         .add_enabled(
             !editor.input.trim().is_empty(),
             egui::Button::new(t("Add labels")),
         )
         .clicked()
-        || enter
+        || enter)
+        && touch_allowed
     {
         editor.add_input();
     }
@@ -241,6 +252,7 @@ fn label_fields(ui: &mut egui::Ui, editor: &mut LabelEditor, suggestions: &BTree
                     .add(egui::Button::new(label).wrap())
                     .accessible_name(format!("{}: {label}", t("Use label")))
                     .clicked()
+                    && touch_allowed
                 {
                     editor.labels.push(label.clone());
                 }

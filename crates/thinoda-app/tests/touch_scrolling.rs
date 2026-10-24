@@ -1069,6 +1069,77 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn label_popup_rejects_canceled_and_multitouch_actions() {
+    use egui_kittest::kittest::NodeT;
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for label in [
+            "Apply",
+            "Cancel",
+            "Add labels",
+            "Auto sort",
+            "Remove label: Existing",
+            "Use label: Keep this label",
+            "backdrop",
+        ] {
+            let mut h = harness(theme, 1.0);
+            let root = h.state().doc().unwrap().doc.sheet().root;
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .doc
+                .edit_sheet("Initial labels", |sheet| {
+                    let child = sheet.children(root)[0];
+                    sheet.set_labels(root, vec!["Existing".into()])?;
+                    sheet.set_labels(child, vec!["Keep this label".into()])
+                })
+                .unwrap();
+            h.state_mut().doc_mut().unwrap().view.selection = vec![root];
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Labels);
+            h.run_steps(4);
+            h.get_by_label(t("New labels")).type_text("Keep this label");
+            h.run_steps(4);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let sort = h.get_by_label(t("Auto sort")).accesskit_node().toggled();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                let target = if label == "backdrop" {
+                    egui::pos2(5.0, 5.0)
+                } else {
+                    h.get_by_label(t(label)).rect().center()
+                };
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(
+                    h.get_by_label(t("New labels")).value().as_deref(),
+                    Some("Keep this label")
+                );
+                assert_eq!(
+                    h.get_by_label(t("Auto sort")).accesskit_node().toggled(),
+                    sort
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+            h.get_by_label(t("Apply")).click();
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .topic(root)
+                    .unwrap()
+                    .labels,
+                ["Existing", "Keep this label"]
+            );
+            assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+    }
+}
+
+#[test]
 fn sheet_rename_rejects_canceled_and_multitouch_decisions() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         for choice in ["OK", "Cancel"] {
