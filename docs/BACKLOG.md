@@ -9,7 +9,18 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-22 after incorporating main through `ba05910`:
+**Current priority (2026-10-24):** finish the
+[security and stability sprint](PLAN.md#security-and-stability-sprint---draft-2026-10-24)
+before resuming the larger UX improvements. GitHub currently lists no open
+issues; [PR #70](https://github.com/AxelWol/Thinoda/pull/70) is open for browser
+zoom and touch-input safety. Native CI is still running at this inventory
+check; an earlier Ubuntu ARM64 recovery failure remains an SS1 investigation,
+not a confirmed fix. GitHub security-alert APIs report disabled scanners/no
+analysis, not a clean vulnerability inventory. SS0-SS8 define the finite
+scope, evidence, dependencies and release blockers without treating future
+encryption/cloud/updater features as existing defects.
+
+Historical baseline (2026-10-22), after incorporating main through `ba05910`:
 there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
 merged the R1 shortcut-catalog, conflict-audit and Zen/search improvements at
 `679c85a`; its final head CI passed. Release preparation

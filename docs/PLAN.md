@@ -137,11 +137,13 @@ as a defect in the planning deliverable.
 
 ### Delivery order and dependencies
 
-#### Active priorities by end-user value (2026-10-22)
+#### Active priorities by end-user value (2026-10-24)
 
 This ranks remaining work, not whole packages as unfinished. Reuse the delivered
 slices below; close each task with observable behavior before moving on.
 Data-loss, security, launch and release regressions override the ranking.
+The security and stability sprint below now owns the first delivery gate;
+ranks 2-8 resume only after its acceptance criteria are met.
 
 | Rank | Phase / packages | Prioritized remaining tasks | End-user benefit |
 |---|---|---|---|
@@ -158,6 +160,133 @@ P4 remains explicitly scheduled, not completed or replaced by popup mitigations.
 Its dependencies and per-step review/native acceptance gates below still apply.
 Performance, localization, accessibility, signing and regression checks accompany
 each affected slice rather than waiting for their own final phase.
+
+### Security and stability sprint - draft, 2026-10-24
+
+**User-directed sequencing change:** consolidate the remaining safety work into
+one stabilization sprint, then resume the value-ranked improvements above.
+This section supersedes the open-ended sequence of small touch-control slices:
+finish a finite current-product safety checklist before adding more UX features.
+It does not mark the wider R0-R13 roadmap complete.
+
+**Timebox:** ten working days from approval, not ten calendar days or a promise
+that unavailable hardware/accounts can be replaced by automated tests. The day
+ranges below are work budgets, not additional staffing or permission to launch
+parallel agents. Confirm native test hosts, security-tool access and signing
+capacity on day 1. If capacity is insufficient, change the timebox or supported
+release scope explicitly; do not silently remove acceptance cases.
+
+**Scope contract:** close all confirmed security/data-loss/stability defects in
+the currently implemented native/web product, including defects found by the
+sprint's defined audit. Reverify delivered protections rather than rebuilding
+them. Unimplemented password protection, OAuth/cloud APIs, an auto-updater,
+collaboration and plugin execution remain R9-R13 features with their own safety
+gates; they are not existing vulnerabilities or prerequisites for completing
+this sprint. Do not expose those features before those gates pass.
+
+#### Baseline and known gaps
+
+- No open GitHub issues were returned on 2026-10-24. PR
+  [#70](https://github.com/AxelWol/Thinoda/pull/70) is open; current checks are
+  still running. Earlier run
+  [40071626605](https://github.com/AxelWol/Thinoda/actions/runs/40071626605)
+  failed only its Ubuntu ARM64 job: `crash_recovery_restores_unsaved_work`
+  discovered zero orphan sessions instead of one. Root cause is unconfirmed;
+  do not dismiss it as a flaky test or weaken the recovery assertion.
+- The in-progress numeric-draft fix binds provisional Style values to document,
+  sheet, selection and revision, and cancels on hidden/disabled/modal contexts.
+  Its targeted interruption test passes locally; it is not yet merged or
+  released. Finish this work before extending the helper.
+- Remaining gesture gaps include standard menu/toolbar/dialog commands,
+  theme-editor numeric/color drags and other property controls; a per-frame
+  draft restore is not rollback of earlier frames in a canceled drag.
+- Save/picker/close, real native/browser IME and assistive-technology acceptance,
+  browser storage/zoom and native installation acceptance remain partly open.
+  Existing headless tests and earlier release packaging do not close these gates.
+- GitHub's alert APIs report Dependabot disabled (403), secret scanning disabled
+  (404), and no code-scanning analysis (404). Alert coverage is therefore
+  **unavailable**, not zero findings. Tool-access messages also request broader
+  token scopes; do not change credentials/permissions or enable services without
+  authorization. Use existing permitted local/CI scanners as applicable and
+  record tool/database versions and coverage limits.
+
+#### Sprint backlog and acceptance
+
+These are audit/remediation work packages, not a list of already-confirmed
+vulnerabilities. Record each finding with its affected revision/surface, minimal
+reproduction, impact/severity, owner, fix, regression and verification evidence.
+Handle exploitable findings privately under [SECURITY.md](../SECURITY.md).
+
+| ID / budget | Work and relevant components | Done evidence |
+|---|---|---|
+| SS0 / day 1 | Freeze the current-product checklist from this plan, BACKLOG, WEB, MINDMANAGER and open GitHub work. Inventory dependencies, credential/network/file trust boundaries and every state-changing input surface. Establish security-review, native QA and release access; verify private vulnerability reporting and branch protection/required checks, obtaining owner approval for any configuration changes. | Every known gap maps to SS1-SS7, with a named executor and available verification host/tool. Reporting and merge protections are evidenced, or an explicit owner decision remains open. A missing prerequisite is a visible blocker, not a pass. New findings enter this same checklist and can displace lower-impact work. |
+| SS1 / days 1-3 | Fix recovery/CI reliability first: reproduce the ARM64 orphan-discovery failure, inspect snapshot persistence, session-lock release, parallel/subprocess interactions and cleanup. Exercise actual crash/restart, two live sessions, restore/discard, failed writes and orphan leases in `thinoda-platform`/`thinoda-app`. | Root cause and failing regression established; latest ARM64 run and the complete required CI matrix pass at the candidate SHA. Repeat the previously failing recovery case at least 50 times on ARM64, both alone and under concurrent test load, without lost snapshots or weakened assertions. |
+| SS2 / days 2-4 | Close save/lifecycle data-loss risks: atomic save/backup errors, stale sources and symlink aliases, focused Notes/Hyperlink/title/IME drafts, Save All continuation, picker cancel, Close/Quit during startup or background work, and sheet/document switching. | Fault-injection plus native picker/close tests preserve source bytes, unsaved drafts, other documents and recovery on cancel/error; successful edits have correct one-step Undo/Redo. No silent overwrite, false success or accidental clean-state transition. |
+| SS3 / days 3-5 | Finish the input-safety inventory as one bounded pass: canvas/Outline, sheet/document tabs, main/context menus, quick actions, Style/Map/Symbols/custom-theme controls, Settings, dialogs and popups. Share cancellation/ownership logic; bind all staged values to their actual target and lifecycle. | Each state-changing control family has canceled one-contact, two/three-contact, added/removed-finger, delayed-release, hide/modal/focus-loss and stale-target cases where applicable. Rejected gestures leave model/history or staged settings unchanged; clean touch/mouse/pen/keyboard and text composition still work. No unsupported gestures or disabled controls that merely mask a defect. |
+| SS4 / days 4-6 | Review current import/export/clipboard/link/asset boundaries in `thinoda-io`, `thinoda-core`, platform and native printing bridges. Verify archive/XML/depth/count/image allocation limits, malformed IDs/references, traversal/symlink handling, external-resource behavior and source-preserving conversion consent. | Boundary and over-limit fixtures fail visibly without panic, unbounded allocation, unexpected fetch/launch or source mutation. Existing fuzz targets run with retained failure artifacts; at least a 30-minute bounded campaign per existing target completes on the candidate, in addition to CI smoke. Review native bridge lifetime/ownership and error/cancel paths without submitting physical print jobs. |
+| SS5 / days 4-6 | Review shipped dependency/secret exposure, AI endpoint/request handling, keychain/session-storage policy, legacy migration, logging, response limits, cancellation/timeouts and stale/background result application. Audit network behavior with mocks; no user documents or credentials sent to external test services. | Security review plus dependency/secret-scan evidence at the candidate SHA; confirmed exploitable findings remediated and retested. Locked/unavailable keychains never fall back to plaintext; logs/files/exports exclude secrets; failed/canceled/stale AI results cannot edit a different map or leave partial mutations. List inaccessible scanners explicitly. New streaming/prompt-library features remain R9 work. |
+| SS6 / days 5-7 | Verify web persistence/recovery across reload, tab contention, storage quota/write errors and PWA updates/offline use. Verify download/save semantics and browser zoom ownership. Audit CI/release permissions, untrusted PR handling, dependency/tool downloads, credential cleanup, package integrity/signatures and install/update compatibility of the shipped product. | Browser execution, not only metadata tests or WASM compilation; errors are visible and old/new clients do not silently lose maps. Package downloads match checksums; available platform signature/notarization checks pass. No release/secret exposure to untrusted PR code; installs/reinstalls preserve user files/settings. Adding a new updater or signing account is not part of this gate. |
+| SS7 / days 7-8 | Run independent security review and focused behavioral QA of recovery/lifecycle, untrusted inputs, native bridges and changed input surfaces. Exercise repeated open/edit/undo/save/recover/close cycles and large-map responsiveness against existing benchmarks; execute the supported native/browser matrix below with temporary profiles/maps. | Findings have reproducible evidence; fixes are independently retested. Zero unresolved confirmed security vulnerabilities, data-loss defects, crashes or required-check failures. No unbounded resource growth, blocking UI regressions or lost edits during the exercised cycles. CPU layout timing is not GPU frame-rate evidence. Tests cannot be skipped or relabeled to make the exit green. |
+| SS8 / days 9-10 | Reserve two days for findings/retests, freeze a release candidate, merge only after green checks, build all six native targets plus the website and perform post-release checks. Reconcile PLAN/BACKLOG/WEB/security limitations. | The exact merged/tagged SHA passes the gate below. Publication/download/site checks succeed; runtime/install acceptance is recorded separately. No change after sign-off without rerunning affected checks. Resume feature work only after sign-off. |
+
+**Dependency order:** SS0 precedes the audit baseline. SS1 is the first repair
+priority and blocks any release; SS2-SS6 findings can be investigated alongside
+it where capacity permits. SS3's draft helper depends on SS2 ownership/commit
+contracts. SS7 depends on fixes and evidence from SS1-SS6; SS8 depends on SS7.
+Every newly discovered exploitable or data-loss defect interrupts lower-impact
+work. Day 6 is the scope checkpoint: escalate unresolved roots/access blockers
+then, not after the release is promised.
+
+#### Completion gate - no partial-success closure
+
+1. All SS0-SS8 acceptance cases have recorded evidence against the candidate
+   revision, and all confirmed security/stability defects are fixed and retested.
+   Mitigations or unavailable tests remain open unless the user explicitly
+   changes the scope. A clean scan alone is not proof of security.
+2. `cargo xtask ci`, importer fuzz smoke/campaigns, native bridge/packaging tests,
+   web Node tests, WASM lint/build and all required GitHub checks pass.
+   Repeated recovery testing includes the previously failing Ubuntu ARM64 host.
+   No broad retries, sleep-only fixes, ignored regressions or assertion removal.
+3. Native execution covers Windows x64/ARM64, macOS Intel/Apple Silicon and
+   Ubuntu x86_64/ARM64, distinguishing Wayland/X11 input acceptance. Browser
+   execution covers desktop Chromium and Safari where applicable, iOS/iPadOS
+   Safari/PWA and Android Chrome/PWA for the shipped touch/recovery paths.
+   Compile/package checks do not count as device execution. Missing hosts,
+   assistive technologies or signing access block the affected claim; arrange
+   user/QA evidence or explicitly revise release scope before closure.
+4. Shared UI regressions cover both themes, Auto/system behavior, supported
+   locale/scale/viewport matrices and keyboard alternatives. Native IME/AT
+   evidence is separate; JA/zh-CN/zh-TW remain planned rather than falsely added
+   to the shipped-locale claim. User data and external service access require
+   explicit authorization; use synthetic fixtures and isolated profiles.
+5. Independent review/QA sign-off, recovery/save compatibility, all six target
+   artifacts/checksums, relevant signatures/notarization and the live website
+   are verified. If any gate is blocked at day 10, the sprint is **not finished**:
+   report the exact blocker and obtain a timebox/scope decision. Do not move to
+   feature work with hidden safety debt.
+
+#### Feature restart after the sprint
+
+Return to the existing value ranking without another indefinite hardening loop.
+New defects retain the normal stop-the-line rule; unrelated polish does not
+reopen this sprint.
+
+1. **Adaptable commands (R1-R2):** versioned shortcut capture/apply/reset and
+   persistence, visible conflict/reserved-key handling and keyboard navigation.
+   Resolve the Fit collision before activating overrides; retain existing
+   bindings and do not silently migrate legacy inactive values.
+2. **Trustworthy outputs and richer maps (R3-R6):** finish output/print fidelity
+   and supported sheet exchange, then versioned embedded assets, usable
+   image/attachment/equation/audio workflows and searchable asset panels.
+   Preserve original/licensed content, undo and roundtrip acceptance.
+3. **Presentation and planning (R7-R8):** zones/Pitch and presentation export,
+   then deterministic task/calendar scheduling and Gantt.
+4. **Optional intelligent/connected work (R9-R10):** streaming AI preview/cancel,
+   then reviewed protected-file and cloud conflict contracts before connecting
+   accounts or sharing. These new attack surfaces require their own reviews.
+5. **Broader reach (R12-R13):** remaining locales, sandboxed extension contracts
+   and collaboration after storage/security prerequisites; OS-native menus,
+   ribbon and multi-window lifecycle follow the already agreed P4 gates.
 
 | Package | Outcome | Prerequisites | Delivery band |
 |---|---|---|---|
@@ -598,7 +727,11 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
-**User-directed priority-1 workstream - native/web touch and trackpad gestures:**
+The security and stability sprint above is the current delivery gate. The
+gesture checklist and delivered slices below remain its SS3 evidence and
+acceptance inventory, not a separate endless workstream.
+
+**User-directed workstream - native/web touch and trackpad gestures:**
 deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
 Silicon and supported Ubuntu desktops, plus WASM/PWA on desktop and iOS/iPadOS/
 Android browsers. Native mobile packages are not existing deployment targets.
@@ -683,12 +816,20 @@ selection still applies the shape. Style width sliders now keep pointer-down
 changes provisional and commit them once on release; canceled or multitouch
 sequences discard the draft. Tests cover canceled and two/three-contact drags,
 clean touch commit/Undo, Font Size numeric drags and ordinary mouse dragging.
+Numeric drafts are scoped to document identity, sheet index/root, the complete
+selection and document revision. Changing any of these, disabling the control
+or skipping inspector frames cancels the draft through release. Regressions
+cover identical documents, duplicated sheets with shared topic IDs, selection
+changes, intervening model edits and hiding/reopening the inspector, without
+creating history entries or applying the draft to a different target. Opening
+Settings or another app-blocking modal also cancels provisional numeric values.
 The Map inspector also rejects canceled/multitouch theme-switch releases and
 does not commit staged theme changes for rejected sequences; ordinary switch
-activation remains available. The custom-theme editor restores its staged role
-and theme after rejected touch sequences, including preset activation; Apply,
-Save and Cancel controls require a clean release. Other inspector families and
-combo boxes, theme-editor color-picker gestures, text-selection behavior,
+activation remains available. The custom-theme editor restores per-frame staged
+role/theme changes after rejected touch input, including preset activation;
+Apply, Save and Cancel controls require a clean release. This does not undo
+changes from earlier drag frames: numeric/color drag lifecycle rollback remains
+open in SS3. Other inspector families and combo boxes, text-selection behavior,
 browser/device gestures and hardware acceptance remain open.
 
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
