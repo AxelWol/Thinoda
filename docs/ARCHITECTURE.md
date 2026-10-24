@@ -67,6 +67,10 @@ graph TD
   external change: interactive saves require conflict resolution and autosave
   skips the write. Failed saves and canceled MindManager save consent revoke
   overwrite authorization so a later attempt asks again.
+  Save As compares absolute/canonical destination identity, not just literal
+  path spelling; aliases of the current file retain conflict protection.
+  Source-preserving sheet saves/conversions use the same identity check and
+  propagate identity errors instead of silently classifying them as distinct.
   Tab-close prompts and save continuations target the stable document key,
   never a retained vector index. Conflict/conversion decisions resume that same
   close only after a successful save leaves no unsaved work. Cancellation,

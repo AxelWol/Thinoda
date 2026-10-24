@@ -303,6 +303,27 @@ then, not after the release is promised.
   The affected app unit and seven integration suites pass 172 tests; all-target
   native and WASM lint pass. Real native picker execution and exact-head CI
   remain separate gates.
+- **SS2 destination identity and backup faults:** reproduced a Save As conflict
+  bypass through `nested/../map.thinoda`: literal-path comparison allowed newer
+  external bytes to be replaced without conflict resolution. Save destinations
+  now use the shared source-preservation identity helper; non-NotFound identity
+  errors fail visibly rather than being treated as a different file. Sheet-save
+  source checks reuse that helper instead of duplicating it. Regressions cover
+  parent aliases, Windows case aliases, Unix file/directory symlinks (CI),
+  invalid identity checks, preserved workbook/history and separate-copy success.
+- Added a backup-write fault using a non-replaceable backup destination while
+  Notes is focused, in Map and Outline. Original/backup blocker bytes survive,
+  failed saves remain dirty with an error, recovery contains the notes, successful
+  retry preserves the original backup, and one Undo removes the notes. The
+  affected app unit/save/lifecycle/interop suites pass 161 tests on Windows x64;
+  native/WASM lint pass for the implementation. Unix symlink execution remains
+  candidate-CI evidence, not a Windows runtime claim.
+- **SS1 CI milestone:** run
+  [40074194593](https://github.com/AxelWol/Thinoda/actions/runs/40074194593)
+  at `6cce6cb` completed successfully across all native jobs, WASM and fuzz smoke,
+  including the additional isolated 50-cycle Ubuntu ARM64 recovery step. This
+  verifies the first explicit-unlock patch only; later ownership/lifecycle
+  revisions and final-candidate review/acceptance still gate SS1 closure.
 - **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
   device acceptance evidence has been supplied; security scanner coverage and
   any necessary owner authorization remain open. Read-only API verification

@@ -253,6 +253,12 @@ impl OpenDoc {
         }
     }
 
+    pub(crate) fn targets_current_file(&self, path: &Path) -> Result<bool, String> {
+        self.path.as_ref().map_or(Ok(false), |source| {
+            same_destination(source, path).map_err(|error| error.to_string())
+        })
+    }
+
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
         self.commit_inspector_edit()?;
@@ -281,18 +287,8 @@ impl OpenDoc {
         let format = Format::from_path(path)
             .filter(|format| is_native(*format) || *format == Format::MindManager)
             .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
-        if let Some(source) = &self.path {
-            let same_path = pfs::absolute(source).map_err(|e| e.to_string())?
-                == pfs::absolute(path).map_err(|e| e.to_string())?;
-            let same_file = if pfs::exists(source) && pfs::exists(path) {
-                pfs::canonicalize(source).map_err(|e| e.to_string())?
-                    == pfs::canonicalize(path).map_err(|e| e.to_string())?
-            } else {
-                false
-            };
-            if same_path || same_file {
-                return Err("choose a different path to preserve the source workbook".into());
-            }
+        if self.targets_current_file(path)? {
+            return Err("choose a different path to preserve the source workbook".into());
         }
         let source = if let Some(edit) = &self.inspector_edit {
             let mut source = self.doc.workbook().clone();
@@ -452,13 +448,57 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
     if pfs::absolute(source)? == pfs::absolute(destination)? {
         return Ok(true);
     }
-    Ok(pfs::exists(source)
-        && pfs::exists(destination)
-        && pfs::canonicalize(source)? == pfs::canonicalize(destination)?)
+    let canonical = |path: &Path| match pfs::canonicalize(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    match (canonical(source)?, canonical(destination)?) {
+        (Some(source), Some(destination)) => Ok(source == destination),
+        _ => Ok(false),
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destination_identity_errors_do_not_allow_source_preservation_bypass() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.save_to(&source, false).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let alias = dir.path().join("invalid\0.thinoda");
+        assert!(doc.targets_current_file(&alias).is_err());
+        assert!(doc.save_sheet_to(&alias, false).is_err());
+        doc.import_source = Some(source.clone());
+        assert!(doc.ensure_export_destination(&alias).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn sheet_save_rejects_parent_alias_without_altering_source_or_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.thinoda");
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let alias = nested.join("..").join("source.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.doc
+            .edit_book("Second sheet", |book| {
+                book.sheets.push(thinoda_core::Sheet::new("Other", "Other"));
+                Ok(())
+            })
+            .unwrap();
+        doc.save_to(&source, false).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let revision = doc.doc.state_id();
+        assert!(doc.save_sheet_to(&alias, false).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert_eq!(doc.doc.state_id(), revision);
+        assert!(!doc.is_dirty());
+    }
 
     #[test]
     fn save_and_reopen() {

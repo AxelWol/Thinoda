@@ -1328,7 +1328,16 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
-        if d.path.as_deref() == Some(target) && d.changed_on_disk() && !d.ignore_conflict {
+        let same_file = match d.targets_current_file(target) {
+            Ok(same_file) => same_file,
+            Err(error) => {
+                d.ignore_conflict = false;
+                self.toasts
+                    .error(format!("{}: {error}", t("Could not save")));
+                return false;
+            }
+        };
+        if same_file && d.changed_on_disk() && !d.ignore_conflict {
             self.dialogs.conflict = Some(d.key.clone());
             return false;
         }
@@ -2419,6 +2428,61 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_alias_cannot_bypass_external_change_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("map.thinoda");
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let alias = nested.join("..").join("map.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.doc_mut().unwrap().save_to(&path, false).unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "My changes"))
+            .unwrap();
+        let external = b"newer external content";
+        std::fs::write(&path, external).unwrap();
+        let key = app.doc().unwrap().key.clone();
+        let workbook = app.doc().unwrap().doc.workbook().clone();
+        let revision = app.doc().unwrap().doc.state_id();
+        assert!(!app.save_active_to(&alias, false));
+        assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert!(app.doc().unwrap().is_dirty());
+        assert_eq!(app.doc().unwrap().path.as_deref(), Some(path.as_path()));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &workbook);
+        assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("linked-map.thinoda");
+            let folder = dir.path().join("linked-folder");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            std::os::unix::fs::symlink(dir.path(), &folder).unwrap();
+            for alias in [link, folder.join("map.thinoda")] {
+                app.dialogs.conflict = None;
+                assert!(!app.save_active_to(&alias, false));
+                assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+                assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+            }
+        }
+        #[cfg(windows)]
+        {
+            app.dialogs.conflict = None;
+            assert!(!app.save_active_to(&dir.path().join("MAP.THINODA"), false));
+            assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+            assert_eq!(std::fs::read(&path).unwrap(), external);
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+        }
+        app.dialogs.conflict = None;
+        let copy = dir.path().join("copy.thinoda");
+        assert!(app.save_active_to(&copy, false));
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert_eq!(OpenDoc::open(&copy).unwrap().doc.workbook(), &workbook);
+    }
 
     #[test]
     fn sanitize_names() {
