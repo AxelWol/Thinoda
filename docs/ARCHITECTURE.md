@@ -162,6 +162,10 @@ graph TD
   or dismiss the editor; a canceled crop clears its provisional drag origin.
   Label-popup add/remove/suggestion/sort/apply/cancel actions use the touch latch;
   rejected outside releases retain the popup and its typed draft.
+  Symbol-color and MindManager export consents bind to document key, sheet and
+  revision after committing title edits. Switching/removing/changing the source
+  revokes both decisions and symbol-loss authorization; tab-vector reordering
+  alone does not transfer consent to the tab now occupying its old index.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

@@ -3473,7 +3473,21 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
-        if let Some((index, format)) = self.dialogs.symbol_export {
+        if self.dialogs.symbol_export.is_some() || self.dialogs.mindmanager_export {
+            let valid = self.doc().is_some_and(|doc| {
+                self.dialogs.export_owner.as_ref()
+                    == Some(&(doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()))
+            });
+            if !valid {
+                self.dialogs.symbol_export = None;
+                self.dialogs.mindmanager_export = false;
+                self.dialogs.mindmanager_symbol_color_loss = false;
+                self.dialogs.export_owner = None;
+                self.toasts.warning(t("Not possible here"));
+                return;
+            }
+        }
+        if let Some((_, format)) = self.dialogs.symbol_export {
             if let Some(choice) = confirm_dialog(
                 ctx,
                 "symbol_export",
@@ -3485,8 +3499,8 @@ impl ThinodaApp {
                 ],
             ) {
                 self.dialogs.symbol_export = None;
-                if choice == 0 && index < self.docs.len() {
-                    self.active = index;
+                self.dialogs.export_owner = None;
+                if choice == 0 {
                     self.export(format, true);
                 }
             }
@@ -3555,6 +3569,7 @@ impl ThinodaApp {
                 ],
             ) {
                 self.dialogs.mindmanager_export = false;
+                self.dialogs.export_owner = None;
                 let allow_symbol_color_loss =
                     std::mem::take(&mut self.dialogs.mindmanager_symbol_color_loss);
                 if choice == 0 {

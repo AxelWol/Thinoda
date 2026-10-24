@@ -491,6 +491,14 @@ then, not after the release is promised.
   executable was installed or scanner coverage claimed. This joins disabled
   repository scanners, owner-controlled signing/tag protections, long sanitized
   fuzz execution and browser/device acceptance as unresolved release gates.
+- **SS2 export consent ownership:** symbol-color and MindManager warnings now
+  bind to the source document key, active sheet and revision after title-edit
+  commit. A source switch/removal/revision/sheet change revokes pending export
+  and color-loss authorization before a picker can open. Tab reordering that
+  preserves the source still allows the two independent consent steps without
+  switching to the document now at its old vector index. Actual-app regressions
+  cover both warning types and their chained reordered-tab path; existing
+  conversion, source-preservation, title and symbol tests remain green.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

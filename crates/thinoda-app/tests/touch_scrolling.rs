@@ -1069,6 +1069,120 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn export_consent_cannot_follow_a_changed_source() {
+    for symbols in [false, true] {
+        for change in [
+            "active-document",
+            "revision",
+            "active-sheet",
+            "removed-document",
+        ] {
+            let mut h = harness(ThemeMode::Light, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::New);
+            h.state_mut().active = 0;
+            h.state_mut().exec(&ctx, Cmd::NewSheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            if symbols {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Symbol color", |sheet| {
+                        let topic = sheet.topic_mut(sheet.root).unwrap();
+                        topic.markers.push("priority-1".into());
+                        topic
+                            .marker_colors
+                            .insert(0, thinoda_core::Color::rgb(20, 30, 40));
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+            h.state_mut()
+                .exec(&ctx, Cmd::Export(thinoda_io::Format::MindManager));
+            h.run_steps(4);
+            assert!(
+                h.state().dialogs.symbol_export.is_some() || h.state().dialogs.mindmanager_export
+            );
+            match change {
+                "active-document" => h.state_mut().active = 1,
+                "removed-document" => {
+                    h.state_mut().docs.remove(0);
+                }
+                "active-sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+                "revision" => {
+                    h.state_mut()
+                        .doc_mut()
+                        .unwrap()
+                        .doc
+                        .edit_sheet("New work", |sheet| {
+                            sheet.set_title(sheet.root, "Changed after consent opened")
+                        })
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before: Vec<_> = h
+                .state()
+                .docs
+                .iter()
+                .map(|doc| doc.doc.workbook().clone())
+                .collect();
+            h.run_steps(4);
+            assert!(h.state().dialogs.symbol_export.is_none(), "{change}");
+            assert!(!h.state().dialogs.mindmanager_export, "{change}");
+            assert!(!h.state().dialogs.mindmanager_symbol_color_loss);
+            for (doc, expected) in h.state().docs.iter().zip(before) {
+                assert_eq!(doc.doc.workbook(), &expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn export_consent_stays_with_its_document_after_tab_reordering() {
+    use egui_kittest::kittest::NodeT;
+    let mut h = harness(ThemeMode::Light, 1.0);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.state_mut().active = 0;
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Symbol color", |sheet| {
+            let topic = sheet.topic_mut(sheet.root).unwrap();
+            topic.markers.push("priority-1".into());
+            topic
+                .marker_colors
+                .insert(0, thinoda_core::Color::rgb(20, 30, 40));
+            Ok(())
+        })
+        .unwrap();
+    let key = h.state().doc().unwrap().key.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Export(thinoda_io::Format::MindManager));
+    h.run_steps(4);
+    assert!(h.state().dialogs.symbol_export.is_some());
+    h.state_mut().docs.swap(0, 1);
+    h.state_mut().active = 1;
+    h.run_steps(4);
+    h.query_all_by_role_and_label(Role::Button, t("Export"))
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap()
+        .click();
+    h.run_steps(4);
+    assert!(h.state().dialogs.symbol_export.is_none());
+    assert!(h.state().dialogs.mindmanager_export);
+    assert!(h.state().dialogs.mindmanager_symbol_color_loss);
+    assert_eq!(h.state().doc().unwrap().key, key);
+    h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+    h.run_steps(4);
+    assert!(!h.state().dialogs.mindmanager_export);
+    assert!(!h.state().dialogs.mindmanager_symbol_color_loss);
+}
+
+#[test]
 fn label_popup_rejects_canceled_and_multitouch_actions() {
     use egui_kittest::kittest::NodeT;
     for theme in [ThemeMode::Light, ThemeMode::Dark] {

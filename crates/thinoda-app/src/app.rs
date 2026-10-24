@@ -171,6 +171,7 @@ pub struct Dialogs {
     pub(crate) save_close_tab: Option<String>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub symbol_export: Option<(usize, Format)>,
+    pub(crate) export_owner: Option<(String, usize, u64)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
@@ -568,6 +569,9 @@ impl ThinodaApp {
             Cmd::Labels => self.begin_labels(ctx),
             Cmd::Print => self.begin_print(ctx),
             Cmd::Export(format) => {
+                if let Some(doc) = self.doc_mut() {
+                    doc.view.commit_edit(&mut doc.doc);
+                }
                 if self.doc().is_some_and(|d| {
                     thinoda_io::symbol_color_loss(d.doc.workbook(), format)
                         || (format == Format::XMind
@@ -578,6 +582,9 @@ impl ThinodaApp {
                                 .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty())))
                 }) {
                     self.dialogs.symbol_export = Some((self.active, format));
+                    self.dialogs.export_owner = self
+                        .doc()
+                        .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
                 } else {
                     self.export(format, false);
                 }
@@ -1368,6 +1375,9 @@ impl ThinodaApp {
         if format == Format::MindManager {
             self.dialogs.mindmanager_export = true;
             self.dialogs.mindmanager_symbol_color_loss = allow_symbol_color_loss;
+            self.dialogs.export_owner = self
+                .doc()
+                .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
             return;
         }
         self.export_confirmed(format, allow_symbol_color_loss);
