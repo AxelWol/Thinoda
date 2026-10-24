@@ -3528,6 +3528,9 @@ impl ThinodaApp {
                         false
                     }
                 } else {
+                    if let Some(index) = index {
+                        self.docs[index].ignore_conflict = false;
+                    }
                     false
                 };
                 if self.resolve_save_all(ctx, &key, saved) {

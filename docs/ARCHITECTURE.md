@@ -63,6 +63,10 @@ graph TD
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;
   recovery overlays their current value on a copy without committing history.
+  Missing file fingerprints or failed metadata checks count as an unverifiable
+  external change: interactive saves require conflict resolution and autosave
+  skips the write. Failed saves and canceled MindManager save consent revoke
+  overwrite authorization so a later attempt asks again.
   Drafts bind to the document, sheet index/root and topic, since duplicated
   sheets can share topic IDs. Changed or missing source fields fail explicitly
   and retain the draft instead of overwriting newer content. Single-line

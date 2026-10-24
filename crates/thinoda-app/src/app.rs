@@ -1344,6 +1344,7 @@ impl ThinodaApp {
                 true
             }
             Err(e) => {
+                d.ignore_conflict = false;
                 self.toasts.error(format!("{}: {e}", t("Could not save")));
                 false
             }

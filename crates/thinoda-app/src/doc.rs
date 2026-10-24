@@ -231,11 +231,25 @@ impl OpenDoc {
         self.last_change.elapsed().as_secs_f32()
     }
 
-    /// Whether the file on disk changed since it was loaded or last saved.
+    /// Whether the file changed or its identity cannot be verified.
+    /// Uncertainty requires conflict resolution and must never permit autosave.
     pub fn changed_on_disk(&self) -> bool {
         match (&self.path, &self.fingerprint) {
-            (Some(_), Some(fp)) => fp.changed_since().unwrap_or(false),
-            _ => false,
+            (Some(path), Some(fp)) => match fp.changed_since() {
+                Ok(changed) => changed,
+                Err(error) => {
+                    log::warn!(
+                        "Could not verify file identity for {}: {error}",
+                        path.display()
+                    );
+                    true
+                }
+            },
+            (Some(path), None) => {
+                log::warn!("No saved file identity available for {}", path.display());
+                true
+            }
+            (None, _) => false,
         }
     }
 
@@ -466,6 +480,29 @@ mod tests {
         );
         assert!(!e.is_dirty());
         assert!(!e.changed_on_disk());
+    }
+
+    #[test]
+    fn unknown_or_unreadable_file_identity_requires_conflict_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("maps");
+        std::fs::create_dir(&parent).unwrap();
+        let path = parent.join("map.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.save_to(&path, false).unwrap();
+        let fingerprint = doc.fingerprint.take().unwrap();
+        assert!(
+            doc.changed_on_disk(),
+            "an existing document without a baseline cannot be assumed unchanged"
+        );
+        doc.fingerprint = Some(fingerprint);
+        let moved = dir.path().join("moved");
+        std::fs::rename(&parent, &moved).unwrap();
+        std::fs::write(&parent, b"parent is no longer a directory").unwrap();
+        assert!(
+            doc.changed_on_disk(),
+            "an unreadable identity must not silently permit overwrite/autosave"
+        );
     }
 
     #[test]

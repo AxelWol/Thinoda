@@ -272,6 +272,22 @@ then, not after the release is promised.
   now advances only on successful cleanup, with failures logged; queue failures
   are also logged without dropping the retry. That regression failed before the
   change. The final targeted run passes 200 tests; native/WASM lint remains green.
+- **SS2 in progress (save/conflict protection):** reproduced a missing-baseline
+  overwrite bypass: clearing an existing document's fingerprint allowed Save to
+  replace newer external bytes without confirmation. Metadata-query errors were
+  also treated as unchanged. Both cases now log the uncertainty and require
+  conflict resolution; autosave cannot write an unverifiable file. Regressions
+  cover unavailable metadata, missing baselines, Save/Save All cancel and explicit
+  Overwrite, plus autosave after its actual idle threshold. Model/history and
+  external/later-document bytes remain unchanged when writing is rejected.
+- Reproduced single-save overwrite consent surviving a failed write (batch saves
+  already revoked it). Failed saves now revoke that consent; canceling standalone
+  MindManager conversion consent revokes it too. A subsequent attempt must ask
+  again rather than silently overwrite a newer external version. Regressions
+  exercise native and MindManager saves, failed writes, conversion cancellation
+  and retry. The affected app unit/save/inspector/title/MindManager run passes
+  88 tests; native all-target and WASM lint pass. Native picker/close, source-alias
+  and broader fault-injection acceptance remain open; SS2 is not complete.
 - **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
   device acceptance evidence has been supplied; security scanner coverage and
   any necessary owner authorization remain open. Read-only API verification
