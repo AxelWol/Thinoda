@@ -23,7 +23,7 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
-fn touch_slider_value(
+fn touch_numeric_value(
     ui: &mut Ui,
     value: &mut f32,
     salt: &'static str,
@@ -2706,7 +2706,7 @@ impl ThinodaApp {
             });
             let mut bw = resolved.border_width;
             widgets::property_field(ui, t("Width"), |ui| {
-                let (r, commit) = touch_slider_value(ui, &mut bw, "border-width", |ui, value| {
+                let (r, commit) = touch_numeric_value(ui, &mut bw, "border-width", |ui, value| {
                     ui.add(egui::Slider::new(value, 0.0..=8.0).step_by(0.5))
                 });
                 if commit && (r.changed() || bw != resolved.border_width) {
@@ -2729,8 +2729,10 @@ impl ThinodaApp {
             }
             let mut size = resolved.font_size;
             widgets::property_field(ui, t("Font Size"), |ui| {
-                let r = ui.add(egui::DragValue::new(&mut size).range(6.0..=96.0).speed(0.5));
-                if r.changed() && touch_allowed {
+                let (r, commit) = touch_numeric_value(ui, &mut size, "font-size", |ui, value| {
+                    ui.add(egui::DragValue::new(value).range(6.0..=96.0).speed(0.5))
+                });
+                if commit && (r.changed() || size != resolved.font_size) {
                     change = Some(("Font Size", Box::new(move |st| st.font_size = Some(size))));
                 }
                 r
@@ -2809,7 +2811,7 @@ impl ThinodaApp {
             });
             let mut lw = resolved.line_width;
             widgets::property_field(ui, t("Line Width"), |ui| {
-                let (r, commit) = touch_slider_value(ui, &mut lw, "line-width", |ui, value| {
+                let (r, commit) = touch_numeric_value(ui, &mut lw, "line-width", |ui, value| {
                     ui.add(egui::Slider::new(value, 0.5..=8.0).step_by(0.5))
                 });
                 if commit && (r.changed() || lw != resolved.line_width) {

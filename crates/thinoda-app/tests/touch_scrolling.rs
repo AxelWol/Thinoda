@@ -116,7 +116,7 @@ fn touch_release(
     h.run_steps(4);
 }
 
-fn drag_slider_with_touch(
+fn drag_control_with_touch(
     h: &mut Harness<'_, ThinodaApp>,
     start: egui::Pos2,
     delta: egui::Vec2,
@@ -199,7 +199,7 @@ fn drag_slider_with_touch(
     h.run_steps(4);
 }
 
-fn drag_slider_with_mouse(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) {
+fn drag_control_with_mouse(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) {
     h.event(Event::PointerMoved(start));
     h.event(Event::PointerButton {
         pos: start,
@@ -905,7 +905,7 @@ fn style_inspector_slider_discards_canceled_and_multitouch_drags() {
         let revision = h.state().doc().unwrap().doc.state_id();
 
         for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
-            drag_slider_with_touch(&mut h, start, delta, contacts, cancel);
+            drag_control_with_touch(&mut h, start, delta, contacts, cancel);
             assert_eq!(
                 h.state().doc().unwrap().doc.state_id(),
                 revision,
@@ -918,7 +918,7 @@ fn style_inspector_slider_discards_canceled_and_multitouch_drags() {
             );
         }
 
-        drag_slider_with_touch(&mut h, start, delta, 1, false);
+        drag_control_with_touch(&mut h, start, delta, 1, false);
         let touched = h.state().doc().unwrap().doc.workbook().clone();
         assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
         assert_ne!(touched, before);
@@ -928,11 +928,46 @@ fn style_inspector_slider_discards_canceled_and_multitouch_drags() {
         h.run_steps(4);
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 
-        drag_slider_with_mouse(&mut h, start, delta);
+        drag_control_with_mouse(&mut h, start, delta);
         assert_ne!(
             h.state().doc().unwrap().doc.workbook(),
             &before,
             "ordinary mouse slider dragging remains available"
         );
+    }
+}
+
+#[test]
+fn style_inspector_numeric_drag_discards_canceled_and_multitouch_input() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::SpinButton, t("Font Size"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let rect = h
+            .get_by_role_and_label(Role::SpinButton, t("Font Size"))
+            .rect();
+        let start = rect.center();
+        let delta = vec2(rect.width() * 0.4, 0.0);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            drag_control_with_touch(&mut h, start, delta, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "canceled/multitouch numeric drag must not create a document edit"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+
+        drag_control_with_touch(&mut h, start, delta, 1, false);
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
     }
 }
