@@ -25,6 +25,17 @@ def dependencies(block: str) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_web_tool_download_is_verified_without_elevated_extraction(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        web = job(source, "web")
+        self.assertIn('install_trunk.py "$RUNNER_TEMP/thinoda-tools"', web)
+        self.assertIn('echo "$RUNNER_TEMP/thinoda-tools" >> "$GITHUB_PATH"', web)
+        self.assertNotIn("sudo", web)
+        self.assertNotRegex(web, r"curl[^\n]*\|")
+        self.assertLess(web.index("install_trunk.py"), web.index("trunk build"))
+        self.assertIn("cargo install cargo-fuzz --version 0.13.2 --locked",
+                      job(source, "fuzz-smoke"))
+
     def test_release_order_separates_apple_jobs_and_orders_linux_architectures(self):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         expected = {

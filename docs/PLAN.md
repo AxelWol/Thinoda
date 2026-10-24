@@ -649,6 +649,19 @@ then, not after the release is promised.
   service, not RustSec unsound/unmaintained-package coverage, secret scanning,
   source/provenance verification, GitHub Actions/toolchain auditing or a claim
   that dependencies are defect-free. Those remaining gates are not waived.
+- **SS6 CI download integrity:** replaced the web job's download-to-privileged-tar
+  pipeline with an installer pinned to Trunk 0.21.14 and the upstream archive's
+  SHA-256, independently checked against the downloaded archive bytes. The
+  installer verifies before archive parsing, limits download/binary sizes,
+  accepts only the single regular `trunk` member and installs in the runner's
+  temporary tools directory without `sudo`. Offline fixtures reject bad hashes,
+  traversal/absolute paths, symlink/hardlink members, oversized data, malformed
+  archives, non-HTTPS final URLs and network failures. Existing binaries survive
+  checksum rejection. The real archive verifies and extracts the expected
+  30,533,520-byte Linux ELF without executing it on Windows. CI fuzz smoke now
+  pins cargo-fuzz 0.13.2, matching the longer acceptance campaign. This does not
+  close owner-enforced release authorization, upstream provenance, mutable
+  action/toolchain refs or Trunk's additional tool-download review.
 
 #### Bounded SS3 inventory reconciliation
 

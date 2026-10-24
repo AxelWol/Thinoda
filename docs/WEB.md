@@ -36,6 +36,16 @@ in **Settings > Pages**, set **Build and deployment > Source** to
 the `thinoda-web` artifact from the workflow run to try a pull request locally
 (`python -m http.server -d <unzipped folder>`).
 
+CI installs Trunk 0.21.14 with
+[a checksum-pinned installer](../.github/scripts/install_trunk.py), verifying the
+Linux archive before parsing it and accepting only its single regular `trunk`
+binary. The expected SHA-256 is committed, not fetched alongside the executable
+at build time. Installation uses a temporary runner directory without `sudo`.
+Changing Trunk requires reviewing the upstream release and updating the version,
+checksum and fixtures together. This verifies the pinned archive bytes; it does
+not establish upstream build provenance or cover Trunk's separately downloaded
+`wasm-bindgen`/`wasm-opt` tools.
+
 ## Feature parity and browser alternatives
 All editing features are the same shared code as on the desktop: topics,
 structures, themes, styles, symbols, relationships, boundaries, summaries,
