@@ -12,6 +12,8 @@ mod labels;
 mod legal;
 mod legal_markdown;
 mod map_shot;
+pub mod menus;
+pub mod native_menus;
 mod printing;
 mod quick_styles;
 mod save_all;
@@ -39,7 +41,11 @@ pub static UNSAVED_CHANGES: std::sync::atomic::AtomicBool =
 
 impl eframe::App for ThinodaApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        self.poll_native_menus(ui.ctx());
         self.draw(ui);
+        #[cfg(target_os = "windows")]
+        self.sync_native_menus(ui.ctx(), frame);
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);

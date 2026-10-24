@@ -4209,6 +4209,7 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "web-time",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

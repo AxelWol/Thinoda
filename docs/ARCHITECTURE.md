@@ -108,6 +108,15 @@ graph TD
   keyboard activation and draw a two-logical-pixel focus outline in the semantic
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
+- **Main-menu commands**: the host-independent menu tree drives compact menus
+  and the Windows HMENU adapter. The native callback only queues known enabled
+  IDs and wakes the egui context; application-frame dispatch uses the producing
+  snapshot and rechecks document/sheet/history, text focus and modal ownership.
+  Standard native editing items send text-edit events when a text field owns
+  focus. Menu replacement drains pending commands first, and window destruction
+  removes its subclass before dropping callback data. Native integration errors
+  are logged and shown, with the compact menu retained. This is not a Windows
+  ribbon or macOS/global-menu/multi-window implementation.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It

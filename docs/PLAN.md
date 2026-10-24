@@ -206,6 +206,26 @@ command availability and error reporting. Test each feature while building it,
 update completion status honestly, and do not interleave deferred stability work.
 No staffing or calendar promises are inferred from these phases.
 
+**F1 implementation progress (2026-10-24):** the compact main menus now use a
+shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
+HMENU adapter is wired to the root eframe window; it queues native selections
+for application-frame dispatch, preserves the producing snapshot, rejects
+stale document/sheet/history targets and modal execution, and sends standard
+editing actions to focused text controls instead of the map. Native menu
+failure is reported and leaves the compact menu available. Hidden Win32-window
+fixtures cover dispatch, disabled IDs, replacement, invalid input and destruction;
+app fixtures cover menu parity, stale/modal ownership and text selection.
+Local evidence: 77 app unit tests, four hidden-window native menu fixtures and
+36 existing menu/shortcut/context/touch integration tests passed; native and
+WASM clippy and 25 documentation contracts passed. The desktop executable was
+built and launched at the user's request; its live Windows accessibility tree
+exposed all eight native menu groups. This does not establish screen-reader,
+ARM64 or other-OS acceptance.
+This is a Windows integration slice, **not F1/P4 completion**: Windows ribbon,
+macOS global menus/multiple windows, Ubuntu desktop acceptance, command/window
+lifecycle and the broader P4 review/host matrix remain pending. F2-F6 remain
+pending; SS0-SS8 remains deferred.
+
 #### Active priorities by end-user value (2026-10-24)
 
 **Historical ranking, superseded by the active feature phase plan above.**

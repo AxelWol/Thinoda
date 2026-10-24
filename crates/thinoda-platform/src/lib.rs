@@ -53,6 +53,7 @@ pub mod cloud;
 pub mod crash;
 pub mod credentials;
 pub mod fs;
+pub mod native_menu;
 pub mod paths;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod printing;

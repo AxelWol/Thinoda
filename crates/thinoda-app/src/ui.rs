@@ -879,378 +879,52 @@ impl ThinodaApp {
         }
     }
 
-    fn file_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
-        let mode = self.mode;
-        ui.set_min_width(220.0);
-        let item = |ui: &mut Ui, label: &str, command: &Cmd| {
-            ui.add(command_button(ui.ctx(), mode, label, command))
-        };
-        if item(ui, t("New"), &Cmd::New).clicked() {
-            *cmd = Some(Cmd::New);
-        }
-        menu_button(ui, t("New from Template…"), |ui| {
-            for category in templates::TemplateCategory::ALL {
-                let category_label = t(category.label());
-                menu_button(ui, category_label, |ui| {
-                    for template in templates::TEMPLATES
-                        .iter()
-                        .filter(|template| template.category == category)
-                    {
-                        if ui.button(t(template.name)).clicked() {
-                            *cmd = Some(Cmd::NewFromTemplate(template.id));
-                        }
-                    }
-                });
-            }
-        });
-        if item(ui, t("Open…"), &Cmd::Open).clicked() {
-            *cmd = Some(Cmd::Open);
-        }
-        menu_button(ui, t("Open Recent"), |ui| {
-            let recent: Vec<_> = self
-                .settings
-                .existing_recent()
-                .into_iter()
-                .map(|r| r.path.clone())
-                .collect();
-            if recent.is_empty() {
-                ui.label(t("No recent files"));
-            }
-            for p in recent.iter().take(15) {
-                if ui
-                    .button(
-                        p.file_name()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                    )
-                    .on_hover_text(p.display().to_string())
-                    .clicked()
-                {
-                    *cmd = Some(Cmd::OpenPath(p.clone()));
-                }
-            }
-            ui.separator();
-            if ui.button(t("Clear Recent")).clicked() && widgets::touch_activation_allowed(ui.ctx())
-            {
-                self.settings.clear_recent();
-                self.save_settings();
-            }
-        });
-        ui.separator();
-        if ui
-            .add_enabled(
-                self.command_available(&Cmd::Save),
-                command_button(ui.ctx(), mode, t("Save"), &Cmd::Save),
-            )
-            .clicked()
-        {
-            *cmd = Some(Cmd::Save);
-        }
-        if ui
-            .add_enabled(
-                self.command_available(&Cmd::SaveAs),
-                command_button(ui.ctx(), mode, t("Save As…"), &Cmd::SaveAs),
-            )
-            .clicked()
-        {
-            *cmd = Some(Cmd::SaveAs);
-        }
-        if ui
-            .add_enabled(
-                self.command_available(&Cmd::SaveAll),
-                egui::Button::new(t("Save All")),
-            )
-            .clicked()
-        {
-            *cmd = Some(Cmd::SaveAll);
-        }
-        if ui.button(t("Import")).clicked() {
-            *cmd = Some(Cmd::Import);
-        }
-        ui.add_enabled_ui(
-            EXPORT_MENU
-                .iter()
-                .any(|f| self.command_available(&Cmd::Export(*f))),
-            |ui| {
-                menu_button(ui, t("Export"), |ui| {
-                    for f in EXPORT_MENU {
-                        if ui
-                            .add_enabled(
-                                self.command_available(&Cmd::Export(*f)),
-                                egui::Button::new(t(f.label())),
-                            )
-                            .clicked()
-                        {
-                            *cmd = Some(Cmd::Export(*f));
-                        }
-                    }
-                });
-            },
-        );
-        if ui
-            .add_enabled(
-                self.command_available(&Cmd::Print),
-                command_button(ui.ctx(), mode, t("Print"), &Cmd::Print),
-            )
-            .clicked()
-        {
-            *cmd = Some(Cmd::Print);
-            ui.close();
-        }
-        if self.doc().is_some_and(|d| d.path.is_some()) && ui.button(t("Show in Folder")).clicked()
-        {
-            *cmd = Some(Cmd::ShowInFolder);
-        }
-        ui.separator();
-        if item(ui, t("Quit"), &Cmd::Quit).clicked() {
-            *cmd = Some(Cmd::Quit);
-        }
+    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        self.render_menu_entries(ui, &self.main_menu_entries(), cmd);
     }
 
-    fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
-        let mode = self.mode;
+    fn render_menu_entries(
+        &mut self,
+        ui: &mut Ui,
+        entries: &[crate::menus::MenuEntry],
+        cmd: &mut Option<Cmd>,
+    ) {
+        use crate::menus::MenuEntry;
         ui.set_min_width(220.0);
-        let item = |ui: &mut Ui, label: &str, command: &Cmd| {
-            ui.add(command_button(ui.ctx(), mode, label, command))
-        };
-        menu_button(ui, t("File"), |ui| self.file_menu(ui, cmd));
-        menu_button(ui, t("Edit"), |ui| {
-            let e = [
-                ("Undo", Cmd::Canvas(Action::Undo)),
-                ("Redo", Cmd::Canvas(Action::Redo)),
-                ("Cut", Cmd::Canvas(Action::Cut)),
-                ("Copy", Cmd::Canvas(Action::Copy)),
-                ("Paste", Cmd::MenuPaste),
-                ("Duplicate", Cmd::Canvas(Action::Duplicate)),
-                ("Delete", Cmd::Canvas(Action::Delete)),
-                ("Select All", Cmd::Canvas(Action::SelectAll)),
-                ("Find…", Cmd::Find),
-                ("Find and Replace…", Cmd::FindReplace),
-                ("Command Palette…", Cmd::Palette),
-            ];
-            for (l, c) in e {
-                let button = command_button(ui.ctx(), mode, t(l), &c);
-                if ui.add_enabled(self.command_available(&c), button).clicked() {
-                    *cmd = Some(c);
-                }
-            }
-            menu_button(ui, t("Select"), |ui| {
-                for (action, label) in Self::selection_commands() {
-                    let command = Cmd::Canvas(action);
-                    if ui
-                        .add_enabled(
-                            self.command_available(&command),
-                            command_button(ui.ctx(), mode, t(label), &command),
-                        )
-                        .clicked()
-                    {
-                        *cmd = Some(command);
+        for entry in entries {
+            match entry {
+                MenuEntry::Command { label, command } => {
+                    let button = command_button(ui.ctx(), self.mode, label, command);
+                    let response = ui.add_enabled(self.command_available(command), button);
+                    let response = if let Cmd::OpenPath(path) = command {
+                        response.on_hover_text(path.display().to_string())
+                    } else {
+                        response
+                    };
+                    if response.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
+                        *cmd = Some(command.clone());
+                        ui.close();
                     }
                 }
-            });
-            menu_button(ui, t("Arrange"), |ui| {
-                for (action, label) in Self::arrangement_commands() {
-                    let command = Cmd::Canvas(action);
-                    if ui
-                        .add_enabled(
-                            self.command_available(&command),
-                            command_button(ui.ctx(), mode, t(label), &command),
-                        )
-                        .clicked()
+                MenuEntry::Submenu { label, entries } => {
+                    menu_button(ui, label, |ui| self.render_menu_entries(ui, entries, cmd));
+                }
+                MenuEntry::Separator => {
+                    ui.separator();
+                }
+                MenuEntry::Caption(text) => {
+                    widgets::caption(ui, text);
+                }
+                MenuEntry::ClearRecent => {
+                    if ui.button(t("Clear Recent")).clicked()
+                        && widgets::touch_activation_allowed(ui.ctx())
                     {
-                        *cmd = Some(command);
+                        self.settings.clear_recent();
+                        self.save_settings();
                     }
                 }
-                widgets::caption(
-                    ui,
-                    t(
-                        "Alignment needs floating topics only; distribution spaces centers, not edges.",
-                    ),
-                );
-            });
-            ui.separator();
-            for (label, command) in [
-                ("Indent", Cmd::Canvas(Action::Indent)),
-                ("Outdent", Cmd::Canvas(Action::Outdent)),
-                ("Copy Style", Cmd::CopyStyle),
-                ("Paste Style", Cmd::PasteStyle),
-                ("Reset Style", Cmd::ResetStyle),
-                ("Save Quick Style…", Cmd::SaveQuickStyle),
-                ("New Sheet from Topic", Cmd::NewSheetFromTopic),
-            ] {
-                let button = command_button(ui.ctx(), mode, t(label), &command);
-                if ui
-                    .add_enabled(self.command_available(&command), button)
-                    .clicked()
-                {
-                    *cmd = Some(command);
-                }
             }
-            widgets::caption(
-                ui,
-                t("Copies explicit overrides; inherited theme styles stay automatic."),
-            );
-            ui.separator();
-            if item(ui, t("Settings…"), &Cmd::Settings).clicked() {
-                *cmd = Some(Cmd::Settings);
-            }
-        });
-        menu_button(ui, t("Sheet"), |ui| {
-            for (label, command) in [
-                ("New Sheet", Cmd::NewSheet),
-                ("Rename Sheet", Cmd::RenameSheet),
-                ("Copy Sheet", Cmd::CopySheet),
-                ("Paste Sheet", Cmd::PasteSheet),
-                ("Duplicate Sheet", Cmd::DuplicateSheet),
-                ("Save Sheet As…", Cmd::SaveSheetAs),
-                ("Delete Sheet", Cmd::DeleteSheet),
-            ] {
-                if ui
-                    .add_enabled(
-                        self.command_available(&command),
-                        egui::Button::new(t(label)),
-                    )
-                    .clicked()
-                {
-                    *cmd = Some(command);
-                }
-            }
-        });
-        menu_button(ui, t("Insert"), |ui| {
-            let e = [
-                ("Topic", Action::InsertSibling),
-                ("Subtopic", Action::InsertChild),
-                ("Topic Before", Action::InsertSiblingBefore),
-                ("Parent Topic", Action::InsertParent),
-                (
-                    "Floating Topic",
-                    Action::InsertFloating(thinoda_core::Vec2::new(0.0, -260.0)),
-                ),
-                ("Relationship", Action::StartRelationship),
-                ("Summary", Action::AddSummary),
-                ("Boundary", Action::AddBoundary),
-                ("To-Do", Action::ToggleTodo),
-            ];
-            for (l, a) in e {
-                let command = Cmd::Canvas(a);
-                let button = command_button(ui.ctx(), mode, t(l), &command);
-                if ui
-                    .add_enabled(self.command_available(&command), button)
-                    .clicked()
-                {
-                    *cmd = Some(command);
-                }
-            }
-            ui.separator();
-            for (label, field) in [
-                ("Notes", FocusField::Notes),
-                ("Hyperlink", FocusField::Hyperlink),
-            ] {
-                let command = Cmd::EditField(field);
-                if ui
-                    .add_enabled(
-                        self.command_available(&command),
-                        command_button(ui.ctx(), mode, t(label), &command),
-                    )
-                    .clicked()
-                {
-                    *cmd = Some(command);
-                }
-            }
-            if ui
-                .add_enabled(
-                    self.command_available(&Cmd::Labels),
-                    egui::Button::new(t("Labels")),
-                )
-                .clicked()
-            {
-                *cmd = Some(Cmd::Labels);
-            }
-        });
-        menu_button(ui, t("AI"), |ui| {
-            for a in crate::ai::AiCommand::ALL {
-                if item(ui, t(a.label()), &Cmd::Ai(a)).clicked() {
-                    *cmd = Some(Cmd::Ai(a));
-                }
-            }
-        });
-        menu_button(ui, t("Tools"), |ui| {
-            if ui
-                .add_enabled(
-                    self.command_available(&Cmd::MapShot),
-                    command_button(ui.ctx(), mode, t("Map Shot"), &Cmd::MapShot),
-                )
-                .clicked()
-            {
-                *cmd = Some(Cmd::MapShot);
-            }
-            if ui
-                .add_enabled(
-                    self.command_available(&Cmd::MaskedCopy),
-                    egui::Button::new(t("Create Masked Copy…")),
-                )
-                .clicked()
-            {
-                *cmd = Some(Cmd::MaskedCopy);
-            }
-            if ui
-                .add_enabled(
-                    self.command_available(&Cmd::MergeFiles),
-                    egui::Button::new(t("Merge Map Files…")),
-                )
-                .clicked()
-            {
-                *cmd = Some(Cmd::MergeFiles);
-            }
-            widgets::caption(
-                ui,
-                t(
-                    "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
-                ),
-            );
-        });
-        menu_button(ui, t("View"), |ui| {
-            let e = [
-                ("Previous Sheet", Cmd::PreviousSheet),
-                ("Next Sheet", Cmd::NextSheet),
-                ("Outliner", Cmd::ToggleOutliner),
-                ("Zen Mode", Cmd::ToggleZen),
-                ("Format Panel", Cmd::ToggleFormatPanel),
-                ("Symbols", Cmd::ToggleSymbolsPanel),
-                ("Status Bar", Cmd::ToggleStatusBar),
-                ("Zoom In", Cmd::Canvas(Action::ZoomIn)),
-                ("Zoom Out", Cmd::Canvas(Action::ZoomOut)),
-                ("Actual Size", Cmd::Canvas(Action::ZoomReset)),
-                ("Fit Map", Cmd::Canvas(Action::Fit)),
-                ("Expand All", Cmd::Canvas(Action::ExpandAll)),
-                ("Collapse All", Cmd::Canvas(Action::CollapseAll)),
-            ];
-            for (l, c) in e {
-                let button = command_button(ui.ctx(), mode, t(l), &c);
-                if ui.add_enabled(self.command_available(&c), button).clicked() {
-                    *cmd = Some(c);
-                }
-            }
-        });
-        menu_button(ui, t("Help"), |ui| {
-            for (label, command) in [
-                ("Quick Start", Cmd::QuickStart),
-                ("User Guide", Cmd::UserGuide),
-                ("Send Feedback…", Cmd::Feedback),
-                ("Project News…", Cmd::ProjectNews),
-            ] {
-                if ui.button(t(label)).clicked() {
-                    *cmd = Some(command);
-                }
-            }
-            ui.separator();
-            if item(ui, t("Keyboard Shortcuts"), &Cmd::Shortcuts).clicked() {
-                *cmd = Some(Cmd::Shortcuts);
-            }
-            if ui.button(t("About Thinoda")).clicked() {
-                *cmd = Some(Cmd::About);
-            }
-        });
+        }
     }
 
     fn marker_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {

@@ -231,6 +231,8 @@ pub struct ThinodaApp {
     last_title: String,
     /// Startup work still pending behind the splash; `None` once ready.
     pub(crate) launch: Option<crate::startup::Launch>,
+    #[cfg(target_os = "windows")]
+    pub(crate) native_menus: crate::native_menus::WindowsMenus,
 }
 
 pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
@@ -265,6 +267,8 @@ impl ThinodaApp {
         i18n::set_lang(i18n::resolve(settings.language));
         let mut app = Self {
             docs: Vec::new(),
+            #[cfg(target_os = "windows")]
+            native_menus: crate::native_menus::WindowsMenus::default(),
             active: 0,
             format_tab: settings.format_tab,
             sidebar_family: settings.sidebar_family,
