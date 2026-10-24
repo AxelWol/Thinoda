@@ -90,6 +90,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Repeat ARM64 recovery in isolation (50 crash/restore cycles)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: cargo test -p thinoda-app --test e2e crash_recovery_restores_unsaved_work -- --exact --test-threads=1
       - run: cargo test -p thinoda-core --example layout_benchmark
       - name: CPU layout benchmark (not GPU frame timing)
         run: cargo run --quiet --release -p thinoda-core --example layout_benchmark -- --topics 10000 --samples 30 --output layout-benchmark.json
@@ -116,7 +119,9 @@ jobs:
       - name: Test PWA manifest, icons, install lifecycle and offline isolation
         run: node --test crates/thinoda-web/tests/pwa.test.cjs
       - name: Install Trunk
-        run: curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin
+        run: |
+          python3 .github/scripts/install_trunk.py "$RUNNER_TEMP/thinoda-tools"
+          echo "$RUNNER_TEMP/thinoda-tools" >> "$GITHUB_PATH"
       - run: cargo clippy --locked --target wasm32-unknown-unknown -p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings
       - name: Build static site
         working-directory: crates/thinoda-web
@@ -166,7 +171,7 @@ jobs:
         with:
           workspaces: fuzz -> fuzz/target
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Check fuzz target formatting and lints
         run: |
           cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check

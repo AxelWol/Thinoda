@@ -327,8 +327,8 @@ pub(crate) fn list_dir(path: impl AsRef<Path>) -> io::Result<Vec<(PathBuf, Entry
     }
 }
 
-/// Exclusive advisory lock released on drop: an OS file lock natively, and a
-/// heartbeat record shared between browser tabs on the web.
+/// Exclusive advisory lock explicitly released on drop: an OS file lock natively,
+/// and a heartbeat record shared between browser tabs on the web.
 pub(crate) struct Lock {
     #[cfg(not(target_arch = "wasm32"))]
     _file: fs::File,
@@ -379,5 +379,40 @@ impl Lock {
 impl Drop for Lock {
     fn drop(&mut self) {
         vfs::global().unlock(&self.path, tab_id());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // A forked child can retain the open file description until exec/exit.
+        // Closing our descriptor alone would keep that session locked meanwhile.
+        if let Err(error) = self._file.unlock() {
+            log::warn!("Recovery lock release failed: {error}");
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn dropping_lock_releases_it_even_with_a_duplicated_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock");
+        let lock = Lock::try_acquire(&path).unwrap();
+        let duplicate = lock._file.try_clone().unwrap();
+        assert!(Lock::try_acquire(&path).is_err());
+        drop(lock);
+        let next = Lock::try_acquire(&path)
+            .expect("a duplicated descriptor must not retain a released session lock");
+        drop(duplicate);
+        assert!(
+            Lock::try_acquire(&path).is_err(),
+            "closing the old descriptor must not release the new owner's lock"
+        );
+        drop(next);
+        assert!(Lock::try_acquire(&path).is_ok());
     }
 }

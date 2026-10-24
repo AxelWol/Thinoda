@@ -1822,7 +1822,10 @@ fn closing_dirty_tab_asks_and_dont_save_closes() {
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "Close Tab").click();
     h.run_steps(2);
-    assert_eq!(h.state().dialogs.close, Some(CloseIntent::Tab(0)));
+    assert_eq!(
+        h.state().dialogs.close,
+        Some(CloseIntent::Tab(h.state().docs[0].key.clone()))
+    );
     h.get_by_label("Save changes?");
     h.get_by_role_and_label(Role::Button, "Don't Save").click();
     h.run_steps(2);
@@ -2496,7 +2499,44 @@ fn xmind_export_reimports_and_foreign_import_is_dirty() {
 }
 
 #[test]
+fn recovery_cleanup_retries_after_suspended_session_resumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut doc = thinoda_app::doc::OpenDoc::new(Workbook::default());
+    doc.doc
+        .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Unsaved"))
+        .unwrap();
+    doc.snapshot(&recovery);
+    recovery.suspend().unwrap();
+    let snapshot = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    assert!(snapshot.exists());
+    doc.doc
+        .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Saved"))
+        .unwrap();
+    doc.doc.mark_saved();
+    doc.snapshot(&recovery);
+    assert!(snapshot.exists(), "suspended cleanup cannot remove data");
+    recovery.resume().unwrap();
+    doc.snapshot(&recovery);
+    assert!(
+        !snapshot.exists(),
+        "failed cleanup must retry without requiring another edit"
+    );
+    recovery.finish().unwrap();
+}
+
+#[test]
 fn crash_recovery_restores_unsaved_work() {
+    for _ in 0..50 {
+        assert_crash_recovery_restores_unsaved_work();
+    }
+}
+
+fn assert_crash_recovery_restores_unsaved_work() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::from_root(dir.path());
     paths.ensure().unwrap();
@@ -2520,7 +2560,15 @@ fn crash_recovery_restores_unsaved_work() {
 
     let orphans = RecoveryManager::find_orphans(&paths);
     assert_eq!(orphans.len(), 1, "crashed session is found on next start");
-    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+    let mut app = ThinodaApp::new(
+        english(),
+        Services {
+            recovery: Some(current.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
     app.dialogs.recovery = orphans;
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "Restore").click();
@@ -2538,6 +2586,219 @@ fn crash_recovery_restores_unsaved_work() {
         RecoveryManager::find_orphans(&paths).is_empty(),
         "restored session is cleaned up"
     );
+    current.finish().unwrap();
+}
+
+#[test]
+fn recovery_handoff_failure_keeps_sources_and_retries_without_duplicates() {
+    for suspended in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+        for title in ["First handoff", "Second handoff"] {
+            source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+            rename_root(&mut source, title);
+            source.doc_mut().unwrap().snapshot(&original);
+        }
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+        let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            english(),
+            Services {
+                recovery: Some(current.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        let originals: Vec<_> = app.dialogs.recovery[0]
+            .docs
+            .iter()
+            .map(|doc| (doc.path.clone(), std::fs::read(&doc.path).unwrap()))
+            .collect();
+        let docs_dir = current.session_dir().join("docs");
+        if suspended {
+            current.suspend().unwrap();
+        } else {
+            std::fs::remove_dir(&docs_dir).unwrap();
+            std::fs::write(&docs_dir, b"destination blocker").unwrap();
+        }
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        for (path, bytes) in &originals {
+            assert_eq!(std::fs::read(path).unwrap(), *bytes);
+        }
+        if suspended {
+            current.resume().unwrap();
+        } else {
+            assert_eq!(std::fs::read(&docs_dir).unwrap(), b"destination blocker");
+            std::fs::remove_file(&docs_dir).unwrap();
+            std::fs::create_dir(&docs_dir).unwrap();
+        }
+        app.restore_orphans(None);
+        assert_eq!(app.docs.len(), 2);
+        assert!(app.dialogs.recovery.is_empty());
+        assert!(originals.iter().all(|(path, _)| !path.exists()));
+        current.flush().unwrap();
+        assert_eq!(std::fs::read_dir(&docs_dir).unwrap().count(), 2);
+        for doc in &app.docs {
+            assert!(doc.is_dirty());
+            assert!(docs_dir.join(format!("{}.json", doc.key)).is_file());
+        }
+    }
+}
+
+#[test]
+fn recovery_without_a_new_session_retains_original_snapshots() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let original = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+    rename_root(&mut source, "Recovery service unavailable");
+    let expected = source.doc().unwrap().doc.workbook().clone();
+    source.doc_mut().unwrap().snapshot(&original);
+    assert!(original.try_flush_for_crash());
+    original.suspend().unwrap();
+    drop(original);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &expected);
+    assert!(app.doc().unwrap().is_dirty());
+    let retained = RecoveryManager::find_orphans(&paths);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].docs[0].load().unwrap(), expected);
+    retained[0].discard().unwrap();
+}
+
+#[test]
+fn restored_work_survives_an_immediate_second_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let original = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+    rename_root(&mut source, "Survive the handoff");
+    let expected = source.doc().unwrap().doc.workbook().clone();
+    source.doc_mut().unwrap().snapshot(&original);
+    assert!(original.try_flush_for_crash());
+    original.suspend().unwrap();
+    drop(original);
+    let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+    let mut app = ThinodaApp::new(
+        english(),
+        Services {
+            recovery: Some(current.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    let old_snapshot = app.dialogs.recovery[0].docs[0].path.clone();
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert!(!old_snapshot.exists());
+    // No draw, housekeeping or panic-hook flush occurs before ownership is released.
+    drop(app);
+    current.suspend().unwrap();
+    let recovered = RecoveryManager::find_orphans(&paths);
+    assert_eq!(recovered.len(), 1, "handoff must already be durable");
+    assert_eq!(recovered[0].docs.len(), 1);
+    assert_eq!(recovered[0].docs[0].load().unwrap(), expected);
+    recovered[0].discard().unwrap();
+}
+
+#[test]
+fn failed_recovery_load_preserves_the_whole_session_for_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    for title in ["First unsaved map", "Second unsaved map"] {
+        source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+        rename_root(&mut source, title);
+        source.doc_mut().unwrap().snapshot(&recovery);
+    }
+    assert!(recovery.try_flush_for_crash());
+    recovery.suspend().unwrap();
+    drop(recovery);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    assert_eq!(app.dialogs.recovery[0].docs.len(), 2);
+    let snapshots: Vec<_> = app.dialogs.recovery[0]
+        .docs
+        .iter()
+        .map(|doc| {
+            (
+                doc.path.clone(),
+                std::fs::read(&doc.path).unwrap(),
+                doc.load().unwrap(),
+            )
+        })
+        .collect();
+    std::fs::write(&snapshots[1].0, b"temporarily unreadable snapshot").unwrap();
+    app.restore_orphans(None);
+    assert!(
+        app.docs.is_empty(),
+        "a failed session restore cannot partially consume its maps"
+    );
+    assert_eq!(app.dialogs.recovery.len(), 1);
+    assert_eq!(std::fs::read(&snapshots[0].0).unwrap(), snapshots[0].1);
+    std::fs::write(&snapshots[1].0, &snapshots[1].1).unwrap();
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert_eq!(app.docs.len(), 2);
+    for (doc, (_, _, expected)) in app.docs.iter().zip(&snapshots) {
+        assert_eq!(doc.doc.workbook(), expected);
+        assert!(doc.is_dirty());
+    }
+}
+
+#[test]
+fn failed_recovery_discard_retains_failed_snapshots_for_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    for title in ["First discard", "Second discard"] {
+        source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+        rename_root(&mut source, title);
+        source.doc_mut().unwrap().snapshot(&recovery);
+    }
+    assert!(recovery.try_flush_for_crash());
+    recovery.suspend().unwrap();
+    drop(recovery);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    let snapshot = app.dialogs.recovery[0].docs[0].path.clone();
+    let discarded = app.dialogs.recovery[0].docs[1].path.clone();
+    let bytes = std::fs::read(&snapshot).unwrap();
+    std::fs::remove_file(&snapshot).unwrap();
+    std::fs::create_dir(&snapshot).unwrap();
+    app.discard_orphans();
+    assert_eq!(
+        app.dialogs.recovery.len(),
+        1,
+        "failed deletion remains actionable"
+    );
+    assert_eq!(app.dialogs.recovery[0].docs.len(), 1);
+    assert_eq!(app.dialogs.recovery[0].docs[0].path, snapshot);
+    assert!(
+        !discarded.exists(),
+        "successful discards are not offered again"
+    );
+    std::fs::remove_dir(&snapshot).unwrap();
+    std::fs::write(&snapshot, bytes).unwrap();
+    assert!(app.dialogs.recovery[0].docs[0].load().is_ok());
+    app.discard_orphans();
+    assert!(app.dialogs.recovery.is_empty());
+    assert!(!snapshot.exists());
 }
 
 fn thinoda_bin() -> &'static str {
@@ -2725,11 +2986,97 @@ fn ai_generate_map_opens_new_document() {
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::GenerateMap));
     h.run_steps(2);
     assert!(h.state().ai.prompt.is_some(), "prompt dialog opens");
-    h.state_mut().start_generate_map("Trip".into());
-    h.state_mut().ai.prompt = None;
+    h.state_mut().ai.prompt = Some("Trip".into());
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Generate").click();
+    h.run_steps(2);
+    assert!(h.state().ai.prompt.is_none());
     wait_for_ai(&mut h);
     assert_eq!(h.state().docs.len(), docs + 1);
     assert_eq!(root_children(h.state()), 3);
+}
+
+#[test]
+fn stale_ai_results_preserve_changed_sheets_and_drafts() {
+    use thinoda_app::ai::AiCommand;
+    for change in ["revision", "sheet", "title", "disabled", "closed"] {
+        let (mut h, _server) = ai_harness("- Stale suggestion");
+        let ctx = h.ctx.clone();
+        if change == "sheet" {
+            let d = h.state_mut().doc_mut().unwrap();
+            d.doc.duplicate_sheet(0).unwrap();
+            d.doc.set_active(0);
+        }
+        h.state_mut().exec(&ctx, Cmd::Ai(AiCommand::Brainstorm));
+        assert!(h.state().ai.pending.is_some());
+        match change {
+            "revision" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                d.doc
+                    .edit_sheet("Local edit", |s| s.set_title(s.root, "Local title"))
+                    .unwrap();
+            }
+            "sheet" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                d.doc.set_active(1);
+            }
+            "title" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                let root = d.doc.sheet().root;
+                d.view
+                    .begin_edit_with(d.doc.sheet(), root, "Uncommitted title");
+            }
+            "disabled" => {
+                h.state_mut().settings.ai.enabled = false;
+                h.state_mut().poll_ai(&ctx);
+                assert!(h.state().ai.pending.is_none());
+                h.state_mut().settings.ai.enabled = true;
+            }
+            "closed" => h.state_mut().docs.clear(),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        wait_for_ai(&mut h);
+        let after: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        assert_eq!(after, before, "{change}");
+        if change == "title" {
+            assert_eq!(
+                h.state().doc().unwrap().view.editing_text(),
+                Some("Uncommitted title")
+            );
+        }
+    }
+}
+
+#[test]
+fn ai_result_keeps_its_document_when_another_tab_is_active() {
+    use thinoda_app::ai::AiCommand;
+    let (mut h, _server) = ai_harness("- Background suggestion");
+    let ctx = h.ctx.clone();
+    let source = h.state().active;
+    let before_children = root_children(h.state());
+    h.state_mut().exec(&ctx, Cmd::Ai(AiCommand::Brainstorm));
+    h.state_mut().exec(&ctx, Cmd::New);
+    let active = h.state().active;
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    wait_for_ai(&mut h);
+    assert_eq!(h.state().active, active);
+    assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
+    let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children + 1);
+    h.state_mut().docs[source].doc.undo();
+    let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children);
 }
 
 #[test]

@@ -526,7 +526,10 @@ fn palette_close_targets_the_active_document_and_reference_includes_missing_glob
     h.run_steps(4);
     h.key_press(Key::Enter);
     h.run_steps(3);
-    assert_eq!(h.state().dialogs.close, Some(CloseIntent::Tab(1)));
+    assert_eq!(
+        h.state().dialogs.close,
+        Some(CloseIntent::Tab(h.state().docs[1].key.clone()))
+    );
     assert_eq!(h.state().docs.len(), 2);
     assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
     assert!(h.state().doc().unwrap().is_dirty());

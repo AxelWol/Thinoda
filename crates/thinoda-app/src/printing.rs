@@ -80,6 +80,13 @@ struct PrintEditor {
     rendered: Option<Arc<PrintDocument>>,
     preview: Option<egui::TextureHandle>,
     failed: Option<(PrintSettings, String)>,
+    gesture: Option<PrintGesture>,
+}
+
+struct PrintGesture {
+    settings: PrintSettings,
+    frame: u64,
+    canceled: bool,
 }
 
 impl PrintEditor {
@@ -332,6 +339,7 @@ impl ThinodaApp {
             rendered: None,
             preview: None,
             failed: None,
+            gesture: None,
         });
         ctx.request_repaint();
     }
@@ -395,6 +403,35 @@ impl ThinodaApp {
         let mut print = false;
         let mut save = false;
         let busy = self.printing.busy();
+        let touch_allowed = widgets::touch_activation_allowed(ctx);
+        let pointer_down = ctx.input(|input| input.pointer.primary_down());
+        let focused = ctx.input(|input| {
+            input.focused
+                && !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+        });
+        let frame = ctx.cumulative_frame_nr();
+        if pointer_down && editor.gesture.is_none() {
+            editor.gesture = Some(PrintGesture {
+                settings: editor.settings,
+                frame,
+                canceled: false,
+            });
+        }
+        if let Some(gesture) = &mut editor.gesture {
+            gesture.canceled |=
+                !touch_allowed || !focused || frame > gesture.frame.saturating_add(1);
+            gesture.frame = frame;
+        }
+        let activation_allowed = touch_allowed
+            && focused
+            && editor
+                .gesture
+                .as_ref()
+                .is_none_or(|gesture| !gesture.canceled);
+        let settings_before = editor.settings;
         let response = egui::Modal::new(egui::Id::unique("print-map")).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 60.0).clamp(260.0, 860.0));
             ui.heading(t("Print"));
@@ -419,7 +456,7 @@ impl ThinodaApp {
                         t("Continue opens the OS print dialog with printer selection and driver settings. The whole preview page, including margins, is fitted proportionally inside the selected printable area. Changing OS paper or orientation scales the page without reflow; driver options may further change output. Resolution here controls source detail, not printer quality.")
                     };
                     ui.label(RichText::new(hint).small().weak());
-                    if editor.failed.is_some() && ui.button(t("Retry preview")).clicked() {
+                    if editor.failed.is_some() && ui.button(t("Retry preview")).clicked() && activation_allowed {
                         editor.failed = None;
                     }
                     if let Some(message) = &self.printing.message {
@@ -432,15 +469,21 @@ impl ThinodaApp {
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 ui.add_enabled_ui(editor.ready() && !busy, |ui| {
-                    print = widgets::primary_button(ui, t("Continue to print…")).clicked();
-                    save = widgets::secondary_button(ui, t("Save print PDF…")).clicked();
+                    print = widgets::primary_button(ui, t("Continue to print…")).clicked() && activation_allowed;
+                    save = widgets::secondary_button(ui, t("Save print PDF…")).clicked() && activation_allowed;
                 });
-                close = ui.add_enabled(!busy, egui::Button::new(t("Close"))).clicked();
+                close = ui.add_enabled(!busy, egui::Button::new(t("Close"))).clicked() && activation_allowed;
                 if busy {
                     ui.spinner();
                     ui.label(t("Preparing print document…"));
                 }
             });
+            if !activation_allowed {
+                editor.settings = editor.gesture.as_ref().map_or(settings_before, |gesture| gesture.settings);
+            }
+            if !pointer_down {
+                editor.gesture = None;
+            }
         });
         if print || save {
             let path = if save {
@@ -472,7 +515,7 @@ impl ThinodaApp {
                 });
             }
         }
-        if self.printing.busy() || (!close && !response.should_close()) {
+        if self.printing.busy() || (!close && !(response.should_close() && activation_allowed)) {
             self.printing.editor = Some(editor);
         }
     }
@@ -565,6 +608,7 @@ mod tests {
             rendered: None,
             preview: None,
             failed: None,
+            gesture: None,
         };
         let ctx = Context::default();
         assert!(sender.send(Err("Rendering failed".into())).is_ok());
@@ -652,6 +696,7 @@ mod tests {
         app.settings.theme = theme;
         let mut harness = Harness::builder()
             .with_size(size)
+            .with_step_dt(1.0 / 60.0)
             .with_context_setup(|ctx| {
                 ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu)
             })
@@ -673,6 +718,190 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         h.run_steps(2);
+    }
+
+    #[test]
+    fn print_margin_drag_rolls_back_the_whole_rejected_sequence() {
+        use egui::{Event, PointerButton, TouchDeviceId, TouchId, TouchPhase};
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            for reject in ["cancel", "multitouch", "focus", "clean"] {
+                let mut h = harness(theme, egui::vec2(1280.0, 850.0));
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::Print);
+                wait_ready(&mut h);
+                let before = h.state().printing.editor.as_ref().unwrap().settings;
+                let start = h
+                    .get_by_role_and_label(Role::SpinButton, "Margins")
+                    .rect()
+                    .center();
+                let end = start + egui::vec2(40.0, 0.0);
+                h.event(Event::PointerMoved(start));
+                h.event(Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Start,
+                    pos: start,
+                    force: None,
+                });
+                h.event(Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(2);
+                for fraction in [0.3, 0.7, 1.0] {
+                    let pos = start.lerp(end, fraction);
+                    h.event(Event::PointerMoved(pos));
+                    h.event(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(1),
+                        phase: TouchPhase::Move,
+                        pos,
+                        force: None,
+                    });
+                    h.run_steps(2);
+                }
+                assert_ne!(
+                    h.state()
+                        .printing
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .settings
+                        .margin_mm,
+                    before.margin_mm
+                );
+                if reject == "focus" {
+                    h.event(Event::WindowFocused(false));
+                    h.run_steps(1);
+                }
+                if reject == "multitouch" {
+                    h.event(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::Start,
+                        pos: end + egui::vec2(40.0, 0.0),
+                        force: None,
+                    });
+                    h.run_steps(2);
+                    h.event(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::End,
+                        pos: end + egui::vec2(40.0, 0.0),
+                        force: None,
+                    });
+                }
+                h.event(Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: if reject == "cancel" {
+                        TouchPhase::Cancel
+                    } else {
+                        TouchPhase::End
+                    },
+                    pos: end,
+                    force: None,
+                });
+                h.run_steps(2);
+                h.event(Event::PointerButton {
+                    pos: end,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(4);
+                let after = h.state().printing.editor.as_ref().unwrap().settings;
+                if reject == "clean" {
+                    assert_ne!(after.margin_mm, before.margin_mm);
+                } else {
+                    assert_eq!(after, before, "{reject}");
+                }
+                assert!(!h.state().printing.busy());
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_touch_cannot_start_output_or_close_print_preview() {
+        use egui::{Event, PointerButton, TouchDeviceId, TouchId, TouchPhase};
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            let mut h = harness(theme, egui::vec2(1280.0, 850.0));
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Print);
+            wait_ready(&mut h);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let settings = h.state().printing.editor.as_ref().unwrap().settings;
+            for label in [
+                "Continue to print…",
+                "Save print PDF…",
+                "Close",
+                "Portrait",
+                "Dark map",
+                "Map background",
+                "Grayscale",
+                "backdrop",
+            ] {
+                let pos = if label == "backdrop" {
+                    egui::pos2(5.0, 5.0)
+                } else {
+                    h.get_by_label(label).rect().center()
+                };
+                for (contacts, canceled) in [(1, true), (2, false), (3, false)] {
+                    h.event(Event::PointerMoved(pos));
+                    h.event(Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    });
+                    for phase in [
+                        TouchPhase::Start,
+                        if canceled {
+                            TouchPhase::Cancel
+                        } else {
+                            TouchPhase::End
+                        },
+                    ] {
+                        for id in 1..=contacts {
+                            h.event(Event::Touch {
+                                device_id: TouchDeviceId(1),
+                                id: TouchId(id),
+                                phase,
+                                pos: pos + egui::vec2((id - 1) as f32 * 40.0, 0.0),
+                                force: None,
+                            });
+                        }
+                        h.run_steps(2);
+                    }
+                    h.event(Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    });
+                    h.run_steps(4);
+                    assert!(
+                        h.state().printing.editor.is_some(),
+                        "rejected {label} closes preview"
+                    );
+                    assert!(!h.state().printing.busy(), "rejected {label} starts output");
+                    assert_eq!(
+                        h.state().printing.editor.as_ref().unwrap().settings,
+                        settings,
+                        "{label}"
+                    );
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                }
+            }
+            h.get_by_role_and_label(Role::Button, "Close").focus();
+            h.key_press(Key::Space);
+            h.run_steps(4);
+            assert!(!h.state().printing.active());
+        }
     }
 
     #[test]

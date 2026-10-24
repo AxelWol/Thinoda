@@ -23,6 +23,7 @@ const PAGES: &[Page] = &[
             "Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.",
             "Save with Ctrl+S to a .thinoda file. Use .xmind for interchange. Save As creates a separate destination; export formats may omit unsupported features.",
             "Use Ctrl+Z to undo map edits. On macOS, use Command instead of Ctrl for command shortcuts. Help > Keyboard Shortcuts lists the available bindings.",
+            "On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.",
         ],
     },
     Page {
@@ -90,6 +91,7 @@ impl ThinodaApp {
         if !self.dialogs.guide.open {
             return;
         }
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         if !egui::Popup::is_any_open(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
@@ -127,6 +129,9 @@ impl ThinodaApp {
                     state.section = None;
                 }
             });
+            if !touch_allowed {
+                state.section = previous;
+            }
             let search_changed = ui
                 .add(egui::TextEdit::singleline(&mut state.query).hint_text(t("Search the guide")))
                 .accessible_name(t("Search the guide"))
@@ -165,11 +170,11 @@ impl ThinodaApp {
                     ui.label(t("No matching guide sections"));
                 }
             });
-            if ui.button(t("Close")).clicked() {
+            if ui.button(t("Close")).clicked() && touch_allowed {
                 state.open = false;
             }
         });
-        if response.should_close() {
+        if response.should_close() && touch_allowed {
             state.open = false;
         }
     }

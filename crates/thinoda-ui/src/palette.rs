@@ -117,6 +117,7 @@ impl CommandPalette {
         if !self.open {
             return None;
         }
+        let touch_allowed = crate::widgets::touch_activation_allowed(ctx);
         let p = Palette::of(ctx);
         let matches: Vec<Command> = self
             .filter(commands)
@@ -150,6 +151,7 @@ impl CommandPalette {
                 ui.set_max_height(available.y);
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
+                        .id(Id::unique("thinoda_command_palette_input"))
                         .hint_text(placeholder)
                         .desired_width(f32::INFINITY)
                         .font(egui::FontId::proportional(Tokens::FONT_HEADING)),
@@ -185,7 +187,7 @@ impl CommandPalette {
                         if sel && (up || down || edit.changed()) {
                             r.scroll_to_me(None);
                         }
-                        if r.clicked() || (sel && enter) {
+                        if (r.clicked() || (sel && enter)) && touch_allowed {
                             chosen = Some(c.id.clone());
                         }
                     }
@@ -194,7 +196,7 @@ impl CommandPalette {
                     }
                 });
             });
-        if resp.should_close() || chosen.is_some() {
+        if (resp.should_close() && touch_allowed) || chosen.is_some() {
             self.open = false;
         }
         chosen

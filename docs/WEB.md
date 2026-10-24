@@ -36,6 +36,16 @@ in **Settings > Pages**, set **Build and deployment > Source** to
 the `thinoda-web` artifact from the workflow run to try a pull request locally
 (`python -m http.server -d <unzipped folder>`).
 
+CI installs Trunk 0.21.14 with
+[a checksum-pinned installer](../.github/scripts/install_trunk.py), verifying the
+Linux archive before parsing it and accepting only its single regular `trunk`
+binary. The expected SHA-256 is committed, not fetched alongside the executable
+at build time. Installation uses a temporary runner directory without `sudo`.
+Changing Trunk requires reviewing the upstream release and updating the version,
+checksum and fixtures together. This verifies the pinned archive bytes; it does
+not establish upstream build provenance or cover Trunk's separately downloaded
+`wasm-bindgen`/`wasm-opt` tools.
+
 ## Feature parity and browser alternatives
 All editing features are the same shared code as on the desktop: topics,
 structures, themes, styles, symbols, relationships, boundaries, summaries,
@@ -136,7 +146,7 @@ Keyboard shortcuts and visible zoom/Fit controls remain alternatives.
 | Ubuntu Wayland / X11 | Separate touch/touchpad/backend runtime acceptance remains open; libinput touchpad support alone does not prove touchscreen behavior. |
 | iPhone/iPad Safari and Android Chrome, browser/PWA | Shared WASM code compiles; real browser gesture delivery, pointer cancellation, text input, orientation and installed-PWA behavior remain open. No native iOS/Android package is implied. |
 | All UI surfaces and accessibility | Shared canvas tap/double-tap/hold, sheet/menu/Settings/Symbols-inspector swipes, Outline release safety and guarded Settings/Symbols actions have automated coverage. Device-delivered gestures, topic moves, remaining inspector properties, touch targets and AT/OS-reserved gestures still need the full acceptance matrix in PLAN. |
-| Browser zoom ownership | Existing restrictive viewport metadata and eframe touch-event default prevention still need a browser-tested accessibility/gesture-ownership change. Map pinch is not page zoom or proof of low-vision acceptance. |
+| Browser zoom ownership | The viewport no longer caps or disables browser-controlled zoom. A pinch on the full-screen canvas belongs to map navigation; browser controls/keyboard zoom the page, and visible app controls zoom the map. Eframe prevents browser defaults for canvas touch events. Verify these paths in browser/device testing; map pinch alone is not page zoom or proof of low-vision acceptance. |
 
 See [the gesture workstream](PLAN.md#immediate-next-work) for official platform
 references and remaining tasks. Do not disable system accessibility gestures or

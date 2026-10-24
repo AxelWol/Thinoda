@@ -137,11 +137,161 @@ as a defect in the planning deliverable.
 
 ### Delivery order and dependencies
 
-#### Active priorities by end-user value (2026-10-22)
+#### Active feature phase plan - user-directed, 2026-10-24
 
+**This is the current execution order.** The user's latest instruction supersedes
+the stabilization-first ranking and feature-restart restrictions below: finish
+the reported Fill/color-picker regression, then implement and test only native
+OS menus, configurable keyboard mappings, task planning/Gantt, Zones/Pitch and
+enhanced AI. Resume the existing security/stability backlog only after all five
+feature workstreams are implemented, tested and complete. Preserve the unfinished
+sprint evidence; deferral is not completion or acceptance of its risks.
+
+Do not start additional security scans, tool-download hardening, old device-audit
+campaigns, unrelated UX polish, rich-asset/cloud/updater/collaboration projects or
+release preparation during this feature sequence. Existing CI can finish; normal
+feature-specific testing and fixing defects introduced by these changes remain
+part of delivering each feature, not a restart of the suspended sprint. This
+sequencing change does not authorize permission/account changes, external data
+transmission or publication with unresolved release prerequisites.
+
+| Phase | Outcome and implementation sequence | Main components | Completion evidence / dependency |
+|---|---|---|---|
+| F0 - finish current fix | Repair selected-topic Fill ("Füllung") without breaking Border, Text Color or Line Color; retain custom-color selection, keyboard focus and canceled-touch behavior. Publish with this phase-plan update. | `thinoda-ui/src/widgets.rs`; app inspector integration tests | **Implementation and local verification complete:** two-row regression fails before/passes after; English/German, both themes/scales, multi-selection and Undo/Redo covered. Full workspace: 661 passed, 1 pre-existing ignored, 75 suites; native all-target/WASM clippy and 25 documentation contracts pass. Native-device acceptance is not claimed. |
+| F1 - native OS menus | Reuse stable command IDs and shared availability/execution; finish the grouped menu model and native event routing. Deliver Windows shell/menu behavior, real macOS global menus and Ubuntu desktop integration, retaining the web hamburger. Implement focused-window routing and lifecycle required by the existing P4 contract. | `thinoda-app` command catalog/native host; `thinoda-platform`; reusable `thinoda-ui` shell | All enabled native entries execute the same command exactly once and target the focused document; text editing, Settings aliases, Close Window versus Quit and unsaved-work decisions work. Follow P4.1-P4.7's Windows ribbon/native-menu distinctions and per-step review. Depends on F0; no dependency on completing deferred SS0-SS8 or unrelated R0-R12 work. |
+| F2 - keyboard mappings | Offer built-in Thinoda Standard and XMind-compatible mappings; preserve the current default unless a preset is explicitly chosen. Add named, user-created mappings with capture, assign/unassign, conflict/reserved-key feedback, Apply/Cancel, save/duplicate/rename/delete and reset. Resolve all command dispatch and hints from the active profile. | `thinoda-platform/src/settings.rs`; app command/shortcut catalog, conflict checks and Settings; canvas/Outline dispatch; native menu accelerators | Saved mappings survive restart and work across Map/Outline, menus, palette and help. Conflicting presets show their changed bindings before application; no silent activation of legacy inactive overrides. Keyboard/IME/text-entry/browser ownership tests pass. Depends on F1's command/menu routing; preserves existing bindings throughout migration. |
+| F3 - task planning and Gantt | Define versioned task/calendar/dependency data, keeping simple To-do checkboxes compatible. Add task inspector editing and work-calendar Settings, then a separate native Gantt window with synchronized task table/timeline, date/duration/progress edits, dependencies, zoom and export/print. Provide a browser alternate view without claiming an OS window. | `thinoda-core` model/edit/calendar logic; `thinoda-io` persistence; app task/Gantt view and native viewport host; shared controls | Task edits synchronize with Map/Outline/Gantt and Undo/Redo. Working days, exceptions, leap days and dependency propagation are deterministic; invalid/cyclic dependencies are rejected visibly. Save/reopen/recovery roundtrips retain schedules; closing Gantt preserves the map. Depends on F1 window routing and F2 command bindings. |
+| F4 - Zones and Pitch | Add persisted, named Zones for floating-topic groups, with create/rename/order/move/resize/delete and Undo. Then add branch/zone slide generation, frame/order editing, windowed/fullscreen Pitch, presenter workflow and explicit navigation/exit. Export the same presentation framing to PDF and ordered slide images. | `thinoda-core` Zone/presentation state; canvas framing/rendering; app Pitch inspector/player; `thinoda-io` exports | Zones stay distinct from boundaries and reject central-tree membership. Save/reopen/recovery retain membership/order/framing; cross-zone relationships render correctly. Keyboard and pointer playback/exit work; exports match frames without mutating maps. Depends on F1/F2 commands; no Gantt dependency beyond the chosen delivery order. |
+| F5 - enhanced AI | Deliver bounded SSE streaming with preview/cancel and deliberate Apply; then a persistent chat panel with Quick/Balanced/Deep modes and selected-topic/sheet scope. Add rewrite, translation, prompted idea growth, reorganize/refine, editable saved prompts and model-configured semantic search/clustering. Finish AI Pitch outline suggestions against F4. | `thinoda-ai` transport/parsers/jobs; app preview/chat/prompt/search UI; existing credential/endpoint settings; core undoable batch edits | Local mock streams cover partial/malformed/error/cancel responses; canceled/stale previews never mutate maps. Apply is one undoable change and checks source identity/revision. Prompt profiles persist, embeddings invalidate on edits/model changes, unsupported model capabilities are explicit, and Pitch suggestions remain reviewable. Depends on F2; Pitch assistance also depends on F4. No live endpoint calls without explicit authorization. |
+| F6 - integrated feature completion | Finish focused cross-feature testing and docs for F1-F5: native menu/keymap parity, Gantt window ownership, Zones/Pitch persistence/export and AI review/apply. Reconcile each feature's remaining acceptance, not the suspended sprint's entire matrix. | Existing feature tests, relevant native/web hosts and user documentation | All five feature rows have real implementation plus recorded applicable tests/host evidence. Unavailable native hosts remain open limitations, never counted as passes; other feature implementation can continue independently. Only after all five close may SS0-SS8 resume. No merge/release is implied. |
+
+**Starting design contracts (verify against the cited references before schema/UI
+implementation):**
+
+- **Menus:** retain the already-approved P4 shared File/Edit/Sheet/Insert/AI/Tools/
+  View/Help taxonomy, Settings in Edit with standard native aliases, Windows ribbon
+  behavior, macOS global menu plus an Office-style in-app ribbon, and Ubuntu fallback. Native host actions must be real,
+  not egui popups relabeled "native". Reuse the existing command IDs and preserve
+  focused text editing. Add new feature commands to this model as F3-F5 ship.
+- **Keymaps:** use a versioned active-profile identifier and named bindings keyed
+  by stable command IDs, with platform/context-aware combinations. Thinoda Standard
+  is the safe default; XMind compatibility is opt-in, not a claim that every OS or
+  browser-reserved key can be rebound. Show Home/Find-Replace, Fit and other known
+  conflicts explicitly. Keep inactive legacy values preserved, not automatically
+  interpreted as valid bindings. Every profile operation has an unsaved-draft path;
+  changing profiles updates native accelerators and visible hints together.
+- **Planning:** use date-only scheduling rather than UTC-midnight timestamps,
+  explicit work weekdays/dated exceptions and one consistent duration convention.
+  Start with finish-to-start dependencies and visible cycle/invalid-date errors;
+  document unsupported scheduling constraints rather than silently approximating.
+  Existing `todo: Option<bool>` data must still load and remain a simple checkbox
+  unless scheduling is explicitly added. Do not invent reference behavior for
+  unlabeled calendar/Gantt toolbar controls.
+- **Presentation:** preserve the guide's floating-topic-only Zone membership.
+  Pitch entry is a named rebindable command; choose its default through the same
+  conflict audit, not an unverified XMind F5 claim. Deliver PDF/slide-image export
+  first; PPTX and AI-generated video are not implied by "Pitch".
+- **AI:** build on existing local/OpenAI-compatible endpoints and credential
+  handling. Response depth is request guidance, not a promised provider reasoning
+  API. Semantic features require an explicitly selected embedding-capable model;
+  cache by source/model and keep unsupported endpoints actionable. Selected content
+  and destination are visible before sending; never send maps to external test
+  services. Vision/image/video generation, web-search services, hosted accounts
+  and billing are outside this text/embedding-focused phase.
+
+**Execution rules:** finish F0 first, then F1 -> F2 -> F3 -> F4 -> F5 -> F6.
+Implement complete vertical slices, not disconnected buttons or placeholders.
+Persist/migrate only the data each feature needs; use existing document history,
+command availability and error reporting. Test each feature while building it,
+update completion status honestly, and do not interleave deferred stability work.
+No staffing or calendar promises are inferred from these phases.
+
+**F1 implementation progress (2026-10-24):** the compact main menus now use a
+shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
+HMENU adapter is wired to the root eframe window; it queues native selections
+for application-frame dispatch, preserves the producing snapshot, rejects
+stale document/sheet/history targets and modal execution, and sends standard
+editing actions to focused text controls instead of the map. Native menu
+failure is reported and leaves the compact menu available. Hidden Win32-window
+fixtures cover dispatch, disabled IDs, replacement, invalid input and destruction;
+app fixtures cover menu parity, stale/modal ownership and text selection.
+Local evidence: 77 app unit tests, four hidden-window native menu fixtures and
+36 existing menu/shortcut/context/touch integration tests passed; native and
+WASM clippy and 25 documentation contracts passed. The desktop executable was
+built and launched at the user's request; its live Windows accessibility tree
+exposed all eight native menu groups. This does not establish screen-reader,
+ARM64 or other-OS acceptance.
+This is a Windows integration slice, **not F1/P4 completion**: ribbon/OS-menu
+acceptance, multiple windows, Ubuntu desktop acceptance, command/window
+lifecycle and the broader P4 review/host matrix remain pending. F2-F6 remain
+pending; SS0-SS8 remains deferred.
+
+**F1 ribbon progress (2026-10-24):** Windows now draws the shared eight category
+tabs with semantic command groups, scrollable command overflow and a persisted
+collapse preference. Ctrl+F1 toggles collapse; Alt+1 through Alt+8 chooses a tab;
+collapsed tabs open temporarily, with command/Escape/outside dismissal.
+Short windows use a bounded Ribbon menu. Contextual floating controls and their
+existing visibility settings remain unchanged. Text-edit command clicks retain
+their producing field and dispatch after pointer release. Focus/scroll testing
+found and fixed floating tab-scrollbar interception and text Undo losing focus.
+Six ribbon behavior/parity fixtures and a separate 99-case shipped-language/Auto,
+theme and scale geometry matrix cover these paths. The latest desktop executable
+was built and launched locally; its live Windows accessibility tree exposed the
+eight category tabs, collapse control, semantic groups and disabled file actions.
+This is an implemented
+ribbon slice, not completed P4.3 acceptance: native keyboard/AT, high-contrast
+and Windows ARM64 acceptance still need evidence. The other F1 OS/window work
+and F2-F6 remain open, and deferred stability work has not resumed.
+
+**Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
+uses original vector line icons, large primary actions, stacked secondary actions,
+bottom group captions and an active-tab underline. Width-driven adaptation removes
+secondary captions, then collapses groups; remaining groups use a bounded overflow
+menu. The Outline structural toolbar shown in the user's second screenshot shares
+these controls, adapting between captioned tiles, labeled rows and compact icons.
+Its Insert/Edit/Arrange/Delete groups retain all nine actions, accessible names,
+tooltips, keyboard activation and Undo; the Structure/Map sidebar is unchanged.
+The latest Windows build was launched locally, with the native menus and new
+controls visible in its live accessibility tree. The user is actively editing in
+that app; further work must preserve that window and its unsaved map.
+
+The macOS adapter now has a real AppKit global menu alongside the ribbon:
+Thinoda/About/Settings/Services/Hide/Quit and a standard Window menu, shared
+category commands and typed key equivalents. The existing native bridge owns
+tracking, pending events and generations; Close/Quit still use app decisions.
+Platform model tests run on Windows; a dedicated macOS-only fixture compiles for
+Intel/ARM and exercises real NSMenu callbacks/lifecycle in CI. **Implementation is
+not native-host acceptance:** macOS build/fixture results and UI/VoiceOver evidence
+must be recorded separately. The earlier initial-ribbon workspace snapshot passed
+676 tests (one pre-existing ignored); a later native submenu-state correction had
+its own targeted app/backend checks. Do not represent that earlier run as covering
+the screenshot refinement or the AppKit adapter.
+
+**Ribbon follow-up evidence:** GPU fixtures render six width/theme combinations
+and assert aligned group footers and light/dark ribbon surface colors. The
+compact Outline regression checks unclipped vector icons and complete accessible
+names, not captions intentionally hidden at that width. Eight ribbon unit tests,
+five native-menu tests and five integration tests (including the 99-case layout
+matrix) pass on Windows after the final sizing corrections; native all-target
+clippy with GPU tests and WASM clippy also pass. The preceding full workspace
+run failed only its obsolete compact-caption assertion; its corrected regression
+passes separately, not as a claimed fresh full-suite pass.
+CI run `40100971593` passed real macOS Intel/ARM SDK bridge checks, NSMenu
+callback/lifecycle fixtures and native clippy, then exposed pre-frame shortcut
+formatting in four app snapshot tests. macOS snapshots now use typed key
+equivalents without initializing font-dependent display hints; a fresh Mac-context
+regression passes locally. The corrected macOS CI run and actual UI/VoiceOver
+acceptance remain outstanding. These source refinements do not replace or restart
+the user's running Windows app.
+
+#### Active priorities by end-user value (2026-10-24)
+
+**Historical ranking, superseded by the active feature phase plan above.**
 This ranks remaining work, not whole packages as unfinished. Reuse the delivered
 slices below; close each task with observable behavior before moving on.
 Data-loss, security, launch and release regressions override the ranking.
+The security and stability sprint below now owns the first delivery gate;
+ranks 2-8 resume only after its acceptance criteria are met.
 
 | Rank | Phase / packages | Prioritized remaining tasks | End-user benefit |
 |---|---|---|---|
@@ -158,6 +308,604 @@ P4 remains explicitly scheduled, not completed or replaced by popup mitigations.
 Its dependencies and per-step review/native acceptance gates below still apply.
 Performance, localization, accessibility, signing and regression checks accompany
 each affected slice rather than waiting for their own final phase.
+
+### Security and stability sprint - draft, 2026-10-24
+
+**Deferred by user instruction on 2026-10-24.** Keep this finite backlog and its
+evidence, but do not execute further SS0-SS8 work until F1-F5 and integrated
+feature acceptance above are complete. The earlier stabilization-first
+instructions below are historical and no longer determine implementation order.
+
+**User-directed sequencing change:** consolidate the remaining safety work into
+one stabilization sprint, then resume the value-ranked improvements above.
+This section supersedes the open-ended sequence of small touch-control slices:
+finish a finite current-product safety checklist before adding more UX features.
+It does not mark the wider R0-R13 roadmap complete.
+
+**Timebox:** ten working days from approval, not ten calendar days or a promise
+that unavailable hardware/accounts can be replaced by automated tests. The day
+ranges below are work budgets, not additional staffing or permission to launch
+parallel agents. Confirm native test hosts, security-tool access and signing
+capacity on day 1. If capacity is insufficient, change the timebox or supported
+release scope explicitly; do not silently remove acceptance cases.
+
+**Scope contract:** close all confirmed security/data-loss/stability defects in
+the currently implemented native/web product, including defects found by the
+sprint's defined audit. Reverify delivered protections rather than rebuilding
+them. Unimplemented password protection, OAuth/cloud APIs, an auto-updater,
+collaboration and plugin execution remain R9-R13 features with their own safety
+gates; they are not existing vulnerabilities or prerequisites for completing
+this sprint. Do not expose those features before those gates pass.
+
+#### Baseline and known gaps
+
+- No open GitHub issues were returned on 2026-10-24. PR
+  [#70](https://github.com/AxelWol/Thinoda/pull/70) is open; current checks are
+  still running. Earlier run
+  [40071626605](https://github.com/AxelWol/Thinoda/actions/runs/40071626605)
+  failed only its Ubuntu ARM64 job: `crash_recovery_restores_unsaved_work`
+  discovered zero orphan sessions instead of one. Root cause is unconfirmed;
+  do not dismiss it as a flaky test or weaken the recovery assertion.
+- The in-progress numeric-draft fix binds provisional Style values to document,
+  sheet, selection and revision, and cancels on hidden/disabled/modal contexts.
+  Its targeted interruption test passes locally; it is not yet merged or
+  released. Finish this work before extending the helper.
+- Remaining gesture gaps include standard menu/toolbar/dialog commands,
+  theme-editor numeric/color drags and other property controls; a per-frame
+  draft restore is not rollback of earlier frames in a canceled drag.
+- Save/picker/close, real native/browser IME and assistive-technology acceptance,
+  browser storage/zoom and native installation acceptance remain partly open.
+  Existing headless tests and earlier release packaging do not close these gates.
+- GitHub's alert APIs report Dependabot disabled (403), secret scanning disabled
+  (404), and no code-scanning analysis (404). Alert coverage is therefore
+  **unavailable**, not zero findings. Tool-access messages also request broader
+  token scopes; do not change credentials/permissions or enable services without
+  authorization. Use existing permitted local/CI scanners as applicable and
+  record tool/database versions and coverage limits.
+
+#### Sprint backlog and acceptance
+
+These are audit/remediation work packages, not a list of already-confirmed
+vulnerabilities. Record each finding with its affected revision/surface, minimal
+reproduction, impact/severity, owner, fix, regression and verification evidence.
+Handle exploitable findings privately under [SECURITY.md](../SECURITY.md).
+
+| ID / budget | Work and relevant components | Done evidence |
+|---|---|---|
+| SS0 / day 1 | Freeze the current-product checklist from this plan, BACKLOG, WEB, MINDMANAGER and open GitHub work. Inventory dependencies, credential/network/file trust boundaries and every state-changing input surface. Establish security-review, native QA and release access; verify private vulnerability reporting and branch protection/required checks, obtaining owner approval for any configuration changes. | Every known gap maps to SS1-SS7, with a named executor and available verification host/tool. Reporting and merge protections are evidenced, or an explicit owner decision remains open. A missing prerequisite is a visible blocker, not a pass. New findings enter this same checklist and can displace lower-impact work. |
+| SS1 / days 1-3 | Fix recovery/CI reliability first: reproduce the ARM64 orphan-discovery failure, inspect snapshot persistence, session-lock release, parallel/subprocess interactions and cleanup. Exercise actual crash/restart, two live sessions, restore/discard, failed writes and orphan leases in `thinoda-platform`/`thinoda-app`. | Root cause and failing regression established; latest ARM64 run and the complete required CI matrix pass at the candidate SHA. Repeat the previously failing recovery case at least 50 times on ARM64, both alone and under concurrent test load, without lost snapshots or weakened assertions. |
+| SS2 / days 2-4 | Close save/lifecycle data-loss risks: atomic save/backup errors, stale sources and symlink aliases, focused Notes/Hyperlink/title/IME drafts, Save All continuation, picker cancel, Close/Quit during startup or background work, and sheet/document switching. | Fault-injection plus native picker/close tests preserve source bytes, unsaved drafts, other documents and recovery on cancel/error; successful edits have correct one-step Undo/Redo. No silent overwrite, false success or accidental clean-state transition. |
+| SS3 / days 3-5 | Finish the input-safety inventory as one bounded pass: canvas/Outline, sheet/document tabs, main/context menus, quick actions, Style/Map/Symbols/custom-theme controls, Settings, dialogs and popups. Share cancellation/ownership logic; bind all staged values to their actual target and lifecycle. | Each state-changing control family has canceled one-contact, two/three-contact, added/removed-finger, delayed-release, hide/modal/focus-loss and stale-target cases where applicable. Rejected gestures leave model/history or staged settings unchanged; clean touch/mouse/pen/keyboard and text composition still work. No unsupported gestures or disabled controls that merely mask a defect. |
+| SS4 / days 4-6 | Review current import/export/clipboard/link/asset boundaries in `thinoda-io`, `thinoda-core`, platform and native printing bridges. Verify archive/XML/depth/count/image allocation limits, malformed IDs/references, traversal/symlink handling, external-resource behavior and source-preserving conversion consent. | Boundary and over-limit fixtures fail visibly without panic, unbounded allocation, unexpected fetch/launch or source mutation. Existing fuzz targets run with retained failure artifacts; at least a 30-minute bounded campaign per existing target completes on the candidate, in addition to CI smoke. Review native bridge lifetime/ownership and error/cancel paths without submitting physical print jobs. |
+| SS5 / days 4-6 | Review shipped dependency/secret exposure, AI endpoint/request handling, keychain/session-storage policy, legacy migration, logging, response limits, cancellation/timeouts and stale/background result application. Audit network behavior with mocks; no user documents or credentials sent to external test services. | Security review plus dependency/secret-scan evidence at the candidate SHA; confirmed exploitable findings remediated and retested. Locked/unavailable keychains never fall back to plaintext; logs/files/exports exclude secrets; failed/canceled/stale AI results cannot edit a different map or leave partial mutations. List inaccessible scanners explicitly. New streaming/prompt-library features remain R9 work. |
+| SS6 / days 5-7 | Verify web persistence/recovery across reload, tab contention, storage quota/write errors and PWA updates/offline use. Verify download/save semantics and browser zoom ownership. Audit CI/release permissions, untrusted PR handling, dependency/tool downloads, credential cleanup, package integrity/signatures and install/update compatibility of the shipped product. | Browser execution, not only metadata tests or WASM compilation; errors are visible and old/new clients do not silently lose maps. Package downloads match checksums; available platform signature/notarization checks pass. No release/secret exposure to untrusted PR code; installs/reinstalls preserve user files/settings. Adding a new updater or signing account is not part of this gate. |
+| SS7 / days 7-8 | Run independent security review and focused behavioral QA of recovery/lifecycle, untrusted inputs, native bridges and changed input surfaces. Exercise repeated open/edit/undo/save/recover/close cycles and large-map responsiveness against existing benchmarks; execute the supported native/browser matrix below with temporary profiles/maps. | Findings have reproducible evidence; fixes are independently retested. Zero unresolved confirmed security vulnerabilities, data-loss defects, crashes or required-check failures. No unbounded resource growth, blocking UI regressions or lost edits during the exercised cycles. CPU layout timing is not GPU frame-rate evidence. Tests cannot be skipped or relabeled to make the exit green. |
+| SS8 / days 9-10 | Reserve two days for findings/retests, freeze a release candidate, merge only after green checks, build all six native targets plus the website and perform post-release checks. Reconcile PLAN/BACKLOG/WEB/security limitations. | The exact merged/tagged SHA passes the gate below. Publication/download/site checks succeed; runtime/install acceptance is recorded separately. No change after sign-off without rerunning affected checks. Resume feature work only after sign-off. |
+
+**Dependency order:** SS0 precedes the audit baseline. SS1 is the first repair
+priority and blocks any release; SS2-SS6 findings can be investigated alongside
+it where capacity permits. SS3's draft helper depends on SS2 ownership/commit
+contracts. SS7 depends on fixes and evidence from SS1-SS6; SS8 depends on SS7.
+Every newly discovered exploitable or data-loss defect interrupts lower-impact
+work. Day 6 is the scope checkpoint: escalate unresolved roots/access blockers
+then, not after the release is promised.
+
+#### Execution evidence - 2026-10-24
+
+- **SS1 in progress (implementation: current coding session):** reproduced a
+  deterministic recovery-lock lifetime defect. Holding a duplicated descriptor,
+  then dropping `fs::Lock`, left `try_acquire` returning `WouldBlock`. Native
+  locks now explicitly unlock before closing; a forked child's inherited open
+  description can no longer prolong the parent's released recovery lock.
+  The regression failed before the change and passes afterward; it also checks
+  that closing an old duplicate does not unlock a new owner's session. This
+  establishes the lock defect, not retrospective proof of every CI failure.
+- Added a real child-process exit without Rust destructors after snapshot
+  persistence. The parent must load/discard that orphan, skip a live session,
+  and honor a cloned orphan-document lease. The existing app restore test now
+  exercises 50 crash/restore cycles per invocation, including normal concurrent
+  workspace execution. Ubuntu ARM64 CI additionally runs those cycles alone.
+- Windows x64 validation: 196 tests across platform/app unit tests and app
+  e2e/inspector-save suites passed; all-target platform/app clippy and workflow
+  contract tests passed. The exact-candidate ARM64/native/WASM CI results remain
+  required before SS1 can close. Local Windows success is not ARM64 evidence.
+- **SS1 ownership follow-through:** three further failing regressions established
+  that a suspended manager could write a claimed orphan, normal drop could
+  delete that orphan, and failed suspension released the live lock despite
+  unpersisted snapshots. Suspension now flushes and releases under one state
+  lock, retaining ownership on failure. Flush/remove/crash-flush reject suspended
+  ownership; explicit cleanup reacquires the lock before deleting anything.
+  Queued work survives until successful resume/flush. All three regressions pass;
+  the combined targeted native run passes 199 tests and native/WASM clippy pass.
+  Complete affected platform/app suites subsequently pass 314 tests with one
+  pre-existing ignored test across 56 suites. Browser event/device execution
+  remains separate acceptance work.
+- A follow-up app regression showed that failed snapshot cleanup advanced the
+  document's recovery watermark, suppressing retry after resume. The watermark
+  now advances only on successful cleanup, with failures logged; queue failures
+  are also logged without dropping the retry. That regression failed before the
+  change. The final targeted run passes 200 tests; native/WASM lint remains green.
+- **SS2 in progress (save/conflict protection):** reproduced a missing-baseline
+  overwrite bypass: clearing an existing document's fingerprint allowed Save to
+  replace newer external bytes without confirmation. Metadata-query errors were
+  also treated as unchanged. Both cases now log the uncertainty and require
+  conflict resolution; autosave cannot write an unverifiable file. Regressions
+  cover unavailable metadata, missing baselines, Save/Save All cancel and explicit
+  Overwrite, plus autosave after its actual idle threshold. Model/history and
+  external/later-document bytes remain unchanged when writing is rejected.
+- Reproduced single-save overwrite consent surviving a failed write (batch saves
+  already revoked it). Failed saves now revoke that consent; canceling standalone
+  MindManager conversion consent revokes it too. A subsequent attempt must ask
+  again rather than silently overwrite a newer external version. Regressions
+  exercise native and MindManager saves, failed writes, conversion cancellation
+  and retry. The affected app unit/save/inspector/title/MindManager run passes
+  88 tests; native all-target and WASM lint pass. Native picker/close, source-alias
+  and broader fault-injection acceptance remain open; SS2 is not complete.
+- **SS2 close/save continuation:** reproduced Close > Save leaving the tab open
+  after conflict resolution, and a stale close prompt saving/discarding the tab
+  that later occupied the same index. `CloseIntent::Tab` now stores the document
+  key, resolving its current index only at the action boundary. A key-scoped
+  pending close survives conflict and MindManager consent, closes only after
+  successful saving with no remaining dirty work, and clears on cancellation,
+  missing targets or write failure. The old conversion-only continuation is
+  replaced rather than duplicated.
+- Added regressions for native/MindManager conflict-to-close, target reordering
+  between dialogs, conflict cancellation, stale Save/Don't Save prompts, and
+  conversion cancel/failure followed by a later successful save that must not
+  revive the canceled close. The initial two regressions failed before the fix.
+  The affected app unit and seven integration suites pass 172 tests; all-target
+  native and WASM lint pass. Real native picker execution and exact-head CI
+  remain separate gates.
+- **SS2 destination identity and backup faults:** reproduced a Save As conflict
+  bypass through `nested/../map.thinoda`: literal-path comparison allowed newer
+  external bytes to be replaced without conflict resolution. Save destinations
+  now use the shared source-preservation identity helper; non-NotFound identity
+  errors fail visibly rather than being treated as a different file. Sheet-save
+  source checks reuse that helper instead of duplicating it. Regressions cover
+  parent aliases, Windows case aliases, Unix file/directory symlinks (CI),
+  invalid identity checks, preserved workbook/history and separate-copy success.
+- Added a backup-write fault using a non-replaceable backup destination while
+  Notes is focused, in Map and Outline. Original/backup blocker bytes survive,
+  failed saves remain dirty with an error, recovery contains the notes, successful
+  retry preserves the original backup, and one Undo removes the notes. The
+  affected app unit/save/lifecycle/interop suites pass 161 tests on Windows x64;
+  native/WASM lint pass for the implementation. Unix symlink execution remains
+  candidate-CI evidence, not a Windows runtime claim.
+- **SS1 CI milestone:** run
+  [40074194593](https://github.com/AxelWol/Thinoda/actions/runs/40074194593)
+  at `6cce6cb` completed successfully across all native jobs, WASM and fuzz smoke,
+  including the additional isolated 50-cycle Ubuntu ARM64 recovery step. This
+  verifies the first explicit-unlock patch only; later ownership/lifecycle
+  revisions and final-candidate review/acceptance still gate SS1 closure.
+- **SS3 custom-theme gesture lifecycle:** reproduced canceled numeric dragging
+  leaving Font Size at 38 rather than its pre-drag 30. The editor now keeps a
+  pointer-sequence snapshot of the full staged theme/role, restores it across
+  all frames of cancellation or multitouch, and latches rejection through
+  pointer release. Window-focus loss and skipped editor frames cancel the
+  sequence too; repeated egui layout passes share its frame identity. No rejected
+  pointer sequence can Apply, save to the library or dismiss the editor through
+  a synthetic outside click.
+- Actual-app numeric and color-picker channel regressions cover canceled and
+  two/three-contact drags, clean touch/mouse dragging, focus loss, retention of
+  prior keyboard edits, Save to Library/Apply agreement, unchanged workbook while
+  staging and single-step Undo after Apply in both themes. The initial numeric
+  rollback test failed before the fix; the focus-loss case caught an additional
+  event-frame gap before correction. All 97 affected unit/theme/input/lifecycle
+  tests pass, with native all-target and WASM lint green. Free-form color-plane
+  gestures, remaining control families and real devices still need SS3 acceptance.
+- **SS3 shared confirmation lifecycle:** reproduced a canceled single-contact
+  release activating Save and closing a dirty document. Shared confirmation
+  dialogs now gate all three button kinds and backdrop dismissal with the
+  app-wide touch latch. Actual-app regressions in both themes reject canceled,
+  two- and three-contact choices for Save/Don't Save/Cancel and external-file
+  Overwrite/Save As Copy/Cancel. They preserve model/history, dirty work, pending
+  decisions and disk bytes, without granting overwrite authorization. Close
+  tests additionally reject backdrop releases and verify subsequent clean
+  keyboard, mouse and touch choices; conflict tests verify deliberate touch
+  overwrite still saves the complete local workbook. All 104 affected app
+  unit/input/save/theme/lifecycle tests and 21 shared-UI unit tests pass, with
+  native all-target and locked WASM lint green. This covers shared confirmation
+  dialogs, not arbitrary custom modals or every standard egui control.
+- **SS3 library controls:** reproduced a rejected gallery release opening a
+  quick-style modal and a canceled Save persisting its draft. Theme-library
+  edit/remove launchers, quick-style save/remove launchers and the quick-style
+  removal menu action now share the touch latch. The custom quick-style name
+  dialog guards Save/Enter, Cancel and backdrop dismissal too. Both-theme
+  actual-app tests cover canceled and two/three-contact gallery releases,
+  subsequent deliberate opening, unchanged map/history and library counts.
+  Name-dialog tests retain earlier keyboard text and unchanged persisted
+  settings through rejected Save/Cancel/backdrop releases, then verify mouse,
+  Enter and clean-touch saves agree with reloaded settings. All 108 affected
+  unit/input/quick-style/theme/lifecycle tests pass; native all-target and locked
+  WASM lint pass. Context-menu invocation with raw secondary-pointer input was
+  not established by the gallery fixture, so that path has no new automated
+  acceptance claim. Other custom modals and real-device acceptance remain open.
+- **SS1/SS3 recovery decisions and failure retention:** reproduced a canceled
+  Restore consuming its recovery session; Restore/Restore All/Discard All now
+  share the touch latch. Both-theme actual-app tests reject canceled and
+  two/three-contact actions while verifying the snapshots still load, then
+  exercise intentional single-contact restore/discard. Inspection also exposed
+  failed loads followed by unconditional session deletion and failed discards
+  silently removed from the UI. Failing regressions established both defects.
+  Restore now preloads/validates the whole selected session before mutation;
+  failure retains all its snapshots and opens no partial maps. Explicit discard
+  retains failed documents for retry while successful deletions leave the list.
+  Fault fixtures repair the blocked/corrupt path and verify successful retry,
+  original workbook contents and dirty restored maps. Errors are logged and
+  displayed, including post-restore cleanup errors. All 168 affected app
+  unit/e2e/input/save/theme/library tests pass, with native all-target and locked
+  WASM lint green. Subsequent handoff coverage is recorded below; final
+  ARM64/candidate and native/device execution remain required.
+- **SS1 durable restore handoff:** reproduced an immediate second recovery scan
+  finding zero snapshots after restoration, before any drawing, housekeeping or
+  panic-hook flush. Restored maps now get synchronous replacement snapshots
+  before opening/old-session deletion. Write or suspended-ownership failure keeps
+  originals claimed in the dialog, opens no partial session, reports the error
+  and attempts cleanup of replacement keys. The platform handoff writer does not
+  queue abandoned writes; queued unrelated work remains untouched. When the
+  recovery service is unavailable, maps can open with a warning but original
+  snapshots stay on disk. Regressions verify immediate ownership-release/restart,
+  unavailable service, two-map failed destination/suspension retry without extra
+  snapshots, and handoff replacement of a stale queued snapshot. All 67 platform
+  unit tests and 165 affected app unit/e2e/input/save/inspector tests pass; native
+  all-target and locked WASM lint pass. A crash partway through a multi-map
+  transfer or failed rollback/old cleanup may leave extra copies rather than
+  delete the last copy; this is not a deduplication or final-device acceptance
+  claim. No full SS1 or sprint sign-off yet.
+- **SS2/SS3 sheet-rename ownership:** reproduced canceled confirmation applying a
+  rename and a switched document receiving another map's pending name. Rename
+  drafts now capture document key, active sheet index and revision. Changed or
+  missing owners dismiss with a warning; rejected OK/Cancel releases leave the
+  name draft, workbook and history unchanged. Rename failures are surfaced.
+  Both-theme actual-app cases cover canceled/two/three-contact decisions followed
+  by intentional touch confirmation/cancel and Undo. Stale-target cases cover
+  document switching/removal, revision changes and active-sheet switching.
+  All 103 affected unit/input/title/IME/sheet-strip/context-menu/shortcut tests
+  pass; native all-target and locked WASM lint pass. Remaining custom dialogs,
+  state-changing controls and real-device acceptance are still SS3 work.
+- **SS3 print-preview decisions:** reproduced a canceled touch starting print
+  output preparation. Print/PDF-save, preview retry, Close and backdrop dismissal
+  now share the touch latch. The print harness explicitly uses 60 Hz input steps:
+  its previous default cadence failed to reproduce the same canceled click.
+  Both-theme actual-app coverage rejects canceled/two/three-contact output and
+  dismissal choices, preserves workbook/history and verifies later keyboard
+  closing. Existing deliberate mouse preparation and cancel/error retry cases
+  still pass without opening an OS dialog or submitting a physical job. All 102
+  affected unit/input/shortcut/title tests pass; native all-target and locked
+  WASM lint pass.
+  Print page-setup coverage follows below; screenshot-editor controls and
+  real native/browser dialog execution remain separate SS3/SS6 acceptance work.
+- **SS3 print page setup:** page settings now retain a full pointer-sequence
+  snapshot, with cancellation latched across multitouch, focus loss and skipped
+  frames through release. Both-theme multi-frame margin tests verify earlier
+  drag changes roll back on cancel/added finger/focus loss and remain on clean
+  release. Rejected orientation/background/dark/grayscale choices leave staged
+  settings unchanged; output decisions use the same gesture ownership. All 11
+  print tests pass. Numeric keyboard/popup and real-device coverage remain part
+  of final acceptance rather than a claim of comprehensive print-device testing.
+- **SS4/SS5/SS6 independent security review:** reviewed shipped input/asset,
+  credential/AI, native bridge and release boundaries. One high-confidence
+  HIGH finding concerns arbitrary `v*` tag builds receiving signing secrets;
+  no other confirmed exploitable findings were reported. This is not complete
+  scanner or device coverage. Read-only GitHub ruleset enumeration returned only
+  the active main-branch ruleset, with no active tag ruleset. No settings changed.
+  Owner-controlled release-tag/workflow/signing protections remain an unresolved
+  security gate: an in-workflow check alone can be removed by a writer who can
+  replace that workflow.
+- **SS6 release defense in depth:** a secret-free preflight checks out main,
+  resolves an exact tag/main ref, rejects missing/noncommit/unmerged refs and
+  emits its immutable commit SHA. All package jobs depend on it and use that SHA
+  rather than re-resolving a mutable tag. Publication rechecks the tag against
+  the packaged SHA. Manual feature-branch artifact runs are intentionally
+  rejected; the preflight script must land on main before the updated workflow
+  is used. Local git fixtures cover lightweight/annotated tags, main ancestry,
+  moved/unmerged/missing/malformed refs and unavailable main. Workflow contracts
+  cover preflight dependency and SHA wiring. This mitigates mistaken/untrusted
+  source selection while the workflow is intact; it does not close the owner
+  configuration finding or eliminate a later concurrent tag mutation.
+- **SS3 screenshot editor:** output/cancel decisions and staged crop/square/frame/
+  color settings now retain a pointer-sequence snapshot. Rejected touches,
+  focus loss and skipped frames roll back through release; rejected output
+  cannot copy an image or invoke PNG save. Tests cover both-theme canceled and
+  two/three-contact controls, multi-frame canceled/focus-interrupted crop
+  rollback, clean crop/square editing and dismissal. All 105 affected unit/input/
+  shortcut/title tests pass; native all-target and locked WASM lint pass.
+- **SS4 fuzz host probe:** installed nightly/cargo-fuzz could build importer
+  dependencies but Windows linking failed because
+  `clang_rt.asan_dynamic_runtime_thunk-x86_64.lib` is missing. A no-sanitizer
+  alternative was denied; sanitizer coverage was not weakened. No campaign
+  executed. The probe exposed an out-of-date separate fuzz lockfile (workspace
+  versions/dependencies); it was synchronized by Cargo. Long sanitized campaigns
+  remain an explicit Linux/compatible-host gate, not satisfied by CI smoke.
+- **SS4 compatible-host alternative:** added Linux acceptance campaigns for each
+  existing importer target with default sanitizers and 1,800-second budgets,
+  plus the existing memory/input/time limits. PR fuzz/workflow changes trigger
+  the matrix; manual dispatch is available after merge. Logs, corpus and failure
+  reproducers upload even after failure and expire after 14 days. The workflow
+  has read-only permissions, no signing secrets, and cancels superseded runs.
+  Contract tests verify the three-target budget, limits and evidence retention.
+  Adding this workflow is not campaign completion; only successful full-duration
+  runs at the candidate qualify, and later code changes require reassessment.
+- **SS3 label popup:** guarded add/remove/suggestion/sort/apply/cancel actions
+  and preserved the popup through rejected outside releases. Both-theme tests
+  cover canceled/two/three-contact sequences with retained input, staged sort,
+  workbook/history and subsequent deliberate Apply/Undo. Existing IME protection
+  remains ahead of popup input handling.
+- **SS7 focused independent QA:** at `7d5a96b`, the QA agent executed 31 focused
+  Windows headless recovery/handoff/discard/rename/print/screenshot checks without
+  reproduced defects. This does not satisfy the cross-platform/device/browser
+  matrix or the unresolved security gate. A complete local native workspace run
+  at that revision passed 638 tests with 1 pre-existing ignored across 79 suites.
+  The separate PWA Node suite passed all 7 contracts.
+- **SS6 browser execution blocker:** Playwright and Chrome DevTools MCP navigation
+  both failed during catalog verification with request timeouts. No browser
+  acceptance was executed and no browser was installed. The published site and
+  metadata are not substitutes for candidate runtime/persistence testing.
+- **Latest native candidate evidence:** complete locked workspace tests at
+  `e233bbf` passed 639 tests with 1 pre-existing ignored test across 79 suites,
+  with live AI requests disabled. CI run
+  [40080887181](https://github.com/AxelWol/Thinoda/actions/runs/40080887181)
+  remains in progress: WASM, fuzz smoke, notices and documentation jobs passed
+  at the latest read; native jobs were still running. Earlier candidates
+  `fee4171` and `f85951d` completed the full matrix successfully.
+- **SS5 audit-tool access blocker:** `cargo audit` is not installed. Installing
+  it was denied because specific authorization is required. No alternate
+  executable was installed or scanner coverage claimed. This joins disabled
+  repository scanners, owner-controlled signing/tag protections, long sanitized
+  fuzz execution and browser/device acceptance as unresolved release gates.
+- **SS2 export consent ownership:** symbol-color and MindManager warnings now
+  bind to the source document key, active sheet and revision after title-edit
+  commit. A source switch/removal/revision/sheet change revokes pending export
+  and color-loss authorization before a picker can open. Tab reordering that
+  preserves the source still allows the two independent consent steps without
+  switching to the document now at its old vector index. Actual-app regressions
+  cover both warning types and their chained reordered-tab path; existing
+  conversion, source-preservation, title and symbol tests remain green.
+- **SS1 ownership CI milestone:** run
+  [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
+  at `093ba19` also completed successfully across all native jobs, WASM and fuzz
+  smoke, including Ubuntu ARM64 isolated recovery cycles. This includes the
+  suspension/cleanup retry fixes, but does not replace final-candidate acceptance.
+- **SS0 prerequisites remain open:** no available native macOS/ARM64/mobile
+  device acceptance evidence has been supplied; security scanner coverage and
+  any necessary owner authorization remain open. Read-only API verification
+  reports private vulnerability reporting disabled. Main's active ruleset
+  prevents deletion and non-fast-forward pushes, but its effective rules do not
+  require CI checks or pull-request reviews; the classic protection endpoint
+  returns 404. This is not an entirely unprotected branch, nor enforcement of
+  the sprint's review/CI gate. Repository-owner approval is required before
+  changing those settings. Do not mark the sprint or release ready.
+- **SS3 Settings and batched screenshot input:** Settings now keeps pointer
+  edits outside the live/persisted profile until clean release. Cancel,
+  multitouch, focus loss, hidden/disabled windows, skipped frames and intervening
+  profile changes reject staged edits; newer profile changes remain intact.
+  Rejected tab/shortcut, credential save/clear, connection-test, folder-picker
+  and web-install activation cannot trigger those actions. API-key text remains
+  independently staged. Existing language/keyboard behavior remains supported;
+  settings-folder launch failures are now visible instead of ignored.
+  Both-theme actual-app cases exercise rejected toggles/actions and multi-frame
+  slider cancel/multitouch/focus/hide/modal/profile-change paths, plus deliberate
+  release/persistence. They do not execute native pickers or live AI requests.
+  A separate one-frame screenshot press/cancel fixture fails against the original
+  rollback and passes with a pre-controls fallback when no gesture snapshot exists.
+- **SS5 partial dependency evidence:** GitHub advisory queries for 22 selected
+  locked parser/image/TLS/credential/UI package versions returned no matching
+  advisories. This is neither a full-lockfile audit nor a secret scan; the
+  audit/scanner access gates above remain unresolved.
+- **Candidate evidence before Settings follow-through:** the complete native
+  workspace run after source-bound export consent and batched screenshot rollback
+  passed 644 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. This precedes the Settings changes and is not their full-suite result.
+- **Settings candidate validation:** the complete native workspace now passes
+  646 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. Native all-target and WASM clippy pass; 25 documentation metadata
+  contracts also pass.
+- **SS4 sanitized campaign milestone:** run
+  [40082010663](https://github.com/AxelWol/Thinoda/actions/runs/40082010663)
+  at `75ed5d9` completed all three default-sanitized Linux campaigns successfully.
+  Each log records 1,801 seconds: FreeMind 6,482,358 executions, XMind 6,005,049
+  and OPML 4,246,033. All three log/corpus/reproducer artifacts uploaded
+  successfully with 14-day retention. No crashes were reported in these bounded
+  runs; this is not proof of absence of importer defects. The subsequent
+  Settings/screenshot changes do not modify importer sources, fuzz targets or
+  dependencies; exact final-candidate acceptance remains required at release.
+- **CI milestone:** run
+  [40082010570](https://github.com/AxelWol/Thinoda/actions/runs/40082010570)
+  at `75ed5d9` passed the full configured native matrix, WASM, fuzz smoke, notices
+  and Markdown checks. This precedes the Settings/screenshot follow-through.
+- **SS3 remaining auxiliary-dialog implementation pass:** shortcut-reference
+  filters/Close/backdrop, Guide filters/Close/backdrop, legal-document selection,
+  copy/links/Close, About links/legal navigation and masked-copy decisions now
+  use the shared cancellation latch. Typed searches and text selection remain
+  independent. Actual-app tests cover canceled and two/three-contact actions
+  in both themes, retained decisions/model/history and deliberate follow-through.
+  Masked-copy consent additionally binds to document/sheet/revision; changed or
+  removed sources dismiss it visibly instead of previewing another source.
+  This closes those implementation gaps, not the remaining native/device input
+  acceptance gate.
+- **SS5 AI result ownership:** a local-mock regression failed without the new
+  source guard because a delayed response mutated a locally edited document.
+  Requests now bind to document key, sheet/root and revision after title commit.
+  Changed/closed sources, active title/Notes/Hyperlink drafts and disabled AI
+  reject late results visibly without mutation or history entries. An unchanged
+  background document still receives its own result with one-step Undo without
+  activating another tab. Connection-test jobs and model lists are invalidated
+  when endpoint/credential draft changes, but not by model selection.
+  Generate rejects canceled/multitouch input and keeps its prompt; a stable
+  editor protects IME candidate Escape before global shortcuts, then restores
+  deliberate dismissal. New messages are translated in all supported catalogs.
+  Tests use local mock endpoints or no-network worker closures, not live providers.
+- **Latest local candidate validation:** complete native workspace tests pass
+  655 tests with 1 pre-existing ignored test across 74 suites, with live AI
+  disabled. Native all-target and WASM clippy pass; the prior metadata run passed
+  all 25 documentation contracts. This includes the auxiliary-dialog, masked-copy
+  ownership, AI source/draft/disable, connection-list and prompt IME changes.
+- **Settings candidate CI/acceptance milestone:** both
+  [40084433631](https://github.com/AxelWol/Thinoda/actions/runs/40084433631)
+  (full configured CI) and
+  [40084433630](https://github.com/AxelWol/Thinoda/actions/runs/40084433630)
+  (all three sanitized campaigns) passed at `02153c8`. Each campaign ran
+  1,801 seconds: FreeMind 7,582,132 executions, OPML 4,123,832 and XMind
+  6,169,806. All three evidence artifacts uploaded successfully. These runs were
+  allowed to finish before publishing further application-only changes; they
+  do not sign off the newer AI/auxiliary-dialog candidate.
+- **Exact AI/auxiliary candidate milestone:** full CI
+  [40086807314](https://github.com/AxelWol/Thinoda/actions/runs/40086807314)
+  and all three default-sanitized campaigns
+  [40086807315](https://github.com/AxelWol/Thinoda/actions/runs/40086807315)
+  passed at `8fbad47`. Each campaign ran 1,801 seconds: FreeMind 6,576,733
+  executions, XMind 6,891,062 and OPML 4,481,874; all evidence artifacts uploaded.
+  An attempted native Chrome fallback could launch but safe address-bar delivery
+  returned `no_viable_candidate`; perception then failed closed without a
+  verified URL. The CI-built artifact served HTTP 200 locally, but no candidate
+  page was navigated or tested. The temporary server was stopped. Browser/PWA
+  runtime acceptance remains open; artifact serving is not browser execution.
+  Private-reporting enablement was proposed but the user was unavailable; no
+  approval or permission change was inferred.
+- **SS3 palette and Find/Replace:** regressions failed against unguarded command
+  execution and Replace All: canceled input closed/executed the palette and
+  replaced topic titles. Shared cancellation guards now retain palette/query,
+  search/replacement drafts, options/scope, navigation selection and model/history.
+  Both-theme cases cover cancel and two/three-contact releases, backdrop retention,
+  deliberate command execution and replacement Undo. Stable palette input protects
+  IME candidate Enter/Tab/Escape including the final composition frame.
+  Targeted app touch/palette/search suites pass 31 tests; shared-UI units pass 21.
+  Native all-target and WASM clippy pass. The complete local native workspace
+  subsequently passes 658 tests with 1 pre-existing ignored across 74 suites;
+  live AI is disabled. All 25 documentation metadata contracts pass.
+- **Exact palette/search candidate CI:** full configured CI
+  [40090360397](https://github.com/AxelWol/Thinoda/actions/runs/40090360397)
+  passed at `ed07409`. This includes the configured native matrix, isolated
+  ARM64 recovery repetition, packaging/printing bridge fixtures, WASM build/lint,
+  fuzz smoke and documentation/notices checks. Browser/device acceptance and
+  owner-enforced release restrictions remain separate gates.
+- **Exact palette/search candidate importer acceptance:** all three
+  default-sanitized campaigns in
+  [40090360402](https://github.com/AxelWol/Thinoda/actions/runs/40090360402)
+  passed at `ed07409`. Each ran 1,801 seconds: XMind 7,256,836 executions,
+  FreeMind 6,969,922 and OPML 4,283,971. All three log/corpus/reproducer evidence
+  artifacts uploaded successfully with 14-day retention. No crash was reported
+  in these bounded campaigns; this is not proof of defect absence or the
+  remaining real-host acceptance.
+- **SS5 complete locked Cargo advisory lookup:** GitHub Advisory Database checks
+  cover all 568 registry package/version pairs in the workspace lockfile at
+  `ed07409`, plus all four additional fuzz-lockfile pairs (`arbitrary` 1.5.0,
+  `libc` 0.2.191, `libfuzzer-sys` 0.4.13 and `zip` 9.0.5). All 572 distinct pairs
+  returned no matching advisories, in 20 successful requests bounded to the
+  service's 30-dependency limit. This includes target-specific and development
+  dependencies, not only the earlier 22-package selection. Workspace lockfile
+  SHA-256: `f0512adba78f429533010a59a94184ddc09efd3a22617655438b69c1bf853185`;
+  fuzz lockfile: `11c1e0d7cecde75b16b250b598cb01433f6ae8cae14c24432e17e19ae6cfdbb4`.
+  Only public package metadata was submitted; no scanner installation or
+  permission change was needed. The service did not report its database revision.
+  This is a complete lookup of these locked registry versions against that
+  service, not RustSec unsound/unmaintained-package coverage, secret scanning,
+  source/provenance verification, GitHub Actions/toolchain auditing or a claim
+  that dependencies are defect-free. Those remaining gates are not waived.
+- **SS6 CI download integrity:** replaced the web job's download-to-privileged-tar
+  pipeline with an installer pinned to Trunk 0.21.14 and the upstream archive's
+  SHA-256, independently checked against the downloaded archive bytes. The
+  installer verifies before archive parsing, limits download/binary sizes,
+  accepts only the single regular `trunk` member and installs in the runner's
+  temporary tools directory without `sudo`. Offline fixtures reject bad hashes,
+  traversal/absolute paths, symlink/hardlink members, oversized data, malformed
+  archives, non-HTTPS final URLs and network failures. Existing binaries survive
+  checksum rejection. The real archive verifies and extracts the expected
+  30,533,520-byte Linux ELF without executing it on Windows. CI fuzz smoke now
+  pins cargo-fuzz 0.13.2, matching the longer acceptance campaign. This does not
+  close owner-enforced release authorization, upstream provenance, mutable
+  action/toolchain refs or Trunk's additional tool-download review.
+
+#### Bounded SS3 inventory reconciliation
+
+**User-reported priority regression: selected-topic Fill ("Füllung") locked.**
+Added to SS3 ahead of further hardening/feature work. A failing shared-widget
+fixture established that adjacent palettes reused IDs for matching colors;
+later palettes captured the earlier Fill controls. Swatches now combine their
+individual layout UI's unique ID with the color, rather than the inherited
+scope ID. Fill, Border, Text Color and Line Color remain independent, including
+when a custom swatch disappears. Actual-app coverage exercises English/German,
+both themes, 1x/1.5x/2x scale, single/multiple selected topics, canceled/two/three-
+contact releases, visible resolved fill, unchanged other color fields and
+one-step Undo/Redo. The original two-row fixture fails before the fix and passes
+after it. German UI checks run in a separate integration-test executable because
+the application locale is process-wide; they must not race English-only tests.
+The complete touch suite and isolated German suite pass 31 tests together;
+the full workspace then passes 661 tests with 1 pre-existing ignored across 75
+suites. Native all-target and WASM clippy and 25 documentation contracts pass.
+Real-device/browser delivery remains deferred with the existing separate gate.
+
+This is the implementation inventory, not a substitute for the SS7 real-host
+acceptance matrix. Newly reproduced defects interrupt this list; broadening it
+to new product features is not required to close the current sprint.
+
+| Existing control family | Implemented safety evidence | Remaining acceptance |
+|---|---|---|
+| Canvas/Outline, sheet/document strips, main/context menus | Shared cancellation/ownership, stale-target and delayed-release regressions recorded above | Device-delivered touch/pen/trackpad and platform/AT matrix |
+| Style/Map/Symbols, theme and quick-style libraries | Target-bound edits, full pointer rollback, guarded commands and retained drafts | Free-form color-plane and actual secondary-pointer popup/device execution |
+| Settings and credential/connection controls | Provisional profile, stale-profile rollback, rejected side-effect tests in both themes | Native folder/install UI and device input delivery |
+| Recovery, save/close/conflict, rename/export consent | Stable ownership, durable handoff, error/retry, canceled decisions and source-preservation fixtures | Actual OS picker/quit/crash runtime and remaining supported hosts |
+| Print preview and screenshot editor | Full staged rollback, guarded output/decisions, same-frame cancellation | OS print/picker/clipboard/GPU and physical-device runtime; no print submission |
+| Labels, shortcuts, Guide, legal/About and masked preview | Guarded decisions/links/filter state, independent text drafts, source-bound preview | Native browser-launch/clipboard and AT/device behavior |
+| Command palette and Find/Replace | Canceled command/replacement regressions, retained query/scope/history, palette IME and clean execution/Undo | Real IME/AT and device-delivered gestures |
+| AI Generate and delayed results | Guarded prompt/IME, source revision/drafts, endpoint/key ownership, disable/re-enable and background Undo | Supported browser/native runtime against local mock; no external documents or credentials |
+
+At the latest read, the repository returned no open GitHub issues. This does not
+close unfinished work in PLAN/BACKLOG or waive owner/security/runtime gates.
+
+#### Completion gate - no partial-success closure
+
+1. All SS0-SS8 acceptance cases have recorded evidence against the candidate
+   revision, and all confirmed security/stability defects are fixed and retested.
+   Mitigations or unavailable tests remain open unless the user explicitly
+   changes the scope. A clean scan alone is not proof of security.
+2. `cargo xtask ci`, importer fuzz smoke/campaigns, native bridge/packaging tests,
+   web Node tests, WASM lint/build and all required GitHub checks pass.
+   Repeated recovery testing includes the previously failing Ubuntu ARM64 host.
+   No broad retries, sleep-only fixes, ignored regressions or assertion removal.
+3. Native execution covers Windows x64/ARM64, macOS Intel/Apple Silicon and
+   Ubuntu x86_64/ARM64, distinguishing Wayland/X11 input acceptance. Browser
+   execution covers desktop Chromium and Safari where applicable, iOS/iPadOS
+   Safari/PWA and Android Chrome/PWA for the shipped touch/recovery paths.
+   Compile/package checks do not count as device execution. Missing hosts,
+   assistive technologies or signing access block the affected claim; arrange
+   user/QA evidence or explicitly revise release scope before closure.
+4. Shared UI regressions cover both themes, Auto/system behavior, supported
+   locale/scale/viewport matrices and keyboard alternatives. Native IME/AT
+   evidence is separate; JA/zh-CN/zh-TW remain planned rather than falsely added
+   to the shipped-locale claim. User data and external service access require
+   explicit authorization; use synthetic fixtures and isolated profiles.
+5. Independent review/QA sign-off, recovery/save compatibility, all six target
+   artifacts/checksums, relevant signatures/notarization and the live website
+   are verified. If any gate is blocked at day 10, the sprint is **not finished**:
+   report the exact blocker and obtain a timebox/scope decision. Do not move to
+   feature work with hidden safety debt.
+
+#### Feature restart after the sprint
+
+**Superseded:** the active feature phase plan above now runs before completing
+this suspended sprint. The following order is retained only as historical context.
+
+Return to the existing value ranking without another indefinite hardening loop.
+New defects retain the normal stop-the-line rule; unrelated polish does not
+reopen this sprint.
+
+1. **Adaptable commands (R1-R2):** versioned shortcut capture/apply/reset and
+   persistence, visible conflict/reserved-key handling and keyboard navigation.
+   Resolve the Fit collision before activating overrides; retain existing
+   bindings and do not silently migrate legacy inactive values.
+2. **Trustworthy outputs and richer maps (R3-R6):** finish output/print fidelity
+   and supported sheet exchange, then versioned embedded assets, usable
+   image/attachment/equation/audio workflows and searchable asset panels.
+   Preserve original/licensed content, undo and roundtrip acceptance.
+3. **Presentation and planning (R7-R8):** zones/Pitch and presentation export,
+   then deterministic task/calendar scheduling and Gantt.
+4. **Optional intelligent/connected work (R9-R10):** streaming AI preview/cancel,
+   then reviewed protected-file and cloud conflict contracts before connecting
+   accounts or sharing. These new attack surfaces require their own reviews.
+5. **Broader reach (R12-R13):** remaining locales, sandboxed extension contracts
+   and collaboration after storage/security prerequisites; OS-native menus,
+   ribbon and multi-window lifecycle follow the already agreed P4 gates.
 
 | Package | Outcome | Prerequisites | Delivery band |
 |---|---|---|---|
@@ -498,10 +1246,11 @@ application itself is separate scope; these interfaces enable it.
 
 User-directed addition, 2026-10-20. **P4** is this new future workstream, not the
 already-delivered legacy **Phase 4 - AI assistant** above and not a P1/P2/P3
-priority rating. Track it as **R13** in the delivery order. Continue the existing
-R0-R12 work first; do not introduce a ribbon or native menu backend in the current
-R0 regression slice. Shared command and menu-overflow fixes may land earlier in
-R1/R2 and must be reused here. R13 does not depend on completing CRDTs/plugins.
+priority rating. Track it as **R13** in the delivery order. The latest
+user-directed feature sequence promotes this work to F1, directly after the
+Fill/color-picker fix; the previous requirement to finish R0-R12 first is
+superseded. Reuse delivered R1/R2 command/menu work. R13 does not depend on
+completing the deferred sprint, CRDTs or plugins.
 
 Use one command identity/availability/shortcut/execution model across native
 menus, ribbon, hamburger, palette and context menus. A workbook remains a document
@@ -598,7 +1347,13 @@ Unavailable integrations remain tracked with their blocker, not silently dropped
 
 ### Immediate next work
 
-**User-directed priority-1 workstream - native/web touch and trackpad gestures:**
+Finish and publish the Fill/color-picker fix (F0), then execute the active
+feature phase plan: native menus, saved configurable keymaps, planning/Gantt,
+Zones/Pitch and enhanced AI. The security/stability sprint and gesture checklist
+below are deferred evidence/inventory, not work to resume before those features
+are implemented, tested and complete.
+
+**User-directed workstream - native/web touch and trackpad gestures:**
 deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple
 Silicon and supported Ubuntu desktops, plus WASM/PWA on desktop and iOS/iPadOS/
 Android browsers. Native mobile packages are not existing deployment targets.
@@ -663,6 +1418,43 @@ afterward. Shared-canvas and actual app-menu regressions cover unchanged content
 history and release without edits. No custom long-press timer was introduced.
 This is not full gesture parity: real browser/device acceptance, all-surface
 touch controls and browser viewport zoom remain open.
+
+**Delivered browser-zoom metadata correction:** the mobile viewport no longer
+sets `maximum-scale=1` or `user-scalable=no`, so browser-controlled zoom is not
+disabled by page metadata. A web regression guards against restoring those
+restrictions. **Gesture ownership decision:** a pinch begun on the full-screen
+canvas belongs to map pan/zoom; page zoom remains available through browser
+controls and keyboard shortcuts, while the app's visible zoom controls remain an
+alternative. Eframe still prevents browser defaults for canvas touch events so
+the map gesture works. Browser/device acceptance must verify browser zoom
+controls/keyboard and map pinch separately without sacrificing low-vision access.
+
+**Delivered Style-inspector touch-release safety slice:** ordinary Style controls
+that commit combo-box selections, branch-side changes, reset/marker actions and
+relationship endpoint choices now consult the shared canceled/multitouch release
+guard. An actual-app regression verifies canceled one-contact and two/three-
+contact Shape selections leave workbook/history unchanged, while ordinary mouse
+selection still applies the shape. Style width sliders now keep pointer-down
+changes provisional and commit them once on release; canceled or multitouch
+sequences discard the draft. Tests cover canceled and two/three-contact drags,
+clean touch commit/Undo, Font Size numeric drags and ordinary mouse dragging.
+Numeric drafts are scoped to document identity, sheet index/root, the complete
+selection and document revision. Changing any of these, disabling the control
+or skipping inspector frames cancels the draft through release. Regressions
+cover identical documents, duplicated sheets with shared topic IDs, selection
+changes, intervening model edits and hiding/reopening the inspector, without
+creating history entries or applying the draft to a different target. Opening
+Settings or another app-blocking modal also cancels provisional numeric values.
+The Map inspector also rejects canceled/multitouch theme-switch releases and
+does not commit staged theme changes for rejected sequences; ordinary switch
+activation remains available. The custom-theme editor now snapshots staged
+role/theme values for the whole pointer sequence, restoring earlier drag frames
+after cancel, multitouch, focus loss or skipped editor frames. Numeric/color
+channel tests verify the restored draft reaches library saves and Apply; clean
+touch/mouse editing remains available. Apply, Save and Cancel controls require
+a clean release. Free-form color-plane/device gestures, other inspector families
+and combo boxes, text-selection behavior,
+browser/device gestures and hardware acceptance remain open.
 
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
 swipe scrolls deep Outline content in both axes without selecting, editing or

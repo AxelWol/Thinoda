@@ -32,6 +32,14 @@ pub(crate) struct ThemeDraft {
     theme: CustomTheme,
     role: usize,
     error: Option<String>,
+    gesture: Option<ThemeGesture>,
+}
+
+struct ThemeGesture {
+    theme: CustomTheme,
+    role: usize,
+    frame: u64,
+    canceled: bool,
 }
 
 fn preview(theme: &CustomTheme) -> (Sheet, [thinoda_core::TopicId; 5]) {
@@ -69,6 +77,7 @@ impl ThinodaApp {
             theme,
             role: 0,
             error: None,
+            gesture: None,
         })));
     }
 
@@ -128,6 +137,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn custom_theme_gallery(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         let mut apply = None;
         let mut edit = None;
         let mut remove = None;
@@ -144,6 +154,7 @@ impl ThinodaApp {
                     egui::Button::new(t("Edit Custom Theme…")),
                 )
                 .clicked()
+                && touch_allowed
             {
                 self.begin_theme_editor();
             }
@@ -184,10 +195,10 @@ impl ThinodaApp {
                                 apply = Some(theme.clone());
                             }
                             ui.horizontal(|ui| {
-                                if ui.small_button(t("Edit…")).clicked() {
+                                if ui.small_button(t("Edit…")).clicked() && touch_allowed {
                                     edit = Some(theme.clone());
                                 }
-                                if ui.small_button(t("Remove…")).clicked() {
+                                if ui.small_button(t("Remove…")).clicked() && touch_allowed {
                                     remove = Some(theme.name.clone());
                                 }
                             });
@@ -279,6 +290,37 @@ impl ThinodaApp {
                 }
                 let mut apply = false;
                 let mut save = false;
+                let touch_allowed = widgets::touch_activation_allowed(ctx);
+                let pointer_down = ctx.input(|input| input.pointer.primary_down());
+                let focused = ctx.input(|input| {
+                    input.focused
+                        && !input
+                            .events
+                            .iter()
+                            .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+                });
+                let frame = ctx.cumulative_frame_nr();
+                if pointer_down && draft.gesture.is_none() {
+                    draft.gesture = Some(ThemeGesture {
+                        theme: draft.theme.clone(),
+                        role: draft.role,
+                        frame,
+                        canceled: false,
+                    });
+                }
+                if let Some(gesture) = &mut draft.gesture {
+                    gesture.canceled |=
+                        !touch_allowed || !focused || frame > gesture.frame.saturating_add(1);
+                    gesture.frame = frame;
+                }
+                let activation_allowed = touch_allowed
+                    && focused
+                    && draft
+                        .gesture
+                        .as_ref()
+                        .is_none_or(|gesture| !gesture.canceled);
+                let theme_before_controls = draft.theme.clone();
+                let role_before_controls = draft.role;
                 let response =
                     egui::Modal::new(egui::Id::unique("custom_theme_editor")).show(ctx, |ui| {
                         ui.set_width(600.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
@@ -411,14 +453,16 @@ impl ThinodaApp {
                                     edit_role(ui, style, &resolved, &mut self.fonts)
                                 });
                                 ui.horizontal(|ui| {
-                                    if ui.button(t("Reset role")).clicked() {
+                                    if ui.button(t("Reset role")).clicked() && activation_allowed {
                                         *style = TopicStyle::default();
                                     }
                                     egui::ComboBox::from_id_salt("role_preset")
                                         .selected_text(t("Role preset"))
                                         .show_ui(ui, |ui| {
                                             for name in PRESETS {
-                                                if ui.button(t(name)).clicked() {
+                                                if ui.button(t(name)).clicked()
+                                                    && activation_allowed
+                                                {
                                                     *style = preset(name).unwrap().style;
                                                     ui.close();
                                                 }
@@ -432,14 +476,30 @@ impl ThinodaApp {
                             ui.colored_label(ui.visuals().error_fg_color, error);
                         }
                         ui.horizontal_wrapped(|ui| {
-                            apply = widgets::primary_button(ui, t("Apply Theme")).clicked();
-                            save = widgets::secondary_button(ui, t("Save to Library")).clicked();
-                            if widgets::secondary_button(ui, t("Cancel")).clicked() {
+                            apply = widgets::primary_button(ui, t("Apply Theme")).clicked()
+                                && activation_allowed;
+                            save = widgets::secondary_button(ui, t("Save to Library")).clicked()
+                                && activation_allowed;
+                            if widgets::secondary_button(ui, t("Cancel")).clicked()
+                                && activation_allowed
+                            {
                                 keep = false;
                             }
                         });
                     });
-                if response.should_close() {
+                if !activation_allowed {
+                    if let Some(gesture) = &draft.gesture {
+                        draft.theme = gesture.theme.clone();
+                        draft.role = gesture.role;
+                    } else {
+                        draft.theme = theme_before_controls;
+                        draft.role = role_before_controls;
+                    }
+                }
+                if !pointer_down {
+                    draft.gesture = None;
+                }
+                if response.should_close() && activation_allowed {
                     keep = false;
                 }
                 if keep && (apply || save) {

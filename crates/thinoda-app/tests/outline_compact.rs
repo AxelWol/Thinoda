@@ -74,13 +74,16 @@ fn long_selected_titles_do_not_hide_outline_actions_or_topics() {
                     );
                     assert!(
                         h.output().shapes.iter().any(|shape| {
-                            matches!(&shape.shape, egui::Shape::Text(text)
-                            if text.galley.text() == t(label)
-                                && rect.contains(text.pos)
-                                && shape.clip_rect.expand(1.0 / h.ctx.pixels_per_point())
-                                    .contains_rect(text.galley.rect.translate(text.pos.to_vec2())))
+                            matches!(
+                                &shape.shape,
+                                egui::Shape::Path(_) | egui::Shape::LineSegment { .. }
+                            ) && rect.contains_rect(shape.shape.visual_bounding_rect())
+                                && shape
+                                    .clip_rect
+                                    .expand(1.0 / h.ctx.pixels_per_point())
+                                    .contains_rect(shape.shape.visual_bounding_rect())
                         }),
-                        "{label}: caption is clipped"
+                        "{label}: command icon is clipped"
                     );
                 }
                 let root = h.get_by_role_and_label(Role::Button, "Visible root").rect();

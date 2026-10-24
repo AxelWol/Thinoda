@@ -125,7 +125,7 @@ pub enum SettingsTab {
 /// What to do after the "save changes?" dialog.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloseIntent {
-    Tab(usize),
+    Tab(String),
     Quit,
 }
 
@@ -155,6 +155,8 @@ pub struct Services {
 
 #[derive(Default)]
 pub struct RenameSheetDraft {
+    pub(crate) document_key: String,
+    pub(crate) revision: u64,
     pub(crate) index: usize,
     pub(crate) name: String,
     pub(crate) ime_composing: bool,
@@ -166,17 +168,21 @@ pub struct Dialogs {
     pub mindmanager_export: bool,
     pub mindmanager_symbol_color_loss: bool,
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
-    pub mindmanager_close: Option<CloseIntent>,
+    pub(crate) save_close_tab: Option<String>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub symbol_export: Option<(usize, Format)>,
+    pub(crate) export_owner: Option<(String, usize, u64)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
     pub settings_tab: SettingsTab,
+    pub(crate) settings_gesture: Option<crate::ui::SettingsGesture>,
     pub about: bool,
     pub legal: crate::legal::LegalState,
     pub shortcuts: bool,
     pub shortcut_browser: crate::shortcut_browser::ShortcutBrowser,
+    pub(crate) palette_composing: bool,
     pub masked_copy: bool,
+    pub(crate) masked_copy_owner: Option<(String, usize, u64)>,
     pub close: Option<CloseIntent>,
     pub conflict: Option<String>,
     pub rename_sheet: Option<RenameSheetDraft>,
@@ -225,6 +231,10 @@ pub struct ThinodaApp {
     last_title: String,
     /// Startup work still pending behind the splash; `None` once ready.
     pub(crate) launch: Option<crate::startup::Launch>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) native_menus: crate::native_menus::NativeMenus,
+    #[cfg(any(target_os = "windows", target_os = "macos", test))]
+    pub(crate) ribbon: crate::ribbon::RibbonState,
 }
 
 pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
@@ -259,6 +269,10 @@ impl ThinodaApp {
         i18n::set_lang(i18n::resolve(settings.language));
         let mut app = Self {
             docs: Vec::new(),
+            #[cfg(any(target_os = "windows", target_os = "macos", test))]
+            ribbon: crate::ribbon::RibbonState::default(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            native_menus: crate::native_menus::NativeMenus::default(),
             active: 0,
             format_tab: settings.format_tab,
             sidebar_family: settings.sidebar_family,
@@ -546,7 +560,10 @@ impl ThinodaApp {
                 }
             }
             Cmd::MaskedCopy => {
-                if self.doc().is_some() {
+                if let Some(d) = self.doc_mut() {
+                    d.view.commit_edit(&mut d.doc);
+                    self.dialogs.masked_copy_owner =
+                        Some((d.key.clone(), d.doc.active_index(), d.doc.state_id()));
                     self.dialogs.masked_copy = true;
                 } else {
                     self.toasts.warning(t("Not possible here"));
@@ -566,6 +583,9 @@ impl ThinodaApp {
             Cmd::Labels => self.begin_labels(ctx),
             Cmd::Print => self.begin_print(ctx),
             Cmd::Export(format) => {
+                if let Some(doc) = self.doc_mut() {
+                    doc.view.commit_edit(&mut doc.doc);
+                }
                 if self.doc().is_some_and(|d| {
                     thinoda_io::symbol_color_loss(d.doc.workbook(), format)
                         || (format == Format::XMind
@@ -576,6 +596,9 @@ impl ThinodaApp {
                                 .any(|s| s.topics.values().any(|t| !t.marker_colors.is_empty())))
                 }) {
                     self.dialogs.symbol_export = Some((self.active, format));
+                    self.dialogs.export_owner = self
+                        .doc()
+                        .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
                 } else {
                     self.export(format, false);
                 }
@@ -698,6 +721,8 @@ impl ThinodaApp {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
                     self.dialogs.rename_sheet = Some(RenameSheetDraft {
+                        document_key: d.key.clone(),
+                        revision: d.doc.state_id(),
                         index: d.doc.active_index(),
                         name: d.doc.sheet().title.clone(),
                         ..Default::default()
@@ -1084,6 +1109,7 @@ impl ThinodaApp {
         self.new_doc(workbook);
         self.doc_mut().unwrap().doc.mark_dirty();
         self.dialogs.masked_copy = false;
+        self.dialogs.masked_copy_owner = None;
         self.toasts.info(t(
             "Masked copy created; inspect it before saving or sharing",
         ));
@@ -1328,7 +1354,16 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
-        if d.path.as_deref() == Some(target) && d.changed_on_disk() && !d.ignore_conflict {
+        let same_file = match d.targets_current_file(target) {
+            Ok(same_file) => same_file,
+            Err(error) => {
+                d.ignore_conflict = false;
+                self.toasts
+                    .error(format!("{}: {error}", t("Could not save")));
+                return false;
+            }
+        };
+        if same_file && d.changed_on_disk() && !d.ignore_conflict {
             self.dialogs.conflict = Some(d.key.clone());
             return false;
         }
@@ -1344,6 +1379,7 @@ impl ThinodaApp {
                 true
             }
             Err(e) => {
+                d.ignore_conflict = false;
                 self.toasts.error(format!("{}: {e}", t("Could not save")));
                 false
             }
@@ -1354,6 +1390,9 @@ impl ThinodaApp {
         if format == Format::MindManager {
             self.dialogs.mindmanager_export = true;
             self.dialogs.mindmanager_symbol_color_loss = allow_symbol_color_loss;
+            self.dialogs.export_owner = self
+                .doc()
+                .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
             return;
         }
         self.export_confirmed(format, allow_symbol_color_loss);
@@ -1426,7 +1465,7 @@ impl ThinodaApp {
         d.view.commit_edit(&mut d.doc);
         if self.docs[i].is_dirty() {
             self.active = i;
-            self.dialogs.close = Some(CloseIntent::Tab(i));
+            self.dialogs.close = Some(CloseIntent::Tab(self.docs[i].key.clone()));
         } else {
             self.close_tab_now(i);
         }
@@ -1447,6 +1486,29 @@ impl ThinodaApp {
             self.active -= 1;
         } else if self.active >= self.docs.len() {
             self.active = self.docs.len().saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn resolve_save_close_tab(&mut self, key: &str, saved: bool) {
+        if self.dialogs.save_close_tab.as_deref() != Some(key) {
+            return;
+        }
+        if !saved
+            && (self.dialogs.conflict.as_deref() == Some(key)
+                || self
+                    .dialogs
+                    .mindmanager_save
+                    .as_ref()
+                    .is_some_and(|(pending, _, sheet_only)| pending == key && !sheet_only))
+        {
+            return;
+        }
+        self.dialogs.save_close_tab = None;
+        if saved
+            && let Some(index) = self.docs.iter().position(|doc| doc.key == key)
+            && !self.docs[index].is_dirty()
+        {
+            self.close_tab_now(index);
         }
     }
 
@@ -1650,9 +1712,19 @@ impl ThinodaApp {
                 keep.push(s);
                 continue;
             }
-            for doc in &s.docs {
-                match doc.load() {
-                    Ok(wb) => {
+            let workbooks = s
+                .docs
+                .iter()
+                .map(|doc| {
+                    doc.load().map_err(|error| {
+                        format!("{} {}: {error}", t("Could not open"), doc.meta.title)
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match workbooks {
+                Ok(workbooks) => {
+                    let mut restored = Vec::new();
+                    for (doc, wb) in s.docs.iter().zip(workbooks) {
                         let mut d = OpenDoc::new(wb);
                         d.view.titles = new_topic_titles();
                         d.path = doc
@@ -1666,29 +1738,75 @@ impl ThinodaApp {
                             d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
                         }
                         d.doc.mark_dirty();
-                        self.docs.push(d);
-                        self.active = self.docs.len() - 1;
-                        self.toasts
-                            .success(format!("{}: {}", t("Restored"), doc.meta.title));
+                        restored.push(d);
                     }
-                    Err(e) => {
-                        self.toasts.error(format!(
-                            "{} {}: {e}",
-                            t("Could not open"),
-                            doc.meta.title
+                    if let Some(recovery) = &self.services.recovery {
+                        let persisted =
+                            restored.iter().zip(&s.docs).try_for_each(|(doc, source)| {
+                                let mut meta = source.meta.clone();
+                                meta.original_path = doc.path.clone();
+                                meta.dirty = true;
+                                recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
+                            });
+                        if let Err(error) = persisted {
+                            log::warn!("Recovery handoff failed: {error}");
+                            self.toasts
+                                .error(format!("{}: {error}", t("Recover Unsaved Work")));
+                            for doc in &restored {
+                                if let Err(error) = recovery.remove(&doc.key) {
+                                    log::warn!("Recovery handoff rollback failed: {error}");
+                                }
+                            }
+                            keep.push(s);
+                            continue;
+                        }
+                    } else {
+                        log::warn!("Recovery handoff unavailable; retaining original snapshots");
+                        self.toasts.warning(format!(
+                            "{}: {}",
+                            t("Could not save"),
+                            t("Recover Unsaved Work")
                         ));
                     }
+                    for (doc, source) in restored.into_iter().zip(&s.docs) {
+                        self.docs.push(doc);
+                        self.active = self.docs.len() - 1;
+                        self.toasts
+                            .success(format!("{}: {}", t("Restored"), source.meta.title));
+                    }
+                }
+                Err(message) => {
+                    log::warn!("Recovery restore failed: {message}");
+                    self.toasts.error(message);
+                    keep.push(s);
+                    continue;
                 }
             }
-            // Recovered documents get fresh snapshots in the current session.
-            let _ = s.discard();
+            // Never delete the last durable copy before the replacement session owns one.
+            if self.services.recovery.is_some()
+                && let Err(error) = s.discard()
+            {
+                log::warn!("Restored recovery cleanup failed: {error}");
+                self.toasts
+                    .error(format!("{}: {error}", t("Recover Unsaved Work")));
+            }
         }
         self.dialogs.recovery = keep;
     }
 
     pub fn discard_orphans(&mut self) {
-        for s in std::mem::take(&mut self.dialogs.recovery) {
-            let _ = s.discard();
+        for mut session in std::mem::take(&mut self.dialogs.recovery) {
+            session.docs.retain(|doc| match doc.discard() {
+                Ok(()) => false,
+                Err(error) => {
+                    log::warn!("Recovery discard failed for {}: {error}", doc.doc_key);
+                    self.toasts.error(format!("{}: {error}", t("Discard All")));
+                    true
+                }
+            });
+            if !session.docs.is_empty() {
+                self.dialogs.recovery.push(session);
+            }
         }
     }
 
@@ -2397,6 +2515,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn save_alias_cannot_bypass_external_change_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("map.thinoda");
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let alias = nested.join("..").join("map.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.doc_mut().unwrap().save_to(&path, false).unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "My changes"))
+            .unwrap();
+        let external = b"newer external content";
+        std::fs::write(&path, external).unwrap();
+        let key = app.doc().unwrap().key.clone();
+        let workbook = app.doc().unwrap().doc.workbook().clone();
+        let revision = app.doc().unwrap().doc.state_id();
+        assert!(!app.save_active_to(&alias, false));
+        assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert!(app.doc().unwrap().is_dirty());
+        assert_eq!(app.doc().unwrap().path.as_deref(), Some(path.as_path()));
+        assert_eq!(app.doc().unwrap().doc.workbook(), &workbook);
+        assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("linked-map.thinoda");
+            let folder = dir.path().join("linked-folder");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            std::os::unix::fs::symlink(dir.path(), &folder).unwrap();
+            for alias in [link, folder.join("map.thinoda")] {
+                app.dialogs.conflict = None;
+                assert!(!app.save_active_to(&alias, false));
+                assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+                assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+            }
+        }
+        #[cfg(windows)]
+        {
+            app.dialogs.conflict = None;
+            assert!(!app.save_active_to(&dir.path().join("MAP.THINODA"), false));
+            assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+            assert_eq!(std::fs::read(&path).unwrap(), external);
+            assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+        }
+        app.dialogs.conflict = None;
+        let copy = dir.path().join("copy.thinoda");
+        assert!(app.save_active_to(&copy, false));
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert_eq!(OpenDoc::open(&copy).unwrap().doc.workbook(), &workbook);
+    }
+
+    #[test]
     fn sanitize_names() {
         assert_eq!(sanitize("a/b:c"), "a_b_c");
         assert_eq!(sanitize("  "), "Untitled");
@@ -2460,7 +2633,10 @@ mod tests {
         let root = d.doc.sheet().root;
         d.doc.edit_sheet("t", |s| s.set_title(root, "X")).unwrap();
         app.request_close_tab(0);
-        assert_eq!(app.dialogs.close, Some(CloseIntent::Tab(0)));
+        assert_eq!(
+            app.dialogs.close,
+            Some(CloseIntent::Tab(app.docs[0].key.clone()))
+        );
         assert_eq!(app.docs.len(), 1);
         app.close_tab_now(0);
         assert!(app.docs.is_empty());

@@ -9,7 +9,24 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-GitHub was refreshed on 2026-10-22 after incorporating main through `ba05910`:
+**Current priority (user-directed, 2026-10-24):** finish the selected-node
+Fill/color-picker regression, then follow the
+[active feature phase plan](PLAN.md#active-feature-phase-plan---user-directed-2026-10-24):
+native OS menus, standard and named user-defined keyboard mappings, task
+planning/Gantt, Zones/Pitch and enhanced AI. Implement and test all five before
+resuming the security/stability backlog. No unrelated feature work, new hardening
+campaigns or release preparation is included in this sequence.
+
+The Fill fix and phase plan ship together: full local workspace coverage passes
+661 tests with 1 pre-existing ignored; native/WASM lint is clean. The existing
+SS0-SS8 work is **deferred, not complete**;
+its implementation/evidence and owner/runtime blockers remain in PLAN. Earlier
+exact-candidate native CI, including ARM64 recovery repetition, passed; this is
+not evidence for still-open real-host acceptance. Disabled scanners/no analysis
+are not a clean security inventory. [PR #70](https://github.com/AxelWol/Thinoda/pull/70)
+remains open; implementation priority changes do not waive release prerequisites.
+
+Historical baseline (2026-10-22), after incorporating main through `ba05910`:
 there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
 merged the R1 shortcut-catalog, conflict-audit and Zen/search improvements at
 `679c85a`; its final head CI passed. Release preparation

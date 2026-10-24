@@ -18,6 +18,7 @@ pub mod dialog;
 pub mod fonts;
 pub mod icons;
 pub mod palette;
+pub mod ribbon;
 pub mod theme;
 pub mod toast;
 pub mod tokens;

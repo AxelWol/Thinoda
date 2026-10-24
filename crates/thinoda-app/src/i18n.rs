@@ -182,6 +182,20 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Window", "Fenster"),
+    ("Services", "Dienste"),
+    ("Hide Thinoda", "Thinoda ausblenden"),
+    ("Hide Others", "Andere ausblenden"),
+    ("Show All", "Alle einblenden"),
+    ("Minimize", "Minimieren"),
+    ("Bring All to Front", "Alle nach vorne bringen"),
+    (
+        "On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.",
+        "Unter Windows und macOS klappt Strg+F1 das Menüband ein oder aus. Alt+1 bis Alt+8 wählt eine Kategorie. Escape schließt ein vorübergehend geöffnetes Menüband.",
+    ),
+    ("Expand Ribbon", "Menüband erweitern"),
+    ("Ribbon", "Menüband"),
+    ("Collapse Ribbon", "Menüband reduzieren"),
     ("File name", "Dateiname"),
     ("Download failed", "Download fehlgeschlagen"),
     ("Download started", "Download gestartet"),
@@ -1058,6 +1072,14 @@ const DE: &[(&str, &str)] = &[
     ("Select a topic first", "Bitte zuerst ein Thema auswählen"),
     ("AI map created", "KI-Map erstellt"),
     (
+        "AI settings changed. Test the connection again.",
+        "Die KI-Einstellungen wurden geändert. Bitte die Verbindung erneut testen.",
+    ),
+    (
+        "The document changed. Try again.",
+        "Das Dokument wurde geändert. Bitte erneut versuchen.",
+    ),
+    (
         "The topic no longer exists",
         "Das Thema existiert nicht mehr",
     ),
@@ -1575,6 +1597,9 @@ mod tests {
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
             include_str!("symbols.rs"),
+            include_str!("menus.rs"),
+            include_str!("native_menus.rs"),
+            include_str!("ribbon.rs"),
         ] {
             for (offset, _) in source.match_indices("t(") {
                 if offset > 0

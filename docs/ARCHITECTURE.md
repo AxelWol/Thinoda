@@ -51,10 +51,42 @@ graph TD
   conflict/reserved-key policy and explicit editor/reset behavior.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
+  Native recovery locks explicitly unlock before closing their file descriptor:
+  a concurrently forked child's duplicate must not delay orphan discovery after
+  the owning session releases its lock. Orphan documents retain a shared lease
+  until restoration/discard or the last handle is dropped.
+  Suspension flushes while holding ownership and releases only on success.
+  Suspended managers may queue in-memory work, but cannot flush/remove snapshots
+  before resuming; cleanup must reacquire ownership so it cannot delete another
+  process's claimed orphan.
+  Restore validates every snapshot in a selected session before opening any of
+  its maps or deleting its snapshots. Failed sessions stay claimed and visible
+  for retry; other selected sessions can still restore. Explicit discard retains
+  only documents whose deletion failed, with visible errors and logging.
+  Post-restore cleanup errors are reported rather than silently ignored.
+  Before opening restored maps and removing their originals, the app synchronously
+  persists replacement snapshots in its current recovery session. Failed handoffs
+  retain the original session for retry and attempt cleanup of new snapshot keys.
+  The platform handoff writer holds session ownership and never queues a failed
+  write for later resurrection. If recovery is unavailable, maps can still open,
+  but their original snapshots remain on disk and a warning is shown.
   Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;
   recovery overlays their current value on a copy without committing history.
+  Missing file fingerprints or failed metadata checks count as an unverifiable
+  external change: interactive saves require conflict resolution and autosave
+  skips the write. Failed saves and canceled MindManager save consent revoke
+  overwrite authorization so a later attempt asks again.
+  Save As compares absolute/canonical destination identity, not just literal
+  path spelling; aliases of the current file retain conflict protection.
+  Source-preserving sheet saves/conversions use the same identity check and
+  propagate identity errors instead of silently classifying them as distinct.
+  Tab-close prompts and save continuations target the stable document key,
+  never a retained vector index. Conflict/conversion decisions resume that same
+  close only after a successful save leaves no unsaved work. Cancellation,
+  failure or removal of the target ends the continuation, so subsequent saves
+  cannot revive it or close a replacement tab.
   Drafts bind to the document, sheet index/root and topic, since duplicated
   sheets can share topic IDs. Changed or missing source fields fail explicitly
   and retain the draft instead of overwriting newer content. Single-line
@@ -76,6 +108,40 @@ graph TD
   keyboard activation and draw a two-logical-pixel focus outline in the semantic
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
+- **Main-menu commands**: the host-independent menu tree drives compact menus
+  and the Windows HMENU/AppKit global-menu adapters. Native callbacks only queue known enabled
+  IDs and wakes the egui context; application-frame dispatch uses the producing
+  snapshot and rechecks document/sheet/history, text focus and modal ownership.
+  Standard native editing items send text-edit events when a text field owns
+  focus. Menu replacement drains pending commands first, and window destruction
+  removes its subclass before dropping callback data. Native integration errors
+  are logged and shown, with the compact menu retained. The Windows/macOS ribbon uses
+  the same tree and snapshot dispatch, with original vector icons, semantic group
+  footers and large primary/stacked secondary actions. Width reduction first hides
+  secondary captions, then collapses groups into menus; excess groups remain
+  reachable through a bounded overflow menu rather than a scrolling button wall.
+  Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
+  a category, and Escape or an outside press dismisses a temporary opening.
+  Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
+  overlap tab hit targets; keyboard focus reveals horizontally clipped items.
+  Pointer-driven ribbon commands are deferred past release so restoring a text
+  field's focus delivers Undo/Cut/etc. to that field, not the map. The top bar
+  remains quick access; floating editing/topic controls remain contextual and
+  keep their visibility settings. The Outline structural toolbar shares the icon
+  controls and adapts between captioned tiles, labeled rows and compact icons;
+  full accessible names, tooltips and all nine structural operations remain.
+  AppKit integration uses the existing Objective-C platform bridge, not an
+  additional menu dependency. It supplies the standard Thinoda/Services/Window
+  menus, moves About/Settings/Quit into the application menu and leaves unsaved-work
+  decisions in shared app commands. Key equivalents are derived from typed command
+  bindings, never parsed from file names or translated labels. macOS snapshots
+  omit formatted shortcut hints, so native menus can initialize before egui fonts.
+  NSMenu delegates
+  retain the current tree during tracking; queued selections and generation
+  ownership prevent old native items from invoking a replacement tree's commands.
+  Detaching disables the callback and restores the previous AppKit menu tree.
+  Real AppKit SDK/lifecycle fixtures run only on macOS; Windows tests do not
+  establish macOS UI/VoiceOver acceptance. Multi-window lifecycle remains open.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It
@@ -96,7 +162,10 @@ graph TD
   passes. Outline title/disclosure/command activation and shared switches,
   segmented choices and color swatches use it. Symbol insertion/removal, default-
   color/contrast actions and color application share that guard in the inspector
-  and context instance editor. Scroll areas and text inputs keep
+  and context instance editor. Swatch IDs combine the individual layout UI's
+  unique ID with the color, not the inherited scope ID: adjacent Fill/Border/
+  Text/Line palettes must not capture one another's input. Color-based suffixes
+  preserve keyboard focus when a custom swatch disappears. Scroll areas and text inputs keep
   upstream scrolling/text-selection behavior. Preview cards gate pointer
   activation with the same latch while retaining explicit keyboard activation;
   template double-click creation requires that guarded activation too. The
@@ -104,10 +173,67 @@ graph TD
   guard every standard egui button, slider or combo box. Sheet strip selection,
   creation, rename, arrows, context opening and commands share the latch without
   disabling scrolling or replacing egui's single-finger hold recognizer.
+  The custom-theme editor retains a full staged-theme/role snapshot across each
+  pointer sequence. Cancel, multitouch, focus loss or skipped editor frames restore
+  its starting values through release, including changes made on earlier drag
+  frames; rejected releases cannot save/apply or dismiss it via outside clicks.
+  Settings pointer edits live in a separate staged profile until clean release;
+  ordinary app behavior and settings writes continue to see the committed profile.
+  Cancel, multitouch, focus loss, a disabled/hidden window, skipped frames or an
+  intervening profile change reject the draft without replacing newer preferences.
+  Language/title defaults update only after acceptance. Credential save/clear,
+  connection tests, folder/install actions and shortcut navigation require accepted
+  activation; rejected input retains the independent API-key text draft.
+  Shared confirmation dialogs gate every button kind and backdrop dismissal
+  with the same touch latch, so rejected releases cannot authorize saving,
+  discarding, overwriting or canceling a pending decision. Clean mouse/touch
+  and keyboard activation retain the normal confirmation behavior.
+  Theme-library edit/remove launchers and quick-style save/remove launchers
+  (including the removal menu action) share this latch. The quick-style name
+  dialog also gates Save, Cancel and backdrop dismissal, preserving typed
+  draft text and persisted library contents across rejected releases.
+  Sheet-rename decisions use the same latch and a draft owner composed of the
+  document key, active sheet index and model revision. A changed owner dismisses
+  the dialog with a warning instead of renaming the current replacement target.
+  IME candidate keys retain their existing protection before final confirmation.
+  Print-preview output, retry and close decisions also share the latch,
+  including backdrop dismissal; canceled input cannot initiate a print/PDF
+  handoff. Page-setup gestures retain their starting settings through the primary
+  pointer sequence; cancel, multitouch, focus loss and skipped dialog frames
+  restore that snapshot through release without disabling page setup.
+  Screenshot-editor crop, square/frame/color settings retain the same
+  sequence-scoped rollback contract. Rejected releases cannot copy/save output
+  or dismiss the editor; a canceled crop clears its provisional drag origin.
+  Label-popup add/remove/suggestion/sort/apply/cancel actions use the touch latch;
+  rejected outside releases retain the popup and its typed draft.
+  Symbol-color and MindManager export consents bind to document key, sheet and
+  revision after committing title edits. Switching/removing/changing the source
+  revokes both decisions and symbol-loss authorization; tab-vector reordering
+  alone does not transfer consent to the tab now occupying its old index.
+  Masked-copy preview consent uses the same document/sheet/revision boundary;
+  rejected touches cannot create or cancel a preview. Guide/shortcut filters,
+  legal-document selection/copy/links and auxiliary dialog decisions share the
+  cancellation latch without changing text selection or typed searches.
+  Palette command selection/backdrop and Find/Replace navigation, options and
+  replacement use the same latch. Rejected gestures preserve queries, replacement
+  drafts, scope, selection and history. The palette's stable search input protects
+  IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
+  keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
+  Topic requests capture document key, active sheet/root and revision after title
+  commit. Results for closed, changed or draft-editing sources are rejected with
+  a visible warning; unchanged background documents retain their original target
+  without activating a different tab. Disabling AI drops pending result ownership
+  so re-enabling it cannot revive that result; already-running bounded HTTP work
+  is not forcibly aborted.
+  Connection-test work and model lists belong to their endpoint and credential
+  draft; changing either discards them, while choosing a model keeps the list.
+  Generate requires accepted activation and retains rejected prompt drafts.
+  Its stable text editor protects IME candidate keys before global shortcuts;
+  deliberate Escape dismisses the prompt only after composition has ended.
 - **Printing**: `thinoda-io::print` fits the complete current-sheet export SVG onto
   physical paper, rendering directly at 150/300 dpi with bounded page allocation
   (no viewport screenshots or full-map intermediate raster clipping). The app

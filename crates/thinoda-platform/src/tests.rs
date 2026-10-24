@@ -355,6 +355,7 @@ fn settings_roundtrip_every_field() {
         default_theme: "ocean".into(),
         ui_scale: 1.5,
         show_status_bar: false,
+        ribbon_collapsed: true,
         show_format_panel: false,
         show_topic_toolbar: false,
         show_topic_add_buttons: false,
@@ -712,6 +713,61 @@ fn corrupted_and_invalid_workbooks_are_recoverable_errors_not_panics() {
     }
     orphans[0].discard().unwrap();
     assert!(!session.exists());
+}
+
+#[test]
+fn recovery_after_process_exit_keeps_live_sessions_and_orphan_leases() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let live = RecoveryManager::start(&paths).unwrap();
+    live.snapshot("live", meta("Still editing"), &Workbook::default())
+        .unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::recovery_exit_child", "--test-threads=1"])
+        .env("THINODA_RECOVERY_EXIT_ROOT", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(73),
+        "child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].docs.len(), 1);
+    assert_eq!(orphans[0].docs[0].doc_key, "crashed");
+    assert_eq!(orphans[0].docs[0].meta.title, "Persisted before exit");
+    orphans[0].docs[0].load().unwrap();
+    assert!(RecoveryManager::find_orphans(&paths).is_empty());
+    let retained = orphans[0].docs[0].clone();
+    drop(orphans);
+    assert!(
+        RecoveryManager::find_orphans(&paths).is_empty(),
+        "a cloned recovery document must retain the orphan lease"
+    );
+    retained.discard().unwrap();
+    assert!(RecoveryManager::find_orphans(&paths).is_empty());
+    assert!(live.session_dir().join("docs").join("live.json").exists());
+    live.finish().unwrap();
+}
+
+#[test]
+fn recovery_exit_child() {
+    let Some(root) = std::env::var_os("THINODA_RECOVERY_EXIT_ROOT") else {
+        return;
+    };
+    let manager = RecoveryManager::start(&Paths::from_root(root)).unwrap();
+    manager
+        .queue_snapshot(
+            "crashed",
+            Snapshot::to_bytes(meta("Persisted before exit"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(manager.try_flush_for_crash());
+    // Exit without Rust destructors: the next process must discover the snapshot.
+    std::process::exit(73);
 }
 
 #[test]
@@ -1147,6 +1203,138 @@ fn failed_recovery_flush_retains_pending_bytes_for_retry() {
     let snapshot: Snapshot =
         serde_json::from_slice(&fs::read(docs.join("retry.json")).unwrap()).unwrap();
     assert_eq!(snapshot.meta.title, "Retry");
+}
+
+#[test]
+fn recovery_handoff_persistence_does_not_queue_failed_or_suspended_writes() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    let docs = manager.session_dir().join("docs");
+    manager
+        .queue_snapshot(
+            "existing",
+            Snapshot::to_bytes(meta("Previously queued"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    fs::remove_dir(&docs).unwrap();
+    fs::write(&docs, b"blocker").unwrap();
+    assert!(
+        manager
+            .persist_snapshot("abandoned", meta("Failed"), &Workbook::default())
+            .is_err()
+    );
+    fs::remove_file(&docs).unwrap();
+    manager.flush().unwrap();
+    assert!(!docs.join("abandoned.json").exists());
+    assert!(docs.join("existing.json").is_file());
+    manager.suspend().unwrap();
+    assert!(matches!(
+        manager.persist_snapshot("suspended", meta("Suspended"), &Workbook::default()),
+        Err(crate::Error::Suspended)
+    ));
+    manager.resume().unwrap();
+    manager.flush().unwrap();
+    assert!(!docs.join("suspended.json").exists());
+    manager
+        .queue_snapshot(
+            "existing",
+            Snapshot::to_bytes(meta("Stale queued"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    manager
+        .persist_snapshot("existing", meta("Durable handoff"), &Workbook::default())
+        .unwrap();
+    manager.flush().unwrap();
+    let snapshot: Snapshot =
+        serde_json::from_slice(&fs::read(docs.join("existing.json")).unwrap()).unwrap();
+    assert_eq!(snapshot.meta.title, "Durable handoff");
+    manager.finish().unwrap();
+    assert!(matches!(
+        manager.persist_snapshot("closed", meta("Closed"), &Workbook::default()),
+        Err(crate::Error::Finished)
+    ));
+}
+
+#[test]
+fn suspended_recovery_cannot_modify_a_claimed_orphan() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Before suspend"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    let snapshot = orphans[0].docs[0].path.clone();
+    let original = fs::read(&snapshot).unwrap();
+    manager
+        .queue_snapshot(
+            "doc",
+            Snapshot::to_bytes(meta("Queued while suspended"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(manager.flush(), Err(crate::Error::Suspended)));
+    assert!(!manager.try_flush_for_crash());
+    assert!(matches!(
+        manager.remove("doc"),
+        Err(crate::Error::Suspended)
+    ));
+    assert!(manager.finish().is_err());
+    assert_eq!(fs::read(&snapshot).unwrap(), original);
+    drop(orphans);
+    manager.resume().unwrap();
+    manager.flush().unwrap();
+    let restored: Snapshot = serde_json::from_slice(&fs::read(&snapshot).unwrap()).unwrap();
+    assert_eq!(restored.meta.title, "Queued while suspended");
+    manager.finish().unwrap();
+}
+
+#[test]
+fn dropping_suspended_recovery_does_not_delete_a_claimed_orphan() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Claimed elsewhere"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    drop(manager);
+    orphans[0].docs[0].load().unwrap();
+    orphans[0].discard().unwrap();
+}
+
+#[test]
+fn failed_suspend_retains_the_live_lock_and_pending_snapshot() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Last persisted"), &Workbook::default())
+        .unwrap();
+    let blocked = manager.session_dir().join("docs").join("blocked.json");
+    mkdir(&blocked);
+    manager
+        .queue_snapshot(
+            "blocked",
+            Snapshot::to_bytes(meta("Pending"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(manager.suspend().is_err());
+    assert!(
+        RecoveryManager::find_orphans(&paths).is_empty(),
+        "failed suspension must not expose stale snapshots as an orphan"
+    );
+    fs::remove_dir(&blocked).unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].docs.len(), 2);
+    assert_eq!(orphans[0].docs[0].meta.title, "Pending");
+    orphans[0].discard().unwrap();
 }
 
 #[test]

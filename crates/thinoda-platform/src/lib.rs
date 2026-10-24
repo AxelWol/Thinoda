@@ -53,6 +53,7 @@ pub mod cloud;
 pub mod crash;
 pub mod credentials;
 pub mod fs;
+pub mod native_menu;
 pub mod paths;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod printing;
@@ -87,6 +88,8 @@ pub enum Error {
     Poisoned,
     #[error("recovery session has already finished")]
     Finished,
+    #[error("recovery session is suspended; resume it before modifying snapshots")]
+    Suspended,
     #[error("secure credential storage failed: {0}")]
     Credential(String),
 }

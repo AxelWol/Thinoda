@@ -134,6 +134,33 @@ impl RecoveryManager {
         self.flush()
     }
 
+    /// Persist a handoff without queuing failed work that the caller may abandon.
+    pub fn persist_snapshot(
+        &self,
+        doc_key: &str,
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+    ) -> Result<()> {
+        check_key(doc_key)?;
+        let bytes = Snapshot::to_bytes(meta, workbook)?;
+        let state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        if state.finished {
+            return Err(Error::Finished);
+        }
+        let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
+        lock.refresh();
+        let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
+        atomic_write(
+            self.session_dir
+                .join("docs")
+                .join(format!("{doc_key}.json")),
+            &bytes,
+            false,
+        )?;
+        pending.remove(doc_key);
+        Ok(())
+    }
+
     /// Coalesce a serialized `Snapshot` by document key without doing filesystem I/O.
     /// Serialize with `Snapshot::to_bytes`; the latest queued value wins.
     pub fn queue_snapshot(&self, doc_key: &str, bytes: Vec<u8>) -> Result<()> {
@@ -163,12 +190,18 @@ impl RecoveryManager {
     /// Persist pending snapshots and release the session lock, e.g. when a browser
     /// page is hidden or unloaded. Another tab (or the reloaded page) can then offer
     /// the snapshots for recovery. [`Self::resume`] takes the lock again.
+    /// Failed persistence retains the live lock and pending snapshots for retry.
     pub fn suspend(&self) -> Result<()> {
-        let result = self.flush();
-        if let Ok(mut state) = self.state.lock() {
-            state.lock.take();
+        let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        if state.finished {
+            return Err(Error::Finished);
         }
-        result
+        if state.lock.is_none() {
+            return Ok(());
+        }
+        self.flush_locked(&state)?;
+        state.lock.take();
+        Ok(())
     }
 
     /// Re-acquire the session lock after [`Self::suspend`]. Fails if another
@@ -183,14 +216,18 @@ impl RecoveryManager {
     }
 
     /// Persist pending snapshots synchronously. Failed writes remain queued for retry.
+    /// A suspended session must resume ownership before writing again.
     pub fn flush(&self) -> Result<()> {
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        self.flush_locked(&state)
+    }
+
+    fn flush_locked(&self, state: &State) -> Result<()> {
         if state.finished {
             return Err(Error::Finished);
         }
-        if let Some(lock) = &state.lock {
-            lock.refresh();
-        }
+        let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
+        lock.refresh();
         let mut pending = {
             let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
             std::mem::take(&mut *shared)
@@ -215,6 +252,9 @@ impl RecoveryManager {
         if state.finished {
             return true;
         }
+        if state.lock.is_none() {
+            return false;
+        }
         let Ok(mut pending) = self.pending.try_lock() else {
             return false;
         };
@@ -227,6 +267,9 @@ impl RecoveryManager {
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Err(Error::Finished);
+        }
+        if state.lock.is_none() {
+            return Err(Error::Suspended);
         }
         self.pending
             .lock()
@@ -249,6 +292,9 @@ impl RecoveryManager {
         let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Ok(());
+        }
+        if state.lock.is_none() {
+            state.lock = Some(Lock::try_acquire(&self.session_dir.join("lock"))?);
         }
         let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
         // Remove docs while the lock is held; no scanner can claim them in between.

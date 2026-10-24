@@ -231,12 +231,32 @@ impl OpenDoc {
         self.last_change.elapsed().as_secs_f32()
     }
 
-    /// Whether the file on disk changed since it was loaded or last saved.
+    /// Whether the file changed or its identity cannot be verified.
+    /// Uncertainty requires conflict resolution and must never permit autosave.
     pub fn changed_on_disk(&self) -> bool {
         match (&self.path, &self.fingerprint) {
-            (Some(_), Some(fp)) => fp.changed_since().unwrap_or(false),
-            _ => false,
+            (Some(path), Some(fp)) => match fp.changed_since() {
+                Ok(changed) => changed,
+                Err(error) => {
+                    log::warn!(
+                        "Could not verify file identity for {}: {error}",
+                        path.display()
+                    );
+                    true
+                }
+            },
+            (Some(path), None) => {
+                log::warn!("No saved file identity available for {}", path.display());
+                true
+            }
+            (None, _) => false,
         }
+    }
+
+    pub(crate) fn targets_current_file(&self, path: &Path) -> Result<bool, String> {
+        self.path.as_ref().map_or(Ok(false), |source| {
+            same_destination(source, path).map_err(|error| error.to_string())
+        })
     }
 
     /// Writes the document to `path` atomically.
@@ -267,18 +287,8 @@ impl OpenDoc {
         let format = Format::from_path(path)
             .filter(|format| is_native(*format) || *format == Format::MindManager)
             .ok_or_else(|| t("Choose a .thinoda, .xmind or .mmap destination.").to_string())?;
-        if let Some(source) = &self.path {
-            let same_path = pfs::absolute(source).map_err(|e| e.to_string())?
-                == pfs::absolute(path).map_err(|e| e.to_string())?;
-            let same_file = if pfs::exists(source) && pfs::exists(path) {
-                pfs::canonicalize(source).map_err(|e| e.to_string())?
-                    == pfs::canonicalize(path).map_err(|e| e.to_string())?
-            } else {
-                false
-            };
-            if same_path || same_file {
-                return Err("choose a different path to preserve the source workbook".into());
-            }
+        if self.targets_current_file(path)? {
+            return Err("choose a different path to preserve the source workbook".into());
         }
         let source = if let Some(edit) = &self.inspector_edit {
             let mut source = self.doc.workbook().clone();
@@ -314,9 +324,13 @@ impl OpenDoc {
             return;
         }
         if !self.is_dirty() {
-            let _ = recovery.remove(&self.key);
-            self.snapshot_state = s;
-            self.snapshot_inspector_edit = self.inspector_edit.clone();
+            match recovery.remove(&self.key) {
+                Ok(()) => {
+                    self.snapshot_state = s;
+                    self.snapshot_inspector_edit = self.inspector_edit.clone();
+                }
+                Err(error) => log::warn!("recovery snapshot cleanup failed: {error}"),
+            }
             return;
         }
         let meta = SnapshotMeta {
@@ -337,12 +351,13 @@ impl OpenDoc {
             std::borrow::Cow::Borrowed(self.doc.workbook())
         };
         match Snapshot::to_bytes(meta, &workbook) {
-            Ok(bytes) => {
-                if recovery.queue_snapshot(&self.key, bytes).is_ok() {
+            Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
+                Ok(()) => {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                 }
-            }
+                Err(error) => log::warn!("recovery snapshot queue failed: {error}"),
+            },
             Err(e) => log::warn!("snapshot failed: {e}"),
         }
     }
@@ -433,13 +448,57 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
     if pfs::absolute(source)? == pfs::absolute(destination)? {
         return Ok(true);
     }
-    Ok(pfs::exists(source)
-        && pfs::exists(destination)
-        && pfs::canonicalize(source)? == pfs::canonicalize(destination)?)
+    let canonical = |path: &Path| match pfs::canonicalize(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    match (canonical(source)?, canonical(destination)?) {
+        (Some(source), Some(destination)) => Ok(source == destination),
+        _ => Ok(false),
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destination_identity_errors_do_not_allow_source_preservation_bypass() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.save_to(&source, false).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let alias = dir.path().join("invalid\0.thinoda");
+        assert!(doc.targets_current_file(&alias).is_err());
+        assert!(doc.save_sheet_to(&alias, false).is_err());
+        doc.import_source = Some(source.clone());
+        assert!(doc.ensure_export_destination(&alias).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn sheet_save_rejects_parent_alias_without_altering_source_or_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.thinoda");
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let alias = nested.join("..").join("source.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.doc
+            .edit_book("Second sheet", |book| {
+                book.sheets.push(thinoda_core::Sheet::new("Other", "Other"));
+                Ok(())
+            })
+            .unwrap();
+        doc.save_to(&source, false).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let revision = doc.doc.state_id();
+        assert!(doc.save_sheet_to(&alias, false).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert_eq!(doc.doc.state_id(), revision);
+        assert!(!doc.is_dirty());
+    }
 
     #[test]
     fn save_and_reopen() {
@@ -461,6 +520,29 @@ mod tests {
         );
         assert!(!e.is_dirty());
         assert!(!e.changed_on_disk());
+    }
+
+    #[test]
+    fn unknown_or_unreadable_file_identity_requires_conflict_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("maps");
+        std::fs::create_dir(&parent).unwrap();
+        let path = parent.join("map.thinoda");
+        let mut doc = OpenDoc::new(Workbook::default());
+        doc.save_to(&path, false).unwrap();
+        let fingerprint = doc.fingerprint.take().unwrap();
+        assert!(
+            doc.changed_on_disk(),
+            "an existing document without a baseline cannot be assumed unchanged"
+        );
+        doc.fingerprint = Some(fingerprint);
+        let moved = dir.path().join("moved");
+        std::fs::rename(&parent, &moved).unwrap();
+        std::fs::write(&parent, b"parent is no longer a directory").unwrap();
+        assert!(
+            doc.changed_on_disk(),
+            "an unreadable identity must not silently permit overwrite/autosave"
+        );
     }
 
     #[test]

@@ -70,6 +70,590 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
     touch_release(h, pos, contacts, cancel, 2);
 }
 
+#[test]
+fn rejected_palette_selection_preserves_query_and_document() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Palette);
+        h.state_mut().palette.set_query("New");
+        h.run_steps(4);
+        let commands: Vec<_> = ThinodaApp::palette_commands()
+            .into_iter()
+            .filter(|(cmd, _)| h.state().command_available(cmd))
+            .map(|(_, metadata)| metadata)
+            .collect();
+        let command = h.state().palette.filter(&commands)[0];
+        let label = format!(
+            "{} {}",
+            command.title,
+            command.shortcut.as_deref().unwrap_or_default()
+        );
+        let count = h.state().docs.len();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::Button, &label)
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(h.state().palette.open);
+            assert_eq!(h.state().palette.query(), "New");
+            rejected_tap(&mut h, egui::pos2(2.0, 2.0), contacts, cancel);
+            assert!(h.state().palette.open);
+            assert_eq!(h.state().docs.len(), count);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.get_by_role_and_label(Role::Button, &label).click();
+        h.run_steps(4);
+        assert!(!h.state().palette.open);
+        assert_eq!(h.state().docs.len(), count + 1);
+    }
+}
+
+#[test]
+fn rejected_search_actions_preserve_scope_replacement_and_history() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1100.0, 1000.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::FindReplace);
+        h.state_mut().search.query = "Topic".into();
+        h.state_mut().search.replace = "Replacement".into();
+        h.run_steps(4);
+        assert!(!h.state().search.hits.is_empty());
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in [
+                "All sheets",
+                "Match case",
+                "Whole word",
+                "Include notes",
+                "Include labels",
+                "Dim others",
+                "Replace",
+            ] {
+                let options = (
+                    h.state().search.all_sheets,
+                    h.state().search.opts.clone(),
+                    h.state().search.dim,
+                    h.state().search.show_replace,
+                );
+                let pos = h
+                    .get_by_role_and_label(Role::CheckBox, label)
+                    .rect()
+                    .center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(
+                    (
+                        h.state().search.all_sheets,
+                        h.state().search.opts.clone(),
+                        h.state().search.dim,
+                        h.state().search.show_replace,
+                    ),
+                    options,
+                    "{label}"
+                );
+            }
+            for label in [
+                "Previous result",
+                "Next result",
+                "Replace All",
+                "Close search",
+            ] {
+                let current = h.state().search.current;
+                let selection = h.state().doc().unwrap().view.selection.clone();
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().search.current, current, "{label}");
+                assert_eq!(
+                    h.state().doc().unwrap().view.selection,
+                    selection,
+                    "{label}"
+                );
+                assert!(h.state().search.open);
+                assert_eq!(h.state().search.query, "Topic");
+                assert_eq!(h.state().search.replace, "Replacement");
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+        }
+        h.get_by_role_and_label(Role::Button, "Replace All").click();
+        h.run_steps(4);
+        assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.state_mut().doc_mut().unwrap().doc.undo();
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        h.get_by_role_and_label(Role::Button, "Close search")
+            .click();
+        h.run_steps(4);
+        assert!(!h.state().search.open);
+    }
+}
+
+#[test]
+fn palette_candidate_keys_do_not_execute_or_discard_a_query() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for key in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 900.0));
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Palette);
+            h.state_mut().palette.set_query("New");
+            h.run_steps(4);
+            let count = h.state().docs.len();
+            h.event(Event::Ime(egui::ImeEvent::Preedit {
+                text: "candidate".into(),
+                active_range_chars: None,
+            }));
+            h.run_steps(2);
+            h.key_press(key);
+            h.run_steps(2);
+            assert!(h.state().palette.open, "{key:?}");
+            assert_eq!(h.state().docs.len(), count);
+            h.input_mut().events.extend([
+                Event::Ime(egui::ImeEvent::Commit(String::new())),
+                Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(2);
+            assert!(h.state().palette.open, "{key:?}: final composition frame");
+            assert_eq!(h.state().docs.len(), count);
+            h.key_press(egui::Key::Escape);
+            h.run_steps(2);
+            assert!(!h.state().palette.open);
+        }
+    }
+}
+
+#[test]
+fn rejected_shortcut_reference_actions_preserve_filters_and_search() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Settings);
+        h.state_mut().exec(&ctx, Cmd::Shortcuts);
+        h.state_mut().dialogs.shortcut_browser.query = "save".into();
+        h.run_steps(4);
+        let settings = h.state().settings.clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for (role, label) in [(Role::CheckBox, "Unassigned only"), (Role::Button, "Close")] {
+                h.get_by_role_and_label(role, label).scroll_to_me();
+                h.run_steps(4);
+                let pos = h.get_by_role_and_label(role, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert!(h.state().dialogs.shortcuts);
+                assert!(h.state().dialogs.settings);
+                assert!(!h.state().dialogs.shortcut_browser.unassigned_only);
+                assert_eq!(h.state().dialogs.shortcut_browser.query, "save");
+            }
+            rejected_tap(&mut h, egui::pos2(2.0, 2.0), contacts, cancel);
+            assert!(h.state().dialogs.shortcuts);
+            assert_eq!(h.state().settings, settings);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.get_by_role_and_label(Role::CheckBox, "Unassigned only")
+            .scroll_to_me();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::CheckBox, "Unassigned only")
+            .click();
+        h.run_steps(4);
+        assert!(h.state().dialogs.shortcut_browser.unassigned_only);
+        h.get_by_role_and_label(Role::Button, "Close").click();
+        h.run_steps(4);
+        assert!(!h.state().dialogs.shortcuts);
+        assert!(h.state().dialogs.settings);
+        assert_eq!(h.state().settings, settings);
+        assert_eq!(h.state().dialogs.shortcut_browser.query, "save");
+    }
+}
+
+#[test]
+fn rejected_ai_generation_keeps_prompt_without_starting_request() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().ai.prompt = Some("Local prompt draft".into());
+        h.run_steps(4);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::Button, "Generate")
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(h.state().ai.pending.is_none());
+            assert_eq!(h.state().ai.prompt.as_deref(), Some("Local prompt draft"));
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+        assert!(h.state().ai.prompt.is_none());
+        assert!(h.state().ai.pending.is_none());
+    }
+}
+
+#[test]
+fn ai_prompt_keeps_ime_candidate_escape_and_restores_deliberate_dismissal() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().ai.prompt = Some(String::new());
+        h.run_steps(4);
+        h.event(Event::Ime(egui::ImeEvent::Preedit {
+            text: "candidate".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(2);
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_some());
+        assert!(h.state().ai.pending.is_none());
+        h.input_mut().events.extend([
+            Event::Ime(egui::ImeEvent::Commit(String::new())),
+            Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_some());
+        h.key_press(egui::Key::Escape);
+        h.run_steps(2);
+        assert!(h.state().ai.prompt.is_none());
+        assert!(h.state().ai.pending.is_none());
+    }
+}
+
+#[test]
+fn rejected_auxiliary_dialog_actions_preserve_their_decisions() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for family in ["guide", "legal", "about", "masked"] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1100.0, 1000.0));
+            let ctx = h.ctx.clone();
+            match family {
+                "guide" => h.state_mut().exec(&ctx, Cmd::QuickStart),
+                "legal" => h.state_mut().dialogs.legal.open = true,
+                "about" => h.state_mut().exec(&ctx, Cmd::About),
+                "masked" => h.state_mut().exec(&ctx, Cmd::MaskedCopy),
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            let count = h.state().docs.len();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let labels: &[&str] = match family {
+                "guide" => &["All sections", "Close"],
+                "legal" => &["Copy", "Close"],
+                "about" => &["Legal documents"],
+                "masked" => &["Create Preview", "Cancel"],
+                _ => unreachable!(),
+            };
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                for label in labels {
+                    h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+                    h.run_steps(4);
+                    let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                    rejected_tap(&mut h, pos, contacts, cancel);
+                    match family {
+                        "guide" => {
+                            assert!(h.state().dialogs.guide.open);
+                            assert_eq!(h.state().dialogs.guide.section, Some(0));
+                        }
+                        "legal" => assert!(h.state().dialogs.legal.open),
+                        "about" => {
+                            assert!(h.state().dialogs.about);
+                            assert!(!h.state().dialogs.legal.open);
+                        }
+                        "masked" => assert!(h.state().dialogs.masked_copy),
+                        _ => unreachable!(),
+                    }
+                    assert_eq!(h.state().docs.len(), count);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                }
+            }
+            let clean = match family {
+                "guide" | "legal" => "Close",
+                "about" => "Legal documents",
+                "masked" => "Create Preview",
+                _ => unreachable!(),
+            };
+            h.get_by_role_and_label(Role::Button, clean).click();
+            h.run_steps(4);
+            match family {
+                "guide" => assert!(!h.state().dialogs.guide.open),
+                "legal" => assert!(!h.state().dialogs.legal.open),
+                "about" => assert!(h.state().dialogs.legal.open),
+                "masked" => {
+                    assert!(!h.state().dialogs.masked_copy);
+                    assert_eq!(h.state().docs.len(), count + 1);
+                    assert_eq!(h.state().docs[count - 1].doc.workbook(), &before);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+fn masked_copy_consent_expires_when_its_source_changes() {
+    for change in ["document", "revision", "sheet", "removed"] {
+        let mut h = harness(ThemeMode::Light, 1.0);
+        h.set_size(vec2(1100.0, 1000.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::MaskedCopy);
+        h.run_steps(3);
+        assert!(h.state().dialogs.masked_copy);
+        match change {
+            "document" => h.state_mut().exec(&ctx, Cmd::New),
+            "revision" => {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Local edit", |s| s.set_title(s.root, "Local title"))
+                    .unwrap();
+            }
+            "sheet" => {
+                let d = h.state_mut().doc_mut().unwrap();
+                let index = d.doc.duplicate_sheet(0).unwrap();
+                d.doc.set_active(index);
+            }
+            "removed" => h.state_mut().docs.clear(),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        h.run_steps(4);
+        assert!(!h.state().dialogs.masked_copy, "{change}");
+        let after: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|d| (d.doc.workbook().clone(), d.doc.state_id()))
+            .collect();
+        assert_eq!(before, after, "{change}");
+    }
+}
+
+#[test]
+fn rejected_settings_actions_preserve_profile_and_network_drafts() {
+    use thinoda_app::app::SettingsTab;
+    use thinoda_platform::Paths;
+
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(root.path());
+        paths.ensure().unwrap();
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        h.state_mut().services.paths = Some(paths.clone());
+        h.state_mut().save_settings();
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Settings);
+        h.run_steps(4);
+        let original = h.state().settings.clone();
+        let persisted = Settings::load(&paths).unwrap();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in ["Autosave", "Keep backup on save", "Confirm before deleting"] {
+                let pos = h.get_by_role_and_label(Role::Switch, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().settings, original, "{label}");
+                assert_eq!(Settings::load(&paths).unwrap(), persisted, "{label}");
+            }
+            for label in ["Editor", "AI Assistant", "Cloud", "Keyboard Shortcuts"] {
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(h.state().dialogs.settings_tab, SettingsTab::General);
+                assert!(!h.state().dialogs.shortcuts);
+            }
+        }
+        h.get_by_role_and_label(Role::Switch, "Autosave").click();
+        h.run_steps(4);
+        assert_ne!(h.state().settings.autosave, original.autosave);
+        assert_eq!(
+            Settings::load(&paths).unwrap().autosave,
+            h.state().settings.autosave
+        );
+        h.get_by_role_and_label(Role::Button, "AI Assistant")
+            .click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::DisclosureTriangle, "AI Assistant")
+            .click();
+        h.run_steps(4);
+        h.state_mut().ai.api_key_draft = Some("local-test-draft".into());
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            for label in ["Save API Key", "Clear", "Test Connection"] {
+                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+                rejected_tap(&mut h, pos, contacts, cancel);
+                assert_eq!(
+                    h.state().ai.api_key_draft.as_deref(),
+                    Some("local-test-draft")
+                );
+                assert!(h.state().ai.test.is_none());
+                assert_eq!(
+                    Settings::load(&paths).unwrap().autosave,
+                    h.state().settings.autosave
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn settings_slider_waits_for_release_and_rolls_back_interrupted_gestures() {
+    use thinoda_platform::Paths;
+
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for interruption in [
+            "cancel",
+            "multitouch",
+            "focus",
+            "hidden",
+            "modal",
+            "profile",
+            "clean",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = Paths::from_root(root.path());
+            paths.ensure().unwrap();
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 900.0));
+            h.state_mut().services.paths = Some(paths.clone());
+            h.state_mut().save_settings();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Settings);
+            h.run_steps(4);
+            let mut original = h.state().settings.clone();
+            let mut persisted = Settings::load(&paths).unwrap();
+            let slider = h.get_by_role_and_label(Role::Slider, "UI Scale").rect();
+            let start = egui::pos2(slider.left() + 10.0, slider.center().y);
+            let end = start + vec2(60.0, 0.0);
+            h.input_mut().events.extend([
+                Event::PointerMoved(start),
+                Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Start,
+                    pos: start,
+                    force: None,
+                },
+            ]);
+            h.run_steps(2);
+            h.input_mut().events.extend([
+                Event::PointerMoved(end),
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Move,
+                    pos: end,
+                    force: None,
+                },
+            ]);
+            h.run_steps(2);
+            assert_eq!(h.state().settings, original, "{interruption}: provisional");
+            assert_eq!(Settings::load(&paths).unwrap(), persisted);
+            match interruption {
+                "multitouch" => {
+                    h.input_mut().events.push(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::Start,
+                        pos: end + vec2(40.0, 0.0),
+                        force: None,
+                    });
+                    h.run_steps(2);
+                    h.input_mut().events.push(Event::Touch {
+                        device_id: TouchDeviceId(1),
+                        id: TouchId(2),
+                        phase: TouchPhase::End,
+                        pos: end + vec2(40.0, 0.0),
+                        force: None,
+                    });
+                }
+                "focus" => {
+                    h.input_mut().events.push(Event::WindowFocused(false));
+                    h.run_steps(2);
+                }
+                "hidden" => {
+                    h.state_mut().dialogs.settings = false;
+                    h.run_steps(2);
+                }
+                "modal" => {
+                    h.state_mut().dialogs.shortcuts = true;
+                    h.run_steps(2);
+                }
+                "profile" => {
+                    h.state_mut()
+                        .settings
+                        .recent_templates
+                        .push("external-change".into());
+                    h.state_mut().save_settings();
+                    original = h.state().settings.clone();
+                    persisted = Settings::load(&paths).unwrap();
+                    h.run_steps(2);
+                }
+                _ => {}
+            }
+            h.input_mut().events.extend([
+                Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: if interruption == "cancel" {
+                        TouchPhase::Cancel
+                    } else {
+                        TouchPhase::End
+                    },
+                    pos: end,
+                    force: None,
+                },
+                Event::PointerButton {
+                    pos: end,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(4);
+            if interruption == "clean" {
+                assert_ne!(h.state().settings.ui_scale, original.ui_scale);
+                assert_eq!(
+                    Settings::load(&paths).unwrap().ui_scale,
+                    h.state().settings.ui_scale
+                );
+            } else {
+                assert_eq!(h.state().settings, original, "{interruption}");
+                assert_eq!(Settings::load(&paths).unwrap(), persisted);
+            }
+        }
+    }
+}
+
 fn touch_release(
     h: &mut Harness<'_, ThinodaApp>,
     pos: egui::Pos2,
@@ -109,6 +693,110 @@ fn touch_release(
     }
     h.event(Event::PointerButton {
         pos,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(4);
+}
+
+fn drag_control_with_touch(
+    h: &mut Harness<'_, ThinodaApp>,
+    start: egui::Pos2,
+    delta: egui::Vec2,
+    contacts: u64,
+    cancel: bool,
+) {
+    let revision = h.state().doc().unwrap().doc.state_id();
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::Start,
+        pos: start,
+        force: None,
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+
+    let moved = start + delta;
+    h.event(Event::PointerMoved(moved));
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::Move,
+        pos: moved,
+        force: None,
+    });
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.state_id(),
+        revision,
+        "slider should keep touch changes provisional until release"
+    );
+
+    if contacts > 1 {
+        for id in 2..=contacts {
+            h.event(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(id),
+                phase: TouchPhase::Start,
+                pos: moved + vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        h.run_steps(1);
+    }
+    for id in 1..=contacts {
+        h.event(Event::Touch {
+            device_id: TouchDeviceId(1),
+            id: TouchId(id),
+            phase: if cancel {
+                TouchPhase::Cancel
+            } else {
+                TouchPhase::End
+            },
+            pos: moved + vec2((id - 1) as f32 * 40.0, 0.0),
+            force: None,
+        });
+    }
+    h.run_steps(2);
+    if cancel || contacts > 1 {
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected release must discard the provisional slider value"
+        );
+    }
+    h.event(Event::PointerButton {
+        pos: moved,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(4);
+}
+
+fn drag_control_with_mouse(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) {
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+    let moved = start + delta;
+    h.event(Event::PointerMoved(moved));
+    h.run_steps(2);
+    h.event(Event::PointerButton {
+        pos: moved,
         button: PointerButton::Primary,
         pressed: false,
         modifiers: Modifiers::NONE,
@@ -733,4 +1421,1258 @@ fn inspector_symbols(h: &mut Harness<'_, ThinodaApp>) {
         .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
     h.run_steps(4);
     assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
+}
+
+#[test]
+fn selected_topic_fill_and_border_swatches_are_independent() {
+    {
+        let language = Language::English;
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            for scale in [1.0, 1.5, 2.0] {
+                for multiple in [false, true] {
+                    let mut app = ThinodaApp::new(
+                        Settings {
+                            language,
+                            theme,
+                            ui_scale: scale,
+                            show_format_panel: true,
+                            show_topic_toolbar: false,
+                            ..Default::default()
+                        },
+                        Services::default(),
+                        &[],
+                    );
+                    app.exec(&egui::Context::default(), Cmd::New);
+                    app.format_tab = FormatTab::Style;
+                    let doc = app.doc_mut().unwrap();
+                    let children = doc.doc.sheet().children(doc.doc.sheet().root);
+                    let selected = children[..if multiple { 2 } else { 1 }].to_vec();
+                    doc.view.selection = selected.clone();
+                    let before = doc.doc.workbook().clone();
+                    let revision = doc.doc.state_id();
+                    let mut h = Harness::builder()
+                        .with_size(vec2(1200.0, 1000.0) * scale)
+                        .with_step_dt(1.0 / 60.0)
+                        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                    h.ctx
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    h.run_steps(8);
+                    h.set_size(vec2(1200.0, 1000.0));
+                    h.run_steps(8);
+                    assert_eq!(
+                        h.query_all_by_role_and_label(Role::ColorWell, "#2E7CF6")
+                            .count(),
+                        4,
+                        "Fill, Border, Text Color and Line Color need distinct swatches"
+                    );
+                    h.query_all_by_role_and_label(Role::ColorWell, "#2E7CF6")
+                        .next()
+                        .unwrap()
+                        .scroll_to_me();
+                    h.run_steps(8);
+                    for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                        let pos = h
+                            .query_all_by_role_and_label(Role::ColorWell, "#2E7CF6")
+                            .next()
+                            .unwrap()
+                            .rect()
+                            .center();
+                        rejected_tap(&mut h, pos, contacts, cancel);
+                        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                    }
+                    h.query_all_by_role_and_label(Role::ColorWell, "#2E7CF6")
+                        .next()
+                        .unwrap()
+                        .click();
+                    h.run_steps(4);
+                    let blue = thinoda_core::Color::from_hex("#2E7CF6").unwrap();
+                    let doc = h.state().doc().unwrap();
+                    for &id in &selected {
+                        let style = &doc.doc.sheet().topic(id).unwrap().style;
+                        let original = &before.sheets[0].topic(id).unwrap().style;
+                        assert_eq!(style.fill, Some(blue));
+                        assert_eq!(style.border_color, original.border_color);
+                        assert_eq!(style.text_color, original.text_color);
+                        assert_eq!(style.line_color, original.line_color);
+                        assert_eq!(
+                            thinoda_core::theme::resolve_style(doc.doc.sheet(), id, doc.view.dark)
+                                .fill,
+                            Some(blue)
+                        );
+                    }
+                    let filled = doc.doc.workbook().clone();
+                    let ctx = h.ctx.clone();
+                    h.state_mut()
+                        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+                    h.run_steps(4);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    h.state_mut()
+                        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Redo));
+                    h.run_steps(4);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &filled);
+                    h.query_all_by_role_and_label(Role::ColorWell, "#2BB673")
+                        .nth(1)
+                        .unwrap()
+                        .scroll_to_me();
+                    h.run_steps(8);
+                    h.query_all_by_role_and_label(Role::ColorWell, "#2BB673")
+                        .nth(1)
+                        .unwrap()
+                        .click();
+                    h.run_steps(4);
+                    let green = thinoda_core::Color::from_hex("#2BB673").unwrap();
+                    for &id in &selected {
+                        let style = &h
+                            .state()
+                            .doc()
+                            .unwrap()
+                            .doc
+                            .sheet()
+                            .topic(id)
+                            .unwrap()
+                            .style;
+                        assert_eq!(style.fill, Some(blue));
+                        assert_eq!(style.border_color, Some(green));
+                    }
+                    h.state_mut()
+                        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+                    h.run_steps(4);
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &filled);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn style_inspector_combo_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+            h.run_steps(4);
+            let target = h.get_by_label(t("Rectangle")).rect().center();
+            rejected_tap(&mut h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected touch must not commit an inspector combo selection"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "rejected touch must preserve the topic style"
+            );
+        }
+
+        h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+        h.run_steps(4);
+        h.get_by_label(t("Rectangle")).click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        let root = doc.doc.sheet().root;
+        assert_eq!(
+            doc.doc.sheet().topic(root).unwrap().style.shape,
+            Some(thinoda_core::TopicShape::Rect),
+            "ordinary pointer activation remains available"
+        );
+    }
+}
+
+#[test]
+fn style_inspector_slider_discards_canceled_and_multitouch_drags() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Slider, t("Width"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let rect = h.get_by_role_and_label(Role::Slider, t("Width")).rect();
+        let start = rect.center();
+        let delta = vec2(rect.width() * 0.35, 0.0);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            drag_control_with_touch(&mut h, start, delta, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "contacts={contacts}, cancel={cancel}: rejected slider drag must not create an edit"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "canceled/multitouch slider drag must restore the prior value"
+            );
+        }
+
+        drag_control_with_touch(&mut h, start, delta, 1, false);
+        let touched = h.state().doc().unwrap().doc.workbook().clone();
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_ne!(touched, before);
+        let ctx = h.ctx.clone();
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+        h.run_steps(4);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+        drag_control_with_mouse(&mut h, start, delta);
+        assert_ne!(
+            h.state().doc().unwrap().doc.workbook(),
+            &before,
+            "ordinary mouse slider dragging remains available"
+        );
+    }
+}
+
+#[test]
+fn style_inspector_numeric_drag_discards_canceled_and_multitouch_input() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::SpinButton, t("Font Size"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let rect = h
+            .get_by_role_and_label(Role::SpinButton, t("Font Size"))
+            .rect();
+        let start = rect.center();
+        let delta = vec2(rect.width() * 0.4, 0.0);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            drag_control_with_touch(&mut h, start, delta, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "canceled/multitouch numeric drag must not create a document edit"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+
+        drag_control_with_touch(&mut h, start, delta, 1, false);
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_ne!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn map_inspector_switch_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Map;
+        h.run_steps(8);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let rainbow_before = h.state().doc().unwrap().doc.sheet().theme.rainbow;
+        h.get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let toggle = h
+            .get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .rect()
+            .center();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            rejected_tap(&mut h, toggle, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected Map inspector release must not commit a theme edit"
+            );
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().theme.rainbow,
+            rainbow_before
+        );
+
+        h.get_by_role_and_label(Role::Switch, t("Rainbow Branches"))
+            .click();
+        h.run_steps(4);
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().theme.rainbow,
+            !rainbow_before
+        );
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+}
+
+#[test]
+fn custom_theme_editor_discards_rejected_preset_activation() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+        h.run_steps(4);
+        h.get_by_label(t("Rectangle")).click();
+        h.run_steps(4);
+
+        h.get_by_label(t("Role preset")).scroll_to_me();
+        h.run_steps(8);
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_label(t("Role preset")).click();
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t("Warning"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, target, contacts, cancel);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+
+        h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+            .click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.doc.state_id(), revision + 1);
+        assert_eq!(
+            doc.doc
+                .sheet()
+                .theme
+                .custom_theme
+                .as_ref()
+                .unwrap()
+                .roles
+                .central
+                .shape,
+            Some(thinoda_core::TopicShape::Rect),
+            "rejected preset activation must not overwrite the staged role style"
+        );
+    }
+}
+
+#[test]
+fn export_consent_cannot_follow_a_changed_source() {
+    for symbols in [false, true] {
+        for change in [
+            "active-document",
+            "revision",
+            "active-sheet",
+            "removed-document",
+        ] {
+            let mut h = harness(ThemeMode::Light, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::New);
+            h.state_mut().active = 0;
+            h.state_mut().exec(&ctx, Cmd::NewSheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            if symbols {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Symbol color", |sheet| {
+                        let topic = sheet.topic_mut(sheet.root).unwrap();
+                        topic.markers.push("priority-1".into());
+                        topic
+                            .marker_colors
+                            .insert(0, thinoda_core::Color::rgb(20, 30, 40));
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+            h.state_mut()
+                .exec(&ctx, Cmd::Export(thinoda_io::Format::MindManager));
+            h.run_steps(4);
+            assert!(
+                h.state().dialogs.symbol_export.is_some() || h.state().dialogs.mindmanager_export
+            );
+            match change {
+                "active-document" => h.state_mut().active = 1,
+                "removed-document" => {
+                    h.state_mut().docs.remove(0);
+                }
+                "active-sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+                "revision" => {
+                    h.state_mut()
+                        .doc_mut()
+                        .unwrap()
+                        .doc
+                        .edit_sheet("New work", |sheet| {
+                            sheet.set_title(sheet.root, "Changed after consent opened")
+                        })
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before: Vec<_> = h
+                .state()
+                .docs
+                .iter()
+                .map(|doc| doc.doc.workbook().clone())
+                .collect();
+            h.run_steps(4);
+            assert!(h.state().dialogs.symbol_export.is_none(), "{change}");
+            assert!(!h.state().dialogs.mindmanager_export, "{change}");
+            assert!(!h.state().dialogs.mindmanager_symbol_color_loss);
+            for (doc, expected) in h.state().docs.iter().zip(before) {
+                assert_eq!(doc.doc.workbook(), &expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn export_consent_stays_with_its_document_after_tab_reordering() {
+    use egui_kittest::kittest::NodeT;
+    let mut h = harness(ThemeMode::Light, 1.0);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::New);
+    h.state_mut().active = 0;
+    h.state_mut()
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Symbol color", |sheet| {
+            let topic = sheet.topic_mut(sheet.root).unwrap();
+            topic.markers.push("priority-1".into());
+            topic
+                .marker_colors
+                .insert(0, thinoda_core::Color::rgb(20, 30, 40));
+            Ok(())
+        })
+        .unwrap();
+    let key = h.state().doc().unwrap().key.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Export(thinoda_io::Format::MindManager));
+    h.run_steps(4);
+    assert!(h.state().dialogs.symbol_export.is_some());
+    h.state_mut().docs.swap(0, 1);
+    h.state_mut().active = 1;
+    h.run_steps(4);
+    h.query_all_by_role_and_label(Role::Button, t("Export"))
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap()
+        .click();
+    h.run_steps(4);
+    assert!(h.state().dialogs.symbol_export.is_none());
+    assert!(h.state().dialogs.mindmanager_export);
+    assert!(h.state().dialogs.mindmanager_symbol_color_loss);
+    assert_eq!(h.state().doc().unwrap().key, key);
+    h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+    h.run_steps(4);
+    assert!(!h.state().dialogs.mindmanager_export);
+    assert!(!h.state().dialogs.mindmanager_symbol_color_loss);
+}
+
+#[test]
+fn label_popup_rejects_canceled_and_multitouch_actions() {
+    use egui_kittest::kittest::NodeT;
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for label in [
+            "Apply",
+            "Cancel",
+            "Add labels",
+            "Auto sort",
+            "Remove label: Existing",
+            "Use label: Keep this label",
+            "backdrop",
+        ] {
+            let mut h = harness(theme, 1.0);
+            let root = h.state().doc().unwrap().doc.sheet().root;
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .doc
+                .edit_sheet("Initial labels", |sheet| {
+                    let child = sheet.children(root)[0];
+                    sheet.set_labels(root, vec!["Existing".into()])?;
+                    sheet.set_labels(child, vec!["Keep this label".into()])
+                })
+                .unwrap();
+            h.state_mut().doc_mut().unwrap().view.selection = vec![root];
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::Labels);
+            h.run_steps(4);
+            h.get_by_label(t("New labels")).type_text("Keep this label");
+            h.run_steps(4);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let sort = h.get_by_label(t("Auto sort")).accesskit_node().toggled();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                let target = if label == "backdrop" {
+                    egui::pos2(5.0, 5.0)
+                } else {
+                    h.get_by_label(t(label)).rect().center()
+                };
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(
+                    h.get_by_label(t("New labels")).value().as_deref(),
+                    Some("Keep this label")
+                );
+                assert_eq!(
+                    h.get_by_label(t("Auto sort")).accesskit_node().toggled(),
+                    sort
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+            h.get_by_label(t("Apply")).click();
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .topic(root)
+                    .unwrap()
+                    .labels,
+                ["Existing", "Keep this label"]
+            );
+            assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+    }
+}
+
+#[test]
+fn sheet_rename_rejects_canceled_and_multitouch_decisions() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["OK", "Cancel"] {
+            let mut h = harness(theme, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::RenameSheet);
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                .type_text(" Draft");
+            h.run_steps(4);
+            let name = h
+                .get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                .value()
+                .unwrap();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert!(h.state().dialogs.rename_sheet.is_some());
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert_eq!(
+                    h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+                        .value()
+                        .unwrap(),
+                    name
+                );
+            }
+            touch_release(&mut h, target, 1, false, 2);
+            assert!(h.state().dialogs.rename_sheet.is_none());
+            if choice == "OK" {
+                assert_eq!(h.state().doc().unwrap().doc.sheet().title, name);
+                assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+            }
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        }
+    }
+}
+
+#[test]
+fn sheet_rename_cannot_follow_a_changed_document_or_revision() {
+    for change in [
+        "active-document",
+        "removed-document",
+        "revision",
+        "active-sheet",
+    ] {
+        let mut h = harness(ThemeMode::Light, 1.0);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::New);
+        h.state_mut().active = 0;
+        if change == "active-sheet" {
+            h.state_mut().exec(&ctx, Cmd::NewSheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+        }
+        h.state_mut().exec(&ctx, Cmd::RenameSheet);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::TextInput, t("Rename Sheet"))
+            .type_text(" Stale");
+        h.run_steps(4);
+        let target = h
+            .get_by_role_and_label(Role::Button, t("OK"))
+            .rect()
+            .center();
+        match change {
+            "active-document" => h.state_mut().active = 1,
+            "removed-document" => {
+                h.state_mut().docs.remove(0);
+            }
+            "revision" => {
+                h.state_mut()
+                    .doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("External edit", |sheet| {
+                        sheet.set_title(sheet.root, "Newer work")
+                    })
+                    .unwrap();
+            }
+            "active-sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+            _ => unreachable!(),
+        }
+        let before: Vec<_> = h
+            .state()
+            .docs
+            .iter()
+            .map(|doc| doc.doc.workbook().clone())
+            .collect();
+        touch_release(&mut h, target, 1, false, 2);
+        assert!(h.state().dialogs.rename_sheet.is_none());
+        for (doc, expected) in h.state().docs.iter().zip(before) {
+            assert_eq!(doc.doc.workbook(), &expected, "stale rename after {change}");
+        }
+    }
+}
+
+#[test]
+fn recovery_choices_reject_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["Restore", "Restore All", "Discard All"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = thinoda_platform::Paths::from_root(dir.path());
+            let recovery = thinoda_platform::recovery::RecoveryManager::start(&paths).unwrap();
+            let mut h = harness(theme, 1.0);
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.doc
+                .edit_sheet("Unsaved", |sheet| {
+                    sheet.set_title(sheet.root, "Recovery must survive")
+                })
+                .unwrap();
+            let expected = doc.doc.workbook().clone();
+            doc.snapshot(&recovery);
+            assert!(recovery.try_flush_for_crash());
+            recovery.suspend().unwrap();
+            drop(recovery);
+            let current = std::sync::Arc::new(
+                thinoda_platform::recovery::RecoveryManager::start(&paths).unwrap(),
+            );
+            h.state_mut().services.recovery = Some(current);
+            h.state_mut().docs.clear();
+            h.state_mut().dialogs.recovery =
+                thinoda_platform::recovery::RecoveryManager::find_orphans(&paths);
+            assert_eq!(h.state().dialogs.recovery.len(), 1);
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(
+                    h.state().dialogs.recovery.len(),
+                    1,
+                    "rejected {choice} preserves recovery"
+                );
+                assert!(h.state().docs.is_empty());
+                assert_eq!(
+                    h.state().dialogs.recovery[0].docs[0].load().unwrap(),
+                    expected
+                );
+            }
+            touch_release(&mut h, target, 1, false, 2);
+            assert!(h.state().dialogs.recovery.is_empty());
+            if choice == "Discard All" {
+                assert!(h.state().docs.is_empty());
+            } else {
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &expected);
+                assert!(h.state().doc().unwrap().is_dirty());
+            }
+            assert!(thinoda_platform::recovery::RecoveryManager::find_orphans(&paths).is_empty());
+        }
+    }
+}
+
+#[test]
+fn library_gallery_buttons_reject_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for custom_theme in [false, true] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1280.0, 1000.0));
+            h.state_mut().settings.show_format_panel = true;
+            let doc = h.state_mut().doc_mut().unwrap();
+            doc.view.selection = vec![doc.doc.sheet().root];
+            h.state_mut().format_tab = if custom_theme {
+                FormatTab::Map
+            } else {
+                FormatTab::Style
+            };
+            if custom_theme {
+                let mut saved = thinoda_core::custom_theme::CustomTheme::from_settings(
+                    &h.state().doc().unwrap().doc.sheet().theme,
+                );
+                saved.name = "Saved theme".into();
+                h.state_mut().settings.custom_themes.push(saved);
+            } else {
+                let mut saved = thinoda_core::quick_styles::preset("Warning").unwrap();
+                saved.name = "Saved style".into();
+                h.state_mut().settings.quick_styles.push(saved);
+            }
+            h.run_steps(8);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let labels: &[&str] = if custom_theme {
+                &["Edit Custom Theme…", "Edit…", "Remove…"]
+            } else {
+                &["Save Quick Style…", "Remove…"]
+            };
+            for label in labels {
+                h.get_by_role_and_label(Role::Button, t(label))
+                    .scroll_to_me();
+                h.run_steps(8);
+                let target = h
+                    .get_by_role_and_label(Role::Button, t(label))
+                    .rect()
+                    .center();
+                for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                    rejected_tap(&mut h, target, contacts, cancel);
+                    assert!(
+                        h.state().command_available(&Cmd::Palette),
+                        "rejected {label} cannot open a modal"
+                    );
+                    assert_eq!(
+                        h.state().settings.custom_themes.len(),
+                        usize::from(custom_theme)
+                    );
+                    assert_eq!(
+                        h.state().settings.quick_styles.len(),
+                        usize::from(!custom_theme)
+                    );
+                    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                }
+                h.get_by_role_and_label(Role::Button, t(label)).click();
+                h.run_steps(4);
+                assert!(
+                    !h.state().command_available(&Cmd::Palette),
+                    "clean {label} opens a modal"
+                );
+                h.key_press(egui::Key::Escape);
+                h.run_steps(4);
+            }
+        }
+    }
+}
+
+#[test]
+fn quick_style_save_dialog_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for choice in ["Save", "Cancel", "backdrop"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = thinoda_platform::Paths::from_root(dir.path());
+            let mut h = harness(theme, 1.0);
+            h.state().settings.save(&paths).unwrap();
+            h.state_mut().services.paths = Some(paths.clone());
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::SaveQuickStyle);
+            h.run_steps(4);
+            h.get_by_label(t("Style name")).click();
+            h.get_by_label(t("Style name")).type_text("Keep my draft");
+            h.run_steps(4);
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let target = if choice == "backdrop" {
+                egui::pos2(5.0, 5.0)
+            } else {
+                h.get_by_role_and_label(Role::Button, t(choice))
+                    .rect()
+                    .center()
+            };
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert!(h.state().settings.quick_styles.is_empty());
+                assert!(
+                    thinoda_platform::Settings::load(&paths)
+                        .unwrap()
+                        .quick_styles
+                        .is_empty()
+                );
+                assert!(!h.state().command_available(&Cmd::Palette));
+                assert_eq!(
+                    h.get_by_label(t("Style name")).value().as_deref(),
+                    Some("Keep my draft")
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            }
+            match choice {
+                "Save" => h.get_by_role_and_label(Role::Button, t("Save")).click(),
+                "Cancel" => {
+                    h.get_by_label(t("Style name")).click();
+                    h.key_press(egui::Key::Enter);
+                }
+                "backdrop" => {
+                    let target = h
+                        .get_by_role_and_label(Role::Button, t("Save"))
+                        .rect()
+                        .center();
+                    touch_release(&mut h, target, 1, false, 2);
+                }
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            assert_eq!(h.state().settings.quick_styles[0].name, "Keep my draft");
+            assert_eq!(
+                thinoda_platform::Settings::load(&paths)
+                    .unwrap()
+                    .quick_styles,
+                h.state().settings.quick_styles
+            );
+            assert!(h.state().command_available(&Cmd::Palette));
+        }
+    }
+}
+
+#[test]
+fn conflict_confirmation_rejects_canceled_and_multitouch_overwrites() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conflict.thinoda");
+        let mut h = harness(theme, 1.0);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Local changes"))
+            .unwrap();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let external = b"newer external bytes";
+        std::fs::write(&path, external).unwrap();
+        h.state_mut().save_active(false);
+        h.run_steps(4);
+        let key = h.state().doc().unwrap().key.clone();
+        assert_eq!(h.state().dialogs.conflict.as_ref(), Some(&key));
+        for choice in ["Overwrite", "Save As Copy", "Cancel"] {
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(h.state().dialogs.conflict.as_ref(), Some(&key));
+                assert!(!h.state().doc().unwrap().ignore_conflict);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert!(h.state().doc().unwrap().is_dirty());
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+            }
+        }
+        let target = h
+            .get_by_role_and_label(Role::Button, t("Overwrite"))
+            .rect()
+            .center();
+        touch_release(&mut h, target, 1, false, 2);
+        assert!(h.state().dialogs.conflict.is_none());
+        assert!(!h.state().doc().unwrap().is_dirty());
+        assert_eq!(
+            thinoda_app::doc::OpenDoc::open(&path)
+                .unwrap()
+                .doc
+                .workbook(),
+            &before
+        );
+    }
+}
+
+#[test]
+fn close_confirmation_rejects_canceled_and_multitouch_choices() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (choice, input) in ["Save", "Don't Save", "Cancel"]
+            .into_iter()
+            .flat_map(|choice| ["keyboard", "mouse", "touch"].map(|input| (choice, input)))
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("close.thinoda");
+            let mut h = harness(theme, 1.0);
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .save_to(&path, false)
+                .unwrap();
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .doc
+                .edit_sheet("Edit", |sheet| {
+                    sheet.set_title(sheet.root, "Keep this work")
+                })
+                .unwrap();
+            let original = std::fs::read(&path).unwrap();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let key = h.state().doc().unwrap().key.clone();
+            h.state_mut().request_close_tab(0);
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, egui::pos2(5.0, 5.0), contacts, cancel);
+                assert!(
+                    h.state().dialogs.close.is_some(),
+                    "rejected backdrop cannot dismiss"
+                );
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(h.state().docs.len(), 1, "rejected {choice} cannot close");
+                assert_eq!(
+                    h.state().dialogs.close,
+                    Some(thinoda_app::app::CloseIntent::Tab(key.clone())),
+                    "rejected {choice} cannot resolve the prompt"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert!(h.state().doc().unwrap().is_dirty());
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+            }
+            match input {
+                "keyboard" => {
+                    h.get_by_role_and_label(Role::Button, t(choice)).focus();
+                    h.key_press(egui::Key::Space);
+                }
+                "mouse" => h.get_by_role_and_label(Role::Button, t(choice)).click(),
+                "touch" => touch_release(&mut h, target, 1, false, 2),
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            assert!(h.state().dialogs.close.is_none());
+            if choice == "Cancel" {
+                assert_eq!(h.state().docs.len(), 1);
+                assert!(h.state().doc().unwrap().is_dirty());
+            } else {
+                assert!(h.state().docs.is_empty());
+            }
+            if choice == "Save" {
+                assert_eq!(
+                    thinoda_app::doc::OpenDoc::open(&path)
+                        .unwrap()
+                        .doc
+                        .workbook(),
+                    &before
+                );
+            } else {
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+            }
+        }
+    }
+}
+
+#[test]
+fn custom_theme_numeric_drag_restores_the_entire_rejected_gesture() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (contacts, cancel, lose_focus) in [
+            (1, true, false),
+            (2, false, false),
+            (3, false, false),
+            (1, false, false),
+            (0, false, false),
+            (0, false, true),
+        ] {
+            let mut h = harness(theme, 1.0);
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::TextInput, t("Theme name"))
+                .focus();
+            h.get_by_role_and_label(Role::TextInput, t("Theme name"))
+                .type_text(" Keyboard");
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::CheckBox, t("Override Font Size"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::CheckBox, t("Override Font Size"))
+                .click();
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::SpinButton, t("Override Font Size"))
+                .scroll_to_me();
+            h.run_steps(8);
+            let control = h.get_by_role_and_label(Role::SpinButton, t("Override Font Size"));
+            let before = control.value().unwrap().to_owned();
+            let rect = control.rect();
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            if lose_focus {
+                let start = rect.center();
+                let moved = start + vec2(80.0, 0.0);
+                h.event(Event::PointerMoved(start));
+                h.event(Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(2);
+                h.event(Event::PointerMoved(moved));
+                h.run_steps(2);
+                h.event(Event::WindowFocused(false));
+                h.run_steps(2);
+                h.event(Event::WindowFocused(true));
+                h.event(Event::PointerButton {
+                    pos: moved,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                });
+                h.run_steps(4);
+            } else if contacts == 0 {
+                drag_control_with_mouse(&mut h, rect.center(), vec2(80.0, 0.0));
+            } else {
+                drag_control_with_touch(&mut h, rect.center(), vec2(80.0, 0.0), contacts, cancel);
+            }
+            let after = h
+                .get_by_role_and_label(Role::SpinButton, t("Override Font Size"))
+                .value()
+                .unwrap()
+                .to_owned();
+            if cancel || contacts > 1 || lose_focus {
+                assert_eq!(after, before, "rejected drag must restore earlier frames");
+            } else {
+                assert_ne!(after, before, "clean touch drag must remain usable");
+            }
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            h.get_by_role_and_label(Role::Button, t("Save to Library"))
+                .click();
+            h.run_steps(4);
+            assert_eq!(h.state().settings.custom_themes.len(), 1);
+            assert!(
+                h.state().settings.custom_themes[0]
+                    .name
+                    .contains("Keyboard")
+            );
+            h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+                .click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(
+                doc.doc.sheet().theme.custom_theme.as_ref(),
+                h.state().settings.custom_themes.first()
+            );
+            assert_eq!(doc.doc.state_id(), revision + 1);
+            let size = doc
+                .doc
+                .sheet()
+                .theme
+                .custom_theme
+                .as_ref()
+                .unwrap()
+                .roles
+                .central
+                .font_size
+                .unwrap();
+            let before: f32 = before.parse().unwrap();
+            if cancel || contacts > 1 || lose_focus {
+                assert_eq!(size, before);
+            } else {
+                assert_ne!(size, before);
+            }
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+        }
+    }
+}
+
+#[test]
+fn custom_theme_color_drag_restores_rejected_gesture() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (contacts, cancel) in [(1, true), (2, false), (3, false), (1, false)] {
+            let mut h = harness(theme, 1.0);
+            let before = thinoda_core::custom_theme::CustomTheme::from_settings(
+                &h.state().doc().unwrap().doc.sheet().theme,
+            );
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let ctx = h.ctx.clone();
+            h.state_mut().exec(&ctx, Cmd::EditCustomTheme);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ColorWell, t("Light background"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ColorWell, t("Light background"))
+                .click();
+            h.run_steps(4);
+            let rect = h
+                .query_all_by_role(Role::SpinButton)
+                .find(|control| control.value().is_some_and(|value| value.starts_with("R ")))
+                .expect("color picker red channel")
+                .rect();
+            drag_control_with_touch(&mut h, rect.center(), vec2(-80.0, 0.0), contacts, cancel);
+            h.key_press(egui::Key::Escape);
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+            h.get_by_role_and_label(Role::Button, t("Save to Library"))
+                .click();
+            h.run_steps(4);
+            let saved = &h.state().settings.custom_themes[0];
+            if cancel || contacts > 1 {
+                assert_eq!(
+                    saved, &before,
+                    "canceled picker drag must restore all color changes"
+                );
+            } else {
+                assert_ne!(saved.light_background, before.light_background);
+            }
+            h.get_by_role_and_label(Role::Button, t("Apply Theme"))
+                .click();
+            h.run_steps(4);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .theme
+                    .custom_theme
+                    .as_ref(),
+                h.state().settings.custom_themes.first()
+            );
+            h.state_mut()
+                .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+        }
+    }
+}
+
+#[test]
+fn numeric_drag_drafts_cannot_outlive_their_inspector_context() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for interruption in [
+            "document",
+            "sheet",
+            "selection",
+            "revision",
+            "hidden",
+            "modal",
+        ] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 520.0));
+            h.state_mut().settings.show_format_panel = true;
+            h.state_mut().format_tab = FormatTab::Style;
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            h.state_mut().new_doc(workbook);
+            h.state_mut().active = 0;
+            let sheet = h.state().doc().unwrap().doc.sheet().clone();
+            h.state_mut().doc_mut().unwrap().doc.add_sheet(sheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Slider, t("Width"))
+                .scroll_to_me();
+            h.run_steps(8);
+            let rect = h.get_by_role_and_label(Role::Slider, t("Width")).rect();
+            let start = rect.center();
+            let moved = start + vec2(rect.width() * 0.35, 0.0);
+            let initial_revision = h.state().doc().unwrap().doc.state_id();
+            h.event(Event::PointerMoved(start));
+            h.event(Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(2);
+            h.event(Event::PointerMoved(moved));
+            h.run_steps(2);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), initial_revision);
+
+            match interruption {
+                "document" => h.state_mut().active = 1,
+                "sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+                "selection" => {
+                    let doc = h.state_mut().doc_mut().unwrap();
+                    let child = doc.doc.sheet().children(doc.doc.sheet().root)[0];
+                    doc.view.selection = vec![child];
+                }
+
+                "revision" => {
+                    let doc = h.state_mut().doc_mut().unwrap();
+                    doc.doc
+                        .edit_sheet("External edit", |sheet| {
+                            sheet.set_title(sheet.root, "Changed during drag")
+                        })
+                        .unwrap();
+                }
+                "hidden" => h.state_mut().settings.show_format_panel = false,
+                "modal" => {
+                    let ctx = h.ctx.clone();
+                    h.state_mut().exec(&ctx, Cmd::Settings);
+                }
+                _ => unreachable!(),
+            }
+            h.run_steps(3);
+            let before: Vec<_> = h
+                .state()
+                .docs
+                .iter()
+                .map(|doc| (doc.doc.workbook().clone(), doc.doc.state_id()))
+                .collect();
+            h.event(Event::PointerButton {
+                pos: moved,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(4);
+            h.state_mut().dialogs.settings = false;
+            h.state_mut().settings.show_format_panel = true;
+            h.state_mut().active = 0;
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            let root = h.state().doc().unwrap().doc.sheet().root;
+            h.state_mut().doc_mut().unwrap().view.selection = vec![root];
+            h.run_steps(8);
+            for (doc, (workbook, revision)) in h.state().docs.iter().zip(&before) {
+                assert_eq!(doc.doc.workbook().sheets, workbook.sheets, "{interruption}");
+                assert_eq!(
+                    doc.doc.workbook().metadata,
+                    workbook.metadata,
+                    "{interruption}"
+                );
+                assert_eq!(doc.doc.state_id(), *revision, "{interruption}");
+            }
+        }
+    }
 }

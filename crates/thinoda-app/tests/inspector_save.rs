@@ -1,6 +1,9 @@
 use egui::{Key, Modifiers, accesskit::Role};
 use egui_kittest::{Harness, kittest::Queryable};
-use thinoda_app::app::{CenterMode, Cmd, ThinodaApp};
+use thinoda_app::{
+    app::{CenterMode, Cmd, ThinodaApp},
+    doc::OpenDoc,
+};
 
 fn draft(
     mode: CenterMode,
@@ -29,6 +32,85 @@ fn draft(
         "Typing remains a draft until commit"
     );
     h
+}
+
+#[test]
+fn failed_backup_preserves_focused_notes_and_recovery_until_save_retries() {
+    use thinoda_platform::{Paths, fs::backup_path, recovery::RecoveryManager};
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.thinoda");
+        let mut h = draft(
+            mode,
+            Role::MultilineTextInput,
+            "Notes",
+            "Keep notes after backup failure",
+            &path,
+        );
+        let original = std::fs::read(&path).unwrap();
+        let backup = backup_path(&path);
+        std::fs::create_dir(&backup).unwrap();
+        let blocker = backup.join("keep");
+        std::fs::write(&blocker, b"not a replaceable backup").unwrap();
+        h.state_mut().settings.backup_on_save = true;
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Save);
+        h.run_steps(4);
+        assert!(h.state().doc().unwrap().is_dirty());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::read(&blocker).unwrap(),
+            b"not a replaceable backup"
+        );
+        assert!(
+            h.state()
+                .toasts
+                .texts()
+                .any(|text| text.contains("Could not save"))
+        );
+        let paths = Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        h.state_mut().doc_mut().unwrap().snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(
+            orphans[0].docs[0]
+                .load()
+                .unwrap()
+                .active()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("Keep notes after backup failure")
+        );
+        drop(orphans);
+        recovery.resume().unwrap();
+        std::fs::remove_file(blocker).unwrap();
+        std::fs::remove_dir(&backup).unwrap();
+        h.state_mut().exec(&ctx, Cmd::Save);
+        h.run_steps(4);
+        assert!(!h.state().doc().unwrap().is_dirty());
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        assert_eq!(
+            OpenDoc::open(&path)
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("Keep notes after backup failure")
+        );
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+        assert_eq!(
+            h.state().doc().unwrap().doc.sheet().root_topic().notes,
+            None
+        );
+        assert!(!h.state().doc().unwrap().doc.can_undo());
+        recovery.finish().unwrap();
+    }
 }
 
 #[test]

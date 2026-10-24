@@ -42,15 +42,20 @@ impl ThinodaApp {
         if !self.dialogs.legal.open {
             return;
         }
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         let state = &mut self.dialogs.legal;
         let response = egui::Modal::new(egui::Id::unique("legal_documents")).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 48.0).clamp(240.0, 720.0));
             ui.heading(t("Legal documents"));
+            let previous = state.document;
             ui.horizontal_wrapped(|ui| {
                 for document in LegalDocument::ALL {
                     ui.selectable_value(&mut state.document, document, t(document.title()));
                 }
             });
+            if !touch_allowed {
+                state.document = previous;
+            }
             ui.weak(t("Original legal texts are shown unchanged."));
             let height = (ctx.content_rect().height() - 220.0).max(80.0);
             let document = egui::ScrollArea::both()
@@ -59,7 +64,9 @@ impl ThinodaApp {
                 .min_scrolled_height(height)
                 .max_height(height)
                 .show(ui, |ui| state.markdown.show(ui, state.document.text()));
-            if let Some(destination) = document.inner {
+            if let Some(destination) = document.inner
+                && touch_allowed
+            {
                 match destination.as_str() {
                     "LICENSE.md" => state.document = LegalDocument::License,
                     "THIRD_PARTY_NOTICES.md" => state.document = LegalDocument::Notices,
@@ -78,15 +85,15 @@ impl ThinodaApp {
             }
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button(t("Close")).clicked() {
+                if ui.button(t("Close")).clicked() && touch_allowed {
                     state.open = false;
                 }
-                if ui.button(t("Copy")).clicked() {
+                if ui.button(t("Copy")).clicked() && touch_allowed {
                     ctx.copy_text(state.document.text().to_owned());
                 }
             });
         });
-        if response.should_close() {
+        if response.should_close() && touch_allowed {
             state.open = false;
             // Do not let the same Escape dismiss the About window on the next frame.
             ctx.input_mut(|input| {

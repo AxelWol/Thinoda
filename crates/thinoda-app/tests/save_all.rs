@@ -55,6 +55,249 @@ fn external_change(app: &ThinodaApp, index: usize) -> Vec<u8> {
     bytes
 }
 
+#[test]
+fn save_without_a_file_baseline_requires_explicit_overwrite_consent() {
+    for batch in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), &[Format::Thinoda, Format::Thinoda]);
+        let external = external_change(&app, 0);
+        let path = app.docs[0].path.clone().unwrap();
+        let later = app.docs[1].path.clone().unwrap();
+        let later_bytes = std::fs::read(&later).unwrap();
+        let key = app.docs[0].key.clone();
+        let book = app.docs[0].doc.workbook().clone();
+        let revision = app.docs[0].doc.state_id();
+        app.docs[0].fingerprint = None;
+        app.exec(
+            &egui::Context::default(),
+            if batch { Cmd::SaveAll } else { Cmd::Save },
+        );
+        assert_eq!(app.dialogs.conflict.as_deref(), Some(key.as_str()));
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert_eq!(std::fs::read(&later).unwrap(), later_bytes);
+        assert!(app.docs.iter().all(OpenDoc::is_dirty));
+        assert_eq!(app.docs[0].doc.workbook(), &book);
+        assert_eq!(app.docs[0].doc.state_id(), revision);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        choose(&mut h, "thinoda_conflict", "Cancel");
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        assert_eq!(std::fs::read(&later).unwrap(), later_bytes);
+        assert!(h.state().docs.iter().all(OpenDoc::is_dirty));
+        let ctx = h.ctx.clone();
+        h.state_mut()
+            .exec(&ctx, if batch { Cmd::SaveAll } else { Cmd::Save });
+        h.run_steps(4);
+        choose(&mut h, "thinoda_conflict", "Overwrite");
+        assert_eq!(
+            OpenDoc::open(&path).unwrap().doc.workbook(),
+            &book,
+            "explicit consent must still permit a successful save"
+        );
+        assert!(!h.state().docs[0].is_dirty());
+        assert!(h.state().docs[0].fingerprint.is_some());
+        assert!(!h.state().docs[0].ignore_conflict);
+        if batch {
+            assert_saved(h.state());
+        } else {
+            assert!(h.state().docs[1].is_dirty());
+            assert_eq!(std::fs::read(&later).unwrap(), later_bytes);
+        }
+    }
+}
+
+#[test]
+fn autosave_without_a_file_baseline_preserves_external_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = fixture(dir.path(), &[Format::Thinoda]);
+    let external = external_change(&app, 0);
+    let path = app.docs[0].path.clone().unwrap();
+    app.docs[0].fingerprint = None;
+    app.settings.autosave = true;
+    app.settings.autosave_interval_secs = 5;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    let before = h.state().docs[0].doc.workbook().clone();
+    let revision = h.state().docs[0].doc.state_id();
+    std::thread::sleep(std::time::Duration::from_millis(5100));
+    h.run_steps(4);
+    assert!(h.state().docs[0].idle_secs() >= 5.0);
+    assert_eq!(std::fs::read(path).unwrap(), external);
+    assert!(h.state().docs[0].is_dirty());
+    assert_eq!(h.state().docs[0].doc.workbook(), &before);
+    assert_eq!(h.state().docs[0].doc.state_id(), revision);
+}
+
+#[test]
+fn tab_close_save_resumes_after_conflicts_and_conversion_consent() {
+    for format in [Format::Thinoda, Format::MindManager] {
+        for cancel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = fixture(dir.path(), &[format, Format::Thinoda]);
+            let key = app.docs[0].key.clone();
+            let path = app.docs[0].path.clone().unwrap();
+            let book = app.docs[0].doc.workbook().clone();
+            let external = external_change(&app, 0);
+            let other = app.docs[1].key.clone();
+            let other_path = app.docs[1].path.clone().unwrap();
+            let other_bytes = std::fs::read(&other_path).unwrap();
+            app.request_close_tab(0);
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(1000.0, 700.0))
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            h.run_steps(4);
+            choose(&mut h, "thinoda_close", "Save");
+            assert_eq!(h.state().dialogs.conflict.as_deref(), Some(key.as_str()));
+            if !cancel {
+                h.state_mut().docs.swap(0, 1);
+            }
+            choose(
+                &mut h,
+                "thinoda_conflict",
+                if cancel { "Cancel" } else { "Overwrite" },
+            );
+            if !cancel && format == Format::MindManager {
+                h.state_mut().docs.swap(0, 1);
+                choose(&mut h, "mindmanager_save", "Save");
+            }
+            if cancel {
+                assert_eq!(h.state().docs.len(), 2);
+                assert!(h.state().docs[0].is_dirty());
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+            } else {
+                assert_eq!(h.state().docs.len(), 1, "saved tab must finish closing");
+                assert_eq!(h.state().docs[0].key, other);
+                if format == Format::Thinoda {
+                    assert_eq!(OpenDoc::open(&path).unwrap().doc.workbook(), &book);
+                }
+            }
+            assert_eq!(std::fs::read(other_path).unwrap(), other_bytes);
+            assert!(h.state().docs.iter().all(OpenDoc::is_dirty));
+        }
+    }
+}
+
+#[test]
+fn canceled_or_failed_close_save_cannot_close_a_later_successful_save() {
+    for fail in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), &[Format::MindManager, Format::Thinoda]);
+        let key = app.docs[0].key.clone();
+        let path = app.docs[0].path.clone().unwrap();
+        external_change(&app, 0);
+        app.request_close_tab(0);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        choose(&mut h, "thinoda_close", "Save");
+        choose(&mut h, "thinoda_conflict", "Overwrite");
+        if fail {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+        }
+        choose(
+            &mut h,
+            "mindmanager_save",
+            if fail { "Save" } else { "Cancel" },
+        );
+        assert_eq!(h.state().docs.len(), 2);
+        assert!(h.state().docs[0].is_dirty());
+        assert!(!h.state().docs[0].ignore_conflict);
+        if fail {
+            std::fs::remove_dir(&path).unwrap();
+            external_change(h.state(), 0);
+        }
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Save);
+        h.run_steps(4);
+        choose(&mut h, "thinoda_conflict", "Overwrite");
+        choose(&mut h, "mindmanager_save", "Save");
+        assert_eq!(h.state().docs.len(), 2, "old close intent must be canceled");
+        assert_eq!(h.state().docs[0].key, key);
+        assert!(!h.state().docs[0].is_dirty());
+        assert!(h.state().docs[1].is_dirty());
+    }
+}
+
+#[test]
+fn stale_tab_close_choices_cannot_save_or_discard_a_replacement_tab() {
+    for choice in ["Save", "Don't Save"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), &[Format::Thinoda, Format::Thinoda]);
+        let other = app.docs[1].key.clone();
+        let other_path = app.docs[1].path.clone().unwrap();
+        let other_bytes = std::fs::read(&other_path).unwrap();
+        let book = app.docs[1].doc.workbook().clone();
+        let revision = app.docs[1].doc.state_id();
+        app.request_close_tab(0);
+        app.docs.remove(0);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        choose(&mut h, "thinoda_close", choice);
+        assert_eq!(h.state().docs.len(), 1);
+        assert_eq!(h.state().docs[0].key, other);
+        assert!(h.state().docs[0].is_dirty());
+        assert_eq!(h.state().docs[0].doc.workbook(), &book);
+        assert_eq!(h.state().docs[0].doc.state_id(), revision);
+        assert_eq!(std::fs::read(other_path).unwrap(), other_bytes);
+    }
+}
+
+#[test]
+fn single_save_revokes_overwrite_consent_after_failure_or_cancel() {
+    for format in [Format::Thinoda, Format::MindManager] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), &[format]);
+        let path = app.docs[0].path.clone().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        app.exec(&egui::Context::default(), Cmd::Save);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        choose(&mut h, "thinoda_conflict", "Overwrite");
+        if format == Format::MindManager {
+            choose(&mut h, "mindmanager_save", "Save");
+        }
+        assert!(h.state().docs[0].is_dirty());
+        assert!(!h.state().docs[0].ignore_conflict);
+        assert!(
+            h.state()
+                .toasts
+                .texts()
+                .any(|text| text.contains("Could not save"))
+        );
+        std::fs::remove_dir(&path).unwrap();
+        let external = external_change(h.state(), 0);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Save);
+        h.run_steps(4);
+        assert!(h.state().dialogs.conflict.is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), external);
+        choose(&mut h, "thinoda_conflict", "Cancel");
+        if format == Format::MindManager {
+            h.state_mut().exec(&ctx, Cmd::Save);
+            h.run_steps(4);
+            choose(&mut h, "thinoda_conflict", "Overwrite");
+            assert!(h.state().docs[0].ignore_conflict);
+            choose(&mut h, "mindmanager_save", "Cancel");
+            assert!(!h.state().docs[0].ignore_conflict);
+            h.state_mut().exec(&ctx, Cmd::Save);
+            h.run_steps(4);
+            assert!(h.state().dialogs.conflict.is_some());
+            assert_eq!(std::fs::read(&path).unwrap(), external);
+        }
+    }
+}
+
 fn start(mut app: ThinodaApp, quit: bool, home: bool) -> Harness<'static, ThinodaApp> {
     if home {
         app.exec(&egui::Context::default(), Cmd::Home);
