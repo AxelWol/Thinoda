@@ -116,6 +116,110 @@ fn touch_release(
     h.run_steps(4);
 }
 
+fn drag_slider_with_touch(
+    h: &mut Harness<'_, ThinodaApp>,
+    start: egui::Pos2,
+    delta: egui::Vec2,
+    contacts: u64,
+    cancel: bool,
+) {
+    let revision = h.state().doc().unwrap().doc.state_id();
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::Start,
+        pos: start,
+        force: None,
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+
+    let moved = start + delta;
+    h.event(Event::PointerMoved(moved));
+    h.event(Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase: TouchPhase::Move,
+        pos: moved,
+        force: None,
+    });
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().doc.state_id(),
+        revision,
+        "slider should keep touch changes provisional until release"
+    );
+
+    if contacts > 1 {
+        for id in 2..=contacts {
+            h.event(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(id),
+                phase: TouchPhase::Start,
+                pos: moved + vec2((id - 1) as f32 * 40.0, 0.0),
+                force: None,
+            });
+        }
+        h.run_steps(1);
+    }
+    for id in 1..=contacts {
+        h.event(Event::Touch {
+            device_id: TouchDeviceId(1),
+            id: TouchId(id),
+            phase: if cancel {
+                TouchPhase::Cancel
+            } else {
+                TouchPhase::End
+            },
+            pos: moved + vec2((id - 1) as f32 * 40.0, 0.0),
+            force: None,
+        });
+    }
+    h.run_steps(2);
+    if cancel || contacts > 1 {
+        assert_eq!(
+            h.state().doc().unwrap().doc.state_id(),
+            revision,
+            "rejected release must discard the provisional slider value"
+        );
+    }
+    h.event(Event::PointerButton {
+        pos: moved,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(4);
+}
+
+fn drag_slider_with_mouse(h: &mut Harness<'_, ThinodaApp>, start: egui::Pos2, delta: egui::Vec2) {
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+    let moved = start + delta;
+    h.event(Event::PointerMoved(moved));
+    h.run_steps(2);
+    h.event(Event::PointerButton {
+        pos: moved,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(4);
+}
+
 #[test]
 fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
@@ -779,6 +883,56 @@ fn style_inspector_combo_rejects_canceled_and_multitouch_releases() {
             doc.doc.sheet().topic(root).unwrap().style.shape,
             Some(thinoda_core::TopicShape::Rect),
             "ordinary pointer activation remains available"
+        );
+    }
+}
+
+#[test]
+fn style_inspector_slider_discards_canceled_and_multitouch_drags() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Slider, t("Width"))
+            .scroll_to_me();
+        h.run_steps(8);
+        let rect = h.get_by_role_and_label(Role::Slider, t("Width")).rect();
+        let start = rect.center();
+        let delta = vec2(rect.width() * 0.35, 0.0);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            drag_slider_with_touch(&mut h, start, delta, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "contacts={contacts}, cancel={cancel}: rejected slider drag must not create an edit"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "canceled/multitouch slider drag must restore the prior value"
+            );
+        }
+
+        drag_slider_with_touch(&mut h, start, delta, 1, false);
+        let touched = h.state().doc().unwrap().doc.workbook().clone();
+        assert_ne!(h.state().doc().unwrap().doc.state_id(), revision);
+        assert_ne!(touched, before);
+        let ctx = h.ctx.clone();
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::Undo));
+        h.run_steps(4);
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+        drag_slider_with_mouse(&mut h, start, delta);
+        assert_ne!(
+            h.state().doc().unwrap().doc.workbook(),
+            &before,
+            "ordinary mouse slider dragging remains available"
         );
     }
 }

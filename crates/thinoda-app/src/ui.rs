@@ -23,6 +23,42 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+fn touch_slider_value(
+    ui: &mut Ui,
+    value: &mut f32,
+    salt: &'static str,
+    add: impl FnOnce(&mut Ui, &mut f32) -> egui::Response,
+) -> (egui::Response, bool) {
+    let id = ui.make_persistent_id(("touch_slider_value", salt));
+    let pending = ui.ctx().data(|data| data.get_temp::<f32>(id));
+    if let Some(pending) = pending {
+        *value = pending;
+    }
+    let response = add(ui, value);
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+    let pointer_down = ui.input(|input| input.pointer.primary_down());
+
+    if !touch_allowed {
+        ui.ctx().data_mut(|data| data.remove::<f32>(id));
+        return (response, false);
+    }
+    if pointer_down {
+        if response.changed() {
+            ui.ctx().data_mut(|data| data.insert_temp(id, *value));
+        }
+        return (response, false);
+    }
+    if response.changed() {
+        ui.ctx().data_mut(|data| data.remove::<f32>(id));
+        return (response, true);
+    }
+    if pending.is_some() && !pointer_down {
+        ui.ctx().data_mut(|data| data.remove::<f32>(id));
+        return (response, true);
+    }
+    (response, false)
+}
+
 fn command_button<'a>(
     ctx: &Context,
     mode: CenterMode,
@@ -2670,8 +2706,10 @@ impl ThinodaApp {
             });
             let mut bw = resolved.border_width;
             widgets::property_field(ui, t("Width"), |ui| {
-                let r = ui.add(egui::Slider::new(&mut bw, 0.0..=8.0).step_by(0.5));
-                if r.changed() && touch_allowed {
+                let (r, commit) = touch_slider_value(ui, &mut bw, "border-width", |ui, value| {
+                    ui.add(egui::Slider::new(value, 0.0..=8.0).step_by(0.5))
+                });
+                if commit && (r.changed() || bw != resolved.border_width) {
                     change = Some(("Border", Box::new(move |st| st.border_width = Some(bw))));
                 }
                 r
@@ -2771,8 +2809,10 @@ impl ThinodaApp {
             });
             let mut lw = resolved.line_width;
             widgets::property_field(ui, t("Line Width"), |ui| {
-                let r = ui.add(egui::Slider::new(&mut lw, 0.5..=8.0).step_by(0.5));
-                if r.changed() && touch_allowed {
+                let (r, commit) = touch_slider_value(ui, &mut lw, "line-width", |ui, value| {
+                    ui.add(egui::Slider::new(value, 0.5..=8.0).step_by(0.5))
+                });
+                if commit && (r.changed() || lw != resolved.line_width) {
                     change = Some(("Line Width", Box::new(move |st| st.line_width = Some(lw))));
                 }
                 r
