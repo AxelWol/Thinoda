@@ -620,6 +620,35 @@ then, not after the release is promised.
   Native all-target and WASM clippy pass. The complete local native workspace
   subsequently passes 658 tests with 1 pre-existing ignored across 74 suites;
   live AI is disabled. All 25 documentation metadata contracts pass.
+- **Exact palette/search candidate CI:** full configured CI
+  [40090360397](https://github.com/AxelWol/Thinoda/actions/runs/40090360397)
+  passed at `ed07409`. This includes the configured native matrix, isolated
+  ARM64 recovery repetition, packaging/printing bridge fixtures, WASM build/lint,
+  fuzz smoke and documentation/notices checks. Browser/device acceptance and
+  owner-enforced release restrictions remain separate gates.
+- **Exact palette/search candidate importer acceptance:** all three
+  default-sanitized campaigns in
+  [40090360402](https://github.com/AxelWol/Thinoda/actions/runs/40090360402)
+  passed at `ed07409`. Each ran 1,801 seconds: XMind 7,256,836 executions,
+  FreeMind 6,969,922 and OPML 4,283,971. All three log/corpus/reproducer evidence
+  artifacts uploaded successfully with 14-day retention. No crash was reported
+  in these bounded campaigns; this is not proof of defect absence or the
+  remaining real-host acceptance.
+- **SS5 complete locked Cargo advisory lookup:** GitHub Advisory Database checks
+  cover all 568 registry package/version pairs in the workspace lockfile at
+  `ed07409`, plus all four additional fuzz-lockfile pairs (`arbitrary` 1.5.0,
+  `libc` 0.2.191, `libfuzzer-sys` 0.4.13 and `zip` 9.0.5). All 572 distinct pairs
+  returned no matching advisories, in 20 successful requests bounded to the
+  service's 30-dependency limit. This includes target-specific and development
+  dependencies, not only the earlier 22-package selection. Workspace lockfile
+  SHA-256: `f0512adba78f429533010a59a94184ddc09efd3a22617655438b69c1bf853185`;
+  fuzz lockfile: `11c1e0d7cecde75b16b250b598cb01433f6ae8cae14c24432e17e19ae6cfdbb4`.
+  Only public package metadata was submitted; no scanner installation or
+  permission change was needed. The service did not report its database revision.
+  This is a complete lookup of these locked registry versions against that
+  service, not RustSec unsound/unmaintained-package coverage, secret scanning,
+  source/provenance verification, GitHub Actions/toolchain auditing or a claim
+  that dependencies are defect-free. Those remaining gates are not waived.
 
 #### Bounded SS3 inventory reconciliation
 
