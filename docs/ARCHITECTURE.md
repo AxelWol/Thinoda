@@ -129,6 +129,10 @@ graph TD
   pointer sequence. Cancel, multitouch, focus loss or skipped editor frames restore
   its starting values through release, including changes made on earlier drag
   frames; rejected releases cannot save/apply or dismiss it via outside clicks.
+  Shared confirmation dialogs gate every button kind and backdrop dismissal
+  with the same touch latch, so rejected releases cannot authorize saving,
+  discarding, overwriting or canceling a pending decision. Clean mouse/touch
+  and keyboard activation retain the normal confirmation behavior.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

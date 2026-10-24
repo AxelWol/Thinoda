@@ -340,6 +340,19 @@ then, not after the release is promised.
   event-frame gap before correction. All 97 affected unit/theme/input/lifecycle
   tests pass, with native all-target and WASM lint green. Free-form color-plane
   gestures, remaining control families and real devices still need SS3 acceptance.
+- **SS3 shared confirmation lifecycle:** reproduced a canceled single-contact
+  release activating Save and closing a dirty document. Shared confirmation
+  dialogs now gate all three button kinds and backdrop dismissal with the
+  app-wide touch latch. Actual-app regressions in both themes reject canceled,
+  two- and three-contact choices for Save/Don't Save/Cancel and external-file
+  Overwrite/Save As Copy/Cancel. They preserve model/history, dirty work, pending
+  decisions and disk bytes, without granting overwrite authorization. Close
+  tests additionally reject backdrop releases and verify subsequent clean
+  keyboard, mouse and touch choices; conflict tests verify deliberate touch
+  overwrite still saves the complete local workbook. All 104 affected app
+  unit/input/save/theme/lifecycle tests and 21 shared-UI unit tests pass, with
+  native all-target and locked WASM lint green. This covers shared confirmation
+  dialogs, not arbitrary custom modals or every standard egui control.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

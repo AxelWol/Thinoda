@@ -21,6 +21,7 @@ pub fn confirm_dialog(
     buttons: &[(&str, DialogButton)],
 ) -> Option<usize> {
     let p = Palette::of(ctx);
+    let touch_allowed = crate::widgets::touch_activation_allowed(ctx);
     let mut pressed = None;
     let resp = Modal::new(Id::unique(id)).show(ctx, |ui| {
         ui.set_max_width(440.0);
@@ -39,13 +40,13 @@ pub fn confirm_dialog(
                             .min_size(egui::vec2(80.0, 28.0)),
                     ),
                 };
-                if r.clicked() {
+                if r.clicked() && touch_allowed {
                     pressed = Some(i);
                 }
             }
         });
     });
-    if pressed.is_none() && resp.should_close() {
+    if pressed.is_none() && resp.should_close() && touch_allowed {
         return Some(usize::MAX);
     }
     pressed

@@ -1069,6 +1069,146 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
 }
 
 #[test]
+fn conflict_confirmation_rejects_canceled_and_multitouch_overwrites() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conflict.thinoda");
+        let mut h = harness(theme, 1.0);
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Local changes"))
+            .unwrap();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        let external = b"newer external bytes";
+        std::fs::write(&path, external).unwrap();
+        h.state_mut().save_active(false);
+        h.run_steps(4);
+        let key = h.state().doc().unwrap().key.clone();
+        assert_eq!(h.state().dialogs.conflict.as_ref(), Some(&key));
+        for choice in ["Overwrite", "Save As Copy", "Cancel"] {
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(h.state().dialogs.conflict.as_ref(), Some(&key));
+                assert!(!h.state().doc().unwrap().ignore_conflict);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert!(h.state().doc().unwrap().is_dirty());
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+            }
+        }
+        let target = h
+            .get_by_role_and_label(Role::Button, t("Overwrite"))
+            .rect()
+            .center();
+        touch_release(&mut h, target, 1, false, 2);
+        assert!(h.state().dialogs.conflict.is_none());
+        assert!(!h.state().doc().unwrap().is_dirty());
+        assert_eq!(
+            thinoda_app::doc::OpenDoc::open(&path)
+                .unwrap()
+                .doc
+                .workbook(),
+            &before
+        );
+    }
+}
+
+#[test]
+fn close_confirmation_rejects_canceled_and_multitouch_choices() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for (choice, input) in ["Save", "Don't Save", "Cancel"]
+            .into_iter()
+            .flat_map(|choice| ["keyboard", "mouse", "touch"].map(|input| (choice, input)))
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("close.thinoda");
+            let mut h = harness(theme, 1.0);
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .save_to(&path, false)
+                .unwrap();
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .doc
+                .edit_sheet("Edit", |sheet| {
+                    sheet.set_title(sheet.root, "Keep this work")
+                })
+                .unwrap();
+            let original = std::fs::read(&path).unwrap();
+            let before = h.state().doc().unwrap().doc.workbook().clone();
+            let revision = h.state().doc().unwrap().doc.state_id();
+            let key = h.state().doc().unwrap().key.clone();
+            h.state_mut().request_close_tab(0);
+            h.run_steps(4);
+            let target = h
+                .get_by_role_and_label(Role::Button, t(choice))
+                .rect()
+                .center();
+            for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                rejected_tap(&mut h, egui::pos2(5.0, 5.0), contacts, cancel);
+                assert!(
+                    h.state().dialogs.close.is_some(),
+                    "rejected backdrop cannot dismiss"
+                );
+                rejected_tap(&mut h, target, contacts, cancel);
+                assert_eq!(h.state().docs.len(), 1, "rejected {choice} cannot close");
+                assert_eq!(
+                    h.state().dialogs.close,
+                    Some(thinoda_app::app::CloseIntent::Tab(key.clone())),
+                    "rejected {choice} cannot resolve the prompt"
+                );
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+                assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+                assert!(h.state().doc().unwrap().is_dirty());
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+            }
+            match input {
+                "keyboard" => {
+                    h.get_by_role_and_label(Role::Button, t(choice)).focus();
+                    h.key_press(egui::Key::Space);
+                }
+                "mouse" => h.get_by_role_and_label(Role::Button, t(choice)).click(),
+                "touch" => touch_release(&mut h, target, 1, false, 2),
+                _ => unreachable!(),
+            }
+            h.run_steps(4);
+            assert!(h.state().dialogs.close.is_none());
+            if choice == "Cancel" {
+                assert_eq!(h.state().docs.len(), 1);
+                assert!(h.state().doc().unwrap().is_dirty());
+            } else {
+                assert!(h.state().docs.is_empty());
+            }
+            if choice == "Save" {
+                assert_eq!(
+                    thinoda_app::doc::OpenDoc::open(&path)
+                        .unwrap()
+                        .doc
+                        .workbook(),
+                    &before
+                );
+            } else {
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+            }
+        }
+    }
+}
+
+#[test]
 fn custom_theme_numeric_drag_restores_the_entire_rejected_gesture() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         for (contacts, cancel, lose_focus) in [
