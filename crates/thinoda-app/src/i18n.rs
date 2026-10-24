@@ -182,7 +182,17 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
-    ("On Windows, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.", "Unter Windows klappt Strg+F1 das Menüband ein oder aus. Alt+1 bis Alt+8 wählt eine Kategorie. Escape schließt ein vorübergehend geöffnetes Menüband."),
+    ("Window", "Fenster"),
+    ("Services", "Dienste"),
+    ("Hide Thinoda", "Thinoda ausblenden"),
+    ("Hide Others", "Andere ausblenden"),
+    ("Show All", "Alle einblenden"),
+    ("Minimize", "Minimieren"),
+    ("Bring All to Front", "Alle nach vorne bringen"),
+    (
+        "On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.",
+        "Unter Windows und macOS klappt Strg+F1 das Menüband ein oder aus. Alt+1 bis Alt+8 wählt eine Kategorie. Escape schließt ein vorübergehend geöffnetes Menüband.",
+    ),
     ("Expand Ribbon", "Menüband erweitern"),
     ("Ribbon", "Menüband"),
     ("Collapse Ribbon", "Menüband reduzieren"),

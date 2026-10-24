@@ -116,7 +116,71 @@ fn grouping_retains_every_menu_entry_except_separators() {
 }
 
 #[test]
-fn ribbon_submenus_remain_operable_inside_horizontal_command_overflow() {
+fn responsive_groups_reduce_detail_without_clipping_or_losing_menu_access() {
+    let counts = [4, 5, 3];
+    assert_eq!(group_details(&counts, 1300.0), vec![GroupDetail::Full; 3]);
+    assert!(group_details(&counts, 480.0).contains(&GroupDetail::Compact));
+    assert_eq!(group_details(&counts, 180.0), vec![GroupDetail::Menu; 3]);
+    for width in [1600.0, 1000.0, 720.0, 440.0, 320.0] {
+        let mut h = harness(width, 700.0);
+        for category in 0..8 {
+            h.state_mut().ribbon.tab = category;
+            h.run_steps(4);
+            let ribbon = h.state().ribbon.rect.unwrap();
+            let commands: Vec<_> = h
+                .query_all_by_role(Role::Button)
+                .map(|node| node.rect())
+                .filter(|rect| rect.top() > ribbon.top() + 38.0)
+                .collect();
+            for (index, rect) in commands.iter().enumerate() {
+                assert!(
+                    ribbon.contains_rect(*rect),
+                    "{width}/{category}: {rect:?} outside {ribbon:?}"
+                );
+                for other in commands.iter().skip(index + 1) {
+                    assert!(
+                        !rect.shrink(0.5).intersects(*other),
+                        "{width}/{category}: overlapping commands {rect:?}/{other:?}"
+                    );
+                }
+            }
+            assert!(!commands.is_empty());
+        }
+    }
+    let mut h = harness(320.0, 700.0);
+    h.state_mut().ribbon.tab = 1;
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, t("Ribbon")).click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("Copy Style"))
+        .click();
+    h.run_steps(3);
+    let hint = ThinodaApp::shortcut_hint(&h.ctx, &Cmd::ResetStyle);
+    let label = hint.map_or_else(
+        || t("Reset Style").to_owned(),
+        |hint| format!("{} {hint}", t("Reset Style")),
+    );
+    let reset = h.get_by_role_and_label(Role::Button, &label);
+    assert!(h.ctx.content_rect().contains_rect(reset.rect()));
+}
+
+#[test]
+fn icon_submenus_can_be_opened_from_keyboard() {
+    let mut h = harness(1000.0, 700.0);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("New from Template…"))
+        .focus();
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("Basic"));
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+}
+
+#[test]
+fn ribbon_submenus_preserve_shared_template_commands() {
     let mut h = harness(1000.0, 700.0);
     h.run_steps(3);
     h.get_by_role_and_label(Role::Button, t("New from Template…"))

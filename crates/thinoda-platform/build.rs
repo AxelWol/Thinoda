@@ -27,6 +27,7 @@ fn main() {
         "macos" => {
             build
                 .file("native/print_macos.m")
+                .file("native/menu_macos.m")
                 .flag("-fobjc-arc")
                 .flag("-mmacosx-version-min=11.0");
             println!("cargo:rustc-link-lib=framework=AppKit");

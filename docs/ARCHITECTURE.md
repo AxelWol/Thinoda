@@ -109,23 +109,37 @@ graph TD
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
 - **Main-menu commands**: the host-independent menu tree drives compact menus
-  and the Windows HMENU adapter. The native callback only queues known enabled
+  and the Windows HMENU/AppKit global-menu adapters. Native callbacks only queue known enabled
   IDs and wakes the egui context; application-frame dispatch uses the producing
   snapshot and rechecks document/sheet/history, text focus and modal ownership.
   Standard native editing items send text-edit events when a text field owns
   focus. Menu replacement drains pending commands first, and window destruction
   removes its subclass before dropping callback data. Native integration errors
-  are logged and shown, with the compact menu retained. The Windows ribbon uses
-  the same tree and snapshot dispatch, with semantic command groups and bounded
-  horizontal overflow. Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
+  are logged and shown, with the compact menu retained. The Windows/macOS ribbon uses
+  the same tree and snapshot dispatch, with original vector icons, semantic group
+  footers and large primary/stacked secondary actions. Width reduction first hides
+  secondary captions, then collapses groups into menus; excess groups remain
+  reachable through a bounded overflow menu rather than a scrolling button wall.
+  Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
   a category, and Escape or an outside press dismisses a temporary opening.
   Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
   overlap tab hit targets; keyboard focus reveals horizontally clipped items.
   Pointer-driven ribbon commands are deferred past release so restoring a text
   field's focus delivers Undo/Cut/etc. to that field, not the map. The top bar
   remains quick access; floating editing/topic controls remain contextual and
-  keep their visibility settings. macOS/global menus and multi-window support
-  are not implemented by these adapters.
+  keep their visibility settings. The Outline structural toolbar shares the icon
+  controls and adapts between captioned tiles, labeled rows and compact icons;
+  full accessible names, tooltips and all nine structural operations remain.
+  AppKit integration uses the existing Objective-C platform bridge, not an
+  additional menu dependency. It supplies the standard Thinoda/Services/Window
+  menus, moves About/Settings/Quit into the application menu and leaves unsaved-work
+  decisions in shared app commands. Key equivalents are derived from typed command
+  bindings, never parsed from file names or translated labels. NSMenu delegates
+  retain the current tree during tracking; queued selections and generation
+  ownership prevent old native items from invoking a replacement tree's commands.
+  Detaching disables the callback and restores the previous AppKit menu tree.
+  Real AppKit SDK/lifecycle fixtures run only on macOS; Windows tests do not
+  establish macOS UI/VoiceOver acceptance. Multi-window lifecycle remains open.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It

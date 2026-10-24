@@ -60,12 +60,13 @@ fn assert_outline_controls(h: &Harness<'_, ThinodaApp>) {
         }
         assert!(
             h.output().shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(text)
-                if text.galley.text() == t(label)
-                    && rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size()))
-                    && shape.clip_rect.contains_rect(rect))
+                matches!(
+                    &shape.shape,
+                    egui::Shape::Path(_) | egui::Shape::LineSegment { .. }
+                ) && rect.contains_rect(shape.shape.visual_bounding_rect())
+                    && shape.clip_rect.contains_rect(rect)
             }),
-            "{label}: missing unclipped button caption"
+            "{label}: missing unclipped command icon"
         );
     }
 }
@@ -166,7 +167,11 @@ fn outline_navigation_skips_hidden_rows_and_declared_redo_restores_edits() {
 fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
-            for (scale, sidebar) in [(1.0, true), (1.5, false), (2.0, true)] {
+            for (scale, sidebar, width) in [
+                (1.0, true, 1280.0),
+                (1.5, false, 1040.0),
+                (2.0, true, 640.0),
+            ] {
                 let mut app = ThinodaApp::new(
                     Settings {
                         language,
@@ -194,7 +199,7 @@ fn outline_actions_are_not_covered_by_the_map_insertion_toolbar() {
                 let preceding = children[children.len() - 3];
                 doc.view.select_only(selected);
                 let mut h = Harness::builder()
-                    .with_size(egui::vec2(640.0, 800.0))
+                    .with_size(egui::vec2(width, 800.0))
                     .with_context_setup(|ctx| {
                         ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
                     })

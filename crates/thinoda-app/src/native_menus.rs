@@ -33,7 +33,7 @@ struct MenuOwner {
     object: Option<thinoda_canvas::ObjectSelection>,
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl MenuSnapshot {
     pub(crate) fn has_text_focus(&self) -> bool {
         self.text_focus.is_some()
@@ -60,6 +60,18 @@ impl MenuSnapshot {
         self.command_id(command)
             .and_then(|id| find(&self.items, id))
             .unwrap_or(false)
+    }
+
+    pub(crate) fn command_checked(&self, command: &Cmd) -> bool {
+        fn find(items: &[MenuItem], target: u16) -> bool {
+            items.iter().any(|item| match item {
+                MenuItem::Action { id, checked, .. } if *id == target => *checked,
+                MenuItem::Submenu { items, .. } => find(items, target),
+                _ => false,
+            })
+        }
+        self.command_id(command)
+            .is_some_and(|id| find(&self.items, id))
     }
 }
 
@@ -98,7 +110,7 @@ fn is_text_command(command: &Cmd) -> bool {
 }
 
 impl ThinodaApp {
-    #[cfg(any(target_os = "windows", test))]
+    #[cfg(any(target_os = "windows", target_os = "macos", test))]
     pub(crate) fn dispatch_ribbon_command(
         &mut self,
         ctx: &Context,
@@ -150,8 +162,11 @@ impl ThinodaApp {
                     MenuEntry::Command { label, command } => {
                         actions.push(MenuAction::Command(command.clone()));
                         let hint = ThinodaApp::shortcut_hint_for_mode(ctx, command, app.mode);
-                        let label =
-                            hint.map_or_else(|| label.clone(), |hint| format!("{label}\t{hint}"));
+                        let label = if cfg!(target_os = "macos") {
+                            label.clone()
+                        } else {
+                            hint.map_or_else(|| label.clone(), |hint| format!("{label}\t{hint}"))
+                        };
                         let enabled = if text_focus && is_text_command(command) {
                             app.launch.is_none()
                         } else {
@@ -271,15 +286,20 @@ impl ThinodaApp {
 }
 
 #[cfg(target_os = "windows")]
+type HostMenu = thinoda_platform::native_menu::WindowMenu;
+#[cfg(target_os = "macos")]
+type HostMenu = thinoda_platform::native_menu::ApplicationMenu;
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[derive(Default)]
-pub(crate) struct WindowsMenus {
-    active: Option<(thinoda_platform::native_menu::WindowMenu, MenuSnapshot)>,
+pub(crate) struct NativeMenus {
+    active: Option<(HostMenu, MenuSnapshot)>,
     unavailable: bool,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl ThinodaApp {
-    pub(crate) fn windows_menu_active(&self) -> bool {
+    pub(crate) fn native_menu_active(&self) -> bool {
         self.native_menus.active.is_some()
     }
 
@@ -295,7 +315,10 @@ impl ThinodaApp {
             }
         }
     }
+}
 
+#[cfg(target_os = "windows")]
+impl ThinodaApp {
     pub(crate) fn sync_native_menus(&mut self, ctx: &Context, frame: &eframe::Frame) {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         if self.native_menus.unavailable || self.launch.is_some() {
@@ -346,9 +369,131 @@ impl ThinodaApp {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+impl ThinodaApp {
+    fn macos_menu_model(
+        &self,
+        snapshot: &MenuSnapshot,
+    ) -> std::io::Result<thinoda_platform::native_menu::MacMenuModel> {
+        use thinoda_platform::native_menu::{MacAccelerator, MacMenuLabels, MacMenuModel};
+        let command_id = |command| {
+            snapshot
+                .command_id(&command)
+                .ok_or_else(|| std::io::Error::other("Missing standard application menu command"))
+        };
+        let shortcuts = snapshot
+            .actions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, action)| {
+                let MenuAction::Command(command) = action else {
+                    return None;
+                };
+                let binding = Self::shortcut_binding_for_platform(
+                    command,
+                    self.mode,
+                    egui::os::OperatingSystem::Mac,
+                )?;
+                Some((
+                    u16::try_from(index + 1).ok()?,
+                    MacAccelerator {
+                        key: binding.logical_key.name().into(),
+                        command: binding.modifiers.command || binding.modifiers.mac_cmd,
+                        control: binding.modifiers.ctrl,
+                        alt: binding.modifiers.alt,
+                        shift: binding.modifiers.shift,
+                    },
+                ))
+            })
+            .collect();
+        Ok(MacMenuModel {
+            items: snapshot.items.clone(),
+            application_commands: [
+                command_id(Cmd::About)?,
+                command_id(Cmd::Settings)?,
+                command_id(Cmd::Quit)?,
+            ],
+            shortcuts,
+            labels: MacMenuLabels {
+                application: "Thinoda".into(),
+                services: t("Services").into(),
+                window: t("Window").into(),
+                hide: t("Hide Thinoda").into(),
+                hide_others: t("Hide Others").into(),
+                show_all: t("Show All").into(),
+                minimize: t("Minimize").into(),
+                zoom: t("Zoom").into(),
+                bring_all: t("Bring All to Front").into(),
+            },
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl ThinodaApp {
+    pub(crate) fn sync_native_menus(&mut self, ctx: &Context, _: &eframe::Frame) {
+        if self.native_menus.unavailable || self.launch.is_some() {
+            return;
+        }
+        let snapshot = self.native_menu_snapshot(ctx);
+        if self
+            .native_menus
+            .active
+            .as_ref()
+            .is_some_and(|(_, old)| *old == snapshot)
+        {
+            return;
+        }
+        let result = (|| {
+            let model = self.macos_menu_model(&snapshot)?;
+            if let Some((menu, old)) = &mut self.native_menus.active {
+                if menu.replace(&model)? {
+                    *old = snapshot;
+                }
+            } else {
+                let wake = ctx.clone();
+                let menu =
+                    thinoda_platform::native_menu::ApplicationMenu::attach(&model, move || {
+                        wake.request_repaint()
+                    })?;
+                self.native_menus.active = Some((menu, snapshot));
+            }
+            Ok::<(), std::io::Error>(())
+        })();
+        if let Err(error) = result {
+            log::error!("native macOS menu integration: {error}");
+            self.toasts
+                .error(format!("{}: {error}", t("Not possible here")));
+            self.native_menus.active = None;
+            self.native_menus.unavailable = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_application_aliases_and_accelerators_use_shared_command_bindings() {
+        let app = ThinodaApp::headless();
+        let snapshot = app.native_menu_snapshot(&Context::default());
+        let model = app.macos_menu_model(&snapshot).unwrap();
+        for (index, command) in [Cmd::About, Cmd::Settings, Cmd::Quit]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                model.application_commands[index],
+                snapshot.command_id(&command).unwrap()
+            );
+        }
+        let save = &model.shortcuts[&snapshot.command_id(&Cmd::Save).unwrap()];
+        assert!(save.command);
+        assert!(!save.control);
+        assert_eq!(save.key, "S");
+        assert!(snapshot.actions.contains(&MenuAction::Command(Cmd::Quit)));
+    }
 
     fn id(snapshot: &MenuSnapshot, command: Cmd) -> u16 {
         u16::try_from(

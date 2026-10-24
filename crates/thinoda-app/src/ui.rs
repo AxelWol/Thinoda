@@ -561,8 +561,8 @@ impl ThinodaApp {
                     }
                     self.top_bar(ui);
                 });
-            #[cfg(target_os = "windows")]
-            if self.windows_menu_active() {
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            if self.native_menu_active() {
                 self.show_ribbon(ui);
             }
             if show_doc {
@@ -1595,14 +1595,31 @@ impl ThinodaApp {
             .primary()
             .and_then(|id| d.doc.sheet().topic(id))
             .map(|topic| topic.title.clone());
+        let detail = if ui.available_width() >= 850.0 {
+            thinoda_ui::ribbon::Detail::Large
+        } else if ui.available_width() >= 650.0 {
+            thinoda_ui::ribbon::Detail::Labeled
+        } else {
+            thinoda_ui::ribbon::Detail::Icon
+        };
         let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
             for (label, command) in buttons {
                 let enabled = command.available(&d.doc, &d.view);
-                let response = ui.add_enabled(enabled, egui::Button::new(t(label)));
+                let (response, activated) = ui
+                    .add_enabled_ui(enabled, |ui| {
+                        thinoda_ui::ribbon::command_button(
+                            ui,
+                            crate::command_icons::command_glyph(&Cmd::Canvas(command.clone())),
+                            t(label),
+                            detail,
+                            false,
+                        )
+                    })
+                    .inner;
                 if response.gained_focus() {
                     response.scroll_to_me(None);
                 }
-                if touch_actions_allowed && response.clicked() {
+                if touch_actions_allowed && activated {
                     response.request_focus();
                     action = Some(command.clone());
                 }
@@ -1620,29 +1637,61 @@ impl ThinodaApp {
                 );
                 ui.add(egui::Label::new(&summary).truncate())
                     .on_hover_text(&summary);
-                ui.horizontal_wrapped(|ui| {
-                    action_buttons(
-                        ui,
-                        &[
-                            ("Add Sibling", Action::InsertSibling),
-                            ("Add Child", Action::InsertChild),
-                            ("Edit Topic", Action::StartEdit),
-                            ("Move Up", Action::MoveUp),
-                            ("Move Down", Action::MoveDown),
-                        ],
-                    );
-                });
-                ui.horizontal_wrapped(|ui| {
-                    action_buttons(
-                        ui,
-                        &[
-                            ("Indent", Action::Indent),
-                            ("Outdent", Action::Outdent),
-                            ("Delete Topic", Action::Delete),
-                            ("Delete Topic Only", Action::DeleteKeepChildren),
-                        ],
-                    );
-                });
+                egui::Frame::new()
+                    .fill(p.surface)
+                    .inner_margin(Margin::symmetric(6, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            for (caption, buttons) in [
+                                (
+                                    "Insert",
+                                    &[
+                                        ("Add Sibling", Action::InsertSibling),
+                                        ("Add Child", Action::InsertChild),
+                                    ][..],
+                                ),
+                                ("Edit", &[("Edit Topic", Action::StartEdit)][..]),
+                                (
+                                    "Arrange",
+                                    &[
+                                        ("Move Up", Action::MoveUp),
+                                        ("Move Down", Action::MoveDown),
+                                        ("Indent", Action::Indent),
+                                        ("Outdent", Action::Outdent),
+                                    ][..],
+                                ),
+                                (
+                                    "Delete",
+                                    &[
+                                        ("Delete Topic", Action::Delete),
+                                        ("Delete Topic Only", Action::DeleteKeepChildren),
+                                    ][..],
+                                ),
+                            ] {
+                                ui.vertical(|ui| {
+                                    let controls = if detail == thinoda_ui::ribbon::Detail::Labeled
+                                    {
+                                        ui.vertical(|ui| {
+                                            ui.set_width(142.0);
+                                            action_buttons(ui, buttons);
+                                        })
+                                    } else {
+                                        ui.horizontal(|ui| action_buttons(ui, buttons))
+                                    };
+                                    ui.add_sized(
+                                        [controls.response.rect.width(), 16.0],
+                                        egui::Label::new(
+                                            egui::RichText::new(t(caption))
+                                                .size(10.0)
+                                                .color(p.text_muted),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                                ui.separator();
+                            }
+                        })
+                    });
             });
         let margin = Margin::symmetric(
             (ui.available_width().max(0.0) * 0.08).min(48.0) as i8,

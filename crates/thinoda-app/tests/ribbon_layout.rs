@@ -1,4 +1,4 @@
-#![cfg(target_os = "windows")]
+#![cfg(any(target_os = "windows", target_os = "macos"))]
 
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable};

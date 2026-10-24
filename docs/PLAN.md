@@ -170,7 +170,7 @@ implementation):**
 
 - **Menus:** retain the already-approved P4 shared File/Edit/Sheet/Insert/AI/Tools/
   View/Help taxonomy, Settings in Edit with standard native aliases, Windows ribbon
-  behavior, macOS global menu and Ubuntu fallback. Native host actions must be real,
+  behavior, macOS global menu plus an Office-style in-app ribbon, and Ubuntu fallback. Native host actions must be real,
   not egui popups relabeled "native". Reuse the existing command IDs and preserve
   focused text editing. Add new feature commands to this model as F3-F5 ship.
 - **Keymaps:** use a versioned active-profile identifier and named bindings keyed
@@ -221,8 +221,8 @@ WASM clippy and 25 documentation contracts passed. The desktop executable was
 built and launched at the user's request; its live Windows accessibility tree
 exposed all eight native menu groups. This does not establish screen-reader,
 ARM64 or other-OS acceptance.
-This is a Windows integration slice, **not F1/P4 completion**: Windows ribbon,
-macOS global menus/multiple windows, Ubuntu desktop acceptance, command/window
+This is a Windows integration slice, **not F1/P4 completion**: ribbon/OS-menu
+acceptance, multiple windows, Ubuntu desktop acceptance, command/window
 lifecycle and the broader P4 review/host matrix remain pending. F2-F6 remain
 pending; SS0-SS8 remains deferred.
 
@@ -242,6 +242,30 @@ This is an implemented
 ribbon slice, not completed P4.3 acceptance: native keyboard/AT, high-contrast
 and Windows ARM64 acceptance still need evidence. The other F1 OS/window work
 and F2-F6 remain open, and deferred stability work has not resumed.
+
+**Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
+uses original vector line icons, large primary actions, stacked secondary actions,
+bottom group captions and an active-tab underline. Width-driven adaptation removes
+secondary captions, then collapses groups; remaining groups use a bounded overflow
+menu. The Outline structural toolbar shown in the user's second screenshot shares
+these controls, adapting between captioned tiles, labeled rows and compact icons.
+Its Insert/Edit/Arrange/Delete groups retain all nine actions, accessible names,
+tooltips, keyboard activation and Undo; the Structure/Map sidebar is unchanged.
+The latest Windows build was launched locally, with the native menus and new
+controls visible in its live accessibility tree. The user is actively editing in
+that app; further work must preserve that window and its unsaved map.
+
+The macOS adapter now has a real AppKit global menu alongside the ribbon:
+Thinoda/About/Settings/Services/Hide/Quit and a standard Window menu, shared
+category commands and typed key equivalents. The existing native bridge owns
+tracking, pending events and generations; Close/Quit still use app decisions.
+Platform model tests run on Windows; a dedicated macOS-only fixture compiles for
+Intel/ARM and exercises real NSMenu callbacks/lifecycle in CI. **Implementation is
+not native-host acceptance:** macOS build/fixture results and UI/VoiceOver evidence
+must be recorded separately. The earlier initial-ribbon workspace snapshot passed
+676 tests (one pre-existing ignored); a later native submenu-state correction had
+its own targeted app/backend checks. Do not represent that earlier run as covering
+the screenshot refinement or the AppKit adapter.
 
 #### Active priorities by end-user value (2026-10-24)
 

@@ -65,7 +65,11 @@ fn enabled_ids(items: &[MenuItem]) -> HashSet<u16> {
             } => {
                 ids.insert(*id);
             }
-            MenuItem::Submenu { items, enabled: true, .. } => ids.extend(enabled_ids(items)),
+            MenuItem::Submenu {
+                items,
+                enabled: true,
+                ..
+            } => ids.extend(enabled_ids(items)),
             _ => {}
         }
     }
@@ -107,7 +111,11 @@ fn build(items: &[MenuItem], popup: bool, ids: &mut HashSet<u16>) -> io::Result<
                     None,
                 )
             }
-            MenuItem::Submenu { label, enabled, items } => {
+            MenuItem::Submenu {
+                label,
+                enabled,
+                items,
+            } => {
                 let child = build(items, true, ids)?;
                 (
                     MF_POPUP | if *enabled { 0 } else { MF_GRAYED },
@@ -269,8 +277,8 @@ impl Drop for WindowMenu {
 mod tests {
     use super::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, GetMenuItemCount, GetSubMenu, IsMenu, SendMessageW,
-        WS_OVERLAPPEDWINDOW, GetMenuState, MF_BYPOSITION,
+        CreateWindowExW, DestroyWindow, GetMenuItemCount, GetMenuState, GetSubMenu, IsMenu,
+        MF_BYPOSITION, SendMessageW, WS_OVERLAPPEDWINDOW,
     };
 
     struct TestWindow(HWND);
@@ -418,12 +426,20 @@ mod tests {
     fn submenu_enabled_state_is_owned_by_app_not_inferred_from_disabled_children() {
         let window = TestWindow::new();
         let mut menu = unsafe { WindowMenu::attach(window.0, &fixture(false), || {}) }.unwrap();
-        assert_eq!(unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED, 0);
+        assert_eq!(
+            unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED,
+            0
+        );
         let mut items = fixture(true);
-        let MenuItem::Submenu { enabled, .. } = &mut items[0] else { unreachable!() };
+        let MenuItem::Submenu { enabled, .. } = &mut items[0] else {
+            unreachable!()
+        };
         *enabled = false;
         menu.replace(&items).unwrap();
-        assert_ne!(unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED, 0);
+        assert_ne!(
+            unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED,
+            0
+        );
         unsafe { SendMessageW(window.0, WM_COMMAND, 1, 0) };
         assert!(menu.drain().is_empty());
     }

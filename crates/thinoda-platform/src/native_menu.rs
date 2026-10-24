@@ -21,3 +21,10 @@ pub enum MenuItem {
 mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::WindowMenu;
+
+mod macos_model;
+pub use macos_model::{MacAccelerator, MacMenuLabels, MacMenuModel};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::ApplicationMenu;
