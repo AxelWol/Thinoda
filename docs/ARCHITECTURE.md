@@ -157,6 +157,9 @@ graph TD
   handoff. Page-setup gestures retain their starting settings through the primary
   pointer sequence; cancel, multitouch, focus loss and skipped dialog frames
   restore that snapshot through release without disabling page setup.
+  Screenshot-editor crop, square/frame/color settings retain the same
+  sequence-scoped rollback contract. Rejected releases cannot copy/save output
+  or dismiss the editor; a canceled crop clears its provisional drag origin.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
 - **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
   the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the

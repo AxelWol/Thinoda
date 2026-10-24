@@ -450,6 +450,20 @@ then, not after the release is promised.
   cover preflight dependency and SHA wiring. This mitigates mistaken/untrusted
   source selection while the workflow is intact; it does not close the owner
   configuration finding or eliminate a later concurrent tag mutation.
+- **SS3 screenshot editor:** output/cancel decisions and staged crop/square/frame/
+  color settings now retain a pointer-sequence snapshot. Rejected touches,
+  focus loss and skipped frames roll back through release; rejected output
+  cannot copy an image or invoke PNG save. Tests cover both-theme canceled and
+  two/three-contact controls, multi-frame canceled/focus-interrupted crop
+  rollback, clean crop/square editing and dismissal. All 105 affected unit/input/
+  shortcut/title tests pass; native all-target and locked WASM lint pass.
+- **SS4 fuzz host probe:** installed nightly/cargo-fuzz could build importer
+  dependencies but Windows linking failed because
+  `clang_rt.asan_dynamic_runtime_thunk-x86_64.lib` is missing. A no-sanitizer
+  alternative was denied; sanitizer coverage was not weakened. No campaign
+  executed. The probe exposed an out-of-date separate fuzz lockfile (workspace
+  versions/dependencies); it was synchronized by Cargo. Long sanitized campaigns
+  remain an explicit Linux/compatible-host gate, not satisfied by CI smoke.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

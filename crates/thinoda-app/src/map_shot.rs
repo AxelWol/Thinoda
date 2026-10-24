@@ -38,6 +38,16 @@ struct ShotEditor {
     frame: u32,
     frame_color: Color32,
     drag_start: Option<Pos2>,
+    gesture: Option<ShotGesture>,
+}
+
+struct ShotGesture {
+    crop: PixelCrop,
+    square: bool,
+    frame: u32,
+    frame_color: Color32,
+    last_frame: u64,
+    canceled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +202,7 @@ impl ShotEditor {
             frame: 0,
             frame_color: Color32::WHITE,
             drag_start: None,
+            gesture: None,
         }
     }
 
@@ -380,11 +391,12 @@ impl ThinodaApp {
     }
 
     pub(crate) fn map_shot_dialog(&mut self, ctx: &Context) {
+        let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         if self.map_shot.pending.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
             egui::Modal::new(egui::Id::unique("map-shot-wait")).show(ctx, |ui| {
                 ui.label(t("Capturing visible map…"));
-                if ui.button(t("Cancel")).clicked() {
+                if ui.button(t("Cancel")).clicked() && touch_allowed {
                     self.map_shot.cancel();
                 }
             });
@@ -393,6 +405,36 @@ impl ThinodaApp {
         let Some(editor) = self.map_shot.editor.as_mut() else {
             return;
         };
+        let pointer_down = ctx.input(|input| input.pointer.primary_down());
+        let focused = ctx.input(|input| {
+            input.focused
+                && !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+        });
+        let frame = ctx.cumulative_frame_nr();
+        if pointer_down && editor.gesture.is_none() {
+            editor.gesture = Some(ShotGesture {
+                crop: editor.crop,
+                square: editor.square,
+                frame: editor.frame,
+                frame_color: editor.frame_color,
+                last_frame: frame,
+                canceled: false,
+            });
+        }
+        if let Some(gesture) = &mut editor.gesture {
+            gesture.canceled |=
+                !touch_allowed || !focused || frame > gesture.last_frame.saturating_add(1);
+            gesture.last_frame = frame;
+        }
+        let activation_allowed = touch_allowed
+            && focused
+            && editor
+                .gesture
+                .as_ref()
+                .is_none_or(|gesture| !gesture.canceled);
         let mut close = false;
         egui::Modal::new(egui::Id::unique("map-shot-editor")).show(ctx, |ui| {
             ui.set_width(660.0_f32.min((ctx.content_rect().width()-64.0).max(180.0)));
@@ -402,9 +444,16 @@ impl ThinodaApp {
                 editor.preview(ui);
                 editor.controls(ui);
             });
+            if !activation_allowed && let Some(gesture) = &editor.gesture {
+                editor.crop = gesture.crop;
+                editor.square = gesture.square;
+                editor.frame = gesture.frame;
+                editor.frame_color = gesture.frame_color;
+                editor.drag_start = None;
+            }
             ui.horizontal_wrapped(|ui| {
-                if ui.button(t("Cancel")).clicked() { close = true; }
-                if ui.button(t("Copy image")).clicked() {
+                if ui.button(t("Cancel")).clicked() && activation_allowed { close = true; }
+                if ui.button(t("Copy image")).clicked() && activation_allowed {
                     match editor.output() {
                         Ok(image) => {
                             ctx.copy_image(image);
@@ -413,7 +462,7 @@ impl ThinodaApp {
                         Err(e) => { self.toasts.error(e); }
                     }
                 }
-                if ui.button(t("Save PNG…")).clicked()
+                if ui.button(t("Save PNG…")).clicked() && activation_allowed
                     && let Some(path) = crate::files::save_target(Some(t("Save PNG…")),
                         &[("PNG", &["png"])], "map-shot.png", None, crate::files::Target::Download)
                 {
@@ -424,6 +473,9 @@ impl ThinodaApp {
                     };
                 }
             });
+            if !pointer_down {
+                editor.gesture = None;
+            }
         });
         if close {
             self.map_shot.cancel();
@@ -442,6 +494,7 @@ mod tests {
     fn harness() -> Harness<'static, ThinodaApp> {
         let mut h = Harness::builder()
             .with_size(egui::vec2(1100.0, 800.0))
+            .with_step_dt(1.0 / 60.0)
             .with_context_setup(|ctx| {
                 ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu)
             })
@@ -464,6 +517,166 @@ mod tests {
                 _ => None,
             })
             .expect("native readback requested")
+    }
+
+    #[test]
+    #[cfg(not(feature = "gpu-tests"))]
+    fn interrupted_crop_drag_restores_the_pre_gesture_region() {
+        use egui::{Event, Modifiers, PointerButton, TouchDeviceId, TouchId, TouchPhase};
+        for reject in ["cancel", "focus", "clean"] {
+            let mut h = harness();
+            h.state_mut().map_shot.editor = Some(ShotEditor::new(
+                &h.ctx,
+                ColorImage::filled([240, 180], Color32::GREEN),
+            ));
+            h.run_steps(4);
+            let original = h.state().map_shot.editor.as_ref().unwrap().crop;
+            let rect = h.get_by_label("Map Shot preview").rect();
+            let start = rect.min + egui::vec2(10.0, 10.0);
+            let end = rect.center();
+            h.event(Event::PointerMoved(start));
+            h.event(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(1),
+                phase: TouchPhase::Start,
+                pos: start,
+                force: None,
+            });
+            h.event(Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(2);
+            for fraction in [0.4, 0.8, 1.0] {
+                let pos = start.lerp(end, fraction);
+                h.event(Event::PointerMoved(pos));
+                h.event(Event::Touch {
+                    device_id: TouchDeviceId(1),
+                    id: TouchId(1),
+                    phase: TouchPhase::Move,
+                    pos,
+                    force: None,
+                });
+                h.run_steps(2);
+            }
+            assert_ne!(h.state().map_shot.editor.as_ref().unwrap().crop, original);
+            if reject == "focus" {
+                h.event(Event::WindowFocused(false));
+                h.run_steps(1);
+            }
+            h.event(Event::Touch {
+                device_id: TouchDeviceId(1),
+                id: TouchId(1),
+                phase: if reject == "cancel" {
+                    TouchPhase::Cancel
+                } else {
+                    TouchPhase::End
+                },
+                pos: end,
+                force: None,
+            });
+            h.run_steps(2);
+            h.event(Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(4);
+            let editor = h.state().map_shot.editor.as_ref().unwrap();
+            if reject == "clean" {
+                assert_ne!(editor.crop, original);
+            } else {
+                assert_eq!(editor.crop, original);
+                assert!(editor.drag_start.is_none());
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "gpu-tests"))]
+    fn rejected_map_shot_controls_preserve_crop_and_cannot_copy_or_dismiss() {
+        use egui::{Event, Modifiers, PointerButton, TouchDeviceId, TouchId, TouchPhase};
+        for dark in [false, true] {
+            let mut h = harness();
+            h.state_mut().settings.theme = if dark {
+                thinoda_platform::settings::ThemeMode::Dark
+            } else {
+                thinoda_platform::settings::ThemeMode::Light
+            };
+            h.state_mut().map_shot.editor = Some(ShotEditor::new(
+                &h.ctx,
+                ColorImage::filled([240, 180], Color32::GREEN),
+            ));
+            h.run_steps(4);
+            let original = h.state().map_shot.editor.as_ref().unwrap().crop;
+            for label in ["Square (1:1)", "Copy image", "Save PNG…", "Cancel"] {
+                h.get_by_label(label).scroll_to_me();
+                h.run_steps(6);
+                let pos = h.get_by_label(label).rect().center();
+                for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+                    h.event(Event::PointerMoved(pos));
+                    h.event(Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    });
+                    for phase in [
+                        TouchPhase::Start,
+                        if cancel {
+                            TouchPhase::Cancel
+                        } else {
+                            TouchPhase::End
+                        },
+                    ] {
+                        for id in 1..=contacts {
+                            h.event(Event::Touch {
+                                device_id: TouchDeviceId(1),
+                                id: TouchId(id),
+                                phase,
+                                pos: pos + egui::vec2((id - 1) as f32 * 40.0, 0.0),
+                                force: None,
+                            });
+                        }
+                        h.run_steps(2);
+                    }
+                    h.event(Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    });
+                    h.run_steps(1);
+                    assert!(
+                        !h.output()
+                            .platform_output
+                            .commands
+                            .iter()
+                            .any(|cmd| matches!(cmd, egui::OutputCommand::CopyImage(_)))
+                    );
+                    h.run_steps(3);
+                    let editor = h
+                        .state()
+                        .map_shot
+                        .editor
+                        .as_ref()
+                        .expect("rejected Cancel retains editor");
+                    assert_eq!(editor.crop, original);
+                    assert!(!editor.square);
+                }
+            }
+            h.get_by_label("Square (1:1)").click();
+            h.run_steps(3);
+            let editor = h.state().map_shot.editor.as_ref().unwrap();
+            assert!(editor.square);
+            assert_eq!(editor.crop.width, editor.crop.height);
+            h.get_by_label("Cancel").click();
+            h.run_steps(3);
+            assert!(!h.state().map_shot.active());
+        }
     }
 
     #[test]
