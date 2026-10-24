@@ -734,3 +734,51 @@ fn inspector_symbols(h: &mut Harness<'_, ThinodaApp>) {
     h.run_steps(4);
     assert_eq!(h.state().doc().unwrap().doc.workbook(), &colored);
 }
+
+#[test]
+fn style_inspector_combo_rejects_canceled_and_multitouch_releases() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 520.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(8);
+
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+            h.run_steps(4);
+            let target = h.get_by_label(t("Rectangle")).rect().center();
+            rejected_tap(&mut h, target, contacts, cancel);
+            assert_eq!(
+                h.state().doc().unwrap().doc.state_id(),
+                revision,
+                "rejected touch must not commit an inspector combo selection"
+            );
+            assert_eq!(
+                h.state().doc().unwrap().doc.workbook(),
+                &before,
+                "rejected touch must preserve the topic style"
+            );
+        }
+
+        h.get_by_role_and_label(Role::ComboBox, t("Shape"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::ComboBox, t("Shape")).click();
+        h.run_steps(4);
+        h.get_by_label(t("Rectangle")).click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        let root = doc.doc.sheet().root;
+        assert_eq!(
+            doc.doc.sheet().topic(root).unwrap().style.shape,
+            Some(thinoda_core::TopicShape::Rect),
+            "ordinary pointer activation remains available"
+        );
+    }
+}

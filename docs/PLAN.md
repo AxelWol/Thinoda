@@ -674,6 +674,16 @@ alternative. Eframe still prevents browser defaults for canvas touch events so
 the map gesture works. Browser/device acceptance must verify browser zoom
 controls/keyboard and map pinch separately without sacrificing low-vision access.
 
+**Delivered Style-inspector touch-release safety slice:** ordinary Style controls
+that commit combo-box selections, branch-side changes, reset/marker actions and
+relationship endpoint choices now consult the shared canceled/multitouch release
+guard. An actual-app regression verifies canceled one-contact and two/three-
+contact Shape selections leave workbook/history unchanged, while ordinary mouse
+selection still applies the shape. This is not a generic input filter: other
+inspector families and combo boxes, in-progress slider/drag cancellation,
+text-selection behavior, browser/device gestures and hardware acceptance remain
+open.
+
 **Delivered Outline touch/release safety slice:** the first one-finger diagonal
 swipe scrolls deep Outline content in both axes without selecting, editing or
 mutating topics. Reproduced a two-finger release collapsing a branch; Outline

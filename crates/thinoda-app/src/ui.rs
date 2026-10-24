@@ -2527,10 +2527,11 @@ impl ThinodaApp {
     }
 
     fn style_tab(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         if let Some(thinoda_canvas::ObjectSelection::Relationship(id)) =
             self.doc().and_then(|d| d.view.selected_object)
         {
-            self.relationship_style(ui, id);
+            self.relationship_style(ui, id, touch_allowed);
             return;
         }
         self.quick_styles(ui);
@@ -2582,7 +2583,7 @@ impl ThinodaApp {
                         })
                         .response
                 });
-                if side != topic.branch_side {
+                if touch_allowed && side != topic.branch_side {
                     let result = d.doc.edit_sheet("Branch side", |s| {
                         for id in &sel {
                             s.set_branch_side(*id, side)?;
@@ -2616,7 +2617,7 @@ impl ThinodaApp {
                     })
                     .response
             });
-            if let Some(s) = chosen {
+            if touch_allowed && let Some(s) = chosen {
                 let _ = d
                     .doc
                     .edit_sheet("Structure", |sh| sh.set_structure(Some(primary), s));
@@ -2636,7 +2637,7 @@ impl ThinodaApp {
                     })
                     .response
             });
-            if shape != resolved.shape {
+            if touch_allowed && shape != resolved.shape {
                 change = Some(("Shape", Box::new(move |st| st.shape = Some(shape))));
             }
             widgets::property_row(ui, t("Fill"), |ui| {
@@ -2670,7 +2671,7 @@ impl ThinodaApp {
             let mut bw = resolved.border_width;
             widgets::property_field(ui, t("Width"), |ui| {
                 let r = ui.add(egui::Slider::new(&mut bw, 0.0..=8.0).step_by(0.5));
-                if r.changed() {
+                if r.changed() && touch_allowed {
                     change = Some(("Border", Box::new(move |st| st.border_width = Some(bw))));
                 }
                 r
@@ -2682,7 +2683,7 @@ impl ThinodaApp {
             widgets::property_field(ui, t("Font Family"), |ui| {
                 font_selector(ui, &mut self.fonts, &mut family, t("Auto"))
             });
-            if family != topic.style.font_family {
+            if touch_allowed && family != topic.style.font_family {
                 change = Some((
                     "Font Family",
                     Box::new(move |st| st.font_family = family.clone()),
@@ -2691,7 +2692,7 @@ impl ThinodaApp {
             let mut size = resolved.font_size;
             widgets::property_field(ui, t("Font Size"), |ui| {
                 let r = ui.add(egui::DragValue::new(&mut size).range(6.0..=96.0).speed(0.5));
-                if r.changed() {
+                if r.changed() && touch_allowed {
                     change = Some(("Font Size", Box::new(move |st| st.font_size = Some(size))));
                 }
                 r
@@ -2713,7 +2714,7 @@ impl ThinodaApp {
                     ),
                 ];
                 for (icon, label, on, set) in toggles {
-                    if widgets::icon_button(ui, icon, t(label), on).clicked() {
+                    if widgets::icon_button(ui, icon, t(label), on).clicked() && touch_allowed {
                         change = Some(("Text Style", Box::new(move |st| set(st, !on))));
                     }
                 }
@@ -2723,7 +2724,9 @@ impl ThinodaApp {
                     (TextAlign::Center, "⬌", "Align Center"),
                     (TextAlign::Right, "➡", "Align Right"),
                 ] {
-                    if widgets::icon_button(ui, icon, t(label), resolved.align == a).clicked() {
+                    if widgets::icon_button(ui, icon, t(label), resolved.align == a).clicked()
+                        && touch_allowed
+                    {
                         change = Some(("Align", Box::new(move |st| st.align = Some(a))));
                     }
                 }
@@ -2753,7 +2756,7 @@ impl ThinodaApp {
                     })
                     .response
             });
-            if ls != resolved.line_shape {
+            if touch_allowed && ls != resolved.line_shape {
                 change = Some(("Line", Box::new(move |st| st.line_shape = Some(ls))));
             }
             widgets::property_row(ui, t("Line Color"), |ui| {
@@ -2769,14 +2772,14 @@ impl ThinodaApp {
             let mut lw = resolved.line_width;
             widgets::property_field(ui, t("Line Width"), |ui| {
                 let r = ui.add(egui::Slider::new(&mut lw, 0.5..=8.0).step_by(0.5));
-                if r.changed() {
+                if r.changed() && touch_allowed {
                     change = Some(("Line Width", Box::new(move |st| st.line_width = Some(lw))));
                 }
                 r
             });
         });
 
-        if !topic.style.is_default() && ui.button(t("Reset Style")).clicked() {
+        if !topic.style.is_default() && ui.button(t("Reset Style")).clicked() && touch_allowed {
             change = Some(("Reset Style", Box::new(|st| *st = TopicStyle::default())));
         }
 
@@ -2824,7 +2827,8 @@ impl ThinodaApp {
             });
             edit_labels = ui
                 .add_enabled(sel.len() == 1, egui::Button::new(t("Edit labels")))
-                .clicked();
+                .clicked()
+                && touch_allowed;
             let l = ui.label(t("Notes"));
             let current = topic.notes.clone().unwrap_or_default();
             let salt = (
@@ -2861,7 +2865,8 @@ impl ThinodaApp {
                 ui.label(t("Markers"));
                 ui.horizontal_wrapped(|ui| {
                     for (index, m) in topic.markers.iter().enumerate() {
-                        if ui.button(format!("{} ✖", markers::glyph(m))).clicked() {
+                        if ui.button(format!("{} ✖", markers::glyph(m))).clicked() && touch_allowed
+                        {
                             marker_action = Some(Cmd::Canvas(Action::RemoveMarker(primary, index)));
                         }
                     }
@@ -2882,7 +2887,12 @@ impl ThinodaApp {
         }
     }
 
-    fn relationship_style(&mut self, ui: &mut Ui, id: thinoda_core::RelationshipId) {
+    fn relationship_style(
+        &mut self,
+        ui: &mut Ui,
+        id: thinoda_core::RelationshipId,
+        touch_allowed: bool,
+    ) {
         let Some(d) = self.doc_mut() else { return };
         let Some(rel) = d
             .doc
@@ -2942,7 +2952,7 @@ impl ThinodaApp {
             color = widgets::color_swatches(ui, &SWATCHES, rel.color.map(from_color))
                 .map(|color| Some(to_color(color)));
         });
-        if rel.color.is_some() && ui.button(t("Automatic line color")).clicked() {
+        if rel.color.is_some() && ui.button(t("Automatic line color")).clicked() && touch_allowed {
             color = Some(None);
         }
         let layout = d.view.layout_for(&d.doc);
@@ -3004,19 +3014,17 @@ impl ThinodaApp {
                 rel.control_points.is_some(),
                 egui::Button::new(t("Reset curve")),
             )
-            .clicked();
-        let changed = title.is_some()
-            || color.is_some()
-            || reset
-            || changed_points.is_some()
-            || from != rel.from
-            || to != rel.to;
+            .clicked()
+            && touch_allowed;
+        let reconnect = touch_allowed && (from != rel.from || to != rel.to);
+        let changed =
+            title.is_some() || color.is_some() || reset || changed_points.is_some() || reconnect;
         let result = if changed {
             d.doc.edit_sheet("Edit Relationship", |s| {
                 if let Some(title) = title {
                     s.set_relationship_title(id, &title)?;
                 }
-                if from != rel.from || to != rel.to {
+                if reconnect {
                     s.reconnect_relationship(id, from, to)?;
                 }
                 if let Some(color) = color {
