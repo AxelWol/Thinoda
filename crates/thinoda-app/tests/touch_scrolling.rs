@@ -1067,3 +1067,101 @@ fn custom_theme_editor_discards_rejected_preset_activation() {
         );
     }
 }
+
+#[test]
+fn numeric_drag_drafts_cannot_outlive_their_inspector_context() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        for interruption in [
+            "document",
+            "sheet",
+            "selection",
+            "revision",
+            "hidden",
+            "modal",
+        ] {
+            let mut h = harness(theme, 1.0);
+            h.set_size(vec2(1000.0, 520.0));
+            h.state_mut().settings.show_format_panel = true;
+            h.state_mut().format_tab = FormatTab::Style;
+            let workbook = h.state().doc().unwrap().doc.workbook().clone();
+            h.state_mut().new_doc(workbook);
+            h.state_mut().active = 0;
+            let sheet = h.state().doc().unwrap().doc.sheet().clone();
+            h.state_mut().doc_mut().unwrap().doc.add_sheet(sheet);
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Slider, t("Width"))
+                .scroll_to_me();
+            h.run_steps(8);
+            let rect = h.get_by_role_and_label(Role::Slider, t("Width")).rect();
+            let start = rect.center();
+            let moved = start + vec2(rect.width() * 0.35, 0.0);
+            let initial_revision = h.state().doc().unwrap().doc.state_id();
+            h.event(Event::PointerMoved(start));
+            h.event(Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(2);
+            h.event(Event::PointerMoved(moved));
+            h.run_steps(2);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), initial_revision);
+
+            match interruption {
+                "document" => h.state_mut().active = 1,
+                "sheet" => h.state_mut().doc_mut().unwrap().doc.set_active(1),
+                "selection" => {
+                    let doc = h.state_mut().doc_mut().unwrap();
+                    let child = doc.doc.sheet().children(doc.doc.sheet().root)[0];
+                    doc.view.selection = vec![child];
+                }
+                "revision" => {
+                    let doc = h.state_mut().doc_mut().unwrap();
+                    doc.doc
+                        .edit_sheet("External edit", |sheet| {
+                            sheet.set_title(sheet.root, "Changed during drag")
+                        })
+                        .unwrap();
+                }
+                "hidden" => h.state_mut().settings.show_format_panel = false,
+                "modal" => {
+                    let ctx = h.ctx.clone();
+                    h.state_mut().exec(&ctx, Cmd::Settings);
+                }
+                _ => unreachable!(),
+            }
+            h.run_steps(3);
+            let before: Vec<_> = h
+                .state()
+                .docs
+                .iter()
+                .map(|doc| (doc.doc.workbook().clone(), doc.doc.state_id()))
+                .collect();
+            h.event(Event::PointerButton {
+                pos: moved,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            h.run_steps(4);
+            h.state_mut().dialogs.settings = false;
+            h.state_mut().settings.show_format_panel = true;
+            h.state_mut().active = 0;
+            h.state_mut().doc_mut().unwrap().doc.set_active(0);
+            let root = h.state().doc().unwrap().doc.sheet().root;
+            h.state_mut().doc_mut().unwrap().view.selection = vec![root];
+            h.run_steps(8);
+            for (doc, (workbook, revision)) in h.state().docs.iter().zip(&before) {
+                assert_eq!(doc.doc.workbook().sheets, workbook.sheets, "{interruption}");
+                assert_eq!(
+                    doc.doc.workbook().metadata,
+                    workbook.metadata,
+                    "{interruption}"
+                );
+                assert_eq!(doc.doc.state_id(), *revision, "{interruption}");
+            }
+        }
+    }
+}
