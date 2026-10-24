@@ -64,6 +64,12 @@ graph TD
   for retry; other selected sessions can still restore. Explicit discard retains
   only documents whose deletion failed, with visible errors and logging.
   Post-restore cleanup errors are reported rather than silently ignored.
+  Before opening restored maps and removing their originals, the app synchronously
+  persists replacement snapshots in its current recovery session. Failed handoffs
+  retain the original session for retry and attempt cleanup of new snapshot keys.
+  The platform handoff writer holds session ownership and never queues a failed
+  write for later resurrection. If recovery is unavailable, maps can still open,
+  but their original snapshots remain on disk and a warning is shown.
   Focused Notes/Hyperlink drafts belong to `OpenDoc`, not only egui's temporary
   text buffer. They contribute to dirty/close detection and idle tracking.
   Commands, saves and native close handling commit them as one undo step;

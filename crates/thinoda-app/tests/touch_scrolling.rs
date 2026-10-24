@@ -1087,6 +1087,10 @@ fn recovery_choices_reject_canceled_and_multitouch_releases() {
             assert!(recovery.try_flush_for_crash());
             recovery.suspend().unwrap();
             drop(recovery);
+            let current = std::sync::Arc::new(
+                thinoda_platform::recovery::RecoveryManager::start(&paths).unwrap(),
+            );
+            h.state_mut().services.recovery = Some(current);
             h.state_mut().docs.clear();
             h.state_mut().dialogs.recovery =
                 thinoda_platform::recovery::RecoveryManager::find_orphans(&paths);

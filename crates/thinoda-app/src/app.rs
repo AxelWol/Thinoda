@@ -1694,6 +1694,7 @@ impl ThinodaApp {
                 .collect::<Result<Vec<_>, _>>();
             match workbooks {
                 Ok(workbooks) => {
+                    let mut restored = Vec::new();
                     for (doc, wb) in s.docs.iter().zip(workbooks) {
                         let mut d = OpenDoc::new(wb);
                         d.view.titles = new_topic_titles();
@@ -1708,10 +1709,41 @@ impl ThinodaApp {
                             d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
                         }
                         d.doc.mark_dirty();
-                        self.docs.push(d);
+                        restored.push(d);
+                    }
+                    if let Some(recovery) = &self.services.recovery {
+                        let persisted =
+                            restored.iter().zip(&s.docs).try_for_each(|(doc, source)| {
+                                let mut meta = source.meta.clone();
+                                meta.original_path = doc.path.clone();
+                                meta.dirty = true;
+                                recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
+                            });
+                        if let Err(error) = persisted {
+                            log::warn!("Recovery handoff failed: {error}");
+                            self.toasts
+                                .error(format!("{}: {error}", t("Recover Unsaved Work")));
+                            for doc in &restored {
+                                if let Err(error) = recovery.remove(&doc.key) {
+                                    log::warn!("Recovery handoff rollback failed: {error}");
+                                }
+                            }
+                            keep.push(s);
+                            continue;
+                        }
+                    } else {
+                        log::warn!("Recovery handoff unavailable; retaining original snapshots");
+                        self.toasts.warning(format!(
+                            "{}: {}",
+                            t("Could not save"),
+                            t("Recover Unsaved Work")
+                        ));
+                    }
+                    for (doc, source) in restored.into_iter().zip(&s.docs) {
+                        self.docs.push(doc);
                         self.active = self.docs.len() - 1;
                         self.toasts
-                            .success(format!("{}: {}", t("Restored"), doc.meta.title));
+                            .success(format!("{}: {}", t("Restored"), source.meta.title));
                     }
                 }
                 Err(message) => {
@@ -1721,8 +1753,10 @@ impl ThinodaApp {
                     continue;
                 }
             }
-            // Recovered documents get fresh snapshots in the current session.
-            if let Err(error) = s.discard() {
+            // Never delete the last durable copy before the replacement session owns one.
+            if self.services.recovery.is_some()
+                && let Err(error) = s.discard()
+            {
                 log::warn!("Restored recovery cleanup failed: {error}");
                 self.toasts
                     .error(format!("{}: {error}", t("Recover Unsaved Work")));

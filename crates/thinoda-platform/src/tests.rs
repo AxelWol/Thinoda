@@ -1205,6 +1205,57 @@ fn failed_recovery_flush_retains_pending_bytes_for_retry() {
 }
 
 #[test]
+fn recovery_handoff_persistence_does_not_queue_failed_or_suspended_writes() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    let docs = manager.session_dir().join("docs");
+    manager
+        .queue_snapshot(
+            "existing",
+            Snapshot::to_bytes(meta("Previously queued"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    fs::remove_dir(&docs).unwrap();
+    fs::write(&docs, b"blocker").unwrap();
+    assert!(
+        manager
+            .persist_snapshot("abandoned", meta("Failed"), &Workbook::default())
+            .is_err()
+    );
+    fs::remove_file(&docs).unwrap();
+    manager.flush().unwrap();
+    assert!(!docs.join("abandoned.json").exists());
+    assert!(docs.join("existing.json").is_file());
+    manager.suspend().unwrap();
+    assert!(matches!(
+        manager.persist_snapshot("suspended", meta("Suspended"), &Workbook::default()),
+        Err(crate::Error::Suspended)
+    ));
+    manager.resume().unwrap();
+    manager.flush().unwrap();
+    assert!(!docs.join("suspended.json").exists());
+    manager
+        .queue_snapshot(
+            "existing",
+            Snapshot::to_bytes(meta("Stale queued"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    manager
+        .persist_snapshot("existing", meta("Durable handoff"), &Workbook::default())
+        .unwrap();
+    manager.flush().unwrap();
+    let snapshot: Snapshot =
+        serde_json::from_slice(&fs::read(docs.join("existing.json")).unwrap()).unwrap();
+    assert_eq!(snapshot.meta.title, "Durable handoff");
+    manager.finish().unwrap();
+    assert!(matches!(
+        manager.persist_snapshot("closed", meta("Closed"), &Workbook::default()),
+        Err(crate::Error::Finished)
+    ));
+}
+
+#[test]
 fn suspended_recovery_cannot_modify_a_claimed_orphan() {
     let dir = directory();
     let paths = paths(&dir);

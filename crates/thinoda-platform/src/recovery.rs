@@ -134,6 +134,33 @@ impl RecoveryManager {
         self.flush()
     }
 
+    /// Persist a handoff without queuing failed work that the caller may abandon.
+    pub fn persist_snapshot(
+        &self,
+        doc_key: &str,
+        meta: SnapshotMeta,
+        workbook: &Workbook,
+    ) -> Result<()> {
+        check_key(doc_key)?;
+        let bytes = Snapshot::to_bytes(meta, workbook)?;
+        let state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        if state.finished {
+            return Err(Error::Finished);
+        }
+        let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
+        lock.refresh();
+        let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
+        atomic_write(
+            self.session_dir
+                .join("docs")
+                .join(format!("{doc_key}.json")),
+            &bytes,
+            false,
+        )?;
+        pending.remove(doc_key);
+        Ok(())
+    }
+
     /// Coalesce a serialized `Snapshot` by document key without doing filesystem I/O.
     /// Serialize with `Snapshot::to_bytes`; the latest queued value wins.
     pub fn queue_snapshot(&self, doc_key: &str, bytes: Vec<u8>) -> Result<()> {

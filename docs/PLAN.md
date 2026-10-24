@@ -381,9 +381,24 @@ then, not after the release is promised.
   original workbook contents and dirty restored maps. Errors are logged and
   displayed, including post-restore cleanup errors. All 168 affected app
   unit/e2e/input/save/theme/library tests pass, with native all-target and locked
-  WASM lint green. This is not full SS1 acceptance: persistence handoff between
-  restored documents and their new session still needs explicit crash-window
-  coverage, alongside final ARM64/candidate and native/device execution.
+  WASM lint green. Subsequent handoff coverage is recorded below; final
+  ARM64/candidate and native/device execution remain required.
+- **SS1 durable restore handoff:** reproduced an immediate second recovery scan
+  finding zero snapshots after restoration, before any drawing, housekeeping or
+  panic-hook flush. Restored maps now get synchronous replacement snapshots
+  before opening/old-session deletion. Write or suspended-ownership failure keeps
+  originals claimed in the dialog, opens no partial session, reports the error
+  and attempts cleanup of replacement keys. The platform handoff writer does not
+  queue abandoned writes; queued unrelated work remains untouched. When the
+  recovery service is unavailable, maps can open with a warning but original
+  snapshots stay on disk. Regressions verify immediate ownership-release/restart,
+  unavailable service, two-map failed destination/suspension retry without extra
+  snapshots, and handoff replacement of a stale queued snapshot. All 67 platform
+  unit tests and 165 affected app unit/e2e/input/save/inspector tests pass; native
+  all-target and locked WASM lint pass. A crash partway through a multi-map
+  transfer or failed rollback/old cleanup may leave extra copies rather than
+  delete the last copy; this is not a deduplication or final-device acceptance
+  claim. No full SS1 or sprint sign-off yet.
 - **SS1 ownership CI milestone:** run
   [40075054509](https://github.com/AxelWol/Thinoda/actions/runs/40075054509)
   at `093ba19` also completed successfully across all native jobs, WASM and fuzz

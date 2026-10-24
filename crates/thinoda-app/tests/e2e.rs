@@ -2560,7 +2560,15 @@ fn assert_crash_recovery_restores_unsaved_work() {
 
     let orphans = RecoveryManager::find_orphans(&paths);
     assert_eq!(orphans.len(), 1, "crashed session is found on next start");
-    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+    let mut app = ThinodaApp::new(
+        english(),
+        Services {
+            recovery: Some(current.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
     app.dialogs.recovery = orphans;
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "Restore").click();
@@ -2578,6 +2586,132 @@ fn assert_crash_recovery_restores_unsaved_work() {
         RecoveryManager::find_orphans(&paths).is_empty(),
         "restored session is cleaned up"
     );
+    current.finish().unwrap();
+}
+
+#[test]
+fn recovery_handoff_failure_keeps_sources_and_retries_without_duplicates() {
+    for suspended in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+        for title in ["First handoff", "Second handoff"] {
+            source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+            rename_root(&mut source, title);
+            source.doc_mut().unwrap().snapshot(&original);
+        }
+        assert!(original.try_flush_for_crash());
+        original.suspend().unwrap();
+        drop(original);
+        let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            english(),
+            Services {
+                recovery: Some(current.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        let originals: Vec<_> = app.dialogs.recovery[0]
+            .docs
+            .iter()
+            .map(|doc| (doc.path.clone(), std::fs::read(&doc.path).unwrap()))
+            .collect();
+        let docs_dir = current.session_dir().join("docs");
+        if suspended {
+            current.suspend().unwrap();
+        } else {
+            std::fs::remove_dir(&docs_dir).unwrap();
+            std::fs::write(&docs_dir, b"destination blocker").unwrap();
+        }
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery.len(), 1);
+        for (path, bytes) in &originals {
+            assert_eq!(std::fs::read(path).unwrap(), *bytes);
+        }
+        if suspended {
+            current.resume().unwrap();
+        } else {
+            assert_eq!(std::fs::read(&docs_dir).unwrap(), b"destination blocker");
+            std::fs::remove_file(&docs_dir).unwrap();
+            std::fs::create_dir(&docs_dir).unwrap();
+        }
+        app.restore_orphans(None);
+        assert_eq!(app.docs.len(), 2);
+        assert!(app.dialogs.recovery.is_empty());
+        assert!(originals.iter().all(|(path, _)| !path.exists()));
+        current.flush().unwrap();
+        assert_eq!(std::fs::read_dir(&docs_dir).unwrap().count(), 2);
+        for doc in &app.docs {
+            assert!(doc.is_dirty());
+            assert!(docs_dir.join(format!("{}.json", doc.key)).is_file());
+        }
+    }
+}
+
+#[test]
+fn recovery_without_a_new_session_retains_original_snapshots() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let original = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+    rename_root(&mut source, "Recovery service unavailable");
+    let expected = source.doc().unwrap().doc.workbook().clone();
+    source.doc_mut().unwrap().snapshot(&original);
+    assert!(original.try_flush_for_crash());
+    original.suspend().unwrap();
+    drop(original);
+    let mut app = ThinodaApp::new(english(), Services::default(), &[]);
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &expected);
+    assert!(app.doc().unwrap().is_dirty());
+    let retained = RecoveryManager::find_orphans(&paths);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].docs[0].load().unwrap(), expected);
+    retained[0].discard().unwrap();
+}
+
+#[test]
+fn restored_work_survives_an_immediate_second_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let original = RecoveryManager::start(&paths).unwrap();
+    let mut source = ThinodaApp::new(english(), Services::default(), &[]);
+    source.new_doc(thinoda_core::templates::instantiate("mind-map"));
+    rename_root(&mut source, "Survive the handoff");
+    let expected = source.doc().unwrap().doc.workbook().clone();
+    source.doc_mut().unwrap().snapshot(&original);
+    assert!(original.try_flush_for_crash());
+    original.suspend().unwrap();
+    drop(original);
+    let current = Arc::new(RecoveryManager::start(&paths).unwrap());
+    let mut app = ThinodaApp::new(
+        english(),
+        Services {
+            recovery: Some(current.clone()),
+            ..Default::default()
+        },
+        &[],
+    );
+    app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+    let old_snapshot = app.dialogs.recovery[0].docs[0].path.clone();
+    app.restore_orphans(None);
+    assert!(app.dialogs.recovery.is_empty());
+    assert!(!old_snapshot.exists());
+    // No draw, housekeeping or panic-hook flush occurs before ownership is released.
+    drop(app);
+    current.suspend().unwrap();
+    let recovered = RecoveryManager::find_orphans(&paths);
+    assert_eq!(recovered.len(), 1, "handoff must already be durable");
+    assert_eq!(recovered[0].docs.len(), 1);
+    assert_eq!(recovered[0].docs[0].load().unwrap(), expected);
+    recovered[0].discard().unwrap();
 }
 
 #[test]
