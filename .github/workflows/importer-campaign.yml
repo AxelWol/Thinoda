@@ -1,0 +1,61 @@
+name: Importer acceptance campaigns
+
+on:
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - ".github/workflows/importer-campaign.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: importer-campaign-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  campaign:
+    name: Sanitized 30-minute ${{ matrix.target }} campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [xmind, freemind, opml]
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> fuzz/target
+          key: importer-${{ matrix.target }}
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Run bounded sanitized campaign
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz/logs
+          cargo fuzz run --release "$FUZZ_TARGET" -- \
+            -max_total_time=1800 -rss_limit_mb=2048 -max_len=1048576 \
+            -timeout=5 "-dict=fuzz/dictionaries/$FUZZ_TARGET.dict" \
+            2>&1 | tee "fuzz/logs/$FUZZ_TARGET.log"
+      - name: Retain campaign evidence and reproducers
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: importer-campaign-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            fuzz/logs/
+            fuzz/artifacts/
+            fuzz/corpus/${{ matrix.target }}/
+          if-no-files-found: warn
+          retention-days: 14

@@ -464,6 +464,15 @@ then, not after the release is promised.
   executed. The probe exposed an out-of-date separate fuzz lockfile (workspace
   versions/dependencies); it was synchronized by Cargo. Long sanitized campaigns
   remain an explicit Linux/compatible-host gate, not satisfied by CI smoke.
+- **SS4 compatible-host alternative:** added Linux acceptance campaigns for each
+  existing importer target with default sanitizers and 1,800-second budgets,
+  plus the existing memory/input/time limits. PR fuzz/workflow changes trigger
+  the matrix; manual dispatch is available after merge. Logs, corpus and failure
+  reproducers upload even after failure and expire after 14 days. The workflow
+  has read-only permissions, no signing secrets, and cancels superseded runs.
+  Contract tests verify the three-target budget, limits and evidence retention.
+  Adding this workflow is not campaign completion; only successful full-duration
+  runs at the candidate qualify, and later code changes require reassessment.
 - **SS3 label popup:** guarded add/remove/suggestion/sort/apply/cancel actions
   and preserved the popup through rejected outside releases. Both-theme tests
   cover canceled/two/three-contact sequences with retained input, staged sort,

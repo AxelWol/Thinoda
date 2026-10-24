@@ -48,9 +48,21 @@ five seconds, maximum input at 1 MiB, RSS at 2 GiB, and the whole job at 30
 minutes including installation and compilation. Corpus files are small original
 examples and packages generated from them; no third-party map data is included.
 
+The separate **Importer acceptance campaigns** workflow runs all three targets
+on Linux with the default sanitizer for 30 minutes each, keeping the same
+per-input time, memory and length limits. It runs for pull requests changing the
+fuzz harness or its workflow, and supports manual dispatch after merging.
+Logs, generated corpus and failure reproducers are retained for 14 days even
+when a campaign fails. Concurrent updates to the same pull request cancel the
+older campaign; canceled runs do not satisfy acceptance. Record the exact
+successful candidate SHA and run before claiming the sprint campaign gate.
+Compilation time is outside the 30-minute fuzz budget but inside each job's
+60-minute timeout. Local Windows hosts need the compatible ASan linker runtime;
+do not disable sanitizers to claim equivalent acceptance.
+
 This smoke is a short regression signal, not exhaustive exploration, a proof of
 parser safety, or a substitute for the deterministic importer tests. In
 particular, it does not probe decompression ratios or allocate oversized
 archives; existing tests continue to verify that declared ZIP entries above
 200 MiB are rejected before decompression. Keep those production protections
-intact. Longer campaigns and broader resource-limit analysis remain future work.
+intact. Longer campaigns do not replace broader resource-limit analysis.

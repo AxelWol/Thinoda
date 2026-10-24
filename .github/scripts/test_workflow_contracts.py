@@ -74,6 +74,22 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('name: thinoda-${{ inputs.target }}', source)
         self.assertIn('if-no-files-found: error', source)
 
+    def test_acceptance_campaigns_keep_sanitizers_and_failure_evidence(self):
+        source = (WORKFLOWS / "importer-campaign.yml").read_text(encoding="utf-8")
+        self.assertIn("target: [xmind, freemind, opml]", source)
+        self.assertIn("permissions:\n  contents: read", source)
+        self.assertNotIn("secrets.", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertIn("set -euo pipefail", source)
+        self.assertIn("-max_total_time=1800", source)
+        self.assertIn("-rss_limit_mb=2048", source)
+        self.assertIn("-max_len=1048576", source)
+        self.assertNotIn("--sanitizer none", source)
+        self.assertIn("if: always()", source)
+        self.assertIn("fuzz/artifacts/", source)
+        self.assertIn("fuzz/logs/", source)
+        self.assertIn("retention-days: 14", source)
+
     def test_node_version_and_actions_do_not_regress_to_older_runtimes(self):
         self.assertEqual((ROOT / ".node-version").read_text().strip(), "24")
         # Vendor manifests checked for these refs: JavaScript actions use node24;
