@@ -182,6 +182,10 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("On Windows, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.", "Unter Windows klappt Strg+F1 das Menüband ein oder aus. Alt+1 bis Alt+8 wählt eine Kategorie. Escape schließt ein vorübergehend geöffnetes Menüband."),
+    ("Expand Ribbon", "Menüband erweitern"),
+    ("Ribbon", "Menüband"),
+    ("Collapse Ribbon", "Menüband reduzieren"),
     ("File name", "Dateiname"),
     ("Download failed", "Download fehlgeschlagen"),
     ("Download started", "Download gestartet"),
@@ -1583,6 +1587,9 @@ mod tests {
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
             include_str!("symbols.rs"),
+            include_str!("menus.rs"),
+            include_str!("native_menus.rs"),
+            include_str!("ribbon.rs"),
         ] {
             for (offset, _) in source.match_indices("t(") {
                 if offset > 0

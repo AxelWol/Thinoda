@@ -115,8 +115,17 @@ graph TD
   Standard native editing items send text-edit events when a text field owns
   focus. Menu replacement drains pending commands first, and window destruction
   removes its subclass before dropping callback data. Native integration errors
-  are logged and shown, with the compact menu retained. This is not a Windows
-  ribbon or macOS/global-menu/multi-window implementation.
+  are logged and shown, with the compact menu retained. The Windows ribbon uses
+  the same tree and snapshot dispatch, with semantic command groups and bounded
+  horizontal overflow. Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
+  a category, and Escape or an outside press dismisses a temporary opening.
+  Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
+  overlap tab hit targets; keyboard focus reveals horizontally clipped items.
+  Pointer-driven ribbon commands are deferred past release so restoring a text
+  field's focus delivers Undo/Cut/etc. to that field, not the map. The top bar
+  remains quick access; floating editing/topic controls remain contextual and
+  keep their visibility settings. macOS/global menus and multi-window support
+  are not implemented by these adapters.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It

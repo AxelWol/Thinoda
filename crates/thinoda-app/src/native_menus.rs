@@ -33,6 +33,36 @@ struct MenuOwner {
     object: Option<thinoda_canvas::ObjectSelection>,
 }
 
+#[cfg(any(target_os = "windows", test))]
+impl MenuSnapshot {
+    pub(crate) fn has_text_focus(&self) -> bool {
+        self.text_focus.is_some()
+    }
+
+    pub(crate) fn command_id(&self, command: &Cmd) -> Option<u16> {
+        self.actions
+            .iter()
+            .position(|action| {
+                matches!(action,
+            MenuAction::Command(candidate) if candidate == command)
+            })
+            .and_then(|index| u16::try_from(index + 1).ok())
+    }
+
+    pub(crate) fn command_enabled(&self, command: &Cmd) -> bool {
+        fn find(items: &[MenuItem], target: u16) -> Option<bool> {
+            items.iter().find_map(|item| match item {
+                MenuItem::Action { id, enabled, .. } if *id == target => Some(*enabled),
+                MenuItem::Submenu { items, .. } => find(items, target),
+                _ => None,
+            })
+        }
+        self.command_id(command)
+            .and_then(|id| find(&self.items, id))
+            .unwrap_or(false)
+    }
+}
+
 fn focused_text(ctx: &Context) -> Option<egui::Id> {
     ctx.text_edit_focused()
         .then(|| ctx.memory(|memory| memory.focused()))
@@ -68,6 +98,26 @@ fn is_text_command(command: &Cmd) -> bool {
 }
 
 impl ThinodaApp {
+    #[cfg(any(target_os = "windows", test))]
+    pub(crate) fn dispatch_ribbon_command(
+        &mut self,
+        ctx: &Context,
+        snapshot: &MenuSnapshot,
+        command: &Cmd,
+    ) {
+        if self.native_menu_owner() == snapshot.owner
+            && self.mode == snapshot.mode
+            && is_text_command(command)
+            && focused_text(ctx).is_none_or(|focus| Some(focus) == snapshot.text_focus)
+            && let Some(field) = snapshot.text_focus
+        {
+            ctx.memory_mut(|memory| memory.request_focus(field));
+        }
+        if let Some(id) = snapshot.command_id(command) {
+            self.dispatch_native_menu(ctx, snapshot, id);
+        }
+    }
+
     fn native_menu_owner(&self) -> Option<MenuOwner> {
         self.doc().map(|doc| MenuOwner {
             document: doc.key.clone(),
@@ -127,6 +177,7 @@ impl ThinodaApp {
                     }
                     MenuEntry::Submenu { label, entries } => MenuItem::Submenu {
                         label: label.clone(),
+                        enabled: app.menu_entries_available(entries),
                         items: convert(app, ctx, entries, blocked, text_focus, actions),
                     },
                     MenuEntry::Separator => MenuItem::Separator,
@@ -228,6 +279,10 @@ pub(crate) struct WindowsMenus {
 
 #[cfg(target_os = "windows")]
 impl ThinodaApp {
+    pub(crate) fn windows_menu_active(&self) -> bool {
+        self.native_menus.active.is_some()
+    }
+
     pub(crate) fn poll_native_menus(&mut self, ctx: &Context) {
         let pending = self
             .native_menus
@@ -335,6 +390,15 @@ mod tests {
         )));
         let snapshot = app.native_menu_snapshot(&Context::default());
         assert_eq!(snapshot.items.len(), groups.len());
+        fn submenu_enabled(items: &[MenuItem], target: &str) -> Option<bool> {
+            items.iter().find_map(|item| match item {
+                MenuItem::Submenu { label, enabled, .. } if label == target => Some(*enabled),
+                MenuItem::Submenu { items, .. } => submenu_enabled(items, target),
+                _ => None,
+            })
+        }
+        assert_eq!(submenu_enabled(&snapshot.items, t("Export")), Some(false));
+        assert_eq!(submenu_enabled(&snapshot.items, t("Arrange")), Some(true));
         let mut ids = Vec::new();
         fn collect(items: &[MenuItem], ids: &mut Vec<u16>) {
             for item in items {

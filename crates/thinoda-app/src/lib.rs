@@ -16,6 +16,8 @@ pub mod menus;
 pub mod native_menus;
 mod printing;
 mod quick_styles;
+#[cfg(any(target_os = "windows", test))]
+mod ribbon;
 mod save_all;
 mod shortcut_browser;
 pub mod shortcut_conflicts;

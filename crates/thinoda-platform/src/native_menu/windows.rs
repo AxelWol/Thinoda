@@ -65,7 +65,7 @@ fn enabled_ids(items: &[MenuItem]) -> HashSet<u16> {
             } => {
                 ids.insert(*id);
             }
-            MenuItem::Submenu { items, .. } => ids.extend(enabled_ids(items)),
+            MenuItem::Submenu { items, enabled: true, .. } => ids.extend(enabled_ids(items)),
             _ => {}
         }
     }
@@ -107,9 +107,14 @@ fn build(items: &[MenuItem], popup: bool, ids: &mut HashSet<u16>) -> io::Result<
                     None,
                 )
             }
-            MenuItem::Submenu { label, items } => {
+            MenuItem::Submenu { label, enabled, items } => {
                 let child = build(items, true, ids)?;
-                (MF_POPUP, child.0 as usize, label.as_str(), Some(child))
+                (
+                    MF_POPUP | if *enabled { 0 } else { MF_GRAYED },
+                    child.0 as usize,
+                    label.as_str(),
+                    Some(child),
+                )
             }
             MenuItem::Separator => (MF_SEPARATOR, 0, "", None),
             MenuItem::Caption(text) => (MF_STRING | MF_GRAYED, 0, text.as_str(), None),
@@ -265,7 +270,7 @@ mod tests {
     use super::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetMenuItemCount, GetSubMenu, IsMenu, SendMessageW,
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW, GetMenuState, MF_BYPOSITION,
     };
 
     struct TestWindow(HWND);
@@ -302,6 +307,7 @@ mod tests {
     fn fixture(enabled: bool) -> Vec<MenuItem> {
         vec![MenuItem::Submenu {
             label: "File & maps".into(),
+            enabled: true,
             items: vec![
                 MenuItem::Action {
                     id: 1,
@@ -406,5 +412,19 @@ mod tests {
         unsafe { SendMessageW(window.0, WM_EXITMENULOOP, 0, 0) };
         assert!(!menu.is_tracking());
         menu.replace(&fixture(false)).unwrap();
+    }
+
+    #[test]
+    fn submenu_enabled_state_is_owned_by_app_not_inferred_from_disabled_children() {
+        let window = TestWindow::new();
+        let mut menu = unsafe { WindowMenu::attach(window.0, &fixture(false), || {}) }.unwrap();
+        assert_eq!(unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED, 0);
+        let mut items = fixture(true);
+        let MenuItem::Submenu { enabled, .. } = &mut items[0] else { unreachable!() };
+        *enabled = false;
+        menu.replace(&items).unwrap();
+        assert_ne!(unsafe { GetMenuState(menu.menu.0, 0, MF_BYPOSITION) } & MF_GRAYED, 0);
+        unsafe { SendMessageW(window.0, WM_COMMAND, 1, 0) };
+        assert!(menu.drain().is_empty());
     }
 }

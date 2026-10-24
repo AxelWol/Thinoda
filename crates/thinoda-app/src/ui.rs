@@ -180,7 +180,7 @@ fn status_menu_button(
     guarded_menu_button(ui, label, content)
 }
 
-fn guarded_menu_button(
+pub(crate) fn guarded_menu_button(
     ui: &mut Ui,
     label: impl Into<egui::WidgetText>,
     content: impl FnOnce(&mut Ui),
@@ -561,6 +561,10 @@ impl ThinodaApp {
                     }
                     self.top_bar(ui);
                 });
+            #[cfg(target_os = "windows")]
+            if self.windows_menu_active() {
+                self.show_ribbon(ui);
+            }
             if show_doc {
                 egui::Panel::bottom("thinoda_statusbar")
                     .exact_size(30.0)
@@ -883,7 +887,7 @@ impl ThinodaApp {
         self.render_menu_entries(ui, &self.main_menu_entries(), cmd);
     }
 
-    fn render_menu_entries(
+    pub(crate) fn render_menu_entries(
         &mut self,
         ui: &mut Ui,
         entries: &[crate::menus::MenuEntry],
@@ -907,7 +911,9 @@ impl ThinodaApp {
                     }
                 }
                 MenuEntry::Submenu { label, entries } => {
-                    menu_button(ui, label, |ui| self.render_menu_entries(ui, entries, cmd));
+                    ui.add_enabled_ui(self.menu_entries_available(entries), |ui| {
+                        menu_button(ui, label, |ui| self.render_menu_entries(ui, entries, cmd));
+                    });
                 }
                 MenuEntry::Separator => {
                     ui.separator();

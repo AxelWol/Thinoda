@@ -226,6 +226,23 @@ macOS global menus/multiple windows, Ubuntu desktop acceptance, command/window
 lifecycle and the broader P4 review/host matrix remain pending. F2-F6 remain
 pending; SS0-SS8 remains deferred.
 
+**F1 ribbon progress (2026-10-24):** Windows now draws the shared eight category
+tabs with semantic command groups, scrollable command overflow and a persisted
+collapse preference. Ctrl+F1 toggles collapse; Alt+1 through Alt+8 chooses a tab;
+collapsed tabs open temporarily, with command/Escape/outside dismissal.
+Short windows use a bounded Ribbon menu. Contextual floating controls and their
+existing visibility settings remain unchanged. Text-edit command clicks retain
+their producing field and dispatch after pointer release. Focus/scroll testing
+found and fixed floating tab-scrollbar interception and text Undo losing focus.
+Six ribbon behavior/parity fixtures and a separate 99-case shipped-language/Auto,
+theme and scale geometry matrix cover these paths. The latest desktop executable
+was built and launched locally; its live Windows accessibility tree exposed the
+eight category tabs, collapse control, semantic groups and disabled file actions.
+This is an implemented
+ribbon slice, not completed P4.3 acceptance: native keyboard/AT, high-contrast
+and Windows ARM64 acceptance still need evidence. The other F1 OS/window work
+and F2-F6 remain open, and deferred stability work has not resumed.
+
 #### Active priorities by end-user value (2026-10-24)
 
 **Historical ranking, superseded by the active feature phase plan above.**

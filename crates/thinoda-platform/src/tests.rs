@@ -355,6 +355,7 @@ fn settings_roundtrip_every_field() {
         default_theme: "ocean".into(),
         ui_scale: 1.5,
         show_status_bar: false,
+        ribbon_collapsed: true,
         show_format_panel: false,
         show_topic_toolbar: false,
         show_topic_add_buttons: false,

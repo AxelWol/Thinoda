@@ -38,6 +38,23 @@ fn items(commands: impl IntoIterator<Item = (&'static str, Cmd)>) -> Vec<MenuEnt
 }
 
 impl ThinodaApp {
+    pub(crate) fn menu_entries_available(&self, entries: &[MenuEntry]) -> bool {
+        // Preserve the disabled Export group without hiding discoverable editing
+        // groups whose individual actions depend on the current selection.
+        !entries.iter().all(|entry| {
+            matches!(
+                entry,
+                MenuEntry::Command {
+                    command: Cmd::Export(_),
+                    ..
+                }
+            )
+        }) || entries.iter().any(|entry| {
+            matches!(entry,
+                MenuEntry::Command { command, .. } if self.command_available(command))
+        })
+    }
+
     pub fn file_menu_entries(&self) -> Vec<MenuEntry> {
         let templates = templates::TemplateCategory::ALL
             .iter()
@@ -94,8 +111,8 @@ impl ThinodaApp {
         if self.doc().is_some_and(|doc| doc.path.is_some()) {
             file.push(item("Show in Folder", Cmd::ShowInFolder));
         }
-        file.push(MenuEntry::Separator);
-        file.push(item("Quit", Cmd::Quit));
+        #[cfg(not(target_arch = "wasm32"))]
+        file.extend([MenuEntry::Separator, item("Quit", Cmd::Quit)]);
         file
     }
 

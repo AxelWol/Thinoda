@@ -10,6 +10,7 @@ pub enum MenuItem {
     },
     Submenu {
         label: String,
+        enabled: bool,
         items: Vec<Self>,
     },
     Separator,

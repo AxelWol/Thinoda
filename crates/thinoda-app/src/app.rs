@@ -233,6 +233,8 @@ pub struct ThinodaApp {
     pub(crate) launch: Option<crate::startup::Launch>,
     #[cfg(target_os = "windows")]
     pub(crate) native_menus: crate::native_menus::WindowsMenus,
+    #[cfg(any(target_os = "windows", test))]
+    pub(crate) ribbon: crate::ribbon::RibbonState,
 }
 
 pub fn ui_theme(t: SettingsTheme) -> ThemeMode {
@@ -267,6 +269,8 @@ impl ThinodaApp {
         i18n::set_lang(i18n::resolve(settings.language));
         let mut app = Self {
             docs: Vec::new(),
+            #[cfg(any(target_os = "windows", test))]
+            ribbon: crate::ribbon::RibbonState::default(),
             #[cfg(target_os = "windows")]
             native_menus: crate::native_menus::WindowsMenus::default(),
             active: 0,
