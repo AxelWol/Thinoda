@@ -342,7 +342,10 @@ Zone/presentation persistence and exports, and AI source/review/Apply contracts.
 Simulated platform modes and headless tests are not native macOS/Linux/window-
 manager or browser runtime passes. Browser runtime evidence is recorded below;
 real native multi-window/global-menu behavior remains a separate gate.
-SS0-SS8, release, main merge and new pull requests have not been resumed.
+SS0-SS8 remain deferred. On 2026-10-25 the user authorized a release pull request
+to main, monitoring checks, fixing failures and merging/deployment through the
+repository's existing release automation. This does not turn the host-specific
+acceptance gaps below into passes.
 
 F6 browser entry evidence: the current Trunk bundle started successfully in an
 isolated real Edge profile. Keyboard-created maps, Gantt entry/title-bar close,
