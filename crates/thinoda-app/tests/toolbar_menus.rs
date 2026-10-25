@@ -25,6 +25,39 @@ fn popup_rects(h: &Harness<'_, ThinodaApp>) -> Vec<egui::Rect> {
     })
 }
 
+fn map_toolbars_stay_below_auxiliary_windows() {
+    for name in ["thinoda_editing_toolbar", "thinoda_topic_toolbar"] {
+        let toolbar = egui::Id::unique(name);
+        let window = egui::Id::unique(("auxiliary-feature", name));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 900.0))
+            .build_ui_state(
+                move |ui, app: &mut ThinodaApp| {
+                    app.draw(ui);
+                    if let Some(rect) = ui.ctx().memory(|memory| memory.area_rect(toolbar)) {
+                        egui::Window::new("Auxiliary feature window")
+                            .id(window)
+                            .fixed_rect(rect.expand(16.0))
+                            .show(ui.ctx(), |ui| {
+                                ui.label("Window controls");
+                            });
+                    }
+                },
+                ThinodaApp::headless(),
+            );
+        h.run_steps(5);
+        let rect = h
+            .ctx
+            .memory(|memory| memory.area_rect(toolbar))
+            .expect(name);
+        assert_eq!(
+            h.ctx.layer_id_at(rect.center()).unwrap().id,
+            window,
+            "{name} must not intercept an overlapping feature window"
+        );
+    }
+}
+
 fn assert_fit(h: &Harness<'_, ThinodaApp>, label: &str) {
     // Constrained origins and frame extents can round independently by one pixel.
     let viewport = h.ctx.content_rect().expand(1.0 / h.ctx.pixels_per_point());
@@ -66,6 +99,7 @@ fn dismiss(h: &mut Harness<'_, ThinodaApp>) {
 
 #[test]
 fn toolbar_menus_remain_bounded_and_operable_in_short_windows() {
+    map_toolbars_stay_below_auxiliary_windows();
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
             for (height, scale) in [(240.0, 1.0), (360.0, 1.5), (480.0, 2.0), (800.0, 1.0)] {

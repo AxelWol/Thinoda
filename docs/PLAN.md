@@ -344,6 +344,18 @@ manager or browser runtime passes. Browser fetch/CORS, downloads/print/expanded
 player and real native multi-window/global-menu behavior remain separate gates.
 SS0-SS8, release, main merge and new pull requests have not been resumed.
 
+F6 browser entry evidence: the current Trunk bundle started successfully in an
+isolated real Edge profile. Keyboard-created maps, Gantt entry/title-bar close,
+presentation-editor entry/Escape and AI Chat at 1280x900 and 360x640 were exercised
+and visually inspected, with no uncaught browser exceptions or requests to AI/
+external endpoints. This exposed map floating toolbars covering embedded Gantt
+controls. Both map toolbars now use the normal area layer below feature windows;
+a hit-testing regression fails before/passes after the fix. The four existing
+toolbar/Outline/menu checks and 185 app unit tests pass, as do strict app native/
+WASM clippy and the rebuilt browser confirmation. Menus/popups remain foreground.
+These checks do not claim browser AI/CORS, export/download/print/player acceptance
+or native window-manager/global-menu acceptance.
+
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,
 Discussion mode, stop/retry, branch reorganization, translation to a new sheet

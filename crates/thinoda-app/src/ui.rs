@@ -1234,7 +1234,7 @@ impl ThinodaApp {
         let has_selection = !d.view.selection.is_empty();
         let mut cmd = None;
         egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Middle)
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(canvas.center_top() + vec2(0.0, 12.0))
             .constrain_to(canvas)
@@ -1429,7 +1429,7 @@ impl ThinodaApp {
         );
         let mut cmd = None;
         egui::Area::new(egui::Id::unique("thinoda_topic_toolbar"))
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Middle)
             .pivot(if below {
                 egui::Align2::CENTER_TOP
             } else {

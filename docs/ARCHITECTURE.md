@@ -297,6 +297,10 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
+- **Map toolbar layering**: floating editing/topic controls use normal egui area
+  order, above the map but below auxiliary feature windows. Foreground menu/
+  popup layers remain separate, so embedded browser Gantt controls are not
+  visually covered or intercepted by map controls.
 - **AI Pitch assistance**: the existing presentation editor captures its real
   candidate slide IDs/sources/frames and sends only numbered titles plus explicit
   instructions through `AiStreamJob::chat`. A bounded, closed JSON outline can
