@@ -13,6 +13,14 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.12.1](https://github.com/AxelWol/Thinoda/compare/v0.12.0...v0.12.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* make native release Pitch acceptance keyboard-driven ([538dc0c](https://github.com/AxelWol/Thinoda/commit/538dc0c7a8b7f4ddea05382176868343cf9d580b))
+* stabilize native release Pitch acceptance ([#76](https://github.com/AxelWol/Thinoda/issues/76)) ([c5033f5](https://github.com/AxelWol/Thinoda/commit/c5033f526b9b519c9cde3e4c1606e8bb7ca8874c))
+
 ## [0.12.0](https://github.com/AxelWol/Thinoda/compare/v0.11.0...v0.12.0) (2026-10-25)
 
 
