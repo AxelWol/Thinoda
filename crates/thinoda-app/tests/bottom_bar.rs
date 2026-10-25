@@ -175,7 +175,12 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
             .is_disabled()
     );
     let arrow_end = assert_visible(&h, &titles[19]);
-    assert!(arrow_end.left() >= assert_visible(&h, t("Scroll sheets right")).right());
+    let right_arrow = assert_visible(&h, t("Scroll sheets right"));
+    assert!(
+        arrow_end.left() >= right_arrow.right(),
+        "last={arrow_end:?}, right_arrow={right_arrow:?}, first={first_position:?}, add={:?}",
+        assert_visible(&h, t("New Sheet"))
+    );
     assert_eq!(h.state().doc().unwrap().doc.active_index(), 0);
     assert_eq!(h.state().doc().unwrap().doc.workbook().sheets, before);
     for _ in 0..100 {
@@ -444,7 +449,9 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
         assert!(
             h.get_by_role_and_label(Role::Button, t(label))
                 .accesskit_node()
-                .is_disabled()
+                .is_disabled(),
+            "{label}: single sheet={:?}",
+            h.get_by_role_and_label(Role::Button, &title).rect()
         );
     }
     h.state_mut().active = 0;
@@ -489,6 +496,24 @@ fn bottom_navigation_stays_reachable_without_overlapping_or_changing_sheet_conte
                     h.run_steps(8);
                     let zoom = assert_visible(&h, t("Zoom"));
                     assert_paint(&h, &percent, zoom);
+                    let last_title = h
+                        .state()
+                        .doc()
+                        .unwrap()
+                        .doc
+                        .workbook()
+                        .sheets
+                        .last()
+                        .unwrap()
+                        .title
+                        .clone();
+                    h.get_by_role_and_label(Role::Button, &last_title).focus();
+                    h.run_steps(8);
+                    let last = assert_visible(&h, &last_title);
+                    assert!(
+                        last.left() >= right.right() && last.right() <= add.left(),
+                        "last={last:?}, right_arrow={right:?}, add={add:?}, scale={scale}, size={size:?}"
+                    );
                 }
             }
         }
