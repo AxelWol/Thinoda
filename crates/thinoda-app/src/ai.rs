@@ -17,6 +17,7 @@ use crate::i18n::t;
 mod chat;
 mod prompts;
 mod review;
+mod semantic;
 #[cfg(test)]
 mod transform_tests;
 pub use chat::ChatState;
@@ -113,6 +114,7 @@ pub struct AiState {
     pub review: Option<AiReview>,
     pub chat: ChatState,
     pub prompt_editor: Option<prompts::PromptEditor>,
+    pub semantic: semantic::SemanticState,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
     prompt_viewport: Option<egui::ViewportId>,
@@ -228,6 +230,7 @@ fn poll_stream<T>(
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
         self.protect_prompt_editor_ime(ctx);
+        self.protect_semantic_ime(ctx);
         self.protect_ai_chat_input(ctx);
         if self
             .ai
@@ -390,6 +393,7 @@ impl ThinodaApp {
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
+        self.poll_semantic(ctx);
         self.poll_ai_chat(ctx);
         if !self.settings.ai.enabled && self.ai.pending.is_some() {
             self.cancel_ai();
@@ -711,6 +715,12 @@ impl ThinodaApp {
             });
             widgets::property_field(ui, t("Model"), |ui| {
                 ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
+            });
+            widgets::property_field(ui, t("Embedding model"), |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut ai.embedding_model)
+                        .hint_text(t("Required for semantic tools")),
+                )
             });
             let key_label = ui.label(t("API Key"));
             ui.horizontal_wrapped(|ui| {

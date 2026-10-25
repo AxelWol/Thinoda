@@ -174,6 +174,8 @@ pub struct AiSettings {
     pub temperature: f32,
     pub response_mode: AiResponseMode,
     pub saved_prompts: Vec<crate::ai_prompts::SavedPrompt>,
+    /// Explicit embedding model; never inherits the chat model.
+    pub embedding_model: String,
 }
 
 impl fmt::Debug for AiSettings {
@@ -187,6 +189,7 @@ impl fmt::Debug for AiSettings {
             .field("credentials_ready", &self.credentials_ready)
             .field("temperature", &self.temperature)
             .field("response_mode", &self.response_mode)
+            .field("embedding_model", &self.embedding_model)
             .finish()
     }
 }
@@ -208,6 +211,7 @@ impl Default for AiSettings {
             temperature: 0.7,
             response_mode: AiResponseMode::Balanced,
             saved_prompts: Vec::new(),
+            embedding_model: String::new(),
         }
     }
 }

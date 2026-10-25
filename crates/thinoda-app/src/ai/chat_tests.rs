@@ -337,6 +337,8 @@ fn chat_send_is_reachable_in_a_short_narrow_window() {
         .or_default()
         .draft = "Discuss".into();
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Send").scroll_to_me();
+    h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Send").click();
     h.run_steps(1);
     wait(&mut h);

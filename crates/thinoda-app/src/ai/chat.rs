@@ -322,6 +322,7 @@ impl ThinodaApp {
             }
         });
         widgets::caption(ui, t("Chat history is session-only."));
+        self.semantic_panel(ui);
         if !self.ai.chat.threads.contains_key(&key)
             && self.ai.chat.threads.len() >= MAX_CONVERSATIONS
         {

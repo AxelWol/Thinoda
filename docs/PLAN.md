@@ -221,8 +221,8 @@ Local evidence for this foundation: 150 app unit tests, 38 AI unit/loopback
 tests and 17 focused app E2E tests passed, with live AI disabled. Strict native
 all-target and WASM library clippy, formatting/diff checks and the 25 documentation
 contracts passed. An explicitly configured, bounded/cancellable embeddings job
-is also integrated as the semantic transport prerequisite; it does not yet expose
-semantic search/clustering UI or trigger background indexing.
+is also integrated as the semantic transport prerequisite. The semantic UI slice
+below now uses it; no background indexing is performed.
 
 **F5 scoped discussion slice (in progress):** **AI > AI Chat** opens a nonmodal
 sidebar with per-open-document conversations, streaming answers and explicit Send
@@ -274,7 +274,7 @@ sheet while preserving all source content and metadata. Each Apply is one Undo
 transaction. Source/configuration/draft invalidation, cancellation and viewport
 return reuse the review foundation. Context limits are 500 topics/64 KiB and
 instructions 8192 bytes; output limits are 64 KiB/500 lines, with single-line
-1024-byte rewrite titles. Semantic UI/cache, reviewable Pitch suggestions and F6
+1024-byte rewrite titles. Reviewable Pitch suggestions and F6
 host acceptance remain open.
 
 Guided transformation evidence: 171 app unit tests, 40 AI unit/loopback tests,
@@ -292,6 +292,26 @@ oversized replies, IME, confirmed Clear, per-document ownership and cancel/disab
 source-close late-result rejection. Strict native all-target and WASM library
 clippy, formatting/diff checks and 25 documentation contracts passed. These are
 local/headless checks, not real browser/CORS or native-window-manager acceptance.
+
+**F5 semantic slice:** AI Chat now exposes explicit current-sheet title indexing,
+query embedding search and local cluster previews. A separate persisted embedding
+model is required; it never falls back to the chat model. Indexes are session-only
+and bounded to 500 topics/64 KiB of titles, 16 KiB per title and sequential batches
+of 128. Queries are limited to 8192 bytes; cosine ranking returns up to 20 matches.
+Chunked deterministic spherical k-means previews up to eight groups; Apply adds
+an outline-only sheet in one Undo step without changing the source. Source,
+configuration, credential and draft changes invalidate caches and cancel pending
+work. Changed queries discard late results. Opening controls and local clustering
+are offline; Build and Search are explicit network actions.
+
+Semantic evidence: 179 app unit tests (bounded to four test threads), 90 platform
+tests, strict native all-target/WASM library clippy and 25 documentation contracts
+passed. Local fixtures cover reversed response ordering, exact title/total/topic
+limits, batching, dimensions, zero vectors, HTTP rejection, offline UI, explicit
+dispatch, cancellation, late query/source results, cache invalidation and
+Apply/Undo/source preservation. Unlimited-thread runs exposed intermittent local
+connection failures; bounded-concurrency runs passed. No live AI call was made.
+Reviewable Pitch suggestions and F6 host acceptance remain open.
 
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,

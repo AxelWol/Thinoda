@@ -1133,6 +1133,59 @@ const DE: &[(&str, &str)] = &[
     ("AI map created", "KI-Map erstellt"),
     ("Review AI Result", "KI-Ergebnis prüfen"),
     ("AI Chat", "KI-Chat"),
+    ("Embedding model", "Embedding-Modell"),
+    (
+        "Required for semantic tools",
+        "Für semantische Werkzeuge erforderlich",
+    ),
+    ("Semantic tools", "Semantische Werkzeuge"),
+    ("Build semantic index", "Semantischen Index erstellen"),
+    (
+        "Build sends current-sheet titles to the embedding model. No background indexing.",
+        "Erstellen sendet die Titel des aktuellen Blatts an das Embedding-Modell. Keine Hintergrundindexierung.",
+    ),
+    (
+        "Set an explicit embedding model in Settings before indexing.",
+        "Wähle vor der Indexierung ein Embedding-Modell in den Einstellungen.",
+    ),
+    (
+        "Semantic indexing is limited to 500 topics and 64 KiB of titles.",
+        "Die semantische Indexierung ist auf 500 Themen und 64 KiB Titel begrenzt.",
+    ),
+    (
+        "Semantic indexing requires nonempty titles of at most 16 KiB each.",
+        "Die semantische Indexierung erfordert nichtleere Titel mit jeweils höchstens 16 KiB.",
+    ),
+    (
+        "The embedding model returned an unusable vector.",
+        "Das Embedding-Modell hat einen unbrauchbaren Vektor geliefert.",
+    ),
+    (
+        "The embedding model changed vector dimensions.",
+        "Das Embedding-Modell hat die Vektordimension geändert.",
+    ),
+    (
+        "Build the semantic index first.",
+        "Erstelle zuerst den semantischen Index.",
+    ),
+    (
+        "Semantic source or settings changed. Rebuild the index.",
+        "Semantische Quelle oder Einstellungen wurden geändert. Erstelle den Index neu.",
+    ),
+    (
+        "Cancel indexing or search",
+        "Indexierung oder Suche abbrechen",
+    ),
+    ("Semantic query", "Semantische Suchanfrage"),
+    ("Search meaning", "Nach Bedeutung suchen"),
+    ("Cluster count", "Gruppenanzahl"),
+    ("Preview clusters", "Gruppen vorschauen"),
+    (
+        "Apply clusters to new sheet",
+        "Gruppen auf neuem Blatt anwenden",
+    ),
+    ("Semantic clusters", "Semantische Gruppen"),
+    ("Group", "Gruppe"),
     ("AI: Rewrite Topic…", "KI: Thema umformulieren…"),
     ("AI: Translate Branch…", "KI: Zweig übersetzen…"),
     ("AI: Grow Ideas…", "KI: Ideen erweitern…"),
@@ -1937,6 +1990,7 @@ mod tests {
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),
             include_str!("ai/prompts.rs"),
+            include_str!("ai/semantic.rs"),
             include_str!("help.rs"),
             include_str!("labels.rs"),
             include_str!("doc.rs"),

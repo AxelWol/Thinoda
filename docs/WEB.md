@@ -130,6 +130,30 @@ reads fresh settings and changes only the library, without credential-store acce
 If another window changed the library, Cancel and **Reload prompts** before editing
 again; failed saves leave the editor and existing library intact.
 
+### Semantic search and clustering
+
+Set **Embedding model** in **Settings > AI** to an explicit embedding-capable
+model, then expand **Semantic tools** in AI Chat. Opening these controls is
+offline. **Build semantic index** sends current-sheet titles to the displayed
+server in sequential batches of at most 128; it excludes notes and attachments.
+The chat model is never used as a fallback. Unsupported endpoints/models report
+an error. The sheet is limited to 500 topics and 64 KiB of titles, with nonblank
+titles of at most 16 KiB each.
+
+**Search meaning** explicitly sends your query (at most 8192 UTF-8 bytes) to the
+same embedding model. It lists the best 20 cosine-similarity matches; clicking
+one selects and reveals it without changing content. Editing the query discards
+pending results. **Preview clusters** runs local, deterministic spherical k-means,
+chunked across frames, with up to eight groups. Identical directions can produce
+fewer groups. **Apply clusters to new sheet** creates an outline-only sheet in one
+Undo step, preserving the source, not moving or replacing its topics.
+
+The index, queries, results and previews are session-only. Source edits, unfinished
+title/inspector drafts, sheet changes, source close, AI disable or changed AI
+configuration/credentials invalidate work; rebuild before continuing. Cancel stops
+pending indexing/search or local clustering without editing the map. Browser
+embedding fetch/CORS behavior still requires runtime acceptance.
+
 ### Guided map transformations
 
 The **AI** menu and topic context menu offer **Rewrite Topic**, **Translate Branch**,

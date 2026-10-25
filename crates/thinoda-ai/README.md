@@ -1,7 +1,7 @@
 # Embeddings transport API
 
 `thinoda-ai` supports explicitly configured OpenAI-compatible `/embeddings`
-endpoints. This is a transport prerequisite, not app settings, semantic search,
+endpoints. This crate supplies transport, not app settings, semantic search,
 clustering, model discovery, caching, or automatic document mutation.
 
 ```rust,no_run

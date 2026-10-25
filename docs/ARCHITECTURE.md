@@ -297,6 +297,19 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
+- **Semantic assistance**: the chat sidebar explicitly builds a session-only,
+  source/configuration-owned index using `AiEmbeddingJob` and a separate explicit
+  `embedding_model` preference; there is no chat-model fallback or automatic
+  indexing. Current-sheet titles are bounded before cloning (500 topics/64 KiB,
+  nonblank and at most 16 KiB each) and sent in sequential 128-input batches.
+  Normalized finite vectors must retain one dimension across all batches and
+  queries. Explicit query requests are limited to 8192 bytes; cosine search
+  returns at most 20 matches with deterministic topic-ID tie-breaking. Local
+  farthest-first spherical k-means visits 16 topics per frame, with up to eight
+  centers/eight iterations. It previews a complete partition, then Apply adds a
+  new outline-only sheet in one undo transaction without altering source content.
+  Changed source/configuration/drafts cancel pending work and invalidate caches;
+  changed queries discard late search results. No index or query is persisted.
 - **AI off the UI thread**: typed map requests use `AiStreamJob`; connection tests
   retain the existing nonstreaming `AiJob`. Native streaming uses abortable
   Tokio/reqwest I/O; browser streaming uses fetch ReadableStream/AbortController.

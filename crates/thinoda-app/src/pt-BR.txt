@@ -1,4 +1,24 @@
 AI Chat|Chat de IA
+Embedding model|Modelo de embeddings
+Required for semantic tools|Necessário para ferramentas semânticas
+Semantic tools|Ferramentas semânticas
+Build semantic index|Criar índice semântico
+Build sends current-sheet titles to the embedding model. No background indexing.|Criar envia os títulos da folha atual ao modelo de embeddings. Sem indexação em segundo plano.
+Set an explicit embedding model in Settings before indexing.|Defina um modelo de embeddings explícito nas configurações antes de indexar.
+Semantic indexing is limited to 500 topics and 64 KiB of titles.|A indexação semântica se limita a 500 tópicos e 64 KiB de títulos.
+Semantic indexing requires nonempty titles of at most 16 KiB each.|A indexação requer títulos não vazios com no máximo 16 KiB cada.
+The embedding model returned an unusable vector.|O modelo de embeddings retornou um vetor inutilizável.
+The embedding model changed vector dimensions.|O modelo de embeddings alterou as dimensões dos vetores.
+Build the semantic index first.|Crie primeiro o índice semântico.
+Semantic source or settings changed. Rebuild the index.|A origem ou as configurações mudaram. Recrie o índice.
+Cancel indexing or search|Cancelar indexação ou pesquisa
+Semantic query|Consulta semântica
+Search meaning|Pesquisar significado
+Cluster count|Número de grupos
+Preview clusters|Visualizar grupos
+Apply clusters to new sheet|Aplicar grupos a uma nova folha
+Semantic clusters|Grupos semânticos
+Group|Grupo
 AI: Rewrite Topic…|IA: Reescrever tópico…
 AI: Translate Branch…|IA: Traduzir ramo…
 AI: Grow Ideas…|IA: Desenvolver ideias…
