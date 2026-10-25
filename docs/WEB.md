@@ -72,6 +72,33 @@ features work differently:
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 
+## Keyboard mappings
+
+Open **Settings > Keyboard Shortcuts > Edit mappings** to review or customize
+shortcuts. **Thinoda Standard** preserves the familiar defaults;
+**XMind-compatible** is an opt-in preset for supported commands, not a promise
+that every XMind or operating-system shortcut is available.
+
+To edit a preset, enter a profile name and choose **Duplicate**. Use the search
+field to find a command, choose its **Assign** action, then press the desired
+keys. The editor reports conflicting or reserved combinations and shows changes
+for both Map and Outline before **Apply**. **Unassign** removes a command's
+explicit bindings; **Reset All** restores the profile's base preset.
+**Cancel** discards the draft, including profile selection and management changes.
+A failed save leaves the draft open and the active mapping unchanged.
+
+Applied profiles are saved with the rest of the browser's settings and survive
+reloads, subject to the storage limitations below. All open document views use
+the same active profile. Menus, the command palette, shortcut reference and the
+offline guide's active-shortcut tables update together. The guide's historical
+prose examples are labeled as Thinoda Standard.
+
+Browser navigation/reload/tab controls and ordinary focused-text/clipboard
+operations retain their ownership. Native-only commands such as Close Window
+are not browser-window controls and are not offered as browser features.
+Clearing site data also removes saved profiles; no profile import/export is
+currently provided.
+
 ## Touch and trackpad coverage
 
 The shared canvas supports one-finger dragging on empty background to pan, and

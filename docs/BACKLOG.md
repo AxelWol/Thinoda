@@ -17,6 +17,16 @@ planning/Gantt, Zones/Pitch and enhanced AI. Implement and test all five before
 resuming the security/stability backlog. No unrelated feature work, new hardening
 campaigns or release preparation is included in this sequence.
 
+**Feature implementation update (2026-10-25):** F1 document-window ownership and
+F2 saved keyboard profiles are integrated. The profile editor supports named
+copies, capture, conflict feedback, Apply/Cancel and reset; command dispatch,
+reference hints and native accelerators use the same active mappings. Separate
+document windows share preferences rather than independent snapshots. Native
+macOS/Linux and browser interaction acceptance remain open, not inferred from
+headless checks. F3 task/calendar/Gantt implementation is next; F4-F6 and the
+deferred stability work are not complete. Older progress entries below describe
+their historical state rather than overriding this update.
+
 The Fill fix and phase plan ship together: full local workspace coverage passes
 661 tests with 1 pre-existing ignored; native/WASM lint is clean. The existing
 SS0-SS8 work is **deferred, not complete**;
