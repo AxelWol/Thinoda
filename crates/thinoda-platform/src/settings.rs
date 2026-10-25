@@ -141,6 +141,16 @@ impl Default for CloudSettings {
     }
 }
 
+/// Response-depth guidance, independent of provider-specific reasoning APIs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiResponseMode {
+    Quick,
+    #[default]
+    Balanced,
+    Deep,
+}
+
 /// AI assistant preferences (any OpenAI-compatible server such as LM Studio or Ollama).
 /// API keys are stored in the OS credential store; the environment variable remains an override.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -162,6 +172,7 @@ pub struct AiSettings {
     #[serde(skip)]
     pub api_key_dirty: bool,
     pub temperature: f32,
+    pub response_mode: AiResponseMode,
 }
 
 impl fmt::Debug for AiSettings {
@@ -174,6 +185,7 @@ impl fmt::Debug for AiSettings {
             .field("api_key_stored", &self.api_key_stored)
             .field("credentials_ready", &self.credentials_ready)
             .field("temperature", &self.temperature)
+            .field("response_mode", &self.response_mode)
             .finish()
     }
 }
@@ -193,6 +205,7 @@ impl Default for AiSettings {
             credentials_ready: true,
             api_key_dirty: false,
             temperature: 0.7,
+            response_mode: AiResponseMode::Balanced,
         }
     }
 }

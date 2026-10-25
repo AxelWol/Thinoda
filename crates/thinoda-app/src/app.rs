@@ -108,6 +108,7 @@ pub enum Cmd {
     /// Focus a topic property field in the Format panel (Ctrl+K / Ctrl+Shift+N).
     EditField(FocusField),
     Ai(crate::ai::AiCommand),
+    AiChat,
 }
 
 /// Format panel fields that commands can focus.
@@ -991,6 +992,7 @@ impl ThinodaApp {
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
             }
             Cmd::Ai(a) => self.start_ai(a),
+            Cmd::AiChat => self.toggle_ai_chat(),
             Cmd::EditField(f) => {
                 if !self.command_available(&Cmd::EditField(f)) {
                     self.toasts.warning(t("Not possible here"));
@@ -1111,6 +1113,7 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
+            Cmd::AiChat => self.doc().is_some() && !self.any_modal_open(),
             Cmd::WorkCalendar
             | Cmd::Gantt
             | Cmd::Zones
@@ -2524,6 +2527,7 @@ impl ThinodaApp {
             (Cmd::Print, "Print", "", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
+            (Cmd::AiChat, "AI Chat", "", "AI"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",

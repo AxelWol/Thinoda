@@ -206,9 +206,11 @@ impl ThinodaApp {
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
             ])),
-            submenu("AI", crate::ai::AiCommand::ALL.into_iter().map(|action| {
-                item(action.label(), Cmd::Ai(action))
-            }).collect()),
+            submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
+                .chain(std::iter::once(MenuEntry::Separator))
+                .chain(crate::ai::AiCommand::ALL.into_iter().map(|action| {
+                    item(action.label(), Cmd::Ai(action))
+                })).collect()),
             submenu("Tools", vec![
                 item("Map Shot", Cmd::MapShot),
                 item("Create Masked Copy…", Cmd::MaskedCopy),

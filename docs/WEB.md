@@ -94,6 +94,28 @@ Changing the endpoint, model, committed API key or temperature also invalidates
 that result. Discard it and run the command again with the current settings.
 The result retains its original topic/document even if you switch tabs.
 
+### Discussing a map
+
+Choose **AI > AI Chat** to open the discussion sidebar. Opening it sends nothing.
+Choose **Quick**, **Balanced** or **Deep** for response detail, and **Selected topics**
+(including their descendants) or **Current sheet** for context. Inspect **Context
+to send** and the server address before choosing **Send**. Titles and hierarchy,
+your question and completed chat history are sent; notes and attachments are not.
+The modes guide the answer, not provider-specific reasoning APIs.
+
+Chat streams answers without changing the map. **Cancel AI Request** discards the
+partial answer and keeps your draft; disabling AI does the same. Errors and
+oversized requests/replies are shown rather than saved as completed answers.
+Only one map/chat request runs at a time; finish or discard a map review before
+sending a chat question.
+
+Each open document has its own session-only history. Hiding the panel or switching
+tabs preserves it; closing the document, reloading the browser or restarting the
+app does not. **Clear conversation** requires confirmation and preserves your
+unsent draft. Closing chat restores the format sidebar without changing its
+preferences. The sidebar is scrollable in short windows. Browser fetch/CORS and
+real-device acceptance remain F6 gates, not inferred runtime passes.
+
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or

@@ -214,7 +214,7 @@ title/inspector drafts and request settings; Discard never edits the map.
 Cancel/preview close/AI disable abort transport and discard partial output.
 Native and browser polling share terminal success/error/cancel events; only a
 valid completed response can enter review. The nonstreaming client remains
-available for existing callers. This is the first app slice, not completion of
+available for existing callers. This foundation alone does not complete
 chat/modes/prompts/semantic/Pitch AI or browser/native host acceptance.
 
 Local evidence for this foundation: 150 app unit tests, 38 AI unit/loopback
@@ -223,6 +223,35 @@ all-target and WASM library clippy, formatting/diff checks and the 25 documentat
 contracts passed. An explicitly configured, bounded/cancellable embeddings job
 is also integrated as the semantic transport prerequisite; it does not yet expose
 semantic search/clustering UI or trigger background indexing.
+
+**F5 scoped discussion slice (in progress):** **AI > AI Chat** opens a nonmodal
+sidebar with per-open-document conversations, streaming answers and explicit Send
+and Cancel. Opening the panel or changing mode/scope makes no request. Quick,
+Balanced (default) and Deep persist as response-detail guidance, not invented
+provider reasoning parameters. Selected-topic subtrees or the current sheet
+provide bounded titles/hierarchy; notes and attachments are excluded. The endpoint
+and inspectable context are visible before sending. Chat never edits maps.
+History survives hiding the panel and switching tabs within this session, but is
+not persisted across application restarts and is removed when its document closes.
+Clearing requires confirmation and preserves the unsent draft. Cancellation,
+AI disable and source close cannot append late results. Only completed
+question/answer pairs enter history; errors preserve the draft.
+
+The composer, accessible mode/scope choices and scrollable content support short
+windows without replacing format-sidebar preferences. Chat limits are 500 context
+topics, 64 KiB serialized context, 8192-byte prompts, 64 KiB replies, 256 KiB history,
+32 messages and 64 conversations; oversized requests/replies report errors rather
+than silently truncating. Saved prompts, additional map actions, semantic UI,
+Pitch suggestions and integrated F6 host acceptance remain open.
+
+Scoped discussion evidence: 162 app unit tests (including 12 chat tests), eight
+focused AI E2E tests, 21 command/menu/sidebar/shortcut tests and 86 platform tests
+passed with live AI disabled. The chat cases exercise deliberate/offline dispatch,
+mode/scope controls, short-window Send, hierarchy and byte/topic/history limits,
+oversized replies, IME, confirmed Clear, per-document ownership and cancel/disable/
+source-close late-result rejection. Strict native all-target and WASM library
+clippy, formatting/diff checks and 25 documentation contracts passed. These are
+local/headless checks, not real browser/CORS or native-window-manager acceptance.
 
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,

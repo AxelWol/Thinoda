@@ -78,6 +78,7 @@ impl Cmd {
             Self::SetTheme(ThemeMode::Dark) => "appearance.dark",
             Self::EditField(FocusField::Hyperlink) => "insert.hyperlink",
             Self::EditField(FocusField::Notes) => "insert.notes",
+            Self::AiChat => "ai.chat",
             Self::Ai(action) => match action {
                 crate::ai::AiCommand::Brainstorm => "ai.brainstorm",
                 crate::ai::AiCommand::Breakdown => "ai.breakdown",

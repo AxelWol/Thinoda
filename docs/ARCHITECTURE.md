@@ -21,7 +21,7 @@ graph TD
 | `thinoda-core` | Workbook/sheet/topic model, transactional edits + undo, layout engine for all structures, themes, templates, search, outline conversion | no |
 | `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
 | `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme; on wasm a `localStorage` virtual file system, downloads and browser printing | no |
-| `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for `/v1/models` + `/v1/chat/completions`, prompts, outline parser, background `AiJob`, mock server for tests | no |
+| `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for models/completions/embeddings, bounded SSE, prompts, outline parser, polling `AiJob`/`AiStreamJob`/`AiEmbeddingJob`, local mock server | no |
 | `thinoda-ui` | Design tokens, light/dark visuals, widgets, palette, toasts, dialogs, icons, fonts — **the reusable library for companion apps** | yes |
 | `thinoda-canvas` | Interactive mind map widget: hit-testing, selection, drag & drop, inline editing, keyboard actions | yes |
 | `thinoda-app` | eframe application, commands (`Cmd`), menus, panels, dialogs, CLI | yes |
@@ -320,6 +320,23 @@ graph TD
   1 MiB generated/queued text and 4096 data events, with configured request timeout.
   Existing nonstreaming client APIs remain available without silent streaming
   fallback. Browser runtime/CORS acceptance remains an F6 gate.
+  The discussion sidebar uses `AiStreamJob<String>` and the same bounded event
+  drain, without any map-edit path. `ChatState` owns session-only conversations by
+  open-document key; a pending response retains its source key and viewport.
+  Closing the source prunes its history and aborts the job; closing its native
+  window returns pending viewport ownership to root. Hide/reopen and tab switches
+  retain history, not disk persistence. Explicit Send snapshots selected subtrees
+  or the sheet's central/floating trees into JSON containing IDs, titles and child
+  IDs only. It rejects unfinished title/inspector edits and oversized context,
+  and rechecks the snapshot immediately before dispatch. Completed user/assistant
+  pairs, not partial or failed output, enter history. Cancel/disable preserves the
+  draft; confirmed Clear affects only that conversation. Chat and typed map jobs
+  cannot start concurrently, and an unapplied map review blocks chat dispatch.
+  `AiResponseMode` is a serde-defaulted global preference (Balanced for legacy
+  settings), used only as system-message guidance. Mode/scope changes and opening
+  the panel are offline. Chat bounds: 500 context topics, 64 KiB serialized context,
+  8192-byte prompt, 64 KiB reply, 256 KiB history, 32 messages and 64 conversations.
+  Limits are explicit errors; no silent context/history truncation or indexing.
   Connection-test work and model lists belong to their endpoint and credential
   draft; changing either discards them, while choosing a model keeps the list.
   Generate requires accepted activation and retains rejected prompt drafts.

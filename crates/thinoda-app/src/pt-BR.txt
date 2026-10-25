@@ -1,3 +1,27 @@
+AI Chat|Chat de IA
+Response mode|Modo de resposta
+Context scope|Escopo do contexto
+Chat history is session-only.|O histórico do chat dura apenas esta sessão.
+Selected topics|Tópicos selecionados
+Quick|Rápido
+Balanced|Equilibrado
+Deep|Aprofundado
+Finish the current edit before sending.|Conclua a edição atual antes de enviar.
+AI context is too large. Select a smaller branch.|O contexto de IA é muito grande. Selecione um ramo menor.
+AI reply is too large. Try a shorter request.|A resposta de IA é muito grande. Tente um pedido mais curto.
+Enter a prompt of at most 8192 bytes.|Insira um pedido com no máximo 8192 bytes.
+Conversation is full. Clear it before sending again.|A conversa está cheia. Limpe-a antes de enviar novamente.
+Conversation limit reached. Close another document.|O limite de conversas foi atingido. Feche outro documento.
+Modes guide detail, not provider reasoning settings.|Os modos orientam o detalhamento, não as configurações de raciocínio do provedor.
+Chat never edits maps. Context includes titles, hierarchy and this chat's history, not notes or attachments.|O chat nunca edita mapas. O contexto inclui títulos, hierarquia e histórico do chat, não notas ou anexos.
+Context to send|Contexto a enviar
+Ask about this map|Pergunte sobre este mapa
+Send|Enviar
+Clear conversation|Limpar conversa
+Clear this conversation?|Limpar esta conversa?
+Confirm Clear|Confirmar limpeza
+Assistant|Assistente
+You|Você
 Review AI Result|Revisar resultado de IA
 Cancel AI Request|Cancelar solicitação de IA
 Apply AI Result|Aplicar resultado de IA

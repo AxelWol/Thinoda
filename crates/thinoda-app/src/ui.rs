@@ -703,7 +703,28 @@ impl ThinodaApp {
                         }
                         self.bottom_bar(ui);
                     });
-                if self.settings.show_format_panel {
+                if self.ai.chat.open {
+                    egui::Panel::right("thinoda_ai_chat")
+                        .default_size(320.0)
+                        .size_range(240.0..=480.0)
+                        .frame(
+                            egui::Frame::new()
+                                .fill(Palette::of(&ctx).surface)
+                                .inner_margin(Margin::same(10)),
+                        )
+                        .show(ui, |ui| {
+                            if self.any_modal_open()
+                                || self.palette.open
+                                || self.map_shot.active()
+                                || self.printing.active()
+                                || self.dialogs.legal.open
+                                || self.conversion_modal_open()
+                            {
+                                ui.disable();
+                            }
+                            self.ai_chat_panel(ui);
+                        });
+                } else if self.settings.show_format_panel {
                     egui::Panel::right("thinoda_format")
                         .default_size(280.0)
                         .size_range(240.0..=420.0)

@@ -14,7 +14,9 @@ use thinoda_ui::widgets;
 use crate::app::ThinodaApp;
 use crate::i18n::t;
 
+mod chat;
 mod review;
+pub use chat::ChatState;
 pub use review::{AiReview, AiTarget};
 
 /// AI commands (XMind AI equivalents).
@@ -68,6 +70,7 @@ pub struct PendingAi {
 pub struct AiState {
     pub pending: Option<PendingAi>,
     pub review: Option<AiReview>,
+    pub chat: ChatState,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
     prompt_viewport: Option<egui::ViewportId>,
@@ -161,8 +164,27 @@ fn error_text(e: &AiError) -> String {
     }
 }
 
+fn poll_stream<T>(
+    job: &AiStreamJob<T>,
+    preview: &mut String,
+) -> (bool, Option<Result<T, AiError>>) {
+    let mut progress = false;
+    for _ in 0..128 {
+        match job.poll() {
+            Some(AiStreamEvent::Delta(text)) => {
+                preview.push_str(&text);
+                progress = true;
+            }
+            Some(AiStreamEvent::Finished(result)) => return (progress, Some(result)),
+            None => break,
+        }
+    }
+    (progress, None)
+}
+
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
+        self.protect_ai_chat_input(ctx);
         if self
             .ai
             .prompt_viewport
@@ -191,7 +213,7 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if self.ai.pending.is_some() {
+        if self.ai.pending.is_some() || self.ai.chat.is_busy() {
             self.toasts.info(t("AI is still working…"));
             return;
         }
@@ -244,7 +266,11 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if prompt.trim().is_empty() || self.ai.pending.is_some() || self.ai.review.is_some() {
+        if prompt.trim().is_empty()
+            || self.ai.pending.is_some()
+            || self.ai.review.is_some()
+            || self.ai.chat.is_busy()
+        {
             return;
         }
         self.ai.pending = Some(PendingAi {
@@ -264,6 +290,7 @@ impl ThinodaApp {
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
+        self.poll_ai_chat(ctx);
         if !self.settings.ai.enabled && self.ai.pending.is_some() {
             self.cancel_ai();
             self.toasts
@@ -295,21 +322,7 @@ impl ThinodaApp {
         let Some(p) = &mut self.ai.pending else {
             return;
         };
-        let mut finished = None;
-        let mut progress = false;
-        for _ in 0..128 {
-            match p.job.poll() {
-                Some(AiStreamEvent::Delta(text)) => {
-                    p.preview.push_str(&text);
-                    progress = true;
-                }
-                Some(AiStreamEvent::Finished(result)) => {
-                    finished = Some(result);
-                    break;
-                }
-                None => break,
-            }
-        }
+        let (progress, finished) = poll_stream(&p.job, &mut p.preview);
         if progress {
             ctx.request_repaint_of(p.target.viewport);
         }
@@ -465,6 +478,7 @@ impl ThinodaApp {
                             self.settings.ai.enabled
                                 && self.ai.pending.is_none()
                                 && self.ai.review.is_none()
+                                && !self.ai.chat.is_busy()
                                 && !text.trim().is_empty(),
                             egui::Button::new(t("Generate")),
                         )
@@ -472,7 +486,8 @@ impl ThinodaApp {
                         || (enter
                             && self.settings.ai.enabled
                             && self.ai.pending.is_none()
-                            && self.ai.review.is_none()))
+                            && self.ai.review.is_none()
+                            && !self.ai.chat.is_busy()))
                         && touch_allowed
                     {
                         go = true;

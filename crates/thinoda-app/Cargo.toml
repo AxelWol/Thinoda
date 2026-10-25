@@ -38,6 +38,7 @@ log.workspace = true
 anyhow.workspace = true
 sys-locale.workspace = true
 web-time.workspace = true
+serde_json.workspace = true
 raw-window-handle = "0.6"
 pulldown-cmark = { version = "0.13", default-features = false }
 
@@ -51,7 +52,6 @@ wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
