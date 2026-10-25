@@ -411,6 +411,13 @@ pass, not evidence of OS key delivery: the Windows automation backend reported
 `no_viable_candidate` for the native modified shortcut, and no unsafe foreground
 workaround was used.
 
+The native-menu application regression also delivers a child-viewport Close
+event with an unsaved edit, then dispatches a previously captured New menu event.
+The closed child's stale event cannot create or retarget a document. Both maps
+remain present, the unrelated root map is unchanged, and the returned child's
+edit retains Undo/Redo without requesting Quit or discard. All ten native-menu
+regressions pass; this still does not replace real host focus/menu acceptance.
+
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,
 Discussion mode, stop/retry, branch reorganization, translation to a new sheet

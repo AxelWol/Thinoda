@@ -763,6 +763,69 @@ mod tests {
     }
 
     #[test]
+    fn closed_child_menu_cannot_retarget_a_dirty_document_returned_to_root() {
+        use egui::{RawInput, ViewportEvent, ViewportId};
+        let ctx = Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = ThinodaApp::headless();
+        let root_key = app.doc().unwrap().key.clone();
+        let root_workbook = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&ctx, Cmd::New);
+        let child_key = app.doc().unwrap().key.clone();
+        let topic = app.doc().unwrap().doc.sheet().root;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Child edit", |sheet| {
+                sheet.set_title(topic, "Keep this edit")
+            })
+            .unwrap();
+        let edited = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&ctx, Cmd::MoveToNewWindow);
+        let viewport = app.document_windows[&child_key];
+        app.current_viewport = viewport;
+        app.activate_document_window(viewport);
+        let snapshot = app.native_menu_snapshot(&ctx);
+
+        let mut input = RawInput {
+            viewport_id: viewport,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(viewport)
+            .or_default()
+            .events
+            .push(ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.handle_close_request(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(!app.document_windows.contains_key(&child_key));
+        app.current_viewport = ViewportId::ROOT;
+        app.activate_document_window(ViewportId::ROOT);
+        let active = app.doc().map(|doc| doc.key.clone());
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
+        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.doc().map(|doc| doc.key.clone()), active);
+        assert_eq!(app.current_viewport, ViewportId::ROOT);
+        let root = app.docs.iter().find(|doc| doc.key == root_key).unwrap();
+        assert_eq!(root.doc.workbook(), &root_workbook);
+        let child = app
+            .docs
+            .iter_mut()
+            .find(|doc| doc.key == child_key)
+            .unwrap();
+        assert!(child.is_dirty());
+        assert_eq!(child.doc.workbook(), &edited);
+        child.doc.undo();
+        assert_eq!(child.doc.workbook(), &before);
+        child.doc.redo();
+        assert_eq!(child.doc.workbook(), &edited);
+        assert!(app.dialogs.close.is_none());
+        assert!(app.pending_close.is_none());
+    }
+
+    #[test]
     fn selection_history_sheet_and_view_changes_invalidate_native_targets() {
         let ctx = Context::default();
         for change in [
