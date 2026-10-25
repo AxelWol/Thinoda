@@ -2,6 +2,7 @@
 
 use crate::edit::{EditError, EditResult};
 use crate::model::{Sheet, Workbook};
+use crate::schedule::{Task, WorkCalendar};
 
 const MAX_HISTORY: usize = 300;
 
@@ -296,6 +297,46 @@ impl Document {
             wb.sheets.insert(to, s);
             wb.active_sheet = to;
             Ok(())
+        })
+    }
+
+    pub fn set_task(&mut self, topic: crate::model::TopicId, task: Option<Task>) -> EditResult<()> {
+        self.edit_sheet("Edit task", |sheet| {
+            sheet
+                .set_task(topic, task)
+                .map_err(|error| EditError::Invalid(error.to_string()))
+        })
+    }
+
+    pub fn set_work_calendar(&mut self, calendar: WorkCalendar) -> EditResult<()> {
+        self.edit_sheet("Edit work calendar", |sheet| {
+            sheet
+                .set_work_calendar(calendar)
+                .map_err(|error| EditError::Invalid(error.to_string()))
+        })
+    }
+
+    pub fn add_task_dependency(
+        &mut self,
+        predecessor: crate::model::TopicId,
+        successor: crate::model::TopicId,
+    ) -> EditResult<()> {
+        self.edit_sheet("Add task dependency", |sheet| {
+            sheet
+                .add_task_dependency(predecessor, successor)
+                .map_err(|error| EditError::Invalid(error.to_string()))
+        })
+    }
+
+    pub fn remove_task_dependency(
+        &mut self,
+        predecessor: crate::model::TopicId,
+        successor: crate::model::TopicId,
+    ) -> EditResult<()> {
+        self.edit_sheet("Remove task dependency", |sheet| {
+            sheet
+                .remove_task_dependency(predecessor, successor)
+                .map_err(|error| EditError::Invalid(error.to_string()))
         })
     }
 }
