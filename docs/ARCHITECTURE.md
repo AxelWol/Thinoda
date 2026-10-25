@@ -47,8 +47,29 @@ graph TD
   Registry membership is not availability or key ownership: callers must still
   use the command/focus guards. `Settings.shortcuts_overrides` remains inactive
   and preserves stable, legacy, numeric and unknown keys without guessing a
-  migration. Activating overrides still requires a versioned binding format,
-  conflict/reserved-key policy and explicit editor/reset behavior.
+  migration. `Settings.keymaps` is a separate version-1 profile library:
+  immutable Thinoda Standard/XMind-compatible presets and named user copies,
+  with command-ID bindings and explicit empty lists for unassignment.
+  Logical Command is Cmd on macOS and Ctrl elsewhere; physical Control remains
+  distinguishable. Profile validation rejects duplicate/unknown identities,
+  unknown keys, conflicting dispatch and reserved system/browser/text-editor
+  gestures before activation. Invalid stored profiles are retained but produce
+  a visible warning and use Standard rather than silently activating.
+  Settings > Keyboard Shortcuts > Edit mappings stages profile selection,
+  duplication, rename, delete, reset and key capture until Apply; Cancel leaves
+  persisted settings unchanged. Apply writes settings atomically before changing
+  live preferences and keeps failed saves open for retry. Changed assignments
+  and aliases are reviewed in both Map and Outline contexts.
+  Global, insertion and view dispatch honor the same ordered binding inventory;
+  modified gestures take precedence over a general gesture of the same key,
+  without changing untouched Standard defaults. The canvas accepts host-supplied
+  bindings while standalone consumers retain its defaults. Outline keeps visible
+  row traversal rather than substituting canvas geometry for Up/Down.
+  Menus, ribbon, palette, shortcut reference, native AppKit accelerators and the
+  guide's active-shortcut table resolve the selected profile. Historical guide
+  examples are explicitly labeled Standard. OS clipboard events and focused text
+  editing retain ownership; IME candidate/commit frames cannot capture or apply
+  a mapping. No profile imports or legacy-string activation are inferred.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
   Native recovery locks explicitly unlock before closing their file descriptor:

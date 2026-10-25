@@ -110,8 +110,7 @@ fn settings_opens_existing_reference_and_returns_without_losing_context() {
                     assert_eq!(h.state().dialogs.shortcut_browser.query, "save");
                     h.key_press(Key::Delete);
                     h.run_steps(2);
-                    let notice =
-                        t("This is a reference list. Shortcut rebinding is not available yet.");
+                    let notice = t("Choose Edit mappings to create or change a keyboard profile.");
                     h.get_by_role_and_label(Role::Label, notice).scroll_to_me();
                     h.run_steps(8);
                     assert!(

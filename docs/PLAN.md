@@ -206,6 +206,21 @@ command availability and error reporting. Test each feature while building it,
 update completion status honestly, and do not interleave deferred stability work.
 No staffing or calendar promises are inferred from these phases.
 
+**F2 implementation slice (2026-10-25):** versioned persisted profiles and the
+Settings > Keyboard Shortcuts > Edit mappings editor are implemented. Standard
+remains unchanged by default; XMind-compatible is opt-in and covers supported
+commands rather than claiming every XMind/system gesture. Named copies support
+capture, assignment/unassignment, duplicate/rename/delete/reset and staged
+Apply/Cancel. The editor reviews changed aliases in both views before applying.
+All active dispatch/hint surfaces, including the AppKit menu model and offline
+guide's active-shortcut table, use the profile resolver. Invalid/conflicting or
+reserved assignments are reported; inactive legacy override strings stay inert.
+Focused text, system clipboard events and IME composition retain ownership.
+Local fixtures cover capture, save/reload, cancel, modifier precedence, Map/
+Outline dispatch, native accelerator models and shipped-locale/theme/scale
+geometry. F1 multi-window integration and actual macOS/Linux/browser interaction
+acceptance remain open; this slice is not a claim of F1/F2/F6 completion.
+
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
 HMENU adapter is wired to the root eframe window; it queues native selections

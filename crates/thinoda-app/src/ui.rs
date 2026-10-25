@@ -557,6 +557,7 @@ impl ThinodaApp {
             return;
         }
         let ctx = ui.ctx().clone();
+        self.prepare_keymap(&ctx);
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
         self.protect_ai_prompt_input(&ctx);
@@ -1173,6 +1174,7 @@ impl ThinodaApp {
             return;
         }
         let paste = std::mem::take(&mut self.paste_requested);
+        let shortcuts = self.active_canvas_bindings(ctx.os());
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -1191,7 +1193,7 @@ impl ThinodaApp {
             // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
             ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
         }
-        let out = MapCanvas::show(ui, &mut d.doc, &mut d.view);
+        let out = MapCanvas::show_with_shortcuts(ui, &mut d.doc, &mut d.view, &shortcuts);
         if let Some(text) = d.view.clipboard_out.take() {
             ctx.copy_text(text);
         }
@@ -1658,6 +1660,7 @@ impl ThinodaApp {
 
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let shortcuts = self.active_canvas_bindings(ctx.os());
         let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
@@ -2019,40 +2022,43 @@ impl ThinodaApp {
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
         {
-            for (shortcut, a) in Self::outline_shortcut_bindings() {
+            let mut navigation = None;
+            for (shortcut, a) in &shortcuts {
                 if (topic_focus || matches!(a, Action::Undo | Action::Redo))
                     && action.is_none()
-                    && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
+                    && ctx.input_mut(|i| i.consume_shortcut(shortcut))
                 {
-                    action = Some(a);
+                    match a {
+                        Action::Navigate(
+                            direction @ (thinoda_core::navigation::Direction::Up
+                            | thinoda_core::navigation::Direction::Down),
+                        ) => navigation = Some(*direction),
+                        _ => action = Some(a.clone()),
+                    }
                     break;
                 }
             }
-            if topic_focus && action.is_none() {
-                let [up, down] = ctx.input_mut(|i| {
-                    Self::outline_navigation_bindings()
-                        .map(|shortcut| i.consume_shortcut(&shortcut))
-                });
-                if (up || down)
-                    && let Some(cur) = d.view.primary()
-                {
-                    let sheet = d.doc.sheet();
-                    let order: Vec<TopicId> = sheet
-                        .all_ids_ordered()
-                        .into_iter()
-                        .filter(|x| sheet.is_visible(*x))
-                        .collect();
-                    if let Some(i) = order.iter().position(|x| *x == cur) {
-                        let j = if up {
-                            i.saturating_sub(1)
-                        } else {
-                            (i + 1).min(order.len() - 1)
-                        };
-                        d.view.select_only(order[j]);
-                        ui.data_mut(|data| {
-                            data.insert_temp(outline_id.with("focus_topic"), Some(order[j]));
-                        });
-                    }
+            if topic_focus
+                && action.is_none()
+                && let Some(direction) = navigation
+                && let Some(cur) = d.view.primary()
+            {
+                let sheet = d.doc.sheet();
+                let order: Vec<TopicId> = sheet
+                    .all_ids_ordered()
+                    .into_iter()
+                    .filter(|x| sheet.is_visible(*x))
+                    .collect();
+                if let Some(i) = order.iter().position(|x| *x == cur) {
+                    let j = if direction == thinoda_core::navigation::Direction::Up {
+                        i.saturating_sub(1)
+                    } else {
+                        (i + 1).min(order.len() - 1)
+                    };
+                    d.view.select_only(order[j]);
+                    ui.data_mut(|data| {
+                        data.insert_temp(outline_id.with("focus_topic"), Some(order[j]));
+                    });
                 }
             }
         }
@@ -2064,9 +2070,13 @@ impl ThinodaApp {
                     });
                 }
                 Ok(_) => {}
-                Err(_) => {
+                Err(error) => {
+                    log::debug!("outline action failed: {error}");
                     self.toasts.warning(t("Not possible here"));
                 }
+            }
+            if let Some(text) = d.view.clipboard_out.take() {
+                ctx.copy_text(text);
             }
         }
     }

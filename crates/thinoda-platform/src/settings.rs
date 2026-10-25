@@ -277,6 +277,7 @@ pub struct Settings {
     /// Preserved but inactive. Stable app shortcut IDs use names such as
     /// `file.save`; legacy/numeric/unknown keys are not guessed or migrated.
     pub shortcuts_overrides: BTreeMap<String, String>,
+    pub keymaps: crate::keymaps::Keymaps,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -321,6 +322,7 @@ impl Default for Settings {
             cloud: CloudSettings::default(),
             ai: AiSettings::default(),
             shortcuts_overrides: BTreeMap::new(),
+            keymaps: crate::keymaps::Keymaps::default(),
         }
     }
 }
@@ -420,6 +422,7 @@ impl Settings {
                     .map_err(|e: toml::de::Error| e.to_string())?;
                 Self::validate_quick_styles(&settings.quick_styles)?;
                 Self::validate_custom_themes(&settings.custom_themes)?;
+                settings.keymaps.validate()?;
                 if let Some(theme) = &settings.default_custom_theme {
                     theme.validate()?;
                 }
@@ -534,6 +537,10 @@ impl Settings {
         credentials: &dyn CredentialStore,
     ) -> Result<()> {
         let mut saved = self.clone();
+        saved
+            .keymaps
+            .validate()
+            .map_err(crate::Error::InvalidKeymaps)?;
         Self::validate_custom_themes(&saved.custom_themes)
             .map_err(crate::Error::InvalidCustomThemes)?;
         if let Some(theme) = &saved.default_custom_theme {
@@ -567,6 +574,10 @@ impl Settings {
     }
 
     fn write_settings(paths: &Paths, settings: &Self) -> Result<()> {
+        settings
+            .keymaps
+            .validate()
+            .map_err(crate::Error::InvalidKeymaps)?;
         Self::validate_custom_themes(&settings.custom_themes)
             .map_err(crate::Error::InvalidCustomThemes)?;
         if let Some(theme) = &settings.default_custom_theme {

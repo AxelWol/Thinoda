@@ -9,6 +9,8 @@ pub mod doc;
 pub mod files;
 mod help;
 pub mod i18n;
+mod keymap_editor;
+pub mod keymaps;
 mod labels;
 mod legal;
 mod legal_markdown;

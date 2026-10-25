@@ -10,15 +10,22 @@ pub struct ShortcutBrowser {
     pub category: Option<String>,
     pub unassigned_only: bool,
     reset_scroll: bool,
+    pub(crate) editor: Option<crate::keymap_editor::KeymapEditor>,
 }
 
 impl ThinodaApp {
     pub fn shortcut_reference(&self, ctx: &egui::Context) -> Vec<thinoda_ui::Command> {
-        let bindings: Vec<_> = Self::contextual_shortcut_bindings_for_mode(self.mode)
+        let bindings: Vec<_> = self
+            .active_canvas_bindings(ctx.os())
             .into_iter()
             .filter(|(shortcut, action)| {
-                !Self::default_shortcut_command(self.mode, ctx.os(), *shortcut)
-                    .is_some_and(|command| command != Cmd::Canvas(action.clone()))
+                let command = Cmd::Canvas(action.clone());
+                crate::keymaps::reachable(
+                    &self.profile_bindings(&self.settings.keymaps, self.mode, ctx.os()),
+                    *shortcut,
+                    &command,
+                    ctx.os(),
+                )
             })
             .collect();
         let hint = |actions: &[Action]| {
@@ -105,6 +112,11 @@ impl ThinodaApp {
 
     pub(crate) fn shortcuts_dialog(&mut self, ctx: &egui::Context) {
         if !self.dialogs.shortcuts {
+            self.dialogs.shortcut_browser.editor = None;
+            return;
+        }
+        if self.dialogs.shortcut_browser.editor.is_some() {
+            self.keymap_editor(ctx);
             return;
         }
         let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
@@ -158,6 +170,11 @@ impl ThinodaApp {
                         }
                         scroll.show(ui, |ui| {
                             ui.heading(t("Keyboard Shortcuts"));
+                            if ui.button(t("Edit mappings")).clicked() && touch_allowed {
+                                state.editor = Some(crate::keymap_editor::KeymapEditor::new(
+                                    &self.settings.keymaps,
+                                ));
+                            }
                             ui.label(format!("{}: {scope}", t("View")));
                             let search = ui
                                 .add(
@@ -229,12 +246,13 @@ impl ThinodaApp {
                                 });
                             }
                             ui.label(t(
-                                "This is a reference list. Shortcut rebinding is not available yet.",
+                                "Choose Edit mappings to create or change a keyboard profile.",
                             ));
                             crate::ui::reveal_changed_focus(ui);
                         });
                     });
-                    if ui.put(close_rect, egui::Button::new(close_label)).clicked() && touch_allowed {
+                    if ui.put(close_rect, egui::Button::new(close_label)).clicked() && touch_allowed
+                    {
                         close = true;
                     }
                 });

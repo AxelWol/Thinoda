@@ -164,7 +164,7 @@ impl ThinodaApp {
                         let label = if ctx.os() == egui::os::OperatingSystem::Mac {
                             label.clone()
                         } else {
-                            let hint = ThinodaApp::shortcut_hint_for_mode(ctx, command, app.mode);
+                            let hint = app.active_shortcut_hint(ctx, command);
                             hint.map_or_else(|| label.clone(), |hint| format!("{label}\t{hint}"))
                         };
                         let enabled = if text_focus && is_text_command(command) {
@@ -335,11 +335,38 @@ impl ThinodaApp {
                 let MenuAction::Command(command) = action else {
                     return None;
                 };
-                let binding = Self::shortcut_binding_for_platform(
-                    command,
+                let bindings = self.profile_bindings(
+                    &self.settings.keymaps,
                     self.mode,
                     egui::os::OperatingSystem::Mac,
-                )?;
+                );
+                let binding = bindings
+                    .iter()
+                    .find(|(shortcut, candidate)| {
+                        candidate.shortcut_id() == command.shortcut_id()
+                            && crate::keymaps::reachable(
+                                &bindings,
+                                *shortcut,
+                                command,
+                                egui::os::OperatingSystem::Mac,
+                            )
+                    })
+                    .map(|(binding, _)| *binding)
+                    .or_else(|| {
+                        if matches!(
+                            command,
+                            Cmd::MenuPaste
+                                | Cmd::Canvas(Action::Copy | Action::Cut | Action::Paste(_))
+                        ) {
+                            Self::shortcut_binding_for_platform(
+                                command,
+                                self.mode,
+                                egui::os::OperatingSystem::Mac,
+                            )
+                        } else {
+                            None
+                        }
+                    })?;
                 Some((
                     u16::try_from(index + 1).ok()?,
                     MacAccelerator {
@@ -569,6 +596,37 @@ mod tests {
         let count = app.docs.len();
         app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
         assert_eq!(app.docs.len(), count);
+    }
+
+    #[test]
+    fn native_accelerators_and_labels_follow_the_selected_profile() {
+        let mut app = ThinodaApp::headless();
+        app.settings.keymaps.duplicate_active("Native").unwrap();
+        app.settings.keymaps.profiles[0].bindings.insert(
+            "file.save".into(),
+            vec![thinoda_platform::keymaps::KeyBinding {
+                key: "S".into(),
+                alt: true,
+                ..Default::default()
+            }],
+        );
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        let save = id(&snapshot, Cmd::Save);
+        let model = app.macos_menu_model(&snapshot).unwrap();
+        let accelerator = model.shortcuts.get(&save).unwrap();
+        assert_eq!(accelerator.key, "S");
+        assert!(accelerator.alt);
+        assert!(!accelerator.command);
+        app.settings.keymaps.profiles[0]
+            .bindings
+            .insert("file.save".into(), vec![]);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        let model = app.macos_menu_model(&snapshot).unwrap();
+        assert!(!model.shortcuts.contains_key(&save));
+        ctx.set_os(egui::os::OperatingSystem::Windows);
+        assert!(app.active_shortcut_hint(&ctx, &Cmd::Save).is_none());
     }
 
     #[test]

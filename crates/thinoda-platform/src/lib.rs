@@ -53,6 +53,7 @@ pub mod cloud;
 pub mod crash;
 pub mod credentials;
 pub mod fs;
+pub mod keymaps;
 pub mod native_menu;
 pub mod paths;
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,6 +71,8 @@ pub use settings::Settings;
 /// Platform persistence failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid keyboard profiles: {0}")]
+    InvalidKeymaps(String),
     #[error("invalid custom theme library: {0}")]
     InvalidCustomThemes(String),
     #[error("invalid quick style library: {0}")]

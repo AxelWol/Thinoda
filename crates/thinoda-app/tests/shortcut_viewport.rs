@@ -1,12 +1,83 @@
 //! Locale selection is process-wide; run the viewport matrix sequentially.
 
 use egui::{Key, accesskit::Role};
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_app::{
     app::{CenterMode, Cmd, Services, ThinodaApp},
     i18n::t,
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
+
+fn editable_keyboard_profiles_keep_footer_and_drafts_in_localized_small_windows() {
+    for language in Language::ALL {
+        for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
+            for scale in [1.0, 2.0] {
+                let mut app = ThinodaApp::new(
+                    Settings {
+                        language,
+                        theme,
+                        ui_scale: scale,
+                        show_format_panel: false,
+                        ..Default::default()
+                    },
+                    Services::default(),
+                    &[],
+                );
+                app.exec(&egui::Context::default(), Cmd::New);
+                let mut h = Harness::builder()
+                    .with_size(egui::vec2(1000.0, 800.0))
+                    .with_context_setup(|ctx| {
+                        ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu)
+                    })
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                h.ctx
+                    .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                h.run_steps(3);
+                h.set_size(egui::vec2(640.0, 480.0) / scale);
+                h.run_steps(3);
+                let ctx = h.ctx.clone();
+                h.state_mut().exec(&ctx, Cmd::Shortcuts);
+                h.run_steps(4);
+                h.get_by_role_and_label(Role::Button, t("Edit mappings"))
+                    .click();
+                h.run_steps(4);
+                let before = h.state().settings.keymaps.clone();
+                let workbook = h.state().doc().unwrap().doc.workbook().clone();
+                let viewport = h.ctx.content_rect();
+                let modal = h
+                    .ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("shortcuts")))
+                    .unwrap();
+                assert!(
+                    viewport.expand(1.0).contains_rect(modal),
+                    "{language:?}/{theme:?}/{scale}: {modal:?}"
+                );
+                for label in ["Apply", "Cancel"] {
+                    let button = h
+                        .query_all_by_role_and_label(Role::Button, t(label))
+                        .find(|node| !node.accesskit_node().is_disabled())
+                        .unwrap();
+                    assert!(
+                        viewport.contains_rect(button.rect()),
+                        "{language:?}/{theme:?}/{scale}: {label}"
+                    );
+                    assert_paint(&h, t(label), button.rect());
+                }
+                h.query_all_by_role_and_label(Role::Button, t("Cancel"))
+                    .find(|node| !node.accesskit_node().is_disabled())
+                    .unwrap()
+                    .click();
+                h.run_steps(3);
+                assert_eq!(h.state().settings.keymaps, before);
+                assert_eq!(h.state().doc().unwrap().doc.workbook(), &workbook);
+                assert!(h.state().dialogs.shortcuts);
+            }
+        }
+    }
+}
 
 fn assert_fit(h: &Harness<'_, ThinodaApp>) {
     let viewport = h.ctx.content_rect().expand(1.0 / h.ctx.pixels_per_point());
@@ -90,6 +161,7 @@ fn reveal(h: &mut Harness<'_, ThinodaApp>, label: &str) {
 
 #[test]
 fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
+    editable_keyboard_profiles_keep_footer_and_drafts_in_localized_small_windows();
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
             for (size, scale) in [
@@ -137,6 +209,7 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                 let selection = h.state().doc().unwrap().view.selection.clone();
                 assert_fit(&h);
                 for (role, label) in [
+                    (Role::Button, "Edit mappings"),
                     (Role::TextInput, "Search commands or shortcuts"),
                     (Role::ComboBox, "Shortcut category"),
                     (Role::CheckBox, "Unassigned only"),

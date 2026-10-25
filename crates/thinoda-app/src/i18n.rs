@@ -182,6 +182,52 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Edit mappings", "Tastenbelegungen bearbeiten"),
+    ("Rename", "Umbenennen"),
+    ("Active shortcuts", "Aktive Tastenkombinationen"),
+    (
+        "Shortcut examples below use Thinoda Standard; the active profile is shown above.",
+        "Die folgenden Tastaturbeispiele verwenden Thinoda Standard; das aktive Profil steht oben.",
+    ),
+    ("Keyboard mappings", "Tastenbelegungen"),
+    ("Keyboard profile", "Tastaturprofil"),
+    ("Profile name", "Profilname"),
+    ("Assign", "Zuweisen"),
+    ("Unassign", "Zuweisung entfernen"),
+    ("Reset All", "Alle zurücksetzen"),
+    ("Changed bindings", "Geänderte Belegungen"),
+    ("Previously", "Bisher"),
+    ("Search mappings", "Belegungen suchen"),
+    (
+        "Delete this keyboard profile?",
+        "Dieses Tastaturprofil löschen?",
+    ),
+    ("Confirm deletion", "Löschen bestätigen"),
+    ("Keep profile", "Profil behalten"),
+    (
+        "Press a shortcut. Escape cancels capture.",
+        "Tastenkombination drücken. Escape bricht die Erfassung ab.",
+    ),
+    (
+        "Built-in profiles are read-only. Duplicate one to customize it.",
+        "Integrierte Profile sind schreibgeschützt. Zum Anpassen ein Profil duplizieren.",
+    ),
+    (
+        "XMind-compatible covers supported commands, not every XMind or system shortcut.",
+        "XMind-kompatibel umfasst unterstützte Befehle, nicht jede XMind- oder Systemtastenkombination.",
+    ),
+    (
+        "Review changed bindings before Apply. Cancel leaves saved mappings unchanged.",
+        "Geänderte Belegungen vor dem Übernehmen prüfen. Abbrechen lässt gespeicherte Belegungen unverändert.",
+    ),
+    (
+        "System clipboard and text-editing shortcuts remain owned by the focused editor.",
+        "Systemtastenkombinationen für Zwischenablage und Textbearbeitung bleiben beim fokussierten Editor.",
+    ),
+    (
+        "Choose Edit mappings to create or change a keyboard profile.",
+        "Zum Erstellen oder Ändern eines Tastaturprofils Tastenbelegungen bearbeiten wählen.",
+    ),
     ("Window", "Fenster"),
     ("Services", "Dienste"),
     ("Hide Thinoda", "Thinoda ausblenden"),
@@ -1608,6 +1654,7 @@ mod tests {
             include_str!("template_gallery.rs"),
             include_str!("structure_picker.rs"),
             include_str!("shortcut_browser.rs"),
+            include_str!("keymap_editor.rs"),
             include_str!("symbols.rs"),
             include_str!("menus.rs"),
             include_str!("native_menus.rs"),

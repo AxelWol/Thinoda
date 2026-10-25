@@ -201,3 +201,25 @@ Download failed|Falha no download
 Download started|Download iniciado
 Close the browser tab to quit|Feche a aba do navegador para sair
 Continue opens the browser print dialog. Select the same paper size and orientation there and set its margins to none or default; the page already contains the margins chosen here. Use Save print PDF… for exact page output.|Continuar abre a caixa de impressão do navegador. Escolha nela o mesmo tamanho de papel e a mesma orientação e defina as margens como nenhuma ou padrão; a página já contém as margens escolhidas aqui. Use Salvar PDF de impressão… para uma página exata.
+Edit mappings|Editar atalhos
+Rename|Renomear
+Active shortcuts|Atalhos ativos
+Shortcut examples below use Thinoda Standard; the active profile is shown above.|Os exemplos abaixo usam Thinoda Standard; o perfil ativo aparece acima.
+Keyboard mappings|Atalhos de teclado
+Keyboard profile|Perfil de teclado
+Profile name|Nome do perfil
+Assign|Atribuir
+Unassign|Remover atribuição
+Reset All|Redefinir tudo
+Changed bindings|Atalhos alterados
+Previously|Anteriormente
+Search mappings|Pesquisar atalhos
+Delete this keyboard profile?|Excluir este perfil de teclado?
+Confirm deletion|Confirmar exclusão
+Keep profile|Manter perfil
+Press a shortcut. Escape cancels capture.|Pressione um atalho. Escape cancela a captura.
+Built-in profiles are read-only. Duplicate one to customize it.|Os perfis integrados são somente leitura. Duplique um para personalizá-lo.
+XMind-compatible covers supported commands, not every XMind or system shortcut.|Compatível com XMind abrange os comandos disponíveis, não todos os atalhos do XMind ou do sistema.
+Review changed bindings before Apply. Cancel leaves saved mappings unchanged.|Revise as alterações antes de Aplicar. Cancelar mantém os atalhos salvos.
+System clipboard and text-editing shortcuts remain owned by the focused editor.|Os atalhos do sistema para área de transferência e edição de texto continuam no editor em foco.
+Choose Edit mappings to create or change a keyboard profile.|Escolha Editar atalhos para criar ou alterar um perfil de teclado.

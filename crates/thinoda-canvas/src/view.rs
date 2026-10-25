@@ -735,6 +735,16 @@ impl MapCanvas {
     }
 
     pub fn show(ui: &mut Ui, doc: &mut Document, view: &mut MapView) -> CanvasOutput {
+        Self::show_with_shortcuts(ui, doc, view, &shortcut_bindings())
+    }
+
+    /// The host may supply an explicitly selected keyboard profile.
+    pub fn show_with_shortcuts(
+        ui: &mut Ui,
+        doc: &mut Document,
+        view: &mut MapView,
+        shortcuts: &[(egui::KeyboardShortcut, Action)],
+    ) -> CanvasOutput {
         let id = Self::id();
         let rect = ui.available_rect_before_wrap();
         let response = ui.interact(rect, id, Sense::click_and_drag() | Sense::FOCUSABLE);
@@ -1150,7 +1160,7 @@ impl MapCanvas {
             && !matches!(view.drag, Drag::Topics { .. })
             && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
         {
-            handle_keys(&ctx, doc, view, &mut out);
+            handle_keys(&ctx, doc, view, &mut out, shortcuts);
         }
 
         if doc.state_id() != view.cache.as_ref().map_or(0, |c| c.key.0) || view.editing.is_some() {
@@ -1367,10 +1377,11 @@ fn handle_keys(
     doc: &mut Document,
     view: &mut MapView,
     out: &mut CanvasOutput,
+    shortcuts: &[(egui::KeyboardShortcut, Action)],
 ) {
-    for (shortcut, action) in shortcut_bindings() {
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
-            run(doc, view, action, out);
+    for (shortcut, action) in shortcuts {
+        if ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
+            run(doc, view, action.clone(), out);
             return;
         }
     }

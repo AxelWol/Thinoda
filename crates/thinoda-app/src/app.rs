@@ -105,7 +105,7 @@ pub enum FocusField {
     Notes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CenterMode {
     Map,
     Outliner,
@@ -1816,11 +1816,30 @@ impl ThinodaApp {
 
     /// Global keyboard shortcuts that work regardless of canvas focus.
     pub fn global_shortcuts(&mut self, ctx: &Context) {
-        for (sc, c) in Self::global_shortcut_bindings(self.active) {
+        for (sc, c) in self.profile_bindings(&self.settings.keymaps, self.mode, ctx.os()) {
+            if matches!(c, Cmd::Canvas(_)) {
+                if crate::keymaps::pressed(ctx, sc) {
+                    break;
+                }
+                continue;
+            }
+            if ctx.text_edit_focused()
+                && ((!sc.modifiers.command && !sc.modifiers.ctrl && !sc.modifiers.alt)
+                    || crate::keymaps::text_shortcut_command(sc, ctx.os()).is_some())
+            {
+                continue;
+            }
             if matches!(c, Cmd::CopyStyle | Cmd::PasteStyle) && ctx.text_edit_focused() {
                 continue;
             }
             if ctx.input_mut(|i| i.consume_shortcut(&sc)) {
+                if !sc.modifiers.command && !sc.modifiers.ctrl && !sc.modifiers.alt {
+                    ctx.input_mut(|input| {
+                        input
+                            .events
+                            .retain(|event| !matches!(event, egui::Event::Text(_)))
+                    });
+                }
                 self.exec(ctx, c);
                 return;
             }
@@ -2048,13 +2067,15 @@ impl ThinodaApp {
 
     /// The live catalog resolves active-document commands and platform modifier names.
     pub fn command_catalog(&self, ctx: &Context) -> Vec<(Cmd, thinoda_ui::Command)> {
+        let bindings = self.profile_bindings(&self.settings.keymaps, self.mode, ctx.os());
         Self::palette_commands()
             .into_iter()
             .map(|(mut command, mut metadata)| {
                 if matches!(command, Cmd::CloseTab(_)) {
                     command = Cmd::CloseTab(self.active);
                 }
-                metadata.shortcut = Self::shortcut_hint_for_mode(ctx, &command, self.mode);
+                metadata.shortcut =
+                    crate::keymaps::binding_hint(ctx, &bindings, &command, self.mode);
                 (command, metadata)
             })
             .collect()
@@ -2123,6 +2144,11 @@ impl ThinodaApp {
         command: &Cmd,
         mode: CenterMode,
     ) -> Option<String> {
+        if let Some(bindings) = ctx.data(|data| {
+            data.get_temp::<Vec<(KeyboardShortcut, Cmd)>>(egui::Id::unique(("active_keymap", mode)))
+        }) {
+            return crate::keymaps::binding_hint(ctx, &bindings, command, mode);
+        }
         Self::shortcut_binding_for_platform(command, mode, ctx.os())
             .map(|binding| ctx.format_shortcut(&binding))
     }
@@ -2332,7 +2358,19 @@ impl ThinodaApp {
         if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.text_edit_focused() {
             return;
         }
-        for (shortcut, action) in Self::insertion_shortcut_bindings() {
+        for (shortcut, action) in self.active_canvas_bindings(ctx.os()) {
+            if !Self::insertion_shortcut_bindings()
+                .iter()
+                .any(|(_, default)| {
+                    Cmd::Canvas(default.clone()).shortcut_id()
+                        == Cmd::Canvas(action.clone()).shortcut_id()
+                })
+            {
+                if crate::keymaps::pressed(ctx, shortcut) {
+                    return;
+                }
+                continue;
+            }
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.canvas_action(ctx, action);
                 return;
