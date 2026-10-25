@@ -1,4 +1,4 @@
-_Last updated: 2026-10-23 07:22:57 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-24 14:39:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,70 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.10.1](https://github.com/AxelWol/Thinoda/compare/v0.10.0...v0.10.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* bind close-save continuation to document identity ([2433751](https://github.com/AxelWol/Thinoda/commit/24337517c67370fa567351e7a9f544e84c6f3fa8))
+* bind lossy export consent to its source document ([aa3b927](https://github.com/AxelWol/Thinoda/commit/aa3b927e2c6cd081236d3362731c13840bbc33a4))
+* bind sheet rename decisions to their draft owner ([6074dca](https://github.com/AxelWol/Thinoda/commit/6074dcad53809089f7e4b5ebe03494eb116ac3b8))
+* discard stale inspector numeric drafts ([6b9f13e](https://github.com/AxelWol/Thinoda/commit/6b9f13e309d8b4b2b5e46bcdfcba107add560ef0))
+* explicitly release native recovery locks ([6cce6cb](https://github.com/AxelWol/Thinoda/commit/6cce6cb2ad3e102d08ca5777118cbc8057e2fff9))
+* guard theme and quick style library touch actions ([738ef13](https://github.com/AxelWol/Thinoda/commit/738ef13c398d6746e45fc6eaff7e32039cadd7f5))
+* persist recovery handoffs before deleting original snapshots ([496df0f](https://github.com/AxelWol/Thinoda/commit/496df0f5b413902fc56c7f7699a55113e7281879))
+* preserve conflict checks through save path aliases ([586112c](https://github.com/AxelWol/Thinoda/commit/586112ca6812198568fffe73e082dabb8a728284))
+* preserve label drafts through rejected touch actions ([e233bbf](https://github.com/AxelWol/Thinoda/commit/e233bbf918ef232546569e09bba9affc358b979d))
+* preserve recovery ownership across suspension ([093ba19](https://github.com/AxelWol/Thinoda/commit/093ba191e595e7027c4aa949589aa9dadc9ca10a))
+* preserve recovery sessions after rejected or failed actions ([c958c57](https://github.com/AxelWol/Thinoda/commit/c958c579e16dd2ac6e72a83567739c720fa265cf))
+* preserve screenshot drafts across interrupted gestures ([7d5a96b](https://github.com/AxelWol/Thinoda/commit/7d5a96be7c18e52bd967433d277e9220e35c5715))
+* reject canceled touch confirmation choices ([5dd542a](https://github.com/AxelWol/Thinoda/commit/5dd542a276f51352921e955896a0cd9bd2aecd76))
+* reject canceled touch print preview decisions ([186634d](https://github.com/AxelWol/Thinoda/commit/186634dc1511146fa4510d6232c9f2d2b84cdcf5))
+* require verified identity or fresh overwrite consent ([2c24824](https://github.com/AxelWol/Thinoda/commit/2c248243f5f428802b71960c8ffd2ffcae820828))
+* restore theme drafts across canceled pointer gestures ([43a243e](https://github.com/AxelWol/Thinoda/commit/43a243e303bd844f7a1379a26de049ee803dc9d4))
+* roll back interrupted print page setup gestures ([fee4171](https://github.com/AxelWol/Thinoda/commit/fee4171dc369bfb76d7862b3cb410f5bd1763a67))
+* **touch:** defer numeric inspector drags ([a936b8a](https://github.com/AxelWol/Thinoda/commit/a936b8a8e1a719a2e519143b83c5e725d8d9d8b9))
+* **touch:** discard canceled slider drags ([37a2236](https://github.com/AxelWol/Thinoda/commit/37a2236e8dccd428f4966887756ddfd6a78862d4))
+* **touch:** guard custom theme editor actions ([35acdeb](https://github.com/AxelWol/Thinoda/commit/35acdeb200816bc42d31fb3071180ab380c15787))
+* **touch:** guard map inspector theme commits ([0116202](https://github.com/AxelWol/Thinoda/commit/01162027f9959e50da9e5e6c30636bc474da12b7))
+* **touch:** guard style inspector releases ([5ec673e](https://github.com/AxelWol/Thinoda/commit/5ec673e08f6578c634277629e77e6672391258b7))
+* verify release ancestry and pin packaged source commits ([f85951d](https://github.com/AxelWol/Thinoda/commit/f85951dd77f55fae0dcbc6f769dae6bbd11ae270))
+* **web:** preserve browser zoom accessibility ([0e1d403](https://github.com/AxelWol/Thinoda/commit/0e1d4032b5de4590cd260d1c6a7c43806b0cdbd2))
+
+
+### Documentation
+
+* consolidate security and stability sprint ([fdeb1a6](https://github.com/AxelWol/Thinoda/commit/fdeb1a6d8683f91d55d6dff1b58cd50deacbe4f0))
+* record candidate acceptance evidence and access blockers ([a228e05](https://github.com/AxelWol/Thinoda/commit/a228e0534bcfa79d9d82ff44c4dc08df8c0c3f51))
+
+## [0.10.0](https://github.com/AxelWol/Thinoda/compare/v0.9.0...v0.10.0) (2026-10-23)
+
+
+### Features
+
+* **ui:** add scrollable document tabs ([db428ae](https://github.com/AxelWol/Thinoda/commit/db428ae85c7b598e12c944cd3cce19da4b628616))
+
+
+### Bug Fixes
+
+* **a11y:** preserve keyboard focus on color swatches ([13a529f](https://github.com/AxelWol/Thinoda/commit/13a529ff1c732dbd534b315d979c4701cdf40fa8))
+* **a11y:** show focus on Settings tabs and switches ([b8c97d4](https://github.com/AxelWol/Thinoda/commit/b8c97d4c3e88d7cd5f29a3de2cf5af7d0f1cbfce))
+* **canvas:** support safe touch pan and simultaneous pinch ([d6e7b21](https://github.com/AxelWol/Thinoda/commit/d6e7b21c492dae81c52bf17d37c4c14679a82d49))
+* **editing:** protect label drafts from IME candidate keys ([ce31e4b](https://github.com/AxelWol/Thinoda/commit/ce31e4b38cce5f5fe97fc5dace47469ef1be3101))
+* **editing:** protect sheet rename input and keyboard navigation ([97e280e](https://github.com/AxelWol/Thinoda/commit/97e280edf92dbf41b70840eacd3743a5f8b18cf4))
+* **gestures:** guard preview pickers against rejected touch activation ([e81af6f](https://github.com/AxelWol/Thinoda/commit/e81af6f966995fe34a3af412ff9c1b67acd38d21))
+* **gestures:** guard Symbols inspector edits on rejected releases ([2112961](https://github.com/AxelWol/Thinoda/commit/211296110f4c325fb3b6431e1dd14d2bce23cae0))
+* **gestures:** prevent Outline and delayed release click-through ([afa8517](https://github.com/AxelWol/Thinoda/commit/afa85170590456a6875c933db4288c529cbcd313))
+* **gestures:** protect Settings choices from rejected touch releases ([f16cd91](https://github.com/AxelWol/Thinoda/commit/f16cd91b97c1d765dadb8afeb7f78d2af29c8afa))
+* **gestures:** protect sheet controls from rejected touch releases ([5c6d252](https://github.com/AxelWol/Thinoda/commit/5c6d25234cf1b7dfb5ba67fa136573a5906cb5e5))
+* **gestures:** suppress context menus during multitouch holds ([7c1cfc2](https://github.com/AxelWol/Thinoda/commit/7c1cfc21538755f329e53e78ae12ee585b25fb48))
+* **navigation:** add clipped sheet scrolling controls ([7c0ee62](https://github.com/AxelWol/Thinoda/commit/7c0ee6249e04bf59807266d637ad68003f486f0d))
+
+
+### Documentation
+
+* record verified six-target 0.9.0 publication ([4ec6618](https://github.com/AxelWol/Thinoda/commit/4ec661842310f74628c0f6822e7a31133dc5bb9d))
 
 ## [0.9.0](https://github.com/AxelWol/Thinoda/compare/v0.8.0...v0.9.0) (2026-10-23)
 
