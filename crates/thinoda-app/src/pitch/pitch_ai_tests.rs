@@ -221,7 +221,7 @@ fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation(
         let (app, server) = fixture(REPLY);
         let before = app.doc().unwrap().doc.workbook().clone();
         let mut h = Harness::builder()
-            .with_size(egui::vec2(1000.0, 1400.0))
+            .with_size(egui::vec2(900.0, 800.0))
             .with_context_setup(move |ctx| ctx.set_os(os))
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         h.ctx
@@ -229,7 +229,9 @@ fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation(
         h.run_steps(3);
         h.get_by_label("AI Pitch outline").scroll_to_me();
         h.run_steps(3);
-        h.get_by_label("AI Pitch outline").click();
+        h.get_by_label("AI Pitch outline").focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
         h.run_steps(20);
         assert!(server.requests.lock().unwrap().is_empty());
         h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
@@ -242,7 +244,9 @@ fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation(
             )
         );
         h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
-            .click();
+            .focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
             h.run_steps(3);
@@ -278,7 +282,9 @@ fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation(
         h.get_by_role_and_label(Role::Button, "Cancel")
             .scroll_to_me();
         h.run_steps(20);
-        h.get_by_role_and_label(Role::Button, "Cancel").click();
+        h.get_by_role_and_label(Role::Button, "Cancel").focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
         h.run_steps(3);
         assert!(h.state().pitch.editor.is_none());
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
