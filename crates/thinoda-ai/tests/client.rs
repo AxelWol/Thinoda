@@ -293,6 +293,42 @@ fn streaming_task_keeps_the_existing_typed_result() {
 }
 
 #[test]
+fn public_mock_server_supports_streaming_task_requests() {
+    let server = MockServer::start_sse(
+        &["chat-model"],
+        &[r#"{"choices":[{"delta":{"content":"- Alpha\n- Beta"}}]}"#],
+    );
+    let job = AiStreamJob::spawn(
+        AiConfig {
+            base_url: server.base_url.clone(),
+            model: "chat-model".into(),
+            ..AiConfig::default()
+        },
+        AiTask::Brainstorm(ctx()),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(AiStreamEvent::Finished(result)) = job.poll() {
+            let result = result.unwrap();
+            let AiOutput::Outline(outline) = result.output else {
+                panic!("outline result expected");
+            };
+            assert_eq!(outline.items.len(), 2);
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("mock SSE task did not finish");
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/v1/chat/completions");
+    let body: serde_json::Value = serde_json::from_str(&requests[0].body).unwrap();
+    assert_eq!(body["stream"], true);
+}
+
+#[test]
 fn streaming_errors_and_missing_terminal_marker_are_not_successes() {
     let (base_url, _) = stream_server(
         "500 Internal Server Error",

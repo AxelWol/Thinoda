@@ -19,14 +19,48 @@ pub struct MockServer {
     pub requests: Arc<Mutex<Vec<Recorded>>>,
 }
 
+enum MockReply {
+    Json(String),
+    Sse(String),
+}
+
 impl MockServer {
+    /// Serves `/v1/models` and a regular non-streaming completion.
     pub fn start(models: &[&str], reply: &str) -> Self {
+        Self::start_with_reply(models, MockReply::Json(reply.to_string()))
+    }
+
+    /// Serves `/v1/models` and SSE `data:` events for streaming completions.
+    ///
+    /// Each entry is one SSE data payload, typically a serialized OpenAI
+    /// `choices[0].delta` object. A terminal `[DONE]` event is appended unless
+    /// the final entry already is `[DONE]`.
+    ///
+    /// ```ignore
+    /// let server = MockServer::start_sse(
+    ///     &["chat-model"],
+    ///     &[r#"{"choices":[{"delta":{"content":"Hello"}}]}"#],
+    /// );
+    /// ```
+    pub fn start_sse(models: &[&str], events: &[&str]) -> Self {
+        let mut payload = String::new();
+        for event in events {
+            payload.push_str("data: ");
+            payload.push_str(event);
+            payload.push_str("\r\n\r\n");
+        }
+        if events.last().copied() != Some("[DONE]") {
+            payload.push_str("data: [DONE]\r\n\r\n");
+        }
+        Self::start_with_reply(models, MockReply::Sse(payload))
+    }
+
+    fn start_with_reply(models: &[&str], reply: MockReply) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
         let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
         let rec = requests.clone();
         let models: Vec<String> = models.iter().map(|s| s.to_string()).collect();
-        let reply = reply.to_string();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
@@ -62,30 +96,37 @@ impl MockServer {
                     authorization: auth,
                     body,
                 });
-                let (status, json) = if path == "/v1/models" {
+                let (status, content_type, payload) = if path == "/v1/models" {
                     let data: Vec<_> = models
                         .iter()
                         .map(|m| serde_json::json!({ "id": m, "object": "model" }))
                         .collect();
                     (
                         "200 OK",
-                        serde_json::json!({ "object": "list", "data": data }),
+                        "application/json",
+                        serde_json::json!({ "object": "list", "data": data }).to_string(),
                     )
                 } else if path == "/v1/chat/completions" {
-                    (
-                        "200 OK",
-                        serde_json::json!({ "choices": [{ "index": 0, "message": { "role": "assistant", "content": reply } }] }),
-                    )
+                    match &reply {
+                        MockReply::Json(reply) => (
+                            "200 OK",
+                            "application/json",
+                            serde_json::json!({ "choices": [{ "index": 0, "message": { "role": "assistant", "content": reply } }] }).to_string(),
+                        ),
+                        MockReply::Sse(payload) => {
+                            ("200 OK", "text/event-stream", payload.clone())
+                        }
+                    }
                 } else {
                     (
                         "404 Not Found",
-                        serde_json::json!({ "error": { "message": "not found" } }),
+                        "application/json",
+                        serde_json::json!({ "error": { "message": "not found" } }).to_string(),
                     )
                 };
-                let payload = json.to_string();
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
                     payload.len()
                 );
             }
