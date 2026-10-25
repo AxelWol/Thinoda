@@ -20,8 +20,8 @@ pub struct ShortcutConflict {
     pub kind: ShortcutConflictKind,
 }
 
-fn ordered_bindings(mode: CenterMode) -> Vec<(KeyboardShortcut, Cmd)> {
-    let mut bindings = ThinodaApp::global_shortcut_bindings(0);
+fn ordered_bindings(mode: CenterMode, os: OperatingSystem) -> Vec<(KeyboardShortcut, Cmd)> {
+    let mut bindings = ThinodaApp::global_shortcut_bindings_for_platform(0, os);
     bindings.extend(
         ThinodaApp::insertion_shortcut_bindings()
             .into_iter()
@@ -75,11 +75,17 @@ impl ThinodaApp {
         static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
         static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
             std::sync::OnceLock::new();
-        let bindings = match mode {
-            CenterMode::Map => &MAP,
-            CenterMode::Outliner => &OUTLINE,
+        static MAC_MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+            std::sync::OnceLock::new();
+        static MAC_OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
+            std::sync::OnceLock::new();
+        let bindings = match (mode, os == OperatingSystem::Mac) {
+            (CenterMode::Map, false) => &MAP,
+            (CenterMode::Outliner, false) => &OUTLINE,
+            (CenterMode::Map, true) => &MAC_MAP,
+            (CenterMode::Outliner, true) => &MAC_OUTLINE,
         }
-        .get_or_init(|| ordered_bindings(mode));
+        .get_or_init(|| ordered_bindings(mode, os));
         first_match(bindings, shortcut, os).map(|(_, command)| command.clone())
     }
 
@@ -90,7 +96,7 @@ impl ThinodaApp {
         mode: CenterMode,
         os: OperatingSystem,
     ) -> Vec<ShortcutConflict> {
-        conflicts(&ordered_bindings(mode), os)
+        conflicts(&ordered_bindings(mode, os), os)
     }
 }
 
@@ -214,7 +220,7 @@ mod tests {
             OperatingSystem::Nix,
         ] {
             for mode in [CenterMode::Map, CenterMode::Outliner] {
-                let bindings = ordered_bindings(mode);
+                let bindings = ordered_bindings(mode, os);
                 for (shortcut, _) in &bindings {
                     for extra in [
                         Modifiers::NONE,

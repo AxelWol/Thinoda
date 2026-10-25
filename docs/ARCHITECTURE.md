@@ -67,7 +67,8 @@ graph TD
   explicit unassignment, instead of reinstating fixed Settings/Quit bindings.
   Global, insertion and view dispatch honor the same ordered binding inventory;
   modified gestures take precedence over a general gesture of the same key,
-  without changing untouched Standard defaults. The canvas accepts host-supplied
+  preserving Standard defaults except the corrected native macOS Cmd+W owner
+  (Close Window, not a competing Close Tab). The canvas accepts host-supplied
   bindings while standalone consumers retain its defaults. Outline keeps visible
   row traversal rather than substituting canvas geometry for Up/Down.
   Menus, ribbon, palette, shortcut reference, native AppKit accelerators and the

@@ -208,7 +208,8 @@ No staffing or calendar promises are inferred from these phases.
 
 **F2 implementation slice (2026-10-25):** versioned persisted profiles and the
 Settings > Keyboard Shortcuts > Edit mappings editor are implemented. Standard
-remains unchanged by default; XMind-compatible is opt-in and covers supported
+preserves existing gestures, with the native macOS close-window correction below;
+XMind-compatible is opt-in and covers supported
 commands rather than claiming every XMind/system gesture. Named copies support
 capture, assignment/unassignment, duplicate/rename/delete/reset and staged
 Apply/Cancel. The editor reviews changed aliases in both views before applying.
@@ -218,8 +219,15 @@ reserved assignments are reported; inactive legacy override strings stay inert.
 Focused text, system clipboard events and IME composition retain ownership.
 Local fixtures cover capture, save/reload, cancel, modifier precedence, Map/
 Outline dispatch, native accelerator models and shipped-locale/theme/scale
-geometry. F1 multi-window integration and actual macOS/Linux/browser interaction
-acceptance remain open; this slice is not a claim of F1/F2/F6 completion.
+geometry. F1/F2 integration shares one canonical settings/profile library across
+document windows. Apply cancels stale Settings gestures, preserves live sidebar
+choices, and repaints owner viewports; failed saves retain the draft and unchanged
+live settings. AppKit Settings/Quit aliases no longer overwrite custom or empty
+accelerators. Native macOS Cmd+W now consistently means Close Window, not both
+Close Window and Close Tab; the separate tab command can be assigned explicitly.
+Windows/Linux retain Ctrl+W for Close Tab. System Hide/Minimize keys remain
+reserved. Actual macOS/Linux/browser interaction acceptance remains open; this
+slice is not a claim of F1/F2/F6 host acceptance.
 
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
@@ -338,6 +346,16 @@ macOS viewport/menu behavior: per-window close/save decisions, root/last-window
 lifecycle, recovery ownership, native multi-window execution and VoiceOver/
 multi-monitor acceptance remain open. No single-instance IPC or open/reopen
 forwarding change is included.
+
+**F1 Close Window command parity follow-up:** Close Window has the stable
+`window.close` identity and routes through the existing viewport-close lifecycle,
+not Quit. Native macOS defaults Command+W to Close Window without also assigning
+it to Close Tab; Windows/Linux retain Control+W for Close Tab. AppKit's Window
+menu aliases the shared command and its resolved accelerator rather than adding
+a fixed `performClose:` binding. Host-independent regressions cover the menu
+model, platform defaults, root unsaved-work intent and child document return.
+The AppKit callback fixture also covers a reassigned Close Window accelerator;
+executing that fixture and live macOS behavior still require a macOS host.
 
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,

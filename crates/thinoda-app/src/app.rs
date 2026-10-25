@@ -48,6 +48,7 @@ pub enum Cmd {
     SaveAs,
     SaveAll,
     CloseTab(usize),
+    CloseWindow,
     MoveToNewWindow,
     NextDoc,
     Import,
@@ -545,7 +546,7 @@ impl ThinodaApp {
         }
         if matches!(
             cmd,
-            Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_) | Cmd::Quit
+            Cmd::Save | Cmd::SaveAs | Cmd::SaveAll | Cmd::Export(_) | Cmd::Quit | Cmd::CloseWindow
         ) && !self.command_available(&cmd)
         {
             self.toasts.warning(t("Not possible here"));
@@ -637,6 +638,11 @@ impl ThinodaApp {
                 self.begin_save_all(ctx, None);
             }
             Cmd::CloseTab(i) => self.request_close_tab(i),
+            Cmd::CloseWindow => {
+                if !files::is_web() {
+                    ctx.send_viewport_cmd_to(self.current_viewport, ViewportCommand::Close);
+                }
+            }
             Cmd::MoveToNewWindow => self.move_active_to_new_window(ctx),
             Cmd::NextDoc => {
                 let visible = self.visible_document_indices(self.current_viewport);
@@ -1035,6 +1041,7 @@ impl ThinodaApp {
             }
             Cmd::SaveAll => self.save_all.is_none() && !self.docs.is_empty(),
             Cmd::Quit => self.save_all.is_none(),
+            Cmd::CloseWindow => !files::is_web() && self.save_all.is_none(),
             Cmd::CloseTab(index) => self.save_all.is_none() && *index < self.docs.len(),
             Cmd::MoveToNewWindow => {
                 !cfg!(target_arch = "wasm32")
@@ -2018,6 +2025,26 @@ impl ThinodaApp {
     }
 
     /// Ordered dispatch bindings, also used by command-palette and shortcut hints.
+    pub fn global_shortcut_bindings_for_platform(
+        active: usize,
+        os: egui::os::OperatingSystem,
+    ) -> Vec<(KeyboardShortcut, Cmd)> {
+        Self::global_shortcut_bindings(active)
+            .into_iter()
+            .map(|(shortcut, command)| {
+                let command = if os == egui::os::OperatingSystem::Mac
+                    && !files::is_web()
+                    && matches!(command, Cmd::CloseTab(_))
+                {
+                    Cmd::CloseWindow
+                } else {
+                    command
+                };
+                (shortcut, command)
+            })
+            .collect()
+    }
+
     pub fn global_shortcut_bindings(active: usize) -> Vec<(KeyboardShortcut, Cmd)> {
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
@@ -2250,6 +2277,15 @@ impl ThinodaApp {
         mode: CenterMode,
         os: egui::os::OperatingSystem,
     ) -> Option<KeyboardShortcut> {
+        if !files::is_web() && os == egui::os::OperatingSystem::Mac {
+            match command {
+                Cmd::CloseWindow => {
+                    return Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::W));
+                }
+                Cmd::CloseTab(_) => return None,
+                _ => {}
+            }
+        }
         static MAP: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> = std::sync::OnceLock::new();
         static OUTLINE: std::sync::OnceLock<Vec<(KeyboardShortcut, Cmd)>> =
             std::sync::OnceLock::new();
@@ -2491,6 +2527,8 @@ impl ThinodaApp {
             (Cmd::NextDoc, "Next Document", "", "View"),
             (Cmd::Palette, "Command Palette…", "", "Edit"),
         ]);
+        #[cfg(not(target_arch = "wasm32"))]
+        v.push((Cmd::CloseWindow, "Close Window", "", "Window"));
         v.into_iter()
             .enumerate()
             .map(|(i, (cmd, title, sc, cat))| {

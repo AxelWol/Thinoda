@@ -114,7 +114,11 @@ impl ThinodaApp {
             file.push(item("Show in Folder", Cmd::ShowInFolder));
         }
         #[cfg(not(target_arch = "wasm32"))]
-        file.extend([MenuEntry::Separator, item("Quit", Cmd::Quit)]);
+        file.extend([
+            MenuEntry::Separator,
+            item("Close Window", Cmd::CloseWindow),
+            item("Quit", Cmd::Quit),
+        ]);
         file
     }
 

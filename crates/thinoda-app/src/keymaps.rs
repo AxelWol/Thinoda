@@ -210,7 +210,9 @@ pub fn reserved(shortcut: KeyboardShortcut, os: OperatingSystem, web: bool) -> b
             ))
         || (m.alt && shortcut.logical_key == Key::F4)
         || (m.command && shortcut.logical_key == Key::Space)
-        || (os == OperatingSystem::Mac && m.command && shortcut.logical_key == Key::Tab)
+        || (os == OperatingSystem::Mac
+            && m.command
+            && matches!(shortcut.logical_key, Key::Tab | Key::H | Key::M))
         || (web
             && m.command
             && matches!(
@@ -250,7 +252,7 @@ impl ThinodaApp {
         mode: CenterMode,
         os: OperatingSystem,
     ) -> Vec<(KeyboardShortcut, Cmd)> {
-        let mut bindings = Self::global_shortcut_bindings(self.active);
+        let mut bindings = Self::global_shortcut_bindings_for_platform(self.active, os);
         bindings.extend(
             Self::insertion_shortcut_bindings()
                 .into_iter()
@@ -413,6 +415,68 @@ mod tests {
                     assert_eq!(decode(&encode(shortcut, os)).unwrap(), shortcut);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn close_window_defaults_are_platform_specific_and_can_be_reassigned() {
+        let app = ThinodaApp::headless();
+        let mut maps = Keymaps::default();
+        let close = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+        for os in [
+            OperatingSystem::Windows,
+            OperatingSystem::Nix,
+            OperatingSystem::Mac,
+        ] {
+            let bindings = app.profile_bindings(&maps, CenterMode::Map, os);
+            let command = if os == OperatingSystem::Mac {
+                Cmd::CloseWindow
+            } else {
+                Cmd::CloseTab(app.active)
+            };
+            assert!(bindings.contains(&(close, command)));
+            if os == OperatingSystem::Mac {
+                assert!(
+                    !bindings
+                        .iter()
+                        .any(|(_, command)| matches!(command, Cmd::CloseTab(_)))
+                );
+            }
+        }
+        maps.duplicate_active("Window controls").unwrap();
+        let reassigned = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::J);
+        maps.profiles[0].bindings.insert(
+            "window.close".into(),
+            vec![encode(reassigned, OperatingSystem::Mac)],
+        );
+        maps.profiles[0].bindings.insert(
+            "file.close-tab".into(),
+            vec![encode(close, OperatingSystem::Mac)],
+        );
+        app.validate_keymaps(&maps, OperatingSystem::Mac, false)
+            .unwrap();
+        let bindings = app.profile_bindings(&maps, CenterMode::Map, OperatingSystem::Mac);
+        assert!(bindings.contains(&(reassigned, Cmd::CloseWindow)));
+        assert!(bindings.contains(&(close, Cmd::CloseTab(app.active))));
+        maps.profiles[0]
+            .bindings
+            .insert("window.close".into(), vec![]);
+        assert!(
+            !app.profile_bindings(&maps, CenterMode::Map, OperatingSystem::Mac)
+                .iter()
+                .any(|(_, command)| *command == Cmd::CloseWindow)
+        );
+        for key in [Key::H, Key::M] {
+            assert!(reserved(
+                KeyboardShortcut::new(Modifiers::COMMAND, key),
+                OperatingSystem::Mac,
+                false
+            ));
+            assert!(!reserved(
+                KeyboardShortcut::new(Modifiers::COMMAND, key),
+                OperatingSystem::Windows,
+                false
+            ));
         }
     }
 

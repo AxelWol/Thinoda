@@ -30,7 +30,7 @@ fn global_dispatch_catalog_is_complete_unique_and_platform_aware() {
         ctx.set_os(os);
         let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
         output.textures_delta.clear();
-        let bindings = ThinodaApp::global_shortcut_bindings(app.active);
+        let bindings = ThinodaApp::global_shortcut_bindings_for_platform(app.active, os);
         let catalog = app.command_catalog(&ctx);
         assert_eq!(bindings.len(), 24);
         for (index, (shortcut, command)) in bindings.iter().enumerate() {
@@ -490,9 +490,24 @@ fn platform_menu_hints_and_global_dispatch_keep_the_same_commands() {
         h.key_press_modifiers(Modifiers::COMMAND, Key::N);
         h.run_steps(3);
         assert_eq!(h.state().docs.len(), count + 1);
-        h.key_press_modifiers(Modifiers::COMMAND, Key::W);
-        h.run_steps(3);
-        assert_eq!(h.state().docs.len(), count);
+        h.input_mut().events.push(egui::Event::Key {
+            key: Key::W,
+            physical_key: Some(Key::W),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        });
+        h.run_steps(1);
+        if os == OperatingSystem::Mac {
+            assert_eq!(h.state().docs.len(), count + 1);
+            assert!(
+                h.output().viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .contains(&egui::ViewportCommand::Close)
+            );
+        } else {
+            assert_eq!(h.state().docs.len(), count);
+        }
     }
 }
 
