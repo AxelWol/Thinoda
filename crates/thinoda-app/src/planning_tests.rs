@@ -185,6 +185,24 @@ fn ime_candidate_escape_does_not_dismiss_a_planning_draft() {
 }
 
 #[test]
+fn task_draft_keeps_the_underlying_canvas_read_only() {
+    let app = ThinodaApp::headless();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 700.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::TaskPlanning);
+    h.run_steps(3);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert!(h.state().planning.editing());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+}
+
+#[test]
 fn task_dependencies_recompute_successors_with_one_undo() {
     let mut app = ThinodaApp::headless();
     let ctx = Context::default();

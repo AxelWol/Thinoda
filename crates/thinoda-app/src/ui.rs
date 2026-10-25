@@ -666,6 +666,7 @@ impl ThinodaApp {
                 )
                 .show(ui, |ui| {
                     if self.palette.open
+                        || self.planning.editing()
                         || self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
@@ -743,6 +744,7 @@ impl ThinodaApp {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 if self.palette.open
+                    || self.planning.editing()
                     || self.label_editor.is_some()
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
@@ -1293,6 +1295,7 @@ impl ThinodaApp {
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         if self.palette.open
+            || self.planning.editing()
             || self.map_shot.active()
             || self.printing.active()
             || self.label_editor.is_some()
