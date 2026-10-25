@@ -340,8 +340,8 @@ contracts passed. No live AI endpoint was contacted.
 shared command/menu/shortcut/window ownership, task/calendar/Gantt state,
 Zone/presentation persistence and exports, and AI source/review/Apply contracts.
 Simulated platform modes and headless tests are not native macOS/Linux/window-
-manager or browser runtime passes. Browser fetch/CORS, downloads/print/expanded
-player and real native multi-window/global-menu behavior remain separate gates.
+manager or browser runtime passes. Browser runtime evidence is recorded below;
+real native multi-window/global-menu behavior remains a separate gate.
 SS0-SS8, release, main merge and new pull requests have not been resumed.
 
 F6 browser entry evidence: the current Trunk bundle started successfully in an
@@ -353,8 +353,35 @@ controls. Both map toolbars now use the normal area layer below feature windows;
 a hit-testing regression fails before/passes after the fix. The four existing
 toolbar/Outline/menu checks and 185 app unit tests pass, as do strict app native/
 WASM clippy and the rebuilt browser confirmation. Menus/popups remain foreground.
-These checks do not claim browser AI/CORS, export/download/print/player acceptance
-or native window-manager/global-menu acceptance.
+These initial entry checks did not establish AI/CORS or output/player acceptance.
+
+F6 browser integration evidence (bundle at `a808f7a`): an isolated real headless
+Edge profile exercised a separate loopback OpenAI-compatible fixture origin.
+Actual OPTIONS/POST requests verified chat and explicit embedding-model CORS,
+`stream: true`, title-only index input, and a separate query request. Split SSE
+rendered a completed answer; Cancel aborted a delayed fetch before completion,
+kept the draft and prevented a late answer. Semantic results ranked the fixture's
+matching topic first. Local cluster preview, Apply to a separate sheet and Undo
+were visually checked; the original five-topic sheet remained intact.
+
+The same run generated real Pitch candidates, received a streamed outline,
+reviewed it, used it in the editor draft and separately applied it. Reopening
+the editor retained the two reviewed titles. Browser downloads produced a
+two-page PDF and a valid ZIP containing two distinct PNG slides; signatures,
+ZIP integrity, page count and rendered slide content were checked. The player
+showed the saved titles and frames, advanced with Next, returned with Left,
+expanded within the page and exited with Escape. Print preview rendered the map;
+Continue handed a rendered page to the print iframe and invoked an intercepted
+`window.print` exactly once. No OS print dialog or physical print job was submitted.
+The local fixture, browser profiles and servers were closed after each run.
+
+Request/download/print-handoff assertions and visually inspected screenshots are
+distinct evidence: canvas controls were driven using observed coordinates, not
+a claimed accessibility-tree or fully automated visual assertion. The browser
+run made no live AI or external HTTP requests and had no uncaught exceptions.
+It does not establish compatibility with every provider/CORS policy, physical
+printing, real touch hardware, native Windows/macOS/Linux window-manager or
+global-menu behavior. Those host-specific F6 gates remain open.
 
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,

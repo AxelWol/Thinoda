@@ -113,8 +113,10 @@ Each open document has its own session-only history. Hiding the panel or switchi
 tabs preserves it; closing the document, reloading the browser or restarting the
 app does not. **Clear conversation** requires confirmation and preserves your
 unsent draft. Closing chat restores the format sidebar without changing its
-preferences. The sidebar is scrollable in short windows. Browser fetch/CORS and
-real-device acceptance remain F6 gates, not inferred runtime passes.
+preferences. The sidebar is scrollable in short windows. F6 exercised split
+streaming responses and cancellation in real Edge against a separate loopback
+CORS fixture; no live AI service was contacted. Other providers, browser engines
+and real-device behavior still require their own acceptance.
 
 Expand **Saved prompts** in AI Chat to create reusable prompts. **New prompt** and
 **Edit prompt** open a draft editor; **Save prompt** persists it, while **Cancel**
@@ -151,8 +153,10 @@ Undo step, preserving the source, not moving or replacing its topics.
 The index, queries, results and previews are session-only. Source edits, unfinished
 title/inspector drafts, sheet changes, source close, AI disable or changed AI
 configuration/credentials invalidate work; rebuild before continuing. Cancel stops
-pending indexing/search or local clustering without editing the map. Browser
-embedding fetch/CORS behavior still requires runtime acceptance.
+pending indexing/search or local clustering without editing the map. Real Edge
+acceptance against a local CORS fixture covered explicit index/query requests,
+ranked results, cluster preview, Apply to a new sheet and Undo. This does not
+establish every embedding provider's model or CORS compatibility.
 
 ### Guided map transformations
 
