@@ -6,7 +6,6 @@ pub struct MacMenuLabels {
     pub application: String,
     pub services: String,
     pub window: String,
-    pub close_window: String,
     pub hide: String,
     pub hide_others: String,
     pub show_all: String,
@@ -30,6 +29,7 @@ pub struct MacMenuModel {
     pub items: Vec<MenuItem>,
     /// About, Settings and Quit, in standard application-menu order.
     pub application_commands: [u16; 3],
+    pub close_window_command: u16,
     pub labels: MacMenuLabels,
     pub shortcuts: BTreeMap<u16, MacAccelerator>,
 }
@@ -93,10 +93,15 @@ impl MacMenuModel {
         }
         let mut ids = HashSet::new();
         let items = entries(&self.items, &self.shortcuts, &mut ids)?;
-        if self.application_commands.iter().any(|id| !ids.contains(id)) {
+        if self.application_commands.iter().any(|id| !ids.contains(id))
+            || !ids.contains(&self.close_window_command)
+            || self
+                .application_commands
+                .contains(&self.close_window_command)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Missing application menu command",
+                "Missing or conflicting standard menu command",
             ));
         }
         if self
@@ -110,7 +115,8 @@ impl MacMenuModel {
             ));
         }
         let json = serde_json::to_string(&json!({
-            "items":items, "application_commands":self.application_commands, "labels":self.labels
+            "items":items, "application_commands":self.application_commands,
+            "close_window_command":self.close_window_command, "labels":self.labels
         }))
         .map_err(io::Error::other)?;
         std::ffi::CString::new(json).map_err(io::Error::other)
@@ -125,7 +131,7 @@ mod tests {
             items: vec![MenuItem::Submenu {
                 label: "File".into(),
                 enabled: true,
-                items: (1..=3)
+                items: (1..=4)
                     .map(|id| MenuItem::Action {
                         id,
                         label: "Untrusted name\t\u{2318}Q".into(),
@@ -135,11 +141,11 @@ mod tests {
                     .collect(),
             }],
             application_commands: [1, 2, 3],
+            close_window_command: 4,
             labels: MacMenuLabels {
                 application: "Thinoda".into(),
                 services: "Services".into(),
                 window: "Window".into(),
-                close_window: "Close Window".into(),
                 hide: "Hide".into(),
                 hide_others: "Hide Others".into(),
                 show_all: "Show All".into(),
@@ -175,7 +181,7 @@ mod tests {
         );
         let value: serde_json::Value =
             serde_json::from_str(model.encode().unwrap().to_str().unwrap()).unwrap();
-        assert_eq!(value["labels"]["close_window"], "Close Window");
+        assert_eq!(value["close_window_command"], 4);
         let actions = &value["items"][0]["items"];
         assert_eq!(actions[0]["key"], "s");
         assert_eq!(actions[0]["modifiers"], (1 << 20) | (1 << 17));
@@ -188,13 +194,45 @@ mod tests {
     #[test]
     fn invalid_ids_or_missing_application_commands_are_rejected() {
         let mut model = model();
-        model.application_commands[0] = 4;
+        model.application_commands[0] = 5;
         assert!(model.encode().is_err());
         model.application_commands = [1, 2, 3];
+        model.close_window_command = 5;
+        assert!(model.encode().is_err());
+        model.close_window_command = 1;
+        assert!(model.encode().is_err());
+        model.close_window_command = 4;
         let MenuItem::Submenu { items, .. } = &mut model.items[0] else {
             unreachable!()
         };
         items.push(items[0].clone());
         assert!(model.encode().is_err());
+    }
+
+    #[test]
+    fn close_window_accelerator_is_resolved_and_can_be_unassigned() {
+        let mut model = model();
+        model.shortcuts.insert(
+            model.close_window_command,
+            MacAccelerator {
+                key: "K".into(),
+                command: true,
+                control: false,
+                alt: true,
+                shift: false,
+            },
+        );
+        let encoded = |model: &MacMenuModel| -> serde_json::Value {
+            serde_json::from_str(model.encode().unwrap().to_str().unwrap()).unwrap()
+        };
+        let value = encoded(&model);
+        let close = &value["items"][0]["items"][3];
+        assert_eq!(close["id"], value["close_window_command"]);
+        assert_eq!(close["key"], "k");
+        assert_eq!(close["modifiers"], (1 << 20) | (1 << 19));
+        model.shortcuts.clear();
+        let value = encoded(&model);
+        assert_eq!(value["items"][0]["items"][3]["key"], "");
+        assert_eq!(value["items"][0]["items"][3]["modifiers"], 0);
     }
 }

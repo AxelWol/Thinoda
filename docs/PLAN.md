@@ -324,6 +324,16 @@ lifecycle, recovery ownership, native multi-window execution and VoiceOver/
 multi-monitor acceptance remain open. No single-instance IPC or open/reopen
 forwarding change is included.
 
+**F1 Close Window command parity follow-up:** Close Window has the stable
+`window.close` identity and routes through the existing viewport-close lifecycle,
+not Quit. Native macOS defaults Command+W to Close Window without also assigning
+it to Close Tab; Windows/Linux retain Control+W for Close Tab. AppKit's Window
+menu aliases the shared command and its resolved accelerator rather than adding
+a fixed `performClose:` binding. Host-independent regressions cover the menu
+model, platform defaults, root unsaved-work intent and child document return.
+The AppKit callback fixture also covers a reassigned Close Window accelerator;
+executing that fixture and live macOS behavior still require a macOS host.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes

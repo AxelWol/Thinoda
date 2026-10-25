@@ -59,6 +59,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::OpenLink => (G::Link, Some(B::Right), T::Edit),
         Cmd::Home => (G::Home, None, T::View),
         Cmd::CloseTab(_) => (G::Close, None, T::Danger),
+        Cmd::CloseWindow => (G::Window, Some(B::Minus), T::Danger),
         Cmd::MoveToNewWindow => (G::Window, None, T::View),
         Cmd::NextDoc => (G::File, Some(B::Right), T::View),
         Cmd::Quit => (G::Power, None, T::Danger),

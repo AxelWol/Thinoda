@@ -395,12 +395,12 @@ impl ThinodaApp {
                 command_id(Cmd::Settings)?,
                 command_id(Cmd::Quit)?,
             ],
+            close_window_command: command_id(Cmd::CloseWindow)?,
             shortcuts,
             labels: MacMenuLabels {
                 application: "Thinoda".into(),
                 services: t("Services").into(),
                 window: t("Window").into(),
-                close_window: t("Close Window").into(),
                 hide: t("Hide Thinoda").into(),
                 hide_others: t("Hide Others").into(),
                 show_all: t("Show All").into(),
@@ -477,7 +477,132 @@ mod tests {
         assert!(save.command);
         assert!(!save.control);
         assert_eq!(save.key, "S");
+        assert_eq!(
+            model.close_window_command,
+            snapshot.command_id(&Cmd::CloseWindow).unwrap()
+        );
+        let close = &model.shortcuts[&model.close_window_command];
+        assert!(close.command);
+        assert_eq!(close.key, "W");
         assert!(snapshot.actions.contains(&MenuAction::Command(Cmd::Quit)));
+    }
+
+    #[test]
+    fn close_window_defaults_and_identity_are_distinct_from_close_tab() {
+        use egui::{KeyboardShortcut, Modifiers, os::OperatingSystem};
+        assert_eq!(Cmd::CloseWindow.shortcut_id(), Some("window.close"));
+        let app = ThinodaApp::headless();
+        assert_eq!(app.shortcut_command("window.close"), Some(Cmd::CloseWindow));
+        let shortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+        for os in [
+            OperatingSystem::Mac,
+            OperatingSystem::Windows,
+            OperatingSystem::Nix,
+        ] {
+            let expected = if os == OperatingSystem::Mac {
+                Cmd::CloseWindow
+            } else {
+                Cmd::CloseTab(0)
+            };
+            assert_eq!(
+                ThinodaApp::global_shortcut_bindings_for_platform(0, os)
+                    .into_iter()
+                    .find(|(binding, _)| *binding == shortcut)
+                    .map(|(_, command)| command),
+                Some(expected.clone())
+            );
+            for mode in [CenterMode::Map, CenterMode::Outliner] {
+                assert_eq!(
+                    ThinodaApp::default_shortcut_command(mode, os, shortcut),
+                    Some(expected.clone())
+                );
+                for command in [Cmd::CloseTab(0), Cmd::CloseWindow] {
+                    assert_eq!(
+                        ThinodaApp::shortcut_binding_for_platform(&command, mode, os),
+                        (command == expected).then_some(shortcut)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn close_window_menu_routes_to_its_viewport_and_preserves_unsaved_work() {
+        use crate::app::CloseIntent;
+        use egui::{RawInput, ViewportCommand, ViewportEvent, ViewportId};
+        for child in [false, true] {
+            let ctx = Context::default();
+            ctx.set_embed_viewports(false);
+            let mut app = ThinodaApp::headless();
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.view.begin_edit(doc.doc.sheet(), root, false);
+            doc.view.set_editing_text("Unsaved window title");
+            let key = doc.key.clone();
+            let viewport = if child {
+                app.exec(&ctx, Cmd::MoveToNewWindow);
+                app.document_windows[&key]
+            } else {
+                ViewportId::ROOT
+            };
+            let count = app.docs.len();
+            app.current_viewport = viewport;
+            app.activate_document_window(viewport);
+            let snapshot = app.native_menu_snapshot(&ctx);
+            // AppKit dispatch may occur in the root frame for a captured child.
+            app.current_viewport = ViewportId::ROOT;
+            let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                if child {
+                    ui.ctx().show_viewport_deferred(
+                        viewport,
+                        egui::ViewportBuilder::default(),
+                        |_, _| {},
+                    );
+                }
+                app.dispatch_native_menu(ui.ctx(), &snapshot, id(&snapshot, Cmd::CloseWindow));
+            });
+            output.textures_delta.clear();
+            assert!(
+                output.viewport_output[&viewport]
+                    .commands
+                    .contains(&ViewportCommand::Close)
+            );
+            assert!(
+                app.pending_close.is_none(),
+                "Close Window must not request Quit"
+            );
+
+            let mut input = RawInput {
+                viewport_id: viewport,
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(viewport)
+                .or_default()
+                .events
+                .push(ViewportEvent::Close);
+            let mut output = ctx.run_ui(input, |ui| app.handle_close_request(ui.ctx()));
+            output.textures_delta.clear();
+            assert_eq!(app.docs.len(), count);
+            assert!(app.docs[0].is_dirty());
+            assert_eq!(
+                app.docs[0].doc.sheet().topic(root).unwrap().title,
+                "Unsaved window title"
+            );
+            if child {
+                assert!(!app.document_windows.contains_key(&key));
+                assert!(app.dialogs.close.is_none());
+                assert_eq!(app.visible_document_indices(ViewportId::ROOT), vec![0]);
+            } else {
+                assert_eq!(app.dialogs.close, Some(CloseIntent::Window));
+                assert!(
+                    output.viewport_output[&viewport]
+                        .commands
+                        .contains(&ViewportCommand::CancelClose)
+                );
+            }
+        }
     }
 
     fn id(snapshot: &MenuSnapshot, command: Cmd) -> u16 {
