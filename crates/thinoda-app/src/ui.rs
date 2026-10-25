@@ -775,6 +775,7 @@ impl ThinodaApp {
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
                     || self.ai.prompt_editor.is_some()
+                    || self.ai.prompt.is_some()
                     || self.dialogs.guide.open
                     || self.dialogs.shortcuts
                     || self.dialogs.legal.open
@@ -1339,6 +1340,7 @@ impl ThinodaApp {
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
             || self.ai.prompt_editor.is_some()
+            || self.ai.prompt.is_some()
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
             || self.dialogs.legal.open

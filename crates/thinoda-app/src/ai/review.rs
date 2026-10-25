@@ -104,6 +104,9 @@ impl ThinodaApp {
                 if review.result.kind == OutputKind::Map {
                     ui.label(t("This result creates a new map."));
                 }
+                if review.result.kind == OutputKind::Sheet {
+                    ui.label(t("Apply creates a new sheet. The source stays unchanged."));
+                }
                 if let Err(error) = validation {
                     ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
                 }
@@ -184,6 +187,11 @@ impl ThinodaApp {
     pub(crate) fn return_ai_viewport(&mut self, viewport: egui::ViewportId) {
         self.return_ai_chat_viewport(viewport);
         self.return_prompt_editor_viewport(viewport);
+        if let Some((target, _)) = &mut self.ai.prompted_target
+            && target.viewport == viewport
+        {
+            target.viewport = egui::ViewportId::ROOT;
+        }
         if self.ai.prompt_viewport == Some(viewport) {
             self.ai.prompt_viewport = Some(egui::ViewportId::ROOT);
         }

@@ -2529,6 +2529,36 @@ impl ThinodaApp {
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (Cmd::AiChat, "AI Chat", "", "AI"),
             (
+                Cmd::Ai(crate::ai::AiCommand::Rewrite),
+                "AI: Rewrite Topic…",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Translate),
+                "AI: Translate Branch…",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Grow),
+                "AI: Grow Ideas…",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Reorganize),
+                "AI: Reorganize Branch…",
+                "",
+                "AI",
+            ),
+            (
+                Cmd::Ai(crate::ai::AiCommand::Refine),
+                "AI: Refine Branch…",
+                "",
+                "AI",
+            ),
+            (
                 Cmd::Ai(crate::ai::AiCommand::Brainstorm),
                 "AI: Brainstorm Subtopics",
                 "",

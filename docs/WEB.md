@@ -130,6 +130,25 @@ reads fresh settings and changes only the library, without credential-store acce
 If another window changed the library, Cancel and **Reload prompts** before editing
 again; failed saves leave the editor and existing library intact.
 
+### Guided map transformations
+
+The **AI** menu and topic context menu offer **Rewrite Topic**, **Translate Branch**,
+**Grow Ideas**, **Reorganize Branch** and **Refine Branch**. Choose topics, enter
+instructions (or the target language), inspect the context and server, then **Send**.
+Opening the dialog is offline. These commands include selected subtrees' complete
+titles/hierarchy, not notes or attachments, with the primary topic identified for
+rewrite/growth. Context exceeding 500 topics or 64 KiB is rejected rather than
+truncated; instructions are limited to 8192 UTF-8 bytes.
+
+Review the streamed result before **Apply AI Result**. Rewrite changes only the
+primary topic's title; Grow adds children there. Translation, reorganization and
+refinement create a **new outline-only sheet** in the same document, leaving every
+source topic, note, style, relationship and attachment unchanged. The new sheet
+does not copy that metadata. Each Apply is one undoable operation. Changed source
+documents, unfinished title/inspector edits or changed AI settings invalidate
+Apply. Cancel/Discard never edits the map. A transformed title must be one line
+and at most 1024 bytes; transformed outlines are bounded to 64 KiB/500 lines.
+
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or

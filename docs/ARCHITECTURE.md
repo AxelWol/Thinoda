@@ -348,6 +348,17 @@ graph TD
   saved prompt each require confirmation. Cancel/IME/canceled-touch guards apply
   before state-changing decisions; the map is disabled while the editor is open.
   Limits are 32 prompts, 80-byte names, 8192-byte texts and 128 KiB total UTF-8 data.
+  Guided Rewrite/Translate/Grow/Reorganize/Refine commands capture `AiTarget` plus
+  the chat context builder's bounded selected-subtree snapshot before opening
+  their instruction dialog. Explicit Send rechecks ownership, revision, drafts
+  and configuration before dispatching typed `AiTask::Transform`. Rewrite returns
+  `OutputKind::Title`, growth `Subtopics`, and structural/translation operations
+  `Sheet`. Apply requires the command's exact output kind and text/outline shape.
+  New sheets are outline-only and use `Document::add_sheet` as one undo step;
+  source metadata is never removed or silently represented as translated.
+  All five reuse terminal SSE review/cancellation and viewport-return handling.
+  Transformation responses are bounded to 64 KiB/500 lines before parsing;
+  titles additionally require one nonempty line of at most 1024 UTF-8 bytes.
   Connection-test work and model lists belong to their endpoint and credential
   draft; changing either discards them, while choosing a model keeps the list.
   Generate requires accepted activation and retains rejected prompt drafts.

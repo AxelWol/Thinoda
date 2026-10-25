@@ -94,7 +94,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         .collect::<std::collections::BTreeSet<_>>();
     // This list is a persistence contract, not a snapshot to regenerate on rename.
     let expected = "
-        ai.brainstorm ai.breakdown ai.chat ai.explain ai.generate-map ai.summarize
+        ai.brainstorm ai.breakdown ai.chat ai.explain ai.generate-map ai.grow ai.refine ai.reorganize ai.rewrite ai.summarize ai.translate
         appearance.dark appearance.light appearance.system
         arrange.bottom arrange.distribute-horizontal arrange.distribute-vertical
         arrange.horizontal-center arrange.left arrange.right arrange.top arrange.vertical-center

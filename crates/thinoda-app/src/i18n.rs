@@ -1133,6 +1133,27 @@ const DE: &[(&str, &str)] = &[
     ("AI map created", "KI-Map erstellt"),
     ("Review AI Result", "KI-Ergebnis prüfen"),
     ("AI Chat", "KI-Chat"),
+    ("AI: Rewrite Topic…", "KI: Thema umformulieren…"),
+    ("AI: Translate Branch…", "KI: Zweig übersetzen…"),
+    ("AI: Grow Ideas…", "KI: Ideen erweitern…"),
+    ("AI: Reorganize Branch…", "KI: Zweig neu ordnen…"),
+    ("AI: Refine Branch…", "KI: Zweig verfeinern…"),
+    (
+        "Target language and translation instructions",
+        "Zielsprache und Übersetzungsanweisungen",
+    ),
+    (
+        "Instructions for this transformation",
+        "Anweisungen für diese Umwandlung",
+    ),
+    (
+        "Only titles and hierarchy are sent. Notes and attachments stay local.",
+        "Nur Titel und Hierarchie werden gesendet. Notizen und Anhänge bleiben lokal.",
+    ),
+    (
+        "Apply creates a new sheet. The source stays unchanged.",
+        "Anwenden erstellt ein neues Blatt. Die Quelle bleibt unverändert.",
+    ),
     ("Saved prompts", "Gespeicherte Prompts"),
     ("New prompt", "Neuer Prompt"),
     ("Edit prompt", "Prompt bearbeiten"),

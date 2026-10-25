@@ -85,6 +85,11 @@ impl Cmd {
                 crate::ai::AiCommand::Explain => "ai.explain",
                 crate::ai::AiCommand::Summarize => "ai.summarize",
                 crate::ai::AiCommand::GenerateMap => "ai.generate-map",
+                crate::ai::AiCommand::Rewrite => "ai.rewrite",
+                crate::ai::AiCommand::Translate => "ai.translate",
+                crate::ai::AiCommand::Grow => "ai.grow",
+                crate::ai::AiCommand::Reorganize => "ai.reorganize",
+                crate::ai::AiCommand::Refine => "ai.refine",
             },
             Self::Export(format) => match format {
                 Format::Thinoda => "export.thinoda",

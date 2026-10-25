@@ -99,3 +99,20 @@ THINODA_AI_SKIP_LIVE=1 cargo test -p thinoda-ai
 cargo clippy -p thinoda-ai --all-targets -- -D warnings
 cargo check -p thinoda-ai --target wasm32-unknown-unknown
 ```
+
+## Guided transformation tasks
+
+`AiTask::Transform { action: TransformAction, source: String, instruction: String }`
+uses the same typed streaming/terminal result API as existing map tasks.
+`source` is caller-bounded JSON map reference data; the app sends selected subtree
+titles and hierarchy only. The app bounds context to 500 topics/64 KiB and
+instructions to 8192 bytes and requires explicit dispatch.
+
+`Rewrite` produces `OutputKind::Title`/`AiOutput::Text`; it rejects empty,
+multiline or over-1024-byte titles. `Grow` produces `Subtopics`/`Outline`.
+`Translate`, `Reorganize` and `Refine` produce `Sheet`/`Outline`, requiring a
+central Markdown heading. Their application policy is a new outline-only sheet,
+not destructive replacement or a claim that metadata was translated.
+Transformation output is bounded to 64 KiB/500 lines before outline parsing.
+Only a completed valid stream returns a typed result; caller-owned review/Apply
+and source/configuration validation remain mandatory.

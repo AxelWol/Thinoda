@@ -264,6 +264,26 @@ offline use and draft replacement, IME Escape, canceled touches, short-window
 storage failure, observed library conflicts, fresh unrelated preferences and
 credential-marker preservation, malformed settings and UTF-8/library bounds.
 
+**F5 guided transformation slice:** Rewrite Topic, Translate Branch, Grow Ideas,
+Reorganize Branch and Refine Branch are shared-menu/context-menu/palette commands
+with stable shortcut identities (no new default bindings). Each opens an offline
+instruction draft, exposes bounded selected-subtree titles/hierarchy and requires
+Send, terminal success and explicit Apply. Rewrite changes only the primary title;
+Grow adds children; translation/reorganization/refinement add an outline-only
+sheet while preserving all source content and metadata. Each Apply is one Undo
+transaction. Source/configuration/draft invalidation, cancellation and viewport
+return reuse the review foundation. Context limits are 500 topics/64 KiB and
+instructions 8192 bytes; output limits are 64 KiB/500 lines, with single-line
+1024-byte rewrite titles. Semantic UI/cache, reviewable Pitch suggestions and F6
+host acceptance remain open.
+
+Guided transformation evidence: 171 app unit tests, 40 AI unit/loopback tests,
+eight existing AI E2E tests, five shared command/menu tests, strict native
+all-target/WASM library clippy and 25 documentation contracts passed. Local SSE
+cases cover all five actions' no-change-before-Apply and single Undo, source
+metadata retention, offline dialogs, stale dispatch/review rejection, malformed
+rewrite output and exact title/outline byte/line bounds. No live AI call was made.
+
 Scoped discussion evidence: 162 app unit tests (including 12 chat tests), eight
 focused AI E2E tests, 21 command/menu/sidebar/shortcut tests and 86 platform tests
 passed with live AI disabled. The chat cases exercise deliberate/offline dispatch,

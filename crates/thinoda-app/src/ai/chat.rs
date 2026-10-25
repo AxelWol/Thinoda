@@ -16,7 +16,7 @@ const MAX_MESSAGES: usize = 32;
 const MAX_CONVERSATIONS: usize = 64;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Scope {
+pub(super) enum Scope {
     #[default]
     Selection,
     Sheet,
@@ -91,7 +91,7 @@ fn mode_label(mode: AiResponseMode) -> &'static str {
     }
 }
 
-fn context(doc: &crate::doc::OpenDoc, scope: Scope) -> Result<String, &'static str> {
+pub(super) fn context(doc: &crate::doc::OpenDoc, scope: Scope) -> Result<String, &'static str> {
     if doc.inspector_edit.is_some() || doc.view.editing_topic().is_some() {
         return Err(t("Finish the current edit before sending."));
     }
