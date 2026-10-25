@@ -31,7 +31,7 @@ struct NumericDrag {
     canceled: bool,
 }
 
-fn touch_numeric_value(
+pub(crate) fn touch_numeric_value(
     ui: &mut Ui,
     value: &mut f32,
     salt: &'static str,
@@ -815,6 +815,7 @@ impl ThinodaApp {
         }
         self.map_shot_dialog(&ctx);
         self.print_dialog(&ctx);
+        self.planning_dialog(&ctx);
         self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
@@ -825,6 +826,7 @@ impl ThinodaApp {
         self.housekeeping(&ctx);
         if viewport == egui::ViewportId::ROOT && !self.drawing_document_window {
             self.draw_document_windows(&ctx);
+            self.gantt_window(&ctx);
         } else {
             let returned_home = viewport != egui::ViewportId::ROOT
                 && self.active == self.docs.len()
@@ -926,6 +928,7 @@ impl ThinodaApp {
 
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
+            || self.planning.editing()
             || self.printing.active()
             || self.map_shot.active()
             || self.label_editor.is_some()
@@ -3022,6 +3025,34 @@ impl ThinodaApp {
         if let Some(command) = marker_action {
             self.exec(ui.ctx(), command);
         }
+        ui.separator();
+        if let Some(doc) = self.doc()
+            && let Some(topic) = doc.view.primary()
+            && let Some(task) = doc.doc.sheet().scheduling.tasks.get(&topic)
+        {
+            ui.strong(t("Task Planning"));
+            ui.label(format!("{}: {}%", t("Progress"), task.progress_percent));
+            match doc.doc.sheet().compute_schedule() {
+                Ok(schedule) => {
+                    if let Some(computed) = schedule.get(&topic) {
+                        for (label, date) in [
+                            ("Start date", computed.start_date),
+                            ("Due date", computed.finish_date),
+                        ] {
+                            if let Some(date) = date {
+                                ui.label(format!("{}: {date}", t(label)));
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    ui.colored_label(ui.visuals().error_fg_color, error.to_string());
+                }
+            }
+        }
+        if ui.button(t("Task Planning")).clicked() && touch_allowed {
+            self.exec(ui.ctx(), Cmd::TaskPlanning);
+        }
     }
 
     fn relationship_style(
@@ -4013,6 +4044,7 @@ impl ThinodaApp {
         }
         let mut credentials_saved = false;
         let mut open_shortcuts = false;
+        let mut open_calendar = false;
         let bounds = ctx.content_rect().shrink(8.0);
         const CONTENT_WIDTH: f32 = 440.0;
         let style = ctx.global_style();
@@ -4053,6 +4085,8 @@ impl ThinodaApp {
                     }
                     open_shortcuts =
                         ui.button(t("Keyboard Shortcuts")).clicked() && activation_allowed;
+                    open_calendar = ui.add_enabled(self.doc().is_some(),
+                        egui::Button::new(t("Work Calendar"))).clicked() && activation_allowed;
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
@@ -4329,6 +4363,10 @@ impl ThinodaApp {
         self.dialogs.settings = open;
         if open_shortcuts {
             self.exec(ctx, Cmd::Shortcuts);
+        }
+        if open_calendar {
+            self.dialogs.settings = false;
+            self.exec(ctx, Cmd::WorkCalendar);
         }
     }
 }

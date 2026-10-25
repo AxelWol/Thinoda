@@ -23,7 +23,9 @@ copies, capture, conflict feedback, Apply/Cancel and reset; command dispatch,
 reference hints and native accelerators use the same active mappings. Separate
 document windows share preferences rather than independent snapshots. Native
 macOS/Linux and browser interaction acceptance remain open, not inferred from
-headless checks. F3 task/calendar/Gantt implementation is next; F4-F6 and the
+headless checks. F3 now has task/calendar drafts, shared-document Gantt
+move/resize/progress editing, dependencies, exports and print integration;
+native/browser interaction acceptance remains open in PLAN. F4-F6 and the
 deferred stability work are not complete. Older progress entries below describe
 their historical state rather than overriding this update.
 

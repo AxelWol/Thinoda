@@ -7,6 +7,7 @@ mod command_icons;
 mod command_ids;
 pub mod doc;
 pub mod files;
+mod gantt;
 mod help;
 pub mod i18n;
 mod keymap_editor;
@@ -17,6 +18,7 @@ mod legal_markdown;
 mod map_shot;
 pub mod menus;
 pub mod native_menus;
+mod planning;
 mod printing;
 mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]

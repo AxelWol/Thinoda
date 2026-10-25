@@ -234,18 +234,45 @@ date-only scheduling schema, work-calendar arithmetic, bounded deterministic
 finish-to-start propagation, task/dependency validation and undoable document
 edit helpers. Native `.thinoda` version 2 persists the data; legacy version 1
 and simple To-do checkboxes remain compatible. Copy, duplicate, move and delete
-preserve scheduled task data without dangling dependency IDs. This closes only
-the model/persistence prerequisite. Inspector editing, calendar Settings and
-the app Gantt views/windows remain open under F3; IO export/print progress
-follows.
+preserve scheduled task data without dangling dependency IDs. App integration
+and IO export/print progress follow.
 
 **F3 IO export progress (2026-10-25):** `thinoda-io` now exposes bounded Gantt
 SVG, PNG, vector PDF, print-document and UTF-8 CSV rendering from a validated
 sheet schedule. Rows retain unscheduled tasks and use stable topic-ID ordering;
 chart bounds cover all computed task dates. Raster/PDF and print placement reuse
-existing IO helpers. This is the export/print prerequisite only; app inspector,
-calendar Settings, native Gantt window, synchronized browser alternate and full
-F3 acceptance remain open.
+existing IO helpers. This prerequisite is now connected to the app surfaces below;
+full native/browser interaction acceptance remains open.
+
+**F3 app integration (2026-10-25):** Insert > Task Planning and the Style
+inspector expose explicit Apply/Cancel task drafts with ISO start/due dates,
+inclusive working-day duration, progress, optional priority and finish-to-start
+predecessors. Settings and Tools expose the current sheet's Work Calendar,
+including weekday rules and dated exceptions. Apply validates captured
+document/sheet/revision identity and makes one undoable transaction; invalid
+or stale drafts stay open with an error. Removing scheduling leaves To-do intact.
+
+View > Gantt Chart opens an auxiliary native viewport, or an in-app browser
+window, over the same document. It includes task/date rows, dependency connectors,
+timeline labels/zoom, staged bar move/resize and progress edits, Undo/Redo,
+SVG/PNG/PDF/CSV export and the existing print-preview/submission pipeline using
+Gantt output rather than map output. Pointer edits cancel on Escape, focus loss,
+unsafe touch or revision/zoom changes. Closing Gantt preserves the map; any
+already-open print preview returns to the root window. The interactive chart
+explicitly limits 1,000 rows and 100,000 logical timeline units; export has its
+own documented IO limits. Exports capture a snapshot, include all schedule rows,
+and report rendering/write/delivery failures.
+
+Local headless coverage includes atomic task/calendar/dependency edits,
+Undo, To-do compatibility, stale/cyclic/invalid drafts, small-window Cancel,
+IME candidate Escape, real multi-frame bar movement/cancellation, auxiliary
+close targeting, print-source capture and all four output formats. Native
+Windows/macOS/Linux visual interaction and browser download/print acceptance
+remain F6 host gates, not passes inferred from these tests.
+Local verification: 129 app unit tests, 50 related integration tests, 172 core/IO
+tests and 25 documentation contracts pass; scoped native all-target and WASM
+app-library strict clippy pass. The F3 implementation can proceed into F4
+without treating the outstanding host gates as completed.
 
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows

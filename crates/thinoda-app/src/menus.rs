@@ -200,6 +200,7 @@ impl ThinodaApp {
                 ("Summary", Cmd::Canvas(Action::AddSummary)),
                 ("Boundary", Cmd::Canvas(Action::AddBoundary)),
                 ("To-Do", Cmd::Canvas(Action::ToggleTodo)),
+                ("Task Planning", Cmd::TaskPlanning),
                 ("Notes", Cmd::EditField(FocusField::Notes)),
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
@@ -214,8 +215,11 @@ impl ThinodaApp {
                 MenuEntry::Caption(t(
                     "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
                 ).into()),
+                MenuEntry::Separator,
+                item("Work Calendar", Cmd::WorkCalendar),
             ]),
             submenu("View", items([
+                ("Gantt Chart", Cmd::Gantt),
                 ("Previous Sheet", Cmd::PreviousSheet),
                 ("Next Sheet", Cmd::NextSheet),
                 ("Outliner", Cmd::ToggleOutliner),

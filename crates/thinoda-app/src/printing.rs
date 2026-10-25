@@ -72,6 +72,8 @@ impl PrintState {
 }
 
 struct PrintEditor {
+    viewport: egui::ViewportId,
+    gantt: bool,
     workbook: Arc<Workbook>,
     sheet: usize,
     title: String,
@@ -141,12 +143,18 @@ impl PrintEditor {
             let workbook = Arc::clone(&self.workbook);
             let sheet = self.sheet;
             let settings = self.settings;
+            let gantt = self.gantt;
             let repaint = ctx.clone();
             let (sender, receiver) = mpsc::channel();
             self.pending = Some((settings, receiver));
             // Runs inline in the browser, which has no threads.
             let _ = run_background("thinoda-print-preview", move || {
-                let result = render_print(&workbook, sheet, settings).map_err(|e| e.to_string());
+                let result = if gantt {
+                    thinoda_io::render_gantt_print(&workbook.sheets[sheet], settings)
+                } else {
+                    render_print(&workbook, sheet, settings)
+                }
+                .map_err(|e| e.to_string());
                 let _ = sender.send(result);
                 repaint.request_repaint();
             });
@@ -200,20 +208,25 @@ impl PrintEditor {
                 ui.end_row();
             });
         ui.add_space(16.0);
-        ui.strong(t("Map appearance"));
-        if ui
-            .checkbox(&mut self.settings.dark, t("Dark map"))
-            .changed()
-            && self.settings.dark
-        {
-            self.settings.background = true;
+        if !self.gantt {
+            ui.strong(t("Map appearance"));
+            if ui
+                .checkbox(&mut self.settings.dark, t("Dark map"))
+                .changed()
+                && self.settings.dark
+            {
+                self.settings.background = true;
+            }
+            ui.add_enabled_ui(!self.settings.dark, |ui| {
+                ui.checkbox(&mut self.settings.background, t("Map background"));
+            });
+            ui.checkbox(&mut self.settings.grayscale, t("Grayscale"));
+            ui.add_space(8.0);
+            ui.label(RichText::new(t("Fit the current sheet on one page. Offscreen topics are included; collapsed branches stay collapsed.")).small().weak());
+        } else {
+            ui.checkbox(&mut self.settings.grayscale, t("Grayscale"));
+            ui.label(t("Fit the complete Gantt chart on one page."));
         }
-        ui.add_enabled_ui(!self.settings.dark, |ui| {
-            ui.checkbox(&mut self.settings.background, t("Map background"));
-        });
-        ui.checkbox(&mut self.settings.grayscale, t("Grayscale"));
-        ui.add_space(8.0);
-        ui.label(RichText::new(t("Fit the current sheet on one page. Offscreen topics are included; collapsed branches stay collapsed.")).small().weak());
     }
 
     fn preview_ui(&self, ui: &mut egui::Ui) {
@@ -320,6 +333,22 @@ impl ThinodaApp {
     }
 
     pub(crate) fn begin_print(&mut self, ctx: &Context) {
+        self.begin_print_source(ctx, self.is_gantt_viewport());
+    }
+
+    pub(crate) fn begin_gantt_print(&mut self, ctx: &Context) {
+        self.begin_print_source(ctx, true);
+    }
+
+    pub(crate) fn return_print_viewport(&mut self, viewport: egui::ViewportId) {
+        if let Some(editor) = &mut self.printing.editor
+            && editor.viewport == viewport
+        {
+            editor.viewport = egui::ViewportId::ROOT;
+        }
+    }
+
+    fn begin_print_source(&mut self, ctx: &Context, gantt: bool) {
         if !self.command_available(&Cmd::Print) {
             self.toasts.warning(t("Not possible here"));
             return;
@@ -331,6 +360,8 @@ impl ThinodaApp {
         let workbook = Arc::new(doc.doc.workbook().clone());
         self.printing.message = None;
         self.printing.editor = Some(PrintEditor {
+            viewport: ctx.viewport_id(),
+            gantt,
             workbook,
             sheet,
             title,
@@ -394,6 +425,14 @@ impl ThinodaApp {
             } else {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
+        }
+        if self
+            .printing
+            .editor
+            .as_ref()
+            .is_some_and(|editor| editor.viewport != ctx.viewport_id())
+        {
+            return;
         }
         let Some(mut editor) = self.printing.editor.take() else {
             return;
@@ -584,6 +623,31 @@ mod tests {
     }
 
     #[test]
+    fn gantt_print_captures_the_schedule_and_returns_preview_to_root() {
+        let mut app = ThinodaApp::headless();
+        let ctx = Context::default();
+        let topic = app.doc().unwrap().view.primary().unwrap();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .set_task(topic, Some(thinoda_core::Task::default()))
+            .unwrap();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.begin_gantt_print(&ctx);
+        let viewport = egui::ViewportId::from_hash_of("gantt-test");
+        app.printing.editor.as_mut().unwrap().viewport = viewport;
+        let editor = app.printing.editor.as_ref().unwrap();
+        assert!(editor.gantt);
+        assert_eq!(editor.workbook.as_ref(), &before);
+        app.return_print_viewport(viewport);
+        assert_eq!(
+            app.printing.editor.as_ref().unwrap().viewport,
+            egui::ViewportId::ROOT
+        );
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
     fn preview_thumbnail_preserves_page_aspect_ratio_without_upscaling() {
         for dimensions in [(1754, 1240), (1240, 1754), (3508, 4961), (12, 8)] {
             let image = image::RgbImage::new(dimensions.0, dimensions.1);
@@ -600,6 +664,8 @@ mod tests {
         let settings = PrintSettings::default();
         let (sender, receiver) = mpsc::channel();
         let mut editor = PrintEditor {
+            viewport: egui::ViewportId::ROOT,
+            gantt: false,
             workbook: Arc::new(Workbook::default()),
             sheet: 0,
             title: "Map".into(),

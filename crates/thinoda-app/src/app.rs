@@ -57,6 +57,9 @@ pub enum Cmd {
     MapShot,
     Print,
     Labels,
+    TaskPlanning,
+    WorkCalendar,
+    Gantt,
     Export(Format),
     Settings,
     About,
@@ -232,6 +235,8 @@ pub struct ThinodaApp {
     pub ai: crate::ai::AiState,
     pub(crate) map_shot: crate::map_shot::MapShot,
     pub(crate) printing: crate::printing::PrintState,
+    pub(crate) planning: crate::planning::PlanningState,
+    pub(crate) gantt: crate::gantt::GanttState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
@@ -320,6 +325,8 @@ impl ThinodaApp {
             ai: Default::default(),
             map_shot: Default::default(),
             printing: Default::default(),
+            planning: Default::default(),
+            gantt: Default::default(),
             label_editor: None,
             fonts: Default::default(),
             font_source: None,
@@ -730,6 +737,9 @@ impl ThinodaApp {
                     self.export(format, false);
                 }
             }
+            Cmd::TaskPlanning => self.begin_task_planning(ctx, false),
+            Cmd::WorkCalendar => self.begin_task_planning(ctx, true),
+            Cmd::Gantt => self.open_gantt(),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
@@ -1031,6 +1041,22 @@ impl ThinodaApp {
     }
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
+        if self.is_gantt_viewport()
+            && !matches!(
+                cmd,
+                Cmd::TaskPlanning
+                    | Cmd::WorkCalendar
+                    | Cmd::Gantt
+                    | Cmd::Print
+                    | Cmd::Canvas(Action::Undo | Action::Redo)
+                    | Cmd::Save
+                    | Cmd::SaveAll
+                    | Cmd::CloseWindow
+                    | Cmd::Quit
+            )
+        {
+            return false;
+        }
         match cmd {
             Cmd::Palette => {
                 self.palette.open
@@ -1058,7 +1084,8 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
-            Cmd::Labels | Cmd::EditField(_) => {
+            Cmd::WorkCalendar | Cmd::Gantt => self.doc().is_some() && !self.any_modal_open(),
+            Cmd::Labels | Cmd::TaskPlanning | Cmd::EditField(_) => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
                     && !self.dialogs.about
@@ -2356,6 +2383,9 @@ impl ThinodaApp {
             (Cmd::SaveAll, "Save All", "", "File"),
             (Cmd::Import, "Import", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
+            (Cmd::TaskPlanning, "Task Planning", "", "Insert"),
+            (Cmd::WorkCalendar, "Work Calendar", "", "Tools"),
+            (Cmd::Gantt, "Gantt Chart", "", "View"),
             (Cmd::Canvas(Action::InsertChild), "Subtopic", "", "Insert"),
             (Cmd::Canvas(Action::InsertSibling), "Topic", "", "Insert"),
             (

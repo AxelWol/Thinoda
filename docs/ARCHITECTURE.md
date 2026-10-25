@@ -376,8 +376,8 @@ graph TD
   task durations to 3,650 days, tasks to 5,000 and dependencies/calendar
   exceptions to 20,000/5,000. Native `.thinoda` archive version 2 stores this
   schema; version 1 remains readable. Workbook validation is also used when
-  recovering snapshots. This is the model/persistence foundation; task inspector,
-  calendar Settings and the Gantt window remain planned.
+  recovering snapshots. App task/calendar drafts and Gantt views use these
+  same validated, undoable edits.
 - **Scheduling API**: `LocalDate` implements `FromStr`/`Display` and exposes
   ordinal, signed day-distance and checked calendar-day addition, with `MIN`/
   `MAX` bounds. `Weekday::ALL` and `Weekday::name()` expose stable weekday
@@ -390,12 +390,26 @@ graph TD
   `PrintDocument` via the shared raster, PDF and print placement helpers.
   `export_gantt_csv` emits the same rows as UTF-8 CSV. Unscheduled tasks remain
   visible; an empty task table and invalid schedules return explicit errors.
-  Exports are bounded to 6,000 inclusive timeline days, 5,000 task rows,
+  Chart exports are bounded to 6,000 inclusive timeline days, 5,000 task rows,
   4 MiB of UTF-8 task labels, and 16 MiB each for SVG and CSV; PNG adds 16,384
   pixels per side and 32 million total pixels. Print uses existing paper, DPI
-  and page bounds.
-  This IO API is an export/print prerequisite, not the planned Gantt window or
-  complete F3 integration.
+  and page bounds. CSV is independently byte/row bounded and does not inherit
+  the graphical timeline limit.
+- **Task/Gantt app ownership**: `planning.rs` stages explicit Task/Work Calendar
+  drafts owned by a document key, sheet, history revision and opening viewport.
+  Apply validates the captured owner and applies task/dependency edits together.
+  `gantt.rs` holds only a reference to the same document/sheet, not a second
+  `OpenDoc`; native immediate viewports and the browser window project that
+  shared schedule. Interactive bar/progress gestures reuse the existing
+  owner-checked numeric staging helper and make one Undo edit on release.
+  Native chart focus uses shared profile resolution and a restricted command
+  surface; Close Window targets the auxiliary viewport, never Close Tab.
+  Exports capture a sheet snapshot for bounded worker rendering and atomic
+  file writes, followed by the existing desktop/browser delivery path.
+  `PrintEditor` captures either a map or Gantt source and the preview viewport;
+  closing Gantt returns an open print preview to the root without losing the
+  rendered source. Cross-platform native visual/printing acceptance remains
+  separate from headless ownership and rendering tests.
 - **Localization**: app chrome uses the embedded English/German and
   ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
   `locales.txt` and `pt-BR.txt`. English strings are stable keys; the

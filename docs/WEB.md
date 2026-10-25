@@ -71,6 +71,41 @@ features work differently:
 | Fonts | System font enumeration is unavailable; the bundled Ubuntu and Hack fonts are used for rendering and export. |
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
+| Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
+
+## Task planning and Gantt
+
+Select a topic and choose **Insert > Task Planning**, or use **Task Planning**
+in the Style inspector. Start/due dates use `YYYY-MM-DD`; duration counts
+inclusive working days. An empty start or duration allows an unscheduled draft.
+Entering a due date derives duration; leaving due blank keeps the entered
+duration. Progress is 0-100%, and priority is an optional numeric value (0 in
+the editor means none). Choose existing tasks as finish-to-start predecessors.
+Successors start on the next working day after their predecessors finish.
+**Apply** saves one undoable edit; **Cancel** discards the draft. Invalid dates,
+cycles or edits made from a stale document revision show an error without
+partially changing the map. Removing task planning does not remove its To-do
+checkbox.
+
+**Settings > Work Calendar** or **Tools > Work Calendar** edits the current
+sheet's working weekdays and dated working/non-working exceptions. These are
+document data, not global preferences, and are saved with the map.
+
+**View > Gantt Chart** shows the same tasks, dates, progress and dependencies.
+Select a task name to edit its details. Drag a dated bar to move it, drag its
+right edge to change duration, or use its progress slider; release commits one
+Undo step. Escape, focus loss or a concurrent document edit cancels a pending
+bar gesture. The date fields provide a keyboard alternative. Closing this view
+does not close the map.
+
+The chart's **Export** menu produces complete SVG, PNG, vector PDF or task CSV
+from a captured sheet snapshot. **Print** uses the Gantt-specific page preview,
+including browser printing and **Save print PDF…**, not a map screenshot.
+The interactive view limits 1,000 rows and 100,000 logical timeline units.
+Graphical exports allow up to 5,000 rows and 6,000 timeline days; CSV is not
+subject to the graphical timeline limit. Large PNG output has separate pixel
+limits and fails explicitly rather than truncating tasks. Reduce zoom for a
+wide interactive view, or use CSV for a long schedule.
 
 ## Keyboard mappings
 

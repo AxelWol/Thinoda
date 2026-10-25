@@ -1,4 +1,33 @@
 Window|Janela
+Task Planning|Planejamento de tarefas
+Gantt Chart|Gráfico de Gantt
+Work Calendar|Calendário de trabalho
+Start date|Data de início
+Due date|Prazo
+Progress|Progresso
+Working days (0 = unscheduled)|Dias úteis (0 = sem programação)
+Priority (0 = none)|Prioridade (0 = nenhuma)
+Finish-to-start predecessors|Predecessoras término-início
+Remove Task|Remover planejamento da tarefa
+Dated exceptions|Exceções por data
+Exception date|Data da exceção
+Working day|Dia útil
+Add Exception|Adicionar exceção
+YYYY-MM-DD|AAAA-MM-DD
+Set a start date before a due date.|Defina uma data de início antes do prazo.
+The document changed. Try again.|O documento mudou. Tente novamente.
+Timeline zoom|Zoom da linha do tempo
+Export worker stopped unexpectedly|O processo de exportação parou inesperadamente
+Fit the complete Gantt chart on one page.|Ajustar o gráfico de Gantt completo a uma página.
+Unscheduled|Sem programação
+Too many tasks for the interactive chart. Use Gantt export.|Há tarefas demais para o gráfico interativo. Use a exportação de Gantt.
+Non-working day|Dia não útil
+Dates use YYYY-MM-DD. Duration counts inclusive working days.|As datas usam AAAA-MM-DD. A duração inclui os dias úteis de início e fim.
+Removing a task also removes its dependencies. To-Do stays unchanged.|Remover o planejamento também remove suas dependências. A tarefa simples não muda.
+This calendar belongs to the current sheet and is saved with the map.|Este calendário pertence à planilha atual e é salvo com o mapa.
+Timeline too wide. Reduce zoom or narrow the schedule.|Linha do tempo muito larga. Reduza o zoom ou o período.
+No scheduled tasks yet. Select a topic in the map and choose Insert > Task Planning.|Ainda não há tarefas programadas. Selecione um tópico no mapa e escolha Inserir > Planejamento de tarefas.
+Select a task to edit dates, progress and dependencies. Changes update the map and Undo history.|Selecione uma tarefa para editar datas, progresso e dependências. As alterações atualizam o mapa e o histórico de desfazer.
 Close Window|Fechar janela
 Move to New Window|Mover para uma nova janela
 Services|Serviços
