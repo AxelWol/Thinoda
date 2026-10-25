@@ -200,8 +200,9 @@ fn scroll_row_offset(
     offset: Option<f32>,
     content: impl FnOnce(&mut Ui),
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
+    let row_height = ui.spacing().interact_size.y.max(Tokens::ICON_BUTTON) + Tokens::SPACE_S;
     ui.allocate_ui_with_layout(
-        vec2(width, ui.spacing().interact_size.y),
+        vec2(width, row_height),
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
@@ -210,6 +211,8 @@ fn scroll_row_offset(
                 .id_salt(salt)
                 .scroll_source(egui::scroll_area::ScrollSource::ALL)
                 .max_width(width)
+                .min_scrolled_height(row_height)
+                .max_height(row_height)
                 .auto_shrink([false, false])
                 .min_scrolled_width(0.0)
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
@@ -217,7 +220,11 @@ fn scroll_row_offset(
                 scroll = scroll.horizontal_scroll_offset(offset);
             }
             scroll.show(ui, |ui| {
-                ui.horizontal_centered(content);
+                ui.horizontal_centered(|ui| {
+                    ui.add_space(Tokens::SPACE_XS);
+                    content(ui);
+                    ui.add_space(Tokens::SPACE_XS);
+                });
             })
         },
     )

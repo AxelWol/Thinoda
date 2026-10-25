@@ -555,6 +555,7 @@ impl ThinodaApp {
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             )
                             .max_height(44.0)
+                            .max_width((ui.available_width() - 52.0).max(0.0))
                             .show(ui, |ui| {
                                 ui.horizontal_top(|ui| {
                                     ui.spacing_mut().interact_size.y = 44.0;
@@ -644,6 +645,19 @@ impl ThinodaApp {
                                     crate::ui::reveal_changed_focus(ui);
                                 });
                             });
+                        let pinned = !self.settings.ribbon_collapsed;
+                        let label = if pinned {
+                            t("Unpin Ribbon")
+                        } else {
+                            t("Pin Ribbon")
+                        };
+                        let (_, pin) =
+                            command_button(ui, Glyph::Pin, label, Detail::Icon, pinned, None);
+                        if pin {
+                            self.settings.ribbon_collapsed = pinned;
+                            self.ribbon.temporary = pinned && expanded;
+                            self.save_settings();
+                        }
                     });
                     if expanded {
                         ui.separator();

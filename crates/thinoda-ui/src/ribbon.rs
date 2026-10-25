@@ -60,6 +60,7 @@ pub enum Glyph {
     Close,
     Power,
     Home,
+    Pin,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -749,6 +750,18 @@ impl Glyph {
             }
             Self::Play => {
                 line(&[(7., 3.), (21., 12.), (7., 21.), (7., 3.)]);
+            }
+            Self::Pin => {
+                line(&[
+                    (8., 3.),
+                    (18., 3.),
+                    (16., 10.),
+                    (20., 14.),
+                    (5., 14.),
+                    (9., 10.),
+                    (8., 3.),
+                ]);
+                line(&[(12., 14.), (12., 22.)]);
             }
             Self::Chevron => {
                 line(&[(5., 8.), (12., 16.), (19., 8.)]);

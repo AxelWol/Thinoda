@@ -133,6 +133,8 @@ graph TD
   a long primary caption never forces a separate oversized first tile.
   Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
   a category, and Escape or an outside press dismisses a temporary opening.
+  A visible Pin/Unpin Ribbon control uses that same persisted collapse preference:
+  pinned ribbons stay expanded after actions, while unpinned tab previews close.
   Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
   overlap tab hit targets; keyboard focus reveals horizontally clipped items.
   Pointer-driven ribbon commands are deferred past release so restoring a text
@@ -146,6 +148,8 @@ graph TD
   button. New Tab follows the last capsule inside the same scroll viewport,
   rather than being pinned across empty space. Navigation arrows stay fixed;
   per-document keys, focus reveal and shared unsaved-close decisions are retained.
+  Scroll rows reserve the full capsule height plus vertical breathing room so
+  borders are not clipped by a shorter default interaction row.
   AppKit integration uses the existing Objective-C platform bridge, not an
   additional menu dependency. It supplies the standard Thinoda/Services/Window
   menus, moves About/Settings/Quit into the application menu and leaves unsaved-work

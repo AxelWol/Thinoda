@@ -178,6 +178,51 @@ fn ribbon_invokes_shared_sheet_command_once_and_preserves_undo() {
 }
 
 #[test]
+fn pin_persists_and_keeps_the_ribbon_open_after_actions() {
+    let mut h = harness(1400.0, 700.0);
+    h.state_mut().settings.ribbon_collapsed = true;
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("Sheet")).click();
+    h.run_steps(3);
+    assert!(h.state().ribbon.temporary);
+    h.get_by_role_and_label(Role::Button, t("Pin Ribbon"))
+        .click();
+    h.run_steps(3);
+    assert!(!h.state().settings.ribbon_collapsed);
+    assert!(!h.state().ribbon.temporary);
+    let directory = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::paths::Paths::from_root(directory.path());
+    h.state().settings.save(&paths).unwrap();
+    assert!(
+        !thinoda_platform::settings::Settings::load(&paths)
+            .unwrap()
+            .ribbon_collapsed
+    );
+    let before = h.state().doc().unwrap().doc.workbook().sheets.len();
+    h.get_by_role_and_label(Role::Button, t("New Sheet"))
+        .click();
+    h.run_steps(4);
+    assert_eq!(
+        h.state().doc().unwrap().doc.workbook().sheets.len(),
+        before + 1
+    );
+    h.get_by_role_and_label(Role::Button, t("New Sheet"));
+    h.get_by_role_and_label(Role::Button, t("Unpin Ribbon"))
+        .click();
+    h.run_steps(3);
+    assert!(h.state().settings.ribbon_collapsed);
+    assert!(h.state().ribbon.temporary);
+    h.get_by_role_and_label(Role::Button, t("New Sheet"))
+        .click();
+    h.run_steps(4);
+    assert!(!h.state().ribbon.temporary);
+    assert!(
+        h.query_by_role_and_label(Role::Button, t("New Sheet"))
+            .is_none()
+    );
+}
+
+#[test]
 fn short_viewport_uses_bounded_menu_fallback_and_modals_block_commands() {
     let mut h = harness(400.0, 300.0);
     h.run_steps(3);

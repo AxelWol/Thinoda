@@ -253,6 +253,22 @@ fn close_is_inside_each_capsule_and_add_follows_the_last_capsule() {
             })
             .min_by(|a, b| a.area().total_cmp(&b.area()))
             .expect("one capsule background must contain both its name and close button");
+        assert!(
+            h.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(background)
+                    if background.rect == capsule && shape.clip_rect.contains_rect(capsule))
+            }),
+            "capsule border {capsule:?} must be entirely inside the scroll viewport clip: {:?}",
+            h.output()
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(background) if background.rect == capsule =>
+                        Some(shape.clip_rect),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        );
         final_capsule = capsule;
     }
     let add = h.get_by_role_and_label(Role::Button, t("New Tab")).rect();

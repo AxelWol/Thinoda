@@ -194,6 +194,8 @@ const DE: &[(&str, &str)] = &[
         "Unter Windows und macOS klappt Strg+F1 das Menüband ein oder aus. Alt+1 bis Alt+8 wählt eine Kategorie. Escape schließt ein vorübergehend geöffnetes Menüband.",
     ),
     ("Expand Ribbon", "Menüband erweitern"),
+    ("Pin Ribbon", "Menüband anheften"),
+    ("Unpin Ribbon", "Menüband lösen"),
     ("Ribbon", "Menüband"),
     ("Collapse Ribbon", "Menüband reduzieren"),
     ("File name", "Dateiname"),
