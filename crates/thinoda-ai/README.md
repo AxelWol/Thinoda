@@ -1,3 +1,5 @@
+_Last updated: 2026-10-25 13:14:37 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Embeddings transport API
 
 `thinoda-ai` supports explicitly configured OpenAI-compatible `/embeddings`
