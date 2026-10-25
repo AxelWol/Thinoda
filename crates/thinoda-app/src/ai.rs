@@ -2,7 +2,10 @@
 //! the "Generate Map" prompt dialog and the AI section of the settings.
 
 use egui::{Context, RichText, Ui};
-use thinoda_ai::{AiConfig, AiError, AiJob, AiOutput, AiResult, AiTask, OutputKind, TopicContext};
+use thinoda_ai::{
+    AiConfig, AiError, AiJob, AiOutput, AiResult, AiStreamEvent, AiStreamJob, AiTask, OutputKind,
+    TopicContext,
+};
 use thinoda_core::outline::{OutlineNode as CoreNode, add_outline, sheet_from_outline};
 use thinoda_core::{Sheet, TopicId, Workbook};
 use thinoda_platform::settings::AiSettings;
@@ -10,6 +13,15 @@ use thinoda_ui::widgets;
 
 use crate::app::ThinodaApp;
 use crate::i18n::t;
+
+mod chat;
+mod prompts;
+mod review;
+mod semantic;
+#[cfg(test)]
+mod transform_tests;
+pub use chat::ChatState;
+pub use review::{AiReview, AiTarget};
 
 /// AI commands (XMind AI equivalents).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,15 +36,25 @@ pub enum AiCommand {
     Summarize,
     /// Opens the prompt dialog to create a whole new map.
     GenerateMap,
+    Rewrite,
+    Translate,
+    Grow,
+    Reorganize,
+    Refine,
 }
 
 impl AiCommand {
-    pub const ALL: [AiCommand; 5] = [
+    pub const ALL: [AiCommand; 10] = [
         AiCommand::Brainstorm,
         AiCommand::Breakdown,
         AiCommand::Explain,
         AiCommand::Summarize,
         AiCommand::GenerateMap,
+        AiCommand::Rewrite,
+        AiCommand::Translate,
+        AiCommand::Grow,
+        AiCommand::Reorganize,
+        AiCommand::Refine,
     ];
 
     pub fn label(self) -> &'static str {
@@ -42,30 +64,62 @@ impl AiCommand {
             AiCommand::Explain => "AI: Explain Topic",
             AiCommand::Summarize => "AI: Summarize Branch",
             AiCommand::GenerateMap => "AI: Generate Map…",
+            AiCommand::Rewrite => "AI: Rewrite Topic…",
+            AiCommand::Translate => "AI: Translate Branch…",
+            AiCommand::Grow => "AI: Grow Ideas…",
+            AiCommand::Reorganize => "AI: Reorganize Branch…",
+            AiCommand::Refine => "AI: Refine Branch…",
         }
     }
 
     pub fn needs_topic(self) -> bool {
         self != AiCommand::GenerateMap
     }
+
+    fn transformation(self) -> Option<thinoda_ai::TransformAction> {
+        use thinoda_ai::TransformAction as T;
+        match self {
+            Self::Rewrite => Some(T::Rewrite),
+            Self::Translate => Some(T::Translate),
+            Self::Grow => Some(T::Grow),
+            Self::Reorganize => Some(T::Reorganize),
+            Self::Refine => Some(T::Refine),
+            _ => None,
+        }
+    }
+
+    fn output_kind(self) -> OutputKind {
+        match self {
+            Self::Brainstorm | Self::Grow => OutputKind::Subtopics,
+            Self::Breakdown => OutputKind::Todos,
+            Self::Explain | Self::Summarize => OutputKind::Note,
+            Self::GenerateMap => OutputKind::Map,
+            Self::Rewrite => OutputKind::Title,
+            Self::Translate | Self::Reorganize | Self::Refine => OutputKind::Sheet,
+        }
+    }
 }
 
 /// A running AI request and where its result goes.
 pub struct PendingAi {
-    pub job: AiJob,
-    pub command: AiCommand,
-    /// Recovery key of the target document (`None` for new maps).
-    pub doc_key: Option<String>,
-    pub topic: Option<TopicId>,
-    pub(crate) source: Option<(usize, TopicId, u64)>,
+    pub job: AiStreamJob<AiResult>,
+    pub target: AiTarget,
+    pub preview: String,
+    pub started: web_time::Instant,
 }
 
 #[derive(Default)]
 pub struct AiState {
     pub pending: Option<PendingAi>,
+    pub review: Option<AiReview>,
+    pub chat: ChatState,
+    pub prompt_editor: Option<prompts::PromptEditor>,
+    pub semantic: semantic::SemanticState,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
+    prompt_viewport: Option<egui::ViewportId>,
     prompt_composing: bool,
+    prompted_target: Option<(AiTarget, String)>,
     /// Unsaved API key text; credentials are committed only on explicit save.
     pub api_key_draft: Option<String>,
     /// Running "Test connection" request.
@@ -155,8 +209,36 @@ fn error_text(e: &AiError) -> String {
     }
 }
 
+pub(crate) fn poll_stream<T>(
+    job: &AiStreamJob<T>,
+    preview: &mut String,
+) -> (bool, Option<Result<T, AiError>>) {
+    let mut progress = false;
+    for _ in 0..128 {
+        match job.poll() {
+            Some(AiStreamEvent::Delta(text)) => {
+                preview.push_str(&text);
+                progress = true;
+            }
+            Some(AiStreamEvent::Finished(result)) => return (progress, Some(result)),
+            None => break,
+        }
+    }
+    (progress, None)
+}
+
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
+        self.protect_prompt_editor_ime(ctx);
+        self.protect_semantic_ime(ctx);
+        self.protect_ai_chat_input(ctx);
+        if self
+            .ai
+            .prompt_viewport
+            .is_some_and(|owner| owner != self.current_viewport)
+        {
+            return;
+        }
         if self.ai.prompt.is_some() {
             let id = egui::Id::unique("thinoda_ai_prompt");
             if self.ai.prompt_composing || ctx.memory(|memory| memory.has_focus(id)) {
@@ -164,6 +246,7 @@ impl ThinodaApp {
             }
             if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.ai.prompt = None;
+                self.ai.prompted_target = None;
                 self.ai.prompt_composing = false;
             }
         } else {
@@ -178,12 +261,18 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if self.ai.pending.is_some() {
+        if self.ai.pending.is_some() || self.ai.chat.is_busy() || self.pitch.ai_busy() {
             self.toasts.info(t("AI is still working…"));
             return;
         }
+        if self.ai.review.is_some() {
+            self.toasts.info(t("Review the current AI result first."));
+            return;
+        }
         if cmd == AiCommand::GenerateMap {
+            self.ai.prompted_target = None;
             self.ai.prompt.get_or_insert_with(String::new);
+            self.ai.prompt_viewport = Some(self.current_viewport);
             return;
         }
         if let Some(d) = self.doc_mut() {
@@ -194,22 +283,52 @@ impl ThinodaApp {
             self.toasts.warning(t("Select a topic first"));
             return;
         };
+        if cmd.transformation().is_some() {
+            let source = match chat::context(d, chat::Scope::Selection) {
+                Ok(source) => source,
+                Err(error) => {
+                    self.toasts.warning(error);
+                    return;
+                }
+            };
+            let source = format!("Primary selected topic ID: {id:?}\n{source}");
+            self.ai.prompted_target = Some((
+                AiTarget {
+                    command: cmd,
+                    doc_key: Some(d.key.clone()),
+                    topic: Some(id),
+                    source: Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id())),
+                    viewport: self.current_viewport,
+                    config: config(&self.settings.ai),
+                },
+                source,
+            ));
+            self.ai.prompt = Some(String::new());
+            self.ai.prompt_viewport = Some(self.current_viewport);
+            return;
+        }
         let ctx = topic_context(d.doc.sheet(), id);
         let task = match cmd {
             AiCommand::Brainstorm => AiTask::Brainstorm(ctx),
             AiCommand::Breakdown => AiTask::Breakdown(ctx),
             AiCommand::Explain => AiTask::Explain(ctx),
             AiCommand::Summarize => AiTask::Summarize(ctx),
-            AiCommand::GenerateMap => unreachable!(),
+            _ => unreachable!(),
         };
         let doc_key = Some(d.key.clone());
         let source = Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()));
         self.ai.pending = Some(PendingAi {
-            job: AiJob::spawn(config(&self.settings.ai), task),
-            command: cmd,
-            doc_key,
-            topic: Some(id),
-            source,
+            job: AiStreamJob::spawn(config(&self.settings.ai), task),
+            target: AiTarget {
+                command: cmd,
+                doc_key,
+                topic: Some(id),
+                source,
+                viewport: self.current_viewport,
+                config: config(&self.settings.ai),
+            },
+            preview: String::new(),
+            started: web_time::Instant::now(),
         });
     }
 
@@ -220,21 +339,70 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if prompt.trim().is_empty() || self.ai.pending.is_some() {
+
+        if prompt.trim().is_empty()
+            || self.ai.pending.is_some()
+            || self.ai.review.is_some()
+            || self.ai.chat.is_busy()
+            || self.pitch.ai_busy()
+        {
             return;
         }
         self.ai.pending = Some(PendingAi {
-            job: AiJob::spawn(config(&self.settings.ai), AiTask::GenerateMap(prompt)),
-            command: AiCommand::GenerateMap,
-            doc_key: None,
-            topic: None,
-            source: None,
+            job: AiStreamJob::spawn(config(&self.settings.ai), AiTask::GenerateMap(prompt)),
+            target: AiTarget {
+                command: AiCommand::GenerateMap,
+                doc_key: None,
+                topic: None,
+                source: None,
+                viewport: self.current_viewport,
+                config: config(&self.settings.ai),
+            },
+            preview: String::new(),
+            started: web_time::Instant::now(),
         });
+    }
+
+    fn start_prompted_ai(&mut self, instruction: &str) -> Result<(), String> {
+        if self.ai.pending.is_some()
+            || self.ai.review.is_some()
+            || self.ai.chat.is_busy()
+            || self.pitch.ai_busy()
+        {
+            return Err(t("Review the current AI result first.").into());
+        }
+        if instruction.trim().is_empty() || instruction.len() > 8192 {
+            return Err(t("Enter a prompt of at most 8192 bytes.").into());
+        }
+        let Some((target, _)) = &self.ai.prompted_target else {
+            return Err(t("The document changed. Try again.").into());
+        };
+        if target.viewport != self.current_viewport {
+            return Err(t("Not possible here").into());
+        }
+        self.validate_ai_target(target).map_err(str::to_owned)?;
+        let (target, source) = self.ai.prompted_target.take().unwrap();
+        let task = AiTask::Transform {
+            action: target.command.transformation().unwrap(),
+            source,
+            instruction: instruction.into(),
+        };
+        self.ai.pending = Some(PendingAi {
+            job: AiStreamJob::spawn(config(&self.settings.ai), task),
+            target,
+            preview: String::new(),
+            started: web_time::Instant::now(),
+        });
+        Ok(())
     }
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
-        if !self.settings.ai.enabled && self.ai.pending.take().is_some() {
+        self.poll_pitch_ai(ctx);
+        self.poll_semantic(ctx);
+        self.poll_ai_chat(ctx);
+        if !self.settings.ai.enabled && self.ai.pending.is_some() {
+            self.cancel_ai();
             self.toasts
                 .warning(t("AI assistant is disabled in Settings"));
         }
@@ -261,27 +429,59 @@ impl ThinodaApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
-        let Some(p) = &self.ai.pending else { return };
-        let Some(result) = p.job.poll() else {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        let Some(p) = &mut self.ai.pending else {
+            return;
+        };
+        let (progress, finished) = poll_stream(&p.job, &mut p.preview);
+        if progress {
+            ctx.request_repaint_of(p.target.viewport);
+        }
+        let Some(result) = finished else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(if progress {
+                16
+            } else {
+                100
+            }));
             return;
         };
         let p = self.ai.pending.take().unwrap();
+        ctx.request_repaint_of(p.target.viewport);
         match result {
-            Ok(r) => self.apply_ai(&p, r),
+            Ok(result) => {
+                self.ai.review = Some(AiReview {
+                    target: p.target,
+                    result,
+                });
+                ctx.request_repaint();
+            }
             Err(e) => {
-                self.toasts
-                    .error(format!("{}: {}", t(p.command.label()), error_text(&e)));
+                self.toasts.error(format!(
+                    "{}: {}",
+                    t(p.target.command.label()),
+                    error_text(&e)
+                ));
             }
         }
     }
 
+    /// Cancels transport and discards partial output without applying it.
+    pub fn cancel_ai(&mut self) {
+        if let Some(pending) = self.ai.pending.take() {
+            pending.job.cancel();
+        }
+    }
+
     /// Applies a finished result (one undo step).
-    pub fn apply_ai(&mut self, p: &PendingAi, r: AiResult) {
-        if !self.settings.ai.enabled {
-            self.toasts
-                .warning(t("AI assistant is disabled in Settings"));
-            return;
+    pub fn apply_ai(&mut self, p: &AiTarget, r: &AiResult) -> Result<(), String> {
+        if self.current_viewport != p.viewport {
+            return Err(t("Not possible here").to_owned());
+        }
+        self.validate_ai_target(p).map_err(str::to_owned)?;
+        if r.kind != p.command.output_kind()
+            || matches!(r.output, AiOutput::Text(_))
+                != matches!(r.kind, OutputKind::Note | OutputKind::Title)
+        {
+            return Err(t("The AI response has an unexpected format.").to_owned());
         }
         if r.kind == OutputKind::Map {
             if let AiOutput::Outline(o) = &r.output {
@@ -290,29 +490,28 @@ impl ThinodaApp {
                     d.doc.mark_dirty();
                 }
                 self.toasts.info(t("AI map created"));
+                return Ok(());
             }
-            return;
+            return Err(t("The AI response has an unexpected format.").to_owned());
         }
         let (Some(key), Some(topic)) = (&p.doc_key, p.topic) else {
-            return;
+            return Err(t("The topic no longer exists").to_owned());
         };
         let Some(i) = self.docs.iter().position(|d| &d.key == key) else {
-            self.toasts.warning(t("The topic no longer exists"));
-            return;
+            return Err(t("The topic no longer exists").to_owned());
         };
         let d = &mut self.docs[i];
-        if p.source != Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()))
-            || d.inspector_edit.is_some()
-            || d.view.editing_topic().is_some()
-        {
-            self.toasts.warning(t("The document changed. Try again."));
-            return;
-        }
-        if d.doc.sheet().topic(topic).is_none() {
-            self.toasts.warning(t("The topic no longer exists"));
-            return;
-        }
         let label = t(p.command.label());
+        if r.kind == OutputKind::Sheet {
+            let AiOutput::Outline(outline) = &r.output else {
+                unreachable!()
+            };
+            let mut workbook = workbook_from_outline(outline);
+            let sheet = workbook.sheets.remove(0);
+            d.doc.add_sheet(sheet);
+            d.view.reset();
+            return Ok(());
+        }
         let res = match (&r.output, r.kind) {
             (AiOutput::Outline(o), kind) => {
                 let todo = kind == OutputKind::Todos;
@@ -326,6 +525,12 @@ impl ThinodaApp {
                     }
                     Ok(())
                 })
+            }
+            (AiOutput::Text(text), OutputKind::Title) => {
+                if text.trim().is_empty() || text.len() > 1024 || text.lines().count() != 1 {
+                    return Err(t("The AI response has an unexpected format.").into());
+                }
+                d.doc.edit_sheet(label, |s| s.set_title(topic, text))
             }
             (AiOutput::Text(text), _) => {
                 let note = match d
@@ -347,15 +552,21 @@ impl ThinodaApp {
                     self.docs[i].view.reveal(topic);
                 }
                 self.toasts.info(format!("{} ✔", label));
+                Ok(())
             }
-            Err(e) => {
-                self.toasts.error(format!("{label}: {e}"));
-            }
+            Err(e) => Err(format!("{label}: {e}")),
         }
     }
 
     /// "Generate Map" prompt dialog.
     pub fn ai_prompt_dialog(&mut self, ctx: &Context) {
+        if self
+            .ai
+            .prompt_viewport
+            .is_some_and(|owner| owner != self.current_viewport)
+        {
+            return;
+        }
         let Some(mut text) = self.ai.prompt.take() else {
             return;
         };
@@ -364,18 +575,63 @@ impl ThinodaApp {
         let touch_allowed = widgets::touch_activation_allowed(ctx);
         let escape =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        egui::Window::new(t("Generate Map with AI"))
+        let command = self
+            .ai
+            .prompted_target
+            .as_ref()
+            .map(|(target, _)| target.command);
+        egui::Window::new(command.map_or(t("Generate Map with AI"), |cmd| t(cmd.label())))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .default_width(420.0)
+            .max_height((ctx.content_rect().height() - 32.0).max(80.0))
+            .vscroll(true)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                let l = ui.label(t("Describe the topic of your mind map:"));
+                let l = ui.label(if command == Some(AiCommand::Translate) {
+                    t("Target language and translation instructions")
+                } else if command.is_some() {
+                    t("Instructions for this transformation")
+                } else {
+                    t("Describe the topic of your mind map:")
+                });
+                if let Some((target, source)) = &self.ai.prompted_target {
+                    widgets::caption(
+                        ui,
+                        t("Only titles and hierarchy are sent. Notes and attachments stay local."),
+                    );
+                    if target.command.output_kind() == OutputKind::Sheet {
+                        widgets::caption(
+                            ui,
+                            t("Apply creates a new sheet. The source stays unchanged."),
+                        );
+                    }
+                    if text.len() > 8192 {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            t("Enter a prompt of at most 8192 bytes."),
+                        );
+                    }
+                    egui::CollapsingHeader::new(t("Context to send")).show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(120.0)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut source.as_str())
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                    });
+                    if let Err(error) = self.validate_ai_target(target) {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                }
                 let r = ui.add(
                     egui::TextEdit::multiline(&mut text)
                         .id(egui::Id::unique("thinoda_ai_prompt"))
                         .hint_text(t("e.g. Launch plan for a mobile app"))
+                        .char_limit(8192)
                         .desired_rows(3)
                         .desired_width(f32::INFINITY),
                 );
@@ -391,11 +647,25 @@ impl ThinodaApp {
                         .add_enabled(
                             self.settings.ai.enabled
                                 && self.ai.pending.is_none()
+                                && self.ai.review.is_none()
+                                && !self.ai.chat.is_busy()
+                                && text.len() <= 8192
+                                && self.ai.prompted_target.as_ref().is_none_or(|(target, _)| {
+                                    self.validate_ai_target(target).is_ok()
+                                })
                                 && !text.trim().is_empty(),
-                            egui::Button::new(t("Generate")),
+                            egui::Button::new(if command.is_some() {
+                                t("Send")
+                            } else {
+                                t("Generate")
+                            }),
                         )
                         .clicked()
-                        || (enter && self.settings.ai.enabled && self.ai.pending.is_none()))
+                        || (enter
+                            && self.settings.ai.enabled
+                            && self.ai.pending.is_none()
+                            && self.ai.review.is_none()
+                            && !self.ai.chat.is_busy()))
                         && touch_allowed
                     {
                         go = true;
@@ -407,32 +677,24 @@ impl ThinodaApp {
                 });
             });
         if go {
-            self.start_generate_map(text);
+            if command.is_some() {
+                if let Err(error) = self.start_prompted_ai(&text) {
+                    self.toasts.error(error);
+                    self.ai.prompt = Some(text);
+                }
+            } else {
+                self.start_generate_map(text);
+            }
         } else if (open || !touch_allowed) && !escape {
             self.ai.prompt = Some(text);
+        } else {
+            self.ai.prompted_target = None;
         }
     }
 
-    /// Floating "AI is working" indicator above the status bar.
+    /// Nonmodal streaming preview; closing it cancels the request.
     pub fn ai_busy_overlay(&mut self, ctx: &Context) {
-        let Some(p) = &self.ai.pending else { return };
-        let label = format!(
-            "{} ({:.0}s)",
-            t(p.command.label()),
-            p.job.started.elapsed().as_secs_f32()
-        );
-        egui::Area::new(egui::Id::unique("thinoda_ai_busy"))
-            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -44.0])
-            .order(egui::Order::Foreground)
-            .interactable(false)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new(label).small());
-                    });
-                });
-            });
+        self.ai_stream_window(ctx);
     }
 
     /// AI section of the settings window.
@@ -459,6 +721,12 @@ impl ThinodaApp {
             });
             widgets::property_field(ui, t("Model"), |ui| {
                 ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
+            });
+            widgets::property_field(ui, t("Embedding model"), |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut ai.embedding_model)
+                        .hint_text(t("Required for semantic tools")),
+                )
             });
             let key_label = ui.label(t("API Key"));
             ui.horizontal_wrapped(|ui| {
@@ -580,14 +848,16 @@ mod tests {
         use crate::doc::{InspectorEdit, InspectorField};
         for field in [InspectorField::Notes, InspectorField::Hyperlink] {
             let mut app = ThinodaApp::headless();
+            let request_config = config(&app.settings.ai);
             let d = app.doc_mut().unwrap();
             let root = d.doc.sheet().root;
-            let pending = PendingAi {
-                job: AiJob::spawn_with(AiConfig::default(), |_| Err(AiError::Empty)),
+            let pending = AiTarget {
                 command: AiCommand::Explain,
                 doc_key: Some(d.key.clone()),
                 topic: Some(root),
                 source: Some((d.doc.active_index(), root, d.doc.state_id())),
+                viewport: egui::ViewportId::ROOT,
+                config: request_config,
             };
             let draft = InspectorEdit {
                 buffer_id: None,
@@ -600,13 +870,16 @@ mod tests {
             };
             d.inspector_edit = Some(draft.clone());
             let before = (d.doc.workbook().clone(), d.doc.state_id());
-            app.apply_ai(
-                &pending,
-                AiResult {
-                    kind: OutputKind::Note,
-                    output: AiOutput::Text("Delayed AI note".into()),
-                    model: "local-mock".into(),
-                },
+            assert!(
+                app.apply_ai(
+                    &pending,
+                    &AiResult {
+                        kind: OutputKind::Note,
+                        output: AiOutput::Text("Delayed AI note".into()),
+                        model: "local-mock".into(),
+                    },
+                )
+                .is_err()
             );
             let d = app.doc().unwrap();
             assert_eq!((d.doc.workbook().clone(), d.doc.state_id()), before);

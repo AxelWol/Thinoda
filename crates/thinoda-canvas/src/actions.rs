@@ -258,6 +258,9 @@ pub fn apply_action(
                     ObjectSelection::Summary(id) => {
                         doc.edit_sheet("Delete Summary", |s| s.remove_summary(id))?;
                     }
+                    ObjectSelection::Zone(id) => {
+                        doc.remove_zone(id)?;
+                    }
                 }
                 view.selected_object = None;
                 return Ok(true);

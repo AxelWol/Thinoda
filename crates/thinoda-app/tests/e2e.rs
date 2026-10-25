@@ -2317,7 +2317,7 @@ fn right_click_at(h: &mut Harness<'static, ThinodaApp>, pos: egui::Pos2) {
 fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_disk() {
     use thinoda_canvas::ObjectSelection;
     for dark in [false, true] {
-        for kind in 0..3 {
+        for kind in 0..4 {
             let mut app = ThinodaApp::headless();
             app.settings.show_topic_add_buttons = false;
             app.settings.theme = if dark { Theme::Dark } else { Theme::Light };
@@ -2337,12 +2337,30 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                     ObjectSelection::Boundary(s.add_boundary(&[a, b]).unwrap()),
                     "Delete Boundary",
                 ),
-                _ => {
+                2 => {
                     let topic = s.add_summary(&[a, b], "Conclusion").unwrap();
                     s.add_child(topic, None, "Summary child");
                     (
                         ObjectSelection::Summary(s.summaries[0].id),
                         "Delete Summary",
+                    )
+                }
+                _ => {
+                    let floating =
+                        s.add_floating("Zone content", thinoda_core::Vec2::new(600.0, 100.0));
+                    (
+                        ObjectSelection::Zone(
+                            s.create_zone(
+                                "Zone",
+                                vec![floating],
+                                thinoda_core::Rect::from_min_size(
+                                    thinoda_core::Vec2::new(450.0, 0.0),
+                                    thinoda_core::Vec2::new(300.0, 200.0),
+                                ),
+                            )
+                            .unwrap(),
+                        ),
+                        "Remove Zone",
                     )
                 }
             };
@@ -2360,6 +2378,7 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                     }
                     ObjectSelection::Boundary(_) => layout.boundaries[0].rect.top_center(),
                     ObjectSelection::Summary(_) => layout.summaries[0].tip,
+                    ObjectSelection::Zone(_) => d.doc.sheet().zones[0].frame.top_center(),
                 };
                 d.view.canvas_rect().center()
                     + d.view.offset
@@ -2902,7 +2921,9 @@ fn ctrl_b_adds_boundary() {
 // ---------------------------------------------------------------------------
 
 fn ai_harness(reply: &str) -> (Harness<'static, ThinodaApp>, thinoda_ai::mock::MockServer) {
-    let server = thinoda_ai::mock::MockServer::start(&["text-embedding-x", "mock-llm"], reply);
+    let delta = serde_json::json!({"choices": [{"delta": {"content": reply}}]}).to_string();
+    let server =
+        thinoda_ai::mock::MockServer::start_sse(&["text-embedding-x", "mock-llm"], &[&delta]);
     let mut app = ThinodaApp::headless();
     app.settings.ai.base_url = server.base_url.clone();
     let mut h = harness(app);
@@ -2919,7 +2940,7 @@ fn wait_for_ai(h: &mut Harness<'static, ThinodaApp>) {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.run_steps(1);
     }
-    h.run_steps(1);
+    h.run_steps(3);
 }
 
 #[test]
@@ -2932,10 +2953,19 @@ fn ai_brainstorm_adds_subtopics_in_one_undo_step() {
     );
     h.run_steps(1);
     assert!(
-        h.state().ai.pending.is_some() || root_children(h.state()) > before,
+        h.state().ai.pending.is_some() || h.state().ai.review.is_some(),
         "Ctrl+Shift+I starts brainstorm"
     );
     wait_for_ai(&mut h);
+    assert_eq!(
+        root_children(h.state()),
+        before,
+        "preview must not edit the map"
+    );
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
+    assert!(h.state().ai.review.is_none());
     assert_eq!(root_children(h.state()), before + 3);
     let req = server.requests.lock().unwrap();
     let chat = req
@@ -2946,6 +2976,8 @@ fn ai_brainstorm_adds_subtopics_in_one_undo_step() {
         chat.body.contains("mock-llm"),
         "embedding model must be skipped"
     );
+    let body: serde_json::Value = serde_json::from_str(&chat.body).unwrap();
+    assert_eq!(body["stream"], true);
     drop(req);
     let ctx = h.ctx.clone();
     h.state_mut()
@@ -2960,6 +2992,9 @@ fn ai_breakdown_creates_todos_and_explain_sets_notes() {
     h.state_mut()
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Breakdown));
     wait_for_ai(&mut h);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     let s = h.state().doc().unwrap().doc.sheet();
     let kids = s.children(s.root);
     let todos = kids
@@ -2973,6 +3008,9 @@ fn ai_breakdown_creates_todos_and_explain_sets_notes() {
     h.state_mut()
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
     wait_for_ai(&mut h);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     let s = h.state().doc().unwrap().doc.sheet();
     let notes = s.topic(s.root).unwrap().notes.clone().unwrap_or_default();
     assert!(notes.contains("A short explanation."), "{notes}");
@@ -2993,6 +3031,14 @@ fn ai_generate_map_opens_new_document() {
     h.run_steps(2);
     assert!(h.state().ai.prompt.is_none());
     wait_for_ai(&mut h);
+    assert!(
+        h.state().ai.review.is_some(),
+        "new map output must await review"
+    );
+    assert_eq!(h.state().docs.len(), docs);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     assert_eq!(h.state().docs.len(), docs + 1);
     assert_eq!(root_children(h.state()), 3);
 }
@@ -3074,6 +3120,13 @@ fn ai_result_keeps_its_document_when_another_tab_is_active() {
     assert_eq!(h.state().active, active);
     assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
     let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
+    assert_eq!(h.state().active, active);
+    assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
+    let s = h.state().docs[source].doc.sheet();
     assert_eq!(s.children(s.root).len(), before_children + 1);
     h.state_mut().docs[source].doc.undo();
     let s = h.state().docs[source].doc.sheet();
@@ -3098,4 +3151,82 @@ fn ai_unreachable_server_shows_error_and_keeps_map() {
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Brainstorm));
     wait_for_ai(&mut h);
     assert_eq!(root_children(h.state()), before);
+}
+
+#[test]
+fn ai_stream_preview_can_be_canceled_or_disabled_without_late_edits() {
+    for cancel in ["button", "disabled"] {
+        let delta = r#"{"choices":[{"delta":{"content":"Partial preview "}}]}"#;
+        let events = vec![delta; 4095];
+        let server = thinoda_ai::mock::MockServer::start_sse(&["mock-llm"], &events);
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.base_url = server.base_url.clone();
+        let mut h = harness(app);
+        let ctx = h.ctx.clone();
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::SelectRoot));
+        let before = {
+            let doc = h.state().doc().unwrap();
+            (doc.doc.workbook().clone(), doc.doc.state_id())
+        };
+        h.state_mut()
+            .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while h
+            .state()
+            .ai
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.preview.is_empty())
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "preview did not arrive"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+        assert!(!h.state().ai.pending.as_ref().unwrap().preview.is_empty());
+        assert!(h.state().ai.review.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before.0);
+        if cancel == "button" {
+            h.get_by_role_and_label(Role::Button, "Cancel AI Request")
+                .click();
+            h.run_steps(1);
+        } else {
+            h.state_mut().settings.ai.enabled = false;
+            h.state_mut().poll_ai(&ctx);
+            h.state_mut().settings.ai.enabled = true;
+        }
+        assert!(h.state().ai.pending.is_none());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        h.run_steps(5);
+        assert!(h.state().ai.review.is_none());
+        let doc = h.state().doc().unwrap();
+        assert_eq!((doc.doc.workbook().clone(), doc.doc.state_id()), before);
+    }
+}
+
+#[test]
+fn ai_stream_provider_error_discards_partial_output() {
+    let server = thinoda_ai::mock::MockServer::start_sse(
+        &["mock-llm"],
+        &[
+            r#"{"choices":[{"delta":{"content":"Not a finished answer"}}]}"#,
+            r#"{"error":{"message":"local synthetic failure"}}"#,
+        ],
+    );
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.base_url = server.base_url.clone();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::SelectRoot));
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
+    wait_for_ai(&mut h);
+    assert!(h.state().ai.review.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 }

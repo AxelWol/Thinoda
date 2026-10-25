@@ -5,8 +5,10 @@
 //! (including outlined text); JPEG always uses an opaque background.
 pub mod fonts;
 mod formats;
+pub mod gantt;
 mod mindmanager;
 mod office;
+pub mod presentation;
 pub mod print;
 mod render;
 mod xmind;
@@ -180,6 +182,14 @@ pub enum IoError {
     NewerVersion(String),
     #[error("invalid document: {0}")]
     Invalid(String),
+    #[error("Gantt export contains no tasks")]
+    GanttNoTasks,
+    #[error("Gantt export exceeds supported {0} limit")]
+    GanttLimit(&'static str),
+    #[error("presentation export exceeds supported {0} limit")]
+    PresentationLimit(&'static str),
+    #[error("invalid Gantt schedule: {0}")]
+    GanttSchedule(#[from] thinoda_core::ScheduleError),
     #[error("import requires confirmation because unsupported content may be omitted: {0:?}")]
     ImportNeedsConfirmation(Vec<ImportWarning>),
     #[error(
@@ -191,6 +201,19 @@ pub enum IoError {
     #[error("MindManager export failed: {0}")]
     MindManagerExport(String),
 }
+
+pub use gantt::{
+    GanttBounds, GanttDocument, GanttRow, MAX_GANTT_CSV_BYTES, MAX_GANTT_IMAGE_PIXELS,
+    MAX_GANTT_IMAGE_SIDE, MAX_GANTT_LABEL_BYTES, MAX_GANTT_ROWS, MAX_GANTT_SVG_BYTES,
+    MAX_GANTT_TIMELINE_DAYS, export_gantt_csv, render_gantt, render_gantt_pdf, render_gantt_png,
+    render_gantt_print,
+};
+pub use presentation::{
+    MAX_PRESENTATION_ARCHIVE_BYTES, MAX_PRESENTATION_IMAGE_PIXELS, MAX_PRESENTATION_IMAGE_SIDE,
+    MAX_PRESENTATION_TOTAL_PIXELS, export_presentation_pdf, export_presentation_png_zip,
+    generate_presentation, render_presentation_slide_png, render_presentation_slide_svg,
+};
+pub use print::PrintDocument;
 
 /// Categories of source content not fully represented by the converted workbook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

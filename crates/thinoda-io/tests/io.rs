@@ -1,7 +1,7 @@
 use std::io::{Cursor, Write};
 use thinoda_core::{
-    Boundary, ChildRange, Color, LineShape, Relationship, Sheet, Summary, TextAlign, Topic,
-    TopicShape, Vec2, Workbook,
+    Boundary, ChildRange, Color, LineShape, LocalDate, Relationship, Sheet, Summary, Task,
+    TaskDependency, TextAlign, Topic, TopicShape, Vec2, Weekday, Workbook,
 };
 use thinoda_io::{ExportOptions, Format, detect_format, export_bytes, import_bytes};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -230,18 +230,131 @@ fn multisheet_xmind_annotation_ids_are_globally_unique_and_references_resolve() 
 
 #[test]
 fn native_archive_roundtrips_every_model_field() {
-    let w = sample();
+    let mut w = sample();
+    let sheet = &mut w.sheets[0];
+    let predecessor = sheet.topic(sheet.root).unwrap().children[0];
+    let successor = sheet.topic(sheet.root).unwrap().children[1];
+    sheet.scheduling.tasks.insert(
+        predecessor,
+        Task {
+            start_date: Some(LocalDate::new(2024, 2, 29).unwrap()),
+            duration_days: Some(2),
+            progress_percent: 35,
+            priority: Some(2),
+        },
+    );
+    sheet.scheduling.tasks.insert(
+        successor,
+        Task {
+            start_date: Some(LocalDate::new(2024, 3, 4).unwrap()),
+            duration_days: Some(1),
+            progress_percent: 0,
+            priority: Some(1),
+        },
+    );
+    sheet.scheduling.dependencies.push(TaskDependency {
+        predecessor,
+        successor,
+    });
+    sheet
+        .scheduling
+        .calendar
+        .working_weekdays
+        .remove(&Weekday::Friday);
+    sheet
+        .scheduling
+        .calendar
+        .exceptions
+        .insert(LocalDate::new(2024, 3, 1).unwrap(), true);
+    w.validate().unwrap();
     let bytes = export_bytes(&w, Format::Thinoda, &Default::default()).unwrap();
     let restored = import_bytes(Format::Thinoda, &bytes).unwrap();
     assert_eq!(restored, w);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+    assert_eq!(manifest["version"], 2);
 }
 #[test]
 fn native_rejects_newer_major_version() {
-    let manifest = br#"{"format":"thinoda","version":2}"#;
+    let manifest = br#"{"format":"thinoda","version":3}"#;
     let bytes = zip_with(&[("manifest.json", manifest)]);
     assert!(matches!(
         import_bytes(Format::Thinoda, &bytes),
         Err(thinoda_io::IoError::NewerVersion(_))
+    ));
+}
+
+#[test]
+fn native_version_one_defaults_missing_scheduling_data() {
+    let mut legacy = sample();
+    let legacy_topic = legacy.sheets[0]
+        .topic(legacy.sheets[0].root)
+        .unwrap()
+        .children[0];
+    legacy.sheets[0].topic_mut(legacy_topic).unwrap().todo = Some(false);
+    let mut content = serde_json::to_value(legacy).unwrap();
+    for sheet in content["sheets"].as_array_mut().unwrap() {
+        sheet.as_object_mut().unwrap().remove("scheduling");
+    }
+    let manifest = br#"{"format":"thinoda","version":1}"#;
+    let content = serde_json::to_vec(&content).unwrap();
+    let bytes = zip_with(&[("manifest.json", manifest), ("content.json", &content)]);
+    let restored = import_bytes(Format::Thinoda, &bytes).unwrap();
+    assert_eq!(restored.sheets[0].scheduling.version, 1);
+    assert!(restored.sheets[0].scheduling.tasks.is_empty());
+    assert_eq!(
+        restored.sheets[0]
+            .scheduling
+            .calendar
+            .working_weekdays
+            .len(),
+        5
+    );
+    assert_eq!(
+        restored.sheets[0].topic(legacy_topic).unwrap().todo,
+        Some(false)
+    );
+}
+
+#[test]
+fn native_import_rejects_invalid_scheduling_graphs_and_versions() {
+    let mut book = sample();
+    let sheet = &mut book.sheets[0];
+    let first = sheet.topic(sheet.root).unwrap().children[0];
+    let second = sheet.topic(sheet.root).unwrap().children[1];
+    let task = Task {
+        start_date: Some(LocalDate::new(2024, 3, 4).unwrap()),
+        duration_days: Some(1),
+        ..Task::default()
+    };
+    sheet.scheduling.tasks.insert(first, task.clone());
+    sheet.scheduling.tasks.insert(second, task);
+    sheet.scheduling.dependencies = vec![
+        TaskDependency {
+            predecessor: first,
+            successor: second,
+        },
+        TaskDependency {
+            predecessor: second,
+            successor: first,
+        },
+    ];
+    let manifest = br#"{"format":"thinoda","version":2}"#;
+    let content = serde_json::to_vec(&book).unwrap();
+    let bytes = zip_with(&[("manifest.json", manifest), ("content.json", &content)]);
+    assert!(matches!(
+        import_bytes(Format::Thinoda, &bytes),
+        Err(thinoda_io::IoError::Invalid(message)) if message.contains("cycle")
+    ));
+
+    book.sheets[0].scheduling.dependencies.clear();
+    book.sheets[0].scheduling.version = 2;
+    let content = serde_json::to_vec(&book).unwrap();
+    let bytes = zip_with(&[("manifest.json", manifest), ("content.json", &content)]);
+    assert!(matches!(
+        import_bytes(Format::Thinoda, &bytes),
+        Err(thinoda_io::IoError::Invalid(message)) if message.contains("unsupported scheduling data version")
     ));
 }
 #[test]

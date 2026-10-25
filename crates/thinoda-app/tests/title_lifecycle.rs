@@ -420,7 +420,7 @@ fn native_close_commits_all_titles_but_non_close_frames_do_not() {
             let home = app.active;
             let output = close_request(&mut app, true);
             assert!(cancels_close(&output));
-            assert_eq!(app.dialogs.close, Some(CloseIntent::Quit));
+            assert_eq!(app.dialogs.close, Some(CloseIntent::Window));
             assert_eq!(app.active, home);
             assert!(app.any_dirty());
             assert!(
@@ -477,4 +477,25 @@ fn native_close_commits_all_titles_but_non_close_frames_do_not() {
                 .all(|doc| !doc.doc.can_undo() && !doc.is_dirty())
         );
     }
+}
+
+#[test]
+fn quit_command_remains_distinct_from_the_native_window_close_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = saved_app(dir.path(), CenterMode::Map);
+    draft(&mut app, 0, "Unsaved before quit");
+    app.exec(&egui::Context::default(), Cmd::Quit);
+
+    let output = close_request(&mut app, true);
+    assert!(cancels_close(&output));
+    assert_eq!(app.dialogs.close, Some(CloseIntent::Quit));
+    assert!(app.any_dirty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = saved_app(dir.path(), CenterMode::Map);
+    draft(&mut app, 0, "Unsaved before window close");
+    let output = close_request(&mut app, true);
+    assert!(cancels_close(&output));
+    assert_eq!(app.dialogs.close, Some(CloseIntent::Window));
+    assert!(app.any_dirty());
 }

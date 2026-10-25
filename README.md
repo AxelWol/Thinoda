@@ -479,12 +479,21 @@ for the shipped desktop app; the web app runs WebAssembly/JavaScript in the brow
 
 ```sh
 cargo run -p thinoda-app            # start the app
+cargo run -p thinoda-app --example isolated_native # disposable desktop acceptance profile
 cargo xtask ci                    # fmt + clippy + all tests
 node --test crates/thinoda-web/tests/pwa.test.cjs # Node.js 24
 cargo test -p thinoda-app --features gpu-tests --lib map_shot_gpu_readback # requires a GPU adapter
 cargo xtask package               # installers in target/packages
 thinoda --convert map.xmind map.md  # CLI conversion
 ```
+The `isolated_native` example calls the production desktop entry point with a
+temporary `THINODA_HOME`, set before services or threads start. Settings, recovery
+and single-instance state are isolated from your normal Thinoda profile. Its
+printed home directory is removed on normal exit; save any evidence outside it
+before closing. Explicitly opened/saved external files and the OS credential
+store are not isolated: use test maps only, leave AI disabled and do not enter
+credentials. This is a manual native acceptance host, not an automated UI test.
+
 Web app (WebAssembly, needs `rustup target add wasm32-unknown-unknown` and
 [Trunk](https://trunkrs.dev)): `cd crates/thinoda-web && trunk serve`, or
 `trunk build --release` for the static site. Browser alternatives for files,

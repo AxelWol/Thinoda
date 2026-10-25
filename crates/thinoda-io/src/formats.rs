@@ -20,7 +20,7 @@ pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
 }
 pub(crate) fn native_export(w: &Workbook) -> Result<Vec<u8>, IoError> {
     let content = serde_json::to_vec(w)?;
-    let manifest = serde_json::to_vec(&json!({"format":"thinoda","version":1,"resources":[]}))?;
+    let manifest = serde_json::to_vec(&json!({"format":"thinoda","version":2,"resources":[]}))?;
     archive(&[("manifest.json", &manifest), ("content.json", &content)])
 }
 pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
@@ -32,7 +32,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        if version > 1 {
+        if version > 2 {
             return Err(IoError::NewerVersion(format!("{version}")));
         }
         if manifest

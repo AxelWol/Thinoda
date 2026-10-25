@@ -50,6 +50,38 @@ fn recovery_preserves_import_source_and_accepts_older_metadata() {
     assert!(restored.import_source.is_none());
     assert_eq!(restored.original_path, metadata.original_path);
 }
+
+#[test]
+fn recovery_roundtrip_preserves_zone_and_presentation_frames() {
+    let mut workbook = Workbook::default();
+    let sheet = workbook.active_mut();
+    let floating = sheet.add_floating("Floating", thinoda_core::Vec2::new(140.0, 160.0));
+    let zone = sheet
+        .create_zone(
+            "Research",
+            vec![floating],
+            thinoda_core::Rect::from_min_size(
+                thinoda_core::Vec2::new(100.0, 120.0),
+                thinoda_core::Vec2::new(240.0, 180.0),
+            ),
+        )
+        .unwrap();
+    sheet
+        .add_presentation_slide(
+            "Research",
+            thinoda_core::PresentationSource::Zone(zone),
+            thinoda_core::Rect::from_min_size(
+                thinoda_core::Vec2::new(90.0, 110.0),
+                thinoda_core::Vec2::new(260.0, 200.0),
+            ),
+        )
+        .unwrap();
+    let bytes = Snapshot::to_bytes(SnapshotMeta::default(), &workbook).unwrap();
+    let snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+    snapshot.workbook.validate().unwrap();
+    assert_eq!(snapshot.workbook, workbook);
+}
+
 fn mkdir(path: impl AsRef<Path>) {
     fs::create_dir_all(path).unwrap();
 }

@@ -38,6 +38,7 @@ log.workspace = true
 anyhow.workspace = true
 sys-locale.workspace = true
 web-time.workspace = true
+serde_json.workspace = true
 raw-window-handle = "0.6"
 pulldown-cmark = { version = "0.13", default-features = false }
 

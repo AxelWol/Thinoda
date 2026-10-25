@@ -1,6 +1,6 @@
 //! Menu navigation changes the process-wide language; keep the matrix in one test.
 
-use egui::accesskit::Role;
+use egui::{accesskit::Role, os::OperatingSystem};
 use egui_kittest::{Harness, kittest::Queryable};
 use thinoda_app::{
     app::{Cmd, Services, ThinodaApp},
@@ -60,6 +60,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 let mut h = Harness::builder()
                     .with_size(egui::vec2(width, height))
                     .with_context_setup(|ctx| {
+                        ctx.set_os(OperatingSystem::Windows);
                         ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
                     })
                     .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
@@ -83,6 +84,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                         "{language:?}/{theme:?}/{scale}: {category}: {rect:?}"
                     );
                 }
+
                 let settings_label = format!(
                     "{} {}",
                     t("Settings…"),
@@ -212,5 +214,53 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
             }
         }
+    }
+
+    // Keep language-sensitive menu tests together because the app locale is global.
+    let categories = [
+        "File", "Edit", "Sheet", "Insert", "AI", "Tools", "View", "Help",
+    ];
+    let mut app = ThinodaApp::headless();
+    app.settings.show_format_panel = false;
+    let mut wide = Harness::builder()
+        .with_size(egui::vec2(1600.0, 720.0))
+        .build_ui_state(
+            |ui, app: &mut ThinodaApp| {
+                ui.ctx().set_os(OperatingSystem::Nix);
+                app.draw(ui);
+            },
+            app,
+        );
+    wide.run_steps(4);
+    for category in categories {
+        wide.get_by_role_and_label(Role::Button, t(category));
+    }
+    wide.get_by_role_and_label(Role::Button, t("Edit")).click();
+    wide.run_steps(3);
+    let settings = format!(
+        "{} {}",
+        t("Settings…"),
+        ThinodaApp::shortcut_hint(&wide.ctx, &Cmd::Settings).unwrap()
+    );
+    wide.get_by_role_and_label(Role::Button, &settings).click();
+    wide.run_steps(3);
+    assert!(wide.state().dialogs.settings);
+
+    let mut app = ThinodaApp::headless();
+    app.settings.show_format_panel = false;
+    let mut narrow = Harness::builder()
+        .with_size(egui::vec2(640.0, 360.0))
+        .build_ui_state(
+            |ui, app: &mut ThinodaApp| {
+                ui.ctx().set_os(OperatingSystem::Nix);
+                app.draw(ui);
+            },
+            app,
+        );
+    narrow.run_steps(4);
+    narrow.get_by_label(thinoda_ui::icons::MENU).click();
+    narrow.run_steps(3);
+    for category in categories {
+        narrow.get_by_role_and_label(Role::Button, t(category));
     }
 }

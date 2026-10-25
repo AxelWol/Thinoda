@@ -61,6 +61,8 @@ env_logger = "0.11"
 sys-locale = "0.3"
 base64 = "0.23"
 ureq = { version = "3", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time"] }
 # Web (wasm32) target. Versions match eframe's web backend.
 web-time = "1"
 wasm-bindgen = "0.2.126"

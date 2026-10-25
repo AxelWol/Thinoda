@@ -1,4 +1,170 @@
+AI Chat|Chat de IA
+AI Pitch outline|Esboço de apresentação com IA
+Pitch instructions|Instruções de apresentação
+Suggest Pitch outline|Sugerir esboço de apresentação
+Use suggested outline|Usar esboço sugerido
+Discard suggested outline|Descartar esboço sugerido
+AI suggests slide order and titles only. Frames stay unchanged. Send transmits slide titles and instructions.|A IA sugere apenas a ordem e os títulos. Os enquadramentos não mudam. O envio transmite títulos e instruções.
+AI Pitch requires 1 to 64 slides and at most 64 KiB of titles.|A IA requer de 1 a 64 slides e até 64 KiB de títulos.
+AI Pitch returned an invalid outline. Retry with candidate numbers and titles only.|A IA retornou um esboço inválido. Tente novamente apenas com números de candidatos e títulos.
+Embedding model|Modelo de embeddings
+Required for semantic tools|Necessário para ferramentas semânticas
+Semantic tools|Ferramentas semânticas
+Build semantic index|Criar índice semântico
+Build sends current-sheet titles to the embedding model. No background indexing.|Criar envia os títulos da folha atual ao modelo de embeddings. Sem indexação em segundo plano.
+Set an explicit embedding model in Settings before indexing.|Defina um modelo de embeddings explícito nas configurações antes de indexar.
+Semantic indexing is limited to 500 topics and 64 KiB of titles.|A indexação semântica se limita a 500 tópicos e 64 KiB de títulos.
+Semantic indexing requires nonempty titles of at most 16 KiB each.|A indexação requer títulos não vazios com no máximo 16 KiB cada.
+The embedding model returned an unusable vector.|O modelo de embeddings retornou um vetor inutilizável.
+The embedding model changed vector dimensions.|O modelo de embeddings alterou as dimensões dos vetores.
+Build the semantic index first.|Crie primeiro o índice semântico.
+Semantic source or settings changed. Rebuild the index.|A origem ou as configurações mudaram. Recrie o índice.
+Cancel indexing or search|Cancelar indexação ou pesquisa
+Semantic query|Consulta semântica
+Search meaning|Pesquisar significado
+Cluster count|Número de grupos
+Preview clusters|Visualizar grupos
+Apply clusters to new sheet|Aplicar grupos a uma nova folha
+Semantic clusters|Grupos semânticos
+Group|Grupo
+AI: Rewrite Topic…|IA: Reescrever tópico…
+AI: Translate Branch…|IA: Traduzir ramo…
+AI: Grow Ideas…|IA: Desenvolver ideias…
+AI: Reorganize Branch…|IA: Reorganizar ramo…
+AI: Refine Branch…|IA: Refinar ramo…
+Target language and translation instructions|Idioma de destino e instruções de tradução
+Instructions for this transformation|Instruções para esta transformação
+Only titles and hierarchy are sent. Notes and attachments stay local.|Somente títulos e hierarquia são enviados. Notas e anexos ficam locais.
+Apply creates a new sheet. The source stays unchanged.|Aplicar cria uma nova folha. A origem permanece inalterada.
+Saved prompts|Prompts salvos
+New prompt|Novo prompt
+Edit prompt|Editar prompt
+Use prompt|Usar prompt
+Reload prompts|Recarregar prompts
+Edit saved prompt|Editar prompt salvo
+Prompt name|Nome do prompt
+Prompt text|Texto do prompt
+Save prompt|Salvar prompt
+Delete prompt|Excluir prompt
+Delete this saved prompt?|Excluir este prompt salvo?
+Confirm Delete|Confirmar exclusão
+Keep prompt|Manter prompt
+Replace the unsent draft with this prompt?|Substituir o rascunho não enviado por este prompt?
+Replace draft|Substituir rascunho
+Keep draft|Manter rascunho
+Use prompt fills the draft without sending. Review it before Send.|Usar prompt preenche o rascunho sem enviar. Revise antes de enviar.
+Prompts are saved locally in settings. Do not include passwords or secrets.|Os prompts são salvos localmente nas configurações. Não inclua senhas nem segredos.
+Could not load saved prompts|Não foi possível carregar os prompts salvos
+Could not save prompts|Não foi possível salvar os prompts
+Save at most 32 prompts.|Salve no máximo 32 prompts.
+Saved prompt IDs must be unique and valid.|Os IDs dos prompts devem ser únicos e válidos.
+Enter a prompt name of at most 80 bytes.|Insira um nome com no máximo 80 bytes.
+Prompt names must be unique.|Os nomes dos prompts devem ser únicos.
+Saved prompts exceed the 128 KiB library limit.|Os prompts excedem o limite de 128 KiB da biblioteca.
+Saved prompts changed elsewhere. Cancel and reload prompts.|Os prompts foram alterados em outro lugar. Cancele e recarregue.
+Secure legacy credentials in Settings before saving prompts.|Proteja as credenciais antigas nas configurações antes de salvar prompts.
+Response mode|Modo de resposta
+Context scope|Escopo do contexto
+Chat history is session-only.|O histórico do chat dura apenas esta sessão.
+Selected topics|Tópicos selecionados
+Quick|Rápido
+Balanced|Equilibrado
+Deep|Aprofundado
+Finish the current edit before sending.|Conclua a edição atual antes de enviar.
+AI context is too large. Select a smaller branch.|O contexto de IA é muito grande. Selecione um ramo menor.
+AI reply is too large. Try a shorter request.|A resposta de IA é muito grande. Tente um pedido mais curto.
+Enter a prompt of at most 8192 bytes.|Insira um pedido com no máximo 8192 bytes.
+Conversation is full. Clear it before sending again.|A conversa está cheia. Limpe-a antes de enviar novamente.
+Conversation limit reached. Close another document.|O limite de conversas foi atingido. Feche outro documento.
+Modes guide detail, not provider reasoning settings.|Os modos orientam o detalhamento, não as configurações de raciocínio do provedor.
+Chat never edits maps. Context includes titles, hierarchy and this chat's history, not notes or attachments.|O chat nunca edita mapas. O contexto inclui títulos, hierarquia e histórico do chat, não notas ou anexos.
+Context to send|Contexto a enviar
+Ask about this map|Pergunte sobre este mapa
+Send|Enviar
+Clear conversation|Limpar conversa
+Clear this conversation?|Limpar esta conversa?
+Confirm Clear|Confirmar limpeza
+Assistant|Assistente
+You|Você
+Review AI Result|Revisar resultado de IA
+Cancel AI Request|Cancelar solicitação de IA
+Apply AI Result|Aplicar resultado de IA
+Discard AI Result|Descartar resultado de IA
+Nothing changes until you apply this result.|Nada muda até você aplicar este resultado.
+Review the current AI result first.|Revise primeiro o resultado de IA atual.
+AI settings changed. Try again.|As configurações de IA mudaram. Tente novamente.
+The AI response has an unexpected format.|A resposta de IA tem um formato inesperado.
+This result creates a new map.|Este resultado cria um novo mapa.
 Window|Janela
+Pitch|Pitch
+Edit Presentation|Editar apresentação
+Presenter View|Modo apresentador
+Generate Slides|Gerar slides
+Add Selected Branch or Zone|Adicionar ramo ou zona selecionados
+Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation.|Gerar substitui o rascunho dos slides. Aplicar salva uma alteração reversível; Cancelar mantém a apresentação salva.
+No slides yet. Generate branch and Zone slides, or add the selected branch.|Ainda não há slides. Gere slides de ramos e zonas ou adicione o ramo selecionado.
+Slide title|Título do slide
+Fit Slide to Content|Ajustar slide ao conteúdo
+Remove Slide|Remover slide
+Export PDF|Exportar PDF
+Export Slide Images|Exportar imagens dos slides
+Slide preview|Prévia do slide
+Slide preview failed|Falha na prévia do slide
+Retry|Tentar novamente
+Rendering slide…|Renderizando slide…
+The document changed. Restart Pitch to show the current map.|O documento mudou. Reinicie o Pitch para mostrar o mapa atual.
+Previous Slide|Slide anterior
+Next Slide|Próximo slide
+Restore Player|Restaurar reprodutor
+Expand Player|Expandir reprodutor
+Leave Fullscreen|Sair da tela cheia
+Fullscreen|Tela cheia
+Exit Pitch|Sair do Pitch
+Right / Space: next · Left: previous · Escape: exit|Direita / Espaço: próximo · Esquerda: anterior · Escape: sair
+Zone|Zona
+Zones|Zonas
+Create Zone|Criar zona
+Edit Zone|Editar zona
+Remove Zone|Remover zona
+Name|Nome
+Height|Altura
+X|X
+Y|Y
+Select floating topics to create a Zone.|Selecione tópicos flutuantes para criar uma zona.
+Zones group floating topics and their descendants. Removing a Zone keeps its topics.|As zonas agrupam tópicos flutuantes e seus descendentes. Remover uma zona preserva seus tópicos.
+No Zones yet. Select floating topics, then create a Zone.|Ainda não há zonas. Selecione tópicos flutuantes e crie uma zona.
+Moving a Zone moves its topics. Minimum size is 100 × 100.|Mover uma zona move seus tópicos. O tamanho mínimo é 100 × 100.
+Task Planning|Planejamento de tarefas
+Gantt Chart|Gráfico de Gantt
+Work Calendar|Calendário de trabalho
+Start date|Data de início
+Due date|Prazo
+Progress|Progresso
+Working days (0 = unscheduled)|Dias úteis (0 = sem programação)
+Priority (0 = none)|Prioridade (0 = nenhuma)
+Finish-to-start predecessors|Predecessoras término-início
+Remove Task|Remover planejamento da tarefa
+Dated exceptions|Exceções por data
+Exception date|Data da exceção
+Working day|Dia útil
+Add Exception|Adicionar exceção
+YYYY-MM-DD|AAAA-MM-DD
+Set a start date before a due date.|Defina uma data de início antes do prazo.
+The document changed. Try again.|O documento mudou. Tente novamente.
+Timeline zoom|Zoom da linha do tempo
+Export worker stopped unexpectedly|O processo de exportação parou inesperadamente
+Fit the complete Gantt chart on one page.|Ajustar o gráfico de Gantt completo a uma página.
+Unscheduled|Sem programação
+Too many tasks for the interactive chart. Use Gantt export.|Há tarefas demais para o gráfico interativo. Use a exportação de Gantt.
+Non-working day|Dia não útil
+Dates use YYYY-MM-DD. Duration counts inclusive working days.|As datas usam AAAA-MM-DD. A duração inclui os dias úteis de início e fim.
+Removing a task also removes its dependencies. To-Do stays unchanged.|Remover o planejamento também remove suas dependências. A tarefa simples não muda.
+This calendar belongs to the current sheet and is saved with the map.|Este calendário pertence à planilha atual e é salvo com o mapa.
+Timeline too wide. Reduce zoom or narrow the schedule.|Linha do tempo muito larga. Reduza o zoom ou o período.
+No scheduled tasks yet. Select a topic in the map and choose Insert > Task Planning.|Ainda não há tarefas programadas. Selecione um tópico no mapa e escolha Inserir > Planejamento de tarefas.
+Select a task to edit dates, progress and dependencies. Changes update the map and Undo history.|Selecione uma tarefa para editar datas, progresso e dependências. As alterações atualizam o mapa e o histórico de desfazer.
+Close Window|Fechar janela
+Move to New Window|Mover para uma nova janela
 Services|Serviços
 Hide Thinoda|Ocultar Thinoda
 Hide Others|Ocultar outros
@@ -201,3 +367,25 @@ Download failed|Falha no download
 Download started|Download iniciado
 Close the browser tab to quit|Feche a aba do navegador para sair
 Continue opens the browser print dialog. Select the same paper size and orientation there and set its margins to none or default; the page already contains the margins chosen here. Use Save print PDF… for exact page output.|Continuar abre a caixa de impressão do navegador. Escolha nela o mesmo tamanho de papel e a mesma orientação e defina as margens como nenhuma ou padrão; a página já contém as margens escolhidas aqui. Use Salvar PDF de impressão… para uma página exata.
+Edit mappings|Editar atalhos
+Rename|Renomear
+Active shortcuts|Atalhos ativos
+Shortcut examples below use Thinoda Standard; the active profile is shown above.|Os exemplos abaixo usam Thinoda Standard; o perfil ativo aparece acima.
+Keyboard mappings|Atalhos de teclado
+Keyboard profile|Perfil de teclado
+Profile name|Nome do perfil
+Assign|Atribuir
+Unassign|Remover atribuição
+Reset All|Redefinir tudo
+Changed bindings|Atalhos alterados
+Previously|Anteriormente
+Search mappings|Pesquisar atalhos
+Delete this keyboard profile?|Excluir este perfil de teclado?
+Confirm deletion|Confirmar exclusão
+Keep profile|Manter perfil
+Press a shortcut. Escape cancels capture.|Pressione um atalho. Escape cancela a captura.
+Built-in profiles are read-only. Duplicate one to customize it.|Os perfis integrados são somente leitura. Duplique um para personalizá-lo.
+XMind-compatible covers supported commands, not every XMind or system shortcut.|Compatível com XMind abrange os comandos disponíveis, não todos os atalhos do XMind ou do sistema.
+Review changed bindings before Apply. Cancel leaves saved mappings unchanged.|Revise as alterações antes de Aplicar. Cancelar mantém os atalhos salvos.
+System clipboard and text-editing shortcuts remain owned by the focused editor.|Os atalhos do sistema para área de transferência e edição de texto continuam no editor em foco.
+Choose Edit mappings to create or change a keyboard profile.|Escolha Editar atalhos para criar ou alterar um perfil de teclado.

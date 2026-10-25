@@ -21,7 +21,7 @@ graph TD
 | `thinoda-core` | Workbook/sheet/topic model, transactional edits + undo, layout engine for all structures, themes, templates, search, outline conversion | no |
 | `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
 | `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme; on wasm a `localStorage` virtual file system, downloads and browser printing | no |
-| `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for `/v1/models` + `/v1/chat/completions`, prompts, outline parser, background `AiJob`, mock server for tests | no |
+| `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for models/completions/embeddings, bounded SSE, prompts, outline parser, polling `AiJob`/`AiStreamJob`/`AiEmbeddingJob`, local mock server | no |
 | `thinoda-ui` | Design tokens, light/dark visuals, widgets, palette, toasts, dialogs, icons, fonts — **the reusable library for companion apps** | yes |
 | `thinoda-canvas` | Interactive mind map widget: hit-testing, selection, drag & drop, inline editing, keyboard actions | yes |
 | `thinoda-app` | eframe application, commands (`Cmd`), menus, panels, dialogs, CLI | yes |
@@ -47,8 +47,35 @@ graph TD
   Registry membership is not availability or key ownership: callers must still
   use the command/focus guards. `Settings.shortcuts_overrides` remains inactive
   and preserves stable, legacy, numeric and unknown keys without guessing a
-  migration. Activating overrides still requires a versioned binding format,
-  conflict/reserved-key policy and explicit editor/reset behavior.
+  migration. `Settings.keymaps` is a separate version-1 profile library:
+  immutable Thinoda Standard/XMind-compatible presets and named user copies,
+  with command-ID bindings and explicit empty lists for unassignment.
+  Logical Command is Cmd on macOS and Ctrl elsewhere; physical Control remains
+  distinguishable. Profile validation rejects duplicate/unknown identities,
+  unknown keys, conflicting dispatch and reserved system/browser/text-editor
+  gestures before activation. Invalid stored profiles are retained but produce
+  a visible warning and use Standard rather than silently activating.
+  Settings > Keyboard Shortcuts > Edit mappings stages profile selection,
+  duplication, rename, delete, reset and key capture until Apply; Cancel leaves
+  persisted settings unchanged. Apply writes settings atomically before changing
+  live preferences and keeps failed saves open for retry. Changed assignments
+  and aliases are reviewed in both Map and Outline contexts.
+  All document windows share that canonical profile library. Successful Apply
+  invalidates pending Settings pointer gestures, preserves the live sidebar
+  selections when saving, and requests repaint of every owner viewport.
+  AppKit application-menu aliases retain the resolved accelerators, including
+  explicit unassignment, instead of reinstating fixed Settings/Quit bindings.
+  Global, insertion and view dispatch honor the same ordered binding inventory;
+  modified gestures take precedence over a general gesture of the same key,
+  preserving Standard defaults except the corrected native macOS Cmd+W owner
+  (Close Window, not a competing Close Tab). The canvas accepts host-supplied
+  bindings while standalone consumers retain its defaults. Outline keeps visible
+  row traversal rather than substituting canvas geometry for Up/Down.
+  Menus, ribbon, palette, shortcut reference, native AppKit accelerators and the
+  guide's active-shortcut table resolve the selected profile. Historical guide
+  examples are explicitly labeled Standard. OS clipboard events and focused text
+  editing retain ownership; IME candidate/commit frames cannot capture or apply
+  a mapping. No profile imports or legacy-string activation are inferred.
 - **Crash safety**: edits are journaled to the recovery directory every few seconds and on
   panic; saves are atomic (temp file + rename). On start the recovery dialog restores unsaved work.
   Native recovery locks explicitly unlock before closing their file descriptor:
@@ -94,6 +121,18 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
+  Native window-close requests and the explicit Quit command retain distinct
+  intents through save-all continuation; cancel preserves the dirty workspace,
+  while discard closes only after the shared close decision is accepted. The
+  macOS Window menu exposes Close Window (Cmd+W) separately from the application
+  menu's Quit (Cmd+Q), both entering the app's normal unsaved-work path.
+  Documents can be assigned to same-process eframe secondary viewports with
+  `show_viewport_immediate`; the stable document key maps to exactly one owning
+  viewport, and each viewport has its own active-tab key. A child close commits
+  pending inspector drafts and returns its documents to the root without closing
+  them, preserving unsaved state. This is not yet per-window Save/Cancel/Discard:
+  root/last-window shutdown uses the existing shared app lifecycle, while child
+  close has no prompt because it returns the documents instead.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate
@@ -115,6 +154,10 @@ graph TD
   not an active application menu. Native callbacks only queue known enabled
   IDs and wakes the egui context; application-frame dispatch uses the producing
   snapshot and rechecks document/sheet/history, text focus and modal ownership.
+  AppKit snapshots also capture the owning viewport. The focused viewport alone
+  synchronizes and polls the global menu; deferred actions reselect the captured
+  document for dispatch and restore the prior root selection afterward. This
+  routing is covered by headless tests, not by live AppKit execution.
   Standard native editing items send text-edit events when a text field owns
   focus. Menu replacement drains pending commands first, and window destruction
   removes its subclass before dropping callback data. Native integration errors
@@ -167,7 +210,15 @@ graph TD
   ownership prevent old native items from invoking a replacement tree's commands.
   Detaching disables the callback and restores the previous AppKit menu tree.
   Real AppKit SDK/lifecycle fixtures run only on macOS; Windows tests do not
-  establish macOS UI/VoiceOver acceptance. Multi-window lifecycle remains open.
+  establish macOS UI/VoiceOver acceptance. Native viewport creation and AppKit
+  focused-window routing, per-window close/save decisions, root/last-window
+  lifecycle, recovery ownership, IPC/open/reopen routing, VoiceOver and
+  multi-monitor behavior remain acceptance work.
+  Native Linux uses an in-window row of the same eight shared menu categories
+  when the available width supports it (at least 1400 logical points at the
+  selected UI scale); narrower windows retain the compact
+  hamburger. This is an app-owned eframe menu surface, not a GNOME global-menu
+  exporter or a claim of Ubuntu/Orca host acceptance.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It
@@ -246,15 +297,95 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
-- **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
-  the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
+- **Map toolbar layering**: floating editing/topic controls use normal egui area
+  order, above the map but below auxiliary feature windows. Foreground menu/
+  popup layers remain separate, so embedded browser Gantt controls are not
+  visually covered or intercepted by map controls.
+- **AI Pitch assistance**: the existing presentation editor captures its real
+  candidate slide IDs/sources/frames and sends only numbered titles plus explicit
+  instructions through `AiStreamJob::chat`. A bounded, closed JSON outline can
+  select/reorder/retitle candidates, never supply new sources or frame geometry.
+  Terminal output enters review without editing even the draft. Use replaces
+  only the draft; normal presentation Apply persists one Undo transaction. Work
+  is owned by source revision, draft generation, instructions and AI config.
+  Editor close drops/cancels transport. Source drafts and changed/disabled settings
+  invalidate pending output/review. Bounds are 64 candidates, 64 KiB title context,
+  8192-byte instructions, 64 KiB output and 256-byte single-line result titles.
+- **Semantic assistance**: the chat sidebar explicitly builds a session-only,
+  source/configuration-owned index using `AiEmbeddingJob` and a separate explicit
+  `embedding_model` preference; there is no chat-model fallback or automatic
+  indexing. Current-sheet titles are bounded before cloning (500 topics/64 KiB,
+  nonblank and at most 16 KiB each) and sent in sequential 128-input batches.
+  Normalized finite vectors must retain one dimension across all batches and
+  queries. Explicit query requests are limited to 8192 bytes; cosine search
+  returns at most 20 matches with deterministic topic-ID tie-breaking. Local
+  farthest-first spherical k-means visits 16 topics per frame, with up to eight
+  centers/eight iterations. It previews a complete partition, then Apply adds a
+  new outline-only sheet in one undo transaction without altering source content.
+  Changed source/configuration/drafts cancel pending work and invalidate caches;
+  changed queries discard late search results. No index or query is persisted.
+- **AI off the UI thread**: typed map requests use `AiStreamJob`; connection tests
+  retain the existing nonstreaming `AiJob`. Native streaming uses abortable
+  Tokio/reqwest I/O; browser streaming uses fetch ReadableStream/AbortController.
+  The app drains at most 128 events per frame, previews deltas without mutation,
+  and stages successful output for explicit review/Apply only after valid `[DONE]`.
+  Apply to an existing map remains one undo step; generated maps open a separate
+  unsaved document without changing the source. Requests require an
+  OpenAI-compatible SSE server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
   Topic requests capture document key, active sheet/root and revision after title
   commit. Results for closed, changed or draft-editing sources are rejected with
-  a visible warning; unchanged background documents retain their original target
-  without activating a different tab. Disabling AI drops pending result ownership
-  so re-enabling it cannot revive that result; already-running bounded HTTP work
-  is not forcibly aborted.
+  a visible explanation; unchanged background documents retain their original target
+  without activating a different tab. The nonmodal review retains its output for
+  inspection/discard when the source changes; Apply rechecks the document, drafts,
+  endpoint, model, committed credential and temperature. New-map output also needs
+  Apply. Review and prompt windows belong to the initiating document viewport and
+  return to the root when that window closes. Cancel, closing the preview or
+  disabling AI cancels transport and drops pending/partial output, so late
+  events or re-enabling AI cannot revive it. Errors never turn partial text into
+  an applicable result. Transport limits are 2 MiB response, 64 KiB SSE frame,
+  1 MiB generated/queued text and 4096 data events, with configured request timeout.
+  Existing nonstreaming client APIs remain available without silent streaming
+  fallback. Browser runtime/CORS acceptance remains an F6 gate.
+  The discussion sidebar uses `AiStreamJob<String>` and the same bounded event
+  drain, without any map-edit path. `ChatState` owns session-only conversations by
+  open-document key; a pending response retains its source key and viewport.
+  Closing the source prunes its history and aborts the job; closing its native
+  window returns pending viewport ownership to root. Hide/reopen and tab switches
+  retain history, not disk persistence. Explicit Send snapshots selected subtrees
+  or the sheet's central/floating trees into JSON containing IDs, titles and child
+  IDs only. It rejects unfinished title/inspector edits and oversized context,
+  and rechecks the snapshot immediately before dispatch. Completed user/assistant
+  pairs, not partial or failed output, enter history. Cancel/disable preserves the
+  draft; confirmed Clear affects only that conversation. Chat and typed map jobs
+  cannot start concurrently, and an unapplied map review blocks chat dispatch.
+  `AiResponseMode` is a serde-defaulted global preference (Balanced for legacy
+  settings), used only as system-message guidance. Mode/scope changes and opening
+  the panel are offline. Chat bounds: 500 context topics, 64 KiB serialized context,
+  8192-byte prompt, 64 KiB reply, 256 KiB history, 32 messages and 64 conversations.
+  Limits are explicit errors; no silent context/history truncation or indexing.
+  The saved prompt library is distinct from session-only history: bounded
+  `SavedPrompt { id, name, text }` values persist in AI preferences. The modal
+  editor owns a draft, base library and viewport; Save validates then updates only
+  the library in freshly parsed settings, rejecting observed library conflicts.
+  It preserves unrelated/unknown fields and credential markers without consulting
+  the credential store, and refuses to rewrite unmigrated plaintext credentials.
+  Persistence failures retain the editor and leave runtime preferences unchanged.
+  Use only copies into the composer; replacing a nonempty draft and deleting a
+  saved prompt each require confirmation. Cancel/IME/canceled-touch guards apply
+  before state-changing decisions; the map is disabled while the editor is open.
+  Limits are 32 prompts, 80-byte names, 8192-byte texts and 128 KiB total UTF-8 data.
+  Guided Rewrite/Translate/Grow/Reorganize/Refine commands capture `AiTarget` plus
+  the chat context builder's bounded selected-subtree snapshot before opening
+  their instruction dialog. Explicit Send rechecks ownership, revision, drafts
+  and configuration before dispatching typed `AiTask::Transform`. Rewrite returns
+  `OutputKind::Title`, growth `Subtopics`, and structural/translation operations
+  `Sheet`. Apply requires the command's exact output kind and text/outline shape.
+  New sheets are outline-only and use `Document::add_sheet` as one undo step;
+  source metadata is never removed or silently represented as translated.
+  All five reuse terminal SSE review/cancellation and viewport-return handling.
+  Transformation responses are bounded to 64 KiB/500 lines before parsing;
+  titles additionally require one nonempty line of at most 1024 UTF-8 bytes.
   Connection-test work and model lists belong to their endpoint and credential
   draft; changing either discards them, while choosing a model keeps the list.
   Generate requires accepted activation and retains rejected prompt drafts.
@@ -316,6 +447,79 @@ graph TD
   for API references, manual checks and platform limitations.
   Native driver behavior still requires smoke tests on Windows x64/ARM64,
   macOS Intel/ARM64 and Linux X11/Wayland.
+- **Task scheduling**: a sheet's versioned `SchedulingData` owns its work
+  calendar, topic-keyed tasks and finish-to-start dependencies; legacy
+  `Topic.todo` remains an independent checkbox. Dates serialize as ISO
+  date-only values, never UTC timestamps. Durations count working days
+  inclusively, and dependency propagation starts successors on the next working
+  date after predecessors finish. The core bounds dates to years 0001-9999,
+  task durations to 3,650 days, tasks to 5,000 and dependencies/calendar
+  exceptions to 20,000/5,000. Native `.thinoda` archive version 2 stores this
+  schema; version 1 remains readable. Workbook validation is also used when
+  recovering snapshots. App task/calendar drafts and Gantt views use these
+  same validated, undoable edits.
+- **Scheduling API**: `LocalDate` implements `FromStr`/`Display` and exposes
+  ordinal, signed day-distance and checked calendar-day addition, with `MIN`/
+  `MAX` bounds. `Weekday::ALL` and `Weekday::name()` expose stable weekday
+  choices. `WorkCalendar::working_duration(start, finish)` counts inclusive
+  working days; `finish_date(start, duration)` and `add_working_days` keep
+  schedule arithmetic in core for any future editor or timeline.
+- **Gantt export**: `thinoda_io::render_gantt(&Sheet)` returns deterministic
+  topic-ID-ordered rows, computed finish-to-start dates, full chart bounds and
+  SVG. `GanttDocument` also renders PNG/vector PDF or a paper-sized
+  `PrintDocument` via the shared raster, PDF and print placement helpers.
+  `export_gantt_csv` emits the same rows as UTF-8 CSV. Unscheduled tasks remain
+  visible; an empty task table and invalid schedules return explicit errors.
+  Chart exports are bounded to 6,000 inclusive timeline days, 5,000 task rows,
+  4 MiB of UTF-8 task labels, and 16 MiB each for SVG and CSV; PNG adds 16,384
+  pixels per side and 32 million total pixels. Print uses existing paper, DPI
+  and page bounds. CSV is independently byte/row bounded and does not inherit
+  the graphical timeline limit.
+- **Task/Gantt app ownership**: `planning.rs` stages explicit Task/Work Calendar
+  drafts owned by a document key, sheet, history revision and opening viewport.
+  Apply validates the captured owner and applies task/dependency edits together.
+  `gantt.rs` holds only a reference to the same document/sheet, not a second
+  `OpenDoc`; native immediate viewports and the browser window project that
+  shared schedule. Interactive bar/progress gestures reuse the existing
+  owner-checked numeric staging helper and make one Undo edit on release.
+  Native chart focus uses shared profile resolution and a restricted command
+  surface; Close Window targets the auxiliary viewport, never Close Tab.
+  Exports capture a sheet snapshot for bounded worker rendering and atomic
+  file writes, followed by the existing desktop/browser delivery path.
+  `PrintEditor` captures either a map or Gantt source and the preview viewport;
+  closing Gantt returns an open print preview to the root without losing the
+  rendered source. Cross-platform native visual/printing acceptance remains
+  separate from headless ownership and rendering tests.
+- **Zones and presentation state**: each sheet persists named `Zone` frames and
+  unique floating-root membership, plus ordered `PresentationSlide` records.
+  `PresentationSource` refers to a topic branch or Zone; `SlideFrame` is a
+  bounded `Rect` with explicit origin and size. Limits are 256 Zones, 4,096
+  memberships and 512 slides; Zone size is at least 100 by 100. Document
+  wrappers make frame/membership/order changes undoable. Zone movement translates
+  member floating roots; explicit Zone removal preserves topics and removes
+  its Zone slides. Root deletion/reparenting cleans memberships and references;
+  empty Zones and their slides are removed. Shared layout bounds include Zone
+  frames, so Fit and full-map output account for frames outside topic bounds.
+- **Presentation rendering**: `generate_presentation` creates branch slides in
+  map order followed by Zone slides in Zone order. Single-slide SVG/PNG preview,
+  multipage PDF and ordered PNG ZIP use the same saved frame crop. The renderer
+  draws complete sheet relationships before SVG viewBox clipping, including
+  links crossing Zone/slide edges. Output scale is finite in 0.1-8; raster
+  bounds are 16,384 pixels per side, 16 million pixels per slide and 32 million
+  total pixels per archive. PDF/ZIP output is capped at 128 MiB.
+- **Zone/Pitch app ownership**: Zone and presentation editors capture document
+  key, sheet root/index, revision and viewport, with explicit Apply/Cancel.
+  Canvas Zone move/resize is staged until safe pointer release. Presentation
+  preview holds at most one worker request and accepts only its current
+  generation/index/theme result. Pitch holds an immutable sheet snapshot and
+  layout, never another `OpenDoc`, and closes on source revision/identity change.
+  Native player focus uses the shared keymap/native-menu resolver with a
+  restricted command surface; local playback keys do not enter map shortcuts.
+  Native fullscreen affects the player viewport only; browser expansion remains
+  an in-app window. Presenter context uses the snapshot layout plus the active
+  saved frame. Output workers capture the current draft/player source, write
+  atomically, and use the existing desktop/browser delivery path. Host visual
+  acceptance remains separate from headless rendering and ownership evidence.
 - **Localization**: app chrome uses the embedded English/German and
   ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
   `locales.txt` and `pt-BR.txt`. English strings are stable keys; the

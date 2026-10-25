@@ -3,12 +3,15 @@
 //! A small blocking client for OpenAI-compatible chat APIs (LM Studio, Ollama, llama.cpp
 //! server, vLLM, OpenAI, Azure OpenAI via a compatible endpoint) plus the mind-map tasks
 //! and a tolerant parser for the returned outlines. Requests run on background threads
-//! via [`AiJob`] so the UI never blocks.
+//! via [`AiJob`] or [`AiStreamJob`] so the UI never blocks.
+//! Explicit-model [`embeddings`] batches use the cancellable [`AiEmbeddingJob`].
 
+pub mod embeddings;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mock;
 pub mod outline;
+mod stream;
 pub mod tasks;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -24,8 +27,10 @@ pub use web::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub use embeddings::AiEmbeddingJob;
 pub use outline::{Outline, OutlineNode, parse_outline, strip_reasoning};
-pub use tasks::{AiTask, OutputKind, TopicContext};
+pub use stream::{AiStreamEvent, AiStreamJob};
+pub use tasks::{AiTask, OutputKind, TopicContext, TransformAction};
 
 /// Default endpoint: LM Studio's local server.
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:1234/v1";
@@ -72,6 +77,8 @@ pub enum AiError {
     NoModel,
     #[error("the model returned no usable content")]
     Empty,
+    #[error("AI request was cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, AiError>;
@@ -200,18 +207,36 @@ fn parse_chat(v: &Value) -> Result<String> {
 
 /// Turn a model reply into the task's result type.
 fn finish(task: &AiTask, text: &str, model: String) -> Result<AiResult> {
+    if matches!(task, AiTask::Transform { .. }) {
+        let content = strip_reasoning(text);
+        if content.len() > 65_536 || content.lines().count() > 500 {
+            return Err(AiError::Parse(
+                "transformed outline exceeds 64 KiB or 500 topics".into(),
+            ));
+        }
+        if task.output_kind() == OutputKind::Sheet && !content.starts_with("# ") {
+            return Err(AiError::Parse(
+                "transformed sheet requires a central title".into(),
+            ));
+        }
+    }
     let kind = task.output_kind();
     let output = match kind {
-        OutputKind::Note => {
+        OutputKind::Note | OutputKind::Title => {
             let t = strip_reasoning(text);
             if t.is_empty() {
                 return Err(AiError::Empty);
             }
+            if kind == OutputKind::Title && (t.len() > 1024 || t.lines().count() != 1) {
+                return Err(AiError::Parse(
+                    "expected a single title of at most 1024 bytes".into(),
+                ));
+            }
             AiOutput::Text(t)
         }
-        OutputKind::Map => {
+        OutputKind::Map | OutputKind::Sheet => {
             let o = parse_outline(text).into_map();
-            if o.items.is_empty() {
+            if o.items.is_empty() && (kind == OutputKind::Map || o.title.is_none()) {
                 return Err(AiError::Empty);
             }
             AiOutput::Outline(o)

@@ -98,6 +98,52 @@ impl ThinodaApp {
             self.dialogs.guide.open = false;
             return;
         }
+        use crate::app::Cmd;
+        use thinoda_canvas::Action;
+        let active_shortcuts: Vec<Vec<_>> = [
+            vec![
+                (Cmd::New, "New"),
+                (Cmd::Canvas(Action::InsertChild), "Subtopic"),
+                (Cmd::Canvas(Action::InsertSibling), "Topic"),
+                (Cmd::Canvas(Action::StartEdit), "Edit"),
+                (Cmd::Save, "Save"),
+                (Cmd::Canvas(Action::Undo), "Undo"),
+            ],
+            vec![
+                (Cmd::Find, "Find"),
+                (Cmd::FindReplace, "Find and Replace…"),
+                (Cmd::PreviousSheet, "Previous Sheet"),
+                (Cmd::NextSheet, "Next Sheet"),
+            ],
+            vec![
+                (Cmd::CopyStyle, "Copy Style"),
+                (Cmd::PasteStyle, "Paste Style"),
+            ],
+            vec![
+                (Cmd::Open, "Open…"),
+                (Cmd::SaveAs, "Save As…"),
+                (Cmd::SaveAll, "Save All"),
+            ],
+            vec![(Cmd::MapShot, "Map Shot"), (Cmd::Print, "Print")],
+            vec![
+                (Cmd::Settings, "Settings…"),
+                (Cmd::Shortcuts, "Keyboard Shortcuts"),
+            ],
+        ]
+        .into_iter()
+        .map(|commands| {
+            commands
+                .into_iter()
+                .map(|(command, label)| {
+                    (
+                        t(label),
+                        self.active_shortcut_hint(ctx, &command)
+                            .unwrap_or_else(|| t("Unassigned").into()),
+                    )
+                })
+                .collect()
+        })
+        .collect();
         let state = &mut self.dialogs.guide;
         let response = egui::Modal::new(egui::Id::unique("user_guide")).show(ctx, |ui| {
             ui.set_width(620.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
@@ -160,6 +206,14 @@ impl ThinodaApp {
                     }
                     found = true;
                     ui.heading(t(page.title));
+                    ui.strong(t("Active shortcuts"));
+                    for (label, hint) in &active_shortcuts[index] {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(*label);
+                            ui.label(hint);
+                        });
+                    }
+                    ui.weak(t("Shortcut examples below use Thinoda Standard; the active profile is shown above."));
                     for paragraph in page.paragraphs {
                         ui.label(t(paragraph));
                         ui.add_space(6.0);

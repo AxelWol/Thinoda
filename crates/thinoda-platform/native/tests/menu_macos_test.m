@@ -19,15 +19,20 @@ int main(void) {
         NSMutableArray *fileEntries = [NSMutableArray array];
         for (NSNumber *identifier in @[@1, @2, @3]) {
             [fileEntries addObject:@{@"id":identifier, @"label":@"Application command",
-                @"enabled":@YES, @"checked":@NO, @"key":@"", @"modifiers":@0}];
+                @"enabled":@YES, @"checked":@NO,
+                @"key":[identifier isEqual:@2] ? @"p" : @"",
+                @"modifiers":[identifier isEqual:@2] ? @(NSEventModifierFlagCommand | NSEventModifierFlagOption) : @0}];
         }
-        [fileEntries addObjectsFromArray:@[action, disabledGroup]];
+        NSDictionary *close = @{@"id":@6, @"label":@"Close Window", @"enabled":@YES,
+            @"checked":@NO, @"key":@"k", @"modifiers":@(NSEventModifierFlagCommand | NSEventModifierFlagOption)};
+        [fileEntries addObjectsFromArray:@[action, disabledGroup, close]];
         NSDictionary *payload = @{
             @"items":@[
                 @{@"label":@"File", @"enabled":@YES, @"items":fileEntries},
                 @{@"label":@"Help", @"enabled":@YES, @"items":@[]}
             ],
             @"application_commands":@[@1,@2,@3],
+            @"close_window_command":@6,
             @"labels":@{@"application":@"Thinoda Test", @"services":@"Services", @"window":@"Window",
                 @"hide":@"Hide Thinoda", @"hide_others":@"Hide Others", @"show_all":@"Show All",
                 @"minimize":@"Minimize", @"zoom":@"Zoom", @"bring_all":@"Bring All to Front"}
@@ -42,9 +47,17 @@ int main(void) {
         assert(NSApp.mainMenu == owner.root);
         assert(NSApp.mainMenu.numberOfItems == 4);
         assert(NSApp.servicesMenu && NSApp.windowsMenu && NSApp.helpMenu);
+        NSMenuItem *closeWindow = NSApp.windowsMenu.itemArray[0];
+        assert([closeWindow.title isEqualToString:@"Close Window"]);
+        assert(closeWindow.action == @selector(activate:));
+        assert(closeWindow.target == owner);
+        assert([closeWindow.keyEquivalent isEqualToString:@"k"]);
+        assert(closeWindow.keyEquivalentModifierMask == (NSEventModifierFlagCommand | NSEventModifierFlagOption));
         NSMenu *application = NSApp.mainMenu.itemArray[0].submenu;
-        assert([application.itemArray[2].keyEquivalent isEqualToString:@","]);
-        assert([application.itemArray.lastObject.keyEquivalent isEqualToString:@"q"]);
+        assert([application.itemArray[2].keyEquivalent isEqualToString:@"p"]);
+        assert(application.itemArray[2].keyEquivalentModifierMask ==
+            (NSEventModifierFlagCommand | NSEventModifierFlagOption));
+        assert([application.itemArray.lastObject.keyEquivalent isEqualToString:@""]);
         NSMenu *file = NSApp.mainMenu.itemArray[1].submenu;
         NSMenuItem *stale = file.itemArray[0];
         assert(stale.state == NSControlStateValueOn);
@@ -54,6 +67,8 @@ int main(void) {
         assert(thinoda_menu_replace(handle, json.UTF8String, error, sizeof(error)) == 0);
         uint16_t selected[4] = {0};
         assert(thinoda_menu_drain(handle, selected, 4) == 1 && selected[0] == 4);
+        [NSApp.windowsMenu performActionForItemAtIndex:0];
+        assert(thinoda_menu_drain(handle, selected, 4) == 1 && selected[0] == 6);
         [owner activate:file.itemArray[1].submenu.itemArray[0]];
         assert(thinoda_menu_drain(handle, selected, 4) == 0);
         [owner menuWillOpen:file];

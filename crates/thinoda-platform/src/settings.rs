@@ -141,6 +141,16 @@ impl Default for CloudSettings {
     }
 }
 
+/// Response-depth guidance, independent of provider-specific reasoning APIs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiResponseMode {
+    Quick,
+    #[default]
+    Balanced,
+    Deep,
+}
+
 /// AI assistant preferences (any OpenAI-compatible server such as LM Studio or Ollama).
 /// API keys are stored in the OS credential store; the environment variable remains an override.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -162,6 +172,10 @@ pub struct AiSettings {
     #[serde(skip)]
     pub api_key_dirty: bool,
     pub temperature: f32,
+    pub response_mode: AiResponseMode,
+    pub saved_prompts: Vec<crate::ai_prompts::SavedPrompt>,
+    /// Explicit embedding model; never inherits the chat model.
+    pub embedding_model: String,
 }
 
 impl fmt::Debug for AiSettings {
@@ -174,6 +188,8 @@ impl fmt::Debug for AiSettings {
             .field("api_key_stored", &self.api_key_stored)
             .field("credentials_ready", &self.credentials_ready)
             .field("temperature", &self.temperature)
+            .field("response_mode", &self.response_mode)
+            .field("embedding_model", &self.embedding_model)
             .finish()
     }
 }
@@ -193,6 +209,9 @@ impl Default for AiSettings {
             credentials_ready: true,
             api_key_dirty: false,
             temperature: 0.7,
+            response_mode: AiResponseMode::Balanced,
+            saved_prompts: Vec::new(),
+            embedding_model: String::new(),
         }
     }
 }
@@ -277,6 +296,7 @@ pub struct Settings {
     /// Preserved but inactive. Stable app shortcut IDs use names such as
     /// `file.save`; legacy/numeric/unknown keys are not guessed or migrated.
     pub shortcuts_overrides: BTreeMap<String, String>,
+    pub keymaps: crate::keymaps::Keymaps,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -321,6 +341,7 @@ impl Default for Settings {
             cloud: CloudSettings::default(),
             ai: AiSettings::default(),
             shortcuts_overrides: BTreeMap::new(),
+            keymaps: crate::keymaps::Keymaps::default(),
         }
     }
 }
@@ -419,7 +440,9 @@ impl Settings {
                     .try_into::<Self>()
                     .map_err(|e: toml::de::Error| e.to_string())?;
                 Self::validate_quick_styles(&settings.quick_styles)?;
+                crate::ai_prompts::validate(&settings.ai.saved_prompts)?;
                 Self::validate_custom_themes(&settings.custom_themes)?;
+                settings.keymaps.validate()?;
                 if let Some(theme) = &settings.default_custom_theme {
                     theme.validate()?;
                 }
@@ -534,6 +557,11 @@ impl Settings {
         credentials: &dyn CredentialStore,
     ) -> Result<()> {
         let mut saved = self.clone();
+        crate::ai_prompts::validate(&saved.ai.saved_prompts).map_err(Error::InvalidAiPrompts)?;
+        saved
+            .keymaps
+            .validate()
+            .map_err(crate::Error::InvalidKeymaps)?;
         Self::validate_custom_themes(&saved.custom_themes)
             .map_err(crate::Error::InvalidCustomThemes)?;
         if let Some(theme) = &saved.default_custom_theme {
@@ -567,6 +595,11 @@ impl Settings {
     }
 
     fn write_settings(paths: &Paths, settings: &Self) -> Result<()> {
+        crate::ai_prompts::validate(&settings.ai.saved_prompts).map_err(Error::InvalidAiPrompts)?;
+        settings
+            .keymaps
+            .validate()
+            .map_err(crate::Error::InvalidKeymaps)?;
         Self::validate_custom_themes(&settings.custom_themes)
             .map_err(crate::Error::InvalidCustomThemes)?;
         if let Some(theme) = &settings.default_custom_theme {

@@ -61,6 +61,7 @@ pub struct PaintOptions<'a> {
     /// Additional source topics dimmed while a view-only drag preview is active.
     pub dimmed: Option<&'a std::collections::BTreeSet<TopicId>>,
     pub selected_object: Option<ObjectSelection>,
+    pub omit_zones: bool,
 }
 
 /// Background color of the sheet.
@@ -105,6 +106,41 @@ pub fn paint_map(
         opts.filter.is_some_and(|f| !f.contains(&id))
             || opts.dimmed.is_some_and(|ids| ids.contains(&id))
     };
+
+    if !opts.omit_zones {
+        for zone in &sheet.zones {
+            let rect = xf.rect(zone.frame);
+            let selected = opts.selected_object == Some(ObjectSelection::Zone(zone.id));
+            let color = if selected {
+                opts.accent
+            } else if opts.dark {
+                Color32::from_gray(170)
+            } else {
+                Color32::from_gray(85)
+            };
+            painter.rect(
+                rect,
+                4.0,
+                color.gamma_multiply(0.04),
+                Stroke::new(if selected { 2.0 } else { 1.0 }, color),
+                StrokeKind::Inside,
+            );
+            painter.with_clip_rect(rect.shrink(4.0)).text(
+                rect.left_top() + vec2(8.0, 6.0),
+                egui::Align2::LEFT_TOP,
+                &zone.name,
+                FontId::proportional(12.0),
+                color,
+            );
+            if selected {
+                painter.rect_filled(
+                    Rect::from_center_size(rect.right_bottom(), vec2(10.0, 10.0)),
+                    1.0,
+                    color,
+                );
+            }
+        }
+    }
 
     // Boundaries.
     for b in &layout.boundaries {

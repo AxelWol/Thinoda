@@ -7,14 +7,19 @@ mod command_icons;
 mod command_ids;
 pub mod doc;
 pub mod files;
+mod gantt;
 mod help;
 pub mod i18n;
+mod keymap_editor;
+pub mod keymaps;
 mod labels;
 mod legal;
 mod legal_markdown;
 mod map_shot;
 pub mod menus;
 pub mod native_menus;
+mod pitch;
+mod planning;
 mod printing;
 mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
@@ -28,6 +33,7 @@ mod symbols;
 mod template_gallery;
 mod theme_editor;
 pub mod ui;
+mod zones;
 
 pub use app::{Startup, ThinodaApp, start_services};
 
@@ -49,10 +55,18 @@ impl eframe::App for ThinodaApp {
             self.desktop_ribbon = true;
         }
         #[cfg(target_os = "macos")]
-        self.poll_native_menus(ui.ctx());
+        let root_native_menu_focused = ui
+            .ctx()
+            .input(|input| input.viewport().focused.unwrap_or(true));
+        #[cfg(target_os = "macos")]
+        if root_native_menu_focused {
+            self.poll_native_menus(ui.ctx());
+        }
         self.draw(ui);
         #[cfg(target_os = "macos")]
-        self.sync_native_menus(ui.ctx(), frame);
+        if root_native_menu_focused {
+            self.sync_native_menus(ui.ctx());
+        }
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);

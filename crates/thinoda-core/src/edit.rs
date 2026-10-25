@@ -129,7 +129,19 @@ impl Sheet {
             .filter_map(|t| self.topic(*t).cloned())
             .collect();
         let rels = self.relationships.clone();
+        let tasks = self.scheduling.tasks.clone();
+        let dependencies = self.scheduling.dependencies.clone();
         let sub = self.detach_subtree(id).ok_or(EditError::RootNotAllowed)?;
+        let sub_ids: std::collections::HashSet<_> =
+            sub.topics.iter().map(|topic| topic.id).collect();
+        self.scheduling.tasks = tasks;
+        self.scheduling.dependencies = dependencies
+            .into_iter()
+            .filter(|dependency| {
+                !sub_ids.contains(&dependency.predecessor)
+                    || !sub_ids.contains(&dependency.successor)
+            })
+            .collect();
         for topic in annotation_topics {
             self.topics.insert(topic.id, topic);
         }
@@ -284,6 +296,13 @@ impl Sheet {
         sheet
             .relationships
             .retain(|r| owned.contains(&r.from) && owned.contains(&r.to));
+        sheet
+            .scheduling
+            .tasks
+            .retain(|topic, _| owned.contains(topic));
+        sheet.scheduling.dependencies.retain(|dependency| {
+            owned.contains(&dependency.predecessor) && owned.contains(&dependency.successor)
+        });
         sheet.validate().map_err(EditError::Invalid)?;
         Ok(sheet)
     }

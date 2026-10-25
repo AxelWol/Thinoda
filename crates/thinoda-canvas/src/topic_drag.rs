@@ -233,7 +233,7 @@ pub(crate) fn edge_pan(ctx: &egui::Context, view: &mut MapView, pointer: egui::P
     }
 }
 
-fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<TopicId>) -> Layout {
+pub(crate) fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<TopicId>) -> Layout {
     Layout {
         topics: layout
             .topics
@@ -361,6 +361,7 @@ pub(crate) fn paint(
         },
         &PaintOptions {
             dark: view.dark,
+            omit_zones: true,
             ..Default::default()
         },
     );

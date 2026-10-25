@@ -71,6 +71,235 @@ features work differently:
 | Fonts | System font enumeration is unavailable; the bundled Ubuntu and Hack fonts are used for rendering and export. |
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
+| Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
+| Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
+
+## Reviewing AI results
+
+AI commands use the endpoint configured in **Settings > AI**. Completed output
+opens **Review AI Result** without changing the map. Inspect or copy the response,
+then choose **Apply AI Result** to make one undoable edit to the existing map, or **Discard AI Result**
+to leave the map unchanged. Generated maps also wait for Apply before opening a
+new document.
+
+While working, a nonmodal window shows incoming text. **Cancel AI Request** or
+closing that preview stops the request and discards partial output; disabling AI
+does the same. A broken/interrupted stream reports an error, never a partly
+applied map. The configured server must support OpenAI-compatible SSE streaming,
+including the final `[DONE]` marker, as well as the browser CORS requirements above.
+
+The review is nonmodal. You can continue working, but changing the source sheet
+or keeping a topic/inspector draft open disables Apply with an explanation.
+Changing the endpoint, model, committed API key or temperature also invalidates
+that result. Discard it and run the command again with the current settings.
+The result retains its original topic/document even if you switch tabs.
+
+### Discussing a map
+
+Choose **AI > AI Chat** to open the discussion sidebar. Opening it sends nothing.
+Choose **Quick**, **Balanced** or **Deep** for response detail, and **Selected topics**
+(including their descendants) or **Current sheet** for context. Inspect **Context
+to send** and the server address before choosing **Send**. Titles and hierarchy,
+your question and completed chat history are sent; notes and attachments are not.
+The modes guide the answer, not provider-specific reasoning APIs.
+
+Chat streams answers without changing the map. **Cancel AI Request** discards the
+partial answer and keeps your draft; disabling AI does the same. Errors and
+oversized requests/replies are shown rather than saved as completed answers.
+Only one map/chat request runs at a time; finish or discard a map review before
+sending a chat question.
+
+Each open document has its own session-only history. Hiding the panel or switching
+tabs preserves it; closing the document, reloading the browser or restarting the
+app does not. **Clear conversation** requires confirmation and preserves your
+unsent draft. Closing chat restores the format sidebar without changing its
+preferences. The sidebar is scrollable in short windows. F6 exercised split
+streaming responses and cancellation in real Edge against a separate loopback
+CORS fixture; no live AI service was contacted. Other providers, browser engines
+and real-device behavior still require their own acceptance.
+
+Expand **Saved prompts** in AI Chat to create reusable prompts. **New prompt** and
+**Edit prompt** open a draft editor; **Save prompt** persists it, while **Cancel**
+leaves the library unchanged. Deleting requires **Confirm Delete**. **Use prompt**
+fills the composer without sending; replacing an existing unsent draft requires
+confirmation. Review the text and context before choosing **Send**.
+
+Prompts are local preferences in `settings.toml` (browser-local settings storage on
+the web), not encrypted secrets or part of the map. Do not save passwords or API
+keys in prompts. Names must be unique and at most 80 UTF-8 bytes; prompt text is
+limited to 8192 bytes, with up to 32 prompts and 128 KiB in the library. Saving
+reads fresh settings and changes only the library, without credential-store access.
+If another window changed the library, Cancel and **Reload prompts** before editing
+again; failed saves leave the editor and existing library intact.
+
+### Semantic search and clustering
+
+Set **Embedding model** in **Settings > AI** to an explicit embedding-capable
+model, then expand **Semantic tools** in AI Chat. Opening these controls is
+offline. **Build semantic index** sends current-sheet titles to the displayed
+server in sequential batches of at most 128; it excludes notes and attachments.
+The chat model is never used as a fallback. Unsupported endpoints/models report
+an error. The sheet is limited to 500 topics and 64 KiB of titles, with nonblank
+titles of at most 16 KiB each.
+
+**Search meaning** explicitly sends your query (at most 8192 UTF-8 bytes) to the
+same embedding model. It lists the best 20 cosine-similarity matches; clicking
+one selects and reveals it without changing content. Editing the query discards
+pending results. **Preview clusters** runs local, deterministic spherical k-means,
+chunked across frames, with up to eight groups. Identical directions can produce
+fewer groups. **Apply clusters to new sheet** creates an outline-only sheet in one
+Undo step, preserving the source, not moving or replacing its topics.
+
+The index, queries, results and previews are session-only. Source edits, unfinished
+title/inspector drafts, sheet changes, source close, AI disable or changed AI
+configuration/credentials invalidate work; rebuild before continuing. Cancel stops
+pending indexing/search or local clustering without editing the map. Real Edge
+acceptance against a local CORS fixture covered explicit index/query requests,
+ranked results, cluster preview, Apply to a new sheet and Undo. This does not
+establish every embedding provider's model or CORS compatibility.
+
+### Guided map transformations
+
+The **AI** menu and topic context menu offer **Rewrite Topic**, **Translate Branch**,
+**Grow Ideas**, **Reorganize Branch** and **Refine Branch**. Choose topics, enter
+instructions (or the target language), inspect the context and server, then **Send**.
+Opening the dialog is offline. These commands include selected subtrees' complete
+titles/hierarchy, not notes or attachments, with the primary topic identified for
+rewrite/growth. Context exceeding 500 topics or 64 KiB is rejected rather than
+truncated; instructions are limited to 8192 UTF-8 bytes.
+
+Review the streamed result before **Apply AI Result**. Rewrite changes only the
+primary topic's title; Grow adds children there. Translation, reorganization and
+refinement create a **new outline-only sheet** in the same document, leaving every
+source topic, note, style, relationship and attachment unchanged. The new sheet
+does not copy that metadata. Each Apply is one undoable operation. Changed source
+documents, unfinished title/inspector edits or changed AI settings invalidate
+Apply. Cancel/Discard never edits the map. A transformed title must be one line
+and at most 1024 bytes; transformed outlines are bounded to 64 KiB/500 lines.
+
+## Zones
+
+Select one or more floating root topics and choose **Insert > Create Zone** or
+**Create Zone** in the context menu. Central-tree topics cannot become Zone
+members. The frame initially includes the selected topics and their visible
+descendants. **Apply** saves the name and frame as one undoable change;
+**Cancel** discards the draft.
+
+Click a Zone border/title to select it. Drag the border to move the frame and
+its topics together, or drag the lower-right handle to resize the frame (minimum
+100 by 100). Changes commit only when released inside the map; Escape, focus
+loss or an intervening document change cancels the gesture. Use **Edit Zone**
+in the context menu or Style inspector for precise position and size.
+**Tools > Zones** lists Zones in order with rename/edit, Move Up/Down and Remove
+controls. Removing a Zone preserves its topics. Overlapping frames are allowed;
+the last Zone in the order is on top.
+
+### AI Pitch outline suggestions
+
+In **Edit Presentation**, generate or add slides, then expand **AI Pitch outline**.
+Enter the audience, purpose or desired flow and choose **Suggest Pitch outline**.
+Opening the editor/panel is offline. Sending transmits only the draft's slide
+titles, numbered candidates and your instructions to the displayed AI server;
+topic notes, attachments and frame coordinates are excluded. The chat model and
+streaming/CORS requirements above apply.
+
+Suggestions can select, reorder and retitle real candidates, never invent branch/
+Zone sources or change their frames. Review the streamed result, then choose
+**Use suggested outline** to replace only the editor's draft. **Apply** separately
+saves that draft as one undoable presentation edit; source topics and metadata stay
+unchanged. Discard, request cancellation or editor Cancel never changes the saved
+presentation. Source/draft/instruction/configuration changes invalidate suggestions.
+Limits are 64 candidate slides, 64 KiB of candidate titles, 8192-byte instructions
+and 64 KiB of output; each suggested title is at most 256 UTF-8 bytes.
+
+## Pitch and slide exports
+
+Choose **View > Edit Presentation**. **Generate Slides** replaces only the
+current draft with central-topic child branches in map order, then Zones in Zone
+order. Alternatively, select a branch or Zone before opening the editor and use
+**Add Selected Branch or Zone**. Edit slide titles, reorder or remove slides,
+and adjust X/Y/width/height; **Fit Slide to Content** restores source bounds.
+The preview uses the same saved crop as export. **Apply** saves all changes as
+one Undo entry; **Cancel** leaves the saved presentation unchanged.
+
+Choose **View > Pitch** to play the saved presentation, or **Presenter View** to
+show the slide alongside its map and highlighted crop. If no slides exist, Pitch
+opens the editor first; apply the slides and choose Pitch again. Use the
+**Previous Slide** / **Next Slide** buttons, Left/Right, Page Up/Down or Space
+(next), and **Exit Pitch** or Escape to exit. Native fullscreen is scoped to the
+player window (also F11); the browser's **Expand Player** remains inside its tab.
+Closing playback never closes the map. Playback is read-only and closes with an
+explanation if its source changes, rather than showing a disconnected revision.
+Pitch/editor/presenter entry commands can be rebound in keyboard settings;
+playback arrows are local, not global map shortcuts.
+
+**Export PDF** produces a multipage vector presentation. **Export Slide Images**
+produces a ZIP with ordered `slides/slide-001.png` files. The editor exports its
+current draft without applying it; the player exports its captured saved
+presentation. Neither changes the map. The browser downloads these outputs;
+native builds use a save dialog. Oversized frames/outputs fail visibly rather
+than being truncated. PPTX and presentation video are not provided.
+
+## Task planning and Gantt
+
+Select a topic and choose **Insert > Task Planning**, or use **Task Planning**
+in the Style inspector. Start/due dates use `YYYY-MM-DD`; duration counts
+inclusive working days. An empty start or duration allows an unscheduled draft.
+Entering a due date derives duration; leaving due blank keeps the entered
+duration. Progress is 0-100%, and priority is an optional numeric value (0 in
+the editor means none). Choose existing tasks as finish-to-start predecessors.
+Successors start on the next working day after their predecessors finish.
+**Apply** saves one undoable edit; **Cancel** discards the draft. Invalid dates,
+cycles or edits made from a stale document revision show an error without
+partially changing the map. Removing task planning does not remove its To-do
+checkbox.
+
+**Settings > Work Calendar** or **Tools > Work Calendar** edits the current
+sheet's working weekdays and dated working/non-working exceptions. These are
+document data, not global preferences, and are saved with the map.
+
+**View > Gantt Chart** shows the same tasks, dates, progress and dependencies.
+Select a task name to edit its details. Drag a dated bar to move it, drag its
+right edge to change duration, or use its progress slider; release commits one
+Undo step. Escape, focus loss or a concurrent document edit cancels a pending
+bar gesture. The date fields provide a keyboard alternative. Closing this view
+does not close the map.
+
+The chart's **Export** menu produces complete SVG, PNG, vector PDF or task CSV
+from a captured sheet snapshot. **Print** uses the Gantt-specific page preview,
+including browser printing and **Save print PDF…**, not a map screenshot.
+The interactive view limits 1,000 rows and 100,000 logical timeline units.
+Graphical exports allow up to 5,000 rows and 6,000 timeline days; CSV is not
+subject to the graphical timeline limit. Large PNG output has separate pixel
+limits and fails explicitly rather than truncating tasks. Reduce zoom for a
+wide interactive view, or use CSV for a long schedule.
+
+## Keyboard mappings
+
+Open **Settings > Keyboard Shortcuts > Edit mappings** to review or customize
+shortcuts. **Thinoda Standard** preserves the familiar defaults;
+**XMind-compatible** is an opt-in preset for supported commands, not a promise
+that every XMind or operating-system shortcut is available.
+
+To edit a preset, enter a profile name and choose **Duplicate**. Use the search
+field to find a command, choose its **Assign** action, then press the desired
+keys. The editor reports conflicting or reserved combinations and shows changes
+for both Map and Outline before **Apply**. **Unassign** removes a command's
+explicit bindings; **Reset All** restores the profile's base preset.
+**Cancel** discards the draft, including profile selection and management changes.
+A failed save leaves the draft open and the active mapping unchanged.
+
+Applied profiles are saved with the rest of the browser's settings and survive
+reloads, subject to the storage limitations below. All open document views use
+the same active profile. Menus, the command palette, shortcut reference and the
+offline guide's active-shortcut tables update together. The guide's historical
+prose examples are labeled as Thinoda Standard.
+
+Browser navigation/reload/tab controls and ordinary focused-text/clipboard
+operations retain their ownership. Native-only commands such as Close Window
+are not browser-window controls and are not offered as browser features.
+Clearing site data also removes saved profiles; no profile import/export is
+currently provided.
 
 ## Touch and trackpad coverage
 

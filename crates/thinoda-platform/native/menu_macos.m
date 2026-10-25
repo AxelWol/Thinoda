@@ -36,6 +36,11 @@ typedef void (*ThinodaMenuWake)(void *);
     [self.pending addObject:identifier];
     if (self.wake) self.wake(self.context);
 }
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    NSDictionary *target = item.representedObject;
+    return [target[@"generation"] unsignedIntegerValue] == self.generation &&
+        [self.allowed containsObject:target[@"id"]];
+}
 @end
 
 static int failure(char *error, size_t length, NSString *message) {
@@ -110,8 +115,13 @@ static int install(ThinodaMenu *owner, const char *json, char *error, size_t len
     NSArray *entries = payload[@"items"];
     NSDictionary *labels = payload[@"labels"];
     NSArray *commands = payload[@"application_commands"];
+    NSNumber *closeCommand = payload[@"close_window_command"];
+    NSDictionary *closeEntry = find_action(entries, closeCommand);
+    if (!closeEntry || [commands containsObject:closeCommand])
+        return failure(error, length, @"Missing or conflicting Close Window command");
     NSMutableSet *allowed = [NSMutableSet set];
-    NSSet *aliases = [NSSet setWithArray:commands];
+    NSMutableSet *aliases = [NSMutableSet setWithArray:commands];
+    [aliases addObject:closeCommand];
     NSMenu *root = new_menu(owner, @"");
     NSMenu *application = new_menu(owner, labels[@"application"]);
     NSMenu *services = new_menu(owner, labels[@"services"]);
@@ -123,8 +133,6 @@ static int install(ThinodaMenu *owner, const char *json, char *error, size_t len
         NSDictionary *entry = find_action(entries, commands[index]);
         if (!entry) return failure(error, length, @"Missing application menu command");
         NSMenuItem *item = action_item(owner, entry);
-        if (index == 1) { item.keyEquivalent = @","; item.keyEquivalentModifierMask = NSEventModifierFlagCommand; }
-        if (index == 2) { item.keyEquivalent = @"q"; item.keyEquivalentModifierMask = NSEventModifierFlagCommand; }
         [application addItem:item];
         if (item.enabled) [allowed addObject:commands[index]];
         if (index == 0 || index == 1) [application addItem:NSMenuItem.separatorItem];
@@ -143,6 +151,9 @@ static int install(ThinodaMenu *owner, const char *json, char *error, size_t len
     append_entries(owner, root, entries, aliases, allowed, YES);
     NSMenu *windows = new_menu(owner, labels[@"window"]);
     windows.autoenablesItems = YES;
+    [windows addItem:action_item(owner, closeEntry)];
+    if ([closeEntry[@"enabled"] boolValue]) [allowed addObject:closeCommand];
+    [windows addItem:NSMenuItem.separatorItem];
     [windows addItem:system_item(labels[@"minimize"], @selector(performMiniaturize:), nil, @"m", NSEventModifierFlagCommand)];
     [windows addItem:system_item(labels[@"zoom"], @selector(performZoom:), nil, @"", 0)];
     [windows addItem:NSMenuItem.separatorItem];

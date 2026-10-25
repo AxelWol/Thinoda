@@ -19,6 +19,7 @@ pub enum MenuAction {
 pub struct MenuSnapshot {
     pub items: Vec<MenuItem>,
     pub actions: Vec<MenuAction>,
+    viewport: egui::ViewportId,
     owner: Option<MenuOwner>,
     mode: CenterMode,
     text_focus: Option<egui::Id>,
@@ -164,7 +165,7 @@ impl ThinodaApp {
                         let label = if ctx.os() == egui::os::OperatingSystem::Mac {
                             label.clone()
                         } else {
-                            let hint = ThinodaApp::shortcut_hint_for_mode(ctx, command, app.mode);
+                            let hint = app.active_shortcut_hint(ctx, command);
                             hint.map_or_else(|| label.clone(), |hint| format!("{label}\t{hint}"))
                         };
                         let enabled = if text_focus && is_text_command(command) {
@@ -220,6 +221,7 @@ impl ThinodaApp {
         MenuSnapshot {
             items,
             actions,
+            viewport: self.current_viewport,
             text_focus: focused_text(ctx),
             mode: self.mode,
             owner: self.native_menu_owner(),
@@ -229,19 +231,41 @@ impl ThinodaApp {
     pub fn dispatch_native_menu(&mut self, ctx: &Context, snapshot: &MenuSnapshot, id: u16) {
         let Some(action) = id
             .checked_sub(1)
-            .and_then(|id| snapshot.actions.get(usize::from(id)))
+            .and_then(|index| snapshot.actions.get(usize::from(index)))
+            .cloned()
         else {
             log::warn!("unknown native menu command: {id}");
             return;
         };
-        if self.native_menu_owner() != snapshot.owner
-            || self.mode != snapshot.mode
-            || snapshot.text_focus != focused_text(ctx)
+        let previous_active = self.active;
+        let previous_viewport = self.current_viewport;
+        if snapshot.viewport != egui::ViewportId::ROOT
+            && let Some(owner) = &snapshot.owner
         {
-            self.toasts.warning(t("The document changed. Try again."));
-            return;
+            let Some(index) = self
+                .docs
+                .iter()
+                .position(|doc| doc.key == owner.document)
+                .filter(|_| {
+                    self.document_windows
+                        .get(&owner.document)
+                        .copied()
+                        .unwrap_or(egui::ViewportId::ROOT)
+                        == snapshot.viewport
+                })
+            else {
+                self.toasts.warning(t("The document changed. Try again."));
+                return;
+            };
+            self.active = index;
         }
-        if let MenuAction::Command(command) = action
+        self.current_viewport = snapshot.viewport;
+        let valid = self.native_menu_owner() == snapshot.owner
+            && self.mode == snapshot.mode
+            && snapshot.text_focus == focused_text(ctx);
+        if !valid {
+            self.toasts.warning(t("The document changed. Try again."));
+        } else if let MenuAction::Command(command) = &action
             && snapshot.text_focus.is_some()
             && ctx.text_edit_focused()
             && is_text_command(command)
@@ -249,7 +273,10 @@ impl ThinodaApp {
             match command {
                 Cmd::Canvas(Action::Copy) => ctx.input_mut(|input| input.events.push(Event::Copy)),
                 Cmd::Canvas(Action::Cut) => ctx.input_mut(|input| input.events.push(Event::Cut)),
-                Cmd::MenuPaste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+                Cmd::MenuPaste => ctx.send_viewport_cmd_to(
+                    self.current_viewport,
+                    egui::ViewportCommand::RequestPaste,
+                ),
                 _ => {
                     if let Some((key, modifiers)) = text_command(command) {
                         ctx.input_mut(|input| {
@@ -264,24 +291,33 @@ impl ThinodaApp {
                     }
                 }
             }
-            return;
-        }
-        if self.launch.is_some()
+        } else if self.launch.is_some()
             || self.any_modal_open()
             || self.dialogs.settings
             || self.dialogs.about
             || self.palette.open
         {
             self.toasts.warning(t("Not possible here"));
-            return;
-        }
-        match action {
-            MenuAction::Command(command) => self.exec(ctx, command.clone()),
-            MenuAction::ClearRecent => {
-                self.settings.clear_recent();
-                self.save_settings();
+        } else {
+            match action {
+                MenuAction::Command(command) => self.exec(ctx, command),
+                MenuAction::ClearRecent => {
+                    self.settings.clear_recent();
+                    self.save_settings();
+                }
             }
         }
+        if snapshot.viewport != egui::ViewportId::ROOT {
+            if let Some(doc) = self
+                .doc()
+                .filter(|doc| self.document_windows.get(&doc.key) == Some(&snapshot.viewport))
+            {
+                self.window_active_documents
+                    .insert(snapshot.viewport, doc.key.clone());
+            }
+            self.active = previous_active;
+        }
+        self.current_viewport = previous_viewport;
     }
 }
 
@@ -335,11 +371,38 @@ impl ThinodaApp {
                 let MenuAction::Command(command) = action else {
                     return None;
                 };
-                let binding = Self::shortcut_binding_for_platform(
-                    command,
+                let bindings = self.profile_bindings(
+                    &self.settings.keymaps,
                     self.mode,
                     egui::os::OperatingSystem::Mac,
-                )?;
+                );
+                let binding = bindings
+                    .iter()
+                    .find(|(shortcut, candidate)| {
+                        candidate.shortcut_id() == command.shortcut_id()
+                            && crate::keymaps::reachable(
+                                &bindings,
+                                *shortcut,
+                                command,
+                                egui::os::OperatingSystem::Mac,
+                            )
+                    })
+                    .map(|(binding, _)| *binding)
+                    .or_else(|| {
+                        if matches!(
+                            command,
+                            Cmd::MenuPaste
+                                | Cmd::Canvas(Action::Copy | Action::Cut | Action::Paste(_))
+                        ) {
+                            Self::shortcut_binding_for_platform(
+                                command,
+                                self.mode,
+                                egui::os::OperatingSystem::Mac,
+                            )
+                        } else {
+                            None
+                        }
+                    })?;
                 Some((
                     u16::try_from(index + 1).ok()?,
                     MacAccelerator {
@@ -359,6 +422,7 @@ impl ThinodaApp {
                 command_id(Cmd::Settings)?,
                 command_id(Cmd::Quit)?,
             ],
+            close_window_command: command_id(Cmd::CloseWindow)?,
             shortcuts,
             labels: MacMenuLabels {
                 application: "Thinoda".into(),
@@ -377,7 +441,7 @@ impl ThinodaApp {
 
 #[cfg(target_os = "macos")]
 impl ThinodaApp {
-    pub(crate) fn sync_native_menus(&mut self, ctx: &Context, _: &eframe::Frame) {
+    pub(crate) fn sync_native_menus(&mut self, ctx: &Context) {
         if self.native_menus.unavailable || self.launch.is_some() {
             return;
         }
@@ -440,7 +504,132 @@ mod tests {
         assert!(save.command);
         assert!(!save.control);
         assert_eq!(save.key, "S");
+        assert_eq!(
+            model.close_window_command,
+            snapshot.command_id(&Cmd::CloseWindow).unwrap()
+        );
+        let close = &model.shortcuts[&model.close_window_command];
+        assert!(close.command);
+        assert_eq!(close.key, "W");
         assert!(snapshot.actions.contains(&MenuAction::Command(Cmd::Quit)));
+    }
+
+    #[test]
+    fn close_window_defaults_and_identity_are_distinct_from_close_tab() {
+        use egui::{KeyboardShortcut, Modifiers, os::OperatingSystem};
+        assert_eq!(Cmd::CloseWindow.shortcut_id(), Some("window.close"));
+        let app = ThinodaApp::headless();
+        assert_eq!(app.shortcut_command("window.close"), Some(Cmd::CloseWindow));
+        let shortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+        for os in [
+            OperatingSystem::Mac,
+            OperatingSystem::Windows,
+            OperatingSystem::Nix,
+        ] {
+            let expected = if os == OperatingSystem::Mac {
+                Cmd::CloseWindow
+            } else {
+                Cmd::CloseTab(0)
+            };
+            assert_eq!(
+                ThinodaApp::global_shortcut_bindings_for_platform(0, os)
+                    .into_iter()
+                    .find(|(binding, _)| *binding == shortcut)
+                    .map(|(_, command)| command),
+                Some(expected.clone())
+            );
+            for mode in [CenterMode::Map, CenterMode::Outliner] {
+                assert_eq!(
+                    ThinodaApp::default_shortcut_command(mode, os, shortcut),
+                    Some(expected.clone())
+                );
+                for command in [Cmd::CloseTab(0), Cmd::CloseWindow] {
+                    assert_eq!(
+                        ThinodaApp::shortcut_binding_for_platform(&command, mode, os),
+                        (command == expected).then_some(shortcut)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn close_window_menu_routes_to_its_viewport_and_preserves_unsaved_work() {
+        use crate::app::CloseIntent;
+        use egui::{RawInput, ViewportCommand, ViewportEvent, ViewportId};
+        for child in [false, true] {
+            let ctx = Context::default();
+            ctx.set_embed_viewports(false);
+            let mut app = ThinodaApp::headless();
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.view.begin_edit(doc.doc.sheet(), root, false);
+            doc.view.set_editing_text("Unsaved window title");
+            let key = doc.key.clone();
+            let viewport = if child {
+                app.exec(&ctx, Cmd::MoveToNewWindow);
+                app.document_windows[&key]
+            } else {
+                ViewportId::ROOT
+            };
+            let count = app.docs.len();
+            app.current_viewport = viewport;
+            app.activate_document_window(viewport);
+            let snapshot = app.native_menu_snapshot(&ctx);
+            // AppKit dispatch may occur in the root frame for a captured child.
+            app.current_viewport = ViewportId::ROOT;
+            let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                if child {
+                    ui.ctx().show_viewport_deferred(
+                        viewport,
+                        egui::ViewportBuilder::default(),
+                        |_, _| {},
+                    );
+                }
+                app.dispatch_native_menu(ui.ctx(), &snapshot, id(&snapshot, Cmd::CloseWindow));
+            });
+            output.textures_delta.clear();
+            assert!(
+                output.viewport_output[&viewport]
+                    .commands
+                    .contains(&ViewportCommand::Close)
+            );
+            assert!(
+                app.pending_close.is_none(),
+                "Close Window must not request Quit"
+            );
+
+            let mut input = RawInput {
+                viewport_id: viewport,
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(viewport)
+                .or_default()
+                .events
+                .push(ViewportEvent::Close);
+            let mut output = ctx.run_ui(input, |ui| app.handle_close_request(ui.ctx()));
+            output.textures_delta.clear();
+            assert_eq!(app.docs.len(), count);
+            assert!(app.docs[0].is_dirty());
+            assert_eq!(
+                app.docs[0].doc.sheet().topic(root).unwrap().title,
+                "Unsaved window title"
+            );
+            if child {
+                assert!(!app.document_windows.contains_key(&key));
+                assert!(app.dialogs.close.is_none());
+                assert_eq!(app.visible_document_indices(ViewportId::ROOT), vec![0]);
+            } else {
+                assert_eq!(app.dialogs.close, Some(CloseIntent::Window));
+                assert!(
+                    output.viewport_output[&viewport]
+                        .commands
+                        .contains(&ViewportCommand::CancelClose)
+                );
+            }
+        }
     }
 
     fn id(snapshot: &MenuSnapshot, command: Cmd) -> u16 {
@@ -548,6 +737,95 @@ mod tests {
     }
 
     #[test]
+    fn native_menu_command_targets_its_captured_document_window() {
+        let ctx = Context::default();
+        let mut app = ThinodaApp::headless();
+        app.exec(&ctx, Cmd::New);
+        let root_key = app.doc().unwrap().key.clone();
+        app.exec(&ctx, Cmd::New);
+        let moved_key = app.doc().unwrap().key.clone();
+        app.exec(&ctx, Cmd::MoveToNewWindow);
+        let viewport = app.document_windows[&moved_key];
+        app.current_viewport = viewport;
+        app.activate_document_window(viewport);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        app.current_viewport = egui::ViewportId::ROOT;
+        app.active = app.docs.iter().position(|doc| doc.key == root_key).unwrap();
+        let document_count = app.docs.len();
+
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
+
+        let new_key = app.window_active_documents[&viewport].clone();
+        assert_eq!(app.docs.len(), document_count + 1);
+        assert_eq!(app.document_windows.get(&new_key), Some(&viewport));
+        assert_eq!(app.current_viewport, egui::ViewportId::ROOT);
+        assert_eq!(app.doc().unwrap().key, root_key);
+    }
+
+    #[test]
+    fn closed_child_menu_cannot_retarget_a_dirty_document_returned_to_root() {
+        use egui::{RawInput, ViewportEvent, ViewportId};
+        let ctx = Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = ThinodaApp::headless();
+        let root_key = app.doc().unwrap().key.clone();
+        let root_workbook = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&ctx, Cmd::New);
+        let child_key = app.doc().unwrap().key.clone();
+        let topic = app.doc().unwrap().doc.sheet().root;
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Child edit", |sheet| {
+                sheet.set_title(topic, "Keep this edit")
+            })
+            .unwrap();
+        let edited = app.doc().unwrap().doc.workbook().clone();
+        app.exec(&ctx, Cmd::MoveToNewWindow);
+        let viewport = app.document_windows[&child_key];
+        app.current_viewport = viewport;
+        app.activate_document_window(viewport);
+        let snapshot = app.native_menu_snapshot(&ctx);
+
+        let mut input = RawInput {
+            viewport_id: viewport,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(viewport)
+            .or_default()
+            .events
+            .push(ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.handle_close_request(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(!app.document_windows.contains_key(&child_key));
+        app.current_viewport = ViewportId::ROOT;
+        app.activate_document_window(ViewportId::ROOT);
+        let active = app.doc().map(|doc| doc.key.clone());
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
+        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.doc().map(|doc| doc.key.clone()), active);
+        assert_eq!(app.current_viewport, ViewportId::ROOT);
+        let root = app.docs.iter().find(|doc| doc.key == root_key).unwrap();
+        assert_eq!(root.doc.workbook(), &root_workbook);
+        let child = app
+            .docs
+            .iter_mut()
+            .find(|doc| doc.key == child_key)
+            .unwrap();
+        assert!(child.is_dirty());
+        assert_eq!(child.doc.workbook(), &edited);
+        child.doc.undo();
+        assert_eq!(child.doc.workbook(), &before);
+        child.doc.redo();
+        assert_eq!(child.doc.workbook(), &edited);
+        assert!(app.dialogs.close.is_none());
+        assert!(app.pending_close.is_none());
+    }
+
+    #[test]
     fn selection_history_sheet_and_view_changes_invalidate_native_targets() {
         let ctx = Context::default();
         for change in [
@@ -569,6 +847,71 @@ mod tests {
         let count = app.docs.len();
         app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
         assert_eq!(app.docs.len(), count);
+    }
+
+    #[test]
+    fn native_accelerators_and_labels_follow_the_selected_profile() {
+        let mut app = ThinodaApp::headless();
+        app.settings.keymaps.duplicate_active("Native").unwrap();
+        app.settings.keymaps.profiles[0].bindings.insert(
+            "file.save".into(),
+            vec![thinoda_platform::keymaps::KeyBinding {
+                key: "S".into(),
+                alt: true,
+                ..Default::default()
+            }],
+        );
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        let save = id(&snapshot, Cmd::Save);
+        let model = app.macos_menu_model(&snapshot).unwrap();
+        let accelerator = model.shortcuts.get(&save).unwrap();
+        assert_eq!(accelerator.key, "S");
+        assert!(accelerator.alt);
+        assert!(!accelerator.command);
+        for (command, key) in [
+            (Cmd::Settings, "J"),
+            (Cmd::CloseWindow, "K"),
+            (Cmd::Quit, "L"),
+        ] {
+            let command_id = command.shortcut_id().unwrap();
+            app.settings.keymaps.profiles[0].bindings.insert(
+                command_id.into(),
+                vec![thinoda_platform::keymaps::KeyBinding {
+                    key: key.into(),
+                    command: true,
+                    alt: true,
+                    ..Default::default()
+                }],
+            );
+            app.validate_keymaps(&app.settings.keymaps, ctx.os(), false)
+                .unwrap();
+            let snapshot = app.native_menu_snapshot(&ctx);
+            let model = app.macos_menu_model(&snapshot).unwrap();
+            let accelerator = &model.shortcuts[&id(&snapshot, command.clone())];
+            assert_eq!(accelerator.key, key);
+            assert!(accelerator.command && accelerator.alt);
+            app.settings.keymaps.profiles[0]
+                .bindings
+                .insert(command_id.into(), vec![]);
+            let snapshot = app.native_menu_snapshot(&ctx);
+            let model = app.macos_menu_model(&snapshot).unwrap();
+            assert!(
+                !model
+                    .shortcuts
+                    .contains_key(&id(&snapshot, command.clone()))
+            );
+            assert!(app.active_shortcut_hint(&ctx, &command).is_none());
+        }
+        app.settings.keymaps.profiles[0]
+            .bindings
+            .insert("file.save".into(), vec![]);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        let model = app.macos_menu_model(&snapshot).unwrap();
+        assert!(!model.shortcuts.contains_key(&save));
+        ctx.set_os(egui::os::OperatingSystem::Windows);
+        assert!(app.active_shortcut_hint(&ctx, &Cmd::Save).is_none());
     }
 
     #[test]

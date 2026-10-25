@@ -309,7 +309,7 @@ fn closing_during_import_keeps_unsaved_documents_and_cancel_returns_to_the_map()
         .push(egui::ViewportEvent::Close);
     h.step();
     assert!(h.state().app.launch_phase().is_some());
-    assert_eq!(h.state().app.dialogs.close, Some(CloseIntent::Quit));
+    assert_eq!(h.state().app.dialogs.close, Some(CloseIntent::Window));
     assert!(
         h.output()
             .viewport_output

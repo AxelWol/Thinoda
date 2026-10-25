@@ -99,6 +99,8 @@ impl ThinodaApp {
             ("Save All", Cmd::SaveAll),
             ("Import", Cmd::Import),
         ]));
+        #[cfg(not(target_arch = "wasm32"))]
+        file.push(item("Move to New Window", Cmd::MoveToNewWindow));
         file.push(submenu(
             "Export",
             EXPORT_MENU
@@ -112,7 +114,11 @@ impl ThinodaApp {
             file.push(item("Show in Folder", Cmd::ShowInFolder));
         }
         #[cfg(not(target_arch = "wasm32"))]
-        file.extend([MenuEntry::Separator, item("Quit", Cmd::Quit)]);
+        file.extend([
+            MenuEntry::Separator,
+            item("Close Window", Cmd::CloseWindow),
+            item("Quit", Cmd::Quit),
+        ]);
         file
     }
 
@@ -194,13 +200,17 @@ impl ThinodaApp {
                 ("Summary", Cmd::Canvas(Action::AddSummary)),
                 ("Boundary", Cmd::Canvas(Action::AddBoundary)),
                 ("To-Do", Cmd::Canvas(Action::ToggleTodo)),
+                ("Task Planning", Cmd::TaskPlanning),
+                ("Create Zone", Cmd::CreateZone),
                 ("Notes", Cmd::EditField(FocusField::Notes)),
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
             ])),
-            submenu("AI", crate::ai::AiCommand::ALL.into_iter().map(|action| {
-                item(action.label(), Cmd::Ai(action))
-            }).collect()),
+            submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
+                .chain(std::iter::once(MenuEntry::Separator))
+                .chain(crate::ai::AiCommand::ALL.into_iter().map(|action| {
+                    item(action.label(), Cmd::Ai(action))
+                })).collect()),
             submenu("Tools", vec![
                 item("Map Shot", Cmd::MapShot),
                 item("Create Masked Copy…", Cmd::MaskedCopy),
@@ -208,8 +218,15 @@ impl ThinodaApp {
                 MenuEntry::Caption(t(
                     "Appends complete sheets. Destination metadata is kept; external image references are not embedded.",
                 ).into()),
+                MenuEntry::Separator,
+                item("Work Calendar", Cmd::WorkCalendar),
+                item("Zones", Cmd::Zones),
             ]),
             submenu("View", items([
+                ("Gantt Chart", Cmd::Gantt),
+                ("Pitch", Cmd::Pitch),
+                ("Presenter View", Cmd::PitchPresenter),
+                ("Edit Presentation", Cmd::EditPresentation),
                 ("Previous Sheet", Cmd::PreviousSheet),
                 ("Next Sheet", Cmd::NextSheet),
                 ("Outliner", Cmd::ToggleOutliner),
