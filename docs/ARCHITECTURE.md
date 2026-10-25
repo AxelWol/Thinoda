@@ -376,14 +376,26 @@ graph TD
   task durations to 3,650 days, tasks to 5,000 and dependencies/calendar
   exceptions to 20,000/5,000. Native `.thinoda` archive version 2 stores this
   schema; version 1 remains readable. Workbook validation is also used when
-  recovering snapshots. This is the model/persistence foundation only; task
-  inspector, calendar Settings and Gantt window remain planned.
+  recovering snapshots. This is the model/persistence foundation; task inspector,
+  calendar Settings and the Gantt window remain planned.
 - **Scheduling API**: `LocalDate` implements `FromStr`/`Display` and exposes
   ordinal, signed day-distance and checked calendar-day addition, with `MIN`/
   `MAX` bounds. `Weekday::ALL` and `Weekday::name()` expose stable weekday
   choices. `WorkCalendar::working_duration(start, finish)` counts inclusive
   working days; `finish_date(start, duration)` and `add_working_days` keep
   schedule arithmetic in core for any future editor or timeline.
+- **Gantt export**: `thinoda_io::render_gantt(&Sheet)` returns deterministic
+  topic-ID-ordered rows, computed finish-to-start dates, full chart bounds and
+  SVG. `GanttDocument` also renders PNG/vector PDF or a paper-sized
+  `PrintDocument` via the shared raster, PDF and print placement helpers.
+  `export_gantt_csv` emits the same rows as UTF-8 CSV. Unscheduled tasks remain
+  visible; an empty task table and invalid schedules return explicit errors.
+  Exports are bounded to 6,000 inclusive timeline days, 5,000 task rows,
+  4 MiB of UTF-8 task labels, and 16 MiB each for SVG and CSV; PNG adds 16,384
+  pixels per side and 32 million total pixels. Print uses existing paper, DPI
+  and page bounds.
+  This IO API is an export/print prerequisite, not the planned Gantt window or
+  complete F3 integration.
 - **Localization**: app chrome uses the embedded English/German and
   ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
   `locales.txt` and `pt-BR.txt`. English strings are stable keys; the

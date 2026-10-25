@@ -145,11 +145,18 @@ pub fn render_print(
             ..Default::default()
         },
     )?;
+    render_print_svg(&source, settings)
+}
+
+pub(crate) fn render_print_svg(
+    source: &str,
+    settings: PrintSettings,
+) -> Result<PrintDocument, IoError> {
     let options = resvg::usvg::Options {
         fontdb: crate::fonts::database(),
         ..Default::default()
     };
-    let tree = resvg::usvg::Tree::from_str(&source, &options)
+    let tree = resvg::usvg::Tree::from_str(source, &options)
         .map_err(|e| IoError::Invalid(format!("SVG parse: {e}")))?;
     let source_size = tree.size();
     let [x, y, w, _] = settings.placement([source_size.width(), source_size.height()])?;

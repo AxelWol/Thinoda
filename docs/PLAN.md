@@ -235,8 +235,17 @@ finish-to-start propagation, task/dependency validation and undoable document
 edit helpers. Native `.thinoda` version 2 persists the data; legacy version 1
 and simple To-do checkboxes remain compatible. Copy, duplicate, move and delete
 preserve scheduled task data without dangling dependency IDs. This closes only
-the model/persistence prerequisite: inspector editing, calendar Settings,
-Gantt views/windows and export/print are still open under F3.
+the model/persistence prerequisite. Inspector editing, calendar Settings and
+the app Gantt views/windows remain open under F3; IO export/print progress
+follows.
+
+**F3 IO export progress (2026-10-25):** `thinoda-io` now exposes bounded Gantt
+SVG, PNG, vector PDF, print-document and UTF-8 CSV rendering from a validated
+sheet schedule. Rows retain unscheduled tasks and use stable topic-ID ordering;
+chart bounds cover all computed task dates. Raster/PDF and print placement reuse
+existing IO helpers. This is the export/print prerequisite only; app inspector,
+calendar Settings, native Gantt window, synchronized browser alternate and full
+F3 acceptance remain open.
 
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
