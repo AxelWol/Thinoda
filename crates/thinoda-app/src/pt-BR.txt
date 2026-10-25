@@ -1,4 +1,29 @@
 Window|Janela
+Pitch|Pitch
+Edit Presentation|Editar apresentação
+Presenter View|Modo apresentador
+Generate Slides|Gerar slides
+Add Selected Branch or Zone|Adicionar ramo ou zona selecionados
+Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation.|Gerar substitui o rascunho dos slides. Aplicar salva uma alteração reversível; Cancelar mantém a apresentação salva.
+No slides yet. Generate branch and Zone slides, or add the selected branch.|Ainda não há slides. Gere slides de ramos e zonas ou adicione o ramo selecionado.
+Slide title|Título do slide
+Fit Slide to Content|Ajustar slide ao conteúdo
+Remove Slide|Remover slide
+Export PDF|Exportar PDF
+Export Slide Images|Exportar imagens dos slides
+Slide preview|Prévia do slide
+Slide preview failed|Falha na prévia do slide
+Retry|Tentar novamente
+Rendering slide…|Renderizando slide…
+The document changed. Restart Pitch to show the current map.|O documento mudou. Reinicie o Pitch para mostrar o mapa atual.
+Previous Slide|Slide anterior
+Next Slide|Próximo slide
+Restore Player|Restaurar reprodutor
+Expand Player|Expandir reprodutor
+Leave Fullscreen|Sair da tela cheia
+Fullscreen|Tela cheia
+Exit Pitch|Sair do Pitch
+Right / Space: next · Left: previous · Escape: exit|Direita / Espaço: próximo · Esquerda: anterior · Escape: sair
 Zone|Zona
 Zones|Zonas
 Create Zone|Criar zona

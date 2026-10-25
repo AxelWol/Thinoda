@@ -98,7 +98,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         appearance.dark appearance.light appearance.system
         arrange.bottom arrange.distribute-horizontal arrange.distribute-vertical
         arrange.horizontal-center arrange.left arrange.right arrange.top arrange.vertical-center
-        edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.redo edit.settings edit.undo edit.zone
+        edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
         export.csv export.excel export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
@@ -115,7 +115,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         topic.insert-child topic.insert-floating topic.insert-parent topic.insert-sibling topic.insert-sibling-before
         topic.move-down topic.move-up topic.open-link topic.outdent topic.sort-ascending topic.sort-descending
         topic.toggle-collapse topic.toggle-collapse-all
-        view.fit view.format-panel view.gantt view.next-document view.outliner view.status-bar view.symbols-panel
+        view.fit view.format-panel view.gantt view.next-document view.outliner view.pitch view.pitch-presenter view.status-bar view.symbols-panel
         view.zen view.zoom-in view.zoom-out view.zoom-reset
         window.close window.move-to-new-window
     ".split_whitespace().collect::<std::collections::BTreeSet<_>>();

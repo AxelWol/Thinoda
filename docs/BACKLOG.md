@@ -25,8 +25,11 @@ document windows share preferences rather than independent snapshots. Native
 macOS/Linux and browser interaction acceptance remain open, not inferred from
 headless checks. F3 now has task/calendar drafts, shared-document Gantt
 move/resize/progress editing, dependencies, exports and print integration;
-native/browser interaction acceptance remains open in PLAN. F4-F6 and the
-deferred stability work are not complete. Older progress entries below describe
+native/browser interaction acceptance remains open in PLAN. F4 now includes
+persisted Zone editing/gestures, staged slide generation/frame/order editing,
+read-only Pitch/Presenter View, native fullscreen/browser expansion and shared
+PDF/ordered PNG exports. Its headless evidence does not close native/browser
+host gates. F5-F6 and the deferred stability work are not complete. Older progress entries below describe
 their historical state rather than overriding this update.
 
 The Fill fix and phase plan ship together: full local workspace coverage passes

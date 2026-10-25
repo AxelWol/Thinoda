@@ -410,6 +410,36 @@ graph TD
   closing Gantt returns an open print preview to the root without losing the
   rendered source. Cross-platform native visual/printing acceptance remains
   separate from headless ownership and rendering tests.
+- **Zones and presentation state**: each sheet persists named `Zone` frames and
+  unique floating-root membership, plus ordered `PresentationSlide` records.
+  `PresentationSource` refers to a topic branch or Zone; `SlideFrame` is a
+  bounded `Rect` with explicit origin and size. Limits are 256 Zones, 4,096
+  memberships and 512 slides; Zone size is at least 100 by 100. Document
+  wrappers make frame/membership/order changes undoable. Zone movement translates
+  member floating roots; explicit Zone removal preserves topics and removes
+  its Zone slides. Root deletion/reparenting cleans memberships and references;
+  empty Zones and their slides are removed. Shared layout bounds include Zone
+  frames, so Fit and full-map output account for frames outside topic bounds.
+- **Presentation rendering**: `generate_presentation` creates branch slides in
+  map order followed by Zone slides in Zone order. Single-slide SVG/PNG preview,
+  multipage PDF and ordered PNG ZIP use the same saved frame crop. The renderer
+  draws complete sheet relationships before SVG viewBox clipping, including
+  links crossing Zone/slide edges. Output scale is finite in 0.1-8; raster
+  bounds are 16,384 pixels per side, 16 million pixels per slide and 32 million
+  total pixels per archive. PDF/ZIP output is capped at 128 MiB.
+- **Zone/Pitch app ownership**: Zone and presentation editors capture document
+  key, sheet root/index, revision and viewport, with explicit Apply/Cancel.
+  Canvas Zone move/resize is staged until safe pointer release. Presentation
+  preview holds at most one worker request and accepts only its current
+  generation/index/theme result. Pitch holds an immutable sheet snapshot and
+  layout, never another `OpenDoc`, and closes on source revision/identity change.
+  Native player focus uses the shared keymap/native-menu resolver with a
+  restricted command surface; local playback keys do not enter map shortcuts.
+  Native fullscreen affects the player viewport only; browser expansion remains
+  an in-app window. Presenter context uses the snapshot layout plus the active
+  saved frame. Output workers capture the current draft/player source, write
+  atomically, and use the existing desktop/browser delivery path. Host visual
+  acceptance remains separate from headless rendering and ownership evidence.
 - **Localization**: app chrome uses the embedded English/German and
   ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
   `locales.txt` and `pt-BR.txt`. English strings are stable keys; the

@@ -222,6 +222,9 @@ impl ThinodaApp {
             ]),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),
+                ("Pitch", Cmd::Pitch),
+                ("Presenter View", Cmd::PitchPresenter),
+                ("Edit Presentation", Cmd::EditPresentation),
                 ("Previous Sheet", Cmd::PreviousSheet),
                 ("Next Sheet", Cmd::NextSheet),
                 ("Outliner", Cmd::ToggleOutliner),

@@ -72,6 +72,7 @@ features work differently:
 | Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
+| Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
 
 ## Zones
 
@@ -89,6 +90,34 @@ in the context menu or Style inspector for precise position and size.
 **Tools > Zones** lists Zones in order with rename/edit, Move Up/Down and Remove
 controls. Removing a Zone preserves its topics. Overlapping frames are allowed;
 the last Zone in the order is on top.
+
+## Pitch and slide exports
+
+Choose **View > Edit Presentation**. **Generate Slides** replaces only the
+current draft with central-topic child branches in map order, then Zones in Zone
+order. Alternatively, select a branch or Zone before opening the editor and use
+**Add Selected Branch or Zone**. Edit slide titles, reorder or remove slides,
+and adjust X/Y/width/height; **Fit Slide to Content** restores source bounds.
+The preview uses the same saved crop as export. **Apply** saves all changes as
+one Undo entry; **Cancel** leaves the saved presentation unchanged.
+
+Choose **View > Pitch** to play the saved presentation, or **Presenter View** to
+show the slide alongside its map and highlighted crop. If no slides exist, Pitch
+opens the editor first; apply the slides and choose Pitch again. Use the
+**Previous Slide** / **Next Slide** buttons, Left/Right, Page Up/Down or Space
+(next), and **Exit Pitch** or Escape to exit. Native fullscreen is scoped to the
+player window (also F11); the browser's **Expand Player** remains inside its tab.
+Closing playback never closes the map. Playback is read-only and closes with an
+explanation if its source changes, rather than showing a disconnected revision.
+Pitch/editor/presenter entry commands can be rebound in keyboard settings;
+playback arrows are local, not global map shortcuts.
+
+**Export PDF** produces a multipage vector presentation. **Export Slide Images**
+produces a ZIP with ordered `slides/slide-001.png` files. The editor exports its
+current draft without applying it; the player exports its captured saved
+presentation. Neither changes the map. The browser downloads these outputs;
+native builds use a save dialog. Oversized frames/outputs fail visibly rather
+than being truncated. PPTX and presentation video are not provided.
 
 ## Task planning and Gantt
 

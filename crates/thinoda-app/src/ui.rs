@@ -668,6 +668,7 @@ impl ThinodaApp {
                     if self.palette.open
                         || self.planning.editing()
                         || self.zones.editing()
+                        || self.pitch.blocks_map()
                         || self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
@@ -747,6 +748,7 @@ impl ThinodaApp {
                 if self.palette.open
                     || self.planning.editing()
                     || self.zones.editing()
+                    || self.pitch.blocks_map()
                     || self.label_editor.is_some()
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
@@ -822,6 +824,7 @@ impl ThinodaApp {
         self.planning_dialog(&ctx);
         self.zones_window(&ctx);
         self.zone_dialog(&ctx);
+        self.presentation_dialog(&ctx);
         self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
@@ -833,6 +836,7 @@ impl ThinodaApp {
         if viewport == egui::ViewportId::ROOT && !self.drawing_document_window {
             self.draw_document_windows(&ctx);
             self.gantt_window(&ctx);
+            self.pitch_window(&ctx);
         } else {
             let returned_home = viewport != egui::ViewportId::ROOT
                 && self.active == self.docs.len()
@@ -936,6 +940,7 @@ impl ThinodaApp {
         if self.dialogs.masked_copy
             || self.planning.editing()
             || self.zones.editing()
+            || self.pitch.blocks_map()
             || self.printing.active()
             || self.map_shot.active()
             || self.label_editor.is_some()
@@ -1302,6 +1307,7 @@ impl ThinodaApp {
         if self.palette.open
             || self.planning.editing()
             || self.zones.editing()
+            || self.pitch.blocks_map()
             || self.map_shot.active()
             || self.printing.active()
             || self.label_editor.is_some()

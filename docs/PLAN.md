@@ -274,8 +274,8 @@ tests and 25 documentation contracts pass; scoped native all-target and WASM
 app-library strict clippy pass. The F3 implementation can proceed into F4
 without treating the outstanding host gates as completed.
 
-**F4 implementation in progress:** persisted Zone/presentation domain state is
-integrated. Zones can be created from selected floating roots, edited through
+**F4 implementation:** persisted Zone/presentation domain state is integrated.
+Zones can be created from selected floating roots, edited through
 revision-owned Apply/Cancel drafts, reordered/removed in Tools > Zones, and
 selected/deleted on the canvas. Frame-border dragging moves the Zone and its
 content together; the lower-right handle resizes without moving topics. Gestures
@@ -284,8 +284,36 @@ unsafe touch, disabled canvas, changed document/camera/selection, or outside
 release. Zone removal preserves topics. Draft numeric controls and IME use the
 existing guarded helpers, and child-window drafts return to the root. Local
 canvas/editor, menu deletion/save-reopen, translations and command-identity
-coverage is present. Pitch editing/playback/output integration and native visual
-acceptance remain unfinished; this is not an F4 completion claim.
+coverage is present.
+
+View > Edit Presentation stages branch/Zone generation, selected-source addition,
+slide titles, order, removal and precise saved-frame edits. Apply is one Undo
+transaction; stale/invalid drafts never partially apply. Preview workers are
+single-flight and generation-tagged, so older results cannot replace the current
+slide. Preview, playback, multipage vector PDF and ordered PNG ZIP all use the
+same bounded IO slide renderer and saved crop. Exports capture the current
+draft/player snapshot and write atomically without mutating maps.
+
+Pitch opens a read-only native auxiliary viewport or an embedded browser player,
+with explicit previous/next/exit controls, scoped arrows/Space/Page keys and
+native fullscreen. Presenter View shows the current slide alongside a map with
+the active crop highlighted; narrow windows stack these regions. Native
+Close Window targets only the player and uses the active keymap. Browser Expand
+Player stays inside its tab, not OS fullscreen. A source revision change closes
+stale playback with an explanation; closing playback never closes its document.
+Entry/editor/presenter commands have stable, rebindable identities; playback
+arrows are not registered as global map shortcuts.
+
+Local headless evidence covers draft transactionality, reachable small-window
+Cancel, IME, actual order/apply and pointer/key playback controls, player-only
+close/fullscreen command targets, decoded preview aspect ratio/freshness and both
+export formats. Local verification passes 241 app/canvas unit tests, 74
+menu/UI/command-identity integration tests, 25 documentation contracts and scoped
+native all-target/WASM app-library strict clippy. The integrated core/IO/platform
+prerequisite reports 271 passing tests. Native visual/window-manager acceptance and browser
+download/fullscreen-alternative acceptance remain F6 host gates, not inferred
+passes. F5 implementation may proceed; F6 and the deferred stability work remain
+unfinished.
 
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows

@@ -61,6 +61,9 @@ pub enum Cmd {
     CreateZone,
     EditZone,
     Zones,
+    Pitch,
+    PitchPresenter,
+    EditPresentation,
     WorkCalendar,
     Gantt,
     Export(Format),
@@ -241,6 +244,7 @@ pub struct ThinodaApp {
     pub(crate) planning: crate::planning::PlanningState,
     pub(crate) gantt: crate::gantt::GanttState,
     pub(crate) zones: crate::zones::ZoneState,
+    pub(crate) pitch: crate::pitch::PitchState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
@@ -332,6 +336,7 @@ impl ThinodaApp {
             planning: Default::default(),
             gantt: Default::default(),
             zones: Default::default(),
+            pitch: Default::default(),
             label_editor: None,
             fonts: Default::default(),
             font_source: None,
@@ -754,6 +759,9 @@ impl ThinodaApp {
                 }
             }
             Cmd::Zones => self.open_zones(ctx),
+            Cmd::Pitch => self.open_pitch(ctx, false),
+            Cmd::PitchPresenter => self.open_pitch(ctx, true),
+            Cmd::EditPresentation => self.begin_presentation_editor(ctx),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
@@ -1055,6 +1063,11 @@ impl ThinodaApp {
     }
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
+        if self.is_pitch_viewport()
+            && !matches!(cmd, Cmd::Save | Cmd::SaveAll | Cmd::CloseWindow | Cmd::Quit)
+        {
+            return false;
+        }
         if self.is_gantt_viewport()
             && !matches!(
                 cmd,
@@ -1098,9 +1111,12 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
-            Cmd::WorkCalendar | Cmd::Gantt | Cmd::Zones => {
-                self.doc().is_some() && !self.any_modal_open()
-            }
+            Cmd::WorkCalendar
+            | Cmd::Gantt
+            | Cmd::Zones
+            | Cmd::Pitch
+            | Cmd::PitchPresenter
+            | Cmd::EditPresentation => self.doc().is_some() && !self.any_modal_open(),
             Cmd::CreateZone => {
                 !self.any_modal_open()
                     && self.doc().is_some_and(|doc| {
@@ -1886,6 +1902,7 @@ impl ThinodaApp {
                 }
                 self.return_planning_viewport(viewport);
                 self.return_zone_viewport(viewport);
+                self.return_pitch_viewport(viewport);
                 self.return_print_viewport(viewport);
                 self.return_document_window_to_root(viewport);
                 ctx.request_repaint();
@@ -2426,6 +2443,9 @@ impl ThinodaApp {
             (Cmd::CreateZone, "Create Zone", "", "Insert"),
             (Cmd::EditZone, "Edit Zone", "", "Edit"),
             (Cmd::Zones, "Zones", "", "Tools"),
+            (Cmd::Pitch, "Pitch", "", "View"),
+            (Cmd::PitchPresenter, "Presenter View", "", "View"),
+            (Cmd::EditPresentation, "Edit Presentation", "", "View"),
             (Cmd::WorkCalendar, "Work Calendar", "", "Tools"),
             (Cmd::Gantt, "Gantt Chart", "", "View"),
             (Cmd::Canvas(Action::InsertChild), "Subtopic", "", "Insert"),
