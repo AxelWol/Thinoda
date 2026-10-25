@@ -4,7 +4,9 @@
 //! server, vLLM, OpenAI, Azure OpenAI via a compatible endpoint) plus the mind-map tasks
 //! and a tolerant parser for the returned outlines. Requests run on background threads
 //! via [`AiJob`] or [`AiStreamJob`] so the UI never blocks.
+//! Explicit-model [`embeddings`] batches use the cancellable [`AiEmbeddingJob`].
 
+pub mod embeddings;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mock;
@@ -25,6 +27,7 @@ pub use web::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub use embeddings::AiEmbeddingJob;
 pub use outline::{Outline, OutlineNode, parse_outline, strip_reasoning};
 pub use stream::{AiStreamEvent, AiStreamJob};
 pub use tasks::{AiTask, OutputKind, TopicContext};

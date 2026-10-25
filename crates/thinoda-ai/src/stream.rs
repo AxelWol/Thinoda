@@ -56,13 +56,13 @@ struct WebTimeout {
     _callback: wasm_bindgen::closure::Closure<dyn FnMut()>,
 }
 
-struct Shared<T> {
+pub(crate) struct Shared<T> {
     cancelled: AtomicBool,
     state: Mutex<State<T>>,
 }
 
 impl<T> Shared<T> {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             cancelled: AtomicBool::new(false),
             state: Mutex::new(State {
@@ -123,7 +123,7 @@ impl<T> Shared<T> {
         state.events.push_back(AiStreamEvent::Finished(result));
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
 
@@ -153,6 +153,17 @@ impl<T> Shared<T> {
         state.abort = None;
         if let Some(timeout) = state.timeout.take() {
             timeout.window.clear_timeout_with_handle(timeout.id);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn abort_web_request(&self) {
+        let mut state = self.lock();
+        if let Some(abort) = state.abort.take() {
+            abort.abort();
+        }
+        if let Some((window, id, _)) = state.timeout.take() {
+            window.clear_timeout_with_handle(id);
         }
     }
 
@@ -253,7 +264,7 @@ impl AiStreamJob<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_job<T, F, Fut>(cfg: AiConfig, work: F) -> AiStreamJob<T>
+pub(crate) fn spawn_job<T, F, Fut>(cfg: AiConfig, work: F) -> AiStreamJob<T>
 where
     T: Send + 'static,
     F: FnOnce(AiConfig, Arc<Shared<T>>) -> Fut + Send + 'static,
@@ -289,7 +300,7 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-fn spawn_job<T: 'static, F, Fut>(cfg: AiConfig, work: F) -> AiStreamJob<T>
+pub(crate) fn spawn_job<T: 'static, F, Fut>(cfg: AiConfig, work: F) -> AiStreamJob<T>
 where
     F: FnOnce(AiConfig, Arc<Shared<T>>) -> Fut + 'static,
     Fut: std::future::Future<Output = Result<T>> + 'static,
@@ -472,7 +483,7 @@ impl SseDecoder {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn native_client(cfg: &AiConfig) -> Result<reqwest::Client> {
+pub(crate) fn native_client(cfg: &AiConfig) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(cfg.timeout_secs.max(1)))
@@ -481,7 +492,10 @@ fn native_client(cfg: &AiConfig) -> Result<reqwest::Client> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn authorize(request: reqwest::RequestBuilder, cfg: &AiConfig) -> reqwest::RequestBuilder {
+pub(crate) fn authorize(
+    request: reqwest::RequestBuilder,
+    cfg: &AiConfig,
+) -> reqwest::RequestBuilder {
     if let Some(key) = configured_key(cfg) {
         request.bearer_auth(key)
     } else {
@@ -597,6 +611,24 @@ async fn web_response(
     body: Option<&Value>,
     shared: &Shared<impl Sized>,
 ) -> Result<web_sys::Response> {
+    let response = web_response_raw(cfg, path, method, body, shared).await?;
+    if !response.ok() {
+        return Err(AiError::Status(
+            response.status(),
+            "stream request failed".into(),
+        ));
+    }
+    Ok(response)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn web_response_raw(
+    cfg: &AiConfig,
+    path: &str,
+    method: &str,
+    body: Option<&Value>,
+    shared: &Shared<impl Sized>,
+) -> Result<web_sys::Response> {
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::JsFuture;
 
@@ -652,17 +684,11 @@ async fn web_response(
         })?
         .dyn_into::<web_sys::Response>()
         .map_err(|_| stream_error("invalid stream response"))?;
-    if !response.ok() {
-        return Err(AiError::Status(
-            response.status(),
-            "stream request failed".into(),
-        ));
-    }
     Ok(response)
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn read_web_body<F>(
+pub(crate) async fn read_web_body<F>(
     response: web_sys::Response,
     shared: &Shared<impl Sized>,
     mut on_chunk: F,
@@ -701,11 +727,14 @@ where
         }
         let value = js_sys::Reflect::get(&result, &JsValue::from_str("value"))
             .map_err(|_| stream_error("invalid stream chunk"))?;
-        let chunk = js_sys::Uint8Array::new(&value).to_vec();
-        received = received.saturating_add(chunk.len());
+        let array = value
+            .dyn_into::<js_sys::Uint8Array>()
+            .map_err(|_| stream_error("stream chunk is not a byte array"))?;
+        received = received.saturating_add(array.length() as usize);
         if received > MAX_RESPONSE_BYTES {
             return Err(stream_error("stream response size limit exceeded"));
         }
+        let chunk = array.to_vec();
         if on_chunk(&chunk)? {
             break;
         }
