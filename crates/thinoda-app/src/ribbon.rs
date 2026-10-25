@@ -58,7 +58,16 @@ enum GroupDetail {
 
 const LABELED_COLUMN_WIDTH: f32 = 204.0;
 
-fn group_width(detail: GroupDetail, count: usize) -> f32 {
+fn group_width(detail: GroupDetail, count: usize, compact: bool) -> f32 {
+    if compact {
+        return 112.0
+            + count.saturating_sub(1).div_ceil(2) as f32
+                * match detail {
+                    GroupDetail::Full => 188.0,
+                    GroupDetail::Compact => 38.0,
+                    GroupDetail::Menu => 0.0,
+                };
+    }
     match detail {
         GroupDetail::Full => 120.0 + count.saturating_sub(1).div_ceil(2) as f32 * 212.0,
         GroupDetail::Compact => 120.0 + count.saturating_sub(1).div_ceil(2) as f32 * 52.0,
@@ -73,13 +82,15 @@ fn control_count(entries: &[&MenuEntry]) -> usize {
         .count()
 }
 
-fn group_details(counts: &[usize], available: f32) -> Vec<GroupDetail> {
+fn group_details(counts: &[usize], available: f32, compact: bool) -> Vec<GroupDetail> {
     let mut details = vec![GroupDetail::Full; counts.len()];
     let width = |details: &[GroupDetail]| {
         details
             .iter()
             .zip(counts)
-            .map(|(detail, count)| group_width(*detail, *count) + 24.0)
+            .map(|(detail, count)| {
+                group_width(*detail, *count, compact) + if compact { 16.0 } else { 24.0 }
+            })
             .sum::<f32>()
     };
     for next in [GroupDetail::Compact, GroupDetail::Menu] {
@@ -274,6 +285,11 @@ impl ThinodaApp {
         help: &str,
         command: &mut Option<Cmd>,
     ) {
+        let detail = if self.settings.compact_ribbon {
+            detail.compact()
+        } else {
+            detail
+        };
         match entry {
             MenuEntry::Command {
                 label,
@@ -359,12 +375,19 @@ impl ThinodaApp {
             .copied()
             .filter(|entry| !matches!(entry, MenuEntry::Caption(_)))
             .collect();
+        let compact = self.settings.compact_ribbon;
+        let large = if compact {
+            Detail::CompactLarge
+        } else {
+            Detail::Large
+        };
+        let body_height = if compact { 72.0 } else { 96.0 };
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            let width = group_width(detail, controls.len());
+            ui.spacing_mut().item_spacing = egui::Vec2::splat(if compact { 4.0 } else { 8.0 });
+            let width = group_width(detail, controls.len(), compact);
             ui.set_width(width);
-            ui.allocate_ui(egui::vec2(width, 96.0), |ui| {
-                ui.set_min_height(96.0);
+            ui.allocate_ui(egui::vec2(width, body_height), |ui| {
+                ui.set_min_height(body_height);
                 if detail == GroupDetail::Menu {
                     let glyph = controls
                         .first()
@@ -373,7 +396,7 @@ impl ThinodaApp {
                         ui,
                         glyph,
                         &format!("{label}…"),
-                        Detail::Large,
+                        large,
                         if help.is_empty() { None } else { Some(&help) },
                     );
                     let entries: Vec<_> = controls.iter().map(|entry| (*entry).clone()).collect();
@@ -386,9 +409,9 @@ impl ThinodaApp {
                         for chunk in controls.get(1..).unwrap_or_default().chunks(2) {
                             ui.vertical(|ui| {
                                 ui.set_width(if detail == GroupDetail::Full {
-                                    LABELED_COLUMN_WIDTH
+                                    if compact { 184.0 } else { LABELED_COLUMN_WIDTH }
                                 } else {
-                                    44.0
+                                    if compact { 34.0 } else { 44.0 }
                                 });
                                 for entry in chunk {
                                     self.ribbon_entry(
@@ -410,7 +433,7 @@ impl ThinodaApp {
                 }
             });
             let footer = ui.add_sized(
-                [width, 20.0],
+                [width, if compact { 16.0 } else { 20.0 }],
                 egui::Label::new(
                     egui::RichText::new(label)
                         .size(11.0)
@@ -508,6 +531,13 @@ impl ThinodaApp {
             self.ribbon.temporary = self.settings.ribbon_collapsed;
         }
         let room = ctx.content_rect().height() >= 420.0;
+        let compact = self.settings.compact_ribbon;
+        let header_height = if compact { 34.0 } else { 44.0 };
+        let icon_detail = if compact {
+            Detail::CompactIcon
+        } else {
+            Detail::Icon
+        };
         let expanded = room && (!self.settings.ribbon_collapsed || self.ribbon.temporary);
         let mut command: Option<Cmd> = None;
         if !room {
@@ -528,7 +558,11 @@ impl ThinodaApp {
             return;
         }
         let panel = egui::Panel::top("thinoda_ribbon")
-            .exact_size(if expanded { 200.0 } else { 60.0 })
+            .exact_size(if expanded {
+                if compact { 160.0 } else { 200.0 }
+            } else {
+                header_height + 16.0
+            })
             .frame(
                 egui::Frame::new()
                     .fill(Palette::of(&ctx).surface)
@@ -543,7 +577,7 @@ impl ThinodaApp {
                             t("Collapse Ribbon")
                         };
                         let (_, toggle) =
-                            command_button(ui, Glyph::Chevron, label, Detail::Icon, expanded, None);
+                            command_button(ui, Glyph::Chevron, label, icon_detail, expanded, None);
                         if toggle {
                             self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
                             self.ribbon.temporary = false;
@@ -554,11 +588,11 @@ impl ThinodaApp {
                             .scroll_bar_visibility(
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             )
-                            .max_height(44.0)
-                            .max_width((ui.available_width() - 52.0).max(0.0))
+                            .max_height(header_height)
+                            .max_width((ui.available_width() - header_height - 8.0).max(0.0))
                             .show(ui, |ui| {
                                 ui.horizontal_top(|ui| {
-                                    ui.spacing_mut().interact_size.y = 44.0;
+                                    ui.spacing_mut().interact_size.y = header_height;
                                     for (index, group) in groups.iter().enumerate() {
                                         let MenuEntry::Submenu { label, .. } = group else {
                                             continue;
@@ -576,7 +610,10 @@ impl ThinodaApp {
                                             color,
                                         );
                                         let (rect, response) = ui.allocate_exact_size(
-                                            egui::vec2(galley.size().x + 16.0, 44.0),
+                                            egui::vec2(
+                                                galley.size().x + if compact { 12.0 } else { 16.0 },
+                                                header_height,
+                                            ),
                                             egui::Sense::click(),
                                         );
                                         response.widget_info(|| {
@@ -652,7 +689,7 @@ impl ThinodaApp {
                             t("Pin Ribbon")
                         };
                         let (_, pin) =
-                            command_button(ui, Glyph::Pin, label, Detail::Icon, pinned, None);
+                            command_button(ui, Glyph::Pin, label, icon_detail, pinned, None);
                         if pin {
                             self.settings.ribbon_collapsed = pinned;
                             self.ribbon.temporary = pinned && expanded;
@@ -669,19 +706,23 @@ impl ThinodaApp {
                                 .iter()
                                 .map(|(_, items)| control_count(items))
                                 .collect();
-                            let details = group_details(&counts, ui.available_width());
+                            let details = group_details(&counts, ui.available_width(), compact);
+                            let group_slot = if compact { 128.0 } else { 144.0 };
                             let total: f32 = details
                                 .iter()
                                 .zip(&counts)
-                                .map(|(detail, count)| group_width(*detail, *count) + 24.0)
+                                .map(|(detail, count)| {
+                                    group_width(*detail, *count, compact)
+                                        + if compact { 16.0 } else { 24.0 }
+                                })
                                 .sum();
                             let visible = if total <= ui.available_width() {
                                 sections.len()
                             } else {
-                                ((ui.available_width() - 144.0).max(0.0) / 144.0) as usize
+                                ((ui.available_width() - group_slot).max(0.0) / group_slot) as usize
                             };
                             ui.horizontal_top(|ui| {
-                                ui.spacing_mut().item_spacing.x = 12.0;
+                                ui.spacing_mut().item_spacing.x = if compact { 8.0 } else { 12.0 };
                                 for (index, ((label, items), detail)) in
                                     sections.iter().zip(&details).take(visible).enumerate()
                                 {
@@ -713,7 +754,11 @@ impl ThinodaApp {
                                         ui,
                                         Glyph::Chevron,
                                         t("Ribbon"),
-                                        Detail::Large,
+                                        if compact {
+                                            Detail::CompactLarge
+                                        } else {
+                                            Detail::Large
+                                        },
                                         None,
                                     );
                                     self.ribbon_popup(

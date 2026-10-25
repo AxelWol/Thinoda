@@ -281,6 +281,15 @@ pinned ribbons remain open after commands; unpinned previews dismiss after use.
 Regression coverage checks unclipped capsule borders, saved pin state and both
 post-command behaviors. This is release preparation, not completion of F1-F6.
 
+**Optional compact ribbon (2026-10-25):** Settings > Editor adds a saved
+Compact Ribbon switch, default off with unchanged standard layout. Opting in
+reduces the expanded panel from 200 to 160 logical points, uses 72-point primary
+buttons, 34-point secondary/tab targets, smaller icons, tighter spacing and
+recalculated widths/overflow. It does not remove tabs, commands, tooltips or group
+labels, change Outline/QAT density, or alter pinning/command behavior. Coverage
+includes all eight tabs, both densities, translated/theme/scale combinations,
+rendered fixtures and real settings toggling/save/reload.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes

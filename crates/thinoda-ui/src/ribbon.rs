@@ -352,14 +352,35 @@ pub enum Detail {
     Large,
     Labeled,
     Icon,
+    CompactLarge,
+    CompactLabeled,
+    CompactIcon,
 }
 
 impl Detail {
+    pub fn compact(self) -> Self {
+        match self {
+            Self::Large | Self::CompactLarge => Self::CompactLarge,
+            Self::Labeled | Self::CompactLabeled => Self::CompactLabeled,
+            Self::Icon | Self::CompactIcon => Self::CompactIcon,
+        }
+    }
+
+    fn is_compact(self) -> bool {
+        matches!(
+            self,
+            Self::CompactLarge | Self::CompactLabeled | Self::CompactIcon
+        )
+    }
+
     fn icon_size(self) -> f32 {
         match self {
             Self::Large => 32.0,
             Self::Labeled => 24.0,
             Self::Icon => 16.0,
+            Self::CompactLarge => 24.0,
+            Self::CompactLabeled => 20.0,
+            Self::CompactIcon => 16.0,
         }
     }
 }
@@ -850,6 +871,9 @@ fn button(
         Detail::Large => vec2(112.0, 96.0),
         Detail::Labeled => vec2(ui.available_width().clamp(112.0, 260.0), 44.0),
         Detail::Icon => vec2(44.0, 44.0),
+        Detail::CompactLarge => vec2(104.0, 72.0),
+        Detail::CompactLabeled => vec2(ui.available_width().clamp(104.0, 240.0), 34.0),
+        Detail::CompactIcon => vec2(34.0, 34.0),
     };
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| {
@@ -883,9 +907,15 @@ fn button(
             Detail::Large => pos2(rect.center().x, rect.top() + 26.0),
             Detail::Labeled => pos2(rect.left() + 20.0, rect.center().y),
             Detail::Icon => rect.center(),
+            Detail::CompactLarge => pos2(rect.center().x, rect.top() + 18.0),
+            Detail::CompactLabeled => pos2(rect.left() + 16.0, rect.center().y),
+            Detail::CompactIcon => rect.center(),
         };
         let icon_color = if ui.is_enabled() {
-            icon.tone.color(palette.dark, detail == Detail::Large)
+            icon.tone.color(
+                palette.dark,
+                matches!(detail, Detail::Large | Detail::CompactLarge),
+            )
         } else {
             ui.visuals().weak_text_color()
         };
@@ -894,7 +924,7 @@ fn button(
             Rect::from_center_size(center, Vec2::splat(icon_size)),
             icon_color,
         );
-        if detail != Detail::Icon {
+        if !matches!(detail, Detail::Icon | Detail::CompactIcon) {
             let text_rect = match detail {
                 Detail::Large => Rect::from_min_max(
                     pos2(rect.left() + 8., rect.top() + 48.),
@@ -903,11 +933,21 @@ fn button(
                         rect.bottom() - 8.,
                     ),
                 ),
+                Detail::CompactLarge => Rect::from_min_max(
+                    pos2(rect.left() + 6., rect.top() + 34.),
+                    pos2(
+                        rect.right() - if dropdown { 24. } else { 6. },
+                        rect.bottom() - 4.,
+                    ),
+                ),
                 _ => Rect::from_min_max(
-                    pos2(rect.left() + 40., rect.top() + 8.),
+                    pos2(
+                        rect.left() + if detail.is_compact() { 32. } else { 40. },
+                        rect.top() + if detail.is_compact() { 4. } else { 8. },
+                    ),
                     pos2(
                         rect.right() - if dropdown { 28. } else { 8. },
-                        rect.bottom() - 8.,
+                        rect.bottom() - if detail.is_compact() { 4. } else { 8. },
                     ),
                 ),
             };
@@ -917,9 +957,13 @@ fn button(
                 color,
                 text_rect.width(),
             );
-            job.wrap.max_rows = if detail == Detail::Large { 2 } else { 1 };
+            job.wrap.max_rows = if matches!(detail, Detail::Large | Detail::CompactLarge) {
+                2
+            } else {
+                1
+            };
             let galley = ui.painter().layout_job(job);
-            let anchor = if detail == Detail::Large {
+            let anchor = if matches!(detail, Detail::Large | Detail::CompactLarge) {
                 Align2::CENTER_TOP
             } else {
                 Align2::LEFT_CENTER
@@ -1025,7 +1069,12 @@ mod tests {
 
     #[test]
     fn dropdown_chevrons_align_with_their_caption() {
-        for detail in [Detail::Large, Detail::Labeled] {
+        for detail in [
+            Detail::Large,
+            Detail::Labeled,
+            Detail::CompactLarge,
+            Detail::CompactLabeled,
+        ] {
             let mut h = Harness::builder()
                 .with_size(vec2(300., 180.))
                 .build_ui(move |ui| {
@@ -1067,7 +1116,14 @@ mod tests {
     #[test]
     fn command_icons_use_consistent_priority_tiers_and_touch_targets() {
         let mut sizes = Vec::new();
-        for detail in [Detail::Large, Detail::Labeled, Detail::Icon] {
+        for detail in [
+            Detail::Large,
+            Detail::Labeled,
+            Detail::Icon,
+            Detail::CompactLarge,
+            Detail::CompactLabeled,
+            Detail::CompactIcon,
+        ] {
             let mut h = Harness::builder()
                 .with_size(vec2(300., 160.))
                 .build_ui(move |ui| {
@@ -1075,7 +1131,8 @@ mod tests {
                 });
             h.run_steps(3);
             let rect = h.get_by_role_and_label(Role::Button, "Open").rect();
-            assert!(rect.width() >= 44.0 && rect.height() >= 44.0);
+            let minimum = if detail.is_compact() { 34.0 } else { 44.0 };
+            assert!(rect.width() >= minimum && rect.height() >= minimum);
             let bounds = h
                 .output()
                 .shapes
@@ -1099,7 +1156,14 @@ mod tests {
 
     #[test]
     fn every_detail_preserves_names_keyboard_activation_and_disabled_state() {
-        for detail in [Detail::Large, Detail::Labeled, Detail::Icon] {
+        for detail in [
+            Detail::Large,
+            Detail::Labeled,
+            Detail::Icon,
+            Detail::CompactLarge,
+            Detail::CompactLabeled,
+            Detail::CompactIcon,
+        ] {
             let mut h = Harness::builder()
                 .with_size(vec2(300., 160.))
                 .build_ui_state(

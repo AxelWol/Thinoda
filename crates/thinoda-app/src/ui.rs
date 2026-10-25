@@ -169,7 +169,7 @@ fn menu_button(
 }
 
 fn scroll_row(ui: &mut Ui, salt: &'static str, width: f32, content: impl FnOnce(&mut Ui)) {
-    scroll_row_offset(ui, salt, width, None, content);
+    scroll_row_offset(ui, salt, width, ui.spacing().interact_size.y, None, content);
 }
 
 fn status_menu_button(
@@ -197,10 +197,10 @@ fn scroll_row_offset(
     ui: &mut Ui,
     salt: &'static str,
     width: f32,
+    row_height: f32,
     offset: Option<f32>,
     content: impl FnOnce(&mut Ui),
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
-    let row_height = ui.spacing().interact_size.y.max(Tokens::ICON_BUTTON) + Tokens::SPACE_S;
     ui.allocate_ui_with_layout(
         vec2(width, row_height),
         Layout::left_to_right(Align::Center),
@@ -267,9 +267,14 @@ fn sheet_scroll_row(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui, f32))
             offset = Some(target);
         }
     }
-    let output = scroll_row_offset(ui, "sheet_tabs", names_width, offset, |ui| {
-        content(ui, names_width)
-    });
+    let output = scroll_row_offset(
+        ui,
+        "sheet_tabs",
+        names_width,
+        ui.spacing().interact_size.y,
+        offset,
+        |ui| content(ui, names_width),
+    );
     ui.data_mut(|data| {
         data.insert_temp(
             state_id,
@@ -332,7 +337,8 @@ fn document_tabs(
             offset = Some(target);
         }
     }
-    let output = scroll_row_offset(ui, "document_tabs", names_width, offset, |ui| {
+    let row_height = ui.spacing().interact_size.y.max(Tokens::ICON_BUTTON) + Tokens::SPACE_S;
+    let output = scroll_row_offset(ui, "document_tabs", names_width, row_height, offset, |ui| {
         ui.horizontal(|ui| {
             for (index, doc) in docs.iter().enumerate() {
                 let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
@@ -1791,6 +1797,15 @@ impl ThinodaApp {
                                                 } else {
                                                     (buttons.len().min(2) as f32 * 52.0 - 8.0, 96.0)
                                                 }
+                                            }
+                                            thinoda_ui::ribbon::Detail::CompactLarge => {
+                                                (buttons.len() as f32 * 108.0 - 4.0, 72.0)
+                                            }
+                                            thinoda_ui::ribbon::Detail::CompactLabeled => {
+                                                (184.0, 136.0 + ui.spacing().item_spacing.y * 3.0)
+                                            }
+                                            thinoda_ui::ribbon::Detail::CompactIcon => {
+                                                (buttons.len() as f32 * 38.0 - 4.0, 34.0)
                                             }
                                         };
                                         ui.set_width(width);
@@ -4038,6 +4053,10 @@ impl ThinodaApp {
                                 t("Fallback only; choose an installed font covering your script. Document fonts stay unchanged."),
                             );
                         }
+                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        widgets::property_field(ui, t("Compact Ribbon"), |ui| {
+                            widgets::toggle(ui, &mut self.settings.compact_ribbon, t("Compact Ribbon"))
+                        });
                         widgets::property_field(ui, t("Show topic toolbar"), |ui| {
                             widgets::toggle(
                                 ui,

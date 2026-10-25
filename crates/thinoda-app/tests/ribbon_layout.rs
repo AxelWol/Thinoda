@@ -11,12 +11,16 @@ use thinoda_platform::settings::{Language, Settings, ThemeMode};
 #[test]
 fn translated_ribbon_tabs_and_commands_remain_bounded_at_desktop_scales() {
     for language in Language::ALL {
-        for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
+        for (theme, compact_ribbon) in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System]
+            .into_iter()
+            .flat_map(|theme| [false, true].map(|compact| (theme, compact)))
+        {
             for scale in [1.0, 1.5, 2.0] {
                 let mut app = ThinodaApp::new(
                     Settings {
                         language,
                         theme,
+                        compact_ribbon,
                         ..Default::default()
                     },
                     Services::default(),
@@ -37,7 +41,12 @@ fn translated_ribbon_tabs_and_commands_remain_bounded_at_desktop_scales() {
                             egui::CentralPanel::default().show(ui, |ui| {
                                 ui.label("Canvas workspace");
                                 assert!(
-                                    ui.available_height() >= 200.0,
+                                    ui.available_height()
+                                        >= if app.settings.compact_ribbon {
+                                            240.0
+                                        } else {
+                                            200.0
+                                        },
                                     "Ribbon consumed canvas height: {} remaining in {:?}",
                                     ui.available_height(),
                                     ui.ctx().content_rect()

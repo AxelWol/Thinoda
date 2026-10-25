@@ -195,6 +195,7 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Expand Ribbon", "Menüband erweitern"),
     ("Pin Ribbon", "Menüband anheften"),
+    ("Compact Ribbon", "Kompaktes Menüband"),
     ("Unpin Ribbon", "Menüband lösen"),
     ("Ribbon", "Menüband"),
     ("Collapse Ribbon", "Menüband reduzieren"),

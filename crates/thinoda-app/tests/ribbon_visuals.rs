@@ -11,7 +11,7 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
     if let Some(directory) = &output {
         std::fs::create_dir_all(directory).unwrap();
     }
-    for (name, width, theme, outline, tab) in [
+    for ((name, width, theme, outline, tab), compact) in [
         ("ribbon-wide-light", 1600., ThemeMode::Light, false, "Home"),
         ("ribbon-medium-dark", 720., ThemeMode::Dark, false, "Home"),
         ("ribbon-narrow-dark", 320., ThemeMode::Dark, false, "Home"),
@@ -27,11 +27,15 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
         ("outline-wide-light", 1200., ThemeMode::Light, true, ""),
         ("outline-medium-dark", 720., ThemeMode::Dark, true, ""),
         ("outline-narrow-dark", 480., ThemeMode::Dark, true, ""),
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|fixture| [false, true].map(move |compact| (fixture, compact)))
+    {
         let mut app = ThinodaApp::headless();
         app.settings.theme = theme;
         app.settings.show_format_panel = false;
         app.settings.ribbon_collapsed = false;
+        app.settings.compact_ribbon = compact;
         if outline {
             app.mode = CenterMode::Outliner;
         }
@@ -133,7 +137,10 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
             "{name}"
         );
         if let Some(directory) = &output {
-            image.save(directory.join(format!("{name}.png"))).unwrap();
+            let suffix = if compact { "-compact" } else { "" };
+            image
+                .save(directory.join(format!("{name}{suffix}.png")))
+                .unwrap();
         }
     }
 }

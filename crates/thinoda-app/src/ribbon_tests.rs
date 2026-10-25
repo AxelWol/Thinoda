@@ -223,6 +223,72 @@ fn pin_persists_and_keeps_the_ribbon_open_after_actions() {
 }
 
 #[test]
+fn compact_ribbon_defaults_off_and_settings_toggle_persists() {
+    assert!(!thinoda_platform::settings::Settings::default().compact_ribbon);
+    let mut app = ThinodaApp::headless();
+    app.dialogs.settings = true;
+    app.dialogs.settings_tab = crate::app::SettingsTab::Editor;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 900.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Switch, t("Compact Ribbon"))
+        .scroll_to_me();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Switch, t("Compact Ribbon"))
+        .click();
+    h.run_steps(3);
+    assert!(h.state().settings.compact_ribbon);
+    let directory = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::paths::Paths::from_root(directory.path());
+    h.state().settings.save(&paths).unwrap();
+    assert!(
+        thinoda_platform::settings::Settings::load(&paths)
+            .unwrap()
+            .compact_ribbon
+    );
+    h.get_by_role_and_label(Role::Switch, t("Compact Ribbon"))
+        .click();
+    h.run_steps(3);
+    assert!(!h.state().settings.compact_ribbon);
+}
+
+#[test]
+fn compact_ribbon_shortens_all_pages_and_preserves_command_content() {
+    for compact in [false, true] {
+        let mut h = harness(1600.0, 700.0);
+        h.state_mut().settings.compact_ribbon = compact;
+        h.run_steps(3);
+        for tab in 0..8 {
+            h.state_mut().ribbon.tab = tab;
+            h.run_steps(3);
+            let panel = h.state().ribbon.rect.unwrap();
+            assert_eq!(panel.height(), if compact { 160.0 } else { 200.0 });
+            let mut captions = 0;
+            for shape in &h.output().shapes {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    let bounds = egui::Rect::from_min_size(text.pos, text.galley.size());
+                    if panel.contains(bounds.center()) {
+                        assert!(
+                            panel.contains_rect(bounds),
+                            "tab={tab}, compact={compact}: {}",
+                            text.galley.text()
+                        );
+                        assert!(
+                            shape.clip_rect.contains_rect(bounds),
+                            "clipped tab={tab}, compact={compact}: {}",
+                            text.galley.text()
+                        );
+                        captions += 1;
+                    }
+                }
+            }
+            assert!(captions > 8);
+        }
+    }
+}
+
+#[test]
 fn short_viewport_uses_bounded_menu_fallback_and_modals_block_commands() {
     let mut h = harness(400.0, 300.0);
     h.run_steps(3);
@@ -278,9 +344,15 @@ fn grouping_retains_every_menu_entry_except_separators() {
 #[test]
 fn responsive_groups_reduce_detail_without_clipping_or_losing_menu_access() {
     let counts = [4, 5, 3];
-    assert_eq!(group_details(&counts, 1800.0), vec![GroupDetail::Full; 3]);
-    assert!(group_details(&counts, 800.0).contains(&GroupDetail::Compact));
-    assert_eq!(group_details(&counts, 180.0), vec![GroupDetail::Menu; 3]);
+    assert_eq!(
+        group_details(&counts, 1800.0, false),
+        vec![GroupDetail::Full; 3]
+    );
+    assert!(group_details(&counts, 800.0, false).contains(&GroupDetail::Compact));
+    assert_eq!(
+        group_details(&counts, 180.0, false),
+        vec![GroupDetail::Menu; 3]
+    );
     for width in [1600.0, 1000.0, 720.0, 440.0, 320.0] {
         let mut h = harness(width, 700.0);
         for category in 0..8 {

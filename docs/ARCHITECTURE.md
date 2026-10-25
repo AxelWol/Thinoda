@@ -135,6 +135,12 @@ graph TD
   a category, and Escape or an outside press dismisses a temporary opening.
   A visible Pin/Unpin Ribbon control uses that same persisted collapse preference:
   pinned ribbons stay expanded after actions, while unpinned tab previews close.
+  Settings > Editor offers Compact Ribbon, default off. Standard geometry remains
+  unchanged; compact geometry uses a 160-point expanded panel instead of 200,
+  34-point tab/secondary targets, 72-point primary controls, 24/20/16-point icons,
+  four-point intra-group spacing and recalculated group widths/overflow budgets.
+  Labels, semantic colors, shortcuts, pinning and popup command routing are shared;
+  Outline and Quick Access retain their existing density.
   Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
   overlap tab hit targets; keyboard focus reveals horizontally clipped items.
   Pointer-driven ribbon commands are deferred past release so restoring a text
