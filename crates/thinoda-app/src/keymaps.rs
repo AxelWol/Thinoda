@@ -212,7 +212,8 @@ pub fn reserved(shortcut: KeyboardShortcut, os: OperatingSystem, web: bool) -> b
         || (m.command && shortcut.logical_key == Key::Space)
         || (os == OperatingSystem::Mac
             && m.command
-            && matches!(shortcut.logical_key, Key::Tab | Key::H | Key::M))
+            && (shortcut.logical_key == Key::Tab
+                || (!m.ctrl && !m.shift && matches!(shortcut.logical_key, Key::H | Key::M))))
         || (web
             && m.command
             && matches!(
@@ -475,6 +476,11 @@ mod tests {
             assert!(!reserved(
                 KeyboardShortcut::new(Modifiers::COMMAND, key),
                 OperatingSystem::Windows,
+                false
+            ));
+            assert!(!reserved(
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key),
+                OperatingSystem::Mac,
                 false
             ));
         }
