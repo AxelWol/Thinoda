@@ -11,18 +11,31 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
     if let Some(directory) = &output {
         std::fs::create_dir_all(directory).unwrap();
     }
-    for (name, width, theme, outline) in [
-        ("ribbon-wide-light", 1600., ThemeMode::Light, false),
-        ("ribbon-medium-dark", 720., ThemeMode::Dark, false),
-        ("ribbon-narrow-dark", 320., ThemeMode::Dark, false),
-        ("outline-wide-light", 1200., ThemeMode::Light, true),
-        ("outline-medium-dark", 720., ThemeMode::Dark, true),
-        ("outline-narrow-dark", 480., ThemeMode::Dark, true),
-    ] {
+    for ((name, width, theme, outline, tab), compact) in [
+        ("ribbon-wide-light", 1600., ThemeMode::Light, false, "Home"),
+        ("ribbon-medium-dark", 720., ThemeMode::Dark, false, "Home"),
+        ("ribbon-narrow-dark", 320., ThemeMode::Dark, false, "Home"),
+        (
+            "ribbon-tools-dark",
+            1200.,
+            ThemeMode::Dark,
+            false,
+            "Capture",
+        ),
+        ("ribbon-ai-dark", 1200., ThemeMode::Dark, false, "AI"),
+        ("ribbon-ai-narrow", 640., ThemeMode::Dark, false, "AI"),
+        ("outline-wide-light", 1200., ThemeMode::Light, true, ""),
+        ("outline-medium-dark", 720., ThemeMode::Dark, true, ""),
+        ("outline-narrow-dark", 480., ThemeMode::Dark, true, ""),
+    ]
+    .into_iter()
+    .flat_map(|fixture| [false, true].map(move |compact| (fixture, compact)))
+    {
         let mut app = ThinodaApp::headless();
         app.settings.theme = theme;
         app.settings.show_format_panel = false;
         app.settings.ribbon_collapsed = false;
+        app.settings.compact_ribbon = compact;
         if outline {
             app.mode = CenterMode::Outliner;
         }
@@ -63,18 +76,29 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
             );
         h.run_steps(4);
         if !outline {
-            h.get_by_role_and_label(Role::Button, "Edit").click();
+            h.get_by_role_and_label(Role::Button, tab).click();
             h.run_steps(4);
         }
         let captions: &[&str] = if outline {
             &["Insert", "Edit", "Arrange", "Delete"]
-        } else if width > 1000.0 {
-            &["Undo", "Copy", "Select", "Arrange", "Copy Style", "Edit"]
+        } else if width > 1000.0 && tab == "Home" {
+            &[
+                "Editing",
+                "Clipboard",
+                "Select",
+                "Arrange",
+                "Styles",
+                "Sheet",
+                "Home",
+            ]
         } else {
             &[]
         };
         let mut baseline: Option<f32> = None;
-        for caption in captions {
+        for (index, caption) in captions.iter().enumerate() {
+            if outline && width < 500.0 && index % 2 == 0 {
+                baseline = None;
+            }
             let y = h
                 .get_by_role_and_label(Role::Label, caption)
                 .rect()
@@ -113,7 +137,10 @@ fn ribbon_and_outline_render_at_all_detail_levels() {
             "{name}"
         );
         if let Some(directory) = &output {
-            image.save(directory.join(format!("{name}.png"))).unwrap();
+            let suffix = if compact { "-compact" } else { "" };
+            image
+                .save(directory.join(format!("{name}{suffix}.png")))
+                .unwrap();
         }
     }
 }

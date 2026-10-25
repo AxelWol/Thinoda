@@ -231,7 +231,9 @@ pub struct ThinodaApp {
     last_title: String,
     /// Startup work still pending behind the splash; `None` once ready.
     pub(crate) launch: Option<crate::startup::Launch>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    pub(crate) desktop_ribbon: bool,
+    #[cfg(target_os = "macos")]
     pub(crate) native_menus: crate::native_menus::NativeMenus,
     #[cfg(any(target_os = "windows", target_os = "macos", test))]
     pub(crate) ribbon: crate::ribbon::RibbonState,
@@ -271,7 +273,9 @@ impl ThinodaApp {
             docs: Vec::new(),
             #[cfg(any(target_os = "windows", target_os = "macos", test))]
             ribbon: crate::ribbon::RibbonState::default(),
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(target_os = "windows")]
+            desktop_ribbon: false,
+            #[cfg(target_os = "macos")]
             native_menus: crate::native_menus::NativeMenus::default(),
             active: 0,
             format_tab: settings.format_tab,

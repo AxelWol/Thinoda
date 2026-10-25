@@ -11,7 +11,7 @@ GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional
 
 Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) and **Linux** (Ubuntu LTS).
 A static **web app** build runs the same code in the browser via WebAssembly and is
-published on [GitHub Pages](https://axelwol.github.io/Thinoda/) — see
+published on [Thinoda on GitHub Pages](https://axelwol.github.io/Thinoda/) — see
 [Thinoda for the web](docs/WEB.md).
 
 ## Privacy

@@ -1,5 +1,14 @@
 Expand Ribbon|Expandir cinta|Développer le ruban|Udvid båndet|Lint uitvouwen|Expandir friso|Espandi barra multifunzione|Rozwiń wstążkę
+Pin Ribbon|Anclar cinta|Épingler le ruban|Fastgør båndet|Lint vastzetten|Fixar friso|Blocca barra multifunzione|Przypnij wstążkę
+Compact Ribbon|Cinta compacta|Ruban compact|Kompakt bånd|Compact lint|Friso compacto|Barra multifunzione compatta|Kompaktowa wstążka
+Unpin Ribbon|Desanclar cinta|Détacher le ruban|Frigør båndet|Lint losmaken|Desafixar friso|Sblocca barra multifunzione|Odepnij wstążkę
 On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.|En Windows y macOS, Ctrl+F1 contrae o expande la cinta. Alt+1 a Alt+8 selecciona una categoría. Escape cierra una cinta abierta temporalmente.|Sous Windows et macOS, Ctrl+F1 réduit ou développe le ruban. Alt+1 à Alt+8 sélectionne une catégorie. Échap ferme un ruban ouvert temporairement.|I Windows og macOS skjuler eller udvider Ctrl+F1 båndet. Alt+1 til Alt+8 vælger en kategori. Escape lukker et midlertidigt åbnet bånd.|In Windows en macOS vouwt Ctrl+F1 het lint in of uit. Alt+1 tot en met Alt+8 kiest een categorie. Escape sluit een tijdelijk geopend lint.|No Windows e macOS, Ctrl+F1 recolhe ou expande o friso. Alt+1 a Alt+8 seleciona uma categoria. Escape fecha um friso aberto temporariamente.|In Windows e macOS, Ctrl+F1 comprime o espande la barra multifunzione. Da Alt+1 ad Alt+8 seleziona una categoria. Esc chiude una barra aperta temporaneamente.|W systemach Windows i macOS Ctrl+F1 zwija lub rozwija wstążkę. Alt+1 do Alt+8 wybiera kategorię. Escape zamyka tymczasowo otwartą wstążkę.
+Home|Inicio|Accueil|Hjem|Start|Base|Home|Narzędzia główne
+Quick Access Toolbar|Barra de acceso rápido|Barre d'accès rapide|Værktøjslinje til hurtig adgang|Werkbalk Snelle toegang|Barra de ferramentas de acesso rápido|Barra di accesso rapido|Pasek narzędzi Szybki dostęp
+Capture|Captura|Capture|Optagelse|Opname|Captura|Acquisizione|Przechwytywanie
+Clipboard|Portapapeles|Presse-papiers|Udklipsholder|Klembord|Área de transferência|Appunti|Schowek
+Editing|Edición|Édition|Redigering|Bewerken|Edição|Modifica|Edycja
+Styles|Estilos|Styles|Typografier|Stijlen|Estilos|Stili|Style
 Ribbon|Cinta|Ruban|Bånd|Lint|Friso|Barra multifunzione|Wstążka
 Collapse Ribbon|Contraer cinta|Réduire le ruban|Skjul båndet|Lint samenvouwen|Recolher friso|Comprimi barra multifunzione|Zwiń wstążkę
 Symbol color|Color del símbolo|Couleur du symbole|Symbolfarve|Symboolkleur|Cor do símbolo|Colore del simbolo|Kolor symbolu

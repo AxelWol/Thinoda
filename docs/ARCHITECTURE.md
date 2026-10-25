@@ -109,7 +109,10 @@ graph TD
   text color, independent of selection or user accent. Disabled parent UIs also
   disable captioned controls' accessibility state and interaction.
 - **Main-menu commands**: the host-independent menu tree drives compact menus
-  and the Windows HMENU/AppKit global-menu adapters. Native callbacks only queue known enabled
+  and the AppKit global-menu adapter. Windows desktop uses only the ribbon,
+  without an attached HMENU bar or redundant hamburger; headless, web and Linux
+  hosts retain the compact menu. The Win32 adapter remains a platform primitive,
+  not an active application menu. Native callbacks only queue known enabled
   IDs and wakes the egui context; application-frame dispatch uses the producing
   snapshot and rechecks document/sheet/history, text focus and modal ownership.
   Standard native editing items send text-edit events when a text field owns
@@ -117,19 +120,42 @@ graph TD
   removes its subclass before dropping callback data. Native integration errors
   are logged and shown, with the compact menu retained. The Windows/macOS ribbon uses
   the same tree and snapshot dispatch, with original vector icons, semantic group
-  footers and large primary/stacked secondary actions. Width reduction first hides
+  footers, a large primary command and two-row secondary columns. Width reduction first hides
   secondary captions, then collapses groups into menus; excess groups remain
   reachable through a bounded overflow menu rather than a scrolling button wall.
+  Explanatory group text is available on hover and does not occupy command slots.
+  Primary, labeled and compact controls use 32/24/16-point icons and at least
+  44-point hit targets. Exhaustive command mappings use semantic line glyphs and
+  action badges; primary/secondary semantic colors differ in both themes.
+  Dropdown chevrons reserve caption space and align with its vertical center.
+  Ribbon-only task aliases are Home and Capture; native menu taxonomy is unchanged.
+  Each command supplies one combined tooltip with its label, binding and help;
+  a long primary caption never forces a separate oversized first tile.
   Ctrl+F1 persists collapse state; Alt+1 through Alt+8 opens
   a category, and Escape or an outside press dismisses a temporary opening.
+  A visible Pin/Unpin Ribbon control uses that same persisted collapse preference:
+  pinned ribbons stay expanded after actions, while unpinned tab previews close.
+  Settings > Editor offers Compact Ribbon, default off. Standard geometry remains
+  unchanged; compact geometry uses a 160-point expanded panel instead of 200,
+  34-point tab/secondary targets, 72-point primary controls, 24/20/16-point icons,
+  four-point intra-group spacing and recalculated group widths/overflow budgets.
+  Labels, semantic colors, shortcuts, pinning and popup command routing are shared;
+  Outline and Quick Access retain their existing density.
   Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
   overlap tab hit targets; keyboard focus reveals horizontally clipped items.
   Pointer-driven ribbon commands are deferred past release so restoring a text
   field's focus delivers Undo/Cut/etc. to that field, not the map. The top bar
-  remains quick access; floating editing/topic controls remain contextual and
+  includes a persisted customizable Save/Undo/Redo/Print Quick Access Toolbar;
+  floating editing/topic controls remain contextual and
   keep their visibility settings. The Outline structural toolbar shares the icon
   controls and adapts between captioned tiles, labeled rows and compact icons;
   full accessible names, tooltips and all nine structural operations remain.
+  Document tabs use a single rounded capsule around the name and its own close
+  button. New Tab follows the last capsule inside the same scroll viewport,
+  rather than being pinned across empty space. Navigation arrows stay fixed;
+  per-document keys, focus reveal and shared unsaved-close decisions are retained.
+  Scroll rows reserve the full capsule height plus vertical breathing room so
+  borders are not clipped by a shorter default interaction row.
   AppKit integration uses the existing Objective-C platform bridge, not an
   additional menu dependency. It supplies the standard Thinoda/Services/Window
   menus, moves About/Settings/Quit into the application menu and leaves unsaved-work

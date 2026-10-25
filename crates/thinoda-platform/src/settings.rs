@@ -205,6 +205,27 @@ impl AiSettings {
     }
 }
 
+/// Visible high-frequency commands above the desktop ribbon.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QuickAccessSettings {
+    pub save: bool,
+    pub undo: bool,
+    pub redo: bool,
+    pub print: bool,
+}
+
+impl Default for QuickAccessSettings {
+    fn default() -> Self {
+        Self {
+            save: true,
+            undo: true,
+            redo: true,
+            print: true,
+        }
+    }
+}
+
 /// Persisted preferences. Unknown fields are ignored and missing fields default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -226,6 +247,8 @@ pub struct Settings {
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub ribbon_collapsed: bool,
+    pub compact_ribbon: bool,
+    pub quick_access: QuickAccessSettings,
     pub show_format_panel: bool,
     pub sidebar_family: SidebarFamily,
     pub format_tab: FormatTab,
@@ -274,6 +297,8 @@ impl Default for Settings {
             ui_scale: 1.0,
             show_status_bar: true,
             ribbon_collapsed: false,
+            compact_ribbon: false,
+            quick_access: QuickAccessSettings::default(),
             show_format_panel: true,
             sidebar_family: SidebarFamily::default(),
             format_tab: FormatTab::default(),

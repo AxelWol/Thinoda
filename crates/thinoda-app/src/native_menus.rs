@@ -285,19 +285,17 @@ impl ThinodaApp {
     }
 }
 
-#[cfg(target_os = "windows")]
-type HostMenu = thinoda_platform::native_menu::WindowMenu;
 #[cfg(target_os = "macos")]
 type HostMenu = thinoda_platform::native_menu::ApplicationMenu;
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 #[derive(Default)]
 pub(crate) struct NativeMenus {
     active: Option<(HostMenu, MenuSnapshot)>,
     unavailable: bool,
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 impl ThinodaApp {
     pub(crate) fn native_menu_active(&self) -> bool {
         self.native_menus.active.is_some()
@@ -313,58 +311,6 @@ impl ThinodaApp {
             for id in ids {
                 self.dispatch_native_menu(ctx, &snapshot, id);
             }
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl ThinodaApp {
-    pub(crate) fn sync_native_menus(&mut self, ctx: &Context, frame: &eframe::Frame) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if self.native_menus.unavailable || self.launch.is_some() {
-            return;
-        }
-        let snapshot = self.native_menu_snapshot(ctx);
-        if let Some((_, old)) = &self.native_menus.active
-            && old == &snapshot
-        {
-            return;
-        }
-        let result = if let Some((menu, old)) = &mut self.native_menus.active {
-            if menu.is_tracking() {
-                return;
-            }
-            if old.items == snapshot.items && old.actions == snapshot.actions {
-                *old = snapshot;
-                return;
-            }
-            menu.replace(&snapshot.items)
-                .map(|()| *old = snapshot.clone())
-        } else {
-            (|| {
-                let handle = frame.window_handle().map_err(std::io::Error::other)?;
-                let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-                    return Err(std::io::Error::other("Expected a Win32 window"));
-                };
-                let wake = ctx.clone();
-                // SAFETY: eframe invokes this on the owning window thread.
-                let menu = unsafe {
-                    thinoda_platform::native_menu::WindowMenu::attach(
-                        handle.hwnd.get() as _,
-                        &snapshot.items,
-                        move || wake.request_repaint(),
-                    )
-                }?;
-                self.native_menus.active = Some((menu, snapshot));
-                Ok(())
-            })()
-        };
-        if let Err(error) = result {
-            log::error!("native menu integration: {error}");
-            self.toasts
-                .error(format!("{}: {error}", t("Not possible here")));
-            self.native_menus.active = None;
-            self.native_menus.unavailable = true;
         }
     }
 }
