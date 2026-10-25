@@ -290,6 +290,17 @@ labels, change Outline/QAT density, or alter pinning/command behavior. Coverage
 includes all eight tabs, both densities, translated/theme/scale combinations,
 rendered fixtures and real settings toggling/save/reload.
 
+**F1 Linux in-window menu slice (2026-10-25):** roomy native Linux windows expose
+the shared File/Edit/Sheet/Insert/AI/Tools/View/Help menu categories directly in
+the top bar (at least 1400 logical points at the selected UI scale) and route
+them through the same command availability and execution path. Narrow windows
+keep the compact hamburger; the browser is unchanged.
+Headless coverage exercises category visibility, Settings in Edit and the narrow
+fallback. This is an app-owned eframe menu row, not a GNOME global-menu exporter
+or Ubuntu/Orca host acceptance. P4.2's remaining menu/accessibility audit,
+P4.5's DEB/AppImage/Wayland/X11 and Orca acceptance, F1 multi-window lifecycle
+and non-Windows native execution remain open.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes

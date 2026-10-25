@@ -844,8 +844,13 @@ impl ThinodaApp {
         let ctx = ui.ctx().clone();
         let mut cmd: Option<Cmd> = None;
         let touch_allowed = widgets::touch_activation_allowed(&ctx);
+        let inline_menu_bar = !cfg!(target_arch = "wasm32")
+            && ctx.os() == egui::os::OperatingSystem::Nix
+            && ctx.content_rect().width() >= 1400.0 * self.settings.ui_scale.clamp(0.5, 3.0);
         ui.horizontal_centered(|ui| {
-            if !cfg!(target_os = "windows") || !self.ribbon_active() {
+            if inline_menu_bar {
+                self.main_menu_bar(ui, &mut cmd);
+            } else if !cfg!(target_os = "windows") || !self.ribbon_active() {
                 guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
                     self.main_menu(ui, &mut cmd)
                 });
@@ -985,6 +990,17 @@ impl ThinodaApp {
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         self.render_menu_entries(ui, &self.main_menu_entries(), cmd);
+    }
+
+    fn main_menu_bar(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        for entry in self.main_menu_entries() {
+            if let crate::menus::MenuEntry::Submenu { label, entries } = entry {
+                let enabled = self.menu_entries_available(&entries);
+                ui.add_enabled_ui(enabled, |ui| {
+                    menu_button(ui, label, |ui| self.render_menu_entries(ui, &entries, cmd));
+                });
+            }
+        }
     }
 
     pub(crate) fn render_menu_entries(

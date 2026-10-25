@@ -168,6 +168,11 @@ graph TD
   Detaching disables the callback and restores the previous AppKit menu tree.
   Real AppKit SDK/lifecycle fixtures run only on macOS; Windows tests do not
   establish macOS UI/VoiceOver acceptance. Multi-window lifecycle remains open.
+  Native Linux uses an in-window row of the same eight shared menu categories
+  when the available width supports it (at least 1400 logical points at the
+  selected UI scale); narrower windows retain the compact
+  hamburger. This is an app-owned eframe menu surface, not a GNOME global-menu
+  exporter or a claim of Ubuntu/Orca host acceptance.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It
