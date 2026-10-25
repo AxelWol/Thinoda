@@ -228,21 +228,39 @@ fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation(
     assert!(server.requests.lock().unwrap().is_empty());
     h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
         .scroll_to_me();
-    h.run_steps(3);
+    h.run_steps(8);
     h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
         .click();
-    h.run_steps(1);
-    wait(h.state_mut());
-    h.run_steps(3);
-    assert!(
-        h.state()
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        h.run_steps(3);
+        let editor = h
+            .state()
             .pitch
             .editor
             .as_ref()
+            .expect("Suggest must keep the presentation draft open");
+        assert!(editor.error.is_none(), "{:?}", editor.error);
+        if editor.ai.proposal.is_some() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Suggest did not produce a reviewed proposal; pending={}, requests={:?}",
+            editor.ai.pending.is_some(),
+            server.requests.lock().unwrap()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        server
+            .requests
+            .lock()
             .unwrap()
-            .ai
-            .proposal
-            .is_some()
+            .iter()
+            .filter(|request| request.path == "/v1/chat/completions")
+            .count(),
+        1
     );
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     h.run_steps(3);

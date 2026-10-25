@@ -345,7 +345,7 @@ fn semantic_cache_invalidates_after_edit_and_blank_model_never_uses_chat_model()
 
 #[test]
 fn semantic_panel_opens_offline_and_build_requires_explicit_ui_activation() {
-    let server = Server::start("normal");
+    let server = Server::start("slow");
     let mut app = app(&server);
     app.ai.chat.open = true;
     let mut h = Harness::builder()
@@ -359,11 +359,22 @@ fn semantic_panel_opens_offline_and_build_requires_explicit_ui_activation() {
     assert!(server.requests.lock().unwrap().is_empty());
     h.get_by_role_and_label(Role::Button, "Build semantic index")
         .click();
-    h.run_steps(1);
-    let ctx = h.ctx.clone();
-    wait(h.state_mut(), &ctx);
-    h.run_steps(3);
-    assert!(h.state().ai.semantic.cache.is_some());
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        h.run_steps(3);
+        let semantic = &h.state().ai.semantic;
+        assert!(semantic.error.is_none(), "{:?}", semantic.error);
+        if semantic.cache.is_some() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Build did not produce an index; pending={}, requests={:?}",
+            semantic.pending.is_some(),
+            server.requests.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
