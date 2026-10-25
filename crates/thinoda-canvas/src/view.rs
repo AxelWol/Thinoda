@@ -345,6 +345,32 @@ impl MapView {
         cache.layout.rect(topic).map(|r| self.xf().rect(r))
     }
 
+    /// Laid-out bounds of the supplied topics and their visible descendants.
+    pub fn topic_group_bounds(
+        &mut self,
+        doc: &Document,
+        roots: &[TopicId],
+    ) -> Option<thinoda_core::Rect> {
+        let layout = self.layout_for(doc);
+        let mut pending = roots.to_vec();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut bounds: Option<thinoda_core::Rect> = None;
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(rect) = layout.rect(id) {
+                bounds = Some(bounds.map_or(rect, |bounds| bounds.union(&rect)));
+                if let Some(topic) = doc.sheet().topic(id)
+                    && !topic.collapsed
+                {
+                    pending.extend_from_slice(&topic.children);
+                }
+            }
+        }
+        bounds
+    }
+
     /// Screen-space canvas bounds from the latest frame.
     pub fn canvas_rect(&self) -> Rect {
         self.canvas_rect
@@ -2848,6 +2874,38 @@ mod tests {
         }
         h.run();
         assert!(h.query_by_label("Add child topic").is_none());
+    }
+
+    #[test]
+    fn topic_group_bounds_follow_visible_descendants_and_document_changes() {
+        let mut h = harness();
+        let s = h.state_mut();
+        let (floating, child) = s
+            .doc
+            .edit_sheet("Floating group", |sheet| {
+                let root = sheet.add_floating("Floating", Vec2::new(900.0, 400.0));
+                let child = sheet.insert_child(root, "Child")?;
+                Ok((root, child))
+            })
+            .unwrap();
+        let layout = s.view.layout_for(&s.doc);
+        let expected = layout
+            .rect(floating)
+            .unwrap()
+            .union(&layout.rect(child).unwrap());
+        assert_eq!(
+            s.view.topic_group_bounds(&s.doc, &[floating, child]),
+            Some(expected)
+        );
+        s.doc
+            .edit_sheet("Collapse", |sheet| sheet.set_collapsed(floating, true))
+            .unwrap();
+        let layout = s.view.layout_for(&s.doc);
+        assert_eq!(
+            s.view.topic_group_bounds(&s.doc, &[floating]),
+            layout.rect(floating)
+        );
+        assert_eq!(s.view.topic_group_bounds(&s.doc, &[]), None);
     }
 
     #[test]
