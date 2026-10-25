@@ -368,14 +368,22 @@ pub(crate) fn raster(
     fmt: image::ImageFormat,
 ) -> Result<Vec<u8>, IoError> {
     let source = svg(w, o)?;
+    raster_svg(&source, o.scale, fmt)
+}
+
+pub(crate) fn raster_svg(
+    source: &str,
+    scale: f32,
+    fmt: image::ImageFormat,
+) -> Result<Vec<u8>, IoError> {
     let opts = resvg::usvg::Options {
         fontdb: crate::fonts::database(),
         ..Default::default()
     };
-    let tree = resvg::usvg::Tree::from_str(&source, &opts)
+    let tree = resvg::usvg::Tree::from_str(source, &opts)
         .map_err(|e| IoError::Invalid(format!("SVG parse: {e}")))?;
-    let scale = if o.scale.is_finite() {
-        o.scale.clamp(0.1, 8.0)
+    let scale = if scale.is_finite() {
+        scale.clamp(0.1, 8.0)
     } else {
         1.0
     };
@@ -399,8 +407,6 @@ pub(crate) fn raster(
             .write_to(&mut out, fmt)
             .map_err(|e| IoError::Invalid(e.to_string()))?;
     } else {
-        if !o.transparent { // preserve canvas fill from SVG; renderer already paints it
-        }
         image::DynamicImage::ImageRgba8(std::mem::take(&mut img))
             .write_to(&mut out, fmt)
             .map_err(|e| IoError::Invalid(e.to_string()))?;
@@ -411,8 +417,12 @@ pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
     let mut opts = o.clone();
     opts.transparent = false;
     let source = svg(w, &opts)?;
+    pdf_svg(&source)
+}
+
+pub(crate) fn pdf_svg(source: &str) -> Result<Vec<u8>, IoError> {
     let tree = resvg::usvg::Tree::from_str(
-        &source,
+        source,
         &resvg::usvg::Options {
             fontdb: crate::fonts::database(),
             ..Default::default()
