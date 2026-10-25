@@ -74,6 +74,20 @@ features work differently:
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
 
+## Reviewing AI results
+
+AI commands use the endpoint configured in **Settings > AI**. Completed output
+opens **Review AI Result** without changing the map. Inspect or copy the response,
+then choose **Apply AI Result** to make one undoable change, or **Discard AI Result**
+to leave the map unchanged. Generated maps also wait for Apply before opening a
+new document.
+
+The review is nonmodal. You can continue working, but changing the source sheet
+or keeping a topic/inspector draft open disables Apply with an explanation.
+Changing the endpoint, model, committed API key or temperature also invalidates
+that result. Discard it and run the command again with the current settings.
+The result retains its original topic/document even if you switch tabs.
+
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or

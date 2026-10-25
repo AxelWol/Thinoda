@@ -11,6 +11,9 @@ use thinoda_ui::widgets;
 use crate::app::ThinodaApp;
 use crate::i18n::t;
 
+mod review;
+pub use review::{AiReview, AiTarget};
+
 /// AI commands (XMind AI equivalents).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiCommand {
@@ -53,18 +56,16 @@ impl AiCommand {
 /// A running AI request and where its result goes.
 pub struct PendingAi {
     pub job: AiJob,
-    pub command: AiCommand,
-    /// Recovery key of the target document (`None` for new maps).
-    pub doc_key: Option<String>,
-    pub topic: Option<TopicId>,
-    pub(crate) source: Option<(usize, TopicId, u64)>,
+    pub target: AiTarget,
 }
 
 #[derive(Default)]
 pub struct AiState {
     pub pending: Option<PendingAi>,
+    pub review: Option<AiReview>,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
+    prompt_viewport: Option<egui::ViewportId>,
     prompt_composing: bool,
     /// Unsaved API key text; credentials are committed only on explicit save.
     pub api_key_draft: Option<String>,
@@ -157,6 +158,13 @@ fn error_text(e: &AiError) -> String {
 
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
+        if self
+            .ai
+            .prompt_viewport
+            .is_some_and(|owner| owner != self.current_viewport)
+        {
+            return;
+        }
         if self.ai.prompt.is_some() {
             let id = egui::Id::unique("thinoda_ai_prompt");
             if self.ai.prompt_composing || ctx.memory(|memory| memory.has_focus(id)) {
@@ -182,8 +190,13 @@ impl ThinodaApp {
             self.toasts.info(t("AI is still working…"));
             return;
         }
+        if self.ai.review.is_some() {
+            self.toasts.info(t("Review the current AI result first."));
+            return;
+        }
         if cmd == AiCommand::GenerateMap {
             self.ai.prompt.get_or_insert_with(String::new);
+            self.ai.prompt_viewport = Some(self.current_viewport);
             return;
         }
         if let Some(d) = self.doc_mut() {
@@ -206,10 +219,14 @@ impl ThinodaApp {
         let source = Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()));
         self.ai.pending = Some(PendingAi {
             job: AiJob::spawn(config(&self.settings.ai), task),
-            command: cmd,
-            doc_key,
-            topic: Some(id),
-            source,
+            target: AiTarget {
+                command: cmd,
+                doc_key,
+                topic: Some(id),
+                source,
+                viewport: self.current_viewport,
+                config: config(&self.settings.ai),
+            },
         });
     }
 
@@ -220,15 +237,19 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if prompt.trim().is_empty() || self.ai.pending.is_some() {
+        if prompt.trim().is_empty() || self.ai.pending.is_some() || self.ai.review.is_some() {
             return;
         }
         self.ai.pending = Some(PendingAi {
             job: AiJob::spawn(config(&self.settings.ai), AiTask::GenerateMap(prompt)),
-            command: AiCommand::GenerateMap,
-            doc_key: None,
-            topic: None,
-            source: None,
+            target: AiTarget {
+                command: AiCommand::GenerateMap,
+                doc_key: None,
+                topic: None,
+                source: None,
+                viewport: self.current_viewport,
+                config: config(&self.settings.ai),
+            },
         });
     }
 
@@ -268,20 +289,35 @@ impl ThinodaApp {
         };
         let p = self.ai.pending.take().unwrap();
         match result {
-            Ok(r) => self.apply_ai(&p, r),
+            Ok(result) => {
+                self.ai.review = Some(AiReview {
+                    target: p.target,
+                    result,
+                });
+                ctx.request_repaint();
+            }
             Err(e) => {
-                self.toasts
-                    .error(format!("{}: {}", t(p.command.label()), error_text(&e)));
+                self.toasts.error(format!(
+                    "{}: {}",
+                    t(p.target.command.label()),
+                    error_text(&e)
+                ));
             }
         }
     }
 
     /// Applies a finished result (one undo step).
-    pub fn apply_ai(&mut self, p: &PendingAi, r: AiResult) {
-        if !self.settings.ai.enabled {
-            self.toasts
-                .warning(t("AI assistant is disabled in Settings"));
-            return;
+    pub fn apply_ai(&mut self, p: &AiTarget, r: &AiResult) -> Result<(), String> {
+        if self.current_viewport != p.viewport {
+            return Err(t("Not possible here").to_owned());
+        }
+        self.validate_ai_target(p).map_err(str::to_owned)?;
+        if (r.kind == OutputKind::Map) != (p.command == AiCommand::GenerateMap)
+            || (r.kind == OutputKind::Todos) != (p.command == AiCommand::Breakdown)
+            || matches!(r.output, AiOutput::Text(_))
+                != matches!(p.command, AiCommand::Explain | AiCommand::Summarize)
+        {
+            return Err(t("The AI response has an unexpected format.").to_owned());
         }
         if r.kind == OutputKind::Map {
             if let AiOutput::Outline(o) = &r.output {
@@ -290,28 +326,17 @@ impl ThinodaApp {
                     d.doc.mark_dirty();
                 }
                 self.toasts.info(t("AI map created"));
+                return Ok(());
             }
-            return;
+            return Err(t("The AI response has an unexpected format.").to_owned());
         }
         let (Some(key), Some(topic)) = (&p.doc_key, p.topic) else {
-            return;
+            return Err(t("The topic no longer exists").to_owned());
         };
         let Some(i) = self.docs.iter().position(|d| &d.key == key) else {
-            self.toasts.warning(t("The topic no longer exists"));
-            return;
+            return Err(t("The topic no longer exists").to_owned());
         };
         let d = &mut self.docs[i];
-        if p.source != Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()))
-            || d.inspector_edit.is_some()
-            || d.view.editing_topic().is_some()
-        {
-            self.toasts.warning(t("The document changed. Try again."));
-            return;
-        }
-        if d.doc.sheet().topic(topic).is_none() {
-            self.toasts.warning(t("The topic no longer exists"));
-            return;
-        }
         let label = t(p.command.label());
         let res = match (&r.output, r.kind) {
             (AiOutput::Outline(o), kind) => {
@@ -347,15 +372,21 @@ impl ThinodaApp {
                     self.docs[i].view.reveal(topic);
                 }
                 self.toasts.info(format!("{} ✔", label));
+                Ok(())
             }
-            Err(e) => {
-                self.toasts.error(format!("{label}: {e}"));
-            }
+            Err(e) => Err(format!("{label}: {e}")),
         }
     }
 
     /// "Generate Map" prompt dialog.
     pub fn ai_prompt_dialog(&mut self, ctx: &Context) {
+        if self
+            .ai
+            .prompt_viewport
+            .is_some_and(|owner| owner != self.current_viewport)
+        {
+            return;
+        }
         let Some(mut text) = self.ai.prompt.take() else {
             return;
         };
@@ -391,11 +422,15 @@ impl ThinodaApp {
                         .add_enabled(
                             self.settings.ai.enabled
                                 && self.ai.pending.is_none()
+                                && self.ai.review.is_none()
                                 && !text.trim().is_empty(),
                             egui::Button::new(t("Generate")),
                         )
                         .clicked()
-                        || (enter && self.settings.ai.enabled && self.ai.pending.is_none()))
+                        || (enter
+                            && self.settings.ai.enabled
+                            && self.ai.pending.is_none()
+                            && self.ai.review.is_none()))
                         && touch_allowed
                     {
                         go = true;
@@ -416,9 +451,12 @@ impl ThinodaApp {
     /// Floating "AI is working" indicator above the status bar.
     pub fn ai_busy_overlay(&mut self, ctx: &Context) {
         let Some(p) = &self.ai.pending else { return };
+        if p.target.viewport != self.current_viewport {
+            return;
+        }
         let label = format!(
             "{} ({:.0}s)",
-            t(p.command.label()),
+            t(p.target.command.label()),
             p.job.started.elapsed().as_secs_f32()
         );
         egui::Area::new(egui::Id::unique("thinoda_ai_busy"))
@@ -580,14 +618,16 @@ mod tests {
         use crate::doc::{InspectorEdit, InspectorField};
         for field in [InspectorField::Notes, InspectorField::Hyperlink] {
             let mut app = ThinodaApp::headless();
+            let request_config = config(&app.settings.ai);
             let d = app.doc_mut().unwrap();
             let root = d.doc.sheet().root;
-            let pending = PendingAi {
-                job: AiJob::spawn_with(AiConfig::default(), |_| Err(AiError::Empty)),
+            let pending = AiTarget {
                 command: AiCommand::Explain,
                 doc_key: Some(d.key.clone()),
                 topic: Some(root),
                 source: Some((d.doc.active_index(), root, d.doc.state_id())),
+                viewport: egui::ViewportId::ROOT,
+                config: request_config,
             };
             let draft = InspectorEdit {
                 buffer_id: None,
@@ -600,13 +640,16 @@ mod tests {
             };
             d.inspector_edit = Some(draft.clone());
             let before = (d.doc.workbook().clone(), d.doc.state_id());
-            app.apply_ai(
-                &pending,
-                AiResult {
-                    kind: OutputKind::Note,
-                    output: AiOutput::Text("Delayed AI note".into()),
-                    model: "local-mock".into(),
-                },
+            assert!(
+                app.apply_ai(
+                    &pending,
+                    &AiResult {
+                        kind: OutputKind::Note,
+                        output: AiOutput::Text("Delayed AI note".into()),
+                        model: "local-mock".into(),
+                    },
+                )
+                .is_err()
             );
             let d = app.doc().unwrap();
             assert_eq!((d.doc.workbook().clone(), d.doc.state_id()), before);

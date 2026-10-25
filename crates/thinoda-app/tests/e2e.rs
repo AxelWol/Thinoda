@@ -2938,7 +2938,7 @@ fn wait_for_ai(h: &mut Harness<'static, ThinodaApp>) {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.run_steps(1);
     }
-    h.run_steps(1);
+    h.run_steps(3);
 }
 
 #[test]
@@ -2951,10 +2951,19 @@ fn ai_brainstorm_adds_subtopics_in_one_undo_step() {
     );
     h.run_steps(1);
     assert!(
-        h.state().ai.pending.is_some() || root_children(h.state()) > before,
+        h.state().ai.pending.is_some() || h.state().ai.review.is_some(),
         "Ctrl+Shift+I starts brainstorm"
     );
     wait_for_ai(&mut h);
+    assert_eq!(
+        root_children(h.state()),
+        before,
+        "preview must not edit the map"
+    );
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
+    assert!(h.state().ai.review.is_none());
     assert_eq!(root_children(h.state()), before + 3);
     let req = server.requests.lock().unwrap();
     let chat = req
@@ -2979,6 +2988,9 @@ fn ai_breakdown_creates_todos_and_explain_sets_notes() {
     h.state_mut()
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Breakdown));
     wait_for_ai(&mut h);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     let s = h.state().doc().unwrap().doc.sheet();
     let kids = s.children(s.root);
     let todos = kids
@@ -2992,6 +3004,9 @@ fn ai_breakdown_creates_todos_and_explain_sets_notes() {
     h.state_mut()
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
     wait_for_ai(&mut h);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     let s = h.state().doc().unwrap().doc.sheet();
     let notes = s.topic(s.root).unwrap().notes.clone().unwrap_or_default();
     assert!(notes.contains("A short explanation."), "{notes}");
@@ -3012,6 +3027,14 @@ fn ai_generate_map_opens_new_document() {
     h.run_steps(2);
     assert!(h.state().ai.prompt.is_none());
     wait_for_ai(&mut h);
+    assert!(
+        h.state().ai.review.is_some(),
+        "new map output must await review"
+    );
+    assert_eq!(h.state().docs.len(), docs);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     assert_eq!(h.state().docs.len(), docs + 1);
     assert_eq!(root_children(h.state()), 3);
 }
@@ -3090,6 +3113,13 @@ fn ai_result_keeps_its_document_when_another_tab_is_active() {
     let active = h.state().active;
     let before = h.state().doc().unwrap().doc.workbook().clone();
     wait_for_ai(&mut h);
+    assert_eq!(h.state().active, active);
+    assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
+    let s = h.state().docs[source].doc.sheet();
+    assert_eq!(s.children(s.root).len(), before_children);
+    h.get_by_role_and_label(Role::Button, "Apply AI Result")
+        .click();
+    h.run_steps(2);
     assert_eq!(h.state().active, active);
     assert_eq!(*h.state().doc().unwrap().doc.workbook(), before);
     let s = h.state().docs[source].doc.sheet();

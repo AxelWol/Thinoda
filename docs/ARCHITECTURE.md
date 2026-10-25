@@ -297,13 +297,18 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
-- **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and applies
-  the result as one undo step. Works with any OpenAI-compatible server; nothing leaves the
+- **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and stages
+  successful output for explicit review/Apply, never automatic mutation.
+  Apply remains one undo step. Works with any OpenAI-compatible server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
   Topic requests capture document key, active sheet/root and revision after title
   commit. Results for closed, changed or draft-editing sources are rejected with
-  a visible warning; unchanged background documents retain their original target
-  without activating a different tab. Disabling AI drops pending result ownership
+  a visible explanation; unchanged background documents retain their original target
+  without activating a different tab. The nonmodal review retains its output for
+  inspection/discard when the source changes; Apply rechecks the document, drafts,
+  endpoint, model, committed credential and temperature. New-map output also needs
+  Apply. Review and prompt windows belong to the initiating document viewport and
+  return to the root when that window closes. Disabling AI drops pending result ownership
   so re-enabling it cannot revive that result; already-running bounded HTTP work
   is not forcibly aborted.
   Connection-test work and model lists belong to their endpoint and credential

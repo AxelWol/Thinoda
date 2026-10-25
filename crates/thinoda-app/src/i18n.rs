@@ -1131,6 +1131,29 @@ const DE: &[(&str, &str)] = &[
     ("AI is still working…", "Die KI arbeitet noch…"),
     ("Select a topic first", "Bitte zuerst ein Thema auswählen"),
     ("AI map created", "KI-Map erstellt"),
+    ("Review AI Result", "KI-Ergebnis prüfen"),
+    ("Apply AI Result", "KI-Ergebnis anwenden"),
+    ("Discard AI Result", "KI-Ergebnis verwerfen"),
+    (
+        "Nothing changes until you apply this result.",
+        "Erst beim Anwenden dieses Ergebnisses wird etwas geändert.",
+    ),
+    (
+        "Review the current AI result first.",
+        "Prüfe zuerst das aktuelle KI-Ergebnis.",
+    ),
+    (
+        "AI settings changed. Try again.",
+        "Die KI-Einstellungen wurden geändert. Versuche es erneut.",
+    ),
+    (
+        "The AI response has an unexpected format.",
+        "Die KI-Antwort hat ein unerwartetes Format.",
+    ),
+    (
+        "This result creates a new map.",
+        "Dieses Ergebnis erstellt eine neue Map.",
+    ),
     (
         "AI settings changed. Test the connection again.",
         "Die KI-Einstellungen wurden geändert. Bitte die Verbindung erneut testen.",
@@ -1772,6 +1795,7 @@ mod tests {
             include_str!("ui.rs"),
             include_str!("app.rs"),
             include_str!("ai.rs"),
+            include_str!("ai/review.rs"),
             include_str!("help.rs"),
             include_str!("labels.rs"),
             include_str!("doc.rs"),

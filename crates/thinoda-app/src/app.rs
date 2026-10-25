@@ -1903,6 +1903,7 @@ impl ThinodaApp {
                 self.return_planning_viewport(viewport);
                 self.return_zone_viewport(viewport);
                 self.return_pitch_viewport(viewport);
+                self.return_ai_viewport(viewport);
                 self.return_print_viewport(viewport);
                 self.return_document_window_to_root(viewport);
                 ctx.request_repaint();

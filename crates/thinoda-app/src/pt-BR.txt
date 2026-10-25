@@ -1,3 +1,11 @@
+Review AI Result|Revisar resultado de IA
+Apply AI Result|Aplicar resultado de IA
+Discard AI Result|Descartar resultado de IA
+Nothing changes until you apply this result.|Nada muda até você aplicar este resultado.
+Review the current AI result first.|Revise primeiro o resultado de IA atual.
+AI settings changed. Try again.|As configurações de IA mudaram. Tente novamente.
+The AI response has an unexpected format.|A resposta de IA tem um formato inesperado.
+This result creates a new map.|Este resultado cria um novo mapa.
 Window|Janela
 Pitch|Pitch
 Edit Presentation|Editar apresentação

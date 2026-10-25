@@ -206,6 +206,21 @@ command availability and error reporting. Test each feature while building it,
 update completion status honestly, and do not interleave deferred stability work.
 No staffing or calendar promises are inferred from these phases.
 
+**F5 review foundation (in progress, 2026-10-25):** successful existing AI commands
+now stage output in a source-owned, nonmodal review rather than auto-applying it.
+New maps require Apply too. Apply checks source sheet/root/revision, uncommitted
+title/inspector drafts and request settings; Discard never edits the map.
+This is the first app slice, not completion of streaming/chat/semantic/Pitch AI.
+
+The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
+confirms selected-topic references, Quick/Balanced/Deep response guidance,
+Discussion mode, stop/retry, branch reorganization, translation to a new sheet
+and per-file conversations. It also explicitly describes incremental automatic
+map edits and warns that stopping does not undo them. Thinoda intentionally
+retains the approved safer contract: streaming is preview-only and every map
+change waits for deliberate Apply. Hosted credits/accounts, online research,
+attachments and Notion integration remain outside F5's text/embedding scope.
+
 **F2 implementation slice (2026-10-25):** versioned persisted profiles and the
 Settings > Keyboard Shortcuts > Edit mappings editor are implemented. Standard
 preserves existing gestures, with the native macOS close-window correction below;
