@@ -94,6 +94,11 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
+  Native window-close requests and the explicit Quit command retain distinct
+  intents through save-all continuation; cancel preserves the dirty workspace,
+  while discard closes only after the shared close decision is accepted. The
+  macOS Window menu exposes Close Window (Cmd+W) separately from the application
+  menu's Quit (Cmd+Q), both entering the app's normal unsaved-work path.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate

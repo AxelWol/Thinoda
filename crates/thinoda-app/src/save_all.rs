@@ -1,15 +1,18 @@
 use std::collections::VecDeque;
 
-use crate::{app::ThinodaApp, i18n::t};
+use crate::{
+    app::{CloseIntent, ThinodaApp},
+    i18n::t,
+};
 
 pub(crate) struct SaveAll {
     remaining: VecDeque<String>,
     origin: Option<String>,
-    quit_after: bool,
+    close_after: Option<CloseIntent>,
 }
 
 impl ThinodaApp {
-    pub(crate) fn begin_save_all(&mut self, ctx: &egui::Context, quit_after: bool) {
+    pub(crate) fn begin_save_all(&mut self, ctx: &egui::Context, close_after: Option<CloseIntent>) {
         if self.save_all.is_some()
             || self.any_modal_open()
             || self.dialogs.settings
@@ -29,7 +32,7 @@ impl ThinodaApp {
                 .filter(|doc| doc.is_dirty())
                 .map(|doc| doc.key.clone())
                 .collect(),
-            quit_after,
+            close_after,
         });
         self.continue_save_all(ctx);
     }
@@ -88,13 +91,16 @@ impl ThinodaApp {
             }
             return;
         }
-        let quit_after = self.save_all.as_ref().is_some_and(|batch| batch.quit_after);
+        let close_after = self
+            .save_all
+            .as_ref()
+            .and_then(|batch| batch.close_after.clone());
         self.stop_save_all();
-        if quit_after {
+        if let Some(intent) = close_after {
             if self.any_dirty() {
                 self.toasts.warning(t("Not possible here"));
             } else {
-                self.quitting = true;
+                self.approved_close = Some(intent);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }

@@ -126,6 +126,7 @@ pub enum SettingsTab {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloseIntent {
     Tab(String),
+    Window,
     Quit,
 }
 
@@ -212,7 +213,8 @@ pub struct ThinodaApp {
     pub dialogs: Dialogs,
     pub accent: Color32,
     pub(crate) applied: Option<(SettingsTheme, Color32, u32)>,
-    pub(crate) quitting: bool,
+    pub(crate) pending_close: Option<CloseIntent>,
+    pub(crate) approved_close: Option<CloseIntent>,
     pub(crate) save_all: Option<crate::save_all::SaveAll>,
     last_poll: Instant,
     last_frame: Instant,
@@ -297,7 +299,8 @@ impl ThinodaApp {
             dialogs: Dialogs::default(),
             accent: thinoda_ui::tokens::DEFAULT_ACCENT,
             applied: None,
-            quitting: false,
+            pending_close: None,
+            approved_close: None,
             save_all: None,
             last_poll: Instant::now(),
             last_frame: Instant::now(),
@@ -523,7 +526,7 @@ impl ThinodaApp {
                 self.save_active(true);
             }
             Cmd::SaveAll => {
-                self.begin_save_all(ctx, false);
+                self.begin_save_all(ctx, None);
             }
             Cmd::CloseTab(i) => self.request_close_tab(i),
             Cmd::NextDoc => {
@@ -627,7 +630,10 @@ impl ThinodaApp {
             Cmd::Quit if files::is_web() => {
                 self.toasts.info(t("Close the browser tab to quit"));
             }
-            Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
+            Cmd::Quit => {
+                self.pending_close = Some(CloseIntent::Quit);
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
             Cmd::ToggleOutliner => {
                 self.mode = if self.mode == CenterMode::Map {
                     CenterMode::Outliner
@@ -1682,11 +1688,15 @@ impl ThinodaApp {
             for d in &mut self.docs {
                 d.view.commit_edit(&mut d.doc);
             }
-            if self.quitting || !self.any_dirty() {
+            let approved = self.approved_close.take();
+            let was_approved = approved.is_some();
+            let pending = self.pending_close.take();
+            let intent = approved.or(pending).unwrap_or(CloseIntent::Window);
+            if was_approved || !self.any_dirty() {
                 self.shutdown();
             } else {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-                self.dialogs.close = Some(CloseIntent::Quit);
+                self.dialogs.close = Some(intent);
             }
         }
     }

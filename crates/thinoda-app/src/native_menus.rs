@@ -364,6 +364,7 @@ impl ThinodaApp {
                 application: "Thinoda".into(),
                 services: t("Services").into(),
                 window: t("Window").into(),
+                close_window: t("Close Window").into(),
                 hide: t("Hide Thinoda").into(),
                 hide_others: t("Hide Others").into(),
                 show_all: t("Show All").into(),

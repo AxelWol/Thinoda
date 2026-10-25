@@ -29,6 +29,7 @@ int main(void) {
             ],
             @"application_commands":@[@1,@2,@3],
             @"labels":@{@"application":@"Thinoda Test", @"services":@"Services", @"window":@"Window",
+                @"close_window":@"Close Window",
                 @"hide":@"Hide Thinoda", @"hide_others":@"Hide Others", @"show_all":@"Show All",
                 @"minimize":@"Minimize", @"zoom":@"Zoom", @"bring_all":@"Bring All to Front"}
         };
@@ -42,6 +43,10 @@ int main(void) {
         assert(NSApp.mainMenu == owner.root);
         assert(NSApp.mainMenu.numberOfItems == 4);
         assert(NSApp.servicesMenu && NSApp.windowsMenu && NSApp.helpMenu);
+        NSMenuItem *closeWindow = NSApp.windowsMenu.itemArray[0];
+        assert([closeWindow.title isEqualToString:@"Close Window"]);
+        assert(closeWindow.action == @selector(performClose:));
+        assert([closeWindow.keyEquivalent isEqualToString:@"w"]);
         NSMenu *application = NSApp.mainMenu.itemArray[0].submenu;
         assert([application.itemArray[2].keyEquivalent isEqualToString:@","]);
         assert([application.itemArray.lastObject.keyEquivalent isEqualToString:@"q"]);

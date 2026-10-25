@@ -1,4 +1,5 @@
 Window|Janela
+Close Window|Fechar janela
 Services|Serviços
 Hide Thinoda|Ocultar Thinoda
 Hide Others|Ocultar outros

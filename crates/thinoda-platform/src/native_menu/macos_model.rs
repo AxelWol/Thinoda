@@ -6,6 +6,7 @@ pub struct MacMenuLabels {
     pub application: String,
     pub services: String,
     pub window: String,
+    pub close_window: String,
     pub hide: String,
     pub hide_others: String,
     pub show_all: String,
@@ -138,6 +139,7 @@ mod tests {
                 application: "Thinoda".into(),
                 services: "Services".into(),
                 window: "Window".into(),
+                close_window: "Close Window".into(),
                 hide: "Hide".into(),
                 hide_others: "Hide Others".into(),
                 show_all: "Show All".into(),
@@ -173,6 +175,7 @@ mod tests {
         );
         let value: serde_json::Value =
             serde_json::from_str(model.encode().unwrap().to_str().unwrap()).unwrap();
+        assert_eq!(value["labels"]["close_window"], "Close Window");
         let actions = &value["items"][0]["items"];
         assert_eq!(actions[0]["key"], "s");
         assert_eq!(actions[0]["modifiers"], (1 << 20) | (1 << 17));

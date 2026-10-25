@@ -143,6 +143,8 @@ static int install(ThinodaMenu *owner, const char *json, char *error, size_t len
     append_entries(owner, root, entries, aliases, allowed, YES);
     NSMenu *windows = new_menu(owner, labels[@"window"]);
     windows.autoenablesItems = YES;
+    [windows addItem:system_item(labels[@"close_window"], @selector(performClose:), nil, @"w", NSEventModifierFlagCommand)];
+    [windows addItem:NSMenuItem.separatorItem];
     [windows addItem:system_item(labels[@"minimize"], @selector(performMiniaturize:), nil, @"m", NSEventModifierFlagCommand)];
     [windows addItem:system_item(labels[@"zoom"], @selector(performZoom:), nil, @"", 0)];
     [windows addItem:NSMenuItem.separatorItem];

@@ -3628,14 +3628,14 @@ impl ThinodaApp {
                             self.toasts.warning(t("Not possible here"));
                         }
                     }
-                    (CloseIntent::Quit, 0) => {
-                        self.begin_save_all(ctx, true);
+                    (intent @ (CloseIntent::Window | CloseIntent::Quit), 0) => {
+                        self.begin_save_all(ctx, Some(intent));
                     }
-                    (CloseIntent::Quit, 1) => {
+                    (intent @ (CloseIntent::Window | CloseIntent::Quit), 1) => {
                         for d in &mut self.docs {
                             d.doc.mark_saved();
                         }
-                        self.quitting = true;
+                        self.approved_close = Some(intent);
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     _ => {}

@@ -301,6 +301,15 @@ or Ubuntu/Orca host acceptance. P4.2's remaining menu/accessibility audit,
 P4.5's DEB/AppImage/Wayland/X11 and Orca acceptance, F1 multi-window lifecycle
 and non-Windows native execution remain open.
 
+**F1 window-close intent slice (2026-10-25):** OS window close now stays distinct
+from explicit Quit through the shared unsaved-work prompt and Save All continuation.
+Cancel retains dirty documents; Save waits for all documents to save before closing;
+Discard closes only after the accepted decision. The macOS Window menu now offers
+Close Window (Cmd+W) separately from application-menu Quit (Cmd+Q), both using the
+same app-owned close checks. Focused lifecycle/Save All tests and the host-independent
+menu model pass; the AppKit callback fixture and live macOS behavior still require
+a macOS host, and multi-window/recovery ownership remains open.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes
