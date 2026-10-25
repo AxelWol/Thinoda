@@ -401,6 +401,16 @@ bypassed. Native menu parity, focused multi-document/window lifecycle, accessibi
 coverage, physical printing and macOS/Linux host checks remain open. No live AI
 request or physical print job was made.
 
+The `settings_profile_dispatch` application regression additionally follows the
+actual Settings > Keyboard Shortcuts > Edit mappings controls, duplicates a
+profile, captures a custom New binding and applies it. Closing both dialogs
+preserves the Settings tab, workbook and document state; the binding then opens
+one new document and also works after settings are reloaded into a fresh app.
+Both Map/Outliner and light/dark are covered. This is an egui application-harness
+pass, not evidence of OS key delivery: the Windows automation backend reported
+`no_viable_candidate` for the native modified shortcut, and no unsafe foreground
+workaround was used.
+
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,
 Discussion mode, stop/retry, branch reorganization, translation to a new sheet
