@@ -1,8 +1,11 @@
 //! [`Document`]: a workbook plus snapshot based undo/redo and dirty tracking.
 
 use crate::edit::{EditError, EditResult};
-use crate::model::{Sheet, Workbook};
 use crate::schedule::{Task, WorkCalendar};
+use crate::{
+    geometry::{Rect, Vec2},
+    model::{Presentation, PresentationSource, Sheet, SlideFrame, SlideId, Workbook, ZoneId},
+};
 
 const MAX_HISTORY: usize = 300;
 
@@ -339,6 +342,106 @@ impl Document {
                 .map_err(|error| EditError::Invalid(error.to_string()))
         })
     }
+
+    pub fn create_zone(
+        &mut self,
+        name: &str,
+        roots: Vec<crate::model::TopicId>,
+        frame: Rect,
+    ) -> EditResult<ZoneId> {
+        self.edit_sheet("Create zone", |sheet| {
+            sheet
+                .create_zone(name, roots, frame)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn rename_zone(&mut self, id: ZoneId, name: &str) -> EditResult<()> {
+        self.edit_sheet("Rename zone", |sheet| {
+            sheet.rename_zone(id, name).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn reorder_zone(&mut self, id: ZoneId, index: usize) -> EditResult<()> {
+        self.edit_sheet("Reorder zones", |sheet| {
+            sheet.reorder_zone(id, index).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn move_zone(&mut self, id: ZoneId, delta: Vec2) -> EditResult<()> {
+        self.edit_sheet("Move zone", |sheet| {
+            sheet.move_zone(id, delta).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn resize_zone(&mut self, id: ZoneId, size: Vec2) -> EditResult<()> {
+        self.edit_sheet("Resize zone", |sheet| {
+            sheet.resize_zone(id, size).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn remove_zone(&mut self, id: ZoneId) -> EditResult<()> {
+        self.edit_sheet("Delete zone", |sheet| {
+            sheet.remove_zone(id).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn replace_presentation(&mut self, presentation: Presentation) -> EditResult<()> {
+        self.edit_sheet("Edit presentation", |sheet| {
+            sheet
+                .replace_presentation(presentation)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn add_presentation_slide(
+        &mut self,
+        title: &str,
+        source: PresentationSource,
+        frame: SlideFrame,
+    ) -> EditResult<SlideId> {
+        self.edit_sheet("Add presentation slide", |sheet| {
+            sheet
+                .add_presentation_slide(title, source, frame)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn rename_presentation_slide(&mut self, id: SlideId, title: &str) -> EditResult<()> {
+        self.edit_sheet("Rename presentation slide", |sheet| {
+            sheet
+                .rename_presentation_slide(id, title)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_presentation_slide_frame(
+        &mut self,
+        id: SlideId,
+        frame: SlideFrame,
+    ) -> EditResult<()> {
+        self.edit_sheet("Frame presentation slide", |sheet| {
+            sheet
+                .set_presentation_slide_frame(id, frame)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn reorder_presentation_slide(&mut self, id: SlideId, index: usize) -> EditResult<()> {
+        self.edit_sheet("Reorder presentation", |sheet| {
+            sheet
+                .reorder_presentation_slide(id, index)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn remove_presentation_slide(&mut self, id: SlideId) -> EditResult<()> {
+        self.edit_sheet("Delete presentation slide", |sheet| {
+            sheet
+                .remove_presentation_slide(id)
+                .map_err(EditError::Invalid)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -474,5 +577,60 @@ mod tests {
             n += 1;
         }
         assert_eq!(n, MAX_HISTORY);
+    }
+
+    #[test]
+    fn zone_and_presentation_edits_are_undoable_and_atomic() {
+        let mut doc = Document::default();
+        let floating = doc
+            .edit_sheet("Add floating", |sheet| {
+                Ok(sheet.add_floating("Floating", Vec2::new(120.0, 120.0)))
+            })
+            .unwrap();
+        let zone = doc
+            .create_zone(
+                "Ideas",
+                vec![floating],
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0)),
+            )
+            .unwrap();
+        assert_eq!(doc.sheet().zones[0].id, zone);
+        assert!(doc.undo());
+        assert!(doc.sheet().zones.is_empty());
+        assert!(doc.redo());
+        let moved_position = Vec2::new(140.0, 120.0);
+        doc.move_zone(zone, Vec2::new(20.0, 0.0)).unwrap();
+        assert_eq!(
+            doc.sheet().topic(floating).unwrap().position,
+            Some(moved_position)
+        );
+        assert!(doc.undo());
+        assert_eq!(
+            doc.sheet().topic(floating).unwrap().position,
+            Some(Vec2::new(120.0, 120.0))
+        );
+        let state = doc.state_id();
+        assert!(doc.resize_zone(zone, Vec2::new(99.0, 200.0)).is_err());
+        assert_eq!(doc.state_id(), state);
+        assert_eq!(doc.sheet().zones[0].frame.size, Vec2::new(200.0, 200.0));
+        let slide = doc
+            .add_presentation_slide(
+                "Ideas",
+                crate::model::PresentationSource::Zone(zone),
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0)),
+            )
+            .unwrap();
+        doc.reorder_presentation_slide(slide, 0).unwrap();
+        doc.remove_zone(zone).unwrap();
+        assert!(doc.sheet().presentation.slides.is_empty());
+        assert!(doc.undo());
+        assert_eq!(doc.sheet().presentation.slides.len(), 1);
+        assert!(
+            doc.sheet()
+                .zones
+                .iter()
+                .any(|candidate| candidate.id == zone)
+        );
+        assert!(doc.sheet().contains(floating));
     }
 }
