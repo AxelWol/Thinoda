@@ -3,12 +3,13 @@
 //! A small blocking client for OpenAI-compatible chat APIs (LM Studio, Ollama, llama.cpp
 //! server, vLLM, OpenAI, Azure OpenAI via a compatible endpoint) plus the mind-map tasks
 //! and a tolerant parser for the returned outlines. Requests run on background threads
-//! via [`AiJob`] so the UI never blocks.
+//! via [`AiJob`] or [`AiStreamJob`] so the UI never blocks.
 
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mock;
 pub mod outline;
+mod stream;
 pub mod tasks;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use outline::{Outline, OutlineNode, parse_outline, strip_reasoning};
+pub use stream::{AiStreamEvent, AiStreamJob};
 pub use tasks::{AiTask, OutputKind, TopicContext};
 
 /// Default endpoint: LM Studio's local server.
@@ -72,6 +74,8 @@ pub enum AiError {
     NoModel,
     #[error("the model returned no usable content")]
     Empty,
+    #[error("AI request was cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, AiError>;
