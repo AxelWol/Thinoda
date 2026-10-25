@@ -122,10 +122,17 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                 h.ctx
                     .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
                 h.run_steps(4);
+                h.set_size(size / scale);
+                h.run_steps(4);
                 let ctx = h.ctx.clone();
                 h.state_mut().exec(&ctx, Cmd::Shortcuts);
                 h.run_steps(6);
-                assert!((h.ctx.content_rect().height() - size.y / scale).abs() <= 1.0);
+                assert!(
+                    (h.ctx.content_rect().height() - size.y / scale).abs() <= 1.0,
+                    "{language:?}/{theme:?}/{size:?}/{scale}: {:?}, zoom={}",
+                    h.ctx.content_rect(),
+                    h.ctx.zoom_factor(),
+                );
                 let before = h.state().doc().unwrap().doc.workbook().clone();
                 let selection = h.state().doc().unwrap().view.selection.clone();
                 assert_fit(&h);
@@ -201,10 +208,10 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                 h.state_mut().exec(&ctx, Cmd::Shortcuts);
                 h.run_steps(4);
                 assert_fit(&h);
-                h.set_size(egui::vec2(1280.0, 800.0));
+                h.set_size(egui::vec2(1280.0, 800.0) / scale);
                 h.run_steps(5);
                 assert_fit(&h);
-                h.set_size(size);
+                h.set_size(size / scale);
                 h.run_steps(5);
                 assert_fit(&h);
                 for title in ["Delete Topic Only", "Navigate"] {
