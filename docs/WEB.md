@@ -73,6 +73,23 @@ features work differently:
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 
+## Zones
+
+Select one or more floating root topics and choose **Insert > Create Zone** or
+**Create Zone** in the context menu. Central-tree topics cannot become Zone
+members. The frame initially includes the selected topics and their visible
+descendants. **Apply** saves the name and frame as one undoable change;
+**Cancel** discards the draft.
+
+Click a Zone border/title to select it. Drag the border to move the frame and
+its topics together, or drag the lower-right handle to resize the frame (minimum
+100 by 100). Changes commit only when released inside the map; Escape, focus
+loss or an intervening document change cancels the gesture. Use **Edit Zone**
+in the context menu or Style inspector for precise position and size.
+**Tools > Zones** lists Zones in order with rename/edit, Move Up/Down and Remove
+controls. Removing a Zone preserves its topics. Overlapping frames are allowed;
+the last Zone in the order is on top.
+
 ## Task planning and Gantt
 
 Select a topic and choose **Insert > Task Planning**, or use **Task Planning**

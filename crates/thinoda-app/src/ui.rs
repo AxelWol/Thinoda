@@ -667,6 +667,7 @@ impl ThinodaApp {
                 .show(ui, |ui| {
                     if self.palette.open
                         || self.planning.editing()
+                        || self.zones.editing()
                         || self.map_shot.active()
                         || self.printing.active()
                         || self.dialogs.legal.open
@@ -745,6 +746,7 @@ impl ThinodaApp {
             .show(ui, |ui| {
                 if self.palette.open
                     || self.planning.editing()
+                    || self.zones.editing()
                     || self.label_editor.is_some()
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
@@ -818,6 +820,8 @@ impl ThinodaApp {
         self.map_shot_dialog(&ctx);
         self.print_dialog(&ctx);
         self.planning_dialog(&ctx);
+        self.zones_window(&ctx);
+        self.zone_dialog(&ctx);
         self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
@@ -931,6 +935,7 @@ impl ThinodaApp {
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
             || self.planning.editing()
+            || self.zones.editing()
             || self.printing.active()
             || self.map_shot.active()
             || self.label_editor.is_some()
@@ -1296,6 +1301,7 @@ impl ThinodaApp {
         let ctx = ui.ctx().clone();
         if self.palette.open
             || self.planning.editing()
+            || self.zones.editing()
             || self.map_shot.active()
             || self.printing.active()
             || self.label_editor.is_some()
@@ -1459,7 +1465,14 @@ impl ThinodaApp {
                 thinoda_canvas::ObjectSelection::Relationship(_) => "Delete Relationship",
                 thinoda_canvas::ObjectSelection::Boundary(_) => "Delete Boundary",
                 thinoda_canvas::ObjectSelection::Summary(_) => "Delete Summary",
+                thinoda_canvas::ObjectSelection::Zone(_) => "Remove Zone",
             };
+            if matches!(object, thinoda_canvas::ObjectSelection::Zone(_))
+                && ui.button(t("Edit Zone")).clicked()
+            {
+                *cmd = Some(Cmd::EditZone);
+                ui.close();
+            }
             if matches!(object, thinoda_canvas::ObjectSelection::Summary(_)) {
                 widgets::caption(
                     ui,
@@ -1532,6 +1545,12 @@ impl ThinodaApp {
         );
         item(ui, t("Summary"), Cmd::Canvas(Action::AddSummary), has_sel);
         item(ui, t("Boundary"), Cmd::Canvas(Action::AddBoundary), has_sel);
+        item(
+            ui,
+            t("Create Zone"),
+            Cmd::CreateZone,
+            self.command_available(&Cmd::CreateZone),
+        );
         item(ui, t("To-Do"), Cmd::Canvas(Action::ToggleTodo), has_sel);
         if single {
             ui.separator();
@@ -2648,6 +2667,12 @@ impl ThinodaApp {
     }
 
     fn style_tab(&mut self, ui: &mut Ui) {
+        if let Some(thinoda_canvas::ObjectSelection::Zone(id)) =
+            self.doc().and_then(|doc| doc.view.selected_object)
+        {
+            self.zone_properties(ui, id);
+            return;
+        }
         let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         let numeric_enabled = !self.any_modal_open()
             && !self.dialogs.settings

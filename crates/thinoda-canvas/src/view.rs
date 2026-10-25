@@ -67,6 +67,7 @@ pub enum ObjectSelection {
     Relationship(RelationshipId),
     Boundary(BoundaryId),
     Summary(SummaryId),
+    Zone(thinoda_core::ZoneId),
 }
 
 impl ObjectSelection {
@@ -75,6 +76,7 @@ impl ObjectSelection {
             Self::Relationship(id) => sheet.relationships.iter().any(|r| r.id == id),
             Self::Boundary(id) => sheet.boundaries.iter().any(|b| b.id == id),
             Self::Summary(id) => sheet.summaries.iter().any(|s| s.id == id),
+            Self::Zone(id) => sheet.zones.iter().any(|zone| zone.id == id),
         }
     }
 }
@@ -141,6 +143,17 @@ enum Drag {
         current: Vec2,
         state: u64,
         sheet: usize,
+    },
+    Zone {
+        id: thinoda_core::ZoneId,
+        frame: thinoda_core::Rect,
+        members: std::collections::BTreeSet<TopicId>,
+        grab: Vec2,
+        current: Vec2,
+        state: u64,
+        sheet: usize,
+        camera: (EVec2, f32),
+        resize: bool,
     },
 }
 
@@ -741,6 +754,8 @@ impl MapCanvas {
 
     /// Paints the current camera without interaction, selection, search dimming or editing chrome.
     pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
+        view.drag = Drag::None;
+        view.relationship_drag = None;
         let rect = ui.available_rect_before_wrap();
         ui.advance_cursor_after_rect(rect);
         view.canvas_rect = rect;
@@ -889,7 +904,7 @@ impl MapCanvas {
             && ui.is_enabled()
             && response.hovered()
             && view.relationship_drag.is_none()
-            && !matches!(view.drag, Drag::Topics { .. })
+            && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
         {
             let (scroll, zoom_delta, pos) =
                 ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
@@ -911,7 +926,10 @@ impl MapCanvas {
             &mut out.error,
             !space && !touch_navigation,
         );
-        let handles = if space || touch_navigation || matches!(view.drag, Drag::Topics { .. }) {
+        let handles = if space
+            || touch_navigation
+            || matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
+        {
             Vec::new()
         } else {
             add_handles(view, doc.sheet(), &layout)
@@ -977,6 +995,32 @@ impl MapCanvas {
                         sheet: doc.active_index(),
                     };
                 }
+            } else if let Some(ObjectSelection::Zone(id)) =
+                hit_zone(doc.sheet(), sp, 6.0 / view.zoom)
+                    .filter(|_| hit_object(&layout, sp, 6.0 / view.zoom).is_none())
+            {
+                view.commit_edit(doc);
+                let zone = doc
+                    .sheet()
+                    .zones
+                    .iter()
+                    .find(|zone| zone.id == id)
+                    .expect("hit-tested zone exists");
+                let frame = zone.frame;
+                let members = crate::topic_drag::members(doc.sheet(), &zone.roots);
+                let resize = (sp - frame.max()).length() <= 12.0 / view.zoom;
+                view.select_object(ObjectSelection::Zone(id));
+                view.drag = Drag::Zone {
+                    id,
+                    frame,
+                    members,
+                    grab: sp,
+                    current: sp,
+                    state: doc.state_id(),
+                    sheet: doc.active_index(),
+                    camera: (view.offset, view.zoom),
+                    resize,
+                };
             } else if any_touches {
                 view.drag = Drag::Pan;
             } else {
@@ -987,15 +1031,20 @@ impl MapCanvas {
             }
         }
         let stale = matches!(&view.drag, Drag::Topics { state, sheet, selection, .. }
-            if *state != doc.state_id() || *sheet != doc.active_index() || *selection != view.selection);
+            if *state != doc.state_id() || *sheet != doc.active_index() || *selection != view.selection)
+            || matches!(&view.drag, Drag::Zone { id, state, sheet, camera, .. }
+                if *state != doc.state_id() || *sheet != doc.active_index()
+                    || view.selected_object != Some(ObjectSelection::Zone(*id))
+                    || *camera != (view.offset, view.zoom));
         if stale {
             view.drag = Drag::None;
             out.error = Some(thinoda_core::EditError::Invalid(
-                "topic dragging canceled because the document or selection changed".into(),
+                "canvas dragging canceled because the document, camera or selection changed".into(),
             ));
-        } else if matches!(view.drag, Drag::Topics { .. })
+        } else if matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && (egui::Popup::is_any_open(&ctx)
                 || !ui.is_enabled()
+                || !ctx.input(|input| input.focused)
                 || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)))
         {
             view.drag = Drag::None;
@@ -1011,7 +1060,7 @@ impl MapCanvas {
             let xf = view.xf();
             match &mut view.drag {
                 Drag::Pan => view.offset += delta,
-                Drag::Topics { current, .. } => {
+                Drag::Topics { current, .. } | Drag::Zone { current, .. } => {
                     if let Some(p) = pointer {
                         *current = xf.sheet(p);
                     }
@@ -1062,7 +1111,9 @@ impl MapCanvas {
                         view.select_only(t);
                     }
                 }
-            } else if let Some(object) = hit_object(&layout, sp, 6.0 / view.zoom) {
+            } else if let Some(object) = hit_object(&layout, sp, 6.0 / view.zoom)
+                .or_else(|| hit_zone(doc.sheet(), sp, 6.0 / view.zoom))
+            {
                 view.commit_edit(doc);
                 view.select_object(object);
             } else {
@@ -1099,6 +1150,7 @@ impl MapCanvas {
                 view.begin_edit(doc.sheet(), t, true);
             } else if layout.hit_badge(sp).is_none()
                 && hit_object(&layout, sp, 6.0 / view.zoom).is_none()
+                && hit_zone(doc.sheet(), sp, 6.0 / view.zoom).is_none()
             {
                 run(doc, view, Action::InsertFloating(sp), &mut out);
             }
@@ -1123,7 +1175,9 @@ impl MapCanvas {
                     view.select_only(t);
                 }
                 out.context_topic = Some(t);
-            } else if let Some(object) = hit_object(&layout, view.xf().sheet(p), 6.0 / view.zoom) {
+            } else if let Some(object) = hit_object(&layout, view.xf().sheet(p), 6.0 / view.zoom)
+                .or_else(|| hit_zone(doc.sheet(), view.xf().sheet(p), 6.0 / view.zoom))
+            {
                 view.select_object(object);
             } else {
                 view.selection.clear();
@@ -1164,9 +1218,39 @@ impl MapCanvas {
                         ));
                     }
                 }
+                Drag::Zone {
+                    id,
+                    frame,
+                    grab,
+                    current,
+                    resize,
+                    ..
+                } => {
+                    if pointer.is_some_and(|point| rect.contains(point)) {
+                        let delta = current - grab;
+                        let result = if resize {
+                            doc.resize_zone(
+                                id,
+                                Vec2::new(
+                                    (frame.size.x + delta.x).max(100.0),
+                                    (frame.size.y + delta.y).max(100.0),
+                                ),
+                            )
+                        } else {
+                            doc.move_zone(id, delta)
+                        };
+                        if let Err(error) = result {
+                            out.error = Some(error);
+                        }
+                    } else {
+                        out.error = Some(thinoda_core::EditError::Invalid(
+                            "drop a Zone inside the map canvas".into(),
+                        ));
+                    }
+                }
                 _ => {}
             }
-        } else if matches!(view.drag, Drag::Topics { .. })
+        } else if matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && !ctx.input(|i| i.pointer.primary_down())
         {
             view.drag = Drag::None;
@@ -1183,7 +1267,7 @@ impl MapCanvas {
         }
         if view.editing.is_none()
             && !egui::Popup::is_any_open(&ctx)
-            && !matches!(view.drag, Drag::Topics { .. })
+            && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
         {
             handle_keys(&ctx, doc, view, &mut out, shortcuts);
@@ -1204,7 +1288,13 @@ impl MapCanvas {
         painter.rect_filled(rect, CornerRadius::ZERO, sheet_background(sheet, view.dark));
         let xf = view.xf();
         let filter = view.filter.clone();
-        let dimmed = if let Drag::Topics { members, .. } = &view.drag {
+        let dimmed = if let Drag::Topics { members, .. }
+        | Drag::Zone {
+            members,
+            resize: false,
+            ..
+        } = &view.drag
+        {
             Some(members)
         } else {
             None
@@ -1222,10 +1312,11 @@ impl MapCanvas {
             filter: filter.as_deref(),
             dimmed,
             selected_object: view.selected_object,
+            omit_zones: false,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
         crate::relationship_editing::paint_target(&painter, view, &layout);
-        if !space && !matches!(view.drag, Drag::Topics { .. }) {
+        if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {
             for handle in add_handles(view, sheet, &layout) {
                 let hot = pointer.is_some_and(|p| handle.rect().contains(p));
                 painter.line_segment(
@@ -1279,6 +1370,49 @@ impl MapCanvas {
                 let d = *current - *grab;
                 crate::topic_drag::paint(&painter, sheet, &layout, view, members, d, *current);
             }
+            Drag::Zone {
+                frame,
+                members,
+                grab,
+                current,
+                resize,
+                ..
+            } => {
+                let delta = *current - *grab;
+                let preview = if *resize {
+                    thinoda_core::Rect::from_min_size(
+                        frame.min,
+                        Vec2::new(
+                            (frame.size.x + delta.x).max(100.0),
+                            (frame.size.y + delta.y).max(100.0),
+                        ),
+                    )
+                } else {
+                    let ghost = crate::topic_drag::ghost_layout(sheet, &layout, members);
+                    paint_map(
+                        &painter,
+                        sheet,
+                        &ghost,
+                        Xf {
+                            origin: xf.origin + vec2(delta.x, delta.y) * xf.zoom,
+                            ..xf
+                        },
+                        &PaintOptions {
+                            dark: view.dark,
+                            accent: view.accent,
+                            omit_zones: true,
+                            ..Default::default()
+                        },
+                    );
+                    thinoda_core::Rect::from_min_size(frame.min + delta, frame.size)
+                };
+                painter.rect_stroke(
+                    xf.rect(preview),
+                    4.0,
+                    Stroke::new(2.0, view.accent),
+                    StrokeKind::Inside,
+                );
+            }
             _ => {}
         }
         if let (Some(from), Some(p)) = (view.relationship_from, pointer)
@@ -1297,6 +1431,23 @@ impl MapCanvas {
         show_editor(ui, doc, view, &layout, &mut out);
 
         if response.hovered() {
+            let sheet = doc.sheet();
+            let zone_hover = pointer.and_then(|point| {
+                let point = xf.sheet(point);
+                if layout.hit_test(point).is_some()
+                    || hit_object(&layout, point, 6.0 / view.zoom).is_some()
+                {
+                    return None;
+                }
+                let ObjectSelection::Zone(id) = hit_zone(sheet, point, 6.0 / view.zoom)? else {
+                    return None;
+                };
+                sheet
+                    .zones
+                    .iter()
+                    .find(|zone| zone.id == id)
+                    .map(|zone| (point - zone.frame.max()).length() <= 12.0 / view.zoom)
+            });
             let icon = match view.drag {
                 Drag::Pan => egui::CursorIcon::Grabbing,
                 Drag::Topics {
@@ -1307,7 +1458,11 @@ impl MapCanvas {
                     egui::CursorIcon::NotAllowed
                 }
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
+                Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
+                Drag::Zone { .. } => egui::CursorIcon::Grabbing,
                 _ if space => egui::CursorIcon::Grab,
+                _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
+                _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
                 _ if hovered.is_some() || over_handle => egui::CursorIcon::PointingHand,
                 _ => egui::CursorIcon::Default,
             };
@@ -1665,6 +1820,32 @@ fn hit_object(layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
         .map(|boundary| ObjectSelection::Boundary(boundary.id))
 }
 
+fn hit_zone(sheet: &Sheet, point: Vec2, tolerance: f32) -> Option<ObjectSelection> {
+    sheet
+        .zones
+        .iter()
+        .rev()
+        .find(|zone| {
+            let frame = zone.frame;
+            let max = frame.max();
+            let corners = [
+                frame.min,
+                Vec2::new(max.x, frame.min.y),
+                max,
+                Vec2::new(frame.min.x, max.y),
+                frame.min,
+            ];
+            corners
+                .windows(2)
+                .any(|edge| dist_to_segment(point, edge[0], edge[1]) <= tolerance)
+                || (point.x >= frame.min.x
+                    && point.x <= max.x
+                    && point.y >= frame.min.y
+                    && point.y <= frame.min.y + tolerance * 3.0)
+        })
+        .map(|zone| ObjectSelection::Zone(zone.id))
+}
+
 fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len2 = ab.x * ab.x + ab.y * ab.y;
@@ -1685,6 +1866,10 @@ fn screen_pos(view: &MapView, p: Vec2) -> Pos2 {
 #[cfg(test)]
 #[path = "topic_drag_tests.rs"]
 mod topic_drag_tests;
+
+#[cfg(test)]
+#[path = "zone_tests.rs"]
+mod zone_tests;
 
 #[cfg(test)]
 #[path = "relationship_creation_tests.rs"]
@@ -2379,6 +2564,9 @@ mod tests {
                         }
                         ObjectSelection::Boundary(_) => layout.boundaries[0].rect.top_center(),
                         ObjectSelection::Summary(_) => layout.summaries[0].tip,
+                        ObjectSelection::Zone(_) => unreachable!(
+                            "this fixture creates relationships, boundaries and summaries"
+                        ),
                     };
                     assert!(layout.hit_test(p).is_none());
                     assert_eq!(hit_object(&layout, p, 6.0 / zoom), Some(object));

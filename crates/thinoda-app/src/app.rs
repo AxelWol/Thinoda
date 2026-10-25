@@ -58,6 +58,9 @@ pub enum Cmd {
     Print,
     Labels,
     TaskPlanning,
+    CreateZone,
+    EditZone,
+    Zones,
     WorkCalendar,
     Gantt,
     Export(Format),
@@ -237,6 +240,7 @@ pub struct ThinodaApp {
     pub(crate) printing: crate::printing::PrintState,
     pub(crate) planning: crate::planning::PlanningState,
     pub(crate) gantt: crate::gantt::GanttState,
+    pub(crate) zones: crate::zones::ZoneState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
@@ -327,6 +331,7 @@ impl ThinodaApp {
             printing: Default::default(),
             planning: Default::default(),
             gantt: Default::default(),
+            zones: Default::default(),
             label_editor: None,
             fonts: Default::default(),
             font_source: None,
@@ -740,6 +745,15 @@ impl ThinodaApp {
             Cmd::TaskPlanning => self.begin_task_planning(ctx, false),
             Cmd::WorkCalendar => self.begin_task_planning(ctx, true),
             Cmd::Gantt => self.open_gantt(),
+            Cmd::CreateZone => self.begin_zone_editor(ctx, None),
+            Cmd::EditZone => {
+                if let Some(thinoda_canvas::ObjectSelection::Zone(id)) =
+                    self.doc().and_then(|doc| doc.view.selected_object)
+                {
+                    self.begin_zone_editor(ctx, Some(id));
+                }
+            }
+            Cmd::Zones => self.open_zones(ctx),
             Cmd::Settings => self.dialogs.settings = true,
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
@@ -1084,7 +1098,29 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
-            Cmd::WorkCalendar | Cmd::Gantt => self.doc().is_some() && !self.any_modal_open(),
+            Cmd::WorkCalendar | Cmd::Gantt | Cmd::Zones => {
+                self.doc().is_some() && !self.any_modal_open()
+            }
+            Cmd::CreateZone => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|doc| {
+                        !doc.view.selection.is_empty()
+                            && doc
+                                .view
+                                .selection
+                                .iter()
+                                .all(|id| doc.doc.sheet().floating.contains(id))
+                    })
+            }
+            Cmd::EditZone => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|doc| {
+                        matches!(
+                            doc.view.selected_object,
+                            Some(thinoda_canvas::ObjectSelection::Zone(_))
+                        )
+                    })
+            }
             Cmd::Labels | Cmd::TaskPlanning | Cmd::EditField(_) => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
@@ -1849,6 +1885,7 @@ impl ThinodaApp {
                     }
                 }
                 self.return_planning_viewport(viewport);
+                self.return_zone_viewport(viewport);
                 self.return_print_viewport(viewport);
                 self.return_document_window_to_root(viewport);
                 ctx.request_repaint();
@@ -2386,6 +2423,9 @@ impl ThinodaApp {
             (Cmd::Import, "Import", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
             (Cmd::TaskPlanning, "Task Planning", "", "Insert"),
+            (Cmd::CreateZone, "Create Zone", "", "Insert"),
+            (Cmd::EditZone, "Edit Zone", "", "Edit"),
+            (Cmd::Zones, "Zones", "", "Tools"),
             (Cmd::WorkCalendar, "Work Calendar", "", "Tools"),
             (Cmd::Gantt, "Gantt Chart", "", "View"),
             (Cmd::Canvas(Action::InsertChild), "Subtopic", "", "Insert"),

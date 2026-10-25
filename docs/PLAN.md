@@ -274,6 +274,19 @@ tests and 25 documentation contracts pass; scoped native all-target and WASM
 app-library strict clippy pass. The F3 implementation can proceed into F4
 without treating the outstanding host gates as completed.
 
+**F4 implementation in progress:** persisted Zone/presentation domain state is
+integrated. Zones can be created from selected floating roots, edited through
+revision-owned Apply/Cancel drafts, reordered/removed in Tools > Zones, and
+selected/deleted on the canvas. Frame-border dragging moves the Zone and its
+content together; the lower-right handle resizes without moving topics. Gestures
+stage until release, create one Undo entry, and cancel on Escape, focus loss,
+unsafe touch, disabled canvas, changed document/camera/selection, or outside
+release. Zone removal preserves topics. Draft numeric controls and IME use the
+existing guarded helpers, and child-window drafts return to the root. Local
+canvas/editor, menu deletion/save-reopen, translations and command-identity
+coverage is present. Pitch editing/playback/output integration and native visual
+acceptance remain unfinished; this is not an F4 completion claim.
+
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
 HMENU adapter is wired to the root eframe window; it queues native selections

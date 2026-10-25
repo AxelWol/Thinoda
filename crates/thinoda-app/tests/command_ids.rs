@@ -98,19 +98,19 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         appearance.dark appearance.light appearance.system
         arrange.bottom arrange.distribute-horizontal arrange.distribute-vertical
         arrange.horizontal-center arrange.left arrange.right arrange.top arrange.vertical-center
-        edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.redo edit.settings edit.undo
+        edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.redo edit.settings edit.undo edit.zone
         export.csv export.excel export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
         file.quit file.save file.save-all file.save-as file.show-in-folder
         help.about help.feedback help.project-news help.quick-start help.shortcuts help.user-guide
         insert.boundary insert.hyperlink insert.labels insert.notes insert.priority-1 insert.priority-2 insert.priority-3
-        insert.relationship insert.summary insert.task insert.todo
+        insert.relationship insert.summary insert.task insert.todo insert.zone
         navigation.down navigation.left navigation.right navigation.up
         selection.all selection.descendants selection.invert selection.none selection.root selection.siblings
         sheet.copy sheet.delete sheet.duplicate sheet.from-topic sheet.new sheet.next sheet.paste sheet.previous sheet.rename sheet.save-as
         style.copy style.edit-theme style.paste style.reset style.save-quick-style style.topic
-        tools.map-shot tools.work-calendar
+        tools.map-shot tools.work-calendar tools.zones
         topic.collapse-all topic.delete topic.delete-only topic.duplicate topic.edit topic.expand-all topic.indent
         topic.insert-child topic.insert-floating topic.insert-parent topic.insert-sibling topic.insert-sibling-before
         topic.move-down topic.move-up topic.open-link topic.outdent topic.sort-ascending topic.sort-descending

@@ -2317,7 +2317,7 @@ fn right_click_at(h: &mut Harness<'static, ThinodaApp>, pos: egui::Pos2) {
 fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_disk() {
     use thinoda_canvas::ObjectSelection;
     for dark in [false, true] {
-        for kind in 0..3 {
+        for kind in 0..4 {
             let mut app = ThinodaApp::headless();
             app.settings.show_topic_add_buttons = false;
             app.settings.theme = if dark { Theme::Dark } else { Theme::Light };
@@ -2337,12 +2337,30 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                     ObjectSelection::Boundary(s.add_boundary(&[a, b]).unwrap()),
                     "Delete Boundary",
                 ),
-                _ => {
+                2 => {
                     let topic = s.add_summary(&[a, b], "Conclusion").unwrap();
                     s.add_child(topic, None, "Summary child");
                     (
                         ObjectSelection::Summary(s.summaries[0].id),
                         "Delete Summary",
+                    )
+                }
+                _ => {
+                    let floating =
+                        s.add_floating("Zone content", thinoda_core::Vec2::new(600.0, 100.0));
+                    (
+                        ObjectSelection::Zone(
+                            s.create_zone(
+                                "Zone",
+                                vec![floating],
+                                thinoda_core::Rect::from_min_size(
+                                    thinoda_core::Vec2::new(450.0, 0.0),
+                                    thinoda_core::Vec2::new(300.0, 200.0),
+                                ),
+                            )
+                            .unwrap(),
+                        ),
+                        "Remove Zone",
                     )
                 }
             };
@@ -2360,6 +2378,7 @@ fn structural_objects_delete_from_context_and_keyboard_and_remain_deleted_on_dis
                     }
                     ObjectSelection::Boundary(_) => layout.boundaries[0].rect.top_center(),
                     ObjectSelection::Summary(_) => layout.summaries[0].tip,
+                    ObjectSelection::Zone(_) => d.doc.sheet().zones[0].frame.top_center(),
                 };
                 d.view.canvas_rect().center()
                     + d.view.offset

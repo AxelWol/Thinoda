@@ -32,6 +32,7 @@ mod symbols;
 mod template_gallery;
 mod theme_editor;
 pub mod ui;
+mod zones;
 
 pub use app::{Startup, ThinodaApp, start_services};
 

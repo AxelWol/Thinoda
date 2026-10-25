@@ -1,4 +1,17 @@
 Window|Janela
+Zone|Zona
+Zones|Zonas
+Create Zone|Criar zona
+Edit Zone|Editar zona
+Remove Zone|Remover zona
+Name|Nome
+Height|Altura
+X|X
+Y|Y
+Select floating topics to create a Zone.|Selecione tópicos flutuantes para criar uma zona.
+Zones group floating topics and their descendants. Removing a Zone keeps its topics.|As zonas agrupam tópicos flutuantes e seus descendentes. Remover uma zona preserva seus tópicos.
+No Zones yet. Select floating topics, then create a Zone.|Ainda não há zonas. Selecione tópicos flutuantes e crie uma zona.
+Moving a Zone moves its topics. Minimum size is 100 × 100.|Mover uma zona move seus tópicos. O tamanho mínimo é 100 × 100.
 Task Planning|Planejamento de tarefas
 Gantt Chart|Gráfico de Gantt
 Work Calendar|Calendário de trabalho

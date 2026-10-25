@@ -201,6 +201,7 @@ impl ThinodaApp {
                 ("Boundary", Cmd::Canvas(Action::AddBoundary)),
                 ("To-Do", Cmd::Canvas(Action::ToggleTodo)),
                 ("Task Planning", Cmd::TaskPlanning),
+                ("Create Zone", Cmd::CreateZone),
                 ("Notes", Cmd::EditField(FocusField::Notes)),
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
@@ -217,6 +218,7 @@ impl ThinodaApp {
                 ).into()),
                 MenuEntry::Separator,
                 item("Work Calendar", Cmd::WorkCalendar),
+                item("Zones", Cmd::Zones),
             ]),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),

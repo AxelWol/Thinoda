@@ -1,3 +1,16 @@
+Zone|Zona|Zone|Zone|Zone|Zona|Zona|Strefa
+Zones|Zonas|Zones|Zoner|Zones|Zonas|Zone|Strefy
+Create Zone|Crear zona|Créer une zone|Opret zone|Zone maken|Criar zona|Crea zona|Utwórz strefę
+Edit Zone|Editar zona|Modifier la zone|Rediger zone|Zone bewerken|Editar zona|Modifica zona|Edytuj strefę
+Remove Zone|Quitar zona|Retirer la zone|Fjern zone|Zone verwijderen|Remover zona|Rimuovi zona|Usuń strefę
+Name|Nombre|Nom|Navn|Naam|Nome|Nome|Nazwa
+Height|Alto|Hauteur|Højde|Hoogte|Altura|Altezza|Wysokość
+X|X|X|X|X|X|X|X
+Y|Y|Y|Y|Y|Y|Y|Y
+Select floating topics to create a Zone.|Selecciona temas flotantes para crear una zona.|Sélectionnez des sujets flottants pour créer une zone.|Vælg flydende emner for at oprette en zone.|Selecteer zwevende onderwerpen om een zone te maken.|Selecione tópicos flutuantes para criar uma zona.|Seleziona argomenti mobili per creare una zona.|Wybierz swobodne tematy, aby utworzyć strefę.
+Zones group floating topics and their descendants. Removing a Zone keeps its topics.|Las zonas agrupan temas flotantes y sus descendientes. Quitar una zona conserva sus temas.|Les zones regroupent les sujets flottants et leurs descendants. Retirer une zone conserve ses sujets.|Zoner grupperer flydende emner og deres underemner. Fjernelse af en zone bevarer emnerne.|Zones groeperen zwevende onderwerpen en hun onderliggende onderwerpen. Verwijderen van een zone behoudt de onderwerpen.|As zonas agrupam tópicos flutuantes e os seus descendentes. Remover uma zona preserva os tópicos.|Le zone raggruppano argomenti mobili e discendenti. La rimozione di una zona conserva gli argomenti.|Strefy grupują swobodne tematy i ich potomków. Usunięcie strefy zachowuje tematy.
+No Zones yet. Select floating topics, then create a Zone.|Aún no hay zonas. Selecciona temas flotantes y crea una zona.|Aucune zone. Sélectionnez des sujets flottants, puis créez une zone.|Ingen zoner endnu. Vælg flydende emner, og opret en zone.|Nog geen zones. Selecteer zwevende onderwerpen en maak een zone.|Ainda não há zonas. Selecione tópicos flutuantes e crie uma zona.|Nessuna zona. Seleziona argomenti mobili, poi crea una zona.|Brak stref. Wybierz swobodne tematy, a następnie utwórz strefę.
+Moving a Zone moves its topics. Minimum size is 100 × 100.|Mover una zona mueve sus temas. El tamaño mínimo es 100 × 100.|Déplacer une zone déplace ses sujets. Taille minimale : 100 × 100.|Flytning af en zone flytter dens emner. Mindste størrelse er 100 × 100.|Een zone verplaatsen verplaatst de onderwerpen. Minimale grootte: 100 × 100.|Mover uma zona move os seus tópicos. O tamanho mínimo é 100 × 100.|Spostando una zona si spostano i suoi argomenti. Dimensione minima: 100 × 100.|Przesunięcie strefy przesuwa jej tematy. Minimalny rozmiar to 100 × 100.
 Edit mappings|Editar asignaciones|Modifier les raccourcis|Rediger genveje|Toetsindeling bewerken|Editar atalhos|Modifica scorciatoie|Edytuj skróty
 Task Planning|Planificación de tareas|Planification des tâches|Opgaveplanlægning|Taakplanning|Planeamento de tarefas|Pianificazione attività|Planowanie zadań
 Gantt Chart|Diagrama de Gantt|Diagramme de Gantt|Gantt-diagram|Gantt-diagram|Diagrama de Gantt|Diagramma di Gantt|Wykres Gantta
