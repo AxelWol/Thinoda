@@ -78,7 +78,7 @@ pub struct ChatState {
 }
 
 impl ChatState {
-    pub(super) fn is_busy(&self) -> bool {
+    pub(crate) fn is_busy(&self) -> bool {
         self.pending.is_some()
     }
 }
@@ -256,6 +256,7 @@ impl ThinodaApp {
             || self.ai.pending.is_some()
             || self.ai.review.is_some()
             || self.ai.chat.is_busy()
+            || self.pitch.ai_busy()
         {
             thread.error = Some(t("Review the current AI result first.").into());
             return;
@@ -480,6 +481,7 @@ impl ThinodaApp {
             && self.ai.pending.is_none()
             && self.ai.review.is_none()
             && !self.ai.chat.is_busy()
+            && !self.pitch.ai_busy()
             && scope_context.is_ok()
             && !thread.confirm_clear
             && thread.replacement.is_none()

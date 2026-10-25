@@ -1132,6 +1132,32 @@ const DE: &[(&str, &str)] = &[
     ("Select a topic first", "Bitte zuerst ein Thema auswählen"),
     ("AI map created", "KI-Map erstellt"),
     ("Review AI Result", "KI-Ergebnis prüfen"),
+    ("AI Pitch outline", "KI-Präsentationsgliederung"),
+    ("Pitch instructions", "Anweisungen für die Präsentation"),
+    (
+        "Suggest Pitch outline",
+        "Präsentationsgliederung vorschlagen",
+    ),
+    (
+        "Use suggested outline",
+        "Vorgeschlagene Gliederung verwenden",
+    ),
+    (
+        "Discard suggested outline",
+        "Vorgeschlagene Gliederung verwerfen",
+    ),
+    (
+        "AI suggests slide order and titles only. Frames stay unchanged. Send transmits slide titles and instructions.",
+        "Die KI schlägt nur Reihenfolge und Titel vor. Ausschnitte bleiben unverändert. Senden überträgt Folientitel und Anweisungen.",
+    ),
+    (
+        "AI Pitch requires 1 to 64 slides and at most 64 KiB of titles.",
+        "KI-Präsentationen benötigen 1 bis 64 Folien und höchstens 64 KiB Titel.",
+    ),
+    (
+        "AI Pitch returned an invalid outline. Retry with candidate numbers and titles only.",
+        "Die KI lieferte eine ungültige Gliederung. Erneut nur mit Kandidatennummern und Titeln versuchen.",
+    ),
     ("AI Chat", "KI-Chat"),
     ("Embedding model", "Embedding-Modell"),
     (
@@ -2007,6 +2033,7 @@ mod tests {
             include_str!("pitch.rs"),
             include_str!("pitch/pitch_player.rs"),
             include_str!("pitch/pitch_preview.rs"),
+            include_str!("pitch/pitch_ai.rs"),
             include_str!("gantt.rs"),
             include_str!("symbols.rs"),
             include_str!("menus.rs"),

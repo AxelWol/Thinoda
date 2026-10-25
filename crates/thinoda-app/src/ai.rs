@@ -209,7 +209,7 @@ fn error_text(e: &AiError) -> String {
     }
 }
 
-fn poll_stream<T>(
+pub(crate) fn poll_stream<T>(
     job: &AiStreamJob<T>,
     preview: &mut String,
 ) -> (bool, Option<Result<T, AiError>>) {
@@ -261,7 +261,7 @@ impl ThinodaApp {
                 .warning(t("AI assistant is disabled in Settings"));
             return;
         }
-        if self.ai.pending.is_some() || self.ai.chat.is_busy() {
+        if self.ai.pending.is_some() || self.ai.chat.is_busy() || self.pitch.ai_busy() {
             self.toasts.info(t("AI is still working…"));
             return;
         }
@@ -344,6 +344,7 @@ impl ThinodaApp {
             || self.ai.pending.is_some()
             || self.ai.review.is_some()
             || self.ai.chat.is_busy()
+            || self.pitch.ai_busy()
         {
             return;
         }
@@ -363,7 +364,11 @@ impl ThinodaApp {
     }
 
     fn start_prompted_ai(&mut self, instruction: &str) -> Result<(), String> {
-        if self.ai.pending.is_some() || self.ai.review.is_some() || self.ai.chat.is_busy() {
+        if self.ai.pending.is_some()
+            || self.ai.review.is_some()
+            || self.ai.chat.is_busy()
+            || self.pitch.ai_busy()
+        {
             return Err(t("Review the current AI result first.").into());
         }
         if instruction.trim().is_empty() || instruction.len() > 8192 {
@@ -393,6 +398,7 @@ impl ThinodaApp {
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
+        self.poll_pitch_ai(ctx);
         self.poll_semantic(ctx);
         self.poll_ai_chat(ctx);
         if !self.settings.ai.enabled && self.ai.pending.is_some() {

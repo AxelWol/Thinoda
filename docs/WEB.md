@@ -190,6 +190,24 @@ in the context menu or Style inspector for precise position and size.
 controls. Removing a Zone preserves its topics. Overlapping frames are allowed;
 the last Zone in the order is on top.
 
+### AI Pitch outline suggestions
+
+In **Edit Presentation**, generate or add slides, then expand **AI Pitch outline**.
+Enter the audience, purpose or desired flow and choose **Suggest Pitch outline**.
+Opening the editor/panel is offline. Sending transmits only the draft's slide
+titles, numbered candidates and your instructions to the displayed AI server;
+topic notes, attachments and frame coordinates are excluded. The chat model and
+streaming/CORS requirements above apply.
+
+Suggestions can select, reorder and retitle real candidates, never invent branch/
+Zone sources or change their frames. Review the streamed result, then choose
+**Use suggested outline** to replace only the editor's draft. **Apply** separately
+saves that draft as one undoable presentation edit; source topics and metadata stay
+unchanged. Discard, request cancellation or editor Cancel never changes the saved
+presentation. Source/draft/instruction/configuration changes invalidate suggestions.
+Limits are 64 candidate slides, 64 KiB of candidate titles, 8192-byte instructions
+and 64 KiB of output; each suggested title is at most 256 UTF-8 bytes.
+
 ## Pitch and slide exports
 
 Choose **View > Edit Presentation**. **Generate Slides** replaces only the

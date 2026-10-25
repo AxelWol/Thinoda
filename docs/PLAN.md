@@ -313,6 +313,37 @@ Apply/Undo/source preservation. Unlimited-thread runs exposed intermittent local
 connection failures; bounded-concurrency runs passed. No live AI call was made.
 Reviewable Pitch suggestions and F6 host acceptance remain open.
 
+**F5 AI Pitch implementation:** Edit Presentation now offers an offline instruction
+draft and explicit Suggest action against its actual slide candidates. Only
+numbered slide titles and instructions are sent; notes, attachments and crop
+coordinates are excluded. Cancellable streaming produces a bounded closed JSON
+proposal, which may select/reorder/retitle only real candidates. Source IDs and
+frames are retained exactly. Review and Use update only the presentation draft;
+normal Apply separately saves one Undo transaction. Source/draft/instruction/
+configuration changes reject pending or reviewed work, and editor Cancel leaves
+the saved presentation intact. Limits: 64 candidates/64 KiB titles, 8192-byte
+instructions, 64 KiB response and 256-byte single-line result titles.
+
+All planned F5 feature surfaces are now implemented; F5's cross-feature/runtime
+acceptance remains part of the open F6 gate, not a claim of native/browser passes.
+
+AI Pitch evidence: six focused local SSE/UI/parser tests cover explicit/offline
+dispatch, reviewed draft use followed by separate Apply/Undo, unchanged real
+branch/Zone IDs and crops, excluded notes/coordinates, invalid/oversized output,
+exact candidate/instruction/title bounds, source/draft/configuration/cancel
+invalidation and editor Cancel. The full Windows x64 workspace suite passed
+861 tests, with two ignored, across 85 suites (four test threads). Workspace
+native all-target clippy, app/AI/platform WASM library clippy and 25 documentation
+contracts passed. No live AI endpoint was contacted.
+
+**F6 integrated acceptance is in progress.** The workspace run above exercises
+shared command/menu/shortcut/window ownership, task/calendar/Gantt state,
+Zone/presentation persistence and exports, and AI source/review/Apply contracts.
+Simulated platform modes and headless tests are not native macOS/Linux/window-
+manager or browser runtime passes. Browser fetch/CORS, downloads/print/expanded
+player and real native multi-window/global-menu behavior remain separate gates.
+SS0-SS8, release, main merge and new pull requests have not been resumed.
+
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,
 Discussion mode, stop/retry, branch reorganization, translation to a new sheet

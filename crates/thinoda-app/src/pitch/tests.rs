@@ -3,7 +3,7 @@ use crate::app::Cmd;
 use egui_kittest::{Harness, kittest::Queryable};
 use thinoda_core::{Vec2, Workbook};
 
-fn setup(saved: bool) -> ThinodaApp {
+pub(super) fn setup(saved: bool) -> ThinodaApp {
     let mut sheet = Sheet::new("Presentation", "Center");
     sheet.insert_child(sheet.root, "First branch").unwrap();
     sheet.insert_child(sheet.root, "Second branch").unwrap();

@@ -12,6 +12,7 @@ use thinoda_ui::{Palette, widgets};
 
 use crate::{app::ThinodaApp, i18n::t};
 
+mod pitch_ai;
 mod pitch_player;
 mod pitch_preview;
 use pitch_preview::SlidePreview;
@@ -36,6 +37,7 @@ struct PitchEditor {
     preview: SlidePreview,
     error: Option<String>,
     composing: bool,
+    ai: pitch_ai::PitchAi,
 }
 
 struct PitchPlayer {
@@ -56,6 +58,12 @@ pub(crate) struct PitchState {
 }
 
 impl PitchState {
+    pub(crate) fn ai_busy(&self) -> bool {
+        self.editor
+            .as_ref()
+            .is_some_and(|editor| editor.ai.is_busy())
+    }
+
     pub(crate) fn blocks_map(&self) -> bool {
         self.editor.is_some() || (crate::files::is_web() && self.player.is_some())
     }
@@ -83,6 +91,7 @@ impl ThinodaApp {
             preview: Default::default(),
             error: None,
             composing: false,
+            ai: Default::default(),
         });
     }
 
@@ -95,6 +104,8 @@ impl ThinodaApp {
         if doc.doc.state_id() != editor.owner.revision
             || doc.doc.active_index() != editor.owner.sheet
             || doc.doc.sheet().root != editor.owner.root
+            || doc.inspector_edit.is_some()
+            || doc.view.editing_topic().is_some()
         {
             return Err(t("The document changed. Try again.").into());
         }
@@ -258,6 +269,8 @@ impl ThinodaApp {
                 if let Some(error) = &editor.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
+                let ai_touch = touch && !ime && !editor.composing;
+                self.pitch_ai_panel(ui, &mut editor, ai_touch);
                 ui.add_enabled_ui(self.pitch.output.is_none() && !editor.sheet.presentation.slides.is_empty(), |ui| {
                     ui.horizontal_wrapped(|ui| {
                         if ui.button(t("Export PDF")).clicked() && touch { export = Some(false); }

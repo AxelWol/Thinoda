@@ -1,4 +1,12 @@
 AI Chat|Chat de IA
+AI Pitch outline|Esboço de apresentação com IA
+Pitch instructions|Instruções de apresentação
+Suggest Pitch outline|Sugerir esboço de apresentação
+Use suggested outline|Usar esboço sugerido
+Discard suggested outline|Descartar esboço sugerido
+AI suggests slide order and titles only. Frames stay unchanged. Send transmits slide titles and instructions.|A IA sugere apenas a ordem e os títulos. Os enquadramentos não mudam. O envio transmite títulos e instruções.
+AI Pitch requires 1 to 64 slides and at most 64 KiB of titles.|A IA requer de 1 a 64 slides e até 64 KiB de títulos.
+AI Pitch returned an invalid outline. Retry with candidate numbers and titles only.|A IA retornou um esboço inválido. Tente novamente apenas com números de candidatos e títulos.
 Embedding model|Modelo de embeddings
 Required for semantic tools|Necessário para ferramentas semânticas
 Semantic tools|Ferramentas semânticas

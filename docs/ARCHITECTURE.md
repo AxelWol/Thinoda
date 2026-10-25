@@ -297,6 +297,16 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
+- **AI Pitch assistance**: the existing presentation editor captures its real
+  candidate slide IDs/sources/frames and sends only numbered titles plus explicit
+  instructions through `AiStreamJob::chat`. A bounded, closed JSON outline can
+  select/reorder/retitle candidates, never supply new sources or frame geometry.
+  Terminal output enters review without editing even the draft. Use replaces
+  only the draft; normal presentation Apply persists one Undo transaction. Work
+  is owned by source revision, draft generation, instructions and AI config.
+  Editor close drops/cancels transport. Source drafts and changed/disabled settings
+  invalidate pending output/review. Bounds are 64 candidates, 64 KiB title context,
+  8192-byte instructions, 64 KiB output and 256-byte single-line result titles.
 - **Semantic assistance**: the chat sidebar explicitly builds a session-only,
   source/configuration-owned index using `AiEmbeddingJob` and a separate explicit
   `embedding_model` preference; there is no chat-model fallback or automatic
