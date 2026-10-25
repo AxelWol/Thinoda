@@ -213,57 +213,80 @@ fn pitch_malformed_and_oversized_terminal_results_report_errors_without_changing
 
 #[test]
 fn pitch_ai_ui_is_offline_until_suggest_and_cancel_keeps_the_saved_presentation() {
-    let (app, server) = fixture(REPLY);
-    let before = app.doc().unwrap().doc.workbook().clone();
-    let mut h = Harness::builder()
-        .with_size(egui::vec2(900.0, 800.0))
-        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
-    h.ctx
-        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
-    h.run_steps(3);
-    h.get_by_label("AI Pitch outline").scroll_to_me();
-    h.run_steps(3);
-    h.get_by_label("AI Pitch outline").click();
-    h.run_steps(3);
-    assert!(server.requests.lock().unwrap().is_empty());
-    h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
-        .scroll_to_me();
-    h.run_steps(8);
-    h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
-        .click();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    loop {
+    for os in [
+        egui::os::OperatingSystem::Windows,
+        egui::os::OperatingSystem::Mac,
+        egui::os::OperatingSystem::Nix,
+    ] {
+        let (app, server) = fixture(REPLY);
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(900.0, 800.0))
+            .with_context_setup(move |ctx| ctx.set_os(os))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.ctx
+            .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
         h.run_steps(3);
-        let editor = h
-            .state()
-            .pitch
-            .editor
-            .as_ref()
-            .expect("Suggest must keep the presentation draft open");
-        assert!(editor.error.is_none(), "{:?}", editor.error);
-        if editor.ai.proposal.is_some() {
-            break;
-        }
+        h.get_by_label("AI Pitch outline").scroll_to_me();
+        h.run_steps(3);
+        h.get_by_label("AI Pitch outline").focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(20);
+        assert!(server.requests.lock().unwrap().is_empty());
+        h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
+            .scroll_to_me();
+        h.run_steps(20);
         assert!(
-            std::time::Instant::now() < deadline,
-            "Suggest did not produce a reviewed proposal; pending={}, requests={:?}",
-            editor.ai.pending.is_some(),
-            server.requests.lock().unwrap()
+            h.ctx.content_rect().contains_rect(
+                h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
+                    .rect()
+            )
         );
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        h.get_by_role_and_label(Role::Button, "Suggest Pitch outline")
+            .focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            h.run_steps(3);
+            let editor = h
+                .state()
+                .pitch
+                .editor
+                .as_ref()
+                .expect("Suggest must keep the presentation draft open");
+            assert!(editor.error.is_none(), "{:?}", editor.error);
+            if editor.ai.proposal.is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Suggest did not produce a reviewed proposal; pending={}, requests={:?}",
+                editor.ai.pending.is_some(),
+                server.requests.lock().unwrap()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.path == "/v1/chat/completions")
+                .count(),
+            1
+        );
+        h.run_steps(20);
+        h.get_by_role_and_label(Role::Button, "Cancel")
+            .scroll_to_me();
+        h.run_steps(20);
+        h.get_by_role_and_label(Role::Button, "Cancel").focus();
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert!(h.state().pitch.editor.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
     }
-    assert_eq!(
-        server
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|request| request.path == "/v1/chat/completions")
-            .count(),
-        1
-    );
-    h.get_by_role_and_label(Role::Button, "Cancel").click();
-    h.run_steps(3);
-    assert!(h.state().pitch.editor.is_none());
-    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 }
