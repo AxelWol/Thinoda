@@ -46,11 +46,14 @@ struct State<T> {
     #[cfg(target_arch = "wasm32")]
     abort: Option<web_sys::AbortController>,
     #[cfg(target_arch = "wasm32")]
-    timeout: Option<(
-        web_sys::Window,
-        i32,
-        wasm_bindgen::closure::Closure<dyn FnMut()>,
-    )>,
+    timeout: Option<WebTimeout>,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WebTimeout {
+    window: web_sys::Window,
+    id: i32,
+    _callback: wasm_bindgen::closure::Closure<dyn FnMut()>,
 }
 
 struct Shared<T> {
@@ -105,8 +108,8 @@ impl<T> Shared<T> {
         }
         state.finished = true;
         #[cfg(target_arch = "wasm32")]
-        if let Some((window, id, _)) = state.timeout.take() {
-            window.clear_timeout_with_handle(id);
+        if let Some(timeout) = state.timeout.take() {
+            timeout.window.clear_timeout_with_handle(timeout.id);
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -148,8 +151,8 @@ impl<T> Shared<T> {
     fn clear_abort(&self) {
         let mut state = self.lock();
         state.abort = None;
-        if let Some((window, id, _)) = state.timeout.take() {
-            window.clear_timeout_with_handle(id);
+        if let Some(timeout) = state.timeout.take() {
+            timeout.window.clear_timeout_with_handle(timeout.id);
         }
     }
 
@@ -164,7 +167,11 @@ impl<T> Shared<T> {
         if self.cancelled.load(Ordering::Acquire) {
             window.clear_timeout_with_handle(id);
         } else {
-            state.timeout = Some((window, id, callback));
+            state.timeout = Some(WebTimeout {
+                window,
+                id,
+                _callback: callback,
+            });
         }
     }
 }
@@ -198,8 +205,8 @@ impl<T> AiStreamJob<T> {
             abort.abort();
         }
         #[cfg(target_arch = "wasm32")]
-        if let Some((window, id, _)) = state.timeout.take() {
-            window.clear_timeout_with_handle(id);
+        if let Some(timeout) = state.timeout.take() {
+            timeout.window.clear_timeout_with_handle(timeout.id);
         }
         state.finished = true;
         state
