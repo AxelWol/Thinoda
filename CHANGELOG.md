@@ -1,4 +1,4 @@
-_Last updated: 2026-10-25 09:41:46 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-25 15:54:40 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,40 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.12.0](https://github.com/AxelWol/Thinoda/compare/v0.11.0...v0.12.0) (2026-10-25)
+
+
+### Features
+
+* **ai:** add bounded cancellable embeddings transport ([f086366](https://github.com/AxelWol/Thinoda/commit/f0863664ae1628214883b61d733e2d2f335e719d))
+* **ai:** add editable saved prompt library ([9640144](https://github.com/AxelWol/Thinoda/commit/964014472ac672036cd5a07477187664f5f3e57f))
+* **ai:** add explicit semantic search and cluster previews ([6135a41](https://github.com/AxelWol/Thinoda/commit/6135a41142144e4b71f73a659c55ff35721985f0))
+* **ai:** add reviewable guided map transformations ([86b01ba](https://github.com/AxelWol/Thinoda/commit/86b01ba9095bbd8998183e48e9a26060638a81da))
+* **ai:** add reviewable Pitch outline suggestions ([7570171](https://github.com/AxelWol/Thinoda/commit/757017177a2515825428c33751b529bb70185fbe))
+* **ai:** add scoped session chat and response modes ([20fb3ac](https://github.com/AxelWol/Thinoda/commit/20fb3ac5a4df47b5cc2f479425d2e7fafb5cc29c))
+* **ai:** preview and cancel streaming map requests ([dd6b2ce](https://github.com/AxelWol/Thinoda/commit/dd6b2ced84e529e8780adb14333b3d1d1854aa9a))
+* **ai:** require review before applying generated results ([ce041ce](https://github.com/AxelWol/Thinoda/commit/ce041ce5b0abff1d3db93c82ed759e4d2deb29ba))
+* **app:** add staged Pitch editing and read-only presentation playback ([4328032](https://github.com/AxelWol/Thinoda/commit/4328032e248ff64e48f746cd283365d15f051bfc))
+* **app:** add undoable Zone editor and canvas gestures ([e5ba0fd](https://github.com/AxelWol/Thinoda/commit/e5ba0fd67ffafabb0bffff41bf4f1ab85a4282fe))
+* **canvas:** expose visible topic-group framing for Zones ([a049a6c](https://github.com/AxelWol/Thinoda/commit/a049a6ca7f593677e5812303630bdcbdfe273bb4))
+* **core:** add persisted Zones and presentation model ([0e68707](https://github.com/AxelWol/Thinoda/commit/0e687075f5bdec0afd8bcf0789b880259a62fa5d))
+* **core:** integrate Zones and presentation state ([491f5f0](https://github.com/AxelWol/Thinoda/commit/491f5f0d6be5107a125c2ccfb076845f6d93c919))
+* **io:** render saved presentation slides and exports ([c35ce81](https://github.com/AxelWol/Thinoda/commit/c35ce81007c1bfdc3f640843b150fde5368cc4ba))
+
+
+### Bug Fixes
+
+* **ai:** adapt embeddings cleanup to named wasm timeout ([792a5a9](https://github.com/AxelWol/Thinoda/commit/792a5a970534308e6a15a8bdfab1d62e1f5897e7))
+* **app:** retain planning drafts when document windows return home ([432c789](https://github.com/AxelWol/Thinoda/commit/432c7894829984bb7cb338c4603ac97d5b91ce37))
+* refresh notices for streaming AI dependencies ([feadef2](https://github.com/AxelWol/Thinoda/commit/feadef2047b6ebf32da7a64db1a78e31fa5c0428))
+* **ui:** keep floating map tools below feature windows ([a808f7a](https://github.com/AxelWol/Thinoda/commit/a808f7aeaffd02e3b54344067a357f5f1bdaa09e))
+
+
+### Documentation
+
+* record real browser feature acceptance ([3680427](https://github.com/AxelWol/Thinoda/commit/36804273058dd31c10f8fcbea53116702c3f5e89))
+* record release integration authorization and remaining gates ([33ab6a0](https://github.com/AxelWol/Thinoda/commit/33ab6a07a2621970d839d1ae99308cb4fe83de44))
 
 ## [0.11.0](https://github.com/AxelWol/Thinoda/compare/v0.10.1...v0.11.0) (2026-10-25)
 
