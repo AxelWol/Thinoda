@@ -5,6 +5,7 @@
 //! that `.xmind` files can be imported and exported with high fidelity.
 
 use crate::geometry::{Color, Vec2};
+use crate::schedule::{SchedulingData, Task, TaskDependency};
 use crate::theme::ThemeSettings;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -453,6 +454,10 @@ pub struct Summary {
 pub struct Subtree {
     pub root: TopicId,
     pub topics: Vec<Topic>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<TopicId, Task>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<TaskDependency>,
 }
 
 impl Subtree {
@@ -471,6 +476,21 @@ impl Subtree {
                 *c = m(*c);
             }
         }
+        self.tasks = std::mem::take(&mut self.tasks)
+            .into_iter()
+            .map(|(topic, task)| (m(topic), task))
+            .collect();
+        self.dependencies.retain_mut(|dependency| {
+            let Some(predecessor) = map.get(&dependency.predecessor).copied() else {
+                return false;
+            };
+            let Some(successor) = map.get(&dependency.successor).copied() else {
+                return false;
+            };
+            dependency.predecessor = predecessor;
+            dependency.successor = successor;
+            true
+        });
         self.root = m(self.root);
     }
 
@@ -509,6 +529,8 @@ pub struct Sheet {
     #[serde(default)]
     pub theme: ThemeSettings,
     #[serde(default)]
+    pub scheduling: SchedulingData,
+    #[serde(default)]
     next_id: u64,
 }
 
@@ -528,6 +550,7 @@ impl Sheet {
             summaries: Vec::new(),
             structure: Structure::default(),
             theme: ThemeSettings::default(),
+            scheduling: SchedulingData::default(),
             next_id: 2,
         }
     }
@@ -721,12 +744,31 @@ impl Sheet {
         if !self.contains(id) {
             return None;
         }
-        let topics = self
-            .subtree_ids(id)
-            .into_iter()
-            .map(|t| self.topics[&t].clone())
+        let ids = self.subtree_ids(id);
+        let owned: HashSet<_> = ids.iter().copied().collect();
+        let topics = ids.iter().map(|t| self.topics[t].clone()).collect();
+        let tasks = self
+            .scheduling
+            .tasks
+            .iter()
+            .filter(|(topic, _)| owned.contains(topic))
+            .map(|(topic, task)| (*topic, task.clone()))
             .collect();
-        Some(Subtree { root: id, topics })
+        let dependencies = self
+            .scheduling
+            .dependencies
+            .iter()
+            .filter(|dependency| {
+                owned.contains(&dependency.predecessor) && owned.contains(&dependency.successor)
+            })
+            .copied()
+            .collect();
+        Some(Subtree {
+            root: id,
+            topics,
+            tasks,
+            dependencies,
+        })
     }
 
     /// Removes the subtree rooted at `id` from the sheet and returns it. Relationships,
@@ -752,7 +794,11 @@ impl Sheet {
         let removed: HashSet<TopicId> = sub.topics.iter().map(|t| t.id).collect();
         for t in &removed {
             self.topics.remove(t);
+            self.scheduling.tasks.remove(t);
         }
+        self.scheduling.dependencies.retain(|dependency| {
+            !removed.contains(&dependency.predecessor) && !removed.contains(&dependency.successor)
+        });
         // summary topics owned by removed parents are removed as well
         let orphan_summaries: Vec<TopicId> = self
             .summaries
@@ -787,14 +833,21 @@ impl Sheet {
 
     /// Re-inserts a detached subtree as a child of `parent` at `index` (clamped).
     pub fn attach_child(&mut self, parent: TopicId, index: usize, sub: Subtree) -> TopicId {
-        let root = sub.root;
-        for mut t in sub.topics {
+        let Subtree {
+            root,
+            topics,
+            tasks,
+            dependencies,
+        } = sub;
+        for mut t in topics {
             if t.id == root {
                 t.parent = Some(parent);
                 t.position = None;
             }
             self.topics.insert(t.id, t);
         }
+        self.scheduling.tasks.extend(tasks);
+        self.scheduling.dependencies.extend(dependencies);
         let p = self.topics.get_mut(&parent).expect("parent exists");
         let idx = index.min(p.children.len());
         p.children.insert(idx, root);
@@ -805,14 +858,21 @@ impl Sheet {
 
     /// Re-inserts a detached subtree as a floating topic.
     pub fn attach_floating(&mut self, position: Vec2, sub: Subtree) -> TopicId {
-        let root = sub.root;
-        for mut t in sub.topics {
+        let Subtree {
+            root,
+            topics,
+            tasks,
+            dependencies,
+        } = sub;
+        for mut t in topics {
             if t.id == root {
                 t.parent = None;
                 t.position = Some(position);
             }
             self.topics.insert(t.id, t);
         }
+        self.scheduling.tasks.extend(tasks);
+        self.scheduling.dependencies.extend(dependencies);
         self.floating.push(root);
         self.bump_next_id();
         root
@@ -959,6 +1019,9 @@ impl Sheet {
                 return Err(format!("summary {:?} range out of bounds", s.id));
             }
         }
+        self.scheduling
+            .validate(self)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }

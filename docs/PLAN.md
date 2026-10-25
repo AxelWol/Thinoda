@@ -229,6 +229,15 @@ Windows/Linux retain Ctrl+W for Close Tab. System Hide/Minimize keys remain
 reserved. Actual macOS/Linux/browser interaction acceptance remains open; this
 slice is not a claim of F1/F2/F6 host acceptance.
 
+**F3 model/persistence progress (2026-10-25):** the core now has a versioned,
+date-only scheduling schema, work-calendar arithmetic, bounded deterministic
+finish-to-start propagation, task/dependency validation and undoable document
+edit helpers. Native `.thinoda` version 2 persists the data; legacy version 1
+and simple To-do checkboxes remain compatible. Copy, duplicate, move and delete
+preserve scheduled task data without dangling dependency IDs. This closes only
+the model/persistence prerequisite: inspector editing, calendar Settings,
+Gantt views/windows and export/print are still open under F3.
+
 **F1 implementation progress (2026-10-24):** the compact main menus now use a
 shared File/Edit/Sheet/Insert/AI/Tools/View/Help command tree. A first Windows
 HMENU adapter is wired to the root eframe window; it queues native selections

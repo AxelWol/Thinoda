@@ -367,6 +367,23 @@ graph TD
   for API references, manual checks and platform limitations.
   Native driver behavior still requires smoke tests on Windows x64/ARM64,
   macOS Intel/ARM64 and Linux X11/Wayland.
+- **Task scheduling**: a sheet's versioned `SchedulingData` owns its work
+  calendar, topic-keyed tasks and finish-to-start dependencies; legacy
+  `Topic.todo` remains an independent checkbox. Dates serialize as ISO
+  date-only values, never UTC timestamps. Durations count working days
+  inclusively, and dependency propagation starts successors on the next working
+  date after predecessors finish. The core bounds dates to years 0001-9999,
+  task durations to 3,650 days, tasks to 5,000 and dependencies/calendar
+  exceptions to 20,000/5,000. Native `.thinoda` archive version 2 stores this
+  schema; version 1 remains readable. Workbook validation is also used when
+  recovering snapshots. This is the model/persistence foundation only; task
+  inspector, calendar Settings and Gantt window remain planned.
+- **Scheduling API**: `LocalDate` implements `FromStr`/`Display` and exposes
+  ordinal, signed day-distance and checked calendar-day addition, with `MIN`/
+  `MAX` bounds. `Weekday::ALL` and `Weekday::name()` expose stable weekday
+  choices. `WorkCalendar::working_duration(start, finish)` counts inclusive
+  working days; `finish_date(start, duration)` and `add_working_days` keep
+  schedule arithmetic in core for any future editor or timeline.
 - **Localization**: app chrome uses the embedded English/German and
   ES/FR/DA/NL/PT-PT/PT-BR/IT/PL catalogs in `thinoda-app/src/i18n.rs`,
   `locales.txt` and `pt-BR.txt`. English strings are stable keys; the

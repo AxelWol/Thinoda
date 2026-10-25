@@ -22,6 +22,7 @@ pub mod model;
 pub mod navigation;
 pub mod outline;
 pub mod quick_styles;
+pub mod schedule;
 pub mod search;
 pub mod templates;
 pub mod theme;
@@ -36,3 +37,8 @@ pub use model::{
     Workbook,
 };
 pub use outline::OutlineNode;
+pub use schedule::{
+    ComputedTask, LocalDate, MAX_CALENDAR_EXCEPTIONS, MAX_SCHEDULED_TASKS, MAX_TASK_DEPENDENCIES,
+    MAX_TASK_DURATION_DAYS, SCHEDULING_VERSION, ScheduleError, SchedulingData, Task,
+    TaskDependency, Weekday, WorkCalendar,
+};
