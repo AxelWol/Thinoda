@@ -111,6 +111,20 @@ mod tests {
         sheet.add_boundary(&[a, b]).unwrap();
         let floating = sheet.add_floating("Floating", crate::Vec2::new(20.0, 30.0));
         sheet.add_relationship(child, floating).unwrap();
+        let zone = sheet
+            .create_zone(
+                "Floating group",
+                vec![floating],
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(150.0, 120.0)),
+            )
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Floating group",
+                crate::PresentationSource::Zone(zone),
+                crate::Rect::from_min_size(crate::Vec2::ZERO, crate::Vec2::new(150.0, 120.0)),
+            )
+            .unwrap();
         sheet.topic_mut(a).unwrap().notes = Some("Notes".into());
         sheet.topic_mut(b).unwrap().style.bold = Some(true);
         let payload = encode_sheet(&sheet).unwrap();

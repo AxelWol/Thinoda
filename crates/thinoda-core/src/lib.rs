@@ -32,9 +32,11 @@ pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
 pub use layout::{ApproxMeasure, Layout, TextMeasure, TopicLayout, layout_sheet};
 pub use model::{
-    Boundary, BoundaryId, BranchSide, ChildRange, LineShape, Relationship, RelationshipId, Sheet,
-    Structure, Subtree, Summary, SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle,
-    Workbook,
+    Boundary, BoundaryId, BranchSide, ChildRange, LineShape, MAX_PRESENTATION_COORDINATE,
+    MAX_PRESENTATION_NAME_BYTES, MAX_PRESENTATION_SLIDES, MAX_ZONE_MEMBERSHIPS, MAX_ZONES,
+    MIN_ZONE_SIZE, Presentation, PresentationSlide, PresentationSource, Relationship,
+    RelationshipId, Sheet, SlideFrame, SlideId, Structure, Subtree, Summary, SummaryId, TextAlign,
+    Topic, TopicId, TopicShape, TopicStyle, Workbook, Zone, ZoneId,
 };
 pub use outline::OutlineNode;
 pub use schedule::{

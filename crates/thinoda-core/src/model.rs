@@ -4,7 +4,7 @@
 //! its parent and the ordered list of its children. Concepts and identifiers mirror XMind so
 //! that `.xmind` files can be imported and exported with high fidelity.
 
-use crate::geometry::{Color, Vec2};
+use crate::geometry::{Color, Rect, Vec2};
 use crate::schedule::{SchedulingData, Task, TaskDependency};
 use crate::theme::ThemeSettings;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,15 @@ id_type!(TopicId);
 id_type!(RelationshipId);
 id_type!(BoundaryId);
 id_type!(SummaryId);
+id_type!(ZoneId);
+id_type!(SlideId);
+
+pub const MAX_ZONES: usize = 256;
+pub const MAX_ZONE_MEMBERSHIPS: usize = 4096;
+pub const MAX_PRESENTATION_SLIDES: usize = 512;
+pub const MIN_ZONE_SIZE: f32 = 100.0;
+pub const MAX_PRESENTATION_COORDINATE: f32 = 1_000_000.0;
+pub const MAX_PRESENTATION_NAME_BYTES: usize = 256;
 
 /// Layout structure of a map or of a subtree (mixed structures are supported).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -438,6 +447,41 @@ pub struct Boundary {
     pub color: Option<Color>,
 }
 
+/// A named frame containing one or more independent floating topic trees.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Zone {
+    pub id: ZoneId,
+    pub name: String,
+    pub frame: Rect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<TopicId>,
+}
+
+/// Origin and size in sheet coordinates for a presentation slide.
+pub type SlideFrame = Rect;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PresentationSource {
+    Branch(TopicId),
+    Zone(ZoneId),
+}
+
+/// Saved frame and ordering for one generated or user-curated slide.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresentationSlide {
+    pub id: SlideId,
+    pub title: String,
+    pub source: PresentationSource,
+    pub frame: SlideFrame,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Presentation {
+    pub slides: Vec<PresentationSlide>,
+}
+
 /// Bracket summarising a range of sibling topics into a summary topic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
@@ -523,6 +567,10 @@ pub struct Sheet {
     #[serde(default)]
     pub boundaries: Vec<Boundary>,
     #[serde(default)]
+    pub zones: Vec<Zone>,
+    #[serde(default)]
+    pub presentation: Presentation,
+    #[serde(default)]
     pub summaries: Vec<Summary>,
     #[serde(default)]
     pub structure: Structure,
@@ -547,6 +595,8 @@ impl Sheet {
             floating: Vec::new(),
             relationships: Vec::new(),
             boundaries: Vec::new(),
+            zones: Vec::new(),
+            presentation: Presentation::default(),
             summaries: Vec::new(),
             structure: Structure::default(),
             theme: ThemeSettings::default(),
@@ -563,6 +613,7 @@ impl Sheet {
             .chain(self.relationships.iter().map(|r| r.id.0))
             .chain(self.boundaries.iter().map(|b| b.id.0))
             .chain(self.summaries.iter().map(|s| s.id.0))
+            .chain(self.zones.iter().map(|z| z.id.0))
             .max()
             .unwrap_or(0);
         if self.next_id <= max {
@@ -591,6 +642,10 @@ impl Sheet {
 
     pub fn alloc_summary_id(&mut self) -> SummaryId {
         SummaryId(self.alloc())
+    }
+
+    pub fn alloc_zone_id(&mut self) -> ZoneId {
+        ZoneId(self.alloc())
     }
 
     pub fn topic(&self, id: TopicId) -> Option<&Topic> {
@@ -798,6 +853,13 @@ impl Sheet {
         }
         self.scheduling.dependencies.retain(|dependency| {
             !removed.contains(&dependency.predecessor) && !removed.contains(&dependency.successor)
+        });
+        for zone in &mut self.zones {
+            zone.roots.retain(|root| !removed.contains(root));
+        }
+        self.presentation.slides.retain(|slide| match slide.source {
+            PresentationSource::Branch(root) => !removed.contains(&root),
+            PresentationSource::Zone(zone) => self.zones.iter().any(|item| item.id == zone),
         });
         // summary topics owned by removed parents are removed as well
         let orphan_summaries: Vec<TopicId> = self
@@ -1019,10 +1081,485 @@ impl Sheet {
                 return Err(format!("summary {:?} range out of bounds", s.id));
             }
         }
+        if self.zones.len() > MAX_ZONES {
+            return Err(format!("zone count exceeds {MAX_ZONES}"));
+        }
+        let mut zone_ids = HashSet::new();
+        let mut zone_roots = HashSet::new();
+        let mut membership_count = 0usize;
+        for zone in &self.zones {
+            if !zone_ids.insert(zone.id) {
+                return Err(format!("duplicate zone id {}", zone.id));
+            }
+            validate_presentation_name(&zone.name, "zone")?;
+            validate_frame(zone.frame, true)?;
+            for root in &zone.roots {
+                membership_count += 1;
+                if membership_count > MAX_ZONE_MEMBERSHIPS {
+                    return Err(format!(
+                        "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+                    ));
+                }
+                if !zone_roots.insert(*root) {
+                    return Err(format!(
+                        "floating topic {root} belongs to more than one zone"
+                    ));
+                }
+                if *root == self.root
+                    || !self.floating.contains(root)
+                    || self.parent(*root).is_some()
+                {
+                    return Err(format!(
+                        "zone {} member {root} is not a floating root",
+                        zone.id
+                    ));
+                }
+            }
+        }
+        self.presentation.validate(self)?;
         self.scheduling
             .validate(self)
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+}
+
+impl Presentation {
+    pub fn validate(&self, sheet: &Sheet) -> Result<(), String> {
+        if self.slides.len() > MAX_PRESENTATION_SLIDES {
+            return Err(format!(
+                "presentation slide count exceeds {MAX_PRESENTATION_SLIDES}"
+            ));
+        }
+        let mut ids = HashSet::new();
+        for slide in &self.slides {
+            if !ids.insert(slide.id) {
+                return Err(format!("duplicate presentation slide id {}", slide.id));
+            }
+            validate_presentation_name(&slide.title, "slide")?;
+            validate_frame(slide.frame, false)?;
+            match slide.source {
+                PresentationSource::Branch(root)
+                    if sheet.contains(root) && sheet.main_branch_of(root).is_some() => {}
+                PresentationSource::Branch(root) => {
+                    return Err(format!(
+                        "presentation slide {} has invalid branch source {root}",
+                        slide.id
+                    ));
+                }
+                PresentationSource::Zone(zone)
+                    if sheet.zones.iter().any(|item| item.id == zone) => {}
+                PresentationSource::Zone(zone) => {
+                    return Err(format!(
+                        "presentation slide {} references missing zone {zone}",
+                        slide.id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_presentation_name(name: &str, kind: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err(format!("{kind} name cannot be empty"));
+    }
+    if name.len() > MAX_PRESENTATION_NAME_BYTES {
+        return Err(format!(
+            "{kind} name exceeds {MAX_PRESENTATION_NAME_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_frame(frame: Rect, zone: bool) -> Result<(), String> {
+    let max = frame.max();
+    let min_size = if zone { MIN_ZONE_SIZE } else { 1.0 };
+    let valid_coordinate =
+        |value: f32| value.is_finite() && value.abs() <= MAX_PRESENTATION_COORDINATE;
+    if !valid_coordinate(frame.min.x)
+        || !valid_coordinate(frame.min.y)
+        || !valid_coordinate(max.x)
+        || !valid_coordinate(max.y)
+        || !frame.size.x.is_finite()
+        || !frame.size.y.is_finite()
+        || frame.size.x < min_size
+        || frame.size.y < min_size
+        || frame.size.x > MAX_PRESENTATION_COORDINATE
+        || frame.size.y > MAX_PRESENTATION_COORDINATE
+    {
+        return Err(if zone {
+            "zone frame must be finite, bounded and at least 100 by 100".into()
+        } else {
+            "slide frame must be finite, bounded and at least 1 by 1".into()
+        });
+    }
+    Ok(())
+}
+
+impl Sheet {
+    pub fn create_zone(
+        &mut self,
+        name: &str,
+        roots: Vec<TopicId>,
+        frame: Rect,
+    ) -> Result<ZoneId, String> {
+        validate_presentation_name(name, "zone")?;
+        validate_frame(frame, true)?;
+        if self.zones.len() >= MAX_ZONES {
+            return Err(format!("zone count exceeds {MAX_ZONES}"));
+        }
+        if roots.is_empty() {
+            return Err("a zone needs at least one floating topic".into());
+        }
+        if roots.len() > MAX_ZONE_MEMBERSHIPS
+            || self
+                .zones
+                .iter()
+                .map(|zone| zone.roots.len())
+                .sum::<usize>()
+                .saturating_add(roots.len())
+                > MAX_ZONE_MEMBERSHIPS
+        {
+            return Err(format!(
+                "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+            ));
+        }
+        let existing: HashSet<_> = self
+            .zones
+            .iter()
+            .flat_map(|zone| zone.roots.iter().copied())
+            .collect();
+        let mut new_roots = HashSet::new();
+        for root in &roots {
+            if *root == self.root
+                || !self.floating.contains(root)
+                || self.parent(*root).is_some()
+                || !new_roots.insert(*root)
+                || existing.contains(root)
+            {
+                return Err(format!("topic {root} is not an available floating root"));
+            }
+        }
+        let id = self.alloc_zone_id();
+        self.zones.push(Zone {
+            id,
+            name: name.trim().to_string(),
+            frame,
+            roots,
+        });
+        Ok(id)
+    }
+
+    pub fn rename_zone(&mut self, id: ZoneId, name: &str) -> Result<(), String> {
+        validate_presentation_name(name, "zone")?;
+        let zone = self
+            .zones
+            .iter_mut()
+            .find(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        zone.name = name.trim().to_string();
+        Ok(())
+    }
+
+    pub fn reorder_zone(&mut self, id: ZoneId, index: usize) -> Result<(), String> {
+        let current = self
+            .zones
+            .iter()
+            .position(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        if index >= self.zones.len() {
+            return Err("zone order index out of bounds".into());
+        }
+        let zone = self.zones.remove(current);
+        self.zones.insert(index, zone);
+        Ok(())
+    }
+
+    /// Moves the zone frame and all its floating topic trees by `delta`.
+    pub fn move_zone(&mut self, id: ZoneId, delta: Vec2) -> Result<(), String> {
+        if !delta.x.is_finite()
+            || !delta.y.is_finite()
+            || delta.x.abs() > MAX_PRESENTATION_COORDINATE
+            || delta.y.abs() > MAX_PRESENTATION_COORDINATE
+        {
+            return Err("zone movement must be finite and bounded".into());
+        }
+        let zone = self
+            .zones
+            .iter()
+            .find(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        let frame = zone.frame.translate(delta);
+        validate_frame(frame, true)?;
+        let positions = zone
+            .roots
+            .iter()
+            .map(|root| {
+                self.topic(*root)
+                    .and_then(|topic| topic.position)
+                    .map(|position| (*root, position + delta))
+                    .ok_or_else(|| format!("zone {id} has a floating topic without a position"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if positions.iter().any(|(_, position)| {
+            !position.x.is_finite()
+                || !position.y.is_finite()
+                || position.x.abs() > MAX_PRESENTATION_COORDINATE
+                || position.y.abs() > MAX_PRESENTATION_COORDINATE
+        }) {
+            return Err("zone movement would place a topic outside the coordinate limit".into());
+        }
+        self.zones
+            .iter_mut()
+            .find(|zone| zone.id == id)
+            .expect("zone checked above")
+            .frame = frame;
+        for (root, position) in positions {
+            self.topic_mut(root)
+                .expect("zone root checked above")
+                .position = Some(position);
+        }
+        Ok(())
+    }
+
+    pub fn resize_zone(&mut self, id: ZoneId, size: Vec2) -> Result<(), String> {
+        let zone = self
+            .zones
+            .iter_mut()
+            .find(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        let frame = Rect::from_min_size(zone.frame.min, size);
+        validate_frame(frame, true)?;
+        zone.frame = frame;
+        Ok(())
+    }
+
+    /// Removes only the Zone and its Pitch slides; floating topics are retained.
+    pub fn remove_zone(&mut self, id: ZoneId) -> Result<(), String> {
+        let index = self
+            .zones
+            .iter()
+            .position(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        self.zones.remove(index);
+        self.presentation
+            .slides
+            .retain(|slide| slide.source != PresentationSource::Zone(id));
+        Ok(())
+    }
+
+    pub fn replace_presentation(&mut self, presentation: Presentation) -> Result<(), String> {
+        presentation.validate(self)?;
+        self.presentation = presentation;
+        Ok(())
+    }
+
+    pub fn add_presentation_slide(
+        &mut self,
+        title: &str,
+        source: PresentationSource,
+        frame: SlideFrame,
+    ) -> Result<SlideId, String> {
+        if self.presentation.slides.len() >= MAX_PRESENTATION_SLIDES {
+            return Err(format!(
+                "presentation slide count exceeds {MAX_PRESENTATION_SLIDES}"
+            ));
+        }
+        let next_id = self
+            .presentation
+            .slides
+            .iter()
+            .map(|slide| slide.id.0)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| "presentation slide id space exhausted".to_string())?;
+        let slide = PresentationSlide {
+            id: SlideId(next_id),
+            title: title.trim().to_string(),
+            source,
+            frame,
+        };
+        validate_presentation_name(&slide.title, "slide")?;
+        validate_frame(slide.frame, false)?;
+        let mut candidate = self.presentation.clone();
+        candidate.slides.push(slide.clone());
+        candidate.validate(self)?;
+        self.presentation.slides.push(slide);
+        Ok(SlideId(next_id))
+    }
+
+    pub fn rename_presentation_slide(&mut self, id: SlideId, title: &str) -> Result<(), String> {
+        validate_presentation_name(title, "slide")?;
+        let slide = self
+            .presentation
+            .slides
+            .iter_mut()
+            .find(|slide| slide.id == id)
+            .ok_or_else(|| format!("presentation slide {id} not found"))?;
+        slide.title = title.trim().to_string();
+        Ok(())
+    }
+
+    pub fn set_presentation_slide_frame(
+        &mut self,
+        id: SlideId,
+        frame: SlideFrame,
+    ) -> Result<(), String> {
+        validate_frame(frame, false)?;
+        let slide = self
+            .presentation
+            .slides
+            .iter_mut()
+            .find(|slide| slide.id == id)
+            .ok_or_else(|| format!("presentation slide {id} not found"))?;
+        slide.frame = frame;
+        Ok(())
+    }
+
+    pub fn reorder_presentation_slide(&mut self, id: SlideId, index: usize) -> Result<(), String> {
+        let current = self
+            .presentation
+            .slides
+            .iter()
+            .position(|slide| slide.id == id)
+            .ok_or_else(|| format!("presentation slide {id} not found"))?;
+        if index >= self.presentation.slides.len() {
+            return Err("presentation order index out of bounds".into());
+        }
+        let slide = self.presentation.slides.remove(current);
+        self.presentation.slides.insert(index, slide);
+        Ok(())
+    }
+
+    pub fn remove_presentation_slide(&mut self, id: SlideId) -> Result<(), String> {
+        let index = self
+            .presentation
+            .slides
+            .iter()
+            .position(|slide| slide.id == id)
+            .ok_or_else(|| format!("presentation slide {id} not found"))?;
+        self.presentation.slides.remove(index);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod zone_presentation_tests {
+    use super::*;
+
+    fn frame(x: f32, y: f32, width: f32, height: f32) -> Rect {
+        Rect::from_min_size(Vec2::new(x, y), Vec2::new(width, height))
+    }
+
+    #[test]
+    fn zones_validate_floating_roots_and_allow_overlap() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let first = sheet.add_floating("First", Vec2::new(120.0, 120.0));
+        let second = sheet.add_floating("Second", Vec2::new(200.0, 120.0));
+        let first_zone = sheet
+            .create_zone("One", vec![first], frame(0.0, 0.0, 100.0, 100.0))
+            .unwrap();
+        sheet
+            .create_zone("Two", vec![second], frame(50.0, 50.0, 100.0, 100.0))
+            .unwrap();
+        sheet.validate().unwrap();
+        assert!(
+            sheet
+                .create_zone("Small", vec![first], frame(0.0, 0.0, 99.0, 100.0))
+                .is_err()
+        );
+        assert!(
+            sheet
+                .create_zone("Child", vec![sheet.root], frame(0.0, 0.0, 100.0, 100.0))
+                .is_err()
+        );
+        assert!(sheet.rename_zone(first_zone, "  ").is_err());
+    }
+
+    #[test]
+    fn moving_resizing_and_removing_zone_preserve_content() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let floating = sheet.add_floating("Floating", Vec2::new(125.0, 130.0));
+        let zone = sheet
+            .create_zone("Ideas", vec![floating], frame(0.0, 0.0, 200.0, 200.0))
+            .unwrap();
+        let slide = sheet
+            .add_presentation_slide(
+                "Ideas",
+                PresentationSource::Zone(zone),
+                frame(0.0, 0.0, 200.0, 200.0),
+            )
+            .unwrap();
+        sheet.move_zone(zone, Vec2::new(20.0, -10.0)).unwrap();
+        assert_eq!(
+            sheet.topic(floating).unwrap().position,
+            Some(Vec2::new(145.0, 120.0))
+        );
+        assert_eq!(sheet.zones[0].frame, frame(20.0, -10.0, 200.0, 200.0));
+        assert!(sheet.resize_zone(zone, Vec2::new(99.0, 200.0)).is_err());
+        sheet.resize_zone(zone, Vec2::new(250.0, 225.0)).unwrap();
+        sheet.remove_zone(zone).unwrap();
+        assert!(sheet.contains(floating));
+        assert!(sheet.presentation.slides.is_empty());
+        assert!(sheet.remove_presentation_slide(slide).is_err());
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn deleting_topic_roots_cleans_zone_and_branch_slide_references() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let branch = sheet.add_child(sheet.root, None, "Branch");
+        let floating = sheet.add_floating("Floating", Vec2::new(120.0, 120.0));
+        let zone = sheet
+            .create_zone("Ideas", vec![floating], frame(0.0, 0.0, 200.0, 200.0))
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Branch",
+                PresentationSource::Branch(branch),
+                frame(0.0, 0.0, 200.0, 200.0),
+            )
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Ideas",
+                PresentationSource::Zone(zone),
+                frame(0.0, 0.0, 200.0, 200.0),
+            )
+            .unwrap();
+        sheet.detach_subtree(branch).unwrap();
+        assert_eq!(sheet.presentation.slides.len(), 1);
+        sheet.detach_subtree(floating).unwrap();
+        assert!(sheet.zones[0].roots.is_empty());
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn saved_zone_and_presentation_roundtrip_and_legacy_sheet_defaults() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let floating = sheet.add_floating("Floating", Vec2::new(140.0, 150.0));
+        let zone = sheet
+            .create_zone("Ideas", vec![floating], frame(0.0, 0.0, 300.0, 200.0))
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Ideas",
+                PresentationSource::Zone(zone),
+                frame(0.0, 0.0, 300.0, 200.0),
+            )
+            .unwrap();
+        let json = serde_json::to_value(&sheet).unwrap();
+        let restored: Sheet = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(restored, sheet);
+        let mut legacy = json;
+        legacy.as_object_mut().unwrap().remove("zones");
+        legacy.as_object_mut().unwrap().remove("presentation");
+        let restored: Sheet = serde_json::from_value(legacy).unwrap();
+        assert!(restored.zones.is_empty());
+        assert!(restored.presentation.slides.is_empty());
     }
 }
 
