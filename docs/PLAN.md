@@ -383,6 +383,24 @@ It does not establish compatibility with every provider/CORS policy, physical
 printing, real touch hardware, native Windows/macOS/Linux window-manager or
 global-menu behavior. Those host-specific F6 gates remain open.
 
+F6 Windows native evidence: the `isolated_native` example launched the production
+desktop entry point with a disposable `THINODA_HOME`, without changing the normal
+profile. A five-topic test map generated and applied four branch slides. Separate
+native Gantt and Pitch windows opened while the map remained open. Task Planning
+applied a three-workday schedule starting 2026-10-26; Gantt showed the due date as
+2026-10-28. Gantt Undo removed the row and Redo restored it. Closing Gantt kept the
+map open. Pitch displayed the saved slides, advanced with Next, showed the map
+overview and frame in presenter view, entered real native fullscreen and exited
+back to the still-open map.
+
+These were observed UI checks, not automated native visual assertions. Auxiliary
+windows exposed only title-bar accessibility nodes, so their controls required
+screenshot-based interaction. Focus-dependent keyboard dispatch and Settings
+workflows were not established by background automation; no focus guard was
+bypassed. Native menu parity, focused multi-document/window lifecycle, accessibility
+coverage, physical printing and macOS/Linux host checks remain open. No live AI
+request or physical print job was made.
+
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,
 Discussion mode, stop/retry, branch reorganization, translation to a new sheet
