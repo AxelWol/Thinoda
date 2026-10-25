@@ -158,6 +158,15 @@ fn planning_draft_stays_with_its_opening_viewport() {
     app.cancel_planning_viewport(egui::ViewportId::ROOT);
     assert!(!app.planning.editing());
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    app.begin_task_planning(&ctx, false);
+    let child = egui::ViewportId::from_hash_of("document-child");
+    app.planning.editor.as_mut().unwrap().viewport = child;
+    app.return_planning_viewport(child);
+    assert_eq!(
+        app.planning.editor.as_ref().unwrap().viewport,
+        egui::ViewportId::ROOT
+    );
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
 }
 
 #[test]

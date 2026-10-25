@@ -279,6 +279,7 @@ impl ThinodaApp {
                             &editor.document,
                             editor.sheet,
                             editor.revision,
+                            editor.viewport,
                             *topic,
                         )));
                         let mut duration = f32::from(task.duration_days.unwrap_or(0));
@@ -433,6 +434,14 @@ impl ThinodaApp {
         }
         if !(cancel || response.should_close()) || ime_event || editor.composing {
             self.planning.editor = Some(editor);
+        }
+    }
+
+    pub(crate) fn return_planning_viewport(&mut self, viewport: egui::ViewportId) {
+        if let Some(editor) = &mut self.planning.editor
+            && editor.viewport == viewport
+        {
+            editor.viewport = egui::ViewportId::ROOT;
         }
     }
 
