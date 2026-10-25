@@ -19,6 +19,7 @@ pub enum MenuAction {
 pub struct MenuSnapshot {
     pub items: Vec<MenuItem>,
     pub actions: Vec<MenuAction>,
+    viewport: egui::ViewportId,
     owner: Option<MenuOwner>,
     mode: CenterMode,
     text_focus: Option<egui::Id>,
@@ -220,6 +221,7 @@ impl ThinodaApp {
         MenuSnapshot {
             items,
             actions,
+            viewport: self.current_viewport,
             text_focus: focused_text(ctx),
             mode: self.mode,
             owner: self.native_menu_owner(),
@@ -229,19 +231,41 @@ impl ThinodaApp {
     pub fn dispatch_native_menu(&mut self, ctx: &Context, snapshot: &MenuSnapshot, id: u16) {
         let Some(action) = id
             .checked_sub(1)
-            .and_then(|id| snapshot.actions.get(usize::from(id)))
+            .and_then(|index| snapshot.actions.get(usize::from(index)))
+            .cloned()
         else {
             log::warn!("unknown native menu command: {id}");
             return;
         };
-        if self.native_menu_owner() != snapshot.owner
-            || self.mode != snapshot.mode
-            || snapshot.text_focus != focused_text(ctx)
+        let previous_active = self.active;
+        let previous_viewport = self.current_viewport;
+        if snapshot.viewport != egui::ViewportId::ROOT
+            && let Some(owner) = &snapshot.owner
         {
-            self.toasts.warning(t("The document changed. Try again."));
-            return;
+            let Some(index) = self
+                .docs
+                .iter()
+                .position(|doc| doc.key == owner.document)
+                .filter(|_| {
+                    self.document_windows
+                        .get(&owner.document)
+                        .copied()
+                        .unwrap_or(egui::ViewportId::ROOT)
+                        == snapshot.viewport
+                })
+            else {
+                self.toasts.warning(t("The document changed. Try again."));
+                return;
+            };
+            self.active = index;
         }
-        if let MenuAction::Command(command) = action
+        self.current_viewport = snapshot.viewport;
+        let valid = self.native_menu_owner() == snapshot.owner
+            && self.mode == snapshot.mode
+            && snapshot.text_focus == focused_text(ctx);
+        if !valid {
+            self.toasts.warning(t("The document changed. Try again."));
+        } else if let MenuAction::Command(command) = &action
             && snapshot.text_focus.is_some()
             && ctx.text_edit_focused()
             && is_text_command(command)
@@ -249,7 +273,10 @@ impl ThinodaApp {
             match command {
                 Cmd::Canvas(Action::Copy) => ctx.input_mut(|input| input.events.push(Event::Copy)),
                 Cmd::Canvas(Action::Cut) => ctx.input_mut(|input| input.events.push(Event::Cut)),
-                Cmd::MenuPaste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+                Cmd::MenuPaste => ctx.send_viewport_cmd_to(
+                    self.current_viewport,
+                    egui::ViewportCommand::RequestPaste,
+                ),
                 _ => {
                     if let Some((key, modifiers)) = text_command(command) {
                         ctx.input_mut(|input| {
@@ -264,24 +291,33 @@ impl ThinodaApp {
                     }
                 }
             }
-            return;
-        }
-        if self.launch.is_some()
+        } else if self.launch.is_some()
             || self.any_modal_open()
             || self.dialogs.settings
             || self.dialogs.about
             || self.palette.open
         {
             self.toasts.warning(t("Not possible here"));
-            return;
-        }
-        match action {
-            MenuAction::Command(command) => self.exec(ctx, command.clone()),
-            MenuAction::ClearRecent => {
-                self.settings.clear_recent();
-                self.save_settings();
+        } else {
+            match action {
+                MenuAction::Command(command) => self.exec(ctx, command),
+                MenuAction::ClearRecent => {
+                    self.settings.clear_recent();
+                    self.save_settings();
+                }
             }
         }
+        if snapshot.viewport != egui::ViewportId::ROOT {
+            if let Some(doc) = self
+                .doc()
+                .filter(|doc| self.document_windows.get(&doc.key) == Some(&snapshot.viewport))
+            {
+                self.window_active_documents
+                    .insert(snapshot.viewport, doc.key.clone());
+            }
+            self.active = previous_active;
+        }
+        self.current_viewport = previous_viewport;
     }
 }
 
@@ -378,7 +414,7 @@ impl ThinodaApp {
 
 #[cfg(target_os = "macos")]
 impl ThinodaApp {
-    pub(crate) fn sync_native_menus(&mut self, ctx: &Context, _: &eframe::Frame) {
+    pub(crate) fn sync_native_menus(&mut self, ctx: &Context) {
         if self.native_menus.unavailable || self.launch.is_some() {
             return;
         }
@@ -546,6 +582,32 @@ mod tests {
         let snapshot = app.native_menu_snapshot(&ctx);
         app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
         assert_eq!(app.docs.len(), count + 1);
+    }
+
+    #[test]
+    fn native_menu_command_targets_its_captured_document_window() {
+        let ctx = Context::default();
+        let mut app = ThinodaApp::headless();
+        app.exec(&ctx, Cmd::New);
+        let root_key = app.doc().unwrap().key.clone();
+        app.exec(&ctx, Cmd::New);
+        let moved_key = app.doc().unwrap().key.clone();
+        app.exec(&ctx, Cmd::MoveToNewWindow);
+        let viewport = app.document_windows[&moved_key];
+        app.current_viewport = viewport;
+        app.activate_document_window(viewport);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        app.current_viewport = egui::ViewportId::ROOT;
+        app.active = app.docs.iter().position(|doc| doc.key == root_key).unwrap();
+        let document_count = app.docs.len();
+
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
+
+        let new_key = app.window_active_documents[&viewport].clone();
+        assert_eq!(app.docs.len(), document_count + 1);
+        assert_eq!(app.document_windows.get(&new_key), Some(&viewport));
+        assert_eq!(app.current_viewport, egui::ViewportId::ROOT);
+        assert_eq!(app.doc().unwrap().key, root_key);
     }
 
     #[test]

@@ -183,6 +183,7 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 /// English → German.
 const DE: &[(&str, &str)] = &[
     ("Close Window", "Fenster schließen"),
+    ("Move to New Window", "In neues Fenster verschieben"),
     ("Window", "Fenster"),
     ("Services", "Dienste"),
     ("Hide Thinoda", "Thinoda ausblenden"),

@@ -117,6 +117,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         topic.toggle-collapse topic.toggle-collapse-all
         view.fit view.format-panel view.next-document view.outliner view.status-bar view.symbols-panel
         view.zen view.zoom-in view.zoom-out view.zoom-reset
+        window.move-to-new-window
     ".split_whitespace().collect::<std::collections::BTreeSet<_>>();
     assert_eq!(actual, expected);
 }

@@ -20,6 +20,7 @@ impl Cmd {
             Self::SaveAs => "file.save-as",
             Self::SaveAll => "file.save-all",
             Self::CloseTab(_) => "file.close-tab",
+            Self::MoveToNewWindow => "window.move-to-new-window",
             Self::NextDoc => "view.next-document",
             Self::Import => "file.import",
             Self::MergeFiles => "file.merge",

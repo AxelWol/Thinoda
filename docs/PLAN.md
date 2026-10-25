@@ -310,6 +310,20 @@ same app-owned close checks. Focused lifecycle/Save All tests and the host-indep
 menu model pass; the AppKit callback fixture and live macOS behavior still require
 a macOS host, and multi-window/recovery ownership remains open.
 
+**F1 document-window ownership slice:** `Move to New Window` now assigns the
+active document to an eframe secondary viewport without cloning its live model;
+document tabs are shown only in their owning viewport. Closing a child viewport
+commits pending inspector edits and returns its documents to the root window,
+preserving dirty state. The AppKit menu snapshot now records its viewport; only
+the focused viewport synchronizes/polls the global menu, and deferred commands
+reselect the captured document before dispatch while retaining the prior root
+selection. Headless regressions cover ownership, state preservation, fallback
+rendering and document-targeted menu dispatch. This does not establish native
+macOS viewport/menu behavior: per-window close/save decisions, root/last-window
+lifecycle, recovery ownership, native multi-window execution and VoiceOver/
+multi-monitor acceptance remain open. No single-instance IPC or open/reopen
+forwarding change is included.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes
@@ -1337,9 +1351,10 @@ This deliberately differs from Windows Office's File/Options and Ubuntu
 desktop-specific Preferences placement; P4.1 audits and documents that settled
 choice rather than reopening it. Command parity does not require identical
 group layouts, but Windows tab names must remain the eight shared categories.
-P4.4 cannot enter multi-window acceptance until the IPC/startup mechanism selected
-by P4.1 is implemented, allowing the primary process to create additional native
-viewports instead of only forwarding files into its existing window.
+The initial same-process viewport mechanism is now selected and implemented with
+egui/eframe `show_viewport_immediate`; this does not replace the P4.1 audit of
+single-instance IPC, startup/open/reopen routing and recovery ownership. Those
+host and lifecycle contracts remain prerequisites for P4.4 acceptance.
 
 | Step | Deliverable and dependency | Acceptance before marking finished |
 |---|---|---|

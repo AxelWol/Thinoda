@@ -99,6 +99,8 @@ impl ThinodaApp {
             ("Save All", Cmd::SaveAll),
             ("Import", Cmd::Import),
         ]));
+        #[cfg(not(target_arch = "wasm32"))]
+        file.push(item("Move to New Window", Cmd::MoveToNewWindow));
         file.push(submenu(
             "Export",
             EXPORT_MENU

@@ -49,10 +49,18 @@ impl eframe::App for ThinodaApp {
             self.desktop_ribbon = true;
         }
         #[cfg(target_os = "macos")]
-        self.poll_native_menus(ui.ctx());
+        let root_native_menu_focused = ui
+            .ctx()
+            .input(|input| input.viewport().focused.unwrap_or(true));
+        #[cfg(target_os = "macos")]
+        if root_native_menu_focused {
+            self.poll_native_menus(ui.ctx());
+        }
         self.draw(ui);
         #[cfg(target_os = "macos")]
-        self.sync_native_menus(ui.ctx(), frame);
+        if root_native_menu_focused {
+            self.sync_native_menus(ui.ctx());
+        }
         self.run_native_print(frame, ui.ctx());
         for url in ThinodaApp::take_open_urls(ui.ctx()) {
             self.open_link(&url);

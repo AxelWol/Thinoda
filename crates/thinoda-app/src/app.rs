@@ -1,6 +1,7 @@
 //! Application state, command dispatch and lifecycle (recovery, autosave, close handling).
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -47,6 +48,7 @@ pub enum Cmd {
     SaveAs,
     SaveAll,
     CloseTab(usize),
+    MoveToNewWindow,
     NextDoc,
     Import,
     MergeFiles,
@@ -193,6 +195,10 @@ pub struct Dialogs {
 pub struct ThinodaApp {
     pub docs: Vec<OpenDoc>,
     pub active: usize,
+    pub(crate) document_windows: HashMap<String, egui::ViewportId>,
+    pub(crate) window_active_documents: HashMap<egui::ViewportId, String>,
+    pub(crate) current_viewport: egui::ViewportId,
+    pub(crate) drawing_document_window: bool,
     pub settings: Settings,
     pub services: Services,
     pub mode: CenterMode,
@@ -230,7 +236,7 @@ pub struct ThinodaApp {
     pub(crate) font_source: Option<(String, u64)>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
     pub(crate) theme_dialog: Option<crate::theme_editor::ThemeDialog>,
-    last_title: String,
+    last_titles: HashMap<egui::ViewportId, String>,
     /// Startup work still pending behind the splash; `None` once ready.
     pub(crate) launch: Option<crate::startup::Launch>,
     #[cfg(target_os = "windows")]
@@ -273,6 +279,10 @@ impl ThinodaApp {
         i18n::set_lang(i18n::resolve(settings.language));
         let mut app = Self {
             docs: Vec::new(),
+            document_windows: HashMap::new(),
+            window_active_documents: HashMap::new(),
+            current_viewport: egui::ViewportId::ROOT,
+            drawing_document_window: false,
             #[cfg(any(target_os = "windows", target_os = "macos", test))]
             ribbon: crate::ribbon::RibbonState::default(),
             #[cfg(target_os = "windows")]
@@ -314,7 +324,7 @@ impl ThinodaApp {
             font_source: None,
             quick_style_dialog: None,
             theme_dialog: None,
-            last_title: String::new(),
+            last_titles: HashMap::new(),
             launch: None,
         };
         for f in files {
@@ -342,12 +352,89 @@ impl ThinodaApp {
         self.docs.get_mut(self.active)
     }
 
+    pub(crate) fn visible_document_indices(&self, viewport: egui::ViewportId) -> Vec<usize> {
+        self.docs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, doc)| {
+                (self
+                    .document_windows
+                    .get(&doc.key)
+                    .copied()
+                    .unwrap_or(egui::ViewportId::ROOT)
+                    == viewport)
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    pub(crate) fn activate_document_window(&mut self, viewport: egui::ViewportId) {
+        let visible = self.visible_document_indices(viewport);
+        let preferred = self
+            .window_active_documents
+            .get(&viewport)
+            .and_then(|key| self.docs.iter().position(|doc| &doc.key == key))
+            .filter(|index| visible.contains(index));
+        let current = visible.contains(&self.active).then_some(self.active);
+        let home = (viewport == egui::ViewportId::ROOT && self.active == self.docs.len())
+            .then_some(self.docs.len());
+        self.active = preferred
+            .or(current)
+            .or(home)
+            .or_else(|| visible.first().copied())
+            .unwrap_or(self.docs.len());
+    }
+
+    fn assign_document_window(&mut self, key: &str, viewport: egui::ViewportId) {
+        let previous = self.document_windows.remove(key);
+        if let Some(previous) = previous.filter(|previous| *previous != viewport) {
+            self.prune_empty_document_window(previous);
+        }
+        if viewport != egui::ViewportId::ROOT {
+            self.document_windows.insert(key.to_owned(), viewport);
+            self.window_active_documents
+                .insert(viewport, key.to_owned());
+        }
+    }
+
+    fn prune_empty_document_window(&mut self, viewport: egui::ViewportId) {
+        if !self
+            .document_windows
+            .values()
+            .any(|owner| *owner == viewport)
+        {
+            self.window_active_documents.remove(&viewport);
+            self.last_titles.remove(&viewport);
+        }
+    }
+
+    fn return_document_window_to_root(&mut self, viewport: egui::ViewportId) {
+        self.document_windows.retain(|_, owner| *owner != viewport);
+        self.window_active_documents.remove(&viewport);
+        self.last_titles.remove(&viewport);
+    }
+
+    fn move_active_to_new_window(&mut self, ctx: &Context) {
+        let Some(key) = self.doc().map(|doc| doc.key.clone()) else {
+            return;
+        };
+        if self.document_windows.contains_key(&key) {
+            return;
+        }
+        let viewport = egui::ViewportId::from_hash_of(("thinoda-document-window", &key));
+        self.assign_document_window(&key, viewport);
+        self.activate_document_window(egui::ViewportId::ROOT);
+        ctx.request_repaint();
+    }
+
     pub fn new_doc(&mut self, wb: Workbook) {
         let mut d = OpenDoc::new(wb);
         d.view.titles = new_topic_titles();
         d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
+        let key = d.key.clone();
         self.docs.push(d);
         self.active = self.docs.len() - 1;
+        self.assign_document_window(&key, self.current_viewport);
         self.mode = CenterMode::Map;
     }
 
@@ -358,6 +445,8 @@ impl ThinodaApp {
             .position(|d| d.path.as_deref() == Some(path))
         {
             self.active = i;
+            let key = self.docs[i].key.clone();
+            self.assign_document_window(&key, self.current_viewport);
             return;
         }
         if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
@@ -414,10 +503,16 @@ impl ThinodaApp {
             && !self.docs[0].is_dirty()
             && !self.docs[0].doc.can_undo()
         {
+            let key = self.docs[0].key.clone();
+            if let Some(owner) = self.document_windows.remove(&key) {
+                self.prune_empty_document_window(owner);
+            }
             self.docs.clear();
         }
+        let key = d.key.clone();
         self.docs.push(d);
         self.active = self.docs.len() - 1;
+        self.assign_document_window(&key, self.current_viewport);
         if native {
             self.settings.add_recent(path);
             self.save_settings();
@@ -494,6 +589,19 @@ impl ThinodaApp {
                 if self.doc().is_some() {
                     self.home_return_to = self.doc().map(|doc| doc.key.clone());
                 }
+                if self.current_viewport != egui::ViewportId::ROOT {
+                    let keys: Vec<_> = self
+                        .document_windows
+                        .iter()
+                        .filter_map(|(key, owner)| {
+                            (*owner == self.current_viewport).then_some(key.clone())
+                        })
+                        .collect();
+                    for key in keys {
+                        self.assign_document_window(&key, egui::ViewportId::ROOT);
+                    }
+                    self.window_active_documents.remove(&self.current_viewport);
+                }
                 self.template_choice = None;
                 // The home screen is shown when no document is open; offer it as a "new" tab.
                 self.active = self.docs.len();
@@ -529,9 +637,15 @@ impl ThinodaApp {
                 self.begin_save_all(ctx, None);
             }
             Cmd::CloseTab(i) => self.request_close_tab(i),
+            Cmd::MoveToNewWindow => self.move_active_to_new_window(ctx),
             Cmd::NextDoc => {
-                if !self.docs.is_empty() {
-                    self.active = (self.active + 1) % self.docs.len();
+                let visible = self.visible_document_indices(self.current_viewport);
+                if !visible.is_empty() {
+                    let next = visible
+                        .iter()
+                        .position(|index| *index == self.active)
+                        .map_or(0, |position| (position + 1) % visible.len());
+                    self.active = visible[next];
                 }
             }
             Cmd::Import => {
@@ -632,7 +746,7 @@ impl ThinodaApp {
             }
             Cmd::Quit => {
                 self.pending_close = Some(CloseIntent::Quit);
-                ctx.send_viewport_cmd(ViewportCommand::Close);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, ViewportCommand::Close);
             }
             Cmd::ToggleOutliner => {
                 self.mode = if self.mode == CenterMode::Map {
@@ -922,6 +1036,15 @@ impl ThinodaApp {
             Cmd::SaveAll => self.save_all.is_none() && !self.docs.is_empty(),
             Cmd::Quit => self.save_all.is_none(),
             Cmd::CloseTab(index) => self.save_all.is_none() && *index < self.docs.len(),
+            Cmd::MoveToNewWindow => {
+                !cfg!(target_arch = "wasm32")
+                    && self.current_viewport == egui::ViewportId::ROOT
+                    && self.save_all.is_none()
+                    && !self.any_modal_open()
+                    && self
+                        .doc()
+                        .is_some_and(|doc| !self.document_windows.contains_key(&doc.key))
+            }
             Cmd::Print => {
                 self.doc().is_some()
                     && !self.any_modal_open()
@@ -1487,6 +1610,10 @@ impl ThinodaApp {
         }
         let home = self.active >= self.docs.len();
         let d = self.docs.remove(i);
+        let owner = self.document_windows.remove(&d.key);
+        if let Some(owner) = owner {
+            self.prune_empty_document_window(owner);
+        }
         if let Some(r) = &self.services.recovery {
             let _ = r.remove(&d.key);
         }
@@ -1639,9 +1766,10 @@ impl ThinodaApp {
             ),
             None => "Thinoda".to_string(),
         };
-        if title != self.last_title {
+        let viewport = ctx.viewport_id();
+        if self.last_titles.get(&viewport) != Some(&title) {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
-            self.last_title = title;
+            self.last_titles.insert(viewport, title);
         }
         ctx.request_repaint_after(Duration::from_millis(1000));
     }
@@ -1673,6 +1801,23 @@ impl ThinodaApp {
     /// Handles a window close request (asks to save dirty documents).
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
+            let viewport = ctx.viewport_id();
+            if viewport != egui::ViewportId::ROOT {
+                for doc in &mut self.docs {
+                    if self.document_windows.get(&doc.key) == Some(&viewport) {
+                        if let Err(error) = doc.flush_inspector_edit(ctx) {
+                            log::warn!("inspector commit before document window close: {error}");
+                            self.toasts.error(error);
+                            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                            return;
+                        }
+                        doc.view.commit_edit(&mut doc.doc);
+                    }
+                }
+                self.return_document_window_to_root(viewport);
+                ctx.request_repaint();
+                return;
+            }
             for doc in &mut self.docs {
                 if let Err(error) = doc.flush_inspector_edit(ctx) {
                     log::warn!("inspector commit before window close: {error}");
@@ -2163,6 +2308,8 @@ impl ThinodaApp {
                 "",
                 "Insert",
             ),
+            #[cfg(not(target_arch = "wasm32"))]
+            (Cmd::MoveToNewWindow, "Move to New Window", "", "File"),
             (
                 Cmd::Canvas(Action::InsertFloating(thinoda_core::Vec2::new(0.0, -260.0))),
                 "Floating Topic",
@@ -2597,6 +2744,10 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), cmds.len());
         assert!(cmds.iter().any(|(c, _)| *c == Cmd::Export(Format::Pdf)));
+        assert!(
+            cmds.iter()
+                .any(|(command, _)| *command == Cmd::MoveToNewWindow)
+        );
     }
 
     #[test]
@@ -2638,6 +2789,61 @@ mod tests {
         assert!(app.doc().is_none());
         assert_eq!(app.active, app.docs.len());
         assert_eq!(app.home_return_to.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn moving_a_document_to_a_window_preserves_its_single_live_state() {
+        let ctx = egui::Context::default();
+        let mut app = ThinodaApp::headless();
+        let key = app.doc().unwrap().key.clone();
+        let root = app.doc().unwrap().doc.sheet().root;
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(root, "Unsaved window move"))
+            .unwrap();
+        let revision = app.doc().unwrap().doc.state_id();
+
+        app.move_active_to_new_window(&ctx);
+
+        let viewport = app.document_windows[&key];
+        assert_ne!(viewport, egui::ViewportId::ROOT);
+        assert_eq!(app.docs.len(), 1);
+        assert!(
+            app.visible_document_indices(egui::ViewportId::ROOT)
+                .is_empty()
+        );
+        assert_eq!(app.visible_document_indices(viewport), vec![0]);
+        assert_eq!(app.docs[0].doc.state_id(), revision);
+        assert!(app.docs[0].is_dirty());
+
+        app.return_document_window_to_root(viewport);
+        app.activate_document_window(egui::ViewportId::ROOT);
+        assert_eq!(
+            app.visible_document_indices(egui::ViewportId::ROOT),
+            vec![0]
+        );
+        assert!(app.docs[0].is_dirty());
+        assert_eq!(app.docs[0].doc.state_id(), revision);
+    }
+
+    #[test]
+    fn document_window_fallback_renders_without_cloning_or_recursing() {
+        let ctx = egui::Context::default();
+        let mut app = ThinodaApp::headless();
+        let key = app.doc().unwrap().key.clone();
+        app.move_active_to_new_window(&ctx);
+        let viewport = app.document_windows[&key];
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+
+        assert!(!output.shapes.is_empty());
+        assert_eq!(app.docs.len(), 1);
+        assert_eq!(app.document_windows.get(&key), Some(&viewport));
+        assert_eq!(app.active, app.docs.len());
+        assert!(!app.drawing_document_window);
+        output.textures_delta.set.clear();
+        output.textures_delta.free.clear();
     }
 
     #[test]
