@@ -19,7 +19,9 @@ int main(void) {
         NSMutableArray *fileEntries = [NSMutableArray array];
         for (NSNumber *identifier in @[@1, @2, @3]) {
             [fileEntries addObject:@{@"id":identifier, @"label":@"Application command",
-                @"enabled":@YES, @"checked":@NO, @"key":@"", @"modifiers":@0}];
+                @"enabled":@YES, @"checked":@NO,
+                @"key":[identifier isEqual:@2] ? @"p" : @"",
+                @"modifiers":[identifier isEqual:@2] ? @(NSEventModifierFlagCommand | NSEventModifierFlagOption) : @0}];
         }
         [fileEntries addObjectsFromArray:@[action, disabledGroup]];
         NSDictionary *payload = @{
@@ -29,6 +31,7 @@ int main(void) {
             ],
             @"application_commands":@[@1,@2,@3],
             @"labels":@{@"application":@"Thinoda Test", @"services":@"Services", @"window":@"Window",
+                @"close_window":@"Close Window",
                 @"hide":@"Hide Thinoda", @"hide_others":@"Hide Others", @"show_all":@"Show All",
                 @"minimize":@"Minimize", @"zoom":@"Zoom", @"bring_all":@"Bring All to Front"}
         };
@@ -42,9 +45,15 @@ int main(void) {
         assert(NSApp.mainMenu == owner.root);
         assert(NSApp.mainMenu.numberOfItems == 4);
         assert(NSApp.servicesMenu && NSApp.windowsMenu && NSApp.helpMenu);
+        NSMenuItem *closeWindow = NSApp.windowsMenu.itemArray[0];
+        assert([closeWindow.title isEqualToString:@"Close Window"]);
+        assert(closeWindow.action == @selector(performClose:));
+        assert([closeWindow.keyEquivalent isEqualToString:@"w"]);
         NSMenu *application = NSApp.mainMenu.itemArray[0].submenu;
-        assert([application.itemArray[2].keyEquivalent isEqualToString:@","]);
-        assert([application.itemArray.lastObject.keyEquivalent isEqualToString:@"q"]);
+        assert([application.itemArray[2].keyEquivalent isEqualToString:@"p"]);
+        assert(application.itemArray[2].keyEquivalentModifierMask ==
+            (NSEventModifierFlagCommand | NSEventModifierFlagOption));
+        assert([application.itemArray.lastObject.keyEquivalent isEqualToString:@""]);
         NSMenu *file = NSApp.mainMenu.itemArray[1].submenu;
         NSMenuItem *stale = file.itemArray[0];
         assert(stale.state == NSControlStateValueOn);

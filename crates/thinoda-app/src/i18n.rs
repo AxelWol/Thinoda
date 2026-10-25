@@ -228,6 +228,8 @@ const DE: &[(&str, &str)] = &[
         "Choose Edit mappings to create or change a keyboard profile.",
         "Zum Erstellen oder Ändern eines Tastaturprofils Tastenbelegungen bearbeiten wählen.",
     ),
+    ("Close Window", "Fenster schließen"),
+    ("Move to New Window", "In neues Fenster verschieben"),
     ("Window", "Fenster"),
     ("Services", "Dienste"),
     ("Hide Thinoda", "Thinoda ausblenden"),

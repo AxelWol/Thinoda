@@ -82,6 +82,89 @@ fn capture_apply_cancel_and_restart_preserve_named_profiles_and_documents() {
 }
 
 #[test]
+fn applying_shared_profiles_cancels_stale_settings_gestures_and_refreshes_each_owner() {
+    let mut h = harness(egui::vec2(1000.0, 800.0));
+    h.state_mut().dialogs.shortcuts = false;
+    h.state_mut().dialogs.settings = true;
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(30.0, 30.0),
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+    assert!(h.state().dialogs.settings_gesture.is_some());
+    let temp = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(temp.path());
+    paths.ensure().unwrap();
+    let ctx = h.ctx.clone();
+    let app = h.state_mut();
+    app.services.paths = Some(paths.clone());
+    app.format_tab = thinoda_platform::settings::FormatTab::Map;
+    app.sidebar_family = thinoda_platform::settings::SidebarFamily::Symbols;
+    let child = egui::ViewportId::from_hash_of("shared-keymap-test");
+    app.document_windows.insert(app.docs[0].key.clone(), child);
+    let mut maps = app.settings.keymaps.clone();
+    maps.duplicate_active("Shared").unwrap();
+    maps.profiles[0].bindings.insert(
+        "file.save".into(),
+        vec![crate::keymaps::encode(
+            KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::J),
+            ctx.os(),
+        )],
+    );
+    app.apply_keymap_settings(&ctx, maps.clone()).unwrap();
+    assert!(app.dialogs.settings_gesture.is_none());
+    for viewport in [egui::ViewportId::ROOT, child] {
+        app.activate_document_window(viewport);
+        app.prepare_keymap(&ctx);
+        assert!(
+            app.profile_bindings(&app.settings.keymaps, app.mode, ctx.os())
+                .iter()
+                .any(|(binding, command)| *command == Cmd::Save && binding.logical_key == Key::J)
+        );
+    }
+    h.run_steps(2);
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(30.0, 30.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert_eq!(h.state().settings.keymaps, maps);
+    let saved = thinoda_platform::Settings::load(&paths).unwrap();
+    assert_eq!(saved.keymaps, maps);
+    assert_eq!(saved.format_tab, thinoda_platform::settings::FormatTab::Map);
+    assert_eq!(
+        saved.sidebar_family,
+        thinoda_platform::settings::SidebarFamily::Symbols
+    );
+}
+
+#[test]
+fn failed_profile_save_keeps_the_draft_open_and_canonical_settings_unchanged() {
+    let mut h = harness(egui::vec2(1000.0, 800.0));
+    let before = h.state().settings.clone();
+    let root_file = tempfile::NamedTempFile::new().unwrap();
+    h.state_mut().services.paths = Some(thinoda_platform::Paths::from_root(root_file.path()));
+    h.state_mut()
+        .dialogs
+        .shortcut_browser
+        .editor
+        .as_mut()
+        .unwrap()
+        .draft
+        .duplicate_active("Unsaved")
+        .unwrap();
+    click(&mut h, "Apply");
+    assert_eq!(h.state().settings, before);
+    let editor = h.state().dialogs.shortcut_browser.editor.as_ref().unwrap();
+    assert!(editor.error.is_some());
+    assert_eq!(editor.draft.profile().unwrap().name, "Unsaved");
+}
+
+#[test]
 fn conflict_and_escape_capture_do_not_change_draft_or_document() {
     let mut h = harness(egui::vec2(1000.0, 800.0));
     h.state_mut()

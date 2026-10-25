@@ -30,6 +30,32 @@ impl KeymapEditor {
 }
 
 impl ThinodaApp {
+    fn apply_keymap_settings(
+        &mut self,
+        ctx: &egui::Context,
+        keymaps: Keymaps,
+    ) -> Result<(), String> {
+        self.validate_keymaps(&keymaps, ctx.os(), cfg!(target_arch = "wasm32"))?;
+        let mut settings = self.settings.clone();
+        settings.keymaps = keymaps;
+        settings.format_tab = self.format_tab;
+        settings.sidebar_family = self.sidebar_family;
+        if let Some(paths) = &self.services.paths {
+            settings
+                .save_with_credentials(paths, &thinoda_platform::credentials::NativeCredentialStore)
+                .map_err(|error| error.to_string())?;
+        }
+        self.dialogs.settings_gesture = None;
+        self.settings = settings;
+        self.prepare_keymap(ctx);
+        for viewport in
+            std::iter::once(egui::ViewportId::ROOT).chain(self.document_windows.values().copied())
+        {
+            ctx.request_repaint_of(viewport);
+        }
+        Ok(())
+    }
+
     pub(crate) fn keymap_editor(&mut self, ctx: &egui::Context) {
         let Some(mut editor) = self.dialogs.shortcut_browser.editor.take() else {
             return;
@@ -276,33 +302,14 @@ impl ThinodaApp {
             editor.error = Some(error);
         }
         if apply {
-            match self.validate_keymaps(&editor.draft, ctx.os(), cfg!(target_arch = "wasm32")) {
+            match self.apply_keymap_settings(ctx, editor.draft.clone()) {
                 Ok(()) => {
-                    let mut settings = self.settings.clone();
-                    settings.keymaps = editor.draft.clone();
-                    let result = if let Some(paths) = &self.services.paths {
-                        settings
-                            .save_with_credentials(
-                                paths,
-                                &thinoda_platform::credentials::NativeCredentialStore,
-                            )
-                            .map_err(|error| error.to_string())
-                    } else {
-                        Ok(())
-                    };
-                    match result {
-                        Ok(()) => {
-                            self.settings = settings;
-                            self.prepare_keymap(ctx);
-                            return;
-                        }
-                        Err(error) => {
-                            log::warn!("Could not save keyboard mappings: {error}");
-                            editor.error = Some(error);
-                        }
-                    }
+                    return;
                 }
-                Err(error) => editor.error = Some(error),
+                Err(error) => {
+                    log::warn!("Could not apply keyboard mappings: {error}");
+                    editor.error = Some(error);
+                }
             }
         }
         if !cancel && !(response.should_close() && touch && !editor.composing && !ime_event) {

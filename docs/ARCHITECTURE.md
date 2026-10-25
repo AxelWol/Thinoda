@@ -60,6 +60,11 @@ graph TD
   persisted settings unchanged. Apply writes settings atomically before changing
   live preferences and keeps failed saves open for retry. Changed assignments
   and aliases are reviewed in both Map and Outline contexts.
+  All document windows share that canonical profile library. Successful Apply
+  invalidates pending Settings pointer gestures, preserves the live sidebar
+  selections when saving, and requests repaint of every owner viewport.
+  AppKit application-menu aliases retain the resolved accelerators, including
+  explicit unassignment, instead of reinstating fixed Settings/Quit bindings.
   Global, insertion and view dispatch honor the same ordered binding inventory;
   modified gestures take precedence over a general gesture of the same key,
   without changing untouched Standard defaults. The canvas accepts host-supplied
@@ -115,6 +120,18 @@ graph TD
   Command-boundary flushes invalidate committed UI buffers, and unchanged field
   buffers follow model updates, so Undo cannot resurrect stale text. Toolbar
   Undo/Redo availability accounts for pending inspector changes.
+  Native window-close requests and the explicit Quit command retain distinct
+  intents through save-all continuation; cancel preserves the dirty workspace,
+  while discard closes only after the shared close decision is accepted. The
+  macOS Window menu exposes Close Window (Cmd+W) separately from the application
+  menu's Quit (Cmd+Q), both entering the app's normal unsaved-work path.
+  Documents can be assigned to same-process eframe secondary viewports with
+  `show_viewport_immediate`; the stable document key maps to exactly one owning
+  viewport, and each viewport has its own active-tab key. A child close commits
+  pending inspector drafts and returns its documents to the root without closing
+  them, preserving unsaved state. This is not yet per-window Save/Cancel/Discard:
+  root/last-window shutdown uses the existing shared app lifecycle, while child
+  close has no prompt because it returns the documents instead.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate
@@ -136,6 +153,10 @@ graph TD
   not an active application menu. Native callbacks only queue known enabled
   IDs and wakes the egui context; application-frame dispatch uses the producing
   snapshot and rechecks document/sheet/history, text focus and modal ownership.
+  AppKit snapshots also capture the owning viewport. The focused viewport alone
+  synchronizes and polls the global menu; deferred actions reselect the captured
+  document for dispatch and restore the prior root selection afterward. This
+  routing is covered by headless tests, not by live AppKit execution.
   Standard native editing items send text-edit events when a text field owns
   focus. Menu replacement drains pending commands first, and window destruction
   removes its subclass before dropping callback data. Native integration errors
@@ -188,7 +209,15 @@ graph TD
   ownership prevent old native items from invoking a replacement tree's commands.
   Detaching disables the callback and restores the previous AppKit menu tree.
   Real AppKit SDK/lifecycle fixtures run only on macOS; Windows tests do not
-  establish macOS UI/VoiceOver acceptance. Multi-window lifecycle remains open.
+  establish macOS UI/VoiceOver acceptance. Native viewport creation and AppKit
+  focused-window routing, per-window close/save decisions, root/last-window
+  lifecycle, recovery ownership, IPC/open/reopen routing, VoiceOver and
+  multi-monitor behavior remain acceptance work.
+  Native Linux uses an in-window row of the same eight shared menu categories
+  when the available width supports it (at least 1400 logical points at the
+  selected UI scale); narrower windows retain the compact
+  hamburger. This is an app-owned eframe menu surface, not a GNOME global-menu
+  exporter or a claim of Ubuntu/Orca host acceptance.
 - **Touch navigation ownership**: `MapView` latches an owned or rejected
   multitouch sequence until all contacts lift. Owned two-finger input scales
   about the previous centroid, then translates to the current centroid. It

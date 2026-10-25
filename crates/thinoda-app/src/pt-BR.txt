@@ -1,4 +1,6 @@
 Window|Janela
+Close Window|Fechar janela
+Move to New Window|Mover para uma nova janela
 Services|Serviços
 Hide Thinoda|Ocultar Thinoda
 Hide Others|Ocultar outros

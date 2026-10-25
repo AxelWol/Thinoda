@@ -61,6 +61,7 @@ pub enum Glyph {
     Power,
     Home,
     Pin,
+    Window,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -422,6 +423,12 @@ impl Glyph {
                 line(&[(15., 2.), (15., 8.), (20., 8.)]);
                 line(&[(8., 13.), (16., 13.)]);
                 line(&[(8., 17.), (14., 17.)]);
+            }
+            Self::Window => {
+                box_at(2., 3., 20., 18.);
+                line(&[(2., 8.), (22., 8.)]);
+                line(&[(6., 5.5), (6.1, 5.5)]);
+                line(&[(9., 5.5), (9.1, 5.5)]);
             }
             Self::Folder => {
                 line(&[

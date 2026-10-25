@@ -305,6 +305,40 @@ labels, change Outline/QAT density, or alter pinning/command behavior. Coverage
 includes all eight tabs, both densities, translated/theme/scale combinations,
 rendered fixtures and real settings toggling/save/reload.
 
+**F1 Linux in-window menu slice (2026-10-25):** roomy native Linux windows expose
+the shared File/Edit/Sheet/Insert/AI/Tools/View/Help menu categories directly in
+the top bar (at least 1400 logical points at the selected UI scale) and route
+them through the same command availability and execution path. Narrow windows
+keep the compact hamburger; the browser is unchanged.
+Headless coverage exercises category visibility, Settings in Edit and the narrow
+fallback. This is an app-owned eframe menu row, not a GNOME global-menu exporter
+or Ubuntu/Orca host acceptance. P4.2's remaining menu/accessibility audit,
+P4.5's DEB/AppImage/Wayland/X11 and Orca acceptance, F1 multi-window lifecycle
+and non-Windows native execution remain open.
+
+**F1 window-close intent slice (2026-10-25):** OS window close now stays distinct
+from explicit Quit through the shared unsaved-work prompt and Save All continuation.
+Cancel retains dirty documents; Save waits for all documents to save before closing;
+Discard closes only after the accepted decision. The macOS Window menu now offers
+Close Window (Cmd+W) separately from application-menu Quit (Cmd+Q), both using the
+same app-owned close checks. Focused lifecycle/Save All tests and the host-independent
+menu model pass; the AppKit callback fixture and live macOS behavior still require
+a macOS host, and multi-window/recovery ownership remains open.
+
+**F1 document-window ownership slice:** `Move to New Window` now assigns the
+active document to an eframe secondary viewport without cloning its live model;
+document tabs are shown only in their owning viewport. Closing a child viewport
+commits pending inspector edits and returns its documents to the root window,
+preserving dirty state. The AppKit menu snapshot now records its viewport; only
+the focused viewport synchronizes/polls the global menu, and deferred commands
+reselect the captured document before dispatch while retaining the prior root
+selection. Headless regressions cover ownership, state preservation, fallback
+rendering and document-targeted menu dispatch. This does not establish native
+macOS viewport/menu behavior: per-window close/save decisions, root/last-window
+lifecycle, recovery ownership, native multi-window execution and VoiceOver/
+multi-monitor acceptance remain open. No single-instance IPC or open/reopen
+forwarding change is included.
+
 **Screenshot-directed ribbon refinement (2026-10-24):** the main ribbon now
 uses original vector line icons, large primary actions, stacked secondary actions,
 bottom group captions and an active-tab underline. Width-driven adaptation removes
@@ -1332,9 +1366,10 @@ This deliberately differs from Windows Office's File/Options and Ubuntu
 desktop-specific Preferences placement; P4.1 audits and documents that settled
 choice rather than reopening it. Command parity does not require identical
 group layouts, but Windows tab names must remain the eight shared categories.
-P4.4 cannot enter multi-window acceptance until the IPC/startup mechanism selected
-by P4.1 is implemented, allowing the primary process to create additional native
-viewports instead of only forwarding files into its existing window.
+The initial same-process viewport mechanism is now selected and implemented with
+egui/eframe `show_viewport_immediate`; this does not replace the P4.1 audit of
+single-instance IPC, startup/open/reopen routing and recovery ownership. Those
+host and lifecycle contracts remain prerequisites for P4.4 acceptance.
 
 | Step | Deliverable and dependency | Acceptance before marking finished |
 |---|---|---|

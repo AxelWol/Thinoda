@@ -290,16 +290,20 @@ fn document_tabs(
     ui: &mut Ui,
     width: f32,
     docs: &[crate::doc::OpenDoc],
+    visible_indices: &[usize],
+    viewport: egui::ViewportId,
     active: usize,
 ) -> (Option<usize>, bool, Option<usize>) {
     let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
-    let state_id = ui.make_persistent_id("document_scroll_buttons");
+    let state_id = ui.make_persistent_id(("document_scroll_buttons", viewport));
     let (position, max_offset, previous_active) = ui.data(|data| {
         data.get_temp::<(f32, f32, String)>(state_id)
             .unwrap_or_default()
     });
-    let active_key = docs
-        .get(active)
+    let active_key = visible_indices
+        .contains(&active)
+        .then(|| docs.get(active))
+        .flatten()
         .map_or_else(String::new, |doc| doc.key.clone());
     let active_changed = previous_active != active_key;
     let button_width = ui.spacing().interact_size.y;
@@ -340,7 +344,10 @@ fn document_tabs(
     let row_height = ui.spacing().interact_size.y.max(Tokens::ICON_BUTTON) + Tokens::SPACE_S;
     let output = scroll_row_offset(ui, "document_tabs", names_width, row_height, offset, |ui| {
         ui.horizontal(|ui| {
-            for (index, doc) in docs.iter().enumerate() {
+            for &index in visible_indices {
+                let Some(doc) = docs.get(index) else {
+                    continue;
+                };
                 let label = format!("{}{}", if doc.is_dirty() { "• " } else { "" }, doc.title());
                 let (response, close) = ui
                     .push_id(&doc.key, |ui| {
@@ -557,6 +564,15 @@ impl ThinodaApp {
             return;
         }
         let ctx = ui.ctx().clone();
+        let viewport = if self.drawing_document_window {
+            self.current_viewport
+        } else {
+            ctx.viewport_id()
+        };
+        let previous_active = self.active;
+        let previous_viewport = self.current_viewport;
+        self.current_viewport = viewport;
+        self.activate_document_window(viewport);
         self.prepare_keymap(&ctx);
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
@@ -634,7 +650,8 @@ impl ThinodaApp {
             self.insert_shortcuts(&ctx);
         }
 
-        let show_doc = self.active < self.docs.len();
+        let visible_documents = self.visible_document_indices(viewport);
+        let show_doc = visible_documents.contains(&self.active);
         if !self.zen {
             egui::Panel::top("thinoda_topbar")
                 .exact_size(if self.ribbon_active() {
@@ -806,6 +823,99 @@ impl ThinodaApp {
             self.capture_map_shot(&ctx, d.view.canvas_rect());
         }
         self.housekeeping(&ctx);
+        if viewport == egui::ViewportId::ROOT && !self.drawing_document_window {
+            self.draw_document_windows(&ctx);
+        } else {
+            let returned_home = viewport != egui::ViewportId::ROOT
+                && self.active == self.docs.len()
+                && !self
+                    .document_windows
+                    .values()
+                    .any(|owner| *owner == viewport);
+            if self.active < self.docs.len()
+                && self
+                    .visible_document_indices(viewport)
+                    .contains(&self.active)
+                && let Some(doc) = self.docs.get(self.active)
+            {
+                self.window_active_documents
+                    .insert(viewport, doc.key.clone());
+            }
+            if !returned_home {
+                self.active = previous_active;
+            }
+        }
+        self.current_viewport = previous_viewport;
+    }
+
+    fn draw_document_windows(&mut self, ctx: &egui::Context) {
+        let mut seen = std::collections::HashSet::new();
+        let windows: Vec<_> = self
+            .document_windows
+            .iter()
+            .filter_map(|(key, viewport)| {
+                if !seen.insert(*viewport) {
+                    return None;
+                }
+                let active_key = self
+                    .window_active_documents
+                    .get(viewport)
+                    .filter(|active| self.document_windows.get(*active) == Some(viewport))
+                    .cloned()
+                    .unwrap_or_else(|| key.clone());
+                let title = self
+                    .docs
+                    .iter()
+                    .find(|doc| doc.key == active_key)
+                    .map(|doc| {
+                        doc.path
+                            .as_ref()
+                            .and_then(|path| path.file_name())
+                            .map_or_else(|| doc.title(), |name| name.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| t("Untitled").to_owned());
+                Some((*viewport, active_key, title))
+            })
+            .collect();
+
+        for (viewport, active_key, title) in windows {
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("{title} — Thinoda"))
+                .with_inner_size([1280.0, 800.0])
+                .with_min_inner_size([720.0, 480.0]);
+            let previous_viewport = self.current_viewport;
+            let previous_active = self.active;
+            self.current_viewport = viewport;
+            self.drawing_document_window = true;
+            self.window_active_documents
+                .insert(viewport, active_key.clone());
+            ctx.show_viewport_immediate(viewport, builder, |ui, _class| {
+                self.activate_document_window(viewport);
+                #[cfg(target_os = "macos")]
+                let native_menu_focused = ui
+                    .ctx()
+                    .input(|input| input.viewport().focused.unwrap_or(false));
+                #[cfg(target_os = "macos")]
+                if native_menu_focused {
+                    self.poll_native_menus(ui.ctx());
+                }
+                self.draw(ui);
+                #[cfg(target_os = "macos")]
+                if native_menu_focused {
+                    self.sync_native_menus(ui.ctx());
+                }
+            });
+            self.drawing_document_window = false;
+            self.current_viewport = previous_viewport;
+            let returned_home = !self
+                .document_windows
+                .values()
+                .any(|owner| *owner == viewport)
+                && self.active == self.docs.len();
+            if !returned_home {
+                self.active = previous_active;
+            }
+        }
     }
 
     fn conversion_modal_open(&self) -> bool {
@@ -845,8 +955,14 @@ impl ThinodaApp {
         let ctx = ui.ctx().clone();
         let mut cmd: Option<Cmd> = None;
         let touch_allowed = widgets::touch_activation_allowed(&ctx);
+        let visible_documents = self.visible_document_indices(self.current_viewport);
+        let inline_menu_bar = !cfg!(target_arch = "wasm32")
+            && ctx.os() == egui::os::OperatingSystem::Nix
+            && ctx.content_rect().width() >= 1400.0 * self.settings.ui_scale.clamp(0.5, 3.0);
         ui.horizontal_centered(|ui| {
-            if !cfg!(target_os = "windows") || !self.ribbon_active() {
+            if inline_menu_bar {
+                self.main_menu_bar(ui, &mut cmd);
+            } else if !cfg!(target_os = "windows") || !self.ribbon_active() {
                 guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
                     self.main_menu(ui, &mut cmd)
                 });
@@ -894,8 +1010,14 @@ impl ThinodaApp {
                 let min_tabs_width = 2.0 * arrow_slot + 2.0 * action_slot;
                 (ui.available_width() * 0.4).max(min_tabs_width).min(560.0)
             };
-            let (selected, new_tab, close_tab) =
-                document_tabs(ui, tabs_width, &self.docs, self.active);
+            let (selected, new_tab, close_tab) = document_tabs(
+                ui,
+                tabs_width,
+                &self.docs,
+                &visible_documents,
+                self.current_viewport,
+                self.active,
+            );
             if touch_allowed {
                 if let Some(index) = selected {
                     self.active = index;
@@ -986,6 +1108,17 @@ impl ThinodaApp {
 
     fn main_menu(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
         self.render_menu_entries(ui, &self.main_menu_entries(), cmd);
+    }
+
+    fn main_menu_bar(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        for entry in self.main_menu_entries() {
+            if let crate::menus::MenuEntry::Submenu { label, entries } = entry {
+                let enabled = self.menu_entries_available(&entries);
+                ui.add_enabled_ui(enabled, |ui| {
+                    menu_button(ui, label, |ui| self.render_menu_entries(ui, &entries, cmd));
+                });
+            }
+        }
     }
 
     pub(crate) fn render_menu_entries(
@@ -3622,14 +3755,14 @@ impl ThinodaApp {
                             self.toasts.warning(t("Not possible here"));
                         }
                     }
-                    (CloseIntent::Quit, 0) => {
-                        self.begin_save_all(ctx, true);
+                    (intent @ (CloseIntent::Window | CloseIntent::Quit), 0) => {
+                        self.begin_save_all(ctx, Some(intent));
                     }
-                    (CloseIntent::Quit, 1) => {
+                    (intent @ (CloseIntent::Window | CloseIntent::Quit), 1) => {
                         for d in &mut self.docs {
                             d.doc.mark_saved();
                         }
-                        self.quitting = true;
+                        self.approved_close = Some(intent);
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     _ => {}
