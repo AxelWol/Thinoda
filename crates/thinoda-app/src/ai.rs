@@ -2,7 +2,10 @@
 //! the "Generate Map" prompt dialog and the AI section of the settings.
 
 use egui::{Context, RichText, Ui};
-use thinoda_ai::{AiConfig, AiError, AiJob, AiOutput, AiResult, AiTask, OutputKind, TopicContext};
+use thinoda_ai::{
+    AiConfig, AiError, AiJob, AiOutput, AiResult, AiStreamEvent, AiStreamJob, AiTask, OutputKind,
+    TopicContext,
+};
 use thinoda_core::outline::{OutlineNode as CoreNode, add_outline, sheet_from_outline};
 use thinoda_core::{Sheet, TopicId, Workbook};
 use thinoda_platform::settings::AiSettings;
@@ -55,8 +58,10 @@ impl AiCommand {
 
 /// A running AI request and where its result goes.
 pub struct PendingAi {
-    pub job: AiJob,
+    pub job: AiStreamJob<AiResult>,
     pub target: AiTarget,
+    pub preview: String,
+    pub started: web_time::Instant,
 }
 
 #[derive(Default)]
@@ -218,7 +223,7 @@ impl ThinodaApp {
         let doc_key = Some(d.key.clone());
         let source = Some((d.doc.active_index(), d.doc.sheet().root, d.doc.state_id()));
         self.ai.pending = Some(PendingAi {
-            job: AiJob::spawn(config(&self.settings.ai), task),
+            job: AiStreamJob::spawn(config(&self.settings.ai), task),
             target: AiTarget {
                 command: cmd,
                 doc_key,
@@ -227,6 +232,8 @@ impl ThinodaApp {
                 viewport: self.current_viewport,
                 config: config(&self.settings.ai),
             },
+            preview: String::new(),
+            started: web_time::Instant::now(),
         });
     }
 
@@ -241,7 +248,7 @@ impl ThinodaApp {
             return;
         }
         self.ai.pending = Some(PendingAi {
-            job: AiJob::spawn(config(&self.settings.ai), AiTask::GenerateMap(prompt)),
+            job: AiStreamJob::spawn(config(&self.settings.ai), AiTask::GenerateMap(prompt)),
             target: AiTarget {
                 command: AiCommand::GenerateMap,
                 doc_key: None,
@@ -250,12 +257,15 @@ impl ThinodaApp {
                 viewport: self.current_viewport,
                 config: config(&self.settings.ai),
             },
+            preview: String::new(),
+            started: web_time::Instant::now(),
         });
     }
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
-        if !self.settings.ai.enabled && self.ai.pending.take().is_some() {
+        if !self.settings.ai.enabled && self.ai.pending.is_some() {
+            self.cancel_ai();
             self.toasts
                 .warning(t("AI assistant is disabled in Settings"));
         }
@@ -282,12 +292,37 @@ impl ThinodaApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
-        let Some(p) = &self.ai.pending else { return };
-        let Some(result) = p.job.poll() else {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        let Some(p) = &mut self.ai.pending else {
+            return;
+        };
+        let mut finished = None;
+        let mut progress = false;
+        for _ in 0..128 {
+            match p.job.poll() {
+                Some(AiStreamEvent::Delta(text)) => {
+                    p.preview.push_str(&text);
+                    progress = true;
+                }
+                Some(AiStreamEvent::Finished(result)) => {
+                    finished = Some(result);
+                    break;
+                }
+                None => break,
+            }
+        }
+        if progress {
+            ctx.request_repaint_of(p.target.viewport);
+        }
+        let Some(result) = finished else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(if progress {
+                16
+            } else {
+                100
+            }));
             return;
         };
         let p = self.ai.pending.take().unwrap();
+        ctx.request_repaint_of(p.target.viewport);
         match result {
             Ok(result) => {
                 self.ai.review = Some(AiReview {
@@ -303,6 +338,13 @@ impl ThinodaApp {
                     error_text(&e)
                 ));
             }
+        }
+    }
+
+    /// Cancels transport and discards partial output without applying it.
+    pub fn cancel_ai(&mut self) {
+        if let Some(pending) = self.ai.pending.take() {
+            pending.job.cancel();
         }
     }
 
@@ -448,29 +490,9 @@ impl ThinodaApp {
         }
     }
 
-    /// Floating "AI is working" indicator above the status bar.
+    /// Nonmodal streaming preview; closing it cancels the request.
     pub fn ai_busy_overlay(&mut self, ctx: &Context) {
-        let Some(p) = &self.ai.pending else { return };
-        if p.target.viewport != self.current_viewport {
-            return;
-        }
-        let label = format!(
-            "{} ({:.0}s)",
-            t(p.target.command.label()),
-            p.job.started.elapsed().as_secs_f32()
-        );
-        egui::Area::new(egui::Id::unique("thinoda_ai_busy"))
-            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -44.0])
-            .order(egui::Order::Foreground)
-            .interactable(false)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new(label).small());
-                    });
-                });
-            });
+        self.ai_stream_window(ctx);
     }
 
     /// AI section of the settings window.

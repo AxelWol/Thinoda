@@ -1,4 +1,5 @@
 Review AI Result|Revisar resultado de IA
+Cancel AI Request|Cancelar solicitação de IA
 Apply AI Result|Aplicar resultado de IA
 Discard AI Result|Descartar resultado de IA
 Nothing changes until you apply this result.|Nada muda até você aplicar este resultado.

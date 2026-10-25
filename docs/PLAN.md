@@ -206,11 +206,23 @@ command availability and error reporting. Test each feature while building it,
 update completion status honestly, and do not interleave deferred stability work.
 No staffing or calendar promises are inferred from these phases.
 
-**F5 review foundation (in progress, 2026-10-25):** successful existing AI commands
-now stage output in a source-owned, nonmodal review rather than auto-applying it.
+**F5 streaming/review foundation (in progress, 2026-10-25):** existing AI commands
+now stream bounded preview text and stage completed output in a source-owned,
+nonmodal review rather than auto-applying it.
 New maps require Apply too. Apply checks source sheet/root/revision, uncommitted
 title/inspector drafts and request settings; Discard never edits the map.
-This is the first app slice, not completion of streaming/chat/semantic/Pitch AI.
+Cancel/preview close/AI disable abort transport and discard partial output.
+Native and browser polling share terminal success/error/cancel events; only a
+valid completed response can enter review. The nonstreaming client remains
+available for existing callers. This is the first app slice, not completion of
+chat/modes/prompts/semantic/Pitch AI or browser/native host acceptance.
+
+Local evidence for this foundation: 150 app unit tests, 38 AI unit/loopback
+tests and 17 focused app E2E tests passed, with live AI disabled. Strict native
+all-target and WASM library clippy, formatting/diff checks and the 25 documentation
+contracts passed. An explicitly configured, bounded/cancellable embeddings job
+is also integrated as the semantic transport prerequisite; it does not yet expose
+semantic search/clustering UI or trigger background indexing.
 
 The current official [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web)
 confirms selected-topic references, Quick/Balanced/Deep response guidance,

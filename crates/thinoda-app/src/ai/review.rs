@@ -83,7 +83,7 @@ impl ThinodaApp {
         let mut discard = false;
         let allowed = widgets::touch_activation_allowed(ctx);
         egui::Window::new(t("Review AI Result"))
-            .id(egui::Id::unique("thinoda_ai_review"))
+            .id(egui::Id::unique("thinoda_ai_response"))
             .open(&mut open)
             .collapsible(false)
             .default_width(520.0)
@@ -140,6 +140,44 @@ impl ThinodaApp {
             }
         } else if !discard && (open || !allowed) {
             self.ai.review = Some(review);
+        }
+    }
+
+    pub(super) fn ai_stream_window(&mut self, ctx: &Context) {
+        let Some(pending) = &self.ai.pending else {
+            return;
+        };
+        if pending.target.viewport != self.current_viewport {
+            return;
+        }
+        let mut open = true;
+        let mut cancel = false;
+        let allowed = widgets::touch_activation_allowed(ctx);
+        egui::Window::new(t("AI is still working…"))
+            .id(egui::Id::unique("thinoda_ai_response"))
+            .open(&mut open)
+            .collapsible(false)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.set_max_width((ctx.content_rect().width() - 48.0).max(1.0));
+                ui.label(t(pending.target.command.label()));
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("{:.0}s", pending.started.elapsed().as_secs_f32()));
+                    cancel = ui.button(t("Cancel AI Request")).clicked() && allowed;
+                });
+                widgets::caption(ui, t("Nothing changes until you apply this result."));
+                egui::ScrollArea::vertical()
+                    .max_height((ctx.content_rect().height() - 220.0).max(40.0))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut pending.preview.as_str())
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+            });
+        if cancel || (!open && allowed) {
+            self.cancel_ai();
         }
     }
 

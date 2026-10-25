@@ -2921,7 +2921,9 @@ fn ctrl_b_adds_boundary() {
 // ---------------------------------------------------------------------------
 
 fn ai_harness(reply: &str) -> (Harness<'static, ThinodaApp>, thinoda_ai::mock::MockServer) {
-    let server = thinoda_ai::mock::MockServer::start(&["text-embedding-x", "mock-llm"], reply);
+    let delta = serde_json::json!({"choices": [{"delta": {"content": reply}}]}).to_string();
+    let server =
+        thinoda_ai::mock::MockServer::start_sse(&["text-embedding-x", "mock-llm"], &[&delta]);
     let mut app = ThinodaApp::headless();
     app.settings.ai.base_url = server.base_url.clone();
     let mut h = harness(app);
@@ -2974,6 +2976,8 @@ fn ai_brainstorm_adds_subtopics_in_one_undo_step() {
         chat.body.contains("mock-llm"),
         "embedding model must be skipped"
     );
+    let body: serde_json::Value = serde_json::from_str(&chat.body).unwrap();
+    assert_eq!(body["stream"], true);
     drop(req);
     let ctx = h.ctx.clone();
     h.state_mut()
@@ -3147,4 +3151,82 @@ fn ai_unreachable_server_shows_error_and_keeps_map() {
         .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Brainstorm));
     wait_for_ai(&mut h);
     assert_eq!(root_children(h.state()), before);
+}
+
+#[test]
+fn ai_stream_preview_can_be_canceled_or_disabled_without_late_edits() {
+    for cancel in ["button", "disabled"] {
+        let delta = r#"{"choices":[{"delta":{"content":"Partial preview "}}]}"#;
+        let events = vec![delta; 4095];
+        let server = thinoda_ai::mock::MockServer::start_sse(&["mock-llm"], &events);
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.base_url = server.base_url.clone();
+        let mut h = harness(app);
+        let ctx = h.ctx.clone();
+        h.state_mut()
+            .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::SelectRoot));
+        let before = {
+            let doc = h.state().doc().unwrap();
+            (doc.doc.workbook().clone(), doc.doc.state_id())
+        };
+        h.state_mut()
+            .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while h
+            .state()
+            .ai
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.preview.is_empty())
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "preview did not arrive"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+        assert!(!h.state().ai.pending.as_ref().unwrap().preview.is_empty());
+        assert!(h.state().ai.review.is_none());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before.0);
+        if cancel == "button" {
+            h.get_by_role_and_label(Role::Button, "Cancel AI Request")
+                .click();
+            h.run_steps(1);
+        } else {
+            h.state_mut().settings.ai.enabled = false;
+            h.state_mut().poll_ai(&ctx);
+            h.state_mut().settings.ai.enabled = true;
+        }
+        assert!(h.state().ai.pending.is_none());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        h.run_steps(5);
+        assert!(h.state().ai.review.is_none());
+        let doc = h.state().doc().unwrap();
+        assert_eq!((doc.doc.workbook().clone(), doc.doc.state_id()), before);
+    }
+}
+
+#[test]
+fn ai_stream_provider_error_discards_partial_output() {
+    let server = thinoda_ai::mock::MockServer::start_sse(
+        &["mock-llm"],
+        &[
+            r#"{"choices":[{"delta":{"content":"Not a finished answer"}}]}"#,
+            r#"{"error":{"message":"local synthetic failure"}}"#,
+        ],
+    );
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.base_url = server.base_url.clone();
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Canvas(thinoda_canvas::Action::SelectRoot));
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.state_mut()
+        .exec(&ctx, Cmd::Ai(thinoda_app::ai::AiCommand::Explain));
+    wait_for_ai(&mut h);
+    assert!(h.state().ai.review.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 }

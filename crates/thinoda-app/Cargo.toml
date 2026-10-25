@@ -51,6 +51,7 @@ wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

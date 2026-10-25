@@ -1,4 +1,5 @@
 Review AI Result|Revisar resultado de IA|Vérifier le résultat IA|Gennemse AI-resultat|AI-resultaat beoordelen|Rever resultado de IA|Rivedi risultato IA|Przejrzyj wynik AI
+Cancel AI Request|Cancelar solicitud de IA|Annuler la requête IA|Annuller AI-anmodning|AI-verzoek annuleren|Cancelar pedido de IA|Annulla richiesta IA|Anuluj żądanie AI
 Apply AI Result|Aplicar resultado de IA|Appliquer le résultat IA|Anvend AI-resultat|AI-resultaat toepassen|Aplicar resultado de IA|Applica risultato IA|Zastosuj wynik AI
 Discard AI Result|Descartar resultado de IA|Rejeter le résultat IA|Kassér AI-resultat|AI-resultaat verwerpen|Descartar resultado de IA|Scarta risultato IA|Odrzuć wynik AI
 Nothing changes until you apply this result.|Nada cambia hasta que apliques este resultado.|Rien ne change avant d'appliquer ce résultat.|Intet ændres, før du anvender dette resultat.|Er verandert niets totdat je dit resultaat toepast.|Nada muda até aplicar este resultado.|Nulla cambia finché non applichi questo risultato.|Nic się nie zmieni, dopóki nie zastosujesz tego wyniku.

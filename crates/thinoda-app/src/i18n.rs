@@ -1132,6 +1132,7 @@ const DE: &[(&str, &str)] = &[
     ("Select a topic first", "Bitte zuerst ein Thema auswählen"),
     ("AI map created", "KI-Map erstellt"),
     ("Review AI Result", "KI-Ergebnis prüfen"),
+    ("Cancel AI Request", "KI-Anfrage abbrechen"),
     ("Apply AI Result", "KI-Ergebnis anwenden"),
     ("Discard AI Result", "KI-Ergebnis verwerfen"),
     (

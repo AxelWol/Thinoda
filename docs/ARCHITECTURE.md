@@ -297,9 +297,14 @@ graph TD
   IME candidate Enter/Tab/Escape before commands or modal dismissal; deliberate
   keyboard execution resumes after composition.
   Backend/browser and real-device acceptance is tracked in PLAN/WEB.
-- **AI off the UI thread**: `AiJob` runs on a worker thread; the app polls it each frame and stages
-  successful output for explicit review/Apply, never automatic mutation.
-  Apply remains one undo step. Works with any OpenAI-compatible server; nothing leaves the
+- **AI off the UI thread**: typed map requests use `AiStreamJob`; connection tests
+  retain the existing nonstreaming `AiJob`. Native streaming uses abortable
+  Tokio/reqwest I/O; browser streaming uses fetch ReadableStream/AbortController.
+  The app drains at most 128 events per frame, previews deltas without mutation,
+  and stages successful output for explicit review/Apply only after valid `[DONE]`.
+  Apply to an existing map remains one undo step; generated maps open a separate
+  unsaved document without changing the source. Requests require an
+  OpenAI-compatible SSE server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
   Topic requests capture document key, active sheet/root and revision after title
   commit. Results for closed, changed or draft-editing sources are rejected with
@@ -308,9 +313,13 @@ graph TD
   inspection/discard when the source changes; Apply rechecks the document, drafts,
   endpoint, model, committed credential and temperature. New-map output also needs
   Apply. Review and prompt windows belong to the initiating document viewport and
-  return to the root when that window closes. Disabling AI drops pending result ownership
-  so re-enabling it cannot revive that result; already-running bounded HTTP work
-  is not forcibly aborted.
+  return to the root when that window closes. Cancel, closing the preview or
+  disabling AI cancels transport and drops pending/partial output, so late
+  events or re-enabling AI cannot revive it. Errors never turn partial text into
+  an applicable result. Transport limits are 2 MiB response, 64 KiB SSE frame,
+  1 MiB generated/queued text and 4096 data events, with configured request timeout.
+  Existing nonstreaming client APIs remain available without silent streaming
+  fallback. Browser runtime/CORS acceptance remains an F6 gate.
   Connection-test work and model lists belong to their endpoint and credential
   draft; changing either discards them, while choosing a model keeps the list.
   Generate requires accepted activation and retains rejected prompt drafts.

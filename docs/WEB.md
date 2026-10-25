@@ -78,9 +78,15 @@ features work differently:
 
 AI commands use the endpoint configured in **Settings > AI**. Completed output
 opens **Review AI Result** without changing the map. Inspect or copy the response,
-then choose **Apply AI Result** to make one undoable change, or **Discard AI Result**
+then choose **Apply AI Result** to make one undoable edit to the existing map, or **Discard AI Result**
 to leave the map unchanged. Generated maps also wait for Apply before opening a
 new document.
+
+While working, a nonmodal window shows incoming text. **Cancel AI Request** or
+closing that preview stops the request and discards partial output; disabling AI
+does the same. A broken/interrupted stream reports an error, never a partly
+applied map. The configured server must support OpenAI-compatible SSE streaming,
+including the final `[DONE]` marker, as well as the browser CORS requirements above.
 
 The review is nonmodal. You can continue working, but changing the source sheet
 or keeping a topic/inspector draft open disables Apply with an explanation.
