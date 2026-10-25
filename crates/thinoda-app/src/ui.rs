@@ -2107,7 +2107,12 @@ impl ThinodaApp {
             let width =
                 (ui.available_width() - add_width - gaps * ui.spacing().item_spacing.x).max(0.0);
             let tabs_width = if self.settings.show_status_bar {
-                (width * 0.4).max(108.0_f32.min(width * 0.45))
+                // Keep a whole truncated tab visible between the arrows and status controls.
+                let min_tabs_width = 2.0 * (height + ui.spacing().item_spacing.x)
+                    + ui.spacing().interact_size.x
+                    + 2.0 * Tokens::SPACE_XS
+                    + ui.spacing().item_spacing.x;
+                (width * 0.4).max(min_tabs_width.min(width))
             } else {
                 width
             };
@@ -2132,7 +2137,9 @@ impl ThinodaApp {
                     data.insert_temp(active_key, active);
                     previous != Some(active)
                 });
-                let max_width = names_width.min(180.0);
+                let max_width =
+                    (names_width - 2.0 * Tokens::SPACE_XS - ui.spacing().item_spacing.x)
+                        .clamp(0.0, 180.0);
                 for i in 0..n {
                     let title = d.doc.workbook().sheets[i].title.clone();
                     let text = egui::WidgetText::from(title.clone()).into_galley(
