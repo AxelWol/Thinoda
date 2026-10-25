@@ -1,7 +1,7 @@
 use crate::{ExportOptions, IoError};
 use std::io::Cursor;
 use thinoda_core::{
-    Workbook,
+    Rect, Sheet, TopicId, Workbook,
     geometry::{Color, Vec2},
     layout::{ConnectorKind, layout_sheet},
     model::TopicShape,
@@ -36,10 +36,75 @@ fn svg_with_fonts(
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
 ) -> Result<String, IoError> {
     let s = sheet(w, o);
+    svg_sheet_with_fonts(s, o, fontdb, None)
+}
+
+pub(crate) fn svg_with_frame(
+    s: &thinoda_core::Sheet,
+    o: &ExportOptions,
+    frame: thinoda_core::Rect,
+) -> Result<String, IoError> {
+    svg_sheet_with_fonts(s, o, crate::fonts::database(), Some(frame))
+}
+
+pub(crate) fn branch_frames(
+    sheet: &Sheet,
+    roots: &[TopicId],
+    dark: bool,
+) -> Result<Vec<Rect>, IoError> {
+    for root in roots {
+        if sheet.main_branch_of(*root).is_none() {
+            return Err(IoError::Invalid(format!(
+                "topic {root} is not in the central topic tree"
+            )));
+        }
+    }
+    let text = text::ExportText::new(sheet, dark, crate::fonts::database())?;
+    let layout = layout_sheet(sheet, &text, dark);
+    roots
+        .iter()
+        .map(|root| {
+            let owned: std::collections::HashSet<_> =
+                sheet.owned_subtree_ids(*root).into_iter().collect();
+            let mut bounds = owned
+                .iter()
+                .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
+                .reduce(|bounds, rect| bounds.union(&rect))
+                .ok_or_else(|| IoError::Invalid(format!("branch {root} has no visible topics")))?;
+            for summary in &layout.summaries {
+                if owned.contains(&summary.topic)
+                    || sheet
+                        .summaries
+                        .iter()
+                        .any(|source| source.id == summary.id && owned.contains(&source.parent))
+                {
+                    bounds = bounds.union(&summary.range_rect);
+                }
+            }
+            for boundary in &layout.boundaries {
+                if sheet
+                    .boundaries
+                    .iter()
+                    .any(|source| source.id == boundary.id && owned.contains(&source.parent))
+                {
+                    bounds = bounds.union(&boundary.rect);
+                }
+            }
+            Ok(bounds.expand(80.0))
+        })
+        .collect()
+}
+
+fn svg_sheet_with_fonts(
+    s: &thinoda_core::Sheet,
+    o: &ExportOptions,
+    fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
+    frame: Option<thinoda_core::Rect>,
+) -> Result<String, IoError> {
     let text = text::ExportText::new(s, o.dark, fontdb)?;
     let layout = layout_sheet(s, &text, o.dark);
     let pad = o.padding.max(0.0);
-    let b = layout.bounds.expand(pad);
+    let b = frame.unwrap_or_else(|| layout.bounds.expand(pad));
     let max = b.max();
     let width = max.x - b.min.x;
     let height = max.y - b.min.y;
@@ -51,6 +116,27 @@ fn svg_with_fonts(
     out.push_str("<defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"6\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L0,6 L7,3 z\" fill=\"#777777\"/></marker></defs>");
     if !o.transparent {
         out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{}\"/>",b.min.x,b.min.y,col(bg)));
+    }
+    for zone in &s.zones {
+        let r = zone.frame;
+        let color = Color::rgb(0x5D, 0x7A, 0x91);
+        let fill = Color::rgba(color.r, color.g, color.b, 20);
+        out.push_str(&format!(
+            "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/>",
+            r.min.x,
+            r.min.y,
+            r.size.x,
+            r.size.y,
+            col(fill),
+            col(color)
+        ));
+        out.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" fill=\"{}\" font-size=\"12\">{}</text>",
+            r.min.x + 8.0,
+            r.min.y + 17.0,
+            col(color),
+            esc(&zone.name)
+        ));
     }
     for boundary in &layout.boundaries {
         let r = boundary.rect;
@@ -447,23 +533,68 @@ pub(crate) fn image_pdf(
     page_width: f32,
     page_height: f32,
 ) -> Vec<u8> {
-    let mut objects: Vec<Vec<u8>> = Vec::new();
+    image_pdf_pages(&[PdfImagePage {
+        jpg,
+        width,
+        height,
+        page_width,
+        page_height,
+    }])
+}
+
+pub(crate) struct PdfImagePage<'a> {
+    pub jpg: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+    pub page_width: f32,
+    pub page_height: f32,
+}
+
+pub(crate) fn image_pdf_pages(pages: &[PdfImagePage<'_>]) -> Vec<u8> {
+    let mut objects = Vec::with_capacity(2 + pages.len() * 3);
     objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
-    objects.push(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec());
-    objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.3} {page_height:.3}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>").into_bytes());
-    let mut image_obj=format!("<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",jpg.len()).into_bytes();
-    image_obj.extend_from_slice(jpg);
-    image_obj.extend_from_slice(b"\nendstream");
-    objects.push(image_obj);
-    let stream = format!("q {page_width:.3} 0 0 {page_height:.3} 0 0 cm /Im0 Do Q");
+    let page_refs = (0..pages.len())
+        .map(|index| format!("{} 0 R", 3 + index * 3))
+        .collect::<Vec<_>>()
+        .join(" ");
     objects.push(
         format!(
-            "<< /Length {} >>\nstream\n{}\nendstream",
-            stream.len(),
-            stream
+            "<< /Type /Pages /Kids [{page_refs}] /Count {} >>",
+            pages.len()
         )
         .into_bytes(),
     );
+    for (index, page) in pages.iter().enumerate() {
+        let page_id = 3 + index * 3;
+        let image_id = page_id + 1;
+        let content_id = page_id + 2;
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.3} {:.3}] /Resources << /XObject << /Im0 {image_id} 0 R >> >> /Contents {content_id} 0 R >>",
+            page.page_width, page.page_height
+        ).into_bytes());
+        let mut image_obj = format!(
+            "<< /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",
+            page.width,
+            page.height,
+            page.jpg.len()
+        )
+        .into_bytes();
+        image_obj.extend_from_slice(page.jpg);
+        image_obj.extend_from_slice(b"\nendstream");
+        objects.push(image_obj);
+        let stream = format!(
+            "q {:.3} 0 0 {:.3} 0 0 cm /Im0 Do Q",
+            page.page_width, page.page_height
+        );
+        objects.push(
+            format!(
+                "<< /Length {} >>\nstream\n{}\nendstream",
+                stream.len(),
+                stream
+            )
+            .into_bytes(),
+        );
+    }
     let mut pdf = b"%PDF-1.4\n".to_vec();
     let mut offsets = vec![0usize];
     for (i, obj) in objects.iter().enumerate() {

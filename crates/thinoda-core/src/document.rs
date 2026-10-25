@@ -362,6 +362,16 @@ impl Document {
         })
     }
 
+    pub fn set_zone_roots(
+        &mut self,
+        id: ZoneId,
+        roots: Vec<crate::model::TopicId>,
+    ) -> EditResult<()> {
+        self.edit_sheet("Move topics to zone", |sheet| {
+            sheet.set_zone_roots(id, roots).map_err(EditError::Invalid)
+        })
+    }
+
     pub fn reorder_zone(&mut self, id: ZoneId, index: usize) -> EditResult<()> {
         self.edit_sheet("Reorder zones", |sheet| {
             sheet.reorder_zone(id, index).map_err(EditError::Invalid)
@@ -632,5 +642,50 @@ mod tests {
                 .any(|candidate| candidate.id == zone)
         );
         assert!(doc.sheet().contains(floating));
+    }
+
+    #[test]
+    fn transferring_zone_membership_is_undoable() {
+        let mut doc = Document::default();
+        let (first, second) = doc
+            .edit_sheet("Add floating topics", |sheet| {
+                Ok((
+                    sheet.add_floating("First", Vec2::new(100.0, 120.0)),
+                    sheet.add_floating("Second", Vec2::new(220.0, 120.0)),
+                ))
+            })
+            .unwrap();
+        let target = doc
+            .create_zone(
+                "Target",
+                vec![first],
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(180.0, 160.0)),
+            )
+            .unwrap();
+        let source = doc
+            .create_zone(
+                "Source",
+                vec![second],
+                Rect::from_min_size(Vec2::new(200.0, 0.0), Vec2::new(180.0, 160.0)),
+            )
+            .unwrap();
+        let slide = doc
+            .add_presentation_slide(
+                "Source",
+                crate::model::PresentationSource::Zone(source),
+                Rect::from_min_size(Vec2::new(200.0, 0.0), Vec2::new(180.0, 160.0)),
+            )
+            .unwrap();
+
+        doc.set_zone_roots(target, vec![second]).unwrap();
+        assert!(doc.sheet().zones.iter().all(|zone| zone.id != source));
+        assert!(doc.sheet().presentation.slides.is_empty());
+        assert!(doc.undo());
+        assert!(doc.sheet().zones.iter().any(|zone| zone.id == source));
+        assert_eq!(doc.sheet().presentation.slides[0].id, slide);
+        assert_eq!(doc.sheet().zones[0].roots, vec![first]);
+        assert!(doc.redo());
+        assert_eq!(doc.sheet().zones.len(), 1);
+        assert_eq!(doc.sheet().zones[0].roots, vec![second]);
     }
 }
