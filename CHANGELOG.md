@@ -13,6 +13,20 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.11.0](https://github.com/AxelWol/Thinoda/compare/v0.10.1...v0.11.0) (2026-10-25)
+
+
+### Features
+
+* add optional compact ribbon density ([421fb79](https://github.com/AxelWol/Thinoda/commit/421fb79566390ea76c78c045b0d8e14d947b89b9))
+* add persistent ribbon pinning and unclipped document capsules ([0c9c1e2](https://github.com/AxelWol/Thinoda/commit/0c9c1e2d15ba1382e9aee4775ee7dbc75cde8b68))
+* release ribbon redesign, compact mode and integrated map tabs ([148dfcd](https://github.com/AxelWol/Thinoda/commit/148dfcd4e7eace2de5954308a5f04d23e423e007))
+
+
+### Bug Fixes
+
+* keep sheet tabs clear of scroll controls on narrow windows ([78541a0](https://github.com/AxelWol/Thinoda/commit/78541a0b22041f177ceaffffe1f27136adfe1b3c))
+
 ## [0.10.1](https://github.com/AxelWol/Thinoda/compare/v0.10.0...v0.10.1) (2026-10-24)
 
 
