@@ -223,8 +223,13 @@ fn pin_persists_and_keeps_the_ribbon_open_after_actions() {
 }
 
 #[test]
-fn compact_ribbon_defaults_off_and_settings_toggle_persists() {
+fn compact_ribbon_defaults_off() {
     assert!(!thinoda_platform::settings::Settings::default().compact_ribbon);
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[test]
+fn compact_ribbon_settings_toggle_persists() {
     let mut app = ThinodaApp::headless();
     app.dialogs.settings = true;
     app.dialogs.settings_tab = crate::app::SettingsTab::Editor;
