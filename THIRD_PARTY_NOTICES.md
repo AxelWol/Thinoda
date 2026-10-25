@@ -52,7 +52,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-550 crates.
+580 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -119,6 +119,7 @@ LGPL/MPL licensing:
 | cbc | 0.1.2 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/block-modes> |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | <https://github.com/rust-lang/cfg-if> |
 | cgl | 0.3.2 | MIT / Apache-2.0 | <https://github.com/servo/cgl-rs> |
+| chacha20 | 0.10.2 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/stream-ciphers> |
 | cipher | 0.4.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/traits> |
 | clipboard-win | 5.4.1 | BSL-1.0 | <https://github.com/DoumanAsh/clipboard-win> |
 | codespan-reporting | 0.13.1 | Apache-2.0 | <https://github.com/brendanzab/codespan> |
@@ -135,6 +136,7 @@ LGPL/MPL licensing:
 | core-graphics | 0.23.2 | MIT OR Apache-2.0 | <https://github.com/servo/core-foundation-rs> |
 | core-graphics-types | 0.1.3 | MIT OR Apache-2.0 | <https://github.com/servo/core-foundation-rs> |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
+| cpufeatures | 0.3.1 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
 | crc32fast | 1.5.2 | MIT OR Apache-2.0 | <https://github.com/srijs/rust-crc32fast> |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | <https://github.com/crossbeam-rs/crossbeam> |
 | crunchy | 0.2.4 | MIT | <https://github.com/eira-fransham/crunchy> |
@@ -197,6 +199,7 @@ LGPL/MPL licensing:
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 | <https://github.com/sfackler/foreign-types> |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 | <https://github.com/sfackler/foreign-types> |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url> |
+| futures-channel | 0.3.34 | MIT OR Apache-2.0 | <https://github.com/rust-lang/futures-rs> |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | <https://github.com/rust-lang/futures-rs> |
 | futures-io | 0.3.34 | MIT OR Apache-2.0 | <https://github.com/rust-lang/futures-rs> |
 | futures-lite | 2.6.1 | Apache-2.0 OR MIT | <https://github.com/smol-rs/futures-lite> |
@@ -229,7 +232,12 @@ LGPL/MPL licensing:
 | hkdf | 0.12.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/KDFs/> |
 | hmac | 0.12.1 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/MACs> |
 | http | 1.5.0 | MIT OR Apache-2.0 | <https://github.com/hyperium/http> |
+| http-body | 1.1.0 | MIT | <https://github.com/hyperium/http-body> |
+| http-body-util | 0.1.5 | MIT | <https://github.com/hyperium/http-body> |
 | httparse | 1.10.1 | MIT OR Apache-2.0 | <https://github.com/seanmonstar/httparse> |
+| hyper | 1.12.0 | MIT | <https://github.com/hyperium/hyper> |
+| hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | <https://github.com/rustls/hyper-rustls> |
+| hyper-util | 0.1.21 | MIT | <https://github.com/hyperium/hyper-util> |
 | icu_collections | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_normalizer | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
@@ -245,6 +253,7 @@ LGPL/MPL licensing:
 | imagesize | 0.15.0 | MIT | <https://github.com/Roughsketch/imagesize> |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | <https://github.com/indexmap-rs/indexmap> |
 | inout | 0.1.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
+| ipnet | 2.12.2 | MIT OR Apache-2.0 | <https://github.com/krisprice/ipnet> |
 | is_terminal_polyfill | 1.70.2 | MIT OR Apache-2.0 | <https://github.com/polyfill-rs/is_terminal_polyfill> |
 | itertools | 0.15.0 | MIT OR Apache-2.0 | <https://github.com/rust-itertools/itertools> |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | <https://github.com/dtolnay/itoa> |
@@ -274,11 +283,13 @@ LGPL/MPL licensing:
 | litrs | 1.0.1 | MIT OR Apache-2.0 | <https://github.com/LukasKalbertodt/litrs> |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
 | log | 0.4.34 | MIT OR Apache-2.0 | <https://github.com/rust-lang/log> |
+| lru-slab | 0.1.3 | MIT OR Apache-2.0 OR Zlib | <https://github.com/Ralith/lru-slab> |
 | memchr | 2.8.3 | Unlicense OR MIT | <https://github.com/BurntSushi/memchr> |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 | <https://github.com/RazrFalcon/memmap2-rs> |
 | memoffset | 0.9.1 | MIT | <https://github.com/Gilnaa/memoffset> |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | <https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide> |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | <https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide> |
+| mio | 1.2.4 | MIT | <https://github.com/tokio-rs/mio> |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | <https://github.com/awxkee/moxcms.git> |
 | naga | 30.0.1 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/wgpu> |
 | naga-types | 30.0.1 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/wgpu> |
@@ -371,12 +382,18 @@ LGPL/MPL licensing:
 | quick-error | 2.0.1 | MIT/Apache-2.0 | <http://github.com/tailhook/quick-error> |
 | quick-xml | 0.41.0 | MIT | <https://github.com/tafia/quick-xml> |
 | quick-xml | 0.42.0 | MIT | <https://github.com/tafia/quick-xml> |
+| quinn | 0.11.12 | MIT OR Apache-2.0 | <https://github.com/quinn-rs/quinn> |
+| quinn-proto | 0.11.19 | MIT OR Apache-2.0 | <https://github.com/quinn-rs/quinn> |
+| quinn-udp | 0.5.16 | MIT OR Apache-2.0 | <https://github.com/quinn-rs/quinn> |
 | quote | 1.0.47 | MIT OR Apache-2.0 | <https://github.com/dtolnay/quote> |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | <https://github.com/r-efi/r-efi> |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | <https://github.com/r-efi/r-efi> |
+| rand | 0.10.3 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand | 0.8.8 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
+| rand_core | 0.10.1 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand_core> |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
+| rand_pcg | 0.10.2 | MIT OR Apache-2.0 | <https://github.com/rust-random/rngs> |
 | range-alloc | 0.1.5 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/range-alloc> |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | <https://github.com/rust-windowing/raw-window-handle> |
 | raw-window-metal | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/rust-windowing/raw-window-metal> |
@@ -389,6 +406,7 @@ LGPL/MPL licensing:
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
 | renderdoc-sys | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/ebkalderon/renderdoc-rs> |
+| reqwest | 0.12.28 | MIT OR Apache-2.0 | <https://github.com/seanmonstar/reqwest> |
 | resvg | 0.48.1 | Apache-2.0 OR MIT | <https://github.com/linebender/resvg> |
 | rfd | 0.17.2 | MIT | <https://github.com/PolyMeilex/rfd> |
 | rgb | 0.8.53 | MIT | <https://github.com/kornelski/rust-rgb> |
@@ -419,6 +437,7 @@ LGPL/MPL licensing:
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | <https://github.com/serde-rs/json> |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | <https://github.com/dtolnay/serde-repr> |
 | serde_spanned | 1.1.2 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
+| serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | <https://github.com/nox/serde_urlencoded> |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/hashes> |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/hashes> |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | <https://github.com/vorner/signal-hook> |
@@ -433,6 +452,7 @@ LGPL/MPL licensing:
 | smallvec | 1.16.3 | MIT OR Apache-2.0 | <https://github.com/servo/rust-smallvec> |
 | smithay-client-toolkit | 0.19.2 | MIT | <https://github.com/smithay/client-toolkit> |
 | smol_str | 0.2.2 | MIT OR Apache-2.0 | <https://github.com/rust-analyzer/smol_str> |
+| socket2 | 0.6.5 | MIT OR Apache-2.0 | <https://github.com/rust-lang/socket2> |
 | spirv | 0.4.0+sdk-1.4.341.0 | Apache-2.0 | <https://github.com/gfx-rs/rspirv> |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | <https://github.com/storyyeller/stable_deref_trait> |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/nvzqz/static-assertions-rs> |
@@ -443,6 +463,7 @@ LGPL/MPL licensing:
 | svgtypes | 0.16.1 | Apache-2.0 OR MIT | <https://github.com/linebender/svgtypes> |
 | syn | 2.0.119 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
 | syn | 3.0.9 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
+| sync_wrapper | 1.0.2 | Apache-2.0 | <https://github.com/Actyx/sync_wrapper> |
 | synstructure | 0.14.0 | MIT | <https://github.com/mystor/synstructure> |
 | sys-locale | 0.3.2 | MIT OR Apache-2.0 | <https://github.com/1Password/sys-locale> |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | <https://github.com/Stebalien/tempfile> |
@@ -461,15 +482,22 @@ LGPL/MPL licensing:
 | tinystr | 0.8.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | <https://github.com/Lokathor/tinyvec> |
 | tokio | 1.53.3 | MIT | <https://github.com/tokio-rs/tokio> |
+| tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | <https://github.com/rustls/tokio-rustls> |
+| tokio-util | 0.7.20 | MIT | <https://github.com/tokio-rs/tokio> |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
 | toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
 | toml_edit | 0.25.17+spec-1.1.0 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
 | toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
 | toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | <https://github.com/toml-rs/toml> |
+| tower | 0.5.3 | MIT | <https://github.com/tower-rs/tower> |
+| tower-http | 0.6.11 | MIT | <https://github.com/tower-rs/tower-http> |
+| tower-layer | 0.3.3 | MIT | <https://github.com/tower-rs/tower> |
+| tower-service | 0.3.3 | MIT | <https://github.com/tower-rs/tower> |
 | tracing | 0.1.44 | MIT | <https://github.com/tokio-rs/tracing> |
 | tracing-attributes | 0.1.31 | MIT | <https://github.com/tokio-rs/tracing> |
 | tracing-core | 0.1.36 | MIT | <https://github.com/tokio-rs/tracing> |
 | tree_magic_mini | 3.2.2 | MIT | <https://github.com/mbrubeck/tree_magic/> |
+| try-lock | 0.2.5 | MIT | <https://github.com/seanmonstar/try-lock> |
 | type-map | 0.5.1 | MIT/Apache-2.0 | <https://github.com/kardeiz/type-map> |
 | typed-path | 0.12.3 | MIT OR Apache-2.0 | <https://github.com/chipsenkbeil/typed-path> |
 | typeid | 1.0.3 | MIT OR Apache-2.0 | <https://github.com/dtolnay/typeid> |
@@ -496,6 +524,7 @@ LGPL/MPL licensing:
 | uuid | 1.28.0 | Apache-2.0 OR MIT | <https://github.com/uuid-rs/uuid> |
 | vello_common | 0.2.0 | Apache-2.0 OR MIT | <https://github.com/linebender/vello> |
 | vello_cpu | 0.2.0 | Apache-2.0 OR MIT | <https://github.com/linebender/vello> |
+| want | 0.3.2 | MIT | <https://github.com/seanmonstar/want> |
 | wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/bytecodealliance/wasi> |
 | wasip2 | 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/bytecodealliance/wasi-rs> |
 | wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | <https://github.com/wasm-bindgen/wasm-bindgen> |
@@ -503,6 +532,7 @@ LGPL/MPL licensing:
 | wasm-bindgen-macro | 0.2.129 | MIT OR Apache-2.0 | <https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro> |
 | wasm-bindgen-macro-support | 0.2.129 | MIT OR Apache-2.0 | <https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support> |
 | wasm-bindgen-shared | 0.2.129 | MIT OR Apache-2.0 | <https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared> |
+| wasm-streams | 0.4.2 | MIT OR Apache-2.0 | <https://github.com/MattiasBuelens/wasm-streams/> |
 | wayland-backend | 0.3.17 | MIT | <https://github.com/smithay/wayland-rs> |
 | wayland-client | 0.31.15 | MIT | <https://github.com/smithay/wayland-rs> |
 | wayland-csd-frame | 0.3.0 | MIT | <https://github.com/rust-windowing/wayland-csd-frame> |
