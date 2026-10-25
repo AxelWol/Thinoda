@@ -857,6 +857,7 @@ impl Sheet {
         for zone in &mut self.zones {
             zone.roots.retain(|root| !removed.contains(root));
         }
+        self.zones.retain(|zone| !zone.roots.is_empty());
         self.presentation.slides.retain(|slide| match slide.source {
             PresentationSource::Branch(root) => !removed.contains(&root),
             PresentationSource::Zone(zone) => self.zones.iter().any(|item| item.id == zone),
@@ -1091,6 +1092,9 @@ impl Sheet {
             if !zone_ids.insert(zone.id) {
                 return Err(format!("duplicate zone id {}", zone.id));
             }
+            if zone.roots.is_empty() {
+                return Err(format!("zone {} has no floating topics", zone.id));
+            }
             validate_presentation_name(&zone.name, "zone")?;
             validate_frame(zone.frame, true)?;
             for root in &zone.roots {
@@ -1111,6 +1115,16 @@ impl Sheet {
                 {
                     return Err(format!(
                         "zone {} member {root} is not a floating root",
+                        zone.id
+                    ));
+                }
+                if self
+                    .topic(*root)
+                    .and_then(|topic| topic.position)
+                    .is_none_or(|position| !valid_position(position))
+                {
+                    return Err(format!(
+                        "zone {} member {root} has an invalid position",
                         zone.id
                     ));
                 }
@@ -1176,12 +1190,8 @@ fn validate_presentation_name(name: &str, kind: &str) -> Result<(), String> {
 fn validate_frame(frame: Rect, zone: bool) -> Result<(), String> {
     let max = frame.max();
     let min_size = if zone { MIN_ZONE_SIZE } else { 1.0 };
-    let valid_coordinate =
-        |value: f32| value.is_finite() && value.abs() <= MAX_PRESENTATION_COORDINATE;
-    if !valid_coordinate(frame.min.x)
-        || !valid_coordinate(frame.min.y)
-        || !valid_coordinate(max.x)
-        || !valid_coordinate(max.y)
+    if !valid_position(frame.min)
+        || !valid_position(max)
         || !frame.size.x.is_finite()
         || !frame.size.y.is_finite()
         || frame.size.x < min_size
@@ -1196,6 +1206,13 @@ fn validate_frame(frame: Rect, zone: bool) -> Result<(), String> {
         });
     }
     Ok(())
+}
+
+fn valid_position(position: Vec2) -> bool {
+    position.x.is_finite()
+        && position.y.is_finite()
+        && position.x.abs() <= MAX_PRESENTATION_COORDINATE
+        && position.y.abs() <= MAX_PRESENTATION_COORDINATE
 }
 
 impl Sheet {
@@ -1238,6 +1255,10 @@ impl Sheet {
                 || self.parent(*root).is_some()
                 || !new_roots.insert(*root)
                 || existing.contains(root)
+                || self
+                    .topic(*root)
+                    .and_then(|topic| topic.position)
+                    .is_none_or(|position| !valid_position(position))
             {
                 return Err(format!("topic {root} is not an available floating root"));
             }
@@ -1260,6 +1281,73 @@ impl Sheet {
             .find(|zone| zone.id == id)
             .ok_or_else(|| format!("zone {id} not found"))?;
         zone.name = name.trim().to_string();
+        Ok(())
+    }
+
+    /// Replaces a Zone's floating roots and transfers roots from other Zones if needed.
+    pub fn set_zone_roots(&mut self, id: ZoneId, roots: Vec<TopicId>) -> Result<(), String> {
+        if roots.is_empty() {
+            return Err("a zone needs at least one floating topic".into());
+        }
+        if roots.len() > MAX_ZONE_MEMBERSHIPS {
+            return Err(format!(
+                "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+            ));
+        }
+        let index = self
+            .zones
+            .iter()
+            .position(|zone| zone.id == id)
+            .ok_or_else(|| format!("zone {id} not found"))?;
+        let mut unique = HashSet::new();
+        for root in &roots {
+            if *root == self.root
+                || !self.floating.contains(root)
+                || self.parent(*root).is_some()
+                || !unique.insert(*root)
+                || self
+                    .topic(*root)
+                    .and_then(|topic| topic.position)
+                    .is_none_or(|position| !valid_position(position))
+            {
+                return Err(format!("topic {root} is not an available floating root"));
+            }
+        }
+        let current_memberships = self
+            .zones
+            .iter()
+            .enumerate()
+            .filter(|(zone_index, _)| *zone_index != index)
+            .map(|(_, zone)| {
+                zone.roots
+                    .iter()
+                    .filter(|root| !unique.contains(root))
+                    .count()
+            })
+            .sum::<usize>();
+        if current_memberships.saturating_add(roots.len()) > MAX_ZONE_MEMBERSHIPS {
+            return Err(format!(
+                "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
+            ));
+        }
+
+        let mut zones = self.zones.clone();
+        zones[index].roots = roots.clone();
+        for (zone_index, zone) in zones.iter_mut().enumerate() {
+            if zone_index != index {
+                zone.roots.retain(|root| !unique.contains(root));
+            }
+        }
+        let removed: HashSet<_> = zones
+            .iter()
+            .filter(|zone| zone.roots.is_empty())
+            .map(|zone| zone.id)
+            .collect();
+        zones.retain(|zone| !zone.roots.is_empty());
+        self.zones = zones;
+        self.presentation.slides.retain(|slide| {
+            !matches!(slide.source, PresentationSource::Zone(zone) if removed.contains(&zone))
+        });
         Ok(())
     }
 
@@ -1533,7 +1621,74 @@ mod zone_presentation_tests {
         sheet.detach_subtree(branch).unwrap();
         assert_eq!(sheet.presentation.slides.len(), 1);
         sheet.detach_subtree(floating).unwrap();
-        assert!(sheet.zones[0].roots.is_empty());
+        assert!(sheet.zones.is_empty());
+        assert!(sheet.presentation.slides.is_empty());
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn duplicating_and_moving_topics_never_leave_stale_sources_or_memberships() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let branch = sheet.add_child(sheet.root, None, "Branch");
+        let floating = sheet.add_floating("Floating", Vec2::new(160.0, 120.0));
+        let zone = sheet
+            .create_zone("Ideas", vec![floating], frame(0.0, 0.0, 200.0, 180.0))
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Branch",
+                PresentationSource::Branch(branch),
+                frame(0.0, 0.0, 200.0, 180.0),
+            )
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Ideas",
+                PresentationSource::Zone(zone),
+                frame(0.0, 0.0, 200.0, 180.0),
+            )
+            .unwrap();
+
+        sheet.duplicate(branch).unwrap();
+        sheet.validate().unwrap();
+        sheet
+            .detach_to_floating(branch, Vec2::new(260.0, 180.0))
+            .unwrap();
+        assert!(
+            sheet
+                .presentation
+                .slides
+                .iter()
+                .all(|slide| slide.source != PresentationSource::Branch(branch))
+        );
+        sheet.move_topic(floating, branch, 0).unwrap();
+        assert!(sheet.zones.is_empty());
+        assert!(sheet.presentation.slides.is_empty());
+        sheet.validate().unwrap();
+    }
+
+    #[test]
+    fn moving_roots_between_zones_cleans_empty_zone_slides() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let first = sheet.add_floating("First", Vec2::new(100.0, 120.0));
+        let second = sheet.add_floating("Second", Vec2::new(220.0, 120.0));
+        let first_zone = sheet
+            .create_zone("First zone", vec![first], frame(0.0, 0.0, 160.0, 140.0))
+            .unwrap();
+        let second_zone = sheet
+            .create_zone("Second zone", vec![second], frame(180.0, 0.0, 160.0, 140.0))
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "Second",
+                PresentationSource::Zone(second_zone),
+                frame(180.0, 0.0, 160.0, 140.0),
+            )
+            .unwrap();
+        sheet.set_zone_roots(first_zone, vec![second]).unwrap();
+        assert_eq!(sheet.zones.len(), 1);
+        assert_eq!(sheet.zones[0].roots, vec![second]);
+        assert!(sheet.presentation.slides.is_empty());
         sheet.validate().unwrap();
     }
 

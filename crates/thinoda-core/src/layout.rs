@@ -551,6 +551,9 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
     for b in &layout.boundaries {
         add(b.rect);
     }
+    for zone in &sheet.zones {
+        add(zone.frame);
+    }
     for r in &layout.relationships {
         for p in [r.c1, r.c2] {
             add(Rect::from_center_size(p, Vec2::new(1.0, 1.0)));
@@ -1530,5 +1533,16 @@ mod tests {
             0.5,
         );
         assert_eq!(p, Vec2::new(0.5, 0.5));
+    }
+
+    #[test]
+    fn whole_sheet_bounds_include_zone_frames() {
+        let mut sheet = Sheet::new("S", "Root");
+        let floating = sheet.add_floating("Floating", Vec2::new(30.0, 30.0));
+        let frame = Rect::from_min_size(Vec2::new(800.0, -900.0), Vec2::new(400.0, 300.0));
+        sheet.create_zone("Zone", vec![floating], frame).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        assert!(layout.bounds.contains(frame.min));
+        assert!(layout.bounds.contains(frame.max()));
     }
 }
