@@ -418,6 +418,222 @@ fn chat_request_limits_reject_without_network_and_preserve_input() {
     assert!(server.requests.lock().unwrap().is_empty());
 }
 
+fn saved_prompt() -> thinoda_platform::ai_prompts::SavedPrompt {
+    thinoda_platform::ai_prompts::SavedPrompt {
+        id: "test-prompt".into(),
+        name: "Planning".into(),
+        text: "Suggest practical next steps.".into(),
+    }
+}
+
+fn button(h: &mut Harness<'_, ThinodaApp>, name: &str) {
+    h.get_by_role_and_label(Role::Button, name).scroll_to_me();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, name).click();
+    h.run_steps(3);
+}
+
+#[test]
+fn saved_prompt_use_is_offline_and_preserves_drafts_until_confirmed() {
+    let (mut h, server, key) = harness("Not requested");
+    h.state_mut().settings.ai.saved_prompts = vec![saved_prompt()];
+    h.run_steps(2);
+    h.get_by_label("Saved prompts").click();
+    h.run_steps(3);
+    button(&mut h, "Use prompt");
+    assert_eq!(h.state().ai.chat.threads[&key].draft, saved_prompt().text);
+    h.state_mut().ai.chat.threads.get_mut(&key).unwrap().draft = "My draft".into();
+    button(&mut h, "Use prompt");
+    assert_eq!(h.state().ai.chat.threads[&key].draft, "My draft");
+    button(&mut h, "Keep draft");
+    assert_eq!(h.state().ai.chat.threads[&key].draft, "My draft");
+    button(&mut h, "Use prompt");
+    button(&mut h, "Replace draft");
+    assert_eq!(h.state().ai.chat.threads[&key].draft, saved_prompt().text);
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn prompt_editor_save_cancel_delete_and_restart_do_not_touch_the_map_or_credentials() {
+    let (mut h, server, _) = harness("Not requested");
+    let temp = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(temp.path());
+    paths.ensure().unwrap();
+    h.state_mut().services.paths = Some(paths.clone());
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.state_mut().begin_prompt_editor(None);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "Prompt name")
+        .click();
+    h.get_by_role_and_label(Role::TextInput, "Prompt name")
+        .type_text("Planning");
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::MultilineTextInput, "Prompt text")
+        .click();
+    h.get_by_role_and_label(Role::MultilineTextInput, "Prompt text")
+        .type_text("Suggest practical next steps.");
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    button(&mut h, "Cancel");
+    assert!(h.state().settings.ai.saved_prompts.is_empty());
+    assert!(!paths.config_dir.join("settings.toml").exists());
+    h.state_mut().begin_prompt_editor(None);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "Prompt name")
+        .click();
+    h.get_by_role_and_label(Role::TextInput, "Prompt name")
+        .type_text("Planning");
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::MultilineTextInput, "Prompt text")
+        .click();
+    h.get_by_role_and_label(Role::MultilineTextInput, "Prompt text")
+        .type_text("Suggest practical next steps.");
+    h.run_steps(2);
+    button(&mut h, "Save prompt");
+    assert!(h.state().ai.prompt_editor.is_none());
+    let loaded = thinoda_platform::ai_prompts::load(&paths).unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].name, saved_prompt().name);
+    assert_eq!(loaded[0].text, saved_prompt().text);
+    h.state_mut().begin_prompt_editor(Some(loaded[0].clone()));
+    h.run_steps(3);
+    button(&mut h, "Delete prompt");
+    assert_eq!(h.state().settings.ai.saved_prompts.len(), 1);
+    button(&mut h, "Keep prompt");
+    button(&mut h, "Delete prompt");
+    button(&mut h, "Confirm Delete");
+    assert!(h.state().settings.ai.saved_prompts.is_empty());
+    assert!(
+        thinoda_platform::ai_prompts::load(&paths)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(server.requests.lock().unwrap().is_empty());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+}
+
+#[test]
+fn prompt_conflict_keeps_editor_and_runtime_library_until_explicit_reload() {
+    let (mut h, _, _) = harness("Not requested");
+    let temp = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(temp.path());
+    paths.ensure().unwrap();
+    h.state_mut().services.paths = Some(paths.clone());
+    h.state_mut().begin_prompt_editor(Some(saved_prompt()));
+    let other = thinoda_platform::ai_prompts::SavedPrompt {
+        name: "Other window".into(),
+        ..saved_prompt()
+    };
+    thinoda_platform::ai_prompts::save(&paths, &[], std::slice::from_ref(&other)).unwrap();
+    h.run_steps(3);
+    button(&mut h, "Save prompt");
+    assert!(h.state().ai.prompt_editor.is_some());
+    assert!(h.state().settings.ai.saved_prompts.is_empty());
+    assert_eq!(
+        thinoda_platform::ai_prompts::load(&paths).unwrap(),
+        vec![other.clone()]
+    );
+    button(&mut h, "Cancel");
+    h.state_mut().reload_saved_prompts();
+    assert_eq!(h.state().settings.ai.saved_prompts, vec![other]);
+}
+
+#[test]
+fn saved_prompt_editor_ime_escape_does_not_dismiss_or_edit_map() {
+    let (mut h, server, _) = harness("Not requested");
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    h.state_mut().begin_prompt_editor(None);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "Prompt name")
+        .click();
+    h.run_steps(2);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "候補".into(),
+        active_range_chars: None,
+    }));
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().ai.prompt_editor.is_some());
+    assert!(h.state().settings.ai.saved_prompts.is_empty());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    assert!(server.requests.lock().unwrap().is_empty());
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: String::new(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    button(&mut h, "Cancel");
+    assert!(h.state().ai.prompt_editor.is_none());
+}
+
+#[test]
+fn prompt_save_failure_keeps_the_draft_and_short_window_controls_reachable() {
+    let delta = r#"{"choices":[{"delta":{"content":"Not requested"}}]}"#;
+    let server = thinoda_ai::mock::MockServer::start_sse(&["mock-chat"], &[delta]);
+    let (mut h, server, _) = with_server(server, egui::vec2(360.0, 340.0));
+    let temp = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::Paths::from_root(temp.path());
+    // A file in place of the config directory makes persistence fail deterministically.
+    std::fs::create_dir_all(paths.config_dir.parent().unwrap()).unwrap();
+    std::fs::write(&paths.config_dir, "not a directory").unwrap();
+    h.state_mut().services.paths = Some(paths);
+    h.state_mut().begin_prompt_editor(Some(saved_prompt()));
+    h.run_steps(3);
+    button(&mut h, "Save prompt");
+    assert!(h.state().ai.prompt_editor.is_some());
+    assert!(h.state().settings.ai.saved_prompts.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(&h.state().services.paths.as_ref().unwrap().config_dir).unwrap(),
+        "not a directory"
+    );
+    button(&mut h, "Cancel");
+    assert!(h.state().ai.prompt_editor.is_none());
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn canceled_touches_cannot_save_or_dismiss_a_prompt_draft() {
+    for label in ["Save prompt", "Cancel"] {
+        let (mut h, server, _) = harness("Not requested");
+        h.state_mut().begin_prompt_editor(Some(saved_prompt()));
+        h.run_steps(3);
+        let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+        h.event(egui::Event::PointerMoved(pos));
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Start,
+            pos,
+            force: None,
+        });
+        h.run_steps(2);
+        h.event(egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase: egui::TouchPhase::Cancel,
+            pos,
+            force: None,
+        });
+        h.run_steps(2);
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(3);
+        assert!(h.state().ai.prompt_editor.is_some());
+        assert!(h.state().settings.ai.saved_prompts.is_empty());
+        assert!(server.requests.lock().unwrap().is_empty());
+    }
+}
+
 #[test]
 fn oversized_chat_reply_is_not_retained_as_a_completed_answer() {
     let chunks: Vec<String> = [MAX_REPLY_BYTES / 2, MAX_REPLY_BYTES / 2 + 1]

@@ -116,6 +116,20 @@ unsent draft. Closing chat restores the format sidebar without changing its
 preferences. The sidebar is scrollable in short windows. Browser fetch/CORS and
 real-device acceptance remain F6 gates, not inferred runtime passes.
 
+Expand **Saved prompts** in AI Chat to create reusable prompts. **New prompt** and
+**Edit prompt** open a draft editor; **Save prompt** persists it, while **Cancel**
+leaves the library unchanged. Deleting requires **Confirm Delete**. **Use prompt**
+fills the composer without sending; replacing an existing unsent draft requires
+confirmation. Review the text and context before choosing **Send**.
+
+Prompts are local preferences in `settings.toml` (browser-local settings storage on
+the web), not encrypted secrets or part of the map. Do not save passwords or API
+keys in prompts. Names must be unique and at most 80 UTF-8 bytes; prompt text is
+limited to 8192 bytes, with up to 32 prompts and 128 KiB in the library. Saving
+reads fresh settings and changes only the library, without credential-store access.
+If another window changed the library, Cancel and **Reload prompts** before editing
+again; failed saves leave the editor and existing library intact.
+
 ## Zones
 
 Select one or more floating root topics and choose **Insert > Create Zone** or

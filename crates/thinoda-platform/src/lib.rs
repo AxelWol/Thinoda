@@ -49,6 +49,7 @@
 //! additionally be smoke-tested on those operating systems. Local IPC is an
 //! at-most-once file-open queue, without acknowledgements or ordering guarantees.
 
+pub mod ai_prompts;
 pub mod cloud;
 pub mod crash;
 pub mod credentials;
@@ -71,6 +72,8 @@ pub use settings::Settings;
 /// Platform persistence failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("invalid saved prompt library: {0}")]
+    InvalidAiPrompts(String),
     #[error("invalid keyboard profiles: {0}")]
     InvalidKeymaps(String),
     #[error("invalid custom theme library: {0}")]

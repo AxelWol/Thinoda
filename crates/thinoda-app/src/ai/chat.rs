@@ -39,6 +39,7 @@ struct Conversation {
     scope: Scope,
     composing: bool,
     confirm_clear: bool,
+    replacement: Option<thinoda_platform::ai_prompts::SavedPrompt>,
 }
 
 impl Conversation {
@@ -56,6 +57,7 @@ impl Conversation {
             || self.scope != Scope::Selection
             || self.composing
             || self.confirm_clear
+            || self.replacement.is_some()
     }
 }
 
@@ -328,6 +330,66 @@ impl ThinodaApp {
         }
         let mut thread = self.ai.chat.threads.remove(&key).unwrap_or_default();
         let allowed = widgets::touch_activation_allowed(ui.ctx());
+        let pending_here = self
+            .ai
+            .chat
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.doc_key == key);
+        egui::CollapsingHeader::new(t("Saved prompts"))
+            .id_salt("ai_saved_prompts")
+            .show(ui, |ui| {
+                let prompts = self.settings.ai.saved_prompts.clone();
+                for prompt in prompts {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(&prompt.name);
+                        if ui
+                            .add_enabled(!pending_here, egui::Button::new(t("Use prompt")))
+                            .on_hover_text(&prompt.text)
+                            .clicked()
+                            && allowed
+                        {
+                            if thread.draft.is_empty() {
+                                thread.draft = prompt.text.clone();
+                            } else {
+                                thread.replacement = Some(prompt.clone());
+                            }
+                        }
+                        if ui.button(t("Edit prompt")).clicked() && allowed {
+                            self.begin_prompt_editor(Some(prompt));
+                        }
+                    });
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(t("New prompt")).clicked() && allowed {
+                        self.begin_prompt_editor(None);
+                    }
+                    if ui.button(t("Reload prompts")).clicked() && allowed {
+                        self.reload_saved_prompts();
+                    }
+                });
+                widgets::caption(
+                    ui,
+                    t("Use prompt fills the draft without sending. Review it before Send."),
+                );
+            });
+        if let Some(prompt) = &thread.replacement {
+            ui.label(t("Replace the unsent draft with this prompt?"));
+            let text = prompt.text.clone();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(!pending_here, egui::Button::new(t("Replace draft")))
+                    .clicked()
+                    && allowed
+                {
+                    thread.draft = text;
+                    thread.replacement = None;
+                }
+                if ui.button(t("Keep draft")).clicked() && allowed {
+                    thread.replacement = None;
+                }
+            });
+        }
         let mut mode = self.settings.ai.response_mode;
         let mut scope = thread.scope;
         ui.horizontal_wrapped(|ui| {
@@ -419,6 +481,7 @@ impl ThinodaApp {
             && !self.ai.chat.is_busy()
             && scope_context.is_ok()
             && !thread.confirm_clear
+            && thread.replacement.is_none()
             && !thread.draft.trim().is_empty()
             && thread.draft.len() <= MAX_PROMPT_BYTES;
         let input = ui.add_enabled(

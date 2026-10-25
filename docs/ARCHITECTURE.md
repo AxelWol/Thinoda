@@ -337,6 +337,17 @@ graph TD
   the panel are offline. Chat bounds: 500 context topics, 64 KiB serialized context,
   8192-byte prompt, 64 KiB reply, 256 KiB history, 32 messages and 64 conversations.
   Limits are explicit errors; no silent context/history truncation or indexing.
+  The saved prompt library is distinct from session-only history: bounded
+  `SavedPrompt { id, name, text }` values persist in AI preferences. The modal
+  editor owns a draft, base library and viewport; Save validates then updates only
+  the library in freshly parsed settings, rejecting observed library conflicts.
+  It preserves unrelated/unknown fields and credential markers without consulting
+  the credential store, and refuses to rewrite unmigrated plaintext credentials.
+  Persistence failures retain the editor and leave runtime preferences unchanged.
+  Use only copies into the composer; replacing a nonempty draft and deleting a
+  saved prompt each require confirmation. Cancel/IME/canceled-touch guards apply
+  before state-changing decisions; the map is disabled while the editor is open.
+  Limits are 32 prompts, 80-byte names, 8192-byte texts and 128 KiB total UTF-8 data.
   Connection-test work and model lists belong to their endpoint and credential
   draft; changing either discards them, while choosing a model keeps the list.
   Generate requires accepted activation and retains rejected prompt drafts.

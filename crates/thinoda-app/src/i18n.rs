@@ -1133,6 +1133,72 @@ const DE: &[(&str, &str)] = &[
     ("AI map created", "KI-Map erstellt"),
     ("Review AI Result", "KI-Ergebnis prüfen"),
     ("AI Chat", "KI-Chat"),
+    ("Saved prompts", "Gespeicherte Prompts"),
+    ("New prompt", "Neuer Prompt"),
+    ("Edit prompt", "Prompt bearbeiten"),
+    ("Use prompt", "Prompt verwenden"),
+    ("Reload prompts", "Prompts neu laden"),
+    ("Edit saved prompt", "Gespeicherten Prompt bearbeiten"),
+    ("Prompt name", "Prompt-Name"),
+    ("Prompt text", "Prompt-Text"),
+    ("Save prompt", "Prompt speichern"),
+    ("Delete prompt", "Prompt löschen"),
+    (
+        "Delete this saved prompt?",
+        "Diesen gespeicherten Prompt löschen?",
+    ),
+    ("Confirm Delete", "Löschen bestätigen"),
+    ("Keep prompt", "Prompt behalten"),
+    (
+        "Replace the unsent draft with this prompt?",
+        "Den ungesendeten Entwurf durch diesen Prompt ersetzen?",
+    ),
+    ("Replace draft", "Entwurf ersetzen"),
+    ("Keep draft", "Entwurf behalten"),
+    (
+        "Use prompt fills the draft without sending. Review it before Send.",
+        "Prompt verwenden füllt den Entwurf ohne Senden aus. Prüfe ihn vor dem Senden.",
+    ),
+    (
+        "Prompts are saved locally in settings. Do not include passwords or secrets.",
+        "Prompts werden lokal in den Einstellungen gespeichert. Keine Passwörter oder Geheimnisse eingeben.",
+    ),
+    (
+        "Could not load saved prompts",
+        "Gespeicherte Prompts konnten nicht geladen werden",
+    ),
+    (
+        "Could not save prompts",
+        "Prompts konnten nicht gespeichert werden",
+    ),
+    (
+        "Save at most 32 prompts.",
+        "Speichere höchstens 32 Prompts.",
+    ),
+    (
+        "Saved prompt IDs must be unique and valid.",
+        "Gespeicherte Prompt-IDs müssen eindeutig und gültig sein.",
+    ),
+    (
+        "Enter a prompt name of at most 80 bytes.",
+        "Gib einen Prompt-Namen mit höchstens 80 Bytes ein.",
+    ),
+    (
+        "Prompt names must be unique.",
+        "Prompt-Namen müssen eindeutig sein.",
+    ),
+    (
+        "Saved prompts exceed the 128 KiB library limit.",
+        "Gespeicherte Prompts überschreiten das Bibliothekslimit von 128 KiB.",
+    ),
+    (
+        "Saved prompts changed elsewhere. Cancel and reload prompts.",
+        "Gespeicherte Prompts wurden andernorts geändert. Brich ab und lade die Prompts neu.",
+    ),
+    (
+        "Secure legacy credentials in Settings before saving prompts.",
+        "Sichere alte Zugangsdaten in den Einstellungen vor dem Speichern von Prompts.",
+    ),
     ("Response mode", "Antwortmodus"),
     ("Context scope", "Kontextumfang"),
     (
@@ -1849,6 +1915,7 @@ mod tests {
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),
+            include_str!("ai/prompts.rs"),
             include_str!("help.rs"),
             include_str!("labels.rs"),
             include_str!("doc.rs"),

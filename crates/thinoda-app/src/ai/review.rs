@@ -183,6 +183,7 @@ impl ThinodaApp {
 
     pub(crate) fn return_ai_viewport(&mut self, viewport: egui::ViewportId) {
         self.return_ai_chat_viewport(viewport);
+        self.return_prompt_editor_viewport(viewport);
         if self.ai.prompt_viewport == Some(viewport) {
             self.ai.prompt_viewport = Some(egui::ViewportId::ROOT);
         }

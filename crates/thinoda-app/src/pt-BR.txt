@@ -1,4 +1,31 @@
 AI Chat|Chat de IA
+Saved prompts|Prompts salvos
+New prompt|Novo prompt
+Edit prompt|Editar prompt
+Use prompt|Usar prompt
+Reload prompts|Recarregar prompts
+Edit saved prompt|Editar prompt salvo
+Prompt name|Nome do prompt
+Prompt text|Texto do prompt
+Save prompt|Salvar prompt
+Delete prompt|Excluir prompt
+Delete this saved prompt?|Excluir este prompt salvo?
+Confirm Delete|Confirmar exclusão
+Keep prompt|Manter prompt
+Replace the unsent draft with this prompt?|Substituir o rascunho não enviado por este prompt?
+Replace draft|Substituir rascunho
+Keep draft|Manter rascunho
+Use prompt fills the draft without sending. Review it before Send.|Usar prompt preenche o rascunho sem enviar. Revise antes de enviar.
+Prompts are saved locally in settings. Do not include passwords or secrets.|Os prompts são salvos localmente nas configurações. Não inclua senhas nem segredos.
+Could not load saved prompts|Não foi possível carregar os prompts salvos
+Could not save prompts|Não foi possível salvar os prompts
+Save at most 32 prompts.|Salve no máximo 32 prompts.
+Saved prompt IDs must be unique and valid.|Os IDs dos prompts devem ser únicos e válidos.
+Enter a prompt name of at most 80 bytes.|Insira um nome com no máximo 80 bytes.
+Prompt names must be unique.|Os nomes dos prompts devem ser únicos.
+Saved prompts exceed the 128 KiB library limit.|Os prompts excedem o limite de 128 KiB da biblioteca.
+Saved prompts changed elsewhere. Cancel and reload prompts.|Os prompts foram alterados em outro lugar. Cancele e recarregue.
+Secure legacy credentials in Settings before saving prompts.|Proteja as credenciais antigas nas configurações antes de salvar prompts.
 Response mode|Modo de resposta
 Context scope|Escopo do contexto
 Chat history is session-only.|O histórico do chat dura apenas esta sessão.

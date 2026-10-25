@@ -173,6 +173,7 @@ pub struct AiSettings {
     pub api_key_dirty: bool,
     pub temperature: f32,
     pub response_mode: AiResponseMode,
+    pub saved_prompts: Vec<crate::ai_prompts::SavedPrompt>,
 }
 
 impl fmt::Debug for AiSettings {
@@ -206,6 +207,7 @@ impl Default for AiSettings {
             api_key_dirty: false,
             temperature: 0.7,
             response_mode: AiResponseMode::Balanced,
+            saved_prompts: Vec::new(),
         }
     }
 }
@@ -434,6 +436,7 @@ impl Settings {
                     .try_into::<Self>()
                     .map_err(|e: toml::de::Error| e.to_string())?;
                 Self::validate_quick_styles(&settings.quick_styles)?;
+                crate::ai_prompts::validate(&settings.ai.saved_prompts)?;
                 Self::validate_custom_themes(&settings.custom_themes)?;
                 settings.keymaps.validate()?;
                 if let Some(theme) = &settings.default_custom_theme {
@@ -550,6 +553,7 @@ impl Settings {
         credentials: &dyn CredentialStore,
     ) -> Result<()> {
         let mut saved = self.clone();
+        crate::ai_prompts::validate(&saved.ai.saved_prompts).map_err(Error::InvalidAiPrompts)?;
         saved
             .keymaps
             .validate()
@@ -587,6 +591,7 @@ impl Settings {
     }
 
     fn write_settings(paths: &Paths, settings: &Self) -> Result<()> {
+        crate::ai_prompts::validate(&settings.ai.saved_prompts).map_err(Error::InvalidAiPrompts)?;
         settings
             .keymaps
             .validate()

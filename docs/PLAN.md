@@ -244,6 +244,26 @@ topics, 64 KiB serialized context, 8192-byte prompts, 64 KiB replies, 256 KiB hi
 than silently truncating. Saved prompts, additional map actions, semantic UI,
 Pitch suggestions and integrated F6 host acceptance remain open.
 
+**F5 saved-prompt slice:** the chat sidebar now has a persisted, editable library
+with explicit Save/Cancel, confirmed deletion and confirmed replacement of unsent
+drafts. Use fills the composer, never sends. The editor blocks map input, protects
+IME composition, remains open on validation/storage errors and returns to the
+root viewport if its window closes. A targeted preference writer reads fresh
+settings, preserves unrelated fields and credential markers, rejects observed
+library conflicts and never calls the credential store. Plaintext legacy
+credentials must be migrated through normal Settings before this writer runs.
+Prompt text is not encrypted; the editor warns against saving passwords/secrets.
+Saved prompts are limited to 32 entries, unique names of 80 bytes, text of 8192
+bytes and a 128 KiB library. Additional AI actions, semantic tools, Pitch
+suggestions and F6 host acceptance remain unfinished.
+
+Saved-prompt evidence: 168 app unit tests, 90 platform tests, eight focused AI E2E
+tests, strict native all-target/WASM library clippy and 25 documentation contracts
+passed with live AI disabled. Focused cases include Save/Cancel/restart/delete,
+offline use and draft replacement, IME Escape, canceled touches, short-window
+storage failure, observed library conflicts, fresh unrelated preferences and
+credential-marker preservation, malformed settings and UTF-8/library bounds.
+
 Scoped discussion evidence: 162 app unit tests (including 12 chat tests), eight
 focused AI E2E tests, 21 command/menu/sidebar/shortcut tests and 86 platform tests
 passed with live AI disabled. The chat cases exercise deliberate/offline dispatch,

@@ -774,6 +774,7 @@ impl ThinodaApp {
                     || self.printing.active()
                     || self.quick_style_dialog.is_some()
                     || self.theme_dialog.is_some()
+                    || self.ai.prompt_editor.is_some()
                     || self.dialogs.guide.open
                     || self.dialogs.shortcuts
                     || self.dialogs.legal.open
@@ -840,6 +841,7 @@ impl ThinodaApp {
             self.ai_prompt_dialog(&ctx);
             self.ai_busy_overlay(&ctx);
             self.ai_review_window(&ctx);
+            self.saved_prompt_dialog(&ctx);
         }
         self.map_shot_dialog(&ctx);
         self.print_dialog(&ctx);
@@ -984,6 +986,7 @@ impl ThinodaApp {
             || d.rename_sheet.is_some()
             || !d.recovery.is_empty()
             || self.ai.prompt.is_some()
+            || self.ai.prompt_editor.is_some()
     }
 
     // ----- top bar ----------------------------------------------------------------------------
@@ -1335,6 +1338,7 @@ impl ThinodaApp {
             || self.label_editor.is_some()
             || self.quick_style_dialog.is_some()
             || self.theme_dialog.is_some()
+            || self.ai.prompt_editor.is_some()
             || self.dialogs.guide.open
             || self.dialogs.shortcuts
             || self.dialogs.legal.open

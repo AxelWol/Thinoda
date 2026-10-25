@@ -15,6 +15,7 @@ use crate::app::ThinodaApp;
 use crate::i18n::t;
 
 mod chat;
+mod prompts;
 mod review;
 pub use chat::ChatState;
 pub use review::{AiReview, AiTarget};
@@ -71,6 +72,7 @@ pub struct AiState {
     pub pending: Option<PendingAi>,
     pub review: Option<AiReview>,
     pub chat: ChatState,
+    pub prompt_editor: Option<prompts::PromptEditor>,
     /// Text of the open "Generate Map" dialog.
     pub prompt: Option<String>,
     prompt_viewport: Option<egui::ViewportId>,
@@ -184,6 +186,7 @@ fn poll_stream<T>(
 
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
+        self.protect_prompt_editor_ime(ctx);
         self.protect_ai_chat_input(ctx);
         if self
             .ai
