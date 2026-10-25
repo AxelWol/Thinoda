@@ -162,8 +162,8 @@ impl<T> Shared<T> {
         if let Some(abort) = state.abort.take() {
             abort.abort();
         }
-        if let Some((window, id, _)) = state.timeout.take() {
-            window.clear_timeout_with_handle(id);
+        if let Some(timeout) = state.timeout.take() {
+            timeout.window.clear_timeout_with_handle(timeout.id);
         }
     }
 
