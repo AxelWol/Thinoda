@@ -28,6 +28,37 @@ pub enum Lang {
     PtBr,
 }
 
+impl Lang {
+    pub const ALL: [Lang; 10] = [
+        Lang::En,
+        Lang::De,
+        Lang::Es,
+        Lang::Fr,
+        Lang::Da,
+        Lang::Nl,
+        Lang::Pt,
+        Lang::It,
+        Lang::Pl,
+        Lang::PtBr,
+    ];
+
+    /// English name of the language, used to ask AI models to reply in it.
+    pub fn english_name(self) -> &'static str {
+        match self {
+            Lang::En => "English",
+            Lang::De => "German",
+            Lang::Es => "Spanish",
+            Lang::Fr => "French",
+            Lang::Da => "Danish",
+            Lang::Nl => "Dutch",
+            Lang::Pt => "European Portuguese",
+            Lang::It => "Italian",
+            Lang::Pl => "Polish",
+            Lang::PtBr => "Brazilian Portuguese",
+        }
+    }
+}
+
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
 /// Resolves the configured language (Auto = operating system locale).
@@ -1483,6 +1514,20 @@ const DE: &[(&str, &str)] = &[
     (
         "Counts deepest To-Dos only; scheduled Tasks stay unchanged.",
         "Zählt nur Aufgaben auf der untersten Ebene; die Aufgabenplanung bleibt unverändert.",
+    ),
+    ("Numbering", "Nummerierung"),
+    ("Main Menu", "Hauptmenü"),
+    ("Pin", "Anheften"),
+    ("Unpin", "Lösen"),
+    ("Tiered numbers", "Mehrstufige Nummern"),
+    ("Start at", "Beginnen bei"),
+    (
+        "Select a subtopic to number it together with its siblings.",
+        "Wählen Sie ein Unterthema, um es zusammen mit seinen Geschwistern zu nummerieren.",
+    ),
+    (
+        "Applies to the selected topic and its siblings; numbers update as topics move.",
+        "Gilt für das ausgewählte Thema und seine Geschwister; Nummern passen sich beim Verschieben an.",
     ),
     ("Open Link", "Link öffnen"),
     ("Main Topic", "Hauptthema"),

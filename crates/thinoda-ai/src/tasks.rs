@@ -73,11 +73,11 @@ pub enum OutputKind {
 }
 
 const LIST_RULES: &str = "Reply ONLY with a Markdown bullet list (\"- item\"). \
-Keep every item short (at most 8 words). No introduction, no explanations, no bold text, no numbering. \
-Use the same language as the topic text.";
+Keep every item short (at most 8 words). No introduction, no explanations, no bold text, no numbering.";
 
-const TEXT_RULES: &str = "Reply with plain text only (no Markdown, no lists), 2 to 4 sentences. \
-Use the same language as the topic text.";
+const TEXT_RULES: &str = "Reply with plain text only (no Markdown, no lists), 2 to 4 sentences.";
+
+const SAME_LANGUAGE: &str = "Use the same language as the topic text.";
 
 const SYSTEM: &str = "You are the mind-mapping assistant of Thinoda, a mind map editor.";
 
@@ -98,8 +98,15 @@ impl AiTask {
         }
     }
 
-    /// Chat messages for this task.
+    /// Chat messages for this task, keeping the language of the supplied content.
     pub fn messages(&self) -> Vec<Message> {
+        self.messages_in("")
+    }
+
+    /// Chat messages for this task. A nonblank `reply_language` (English language name)
+    /// asks for replies in that language with an English fallback; translation keeps the
+    /// target language requested by the user.
+    pub fn messages_in(&self, reply_language: &str) -> Vec<Message> {
         let (rules, user) = match self {
             AiTask::Brainstorm(c) => {
                 let mut u = format!("Mind map path: {}\n", c.path_line());
@@ -143,8 +150,7 @@ impl AiTask {
             AiTask::GenerateMap(prompt) => (
                 "Reply ONLY with Markdown: the first line is \"# \" followed by a short central topic, \
                  then a nested bullet list (\"- item\", sub-items indented by two spaces) with 4 to 7 main topics, \
-                 each having 2 to 5 subtopics. Keep items short (at most 8 words). No introduction, no explanations. \
-                 Use the same language as the request.",
+                 each having 2 to 5 subtopics. Keep items short (at most 8 words). No introduction, no explanations.",
                 format!("Create a mind map for: {}", prompt.trim()),
             ),
             AiTask::Transform {
@@ -177,10 +183,22 @@ impl AiTask {
                 )
             }
         };
-        vec![
-            Message::system(format!("{SYSTEM} {rules}")),
-            Message::user(user),
-        ]
+        let language = match self {
+            AiTask::Transform {
+                action: TransformAction::Translate,
+                ..
+            } => None,
+            AiTask::Transform { .. } => crate::reply_language_instruction(reply_language),
+            AiTask::GenerateMap(_) => crate::reply_language_instruction(reply_language)
+                .or_else(|| Some("Use the same language as the request.".into())),
+            _ => crate::reply_language_instruction(reply_language)
+                .or_else(|| Some(SAME_LANGUAGE.into())),
+        };
+        let system = match language {
+            Some(language) => format!("{SYSTEM} {rules} {language}"),
+            None => format!("{SYSTEM} {rules}"),
+        };
+        vec![Message::system(system), Message::user(user)]
     }
 }
 
@@ -205,6 +223,41 @@ mod tests {
         assert!(m[1].content.contains("Vacation > Packing"));
         assert!(m[1].content.contains("Clothes"));
         assert!(m[1].content.contains("\"Packing\""));
+    }
+
+    #[test]
+    fn reply_language_replaces_content_language_except_for_translation() {
+        let transform = |action| AiTask::Transform {
+            action,
+            source: "{}".into(),
+            instruction: "into French".into(),
+        };
+        let tasks = [
+            AiTask::Brainstorm(ctx()),
+            AiTask::Breakdown(ctx()),
+            AiTask::Explain(ctx()),
+            AiTask::Summarize(ctx()),
+            AiTask::GenerateMap("x".into()),
+            transform(TransformAction::Rewrite),
+            transform(TransformAction::Grow),
+            transform(TransformAction::Reorganize),
+            transform(TransformAction::Refine),
+        ];
+        for task in &tasks {
+            let system = &task.messages_in("German")[0].content;
+            assert!(system.contains("reply in German") || system.contains("in German."));
+            assert!(system.contains("reply in English"), "{system}");
+            assert!(!system.contains("same language"), "{system}");
+            assert!(
+                !task.messages_in(" ")[0]
+                    .content
+                    .contains("reply in English")
+            );
+        }
+        assert!(tasks[0].messages()[0].content.contains(SAME_LANGUAGE));
+        let translate = transform(TransformAction::Translate).messages_in("German");
+        assert!(!translate[0].content.contains("German"));
+        assert!(translate[1].content.contains("into French"));
     }
 
     #[test]

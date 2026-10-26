@@ -668,3 +668,22 @@ fn oversized_chat_reply_is_not_retained_as_a_completed_answer() {
         Some(t("AI reply is too large. Try a shorter request."))
     );
 }
+
+#[test]
+fn ai_prompts_ask_for_the_ui_language_with_an_english_fallback() {
+    let mut names = BTreeSet::new();
+    for lang in crate::i18n::Lang::ALL {
+        let name = lang.english_name();
+        assert!(names.insert(name), "{name}");
+        let system = system_message(AiResponseMode::Balanced, name, "{}");
+        assert!(system.contains(&format!("reply in {name}")), "{system}");
+        assert!(system.contains("reply in English"), "{system}");
+        let task = thinoda_ai::AiTask::GenerateMap("x".into()).messages_in(name);
+        assert!(task[0].content.contains(name));
+    }
+    assert!(!system_message(AiResponseMode::Quick, "", "{}").contains("reply in English"));
+    assert_eq!(
+        config(&AiSettings::default()).reply_language,
+        crate::i18n::lang().english_name()
+    );
+}
