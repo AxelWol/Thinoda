@@ -26,6 +26,7 @@ pub mod schedule;
 pub mod search;
 pub mod templates;
 pub mod theme;
+pub mod todo;
 
 pub use document::Document;
 pub use edit::{EditError, EditResult};

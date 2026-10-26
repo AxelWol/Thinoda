@@ -559,6 +559,20 @@ impl Sheet {
         Ok(())
     }
 
+    pub fn set_todo_subtree(&mut self, id: TopicId, done: bool) -> EditResult<()> {
+        self.require(id)?;
+        if self.topics[&id].todo.is_none() {
+            return Err(EditError::Invalid("topic has no To-Do".into()));
+        }
+        for id in self.subtree_ids(id) {
+            let topic = self.topic_mut(id).unwrap();
+            if topic.todo.is_some() {
+                topic.todo = Some(done);
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_relationship(&mut self, from: TopicId, to: TopicId) -> EditResult<RelationshipId> {
         self.require(from)?;
         self.require(to)?;

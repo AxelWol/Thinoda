@@ -2057,6 +2057,7 @@ impl ThinodaApp {
                     .show(ui, |ui| {
                         ui.set_max_width(820.0);
                         let sheet = d.doc.sheet().clone();
+                        let todo_progress = sheet.todo_progress();
                         let mut rows: Vec<(TopicId, usize)> = Vec::new();
                         fn walk(
                             s: &thinoda_core::Sheet,
@@ -2080,6 +2081,13 @@ impl ThinodaApp {
                                 continue;
                             };
                             ui.horizontal(|ui| {
+                                if d.view
+                                    .filter
+                                    .as_ref()
+                                    .is_some_and(|keep| !keep.contains(&id))
+                                {
+                                    ui.multiply_opacity(0.3);
+                                }
                                 ui.add_space(depth as f32 * 22.0);
                                 let has_kids = !sheet.children(id).is_empty();
                                 let chevron = if topic.collapsed {
@@ -2113,7 +2121,12 @@ impl ThinodaApp {
                                     ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                                 }
                                 if let Some(todo) = topic.todo {
-                                    ui.label(if todo { "☑" } else { "☐" });
+                                    let progress = todo_progress.get(&id);
+                                    let done = progress.map_or(todo, |p| p.complete());
+                                    ui.label(if done { "☑" } else { "☐" });
+                                    if let Some(p) = progress.filter(|p| p.nested) {
+                                        ui.label(format!("{}/{}", p.completed, p.total));
+                                    }
                                 }
                                 for (index, m) in topic.markers.iter().enumerate() {
                                     let mut text = RichText::new(markers::glyph(m));
@@ -3088,6 +3101,65 @@ impl ThinodaApp {
             self.exec(ui.ctx(), command);
         }
         ui.separator();
+        let todo = self.doc().and_then(|doc| {
+            if doc.view.selection.len() != 1 {
+                return None;
+            }
+            let id = doc.view.primary()?;
+            doc.doc.sheet().topic(id)?.todo?;
+            Some((id, *doc.doc.sheet().todo_progress().get(&id)?))
+        });
+        if let Some((id, progress)) = todo {
+            ui.strong(t("To-Do"));
+            ui.label(format!(
+                "{}: {}/{}",
+                t("Progress"),
+                progress.completed,
+                progress.total
+            ));
+            widgets::caption(
+                ui,
+                t("Counts deepest To-Dos only; scheduled Tasks stay unchanged."),
+            );
+            let mut change = None;
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        !progress.complete(),
+                        egui::Button::new(t("Complete subtree To-Dos")),
+                    )
+                    .clicked()
+                    && touch_allowed
+                {
+                    change = Some(true);
+                }
+                if ui
+                    .add_enabled(
+                        progress.completed > 0,
+                        egui::Button::new(t("Reopen subtree To-Dos")),
+                    )
+                    .clicked()
+                    && touch_allowed
+                {
+                    change = Some(false);
+                }
+            });
+            if let Some(done) = change
+                && let Some(doc) = self.doc_mut()
+            {
+                let result = doc.flush_inspector_edit(ui.ctx()).and_then(|()| {
+                    doc.view.commit_edit(&mut doc.doc);
+                    doc.doc
+                        .edit_sheet("To-Do", |sheet| sheet.set_todo_subtree(id, done))
+                        .map_err(|error| error.to_string())
+                });
+                if let Err(error) = result {
+                    log::warn!("To-Do subtree edit: {error}");
+                    self.toasts.error(error);
+                }
+            }
+            ui.separator();
+        }
         if let Some(doc) = self.doc()
             && let Some(topic) = doc.view.primary()
             && let Some(task) = doc.doc.sheet().scheduling.tasks.get(&topic)
@@ -3553,7 +3625,7 @@ impl ThinodaApp {
                             let n = self.search.hits.len();
                             widgets::caption(
                                 ui,
-                                if self.search.query.is_empty() {
+                                if self.search.query.is_empty() && !self.search.facets.active() {
                                     String::new()
                                 } else if n == 0 {
                                     t("No results").to_string()
@@ -3610,7 +3682,10 @@ impl ThinodaApp {
                                 .accessible_name(t("Replace with"));
                                 ui.horizontal_wrapped(|ui| {
                                     if ui
-                                        .add_enabled(n > 0, egui::Button::new(t("Replace All")))
+                                        .add_enabled(
+                                            n > 0 && !self.search.facets.notes_only,
+                                            egui::Button::new(t("Replace All")),
+                                        )
                                         .clicked()
                                         && touch_allowed
                                     {
@@ -3618,6 +3693,7 @@ impl ThinodaApp {
                                     }
                                 });
                             }
+                            self.search_facets_ui(ui, touch_allowed);
                             reveal_changed_focus(ui);
                         });
                 });

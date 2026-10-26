@@ -9,37 +9,24 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-**Current priority (user-directed, 2026-10-24):** finish the selected-node
-Fill/color-picker regression, then follow the
-[active feature phase plan](PLAN.md#active-feature-phase-plan---user-directed-2026-10-24):
-native OS menus, standard and named user-defined keyboard mappings, task
-planning/Gantt, Zones/Pitch and enhanced AI. Implement and test all five before
-resuming the security/stability backlog. No unrelated feature work, new hardening
-campaigns or release preparation is included in this sequence.
+**Current inventory (2026-10-26):** there are **no open GitHub issues or pull
+requests**. PRs #70, #72, #74, #76 and release #77 are merged. F0-F5 implementation
+is shipped in [v0.12.1](https://github.com/AxelWol/Thinoda/releases/tag/v0.12.1):
+Fill, native menu/window routing, saved keyboard profiles, task/calendar/Gantt,
+Zones/Pitch and enhanced AI. Main CI, all six native packaging targets and
+publication succeeded; all ten downloads match their SHA-256 manifests.
+macOS signing/notarization passed; Windows Authenticode and optional WinGet
+publication are not delivered. The web app is deployed and actual fresh-profile
+Edge startup/rendering was observed.
 
-**Feature implementation update (2026-10-25):** F1 document-window ownership and
-F2 saved keyboard profiles are integrated. The profile editor supports named
-copies, capture, conflict feedback, Apply/Cancel and reset; command dispatch,
-reference hints and native accelerators use the same active mappings. Separate
-document windows share preferences rather than independent snapshots. Native
-macOS/Linux and browser interaction acceptance remain open, not inferred from
-headless checks. F3 now has task/calendar drafts, shared-document Gantt
-move/resize/progress editing, dependencies, exports and print integration;
-native/browser interaction acceptance remains open in PLAN. F4 now includes
-persisted Zone editing/gestures, staged slide generation/frame/order editing,
-read-only Pitch/Presenter View, native fullscreen/browser expansion and shared
-PDF/ordered PNG exports. Its headless evidence does not close native/browser
-host gates. F5-F6 and the deferred stability work are not complete. Older progress entries below describe
-their historical state rather than overriding this update.
-
-The Fill fix and phase plan ship together: full local workspace coverage passes
-661 tests with 1 pre-existing ignored; native/WASM lint is clean. The existing
-SS0-SS8 work is **deferred, not complete**;
-its implementation/evidence and owner/runtime blockers remain in PLAN. Earlier
-exact-candidate native CI, including ARM64 recovery repetition, passed; this is
-not evidence for still-open real-host acceptance. Disabled scanners/no analysis
-are not a clean security inventory. [PR #70](https://github.com/AxelWol/Thinoda/pull/70)
-remains open; implementation priority changes do not waive release prerequisites.
+**F6 is partial, not closed:** recorded browser/CORS/exports and Windows
+Gantt/Pitch evidence does not close real native focus/global-menu, screen-reader,
+physical-print or touch-hardware acceptance. macOS/Linux GUI hosts and safe
+Windows modified-key delivery remain blockers. SS0-SS8 is **deferred, not
+complete**; this backlog refresh does not lift its restart gate or start a new
+hardening campaign. The
+[current plan](PLAN.md#current-state-and-next-value-plan-2026-10-26) is authoritative
+over older dated progress entries below.
 
 Historical baseline (2026-10-22), after incorporating main through `ba05910`:
 there are no open issues. [PR #65](https://github.com/AxelWol/Thinoda/pull/65)
@@ -68,6 +55,47 @@ files; R11 covers distribution; R12 covers extensibility, collaboration and
 the accepted additional locales. R13 / Phase P4 adds future OS-integrated menus
 and window lifecycle under "R12 and above." No issue is omitted from the priority plan.
 
+## Next-value backlog - XMind audit (2026-10-26)
+
+These are scoped work items, not new GitHub issues. **XV1-XV2 are implemented and
+locally verified, not yet released; XV3-XV9 remain open.** XV1 adds shared Find
+facets and read-only all-notes results with all shipped translations and
+light/dark/System coverage; see PLAN for exact tests/browser evidence and host
+limits. XV2 adds derived leaf-To-Do counts, parent completion/reopen and matching
+Find status without changing scheduled Tasks or the native file schema.
+Priority is end-user frequency, value and enabling dependencies, rather
+than a count of XMind features. On 2026-10-26 the user authorized starting this
+ordered queue with localization/theme/platform coverage and ongoing UX research.
+This lifts the earlier feature-start restriction, not the remaining F6 acceptance
+gaps; SS0-SS8 remain deferred. Extend the existing R packages; do not create parallel search, task,
+resource or presentation systems. The
+[research audit](XMIND-RESEARCH.md#12-thinoda-valuegap-audit-2026-10-26) records
+code evidence and official sources.
+
+| Order / ID | Priority / package | Gap and value | Acceptance for a complete first slice |
+|---|---|---|---|
+| 1 / XV1 | P1 / R6 | **Faceted navigation and View All Notes.** Implemented locally: unified marker/label/To-Do/Task/priority filters and consolidated notes review. Find action items and meeting context without editing the map. | Reuse search; OR within a facet and AND between selected facets, active-sheet/all-sheet scope, connected ancestor context and a visible Clear action. Offer a read-only note list with topic/sheet identity and jump-to-topic. Changing criteria/scope and clearing never change document history or saved collapse state; explicit result navigation retains the existing undoable ancestor expansion. Deleting results cannot retarget a different topic. Cover empty results, edits while filtered, keyboard navigation and Map/Outliner consistency. |
+| 2 / XV2 | P1 / R8 | **Nested lightweight To-Do progress.** Implemented locally: derived parent counts and explicit subtree completion/reopen improve checklists without requiring dates or Gantt. | Count deepest To-Dos, traversing plain topics and excluding scheduled Tasks/intermediate double-counting. Show completed/total in Map/Outliner/Style and shared graphical output; explicit parent completion/reopen is one undoable subtree edit. Add/remove/reparent/Undo recomputes progress, old files load unchanged, and scheduled Task progress stays unchanged. Find uses derived completion. Preserve the original child checkboxes when adding/removing a parent's checkbox. |
+| 3 / XV3 | P1 / R3, R6 | **Automatic structural numbering.** Despite an old Phase 1 checkmark, the current Topic model has no numbering settings/render path. Useful for procedures, agendas and study outlines. | Store numbering separately from title text; implement None/decimal, sibling application, tiered numbers and explicit restart first. Insert/reorder/reparent recomputes labels deterministically. Match Map/Outliner and declared export/print support, keep search/copy title behavior explicit, persist/recover with Undo/Redo, and disclose unsupported XMind/Pitch fields. Do not add literal prefixes to titles as a shortcut. |
+| 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** `Topic.image` is a reference, not a binary resource store. This unlocks evidence-rich maps, usable exchange and later illustrations/equations. | First version the workbook asset store with bounded read/decode, stable IDs and missing/corrupt-file errors. Then insert/render/resize/replace/remove images and explicitly save/open attachments without auto-execution. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. |
+| 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both names occur in export support, but neither is in `Format::IMPORTABLE`. Reduce onboarding/retyping for researchers and document authors. | DOCX headings/lists and TextBundle Markdown become deterministic hierarchy with an import preview and omission report. Preserve sources; never fetch external references or execute document content. Test malformed/bounded archives, Unicode, lists/headings and cancellation. Text-only DOCX can ship independently; embedded-resource retention depends on XV4. Do not claim general Word layout fidelity or add every competing app format at once. |
+| 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** PDF/PNG Pitch exists; `.pptx` and explicit delivery aspect ratios are missing. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export a valid image-based PPTX with one rendered slide per saved slide, matching PDF/PNG framing; disclose that shapes/text are not separately editable. Check generated OOXML plus opening in available PowerPoint/LibreOffice hosts; keep unavailable host checks open. Editable PPTX/transitions/video are not implied. |
+| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Notes are plain strings; equation insertion/rendering is absent. Improve study, engineering and research workflows. | Migrate plain notes losslessly; stage a bounded formatting model/editor with lists/emphasis, searchable plain-text projection and existing save/draft safety. Add an explicit supported LaTeX subset with edit/preview/error handling and export parity. Do not execute arbitrary TeX, lose unsupported formatting silently or mistake an image path for equation support. Deliver notes and equations as separate vertical slices; reuse XV4 for packaged assets where needed. |
+| 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns.** The TreeTable structure exists but currently shares a stacking layout; Gantt has scheduling data, not a task-column Tree Table editor. | Add title/start/due/duration/progress columns using existing validated scheduling edits, with row/topic identity, keyboard navigation and Map/Gantt synchronization. Column changes and sorting do not reorder the underlying topic hierarchy silently. Cover working-day rules, invalid edits, Undo/Redo, saved view choices and output scope. No duplicate scheduling engine. |
+| 9 / XV9 | P2 / R9 | **Durable local AI conversations.** The shipped panel labels history session-only; restarting loses research continuity and there are no named per-file threads. | Add opt-in bounded app-local history and new/rename/select/delete threads keyed to stable document identity. Reopen/restart, Save As, duplicate/moved files and recovery must not mix unrelated conversations. Store no API credentials, never resend on reopen, retain explicit Send/scope review, provide retention/delete controls and keep transcripts out of normal document/export output unless explicitly included. Preserve session-only mode and test failed writes, cancellation and stale-source isolation. |
+
+**Not missing / do not reimplement:** 17 structures including Matrix/TreeTable,
+categorized generated template previews, custom themes/quick styles, Map Shot,
+masked derived copies, sheet merge, cross-sheet title replacement, named
+shortcuts, Zones/Pitch PDF/PNG, Gantt and F5 text/embedding AI. Existing gaps
+include richer fidelity and host acceptance, not absence of these foundations.
+Keep MindManager reverse-roundtrip, remaining gesture/IME/accessibility coverage,
+Windows signing and installer/runtime checks in their existing packages.
+Spelling dictionaries/suggestions remain P2 under Settings; background Quick
+Entry, web clipping, cloud collaboration, image/video AI, audio and decorative
+asset libraries rank later because they add platform/service or resource
+dependencies before improving existing offline workflows.
+
 ## P1: MindManager native file compatibility (bounded slice)
 
 - User request: support the official Corel/Alludo MindManager format for
@@ -88,7 +116,7 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   and redistributable public schema/reference validation remain unimplemented
   or unverified. Keep original sources and use `.thinoda` for full workbooks.
 
-## P1 — Symbol colors and contrast (implemented; awaiting review)
+## Symbol colors and contrast (implementation shipped; host acceptance open)
 - Add per-instance colors to the existing Symbols insertion popover and sidebar,
   including editing existing symbols and a localized, keyboard-accessible
   right-click Remove Symbol action targeting only that instance.
@@ -104,9 +132,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   All ten supported locales have catalog entries and light/dark UI coverage,
   alongside model/output regressions. Merged localization PR29 is integrated;
   both catalog additions are retained.
-- Remaining action: R0 must verify review/release status and update this heading;
-  do not schedule duplicate feature implementation. Future changes must extend
-  validation to the full 13-locale matrix.
+- Included in the merged release baseline; no outstanding GitHub review remains.
+  Do not schedule duplicate feature implementation. Native assistive-technology
+  acceptance and the full 13-locale validation matrix remain separate gates.
 
 ## User-directed priority-1 navigation follow-up
 
@@ -120,6 +148,21 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
   backend/browser audit and real-device acceptance matrix. Synthetic events alone
   do not establish full device support.
 ## Recently completed
+- XV1 implementation/local verification (not yet released): shared native/web
+  Find facets for markers/labels/priorities and To-Do/Task completion; all-notes
+  previews and sheet/topic navigation; non-destructive Clear and optional
+  ancestor-preserving dimming in Map/Outliner. Notes remain read-only, and
+  changing filters does not navigate or alter saved folding/history. Source/
+  scope changes invalidate results; stale row indices cannot retarget topics.
+  Locale/theme/focus/scope/source/cancel-touch regressions and strict native/
+  WASM lint pass. Browser startup/entry was observed, not full device acceptance.
+- v0.12.1 release closes F0-F5 implementation and release/deployment delivery:
+  native menus/windows, named keymaps, calendars/tasks/Gantt, Zones/Pitch PDF/PNG,
+  streaming/scoped AI chat, transformations, prompt profiles, semantic search/
+  clustering and reviewed AI Pitch outlines. PRs #74/#76/#77 are merged.
+  Linux/macOS asynchronous UI timing failures were corrected without bypassing
+  assertions; all six native package gates and publish passed. F6 manual host/
+  hardware acceptance remains open rather than being inferred from CI.
 - User-directed R1 document navigation: top file tabs now use fixed scroll arrows,
   a clipped scrollable name viewport, and pinned Close Tab/New Tab actions.
   Arrow/drag browsing preserves the active document and its history; active/focus
@@ -1033,12 +1076,14 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
     print job as an automated smoke check without explicit user approval.
 - Cross-sheet Find and title replacement are implemented; notes/labels are explicitly
   search-only. Rich-field replacement needs separately specified behavior.
-- P1 Pitch mode (presentation from branches, F5) and slide export
+- Delivered Pitch from branches/Zones, presenter/player and PDF/PNG slide export
+  in F4; PPTX/aspect-ratio follow-up is XV6. F5 is AI, not a Pitch shortcut claim.
 - Delivered Map Shot (F7): visible-canvas region capture to clipboard/PNG (see above).
-- P2 Zone (Ctrl+Alt+Z) and callouts editing UI polish
-- P2 Gantt view for to-dos with start/end dates, progress and export
-- P2 Equations (LaTeX → rendered topic content)
-- P2 Attachments and pictures embedded in the `.thinoda`/`.xmind` package
+- Delivered Zone editing in F4; callout polish and host interaction acceptance remain.
+- Delivered F3 Gantt for scheduled Tasks, dates/progress/dependencies/export;
+  lightweight To-Do roll-up is XV2, not automatic Gantt scheduling.
+- P2 Equations: XV7
+- P1 Portable images/attachments: XV4
 - P2 Password-protected files (AES-GCM, Argon2 key derivation)
 - Delivered custom theme editor, quick-style libraries and actual font rendering
   (see Recently completed). Editable imported XMind theme/style registries and
@@ -1069,7 +1114,8 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
     commercial badges do not establish Thinoda feature restrictions. Test every preset,
     undo/redo, saved-file round trips, large/deep trees and keyboard popup navigation.
 - P3 Audio notes (record/play)
-- P3 Customizable shortcuts (Preferences > Shortcuts); detailed requirements below.
+- Delivered configurable saved shortcut profiles in F2; real OS/IME acceptance
+  remains open. Historical screenshot requirements below are not missing editor code.
 
 ## Main menu parity (user-supplied XMind screenshots, 2026-10-16)
 Reference inventory, not an implementation-status checklist. Reuse existing commands
@@ -1228,21 +1274,23 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   acceptance. Native automatic mixed-script fallback and the optional default
   CJK-font preference are implemented; configured font priority, layout/cache
   behavior, open-document switching and installed Windows CJK coverage are verified.
-- P2 Calendar: selectable base/work calendars, month navigation, working-weekday
-  toggles, non-working-day shading and dated exceptions; integrate with Gantt scheduling.
-  Calendar management operations behind the reference overflow menu still need research.
+- F3 delivered working-weekday/dated-exception calendar drafts and Gantt
+  scheduling integration. Additional base-calendar management, month-navigation/
+  shading parity and reference overflow operations still need research; do not
+  schedule the delivered calendar arithmetic and Settings integration again.
 - P3 Sharing: configurable destination visibility for email, blog, Facebook, X,
   Pinterest and Evernote. Verify current service APIs before committing integrations;
   require explicit user action before connecting accounts or publishing content.
-- P3 Shortcuts: category filter, command search, editable bindings, unassigned state
-  and reset-all. Validate conflicts and reserved platform keys; update menu hints and
-  the command palette from the same bindings.
-- P3 Shortcut command coverage from the reference: home, new blank map, new/template,
+- F2 delivered command search/category filters, assign/unassign/reset, named
+  profiles and shared menu/palette/native hints with conflict/reserved-key
+  feedback. Preserve platform/IME/host acceptance rather than reimplementing it.
+- Historical shortcut command coverage checklist from the reference: home, new blank map, new/template,
   merge windows, new sheet, sheet from topic, and delete a single topic while
   retaining children still need this customizable-shortcuts UI row. Previous/next
   sheet (implemented with fixed Ctrl+PageUp/Ctrl+PageDown) and copy/paste/reset
   style (implemented with fixed Ctrl+Alt+C/V; Reset has no shortcut) now exist as
-  commands but still need an editable-binding row in Preferences > Shortcuts.
+  commands; use the shipped F2 command registry/editor to audit any residual
+  command coverage, not a second customization system.
   The screenshot assigns Ctrl+H to Home, conflicting with Thinoda's existing Find &
   Replace binding; preserve current behavior until an explicit keymap choice is made.
 - P2 Tests: settings persistence/migration, immediate application across open tabs,
@@ -1387,43 +1435,41 @@ Reuse existing persisted settings where applicable rather than introducing dupli
   multiple-selection behavior still need verification or a product decision.
 
 ## AI
-- P1 Streaming responses (SSE) with live preview and cancel button
+- [x] Streaming responses (SSE), bounded preview/cancel and deliberate Apply (F5)
 - [x] P1 Store API keys in the OS keychain (Windows Credential Manager, macOS Keychain,
   Secret Service) instead of `settings.toml` (implemented; legacy keys migrate only
   after secure storage succeeds)
-- P2 Semantic search/clustering with an embedding model (e.g. `nomic-embed-text`)
-- P2 "Rewrite topic", translate branch, AI-assisted Pitch outline
-- P3 Prompt library editable by the user
+- [x] Semantic search/clustering with an explicitly selected embedding model (F5)
+- [x] Rewrite topic, translate branch, reviewed AI Pitch outline (F5)
+- [x] User-editable saved prompt library (F5)
 
 ## AI — user-guide research addendum (2026-10-16)
+**Gap inventory reconciled 2026-10-26:** F5 delivered scoped chat and
+depth modes, prompted Grow Ideas, Reorganize and Refine with explicit reviewed
+Apply. Session-only history can be extended by XV9; do not rebuild chat.
+Online-search augmentation, vision, generated images/video,
+hosted integrations and companion-device workflows remain undelivered.
+
 Verified against xmind.com/user-guide pages not previously digested in
 XMIND-USER-GUIDE.md/XMIND-RESEARCH.md; each item cites its source page. Thinoda's AI
-is local/OpenAI-compatible only (LM Studio, Ollama, llama.cpp, OpenAI); treat every
-item below as a capability gap to design for that transport, not as a requirement
-to add XMind's own cloud account, billing or hosted AI service.
+is local/OpenAI-compatible only (LM Studio, Ollama, llama.cpp, OpenAI). Residual
+gaps must fit that transport or receive a separate scope decision; they are not
+requirements to add XMind's cloud account, billing or hosted AI service.
 
-- P2 Confirmed absent: a persistent AI chat panel beside the map (opened from a
-  toolbar button next to the title) with three selectable response-depth modes
-  (Quick / Balanced / Deep) for simple edits vs. everyday mapping vs. multi-step
-  research, operating on the active sheet or a topic selection. Thinoda's existing
-  AI actions (brainstorm, breakdown, explain, summarize, generate map) are
-  command-triggered one-shots without a chat surface or depth selector.
-  Source: https://xmind.com/user-guide/xmind-ai-chatbot
-- P2 Confirmed partial: "Grow Ideas" expands a selected topic/subtopic with Auto or
-  On-Demand (prompted) modes, matching Thinoda's existing brainstorm-subtopics action,
-  but XMind also documents an optional online-search mode that cites a source link
-  for web-grounded suggestions. Thinoda has no live web-search-augmented generation;
+- Delivered F5: scoped discussion panel with Quick/Balanced/Deep response
+  guidance, selected-topic/sheet context, Send/Cancel and session-only per-open-
+  document history. XV9 covers optional durable local history/named threads.
+  Source: https://xmind.com/user-guide/xmind-ai-chatbot/web
+- Delivered F5: "Grow Ideas" with Auto or prompted expansion. The residual
+  P2 research item is optional online-search grounding with source links.
+  Thinoda has no live web-search-augmented generation;
   treat external web search as an explicit, user-visible, opt-in data egress if added.
   Source: https://xmind.com/user-guide/grow-ideas
-- P2 Confirmed absent: AI "Reorganize" restructures an existing map/branch in one
-  click (Auto or On-Demand with typed guidance), distinct from the deterministic,
-  non-AI Map Style actions (Auto Balance Map, Compact Map, Justify Topic Alignment)
-  already tracked. Source: https://xmind.com/user-guide/reorganize
-- P2 Confirmed absent: AI "Map Refine" adds related content across an entire map and
-  reorganizes it for completeness (Auto or On-Demand), with an explicit Apply/View-Now
-  review step before changes are kept. This is a superset of Reorganize (content
-  addition, not just layout) and of the existing to-do/summarize actions; implement
-  as a reviewable, undoable batch edit, never silently applied.
+- Delivered F5: AI "Reorganize" with optional guidance and reviewed Apply,
+  distinct from deterministic Map Style layout actions.
+  Source: https://xmind.com/user-guide/reorganize
+- Delivered F5: AI "Refine" with content additions, reviewed Apply and Undo;
+  do not reclassify the existing feature as absent.
   Source: https://xmind.com/user-guide/map-refine
 - P3 Confirmed absent: "Image to Mind Map" generates a structured map from an
   uploaded photo (JPG/PNG, documented 10 MB limit), using OCR for text-bearing
@@ -1477,8 +1523,8 @@ to add XMind's own cloud account, billing or hosted AI service.
   define the multiple steps and full planning/per-finished-step rubber-duck gates.
   Full planning rubber-duck review is complete; its ribbon taxonomy,
   Settings-placement, single-instance/viewport and floating-toolbar clarifications
-  are incorporated. All implementation steps remain open; this does not interrupt
-  the existing R0-R12 order.
+  are incorporated. F1/F2 implementation is now shipped; the detailed P4 native
+  host/window/accessibility acceptance gates remain open, not all implementation.
 - P3 Quick Entry-equivalent background capture (XMind "Quick Entry", documented
   macOS-only): a menu-bar-resident popup, launchable without opening the main
   window, with a single text field and a "Create Map" action that converts the
@@ -1486,7 +1532,8 @@ to add XMind's own cloud account, billing or hosted AI service.
   Thinoda has no background/menu-bar quick-capture surface on any platform; verify
   a cross-platform equivalent (tray icon on Windows/Linux) before committing to
   parity with the macOS-only original. Source: https://xmind.com/user-guide/quick-entry-for-mac-new
-- P1 Code signing + notarization; auto-update via `cargo-packager-updater`
+- Delivered macOS Developer ID signing/notarization in v0.12.1.
+  P1 Windows production Authenticode and updater delivery remain separate work.
 - P2 macOS universal binary; Flatpak and `.rpm` packages; winget/Homebrew manifests
 - P2 Publish installers to package managers from the release workflow (winget
   manifest PR, Homebrew cask tap, Flathub); GitHub Packages is not used because
