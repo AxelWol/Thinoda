@@ -28,10 +28,14 @@ for delivery/acceptance status.
 | File Cache / Map Shot / Custom Themes / Quick Style / Merge / Mask Data | Existing implementations; not wholly missing. | Retain recovery, export-fidelity and real-host acceptance requirements. Masked copies are not a guarantee of universal anonymization. |
 | Set Password / Audio / cloud collaboration / vision and video AI | Not delivered in this feature release. | Existing R4/R10/R12 and later-service backlog; do not silently expand F5. |
 
-**Subsequent XV1 implementation:** faceted Find and the all-notes overview are
-now implemented and locally verified, not yet released. The row above preserves
+**Subsequent XV1-XV2 implementation:** faceted Find, the all-notes overview and
+nested To-Do progress are now implemented and locally verified, not yet released.
+Thinoda counts deepest To-Dos through plain grouping topics, provides one-Undo
+subtree completion/reopen and keeps scheduled Tasks independent. Its shared
+checkbox/count UI deliberately differs from XMind's circular indicator.
+The rows above preserve
 the research baseline; PLAN/BACKLOG record the current evidence and remaining
-host checks. Other XV items remain open.
+host checks. XV3-XV9 remain open.
 
 To-Do vs Task, Numbering, Topic Filtering, View All Notes, Export, Import and
 the [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web) were

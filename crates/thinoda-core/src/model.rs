@@ -357,7 +357,8 @@ pub struct Topic {
     /// Explicit attachment side when the parent uses a split-map structure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_side: Option<BranchSide>,
-    /// To-Do checkbox state (`None` = no checkbox).
+    /// To-Do checkbox state (`None` = no checkbox). Nested progress is derived;
+    /// this flag applies directly only when no descendant To-Dos remain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo: Option<bool>,
     /// Image reference (resource path inside the file or URL).

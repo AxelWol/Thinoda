@@ -545,7 +545,16 @@ pub fn apply_action(
         }
         Action::ToggleTodo => {
             let sheet = doc.sheet();
-            let next = match sheet.topic(primary.unwrap()).and_then(|t| t.todo) {
+            let progress = sheet.todo_progress();
+            let current = sheet
+                .topic(primary.unwrap())
+                .and_then(|t| t.todo)
+                .map(|done| {
+                    progress
+                        .get(&primary.unwrap())
+                        .map_or(done, |p| p.complete())
+                });
+            let next = match current {
                 None => Some(false),
                 Some(false) => Some(true),
                 Some(true) => None,
@@ -553,6 +562,9 @@ pub fn apply_action(
             doc.edit_sheet("To-Do", |s| {
                 for id in &sel {
                     s.set_todo(*id, next)?;
+                    if next == Some(true) && progress.get(id).is_some_and(|p| p.nested) {
+                        s.set_todo_subtree(*id, true)?;
+                    }
                 }
                 Ok(())
             })?;
@@ -891,6 +903,31 @@ mod tests {
             doc.sheet().topic(root).unwrap().markers,
             vec!["priority-1".to_string()]
         );
+    }
+
+    #[test]
+    fn adding_parent_todo_preserves_children_and_completion_uses_derived_state() {
+        let (mut doc, mut view) = setup();
+        let root = doc.sheet().root;
+        let child = doc.sheet().children(root)[0];
+        doc.edit_sheet("Child checklist", |sheet| sheet.set_todo(child, Some(true)))
+            .unwrap();
+        view.select_only(root);
+        apply_action(&mut doc, &mut view, Action::ToggleTodo).unwrap();
+        assert_eq!(doc.sheet().topics[&child].todo, Some(true));
+        assert_eq!(doc.sheet().topics[&root].todo, Some(false));
+        // An already completed derived parent removes its checkbox, not its children.
+        apply_action(&mut doc, &mut view, Action::ToggleTodo).unwrap();
+        assert_eq!(doc.sheet().topics[&root].todo, None);
+        assert_eq!(doc.sheet().topics[&child].todo, Some(true));
+        doc.edit_sheet("Reopen child", |sheet| sheet.set_todo(child, Some(false)))
+            .unwrap();
+        apply_action(&mut doc, &mut view, Action::ToggleTodo).unwrap();
+        let before = doc.sheet().clone();
+        apply_action(&mut doc, &mut view, Action::ToggleTodo).unwrap();
+        assert!(doc.sheet().todo_progress()[&root].complete());
+        assert!(doc.undo());
+        assert_eq!(doc.sheet(), &before);
     }
 
     #[test]

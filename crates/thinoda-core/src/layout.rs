@@ -162,6 +162,7 @@ pub struct TopicLayout {
     pub title_rect: Rect,
     pub image_rect: Option<Rect>,
     pub todo_rect: Option<Rect>,
+    pub todo_progress: Option<crate::todo::TodoProgress>,
     pub markers: Vec<(String, Rect)>,
     pub icons: Vec<(Icon, Rect)>,
     pub labels: Vec<(String, Rect)>,
@@ -356,6 +357,7 @@ struct Engine<'a> {
     spacing: f32,
     info: HashMap<TopicId, (Vec2, Content, ResolvedStyle, Level, Vec2)>,
     grow: HashMap<TopicId, Dir>,
+    todo_progress: HashMap<TopicId, crate::todo::TodoProgress>,
 }
 
 /// Lays out the whole sheet.
@@ -367,6 +369,7 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
         spacing: sheet.theme.spacing.clamp(0.3, 4.0),
         info: HashMap::new(),
         grow: HashMap::new(),
+        todo_progress: sheet.todo_progress(),
     };
     let mut items: Vec<(TopicId, Vec2)> = Vec::new();
     let mut connectors = Vec::new();
@@ -686,9 +689,14 @@ impl Engine<'_> {
                 .max(if right > 0.0 { isz } else { 0.0 });
         let lfs = (fs * 0.72).max(9.0);
         let lh = lfs * 1.3 + 4.0;
-        let label_ws: Vec<f32> = t
-            .labels
-            .iter()
+        let progress_label = t.todo.and_then(|_| {
+            self.todo_progress
+                .get(&id)
+                .filter(|p| p.nested)
+                .map(|p| format!("{}/{}", p.completed, p.total))
+        });
+        let labels = || t.labels.iter().chain(progress_label.iter());
+        let label_ws: Vec<f32> = labels()
             .map(|l| self.measure.measure(l, lfs, false, 400.0).x + 10.0)
             .collect();
         let labels_w =
@@ -702,7 +710,7 @@ impl Engine<'_> {
         let inner_w = row_w
             .max(labels_w)
             .max(if t.image.is_some() { IMAGE_SIZE.x } else { 0.0 });
-        let labels_h = if t.labels.is_empty() { 0.0 } else { lh + gap };
+        let labels_h = if label_ws.is_empty() { 0.0 } else { lh + gap };
         let mut w = (inner_w + 2.0 * px).max(fs * 2.0);
         let content_h = image_h + row_h + labels_h;
         let mut h = 2.0 * py + content_h;
@@ -749,10 +757,10 @@ impl Engine<'_> {
         if t.has_notes() {
             c.icons.push((Icon::Notes, sq(x, isz)));
         }
-        if !t.labels.is_empty() {
+        if !label_ws.is_empty() {
             let mut lx = inner_x + (inner_w - labels_w) / 2.0;
             let ly = y + row_h + gap;
-            for (l, lw) in t.labels.iter().zip(label_ws) {
+            for (l, lw) in labels().zip(label_ws) {
                 c.labels.push((
                     l.clone(),
                     Rect::from_min_size(Vec2::new(lx, ly), Vec2::new(lw, lh)),
@@ -787,6 +795,9 @@ impl Engine<'_> {
                     title_rect: mv(content.title),
                     image_rect: content.image.map(mv),
                     todo_rect: content.todo.map(mv),
+                    todo_progress: topic
+                        .todo
+                        .and_then(|_| self.todo_progress.get(&id).copied()),
                     markers: content
                         .markers
                         .into_iter()

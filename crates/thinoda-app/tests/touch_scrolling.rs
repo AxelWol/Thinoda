@@ -71,6 +71,61 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
 }
 
 #[test]
+fn rejected_subtree_completion_preserves_all_checkboxes_and_history() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 640.0));
+        h.state_mut().settings.show_format_panel = true;
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Checklist", |sheet| {
+                sheet.set_todo(sheet.root, Some(false))?;
+                let child = sheet.add_child(sheet.root, None, "Open item");
+                sheet.set_todo(child, Some(false))
+            })
+            .unwrap();
+        h.run_steps(8);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_role_and_label(Role::Button, t("Complete subtree To-Dos"))
+                .focus();
+            h.run_steps(8);
+            let pos = h
+                .get_by_role_and_label(Role::Button, t("Complete subtree To-Dos"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        h.get_by_role_and_label(Role::Button, t("Complete subtree To-Dos"))
+            .focus();
+        h.run_steps(8);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(4);
+        let complete = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            h.get_by_role_and_label(Role::Button, t("Reopen subtree To-Dos"))
+                .focus();
+            h.run_steps(8);
+            let pos = h
+                .get_by_role_and_label(Role::Button, t("Reopen subtree To-Dos"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &complete);
+            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+        }
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+    }
+}
+
+#[test]
 fn rejected_search_facets_preserve_criteria_and_documents() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         let mut h = harness(theme, 1.0);

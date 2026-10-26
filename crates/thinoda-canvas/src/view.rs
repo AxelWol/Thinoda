@@ -1093,8 +1093,11 @@ impl MapCanvas {
                     }
                 } else if tl.todo_rect.is_some_and(|r| r.expand(2.0).contains(sp)) {
                     let cur = doc.sheet().topic(t).and_then(|x| x.todo);
-                    let next = Some(!cur.unwrap_or(false));
-                    if let Err(e) = doc.edit_sheet("To-Do", |s| s.set_todo(t, next)) {
+                    let next = !tl
+                        .todo_progress
+                        .map_or(cur.unwrap_or(false), |p| p.complete());
+                    view.commit_edit(doc);
+                    if let Err(e) = doc.edit_sheet("To-Do", |s| s.set_todo_subtree(t, next)) {
                         out.error = Some(e);
                     }
                 } else if let Some((Icon::Link, _)) =

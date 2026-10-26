@@ -52,6 +52,15 @@ impl Facets {
     }
 
     pub fn matches(&self, sheet: &Sheet, id: TopicId) -> bool {
+        self.matches_with_progress(sheet, id, &sheet.todo_progress())
+    }
+
+    fn matches_with_progress(
+        &self,
+        sheet: &Sheet,
+        id: TopicId,
+        progress: &std::collections::HashMap<TopicId, crate::todo::TodoProgress>,
+    ) -> bool {
         let Some(topic) = sheet.topic(id) else {
             return false;
         };
@@ -76,9 +85,10 @@ impl Facets {
                         .is_some_and(|p| self.priorities.contains(&p))
                 }))
             && (self.todos.is_empty()
-                || topic
-                    .todo
-                    .is_some_and(|done| self.todos.contains(&completion(done))))
+                || topic.todo.is_some_and(|done| {
+                    let done = progress.get(&id).map_or(done, |p| p.complete());
+                    self.todos.contains(&completion(done))
+                }))
             && (self.tasks.is_empty()
                 || task
                     .is_some_and(|t| self.tasks.contains(&completion(t.progress_percent == 100))))
@@ -93,6 +103,12 @@ pub fn search_faceted(
     opts: &SearchOptions,
     facets: &Facets,
 ) -> Vec<SearchHit> {
+    let progress = if facets.todos.is_empty() {
+        Default::default()
+    } else {
+        sheet.todo_progress()
+    };
+    let matches_facets = |id| facets.matches_with_progress(sheet, id, &progress);
     if needle.is_empty() {
         if !facets.active() {
             return Vec::new();
@@ -100,7 +116,7 @@ pub fn search_faceted(
         return sheet
             .all_ids_ordered()
             .into_iter()
-            .filter(|id| facets.matches(sheet, *id))
+            .filter(|id| matches_facets(*id))
             .map(|topic| SearchHit {
                 sheet: sheet_index,
                 topic,
@@ -117,7 +133,7 @@ pub fn search_faceted(
             .all_ids_ordered()
             .into_iter()
             .filter(|id| {
-                facets.matches(sheet, *id)
+                matches_facets(*id)
                     && sheet.topics[id]
                         .notes
                         .as_deref()
@@ -132,7 +148,7 @@ pub fn search_faceted(
     }
     search_sheet(sheet, sheet_index, needle, opts)
         .into_iter()
-        .filter(|hit| facets.matches(sheet, hit.topic))
+        .filter(|hit| matches_facets(hit.topic))
         .collect()
 }
 

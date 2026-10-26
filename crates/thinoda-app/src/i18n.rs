@@ -1472,6 +1472,18 @@ const DE: &[(&str, &str)] = &[
     ("Link", "Link"),
     ("Hyperlink", "Hyperlink"),
     ("To-Do", "Aufgabe"),
+    (
+        "Complete subtree To-Dos",
+        "Untergeordnete Aufgaben abschließen",
+    ),
+    (
+        "Reopen subtree To-Dos",
+        "Untergeordnete Aufgaben wieder öffnen",
+    ),
+    (
+        "Counts deepest To-Dos only; scheduled Tasks stay unchanged.",
+        "Zählt nur Aufgaben auf der untersten Ebene; die Aufgabenplanung bleibt unverändert.",
+    ),
     ("Open Link", "Link öffnen"),
     ("Main Topic", "Hauptthema"),
     ("Central Topic", "Zentrales Thema"),

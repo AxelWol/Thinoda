@@ -504,6 +504,7 @@ fn paint_topic(
 
     // To-Do checkbox.
     if let (Some(tr), Some(done)) = (t.todo_rect, topic.and_then(|x| x.todo)) {
+        let done = t.todo_progress.map_or(done, |p| p.complete());
         let tr = xf.rect(tr).shrink(1.0 * z);
         let rad = CornerRadius::same((3.0 * z) as u8);
         if done {
@@ -520,6 +521,15 @@ fn paint_topic(
                 Stroke::new(1.5 * z, text_color),
                 StrokeKind::Inside,
             );
+            if t.todo_progress.is_some_and(|p| p.completed > 0) {
+                painter.line_segment(
+                    [
+                        pos2(tr.left() + tr.width() * 0.25, tr.center().y),
+                        pos2(tr.right() - tr.width() * 0.25, tr.center().y),
+                    ],
+                    Stroke::new(1.8 * z, text_color),
+                );
+            }
         }
     }
 

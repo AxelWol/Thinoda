@@ -60,7 +60,40 @@ rebinding a diagnostic server restored successful startup and interaction.
 Real touch/assistive technology, populated browser result navigation and other
 native host runtime acceptance are not inferred from these checks.
 No services were left running.
-XV1 is implemented and locally verified, not yet released; XV2 is next.
+XV1 is implemented and locally verified, not yet released.
+
+**XV2 implementation slice:** checklist progress counts deepest To-Do items,
+including those below plain grouping topics, without double-counting intermediate
+checkboxes or counting scheduled Tasks. No schema migration or automatic parent
+flag rewrite is required. Map and Outliner show derived completed/total counts;
+Map uses the existing checkbox with an indeterminate dash for partial progress.
+The parent checkbox and explicit translated Style buttons complete/reopen existing
+subtree checkboxes as one undoable edit. Adding a parent checkbox preserves its
+children, and removing it leaves theirs intact. Find completion facets use the
+same derived state. Shared graphical exports include the count badge; text/XMind
+checklist interoperability is not newly claimed.
+
+The [official To-Do vs Task guide](https://xmind.com/user-guide/to-do-vs-task)
+was rechecked before implementation. The
+[WAI-ARIA checkbox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/checkbox/)
+supports an aggregate mixed state and explicit group completion. Thinoda retains
+its established checkbox/count visual language instead of copying XMind's ring;
+the accessible inspector buttons provide keyboard activation. This is not a claim
+that the custom canvas checkbox now exposes a native mixed-state accessibility
+node or that screen-reader acceptance is complete.
+
+XV2 verification: 101 core, 95 canvas and 186 app unit tests pass. The six
+checklist/search/viewport integration tests cover all shipped language settings,
+light/dark/System, Map/Outliner, 360x640 focus reachability, real parent-checkbox
+clicks and one-Undo completion/reopen. Two I/O tests cover native roundtrip and
+SVG/PNG/PDF badges in both themes without source changes; canceled/multitouch
+subtree controls preserve all checkboxes/history. Native all-target and WASM
+library strict clippy pass; the production Trunk/PWA build succeeds. A fresh
+Edge profile created nested To-Dos in WASM and parent-checkbox clicks visibly
+changed both parent/child checkboxes and the badge from 0/1 to 1/1 and back.
+Those screenshots were inspected; no runtime exceptions, failed requests, AI
+calls or external origins occurred. Owned validation servers were stopped.
+XV1-XV2 are implemented locally and unreleased; XV3 structural numbering is next.
 
 ### Released work and remaining acceptance
 

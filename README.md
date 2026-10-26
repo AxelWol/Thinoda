@@ -349,6 +349,17 @@ those system-owned controls. WinGet publishing remains paused.
   source selected, pick an existing target or click blank canvas to create a connected
   floating topic and edit its title. Creation and connection undo together; Escape
   cancels picking, and failed connections leave no orphan topic.
+- Nested **To-Do** checklists show completed/total progress in Map, Outline and
+  Style. Only deepest To-Do items count; plain grouping topics are traversed,
+  intermediate checkboxes are not double-counted, and scheduled Tasks stay
+  independent. A parent checkbox reflects its descendants (a dash means partial
+  completion); clicking it completes or reopens existing subtree checkboxes in
+  one Undo step. Style also provides explicit **Complete subtree To-Dos** and
+  **Reopen subtree To-Dos** buttons. Adding a parent checkbox preserves its
+  children; removing it does not remove theirs. Derived counts are not saved
+  as labels or title text: native save/recovery retains the existing booleans.
+  SVG/PNG/PDF and shared graphical presentation/print paths include the count
+  badge; this does not add checklist interoperability to text or XMind exports.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.
@@ -357,7 +368,8 @@ those system-owned controls. WinGet publishing remains paused.
   the inspector. Outline shortcuts yield while search is open, so Tab navigates
   controls rather than adding topics.
   Find also offers **Filters** for markers, labels, priority, independent To-Do
-  completion and scheduled Task completion. Values within one group match any;
+  completion (including derived parent progress) and scheduled Task completion.
+  Values within one group match any;
   different selected groups must all match. Priority checks both topic markers
   and scheduled Task priority. **View All Notes** lists note previews with
   sheet/topic names; its search text matches notes only. Results are read-only,

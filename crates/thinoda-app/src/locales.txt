@@ -1,4 +1,7 @@
 View All Notes|Ver todas las notas|Afficher toutes les notes|Vis alle noter|Alle notities bekijken|Ver todas as notas|Visualizza tutte le note|Pokaż wszystkie notatki
+Complete subtree To-Dos|Completar tareas del subárbol|Terminer les tâches de la sous-arborescence|Fuldfør undertræets opgaver|Taken in subboom voltooien|Concluir tarefas da subárvore|Completa attività del sottoalbero|Ukończ zadania w poddrzewie
+Reopen subtree To-Dos|Reabrir tareas del subárbol|Rouvrir les tâches de la sous-arborescence|Genåbn undertræets opgaver|Taken in subboom heropenen|Reabrir tarefas da subárvore|Riapri attività del sottoalbero|Otwórz ponownie zadania w poddrzewie
+Counts deepest To-Dos only; scheduled Tasks stay unchanged.|Cuenta solo las tareas del nivel más profundo; las tareas programadas no cambian.|Compte uniquement les tâches du niveau le plus profond ; les tâches planifiées restent inchangées.|Tæller kun opgaver på nederste niveau; planlagte opgaver ændres ikke.|Telt alleen de diepste taken; geplande taken blijven ongewijzigd.|Conta apenas as tarefas do nível mais profundo; as tarefas agendadas não são alteradas.|Conta solo le attività al livello più profondo; quelle pianificate restano invariate.|Liczy tylko zadania na najniższym poziomie; zaplanowane zadania pozostają bez zmian.
 Filters|Filtros|Filtres|Filtre|Filters|Filtros|Filtri|Filtry
 Incomplete|Sin completar|Inachevé|Ikke fuldført|Onvoltooid|Por concluir|Incompleto|Nieukończone
 Completed|Completado|Terminé|Fuldført|Voltooid|Concluído|Completato|Ukończone

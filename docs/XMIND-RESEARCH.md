@@ -225,10 +225,19 @@ command or enum is not proof of full reference interaction parity.
 
 ### Confirmed gaps and partially used foundations
 
-The table records the audit baseline. **XV1 has since been implemented and
-locally verified in the current worktree**, extending those foundations; it is
+The table records the audit baseline. **XV1-XV2 have since been implemented and
+locally verified in the current worktree**, extending those foundations; this is
 not yet part of v0.12.1. Current execution/test status is in PLAN/BACKLOG.
-XV2-XV9 remain open.
+XV3-XV9 remain open. XV2 reuses `Topic.todo` without a schema change: a linear
+bottom-up aggregation counts deepest checkboxes across plain grouping topics.
+Explicit subtree completion/reopen changes existing checkboxes in one Undo and
+leaves scheduled Tasks independent. Map/Outliner/Style and Find share the derived
+state; graphical output includes numeric progress. The
+[WAI-ARIA checkbox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/checkbox/)
+informed the mixed checkbox state and group activation. Unlike XMind's ring,
+Thinoda retains its checkbox/count language and provides translated keyboard
+buttons in Style. Actual native mixed-state accessibility remains a host gap,
+not a claim inferred from appearance or harness checks.
 
 | Work item | Evidence in current Thinoda source | Reference behavior and end-user value |
 |---|---|---|
