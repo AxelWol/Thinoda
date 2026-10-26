@@ -36,14 +36,20 @@ impl Server {
                     }
                     Err(error) => panic!("loopback accept: {error}"),
                 };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
+                stream.set_nonblocking(true).unwrap();
                 let mut bytes = Vec::new();
                 let mut buffer = [0; 4096];
                 let (path, body) = loop {
                     let count = match stream.read(&mut buffer) {
-                        Ok(0) | Err(_) => break (String::new(), None),
+                        Ok(0) => break (String::new(), None),
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if done.load(Ordering::SeqCst) {
+                                break (String::new(), None);
+                            }
+                            std::thread::sleep(Duration::from_millis(2));
+                            continue;
+                        }
+                        Err(_) => break (String::new(), None),
                         Ok(count) => count,
                     };
                     bytes.extend_from_slice(&buffer[..count]);

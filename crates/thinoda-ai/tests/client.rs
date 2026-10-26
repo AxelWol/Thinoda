@@ -101,7 +101,7 @@ fn http_errors_are_reported_with_status() {
 fn stream_server(
     status: &str,
     body: &[u8],
-    pause_after: Option<usize>,
+    pause_after: Option<(usize, mpsc::Receiver<()>)>,
 ) -> (String, mpsc::Receiver<(String, String, String)>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -168,10 +168,10 @@ fn stream_server(
                 "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
-            if let Some(split) = pause_after {
+            if let Some((split, release)) = pause_after {
                 let _ = stream.write_all(&body[..split]);
                 let _ = stream.flush();
-                std::thread::sleep(Duration::from_millis(300));
+                let _ = release.recv_timeout(Duration::from_secs(5));
                 let _ = stream.write_all(&body[split..]);
             } else {
                 let _ = stream.write_all(&body);
@@ -393,7 +393,8 @@ fn cancellation_before_input_and_during_read_discards_late_deltas() {
         "data: [DONE]\n\n"
     );
     let split = body[1..].find("data: ").unwrap() + 1;
-    let (base_url, _) = stream_server("200 OK", body.as_bytes(), Some(split));
+    let (release_late_chunk, release) = mpsc::channel();
+    let (base_url, _) = stream_server("200 OK", body.as_bytes(), Some((split, release)));
     let during_read = AiStreamJob::chat(
         AiConfig {
             base_url,
@@ -414,6 +415,7 @@ fn cancellation_before_input_and_during_read_discards_late_deltas() {
         std::thread::sleep(Duration::from_millis(2));
     }
     during_read.cancel();
+    release_late_chunk.send(()).unwrap();
     assert_eq!(
         during_read.poll(),
         Some(AiStreamEvent::Finished(Err(AiError::Cancelled)))
