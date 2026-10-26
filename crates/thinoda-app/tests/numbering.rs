@@ -8,6 +8,9 @@ use thinoda_app::{
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+/// Both tests switch the process-wide UI language; run them one at a time.
+static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn app(
     language: Language,
     theme: ThemeMode,
@@ -50,6 +53,7 @@ fn harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
 
 #[test]
 fn outliner_shows_derived_numbers_without_changing_titles_and_undo_restores() {
+    let _language = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             let (mut app, ids) = app(language, theme, false);
@@ -102,6 +106,7 @@ fn outliner_shows_derived_numbers_without_changing_titles_and_undo_restores() {
 
 #[test]
 fn format_panel_offers_numbering_for_a_selected_subtopic() {
+    let _language = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
     for language in Language::ALL {
         let (mut app, ids) = app(language, ThemeMode::Dark, true);
         app.doc_mut().unwrap().view.select_only(ids[0]);
