@@ -67,12 +67,6 @@ fn settings_opens_existing_reference_and_returns_without_losing_context() {
                 h.run_steps(4);
                 assert!((h.ctx.content_rect().width() - size.x).abs() < 0.01);
                 if tab == SettingsTab::Ai {
-                    h.get_by_role_and_label(Role::DisclosureTriangle, t("AI Assistant"))
-                        .scroll_to_me();
-                    h.run_steps(8);
-                    h.get_by_role_and_label(Role::DisclosureTriangle, t("AI Assistant"))
-                        .click();
-                    h.run_steps(4);
                     h.get_by_role_and_label(Role::PasswordInput, t("API Key"))
                         .scroll_to_me();
                     h.run_steps(8);

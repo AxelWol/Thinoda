@@ -1204,6 +1204,11 @@ const DE: &[(&str, &str)] = &[
     ),
     ("AI Chat", "KI-Chat"),
     ("Embedding model", "Embedding-Modell"),
+    ("Embedding models", "Embedding-Modelle"),
+    (
+        "No embedding models found on this server",
+        "Auf diesem Server wurden keine Embedding-Modelle gefunden",
+    ),
     (
         "Required for semantic tools",
         "Für semantische Werkzeuge erforderlich",

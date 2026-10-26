@@ -179,8 +179,9 @@ graph TD
   a category, and Escape or an outside press dismisses a temporary opening.
   A visible Pin/Unpin Ribbon control uses that same persisted collapse preference:
   pinned ribbons stay expanded after actions, while unpinned tab previews close.
-  Settings > Editor offers Compact Ribbon, default off. Standard geometry remains
-  unchanged; compact geometry uses a 160-point expanded panel instead of 200,
+  Settings > Editor offers Compact Ribbon on every target, default on (persisted as
+  `ribbon_compact`; the legacy `compact_ribbon` key is ignored). It also selects the
+  compact tiers of the Outline ribbon. Standard geometry is opt-in; compact geometry uses a 160-point expanded panel instead of 200,
   34-point tab/secondary targets, 72-point primary controls, 24/20/16-point icons,
   four-point intra-group spacing and recalculated group widths/overflow budgets.
   Labels, semantic colors, shortcuts, pinning and popup command routing are shared;

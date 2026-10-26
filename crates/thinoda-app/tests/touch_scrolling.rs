@@ -591,9 +591,6 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
         h.get_by_role_and_label(Role::Button, "AI Assistant")
             .click();
         h.run_steps(4);
-        h.get_by_role_and_label(Role::DisclosureTriangle, "AI Assistant")
-            .click();
-        h.run_steps(4);
         h.state_mut().ai.api_key_draft = Some("local-test-draft".into());
         for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
             for label in ["Save API Key", "Clear", "Test Connection"] {

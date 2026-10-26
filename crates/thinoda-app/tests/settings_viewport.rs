@@ -157,10 +157,11 @@ fn every_settings_category_is_reachable_in_short_narrow_windows() {
                 h.run_steps(4);
                 assert!(h.state().settings.reuse_last_theme);
                 category(&mut h, "AI Assistant");
-                reveal(&mut h, Role::DisclosureTriangle, "AI Assistant");
-                h.get_by_role_and_label(Role::DisclosureTriangle, t("AI Assistant"))
-                    .click();
-                h.run_steps(8);
+                // The AI page is always expanded; no disclosure toggle exists.
+                assert!(
+                    h.query_by_role_and_label(Role::DisclosureTriangle, t("AI Assistant"))
+                        .is_none()
+                );
                 for label in ["Save API Key", "Clear", "Test Connection"] {
                     reveal(&mut h, Role::Button, label);
                 }

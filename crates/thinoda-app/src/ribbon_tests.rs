@@ -223,11 +223,23 @@ fn pin_persists_and_keeps_the_ribbon_open_after_actions() {
 }
 
 #[test]
-fn compact_ribbon_defaults_off() {
-    assert!(!thinoda_platform::settings::Settings::default().compact_ribbon);
+fn compact_ribbon_defaults_on_and_ignores_the_legacy_key() {
+    assert!(thinoda_platform::settings::Settings::default().compact_ribbon);
+    let directory = tempfile::tempdir().unwrap();
+    let paths = thinoda_platform::paths::Paths::from_root(directory.path());
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(
+        paths.config_dir.join("settings.toml"),
+        "compact_ribbon = false\n",
+    )
+    .unwrap();
+    assert!(
+        thinoda_platform::settings::Settings::load(&paths)
+            .unwrap()
+            .compact_ribbon
+    );
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[test]
 fn compact_ribbon_settings_toggle_persists() {
     let mut app = ThinodaApp::headless();
@@ -243,19 +255,19 @@ fn compact_ribbon_settings_toggle_persists() {
     h.get_by_role_and_label(Role::Switch, t("Compact Ribbon"))
         .click();
     h.run_steps(3);
-    assert!(h.state().settings.compact_ribbon);
+    assert!(!h.state().settings.compact_ribbon);
     let directory = tempfile::tempdir().unwrap();
     let paths = thinoda_platform::paths::Paths::from_root(directory.path());
     h.state().settings.save(&paths).unwrap();
     assert!(
-        thinoda_platform::settings::Settings::load(&paths)
+        !thinoda_platform::settings::Settings::load(&paths)
             .unwrap()
             .compact_ribbon
     );
     h.get_by_role_and_label(Role::Switch, t("Compact Ribbon"))
         .click();
     h.run_steps(3);
-    assert!(!h.state().settings.compact_ribbon);
+    assert!(h.state().settings.compact_ribbon);
 }
 
 #[test]

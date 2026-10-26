@@ -266,6 +266,9 @@ pub struct Settings {
     pub ui_scale: f32,
     pub show_status_bar: bool,
     pub ribbon_collapsed: bool,
+    /// Compact ribbon sizing (default). Persisted under a new key so earlier
+    /// saved `compact_ribbon = false` values start compact once; Large is opt-in.
+    #[serde(rename = "ribbon_compact")]
     pub compact_ribbon: bool,
     pub quick_access: QuickAccessSettings,
     pub show_format_panel: bool,
@@ -317,7 +320,7 @@ impl Default for Settings {
             ui_scale: 1.0,
             show_status_bar: true,
             ribbon_collapsed: false,
-            compact_ribbon: false,
+            compact_ribbon: true,
             quick_access: QuickAccessSettings::default(),
             show_format_panel: true,
             sidebar_family: SidebarFamily::default(),
