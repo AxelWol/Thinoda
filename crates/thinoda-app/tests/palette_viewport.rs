@@ -96,7 +96,7 @@ fn palette_is_modal_bounded_and_keyboard_results_remain_reachable() {
             .map(str::to_owned);
         exec(&mut h, Cmd::Palette);
         assert!(
-            h.get_by_label(thinoda_ui::icons::MENU)
+            h.get_by_label(thinoda_app::i18n::t("Main Menu"))
                 .accesskit_node()
                 .is_disabled()
         );
@@ -130,7 +130,7 @@ fn palette_is_modal_bounded_and_keyboard_results_remain_reachable() {
             "direct commands cannot stack the palette"
         );
         assert!(h.state().dialogs.shortcuts);
-        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
         h.run_steps(4);
         assert!(
             !egui::Popup::is_any_open(&h.ctx),

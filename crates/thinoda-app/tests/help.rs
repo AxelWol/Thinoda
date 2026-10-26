@@ -160,7 +160,8 @@ fn help_menu_opens_quick_start_and_guide_without_network_or_map_changes() {
         .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
     h.run_steps(4);
     for entry in ["Quick Start", "User Guide"] {
-        h.get_by_role_and_label(Role::Button, "☰").click();
+        h.get_by_role_and_label(Role::Button, thinoda_app::i18n::t("Main Menu"))
+            .click();
         h.run_steps(3);
         h.get_by_role_and_label(Role::Button, "Help").click();
         h.run_steps(3);

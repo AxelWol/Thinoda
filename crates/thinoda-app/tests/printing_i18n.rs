@@ -25,7 +25,7 @@ fn german_print_dialog_is_translated_and_accessible_in_both_themes() {
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         h.run_steps(3);
         let before = h.state().doc().unwrap().doc.workbook().clone();
-        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
         h.run_steps(2);
         h.get_by_role_and_label(Role::Button, "Datei").click();
         h.run_steps(2);

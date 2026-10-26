@@ -1026,7 +1026,7 @@ mod tests {
             let before = h.state().doc().unwrap().doc.workbook().clone();
             let selected = h.state().doc().unwrap().view.selection.clone();
             let state = h.state().doc().unwrap().doc.state_id();
-            h.get_by_label(thinoda_ui::icons::MENU).click();
+            h.get_by_label(crate::i18n::t("Main Menu")).click();
             h.run_steps(2);
             h.get_by_role_and_label(Role::Button, "File").click();
             h.run_steps(2);

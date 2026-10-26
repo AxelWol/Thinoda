@@ -106,7 +106,7 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                     )],
                 ),
             ] {
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 menu_action(&h, category).scroll_to_me();
                 h.run_steps(5);
@@ -150,7 +150,7 @@ fn menus_and_context_hints_match_catalog_bindings_on_each_platform() {
                 ("Select", "Central Topic", Cmd::Canvas(Action::SelectRoot)),
                 ("Arrange", "Move Down", Cmd::Canvas(Action::MoveDown)),
             ] {
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 menu_action(&h, "Edit").click();
                 h.run_steps(3);
@@ -227,7 +227,7 @@ fn outline_menus_use_outline_redo_and_leave_map_only_shortcuts_unassigned() {
             );
         h.run_steps(4);
         let before = h.state().doc().unwrap().doc.workbook().clone();
-        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
         h.run_steps(3);
         menu_action(&h, "Edit").click();
         h.run_steps(3);
@@ -250,7 +250,7 @@ fn outline_menus_use_outline_redo_and_leave_map_only_shortcuts_unassigned() {
         menu_action(&h, "Paste");
         h.key_press(Key::Escape);
         h.run_steps(3);
-        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
         h.run_steps(3);
         menu_action(&h, "View").scroll_to_me();
         h.run_steps(5);

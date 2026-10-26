@@ -27,6 +27,10 @@ The user interface embeds egui's default fonts (crate `epaint_default_fonts`):
 | Noto Emoji | SIL Open Font License 1.1 |
 | emoji-icon-font | SIL Open Font License 1.1 |
 
+It also embeds a subset of Google Material Symbols Outlined (crate `thinoda-ui`,
+`assets/icons/ThinodaMaterialSymbols.ttf`; Apache License 2.0, see `assets/icons/LICENSE`)
+as its icon font.
+
 ## Notable licenses
 
 - **MPL-2.0** (`option-ext`): file-level copyleft. The unmodified source is

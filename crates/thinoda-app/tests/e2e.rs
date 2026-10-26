@@ -397,7 +397,7 @@ fn arrange_menu_aligns_floating_topics_and_persists_with_single_undo() {
     app.doc_mut().unwrap().view.selection = ids.clone();
     let before = app.doc().unwrap().doc.sheet().clone();
     let mut h = harness(app);
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Edit").click();
     h.run_steps(2);
@@ -1455,7 +1455,8 @@ fn new_from_template_menu_groups_every_template_by_its_category() {
     use thinoda_core::templates::{TEMPLATES, TemplateCategory};
     let mut h = harness(ThinodaApp::headless());
     for category in TemplateCategory::ALL {
-        h.get_by_role_and_label(Role::Button, "☰").click();
+        h.get_by_role_and_label(Role::Button, thinoda_app::i18n::t("Main Menu"))
+            .click();
         h.run_steps(2);
         h.get_by_role_and_label(Role::Button, "File").click();
         h.run_steps(2);

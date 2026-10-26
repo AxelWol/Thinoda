@@ -11,7 +11,7 @@ GPU-accelerated canvas, crash-safe autosave, broad import/export and an optional
 
 Runs on **Windows** (x64 and ARM64), **macOS** (11+, Apple silicon and Intel) and **Linux** (Ubuntu LTS).
 A static **web app** build runs the same code in the browser via WebAssembly and is
-published on [Thinoda on GitHub Pages](https://axelwol.github.io/Thinoda/) — see
+published on [Thinoda app for GitHub Pages](https://axelwol.github.io/Thinoda/) — see
 [Thinoda for the web](docs/WEB.md).
 
 ## Privacy
@@ -115,6 +115,11 @@ those system-owned controls. WinGet publishing remains paused.
 ## Features
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
+- Structural numbering (Style > Numbering) labels a parent's children 1, 2, 3 /
+  I, II, III / i, ii, iii / A, B, C / a, b, c from a chosen start value,
+  optionally tiered (II.1). Labels appear on the
+  map, in the Outliner, images, PDF, print and Pitch; titles, search and text
+  exports keep the plain title. XMind numbering is not imported or exported.
 - Map > Theme > Global Font and Style > Text > Font Family use installed system
   font faces, not just stored names. Per-topic Auto inherits the map font.
   Canvas layout, painting, inline editing and Map Shot share the selected face;
@@ -481,6 +486,8 @@ those system-owned controls. WinGet publishing remains paused.
 - Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders
 - AI assistant (optional): brainstorm subtopics, break down into to-dos, explain, summarize,
   generate a whole map — with any OpenAI-compatible server
+  Replies use the selected UI language (Auto follows the OS locale) and fall back to
+  English when the model cannot write it; *Translate* keeps the target language you ask for.
 
 ## AI setup (LM Studio)
 1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.

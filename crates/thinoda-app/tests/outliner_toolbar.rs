@@ -61,9 +61,9 @@ fn assert_outline_controls(h: &Harness<'_, ThinodaApp>) {
         assert!(
             h.output().shapes.iter().any(|shape| {
                 matches!(
-                    &shape.shape,
-                    egui::Shape::Path(_) | egui::Shape::LineSegment { .. }
-                ) && rect.contains_rect(shape.shape.visual_bounding_rect())
+                                &shape.shape,
+                                egui::Shape::Text(text) if text.galley.job.text.chars().all(|c| c >= '\u{f0000}')
+                            ) && rect.contains_rect(shape.shape.visual_bounding_rect())
                     && shape.clip_rect.contains_rect(rect)
             }),
             "{label}: missing unclipped command icon"

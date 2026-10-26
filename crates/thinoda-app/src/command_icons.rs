@@ -3,161 +3,168 @@ use crate::{
     app::{Cmd, FocusField},
 };
 use thinoda_canvas::{Action, FloatingArrangement};
-use thinoda_ui::ribbon::{Badge as B, CommandIcon, Glyph as G, IconTone as T};
+use thinoda_ui::{
+    icons as I,
+    ribbon::{CommandIcon, IconTone as T},
+};
 
 pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
-    let (glyph, badge, tone) = match command {
-        Cmd::New => (G::File, Some(B::Plus), T::File),
-        Cmd::NewFromTemplate(_) => (G::Template, None, T::File),
-        Cmd::Open | Cmd::OpenPath(_) => (G::Folder, None, T::File),
-        Cmd::ShowInFolder => (G::Folder, Some(B::Eye), T::File),
-        Cmd::Save => (G::Save, None, T::File),
-        Cmd::SaveAs => (G::Save, Some(B::Pencil), T::File),
-        Cmd::SaveAll => (G::Save, Some(B::Stack), T::File),
-        Cmd::SaveSheetAs => (G::Save, Some(B::Branch), T::File),
-        Cmd::Print => (G::Print, None, T::File),
-        Cmd::TaskPlanning => (G::Todo, Some(B::Pencil), T::Create),
-        Cmd::CreateZone => (G::Layout, Some(B::Plus), T::Create),
-        Cmd::EditZone => (G::Layout, Some(B::Pencil), T::Edit),
-        Cmd::Zones => (G::Layout, Some(B::Stack), T::View),
-        Cmd::Pitch => (G::Window, Some(B::Right), T::View),
-        Cmd::PitchPresenter => (G::Window, Some(B::Eye), T::View),
-        Cmd::EditPresentation => (G::Sheet, Some(B::Pencil), T::Edit),
-        Cmd::WorkCalendar => (G::Settings, Some(B::Check), T::View),
-        Cmd::Gantt => (G::Outline, Some(B::Right), T::View),
-        Cmd::Export(_) => (G::Export, None, T::File),
-        Cmd::Import => (G::File, Some(B::Down), T::File),
-        Cmd::MenuPaste => (G::Clipboard, None, T::Edit),
-        Cmd::PasteSheet => (G::Clipboard, Some(B::Branch), T::Edit),
-        Cmd::CopySheet => (G::Copy, Some(B::Branch), T::Edit),
-        Cmd::DuplicateSheet => (G::Copy, Some(B::Plus), T::Create),
-        Cmd::MaskedCopy => (G::Mask, None, T::File),
-        Cmd::CopyStyle => (G::Format, Some(B::Stack), T::Format),
-        Cmd::PasteStyle => (G::Clipboard, Some(B::Pencil), T::Format),
-        Cmd::ResetStyle => (G::Format, Some(B::Reset), T::Format),
-        Cmd::SaveQuickStyle => (G::Format, Some(B::Save), T::Format),
-        Cmd::NewSheet => (G::Sheet, Some(B::Plus), T::Create),
-        Cmd::NextSheet => (G::Sheet, Some(B::Right), T::View),
-        Cmd::PreviousSheet => (G::Sheet, Some(B::Left), T::View),
-        Cmd::RenameSheet => (G::Sheet, Some(B::Pencil), T::Edit),
-        Cmd::NewSheetFromTopic => (G::Sheet, Some(B::Branch), T::Create),
-        Cmd::DeleteSheet => (G::Sheet, Some(B::Minus), T::Danger),
-        Cmd::AiChat => (G::Window, Some(B::Spark), T::Ai),
+    let (symbol, badge, tone) = match command {
+        Cmd::New => (I::NEW_FILE, None, T::File),
+        Cmd::NewFromTemplate(_) => (I::TEMPLATE, None, T::File),
+        Cmd::Open | Cmd::OpenPath(_) => (I::OPEN, None, T::File),
+        Cmd::ShowInFolder => (I::SHOW_IN_FOLDER, None, T::File),
+        Cmd::Save => (I::SAVE, None, T::File),
+        Cmd::SaveAs => (I::SAVE_AS, None, T::File),
+        Cmd::SaveAll => (I::SAVE, Some(I::STACK), T::File),
+        Cmd::SaveSheetAs => (I::SAVE_AS, Some(I::SHEET), T::File),
+        Cmd::Print => (I::PRINT, None, T::File),
+        Cmd::TaskPlanning => (I::TASK_PLANNING, None, T::Create),
+        Cmd::CreateZone => (I::ZONES, Some(I::ADD), T::Create),
+        Cmd::EditZone => (I::ZONES, Some(I::EDIT), T::Edit),
+        Cmd::Zones => (I::ZONES, None, T::View),
+        Cmd::Pitch => (I::PITCH, None, T::View),
+        Cmd::PitchPresenter => (I::PRESENTER, None, T::View),
+        Cmd::EditPresentation => (I::EDIT_PRESENTATION, None, T::Edit),
+        Cmd::WorkCalendar => (I::CALENDAR, None, T::View),
+        Cmd::Gantt => (I::GANTT, None, T::View),
+        Cmd::Export(_) => (I::EXPORT, None, T::File),
+        Cmd::Import => (I::IMPORT, None, T::File),
+        Cmd::MenuPaste => (I::PASTE, None, T::Edit),
+        Cmd::PasteSheet => (I::PASTE, Some(I::SHEET), T::Edit),
+        Cmd::CopySheet => (I::COPY, Some(I::SHEET), T::Edit),
+        Cmd::DuplicateSheet => (I::DUPLICATE, Some(I::SHEET), T::Create),
+        Cmd::MaskedCopy => (I::MASK, None, T::File),
+        Cmd::CopyStyle => (I::COPY_STYLE, None, T::Format),
+        Cmd::PasteStyle => (I::PASTE, Some(I::TOPIC_STYLE), T::Format),
+        Cmd::ResetStyle => (I::RESET_STYLE, None, T::Format),
+        Cmd::SaveQuickStyle => (I::QUICK_STYLE, Some(I::ADD), T::Format),
+        Cmd::NewSheet => (I::SHEET, Some(I::ADD), T::Create),
+        Cmd::NextSheet => (I::SHEET, Some(I::ARROW_RIGHT), T::View),
+        Cmd::PreviousSheet => (I::SHEET, Some(I::ARROW_LEFT), T::View),
+        Cmd::RenameSheet => (I::SHEET, Some(I::EDIT), T::Edit),
+        Cmd::NewSheetFromTopic => (I::SHEET, Some(I::BRANCH), T::Create),
+        Cmd::DeleteSheet => (I::SHEET, Some(I::REMOVE), T::Danger),
+        Cmd::AiChat => (I::AI_CHAT, Some(I::AI), T::Ai),
         Cmd::Ai(action) => match action {
-            AiCommand::Brainstorm => (G::Child, Some(B::Spark), T::Ai),
-            AiCommand::Breakdown => (G::Todo, Some(B::Spark), T::Ai),
-            AiCommand::Explain => (G::Notes, Some(B::Spark), T::Ai),
-            AiCommand::Summarize => (G::Summary, Some(B::Spark), T::Ai),
-            AiCommand::GenerateMap => (G::Topic, Some(B::Spark), T::Ai),
-            AiCommand::Rewrite => (G::Topic, Some(B::Pencil), T::Ai),
-            AiCommand::Translate => (G::Sheet, Some(B::Spark), T::Ai),
-            AiCommand::Grow => (G::Child, Some(B::Plus), T::Ai),
-            AiCommand::Reorganize => (G::Outline, Some(B::Spark), T::Ai),
-            AiCommand::Refine => (G::Summary, Some(B::Pencil), T::Ai),
+            AiCommand::Brainstorm => (I::BRAINSTORM, None, T::Ai),
+            AiCommand::Breakdown => (I::TODO, Some(I::AI), T::Ai),
+            AiCommand::Explain => (I::EXPLAIN, None, T::Ai),
+            AiCommand::Summarize => (I::SUMMARIZE, None, T::Ai),
+            AiCommand::GenerateMap => (I::MAP, Some(I::AI), T::Ai),
+            AiCommand::Rewrite => (I::EDIT, Some(I::AI), T::Ai),
+            AiCommand::Translate => (I::TRANSLATE, None, T::Ai),
+            AiCommand::Grow => (I::SUBTOPIC, Some(I::AI), T::Ai),
+            AiCommand::Reorganize => (I::SORT, Some(I::AI), T::Ai),
+            AiCommand::Refine => (I::AI, None, T::Ai),
         },
-        Cmd::Find => (G::Search, None, T::Edit),
-        Cmd::FindReplace => (G::Search, Some(B::Reset), T::Edit),
-        Cmd::Palette => (G::Keyboard, Some(B::Spark), T::Edit),
-        Cmd::Settings => (G::Settings, None, T::View),
-        Cmd::ToggleOutliner => (G::Outline, None, T::View),
-        Cmd::ToggleStatusBar => (G::StatusBar, None, T::View),
-        Cmd::ToggleZen => (G::Fit, Some(B::Eye), T::View),
-        Cmd::ToggleFormatPanel => (G::Layout, Some(B::Pencil), T::Format),
-        Cmd::ToggleSymbolsPanel => (G::Symbols, None, T::Format),
-        Cmd::TopicStyle => (G::Format, None, T::Format),
-        Cmd::SetTheme(_) => (G::Format, Some(B::Eye), T::Format),
-        Cmd::EditCustomTheme => (G::Format, Some(B::Pencil), T::Format),
-        Cmd::ApplyCustomTheme(_) => (G::Format, Some(B::Check), T::Format),
-        Cmd::ApplyQuickStyle(_) => (G::Format, Some(B::Down), T::Format),
-        Cmd::MapShot => (G::Camera, None, T::File),
-        Cmd::MergeFiles => (G::Merge, None, T::File),
-        Cmd::OpenLink => (G::Link, Some(B::Right), T::Edit),
-        Cmd::Home => (G::Home, None, T::View),
-        Cmd::CloseTab(_) => (G::Close, None, T::Danger),
-        Cmd::CloseWindow => (G::Window, Some(B::Minus), T::Danger),
-        Cmd::MoveToNewWindow => (G::Window, None, T::View),
-        Cmd::NextDoc => (G::File, Some(B::Right), T::View),
-        Cmd::Quit => (G::Power, None, T::Danger),
-        Cmd::EditField(FocusField::Notes) => (G::Notes, None, T::Edit),
-        Cmd::EditField(FocusField::Hyperlink) => (G::Link, None, T::Edit),
-        Cmd::Labels => (G::Tag, None, T::Edit),
+        Cmd::Find => (I::SEARCH, None, T::Edit),
+        Cmd::FindReplace => (I::FIND_REPLACE, None, T::Edit),
+        Cmd::Palette => (I::KEYBOARD, Some(I::SEARCH), T::Edit),
+        Cmd::Settings => (I::SETTINGS, None, T::View),
+        Cmd::ToggleOutliner => (I::OUTLINER, None, T::View),
+        Cmd::ToggleStatusBar => (I::STATUS_BAR, None, T::View),
+        Cmd::ToggleZen => (I::ZEN, None, T::View),
+        Cmd::ToggleFormatPanel => (I::FORMAT, None, T::Format),
+        Cmd::ToggleSymbolsPanel => (I::MARKER, None, T::Format),
+        Cmd::TopicStyle => (I::TOPIC_STYLE, None, T::Format),
+        Cmd::SetTheme(_) => (I::THEME, None, T::Format),
+        Cmd::EditCustomTheme => (I::THEME, Some(I::EDIT), T::Format),
+        Cmd::ApplyCustomTheme(_) => (I::THEME, Some(I::CHECK), T::Format),
+        Cmd::ApplyQuickStyle(_) => (I::QUICK_STYLE, None, T::Format),
+        Cmd::MapShot => (I::CAMERA, None, T::File),
+        Cmd::MergeFiles => (I::MERGE, None, T::File),
+        Cmd::OpenLink => (I::OPEN_LINK, None, T::Edit),
+        Cmd::Home => (I::HOME, None, T::View),
+        Cmd::CloseTab(_) => (I::CLOSE, None, T::Danger),
+        Cmd::CloseWindow => (I::WINDOW, Some(I::CLOSE), T::Danger),
+        Cmd::MoveToNewWindow => (I::WINDOW, None, T::View),
+        Cmd::NextDoc => (I::NEW_FILE, Some(I::ARROW_RIGHT), T::View),
+        Cmd::Quit => (I::QUIT, None, T::Danger),
+        Cmd::EditField(FocusField::Notes) => (I::NOTE, None, T::Edit),
+        Cmd::EditField(FocusField::Hyperlink) => (I::LINK, None, T::Edit),
+        Cmd::Labels => (I::LABEL, None, T::Edit),
         Cmd::Canvas(action) => match action {
-            Action::Undo => (G::Undo, None, T::Edit),
-            Action::Redo => (G::Redo, None, T::Edit),
-            Action::Copy => (G::Copy, None, T::Edit),
-            Action::Duplicate => (G::Copy, Some(B::Plus), T::Create),
-            Action::Cut => (G::Cut, None, T::Edit),
-            Action::Paste(_) => (G::Clipboard, None, T::Edit),
-            Action::InsertSibling => (G::Topic, Some(B::Plus), T::Create),
-            Action::InsertSiblingBefore => (G::Topic, Some(B::Before), T::Create),
-            Action::InsertParent => (G::Topic, Some(B::Parent), T::Create),
-            Action::InsertFloating(_) => (G::Topic, Some(B::Floating), T::Create),
-            Action::InsertChild => (G::Child, None, T::Create),
-            Action::StartEdit => (G::Edit, None, T::Edit),
-            Action::MoveUp => (G::Up, None, T::Edit),
-            Action::MoveDown => (G::Down, None, T::Edit),
-            Action::Indent => (G::Indent, None, T::Edit),
-            Action::Outdent => (G::Outdent, None, T::Edit),
-            Action::Delete => (G::Delete, None, T::Danger),
-            Action::DeleteKeepChildren => (G::Delete, Some(B::Branch), T::Danger),
-            Action::StartRelationship => (G::Relationship, None, T::Create),
-            Action::AddBoundary => (G::Boundary, None, T::Create),
-            Action::AddSummary => (G::Summary, None, T::Create),
-            Action::ToggleTodo => (G::Todo, None, T::Create),
-            Action::ToggleCollapse => (G::Topic, Some(B::Collapse), T::View),
-            Action::ExpandAll => (G::Layout, Some(B::Expand), T::View),
-            Action::CollapseAll => (G::Layout, Some(B::Collapse), T::View),
-            Action::ToggleCollapseAll => (G::Layout, Some(B::Invert), T::View),
-            Action::SelectAll => (G::Layout, Some(B::SelectAll), T::Edit),
-            Action::SelectRoot => (G::Topic, Some(B::Root), T::Edit),
-            Action::SelectNone => (G::Layout, Some(B::SelectNone), T::Edit),
-            Action::SelectSiblings => (G::Topic, Some(B::SelectAll), T::Edit),
-            Action::SelectDescendants => (G::Child, Some(B::SelectAll), T::Edit),
-            Action::InvertSelection => (G::Layout, Some(B::Invert), T::Edit),
-            Action::SortAscending => (G::Outline, Some(B::Up), T::Edit),
-            Action::SortDescending => (G::Outline, Some(B::Down), T::Edit),
+            Action::Undo => (I::UNDO, None, T::Edit),
+            Action::Redo => (I::REDO, None, T::Edit),
+            Action::Copy => (I::COPY, None, T::Edit),
+            Action::Duplicate => (I::DUPLICATE, None, T::Create),
+            Action::Cut => (I::CUT, None, T::Edit),
+            Action::Paste(_) => (I::PASTE, None, T::Edit),
+            Action::InsertSibling => (I::TOPIC, None, T::Create),
+            Action::InsertSiblingBefore => (I::TOPIC_BEFORE, None, T::Create),
+            Action::InsertParent => (I::PARENT_TOPIC, None, T::Create),
+            Action::InsertFloating(_) => (I::FLOATING_TOPIC, None, T::Create),
+            Action::InsertChild => (I::SUBTOPIC, None, T::Create),
+            Action::StartEdit => (I::EDIT, None, T::Edit),
+            Action::MoveUp => (I::MOVE_UP, None, T::Edit),
+            Action::MoveDown => (I::MOVE_DOWN, None, T::Edit),
+            Action::Indent => (I::INDENT, None, T::Edit),
+            Action::Outdent => (I::OUTDENT, None, T::Edit),
+            Action::Delete => (I::TRASH, None, T::Danger),
+            Action::DeleteKeepChildren => (I::TRASH, Some(I::BRANCH), T::Danger),
+            Action::StartRelationship => (I::RELATIONSHIP, None, T::Create),
+            Action::AddBoundary => (I::BOUNDARY, None, T::Create),
+            Action::AddSummary => (I::SUMMARY, None, T::Create),
+            Action::ToggleTodo => (I::TODO, None, T::Create),
+            Action::ToggleCollapse => (I::COLLAPSE, None, T::View),
+            Action::ExpandAll => (I::EXPAND_ALL, None, T::View),
+            Action::CollapseAll => (I::COLLAPSE_ALL, None, T::View),
+            Action::ToggleCollapseAll => (I::EXPAND, Some(I::INVERT), T::View),
+            Action::SelectAll => (I::SELECT_ALL, None, T::Edit),
+            Action::SelectRoot => (I::ROOT, None, T::Edit),
+            Action::SelectNone => (I::SELECT_NONE, None, T::Edit),
+            Action::SelectSiblings => (I::TOPIC, Some(I::SELECT_ALL), T::Edit),
+            Action::SelectDescendants => (I::SUBTOPIC, Some(I::SELECT_ALL), T::Edit),
+            Action::InvertSelection => (I::INVERT, None, T::Edit),
+            Action::SortAscending => (I::SORT, Some(I::ARROW_UP), T::Edit),
+            Action::SortDescending => (I::SORT, Some(I::ARROW_DOWN), T::Edit),
             Action::AlignFloating(arrangement) => (
-                G::Layout,
-                Some(match arrangement {
-                    FloatingArrangement::Left => B::AlignLeft,
-                    FloatingArrangement::HorizontalCenter => B::AlignCenter,
-                    FloatingArrangement::Right => B::AlignRight,
-                    FloatingArrangement::Top => B::AlignTop,
-                    FloatingArrangement::VerticalCenter => B::AlignMiddle,
-                    FloatingArrangement::Bottom => B::AlignBottom,
-                    FloatingArrangement::DistributeHorizontal => B::DistributeHorizontal,
-                    FloatingArrangement::DistributeVertical => B::DistributeVertical,
-                }),
+                match arrangement {
+                    FloatingArrangement::Left => I::ALIGN_LEFT,
+                    FloatingArrangement::HorizontalCenter => I::ALIGN_CENTER,
+                    FloatingArrangement::Right => I::ALIGN_RIGHT,
+                    FloatingArrangement::Top => I::ALIGN_TOP,
+                    FloatingArrangement::VerticalCenter => I::ALIGN_MIDDLE,
+                    FloatingArrangement::Bottom => I::ALIGN_BOTTOM,
+                    FloatingArrangement::DistributeHorizontal => I::DISTRIBUTE_HORIZONTAL,
+                    FloatingArrangement::DistributeVertical => I::DISTRIBUTE_VERTICAL,
+                },
+                None,
                 T::Edit,
             ),
-            Action::ToggleMarker(_) => (G::Symbols, Some(B::Plus), T::Format),
+            Action::ToggleMarker(_) => (I::MARKER, Some(I::ADD), T::Format),
             Action::ToggleMarkerColor(..) | Action::SetMarkerColor(..) => {
-                (G::Symbols, Some(B::Pencil), T::Format)
+                (I::MARKER, Some(I::FORMAT), T::Format)
             }
-            Action::RemoveMarker(..) => (G::Symbols, Some(B::Minus), T::Danger),
+            Action::RemoveMarker(..) => (I::MARKER, Some(I::REMOVE), T::Danger),
             Action::Navigate(direction) => (
-                G::Topic,
-                Some(match direction {
-                    thinoda_core::navigation::Direction::Left => B::Left,
-                    thinoda_core::navigation::Direction::Right => B::Right,
-                    thinoda_core::navigation::Direction::Up => B::Up,
-                    thinoda_core::navigation::Direction::Down => B::Down,
-                }),
+                match direction {
+                    thinoda_core::navigation::Direction::Left => I::ARROW_LEFT,
+                    thinoda_core::navigation::Direction::Right => I::ARROW_RIGHT,
+                    thinoda_core::navigation::Direction::Up => I::ARROW_UP,
+                    thinoda_core::navigation::Direction::Down => I::ARROW_DOWN,
+                },
+                None,
                 T::View,
             ),
-            Action::ZoomIn => (G::Zoom, None, T::View),
-            Action::ZoomOut => (G::ZoomOut, None, T::View),
-            Action::ZoomReset => (G::ZoomReset, None, T::View),
-            Action::Fit => (G::Fit, None, T::View),
+            Action::ZoomIn => (I::ZOOM_IN, None, T::View),
+            Action::ZoomOut => (I::ZOOM_OUT, None, T::View),
+            Action::ZoomReset => (I::ZOOM_RESET, None, T::View),
+            Action::Fit => (I::FIT, None, T::View),
         },
-        Cmd::QuickStart => (G::Play, None, T::Help),
-        Cmd::UserGuide => (G::Book, None, T::Help),
-        Cmd::About => (G::Info, None, T::Help),
-        Cmd::Shortcuts => (G::Keyboard, None, T::Help),
-        Cmd::Feedback => (G::Message, None, T::Help),
-        Cmd::ProjectNews => (G::News, None, T::Help),
+        Cmd::QuickStart => (I::QUICK_START, None, T::Help),
+        Cmd::UserGuide => (I::USER_GUIDE, None, T::Help),
+        Cmd::About => (I::INFO, None, T::Help),
+        Cmd::Shortcuts => (I::KEYBOARD, None, T::Help),
+        Cmd::Feedback => (I::FEEDBACK, None, T::Help),
+        Cmd::ProjectNews => (I::NEWS, None, T::Help),
     };
-    CommandIcon { glyph, badge, tone }
+    CommandIcon {
+        symbol,
+        badge,
+        tone,
+    }
 }
 
 #[cfg(test)]
@@ -168,7 +175,7 @@ mod tests {
     #[test]
     fn sibling_menu_actions_have_distinct_semantic_icons() {
         fn check(entries: &[MenuEntry]) {
-            let mut commands = Vec::new();
+            let mut commands: Vec<(&String, CommandIcon)> = Vec::new();
             for entry in entries {
                 match entry {
                     MenuEntry::Command { label, command } => {
@@ -178,30 +185,15 @@ mod tests {
                             Cmd::Export(_) | Cmd::NewFromTemplate(_) | Cmd::OpenPath(_)
                         ) {
                             let icon = command_glyph(command);
-                            let mut h = egui_kittest::Harness::new_ui(move |ui| {
-                                icon.paint(
-                                    ui,
-                                    egui::Rect::from_min_size(
-                                        egui::pos2(8., 8.),
-                                        egui::vec2(32., 32.),
-                                    ),
-                                    egui::Color32::WHITE,
-                                );
-                            });
-                            h.run_steps(2);
-                            let painted = format!("{:?}", h.output().shapes);
                             assert_ne!(icon.tone, T::Neutral, "{label}");
-                            for (previous, previous_icon, previous_painted) in &commands {
+                            for (previous, previous_icon) in &commands {
                                 assert_ne!(
-                                    &icon, previous_icon,
+                                    (icon.symbol, icon.badge),
+                                    (previous_icon.symbol, previous_icon.badge),
                                     "{previous} and {label} share an icon"
                                 );
-                                assert_ne!(
-                                    &painted, previous_painted,
-                                    "{previous} and {label} paint the same shape"
-                                );
                             }
-                            commands.push((label, icon, painted));
+                            commands.push((label, icon));
                         }
                     }
                     MenuEntry::Submenu { entries, .. } => check(entries),
@@ -210,5 +202,30 @@ mod tests {
             }
         }
         check(&ThinodaApp::headless().main_menu_entries());
+    }
+
+    #[test]
+    fn surfaces_use_the_shared_icon_for_the_same_action() {
+        use thinoda_canvas::Action;
+        let pairs = [
+            (Cmd::Canvas(Action::Fit), I::FIT),
+            (Cmd::ToggleOutliner, I::OUTLINER),
+            (Cmd::Canvas(Action::InsertSibling), I::TOPIC),
+            (Cmd::Canvas(Action::InsertChild), I::SUBTOPIC),
+            (Cmd::Canvas(Action::StartRelationship), I::RELATIONSHIP),
+            (Cmd::Canvas(Action::AddBoundary), I::BOUNDARY),
+            (Cmd::Canvas(Action::AddSummary), I::SUMMARY),
+            (Cmd::Save, I::SAVE),
+            (Cmd::Canvas(Action::Undo), I::UNDO),
+            (Cmd::Canvas(Action::Redo), I::REDO),
+            (Cmd::Print, I::PRINT),
+            (Cmd::Find, I::SEARCH),
+            (Cmd::ToggleZen, I::ZEN),
+        ];
+        for (command, symbol) in pairs {
+            assert_eq!(command_glyph(&command).symbol, symbol, "{command:?}");
+        }
+        assert_ne!(I::FIT, I::MAP);
+        assert_ne!(I::FIT, I::OUTLINER);
     }
 }

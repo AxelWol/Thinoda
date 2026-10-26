@@ -1,108 +1,15 @@
-//! Original, font-independent line icons and adaptive ribbon command controls.
+//! Adaptive ribbon command controls using the shared Material Symbols vocabulary.
 
 use egui::{Align2, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
-use crate::{Palette, widgets};
+use crate::{Palette, icons, widgets};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Glyph {
-    File,
-    Folder,
-    Save,
-    Clipboard,
-    Copy,
-    Cut,
-    Undo,
-    Redo,
-    Topic,
-    Child,
-    Edit,
-    Up,
-    Down,
-    Indent,
-    Outdent,
-    Delete,
-    Link,
-    Format,
-    Layout,
-    Search,
-    Print,
-    Export,
-    Settings,
-    Help,
-    Spark,
-    Sheet,
-    Zoom,
-    ZoomOut,
-    ZoomReset,
-    Fit,
-    Boundary,
-    Summary,
-    Todo,
-    Tag,
-    Notes,
-    Outline,
-    StatusBar,
-    Symbols,
-    Keyboard,
-    Book,
-    Info,
-    Message,
-    News,
-    Merge,
-    Mask,
-    Relationship,
-    Template,
-    History,
-    Play,
-    Chevron,
-    Camera,
-    Close,
-    Power,
-    Home,
-    Pin,
-    Window,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Badge {
-    Plus,
-    Minus,
-    Pencil,
-    Stack,
-    Left,
-    Right,
-    Up,
-    Down,
-    Reset,
-    Check,
-    Root,
-    Branch,
-    Before,
-    Parent,
-    Floating,
-    SelectAll,
-    SelectNone,
-    Invert,
-    AlignLeft,
-    AlignCenter,
-    AlignRight,
-    AlignTop,
-    AlignMiddle,
-    AlignBottom,
-    DistributeHorizontal,
-    DistributeVertical,
-    Expand,
-    Collapse,
-    Eye,
-    Spark,
-    Save,
-}
-
+/// A command icon: one [`icons`] glyph, an optional small corner badge (also an [`icons`]
+/// glyph) for variants Material Symbols has no dedicated icon for, and a semantic tone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CommandIcon {
-    pub glyph: Glyph,
-    pub badge: Option<Badge>,
+    pub symbol: &'static str,
+    pub badge: Option<&'static str>,
     pub tone: IconTone,
 }
 
@@ -141,10 +48,10 @@ impl IconTone {
     }
 }
 
-impl From<Glyph> for CommandIcon {
-    fn from(glyph: Glyph) -> Self {
+impl From<&'static str> for CommandIcon {
+    fn from(symbol: &'static str) -> Self {
         Self {
-            glyph,
+            symbol,
             badge: None,
             tone: IconTone::Neutral,
         }
@@ -152,9 +59,9 @@ impl From<Glyph> for CommandIcon {
 }
 
 impl CommandIcon {
-    pub const fn marked(glyph: Glyph, badge: Badge) -> Self {
+    pub const fn marked(symbol: &'static str, badge: &'static str) -> Self {
         Self {
-            glyph,
+            symbol,
             badge: Some(badge),
             tone: IconTone::Neutral,
         }
@@ -165,187 +72,63 @@ impl CommandIcon {
         self
     }
 
+    /// Paints the icon to fill `rect` (a square of one of the [`icons`] size tiers).
     pub fn paint(self, ui: &Ui, rect: Rect, color: egui::Color32) {
-        let Some(badge) = self.badge else {
-            self.glyph.paint(ui, rect, color);
-            return;
-        };
-        self.glyph
-            .paint(ui, Rect::from_min_size(rect.min, rect.size() * 0.72), color);
-        let badge_rect = Rect::from_min_max(rect.min + rect.size() * 0.52, rect.max);
-        let painter = ui.painter();
-        painter.rect_filled(badge_rect.expand(0.5), 1, Palette::of_ui(ui).surface);
-        let point = |x: f32, y: f32| badge_rect.min + badge_rect.size() * vec2(x, y) / 10.0;
-        let stroke = Stroke::new((rect.width() / 20.0).clamp(1.0, 1.6), color);
-        let line = |points: &[(f32, f32)]| {
-            painter.add(egui::Shape::line(
-                points.iter().map(|&(x, y)| point(x, y)).collect(),
-                stroke,
-            ));
-        };
-        match badge {
-            Badge::Plus | Badge::Minus => {
-                line(&[(1., 5.), (9., 5.)]);
-                if badge == Badge::Plus {
-                    line(&[(5., 1.), (5., 9.)]);
-                }
-            }
-            Badge::Pencil => line(&[(1., 9.), (2., 6.), (7., 1.), (9., 3.), (4., 8.), (1., 9.)]),
-            Badge::Stack => {
-                line(&[(1., 2.), (7., 2.), (7., 8.), (1., 8.), (1., 2.)]);
-                line(&[(4., 0.), (10., 0.), (10., 6.)]);
-            }
-            Badge::Left | Badge::Right | Badge::Up | Badge::Down => {
-                let transform = |x, y| match badge {
-                    Badge::Left => (10. - x, y),
-                    Badge::Up => (y, 10. - x),
-                    Badge::Down => (y, x),
-                    _ => (x, y),
-                };
-                let points: Vec<_> = [(1., 5.), (9., 5.), (5., 1.), (9., 5.), (5., 9.)]
-                    .into_iter()
-                    .map(|(x, y)| transform(x, y))
-                    .collect();
-                line(&points);
-            }
-            Badge::Reset => line(&[
-                (2., 4.),
-                (4., 1.),
-                (8., 2.),
-                (9., 6.),
-                (6., 9.),
-                (2., 8.),
-                (2., 4.),
-                (0., 5.),
-                (2., 4.),
-                (4., 5.),
-            ]),
-            Badge::Check => line(&[(1., 5.), (4., 8.), (9., 1.)]),
-            Badge::Root => {
-                painter.circle_stroke(point(5., 3.), badge_rect.width() * 0.22, stroke);
-                line(&[(5., 5.), (5., 9.), (1., 9.), (9., 9.)]);
-            }
-            Badge::Branch => line(&[(1., 1.), (1., 8.), (8., 8.), (1., 8.), (1., 4.), (8., 4.)]),
-            Badge::Before => line(&[
-                (1., 1.),
-                (9., 1.),
-                (5., 2.),
-                (5., 9.),
-                (2., 6.),
-                (5., 9.),
-                (8., 6.),
-            ]),
-            Badge::Parent => line(&[
-                (1., 9.),
-                (1., 6.),
-                (9., 6.),
-                (9., 9.),
-                (5., 6.),
-                (5., 1.),
-                (2., 4.),
-                (5., 1.),
-                (8., 4.),
-            ]),
-            Badge::Floating => {
-                painter.circle_stroke(point(5., 5.), badge_rect.width() * 0.25, stroke);
-                for (a, b) in [
-                    ((0., 0.), (2., 2.)),
-                    ((8., 8.), (10., 10.)),
-                    ((0., 10.), (2., 8.)),
-                    ((8., 2.), (10., 0.)),
-                ] {
-                    line(&[a, b]);
-                }
-            }
-            Badge::SelectAll | Badge::SelectNone | Badge::Invert => {
-                line(&[(1., 1.), (9., 1.), (9., 9.), (1., 9.), (1., 1.)]);
-                match badge {
-                    Badge::SelectAll => line(&[(2., 5.), (4., 7.), (8., 3.)]),
-                    Badge::SelectNone => line(&[(2., 8.), (8., 2.)]),
-                    _ => {
-                        painter.rect_filled(
-                            Rect::from_min_max(point(1., 1.), point(5., 9.)),
-                            0,
-                            color,
-                        );
-                    }
-                }
-            }
-            Badge::AlignLeft | Badge::AlignCenter | Badge::AlignRight => {
-                let x = match badge {
-                    Badge::AlignLeft => 1.,
-                    Badge::AlignCenter => 5.,
-                    _ => 9.,
-                };
-                line(&[(x, 0.), (x, 10.)]);
-                line(&[(2., 3.), (8., 3.)]);
-                let start = match badge {
-                    Badge::AlignLeft => 2.,
-                    Badge::AlignCenter => 4.,
-                    _ => 6.,
-                };
-                line(&[(start, 7.), (start + 2., 7.)]);
-            }
-            Badge::AlignTop | Badge::AlignMiddle | Badge::AlignBottom => {
-                let y = match badge {
-                    Badge::AlignTop => 1.,
-                    Badge::AlignMiddle => 5.,
-                    _ => 9.,
-                };
-                line(&[(0., y), (10., y)]);
-                line(&[(3., 2.), (3., 8.)]);
-                let start = match badge {
-                    Badge::AlignTop => 2.,
-                    Badge::AlignMiddle => 4.,
-                    _ => 6.,
-                };
-                line(&[(7., start), (7., start + 2.)]);
-            }
-            Badge::DistributeHorizontal => {
-                for x in [1., 5., 9.] {
-                    line(&[(x, 1.), (x, 9.)]);
-                }
-                line(&[(1., 5.), (9., 5.)]);
-            }
-            Badge::DistributeVertical => {
-                for y in [1., 5., 9.] {
-                    line(&[(1., y), (9., y)]);
-                }
-                line(&[(5., 1.), (5., 9.)]);
-            }
-            Badge::Expand | Badge::Collapse => {
-                let offset = if badge == Badge::Expand { 0. } else { 4. };
-                line(&[(1., 3. + offset), (5., 7. - offset), (9., 3. + offset)]);
-            }
-            Badge::Eye => {
-                line(&[
-                    (0., 5.),
-                    (3., 2.),
-                    (7., 2.),
-                    (10., 5.),
-                    (7., 8.),
-                    (3., 8.),
-                    (0., 5.),
-                ]);
-                painter.circle_filled(point(5., 5.), badge_rect.width() * 0.12, color);
-            }
-            Badge::Spark => line(&[
-                (5., 0.),
-                (6.5, 3.5),
-                (10., 5.),
-                (6.5, 6.5),
-                (5., 10.),
-                (3.5, 6.5),
-                (0., 5.),
-                (3.5, 3.5),
-                (5., 0.),
-            ]),
-            Badge::Save => {
-                line(&[(1., 1.), (8., 1.), (9., 2.), (9., 9.), (1., 9.), (1., 1.)]);
-                line(&[(3., 1.), (3., 4.), (7., 4.), (7., 1.)]);
-            }
+        paint_symbol(ui, self.symbol, rect, color);
+        if let Some(badge) = self.badge {
+            let badge_rect =
+                Rect::from_min_max(rect.min + rect.size() * 0.5, rect.max + vec2(1.0, 1.0));
+            ui.painter().circle_filled(
+                badge_rect.center(),
+                badge_rect.width() * 0.55,
+                Palette::of_ui(ui).surface,
+            );
+            paint_symbol(ui, badge, badge_rect, color);
         }
     }
+}
+
+/// Paints one icon glyph centered in `rect`, sized to the rect height.
+pub fn paint_symbol(ui: &Ui, symbol: &str, rect: Rect, color: egui::Color32) {
+    if !crate::fonts::ensure_icon_symbol(ui.ctx(), symbol) {
+        return;
+    }
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        symbol,
+        FontId::proportional(rect.height()),
+        color,
+    );
+}
+
+/// A menu row with a leading [`icons::SIZE_SMALL`] command icon slot (empty for
+/// `None`, so labels stay aligned) and an optional shortcut. The accessible name is
+/// the label followed by the shortcut, as for plain egui menu buttons.
+pub fn menu_item(
+    ui: &mut Ui,
+    icon: Option<CommandIcon>,
+    label: &str,
+    shortcut: Option<String>,
+) -> Response {
+    let slot = egui::IdSalt::new("thinoda-menu-icon");
+    let mut button = egui::Button::new((
+        egui::Atom::custom(slot, Vec2::splat(icons::SIZE_SMALL)),
+        label,
+    ));
+    if let Some(shortcut) = shortcut {
+        button = button.shortcut_text(shortcut);
+    }
+    let response = button.atom_ui(ui);
+    if let (Some(icon), Some(rect)) = (icon, response.rect(slot)) {
+        let color = if ui.is_enabled() {
+            icon.tone.color(ui.visuals().dark_mode, true)
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        icon.paint(ui, rect, color);
+    }
+    response.response
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -382,462 +165,6 @@ impl Detail {
             Self::CompactLarge => 24.0,
             Self::CompactLabeled => 20.0,
             Self::CompactIcon => 16.0,
-        }
-    }
-}
-
-impl Glyph {
-    pub fn paint(self, ui: &Ui, rect: Rect, color: egui::Color32) {
-        let painter = ui.painter();
-        let point = |x: f32, y: f32| {
-            pos2(
-                rect.left() + rect.width() * x / 24.0,
-                rect.top() + rect.height() * y / 24.0,
-            )
-        };
-        let stroke = Stroke::new((rect.width() / 16.0).clamp(1.2, 1.8), color);
-        let line = |points: &[(f32, f32)]| {
-            painter.add(egui::Shape::line(
-                points.iter().map(|&(x, y)| point(x, y)).collect(),
-                stroke,
-            ));
-        };
-        let box_at = |x: f32, y: f32, w: f32, h: f32| {
-            painter.rect_stroke(
-                Rect::from_min_max(point(x, y), point(x + w, y + h)),
-                2,
-                stroke,
-                StrokeKind::Inside,
-            );
-        };
-        match self {
-            Self::File | Self::Sheet => {
-                line(&[
-                    (5., 2.),
-                    (15., 2.),
-                    (20., 7.),
-                    (20., 22.),
-                    (5., 22.),
-                    (5., 2.),
-                ]);
-                line(&[(15., 2.), (15., 8.), (20., 8.)]);
-                line(&[(8., 13.), (16., 13.)]);
-                line(&[(8., 17.), (14., 17.)]);
-            }
-            Self::Window => {
-                box_at(2., 3., 20., 18.);
-                line(&[(2., 8.), (22., 8.)]);
-                line(&[(6., 5.5), (6.1, 5.5)]);
-                line(&[(9., 5.5), (9.1, 5.5)]);
-            }
-            Self::Folder => {
-                line(&[
-                    (3., 20.),
-                    (3., 5.),
-                    (10., 5.),
-                    (12., 8.),
-                    (21., 8.),
-                    (21., 20.),
-                    (3., 20.),
-                ]);
-                line(&[(3., 11.), (21., 11.)]);
-            }
-            Self::Save => {
-                box_at(3., 3., 18., 18.);
-                box_at(7., 3., 9., 6.);
-                box_at(7., 14., 10., 7.);
-            }
-            Self::Copy => {
-                box_at(3., 3., 13., 15.);
-                box_at(8., 7., 13., 15.);
-            }
-            Self::Clipboard => {
-                box_at(5., 4., 15., 18.);
-                box_at(8., 2., 9., 5.);
-                line(&[(9., 12.), (16., 12.)]);
-                line(&[(9., 16.), (15., 16.)]);
-            }
-            Self::Cut => {
-                painter.circle_stroke(point(6., 18.), rect.width() * 0.13, stroke);
-                painter.circle_stroke(point(18., 18.), rect.width() * 0.13, stroke);
-                line(&[(8., 15.), (19., 2.)]);
-                line(&[(16., 15.), (5., 2.)]);
-            }
-            Self::Undo | Self::Redo => {
-                let mirror = |x| if self == Self::Redo { 24. - x } else { x };
-                let points: Vec<_> = [
-                    (8., 4.),
-                    (3., 9.),
-                    (8., 14.),
-                    (3., 9.),
-                    (14., 9.),
-                    (20., 12.),
-                    (20., 18.),
-                ]
-                .into_iter()
-                .map(|(x, y)| (mirror(x), y))
-                .collect();
-                line(&points);
-            }
-            Self::Layout => {
-                for (x, y) in [(2., 2.), (14., 2.), (2., 14.), (14., 14.)] {
-                    box_at(x, y, 8., 8.);
-                }
-            }
-            Self::Topic | Self::Child => {
-                box_at(2., 8., 8., 8.);
-                box_at(16., 2., 7., 6.);
-                box_at(16., 16., 7., 6.);
-                line(&[(10., 12.), (13., 12.), (13., 5.), (16., 5.)]);
-                line(&[(13., 12.), (13., 19.), (16., 19.)]);
-                if self == Self::Child {
-                    line(&[(17., 11.), (23., 11.)]);
-                    line(&[(20., 8.), (20., 14.)]);
-                }
-            }
-            Self::Edit => {
-                line(&[
-                    (4., 20.),
-                    (6., 14.),
-                    (17., 3.),
-                    (21., 7.),
-                    (10., 18.),
-                    (4., 20.),
-                ]);
-                line(&[(14., 6.), (18., 10.)]);
-            }
-            Self::Up | Self::Down => {
-                let y = |y| if self == Self::Down { 24. - y } else { y };
-                line(&[(5., y(10.)), (12., y(3.)), (19., y(10.))]);
-                line(&[(12., y(3.)), (12., y(21.))]);
-            }
-            Self::Indent | Self::Outdent => {
-                line(&[(3., 4.), (21., 4.)]);
-                line(&[(11., 9.), (21., 9.)]);
-                line(&[(11., 14.), (21., 14.)]);
-                line(&[(3., 20.), (21., 20.)]);
-                if self == Self::Indent {
-                    line(&[(3., 8.), (7., 12.), (3., 16.)]);
-                } else {
-                    line(&[(7., 8.), (3., 12.), (7., 16.)]);
-                }
-            }
-            Self::Delete => {
-                line(&[(3., 6.), (21., 6.)]);
-                box_at(6., 6., 12., 15.);
-                line(&[(9., 3.), (15., 3.)]);
-                line(&[(10., 10.), (10., 17.)]);
-                line(&[(14., 10.), (14., 17.)]);
-            }
-            Self::Link => {
-                box_at(2., 5., 13., 8.);
-                box_at(9., 11., 13., 8.);
-                line(&[(8., 9.), (16., 15.)]);
-            }
-            Self::Format => {
-                line(&[(4., 20.), (12., 3.), (20., 20.)]);
-                line(&[(7., 14.), (17., 14.)]);
-                line(&[(3., 23.), (21., 23.)]);
-            }
-            Self::Search | Self::Zoom | Self::ZoomOut | Self::ZoomReset => {
-                painter.circle_stroke(point(10., 10.), rect.width() * 0.31, stroke);
-                line(&[(15., 15.), (22., 22.)]);
-                if matches!(self, Self::Zoom | Self::ZoomOut) {
-                    line(&[(6., 10.), (14., 10.)]);
-                }
-                if self == Self::Zoom {
-                    line(&[(10., 6.), (10., 14.)]);
-                }
-                if self == Self::ZoomReset {
-                    line(&[(8., 8.), (10., 6.), (10., 14.)]);
-                    line(&[(7., 14.), (13., 14.)]);
-                }
-            }
-            Self::Fit => {
-                for points in [
-                    [(2., 8.), (2., 2.), (8., 2.)],
-                    [(16., 2.), (22., 2.), (22., 8.)],
-                    [(2., 16.), (2., 22.), (8., 22.)],
-                    [(16., 22.), (22., 22.), (22., 16.)],
-                ] {
-                    line(&points);
-                }
-                box_at(7., 7., 10., 10.);
-            }
-            Self::Boundary => {
-                for points in [
-                    [(2., 8.), (2., 2.), (8., 2.)],
-                    [(16., 2.), (22., 2.), (22., 8.)],
-                    [(2., 16.), (2., 22.), (8., 22.)],
-                    [(16., 22.), (22., 22.), (22., 16.)],
-                ] {
-                    line(&points);
-                }
-                box_at(6., 9., 5., 6.);
-                box_at(14., 9., 5., 6.);
-            }
-            Self::Summary => {
-                line(&[
-                    (3., 3.),
-                    (9., 3.),
-                    (9., 10.),
-                    (13., 12.),
-                    (9., 14.),
-                    (9., 21.),
-                    (3., 21.),
-                ]);
-                line(&[(13., 12.), (22., 12.)]);
-            }
-            Self::Todo => {
-                box_at(3., 3., 18., 18.);
-                line(&[(6., 12.), (10., 16.), (18., 7.)]);
-            }
-            Self::Tag => {
-                line(&[
-                    (2., 3.),
-                    (12., 3.),
-                    (22., 13.),
-                    (12., 23.),
-                    (2., 13.),
-                    (2., 3.),
-                ]);
-                painter.circle_stroke(point(7., 8.), rect.width() * 0.07, stroke);
-            }
-            Self::Notes => {
-                box_at(4., 2., 16., 20.);
-                for y in [7., 12., 17.] {
-                    line(&[(8., y), (16., y)]);
-                }
-            }
-            Self::Outline => {
-                for (y, x) in [(4., 3.), (9., 8.), (14., 8.), (20., 3.)] {
-                    line(&[(x, y), (21., y)]);
-                }
-            }
-            Self::StatusBar => {
-                box_at(2., 3., 20., 18.);
-                line(&[(2., 16.), (22., 16.)]);
-                line(&[(5., 19.), (11., 19.)]);
-            }
-            Self::Symbols => {
-                painter.circle_stroke(point(7., 7.), rect.width() * 0.18, stroke);
-                box_at(14., 3., 7., 8.);
-                line(&[(3., 21.), (7., 14.), (11., 21.), (3., 21.)]);
-                line(&[(15., 18.), (22., 18.)]);
-                line(&[(18.5, 14.5), (18.5, 21.5)]);
-            }
-            Self::Keyboard => {
-                box_at(1., 5., 22., 14.);
-                for y in [9., 13.] {
-                    for x in [5., 9., 13., 17.] {
-                        line(&[(x, y), (x + 1., y)]);
-                    }
-                }
-                line(&[(7., 17.), (17., 17.)]);
-            }
-            Self::Book => {
-                line(&[
-                    (12., 5.),
-                    (8., 3.),
-                    (2., 3.),
-                    (2., 20.),
-                    (8., 20.),
-                    (12., 22.),
-                    (16., 20.),
-                    (22., 20.),
-                    (22., 3.),
-                    (16., 3.),
-                    (12., 5.),
-                    (12., 22.),
-                ]);
-            }
-            Self::Info => {
-                painter.circle_stroke(point(12., 12.), rect.width() * 0.42, stroke);
-                line(&[(12., 10.), (12., 18.)]);
-                painter.circle_filled(point(12., 6.), rect.width() * 0.05, color);
-            }
-            Self::Message => {
-                line(&[
-                    (2., 3.),
-                    (22., 3.),
-                    (22., 17.),
-                    (9., 17.),
-                    (4., 22.),
-                    (4., 17.),
-                    (2., 17.),
-                    (2., 3.),
-                ]);
-                line(&[(6., 8.), (18., 8.)]);
-                line(&[(6., 12.), (15., 12.)]);
-            }
-            Self::News => {
-                box_at(2., 3., 20., 18.);
-                box_at(5., 6., 6., 6.);
-                line(&[(14., 6.), (19., 6.)]);
-                line(&[(14., 11.), (19., 11.)]);
-                line(&[(5., 16.), (19., 16.)]);
-            }
-            Self::Merge => {
-                line(&[
-                    (2., 3.),
-                    (8., 3.),
-                    (14., 12.),
-                    (22., 12.),
-                    (18., 8.),
-                    (22., 12.),
-                    (18., 16.),
-                ]);
-                line(&[(2., 21.), (8., 21.), (14., 12.)]);
-            }
-            Self::Mask => {
-                line(&[
-                    (2., 6.),
-                    (12., 9.),
-                    (22., 6.),
-                    (21., 16.),
-                    (16., 21.),
-                    (8., 21.),
-                    (3., 16.),
-                    (2., 6.),
-                ]);
-                line(&[(6., 13.), (9., 14.)]);
-                line(&[(15., 14.), (18., 13.)]);
-            }
-            Self::Relationship => {
-                box_at(1., 3., 6., 6.);
-                box_at(17., 15., 6., 6.);
-                line(&[
-                    (7., 6.),
-                    (13., 6.),
-                    (13., 18.),
-                    (17., 18.),
-                    (14., 15.),
-                    (17., 18.),
-                    (14., 21.),
-                ]);
-            }
-            Self::Template => {
-                box_at(3., 2., 18., 20.);
-                line(&[(3., 8.), (21., 8.)]);
-                line(&[(10., 8.), (10., 22.)]);
-                line(&[(10., 15.), (21., 15.)]);
-            }
-            Self::History => {
-                painter.circle_stroke(point(12., 12.), rect.width() * 0.4, stroke);
-                line(&[(12., 5.), (12., 12.), (17., 15.)]);
-            }
-            Self::Print => {
-                box_at(3., 8., 18., 10.);
-                box_at(7., 2., 10., 7.);
-                box_at(7., 14., 10., 8.);
-            }
-            Self::Export => {
-                line(&[(3., 4.), (3., 21.), (20., 21.), (20., 16.)]);
-                line(&[(8., 15.), (21., 3.), (21., 11.), (21., 3.), (13., 3.)]);
-            }
-            Self::Settings => {
-                painter.circle_stroke(point(12., 12.), rect.width() * 0.31, stroke);
-                painter.circle_stroke(point(12., 12.), rect.width() * 0.12, stroke);
-                for (x, y, xx, yy) in [
-                    (12., 1., 12., 4.),
-                    (12., 20., 12., 23.),
-                    (1., 12., 4., 12.),
-                    (20., 12., 23., 12.),
-                    (4., 4., 6., 6.),
-                    (18., 18., 20., 20.),
-                    (4., 20., 6., 18.),
-                    (18., 6., 20., 4.),
-                ] {
-                    line(&[(x, y), (xx, yy)]);
-                }
-            }
-            Self::Help => {
-                painter.circle_stroke(point(12., 12.), rect.width() * 0.43, stroke);
-                line(&[
-                    (8., 8.),
-                    (10., 5.),
-                    (15., 5.),
-                    (17., 8.),
-                    (12., 13.),
-                    (12., 15.),
-                ]);
-                painter.circle_filled(point(12., 19.), 1., color);
-            }
-            Self::Spark => {
-                line(&[
-                    (12., 2.),
-                    (15., 9.),
-                    (22., 12.),
-                    (15., 15.),
-                    (12., 22.),
-                    (9., 15.),
-                    (2., 12.),
-                    (9., 9.),
-                    (12., 2.),
-                ]);
-            }
-            Self::Play => {
-                line(&[(7., 3.), (21., 12.), (7., 21.), (7., 3.)]);
-            }
-            Self::Pin => {
-                line(&[
-                    (8., 3.),
-                    (18., 3.),
-                    (16., 10.),
-                    (20., 14.),
-                    (5., 14.),
-                    (9., 10.),
-                    (8., 3.),
-                ]);
-                line(&[(12., 14.), (12., 22.)]);
-            }
-            Self::Chevron => {
-                line(&[(5., 8.), (12., 16.), (19., 8.)]);
-            }
-            Self::Camera => {
-                line(&[
-                    (2., 7.),
-                    (7., 7.),
-                    (9., 4.),
-                    (15., 4.),
-                    (17., 7.),
-                    (22., 7.),
-                    (22., 21.),
-                    (2., 21.),
-                    (2., 7.),
-                ]);
-                painter.circle_stroke(point(12., 14.), rect.width() * 0.2, stroke);
-            }
-            Self::Close => {
-                line(&[(5., 5.), (19., 19.)]);
-                line(&[(19., 5.), (5., 19.)]);
-            }
-            Self::Power => {
-                line(&[(12., 2.), (12., 13.)]);
-                line(&[
-                    (6., 5.),
-                    (3., 10.),
-                    (3., 16.),
-                    (7., 21.),
-                    (17., 21.),
-                    (21., 16.),
-                    (21., 10.),
-                    (18., 5.),
-                ]);
-            }
-            Self::Home => {
-                line(&[
-                    (2., 11.),
-                    (12., 2.),
-                    (22., 11.),
-                    (19., 11.),
-                    (19., 22.),
-                    (5., 22.),
-                    (5., 11.),
-                    (2., 11.),
-                ]);
-                box_at(10., 15., 5., 7.);
-            }
         }
     }
 }
@@ -977,8 +304,9 @@ fn button(
             };
             let origin: Pos2 = anchor.align_size_within_rect(galley.size(), text_rect).min;
             if dropdown {
-                Glyph::Chevron.paint(
+                paint_symbol(
                     ui,
+                    icons::CHEVRON_DOWN,
                     Rect::from_center_size(
                         pos2(rect.right() - 14., origin.y + galley.size().y * 0.5),
                         Vec2::splat(13.0),
@@ -990,8 +318,9 @@ fn button(
                 .with_clip_rect(text_rect.intersect(ui.clip_rect()))
                 .galley(origin, galley, color);
         } else if dropdown {
-            Glyph::Chevron.paint(
+            paint_symbol(
                 ui,
+                icons::CHEVRON_DOWN,
                 Rect::from_center_size(pos2(rect.right() - 7., rect.center().y), Vec2::splat(13.0)),
                 color,
             );
@@ -1085,7 +414,7 @@ mod tests {
             let mut h = Harness::builder()
                 .with_size(vec2(300., 180.))
                 .build_ui(move |ui| {
-                    menu_button(ui, Glyph::Folder, "Open Recent", detail, None);
+                    menu_button(ui, icons::OPEN, "Open Recent", detail, None);
                 });
             h.run_steps(3);
             let rect = h.get_by_role_and_label(Role::Button, "Open Recent").rect();
@@ -1093,29 +422,27 @@ mod tests {
                 .output()
                 .shapes
                 .iter()
-                .find_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape {
-                        Some(text)
-                    } else {
-                        None
-                    }
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "Open Recent" => Some(text),
+                    _ => None,
                 })
                 .unwrap();
             let arrow = h
                 .output()
                 .shapes
                 .iter()
-                .find_map(|shape| {
-                    if let egui::Shape::Path(path) = &shape.shape
-                        && path.points.len() == 3
-                        && path.points.iter().all(|point| point.x > rect.right() - 22.)
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.job.text == icons::CHEVRON_DOWN
+                            && text.visual_bounding_rect().center().x > rect.right() - 22. =>
                     {
-                        return Some(Rect::from_points(&path.points));
+                        Some(text.visual_bounding_rect())
                     }
-                    None
+                    _ => None,
                 })
                 .expect("dropdown has one caption-adjacent chevron");
-            assert!((arrow.center().y - (text.pos.y + text.galley.size().y * 0.5)).abs() < 0.1);
+            let offset = arrow.center().y - (text.pos.y + text.galley.size().y * 0.5);
+            assert!(offset.abs() < 1.5, "{detail:?}: {offset}");
             assert!(arrow.left() >= text.pos.x + text.galley.size().x);
         }
     }
@@ -1134,30 +461,27 @@ mod tests {
             let mut h = Harness::builder()
                 .with_size(vec2(300., 160.))
                 .build_ui(move |ui| {
-                    command_button(ui, Glyph::Folder, "Open", detail, false, None);
+                    command_button(ui, icons::OPEN, "Open", detail, false, None);
                 });
             h.run_steps(3);
             let rect = h.get_by_role_and_label(Role::Button, "Open").rect();
             let minimum = if detail.is_compact() { 34.0 } else { 44.0 };
             assert!(rect.width() >= minimum && rect.height() >= minimum);
-            let bounds = h
+            let font_size = h
                 .output()
                 .shapes
                 .iter()
-                .filter(|shape| matches!(shape.shape, egui::Shape::Path(_)))
-                .fold(Rect::NOTHING, |mut bounds, shape| {
-                    if let egui::Shape::Path(path) = &shape.shape {
-                        for point in &path.points {
-                            bounds.extend_with(*point);
-                        }
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == icons::OPEN => {
+                        Some(text.galley.job.sections[0].format.font_id.size)
                     }
-                    bounds
-                });
-            assert!(bounds.is_positive());
-            sizes.push(bounds.size() / detail.icon_size());
+                    _ => None,
+                })
+                .expect("command icon glyph");
+            sizes.push(font_size / detail.icon_size());
         }
         for size in &sizes[1..] {
-            assert!((*size - sizes[0]).length() < 0.01, "{sizes:?}");
+            assert!((*size - sizes[0]).abs() < 0.01, "{sizes:?}");
         }
     }
 
@@ -1179,7 +503,7 @@ mod tests {
                             .add_enabled_ui(state.0, |ui| {
                                 command_button(
                                     ui,
-                                    Glyph::Down,
+                                    icons::MOVE_DOWN,
                                     "Move selected topics down",
                                     detail,
                                     false,
@@ -1223,7 +547,7 @@ mod tests {
     fn canceled_touch_cannot_activate_a_ribbon_command() {
         let mut h = Harness::builder().build_ui_state(
             |ui, count: &mut usize| {
-                if command_button(ui, Glyph::Delete, "Delete", Detail::Icon, false, None).1 {
+                if command_button(ui, icons::TRASH, "Delete", Detail::Icon, false, None).1 {
                     *count += 1;
                 }
             },

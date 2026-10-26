@@ -62,7 +62,7 @@ fn windows_desktop_uses_only_ribbon_with_compact_fallback_for_headless_hosts() {
             .with_size(egui::vec2(width, height))
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
         h.run_steps(3);
-        assert!(h.query_by_label(thinoda_ui::icons::MENU).is_none());
+        assert!(h.query_by_label(crate::i18n::t("Main Menu")).is_none());
         if height < 400.0 {
             h.get_by_role_and_label(Role::Button, t("Ribbon"));
         } else {
@@ -71,7 +71,7 @@ fn windows_desktop_uses_only_ribbon_with_compact_fallback_for_headless_hosts() {
         }
         h.state_mut().desktop_ribbon = false;
         h.run_steps(3);
-        assert!(h.query_by_label(thinoda_ui::icons::MENU).is_some());
+        assert!(h.query_by_label(crate::i18n::t("Main Menu")).is_some());
         assert!(
             h.query_by_role_and_label(Role::Button, t("Ribbon"))
                 .is_none()

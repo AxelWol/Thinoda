@@ -6,7 +6,8 @@ use crate::{
     menus::MenuEntry,
 };
 use egui::{Key, Modifiers, Ui};
-use thinoda_ui::ribbon::{CommandIcon, Detail, Glyph, IconTone, command_button, menu_button};
+use thinoda_ui::icons;
+use thinoda_ui::ribbon::{CommandIcon, Detail, IconTone, command_button, menu_button};
 use thinoda_ui::{tokens::Palette, widgets};
 
 #[derive(Default)]
@@ -30,22 +31,21 @@ fn entry_glyph(entry: &MenuEntry) -> CommandIcon {
     match entry {
         MenuEntry::Command { command, .. } => command_glyph(command),
         MenuEntry::Submenu { label, .. } if label == t("New from Template…") => {
-            CommandIcon::from(Glyph::Template).with_tone(IconTone::File)
+            CommandIcon::from(icons::TEMPLATE).with_tone(IconTone::File)
         }
         MenuEntry::Submenu { label, .. } if label == t("Open Recent") => {
-            CommandIcon::from(Glyph::History).with_tone(IconTone::File)
+            CommandIcon::from(icons::RECENT).with_tone(IconTone::File)
         }
         MenuEntry::Submenu { label, .. } if label == t("Export") => {
-            CommandIcon::from(Glyph::Export).with_tone(IconTone::File)
+            CommandIcon::from(icons::EXPORT).with_tone(IconTone::File)
         }
         MenuEntry::Submenu { entries, .. } => entries
             .first()
-            .map_or_else(|| Glyph::Folder.into(), entry_glyph),
+            .map_or_else(|| icons::OPEN.into(), entry_glyph),
         MenuEntry::ClearRecent => {
-            CommandIcon::marked(Glyph::History, thinoda_ui::ribbon::Badge::Minus)
-                .with_tone(IconTone::Danger)
+            CommandIcon::marked(icons::RECENT, icons::REMOVE).with_tone(IconTone::Danger)
         }
-        _ => Glyph::Chevron.into(),
+        _ => icons::CHEVRON_DOWN.into(),
     }
 }
 
@@ -247,7 +247,7 @@ impl ThinodaApp {
             let mut preferences = preferences;
             let (response, activated) = command_button(
                 ui,
-                Glyph::Chevron,
+                icons::CHEVRON_DOWN,
                 t("Quick Access Toolbar"),
                 Detail::Icon,
                 false,
@@ -391,7 +391,7 @@ impl ThinodaApp {
                 if detail == GroupDetail::Menu {
                     let glyph = controls
                         .first()
-                        .map_or_else(|| Glyph::Chevron.into(), |entry| entry_glyph(entry));
+                        .map_or_else(|| icons::CHEVRON_DOWN.into(), |entry| entry_glyph(entry));
                     let (response, activated) = menu_button(
                         ui,
                         glyph,
@@ -576,8 +576,14 @@ impl ThinodaApp {
                         } else {
                             t("Collapse Ribbon")
                         };
-                        let (_, toggle) =
-                            command_button(ui, Glyph::Chevron, label, icon_detail, expanded, None);
+                        let (_, toggle) = command_button(
+                            ui,
+                            icons::CHEVRON_DOWN,
+                            label,
+                            icon_detail,
+                            expanded,
+                            None,
+                        );
                         if toggle {
                             self.settings.ribbon_collapsed = !self.settings.ribbon_collapsed;
                             self.ribbon.temporary = false;
@@ -689,7 +695,7 @@ impl ThinodaApp {
                             t("Pin Ribbon")
                         };
                         let (_, pin) =
-                            command_button(ui, Glyph::Pin, label, icon_detail, pinned, None);
+                            command_button(ui, icons::PIN, label, icon_detail, pinned, None);
                         if pin {
                             self.settings.ribbon_collapsed = pinned;
                             self.ribbon.temporary = pinned && expanded;
@@ -752,7 +758,7 @@ impl ThinodaApp {
                                         .collect();
                                     let (response, activated) = menu_button(
                                         ui,
-                                        Glyph::Chevron,
+                                        icons::CHEVRON_DOWN,
                                         t("Ribbon"),
                                         if compact {
                                             Detail::CompactLarge

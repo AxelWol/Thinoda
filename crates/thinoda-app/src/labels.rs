@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn labels_insert_menu_sidebar_and_availability_use_one_editor() {
         let mut h = harness();
-        h.get_by_label(thinoda_ui::icons::MENU).click();
+        h.get_by_label(crate::i18n::t("Main Menu")).click();
         h.run_steps(2);
         h.get_by_label("Insert").click();
         h.run_steps(2);
