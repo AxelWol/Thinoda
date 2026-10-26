@@ -13,6 +13,15 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.13.0](https://github.com/AxelWol/Thinoda/compare/v0.12.1...v0.13.0) (2026-10-26)
+
+
+### Features
+
+* add faceted topic navigation and all-notes review ([2b93169](https://github.com/AxelWol/Thinoda/commit/2b93169a60ecee31d37af88c271dd90acbec512c))
+* derive nested checklist progress and subtree completion ([8dc76be](https://github.com/AxelWol/Thinoda/commit/8dc76bed57db444e57342702616f5c6af1c2b125))
+* improve topic navigation and nested checklist progress ([bc1cc4d](https://github.com/AxelWol/Thinoda/commit/bc1cc4da344c42d9fed9b858d2527ed00c90c077))
+
 ## [0.12.1](https://github.com/AxelWol/Thinoda/compare/v0.12.0...v0.12.1) (2026-10-25)
 
 
