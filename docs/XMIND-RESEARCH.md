@@ -1,4 +1,4 @@
-_Last updated: 2026-10-17 09:37:32 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-26 08:21:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind product research (basis for the Thinoda clone)
 
