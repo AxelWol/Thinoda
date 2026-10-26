@@ -228,6 +228,22 @@ pub(crate) fn poll_stream<T>(
     (progress, None)
 }
 
+/// Whether a server model id names a text-embedding model.
+pub(crate) fn is_embedding_model(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    id.contains("embed") || id.split(['/', '-', '_', ':']).any(|part| part == "bge")
+}
+
+/// Embedding model to fill in after a connection test: keeps a configured model
+/// the server offers, otherwise picks the first discovered embedding model.
+pub(crate) fn discovered_embedding_model(models: &[String], current: &str) -> Option<String> {
+    let current = current.trim();
+    if !current.is_empty() && models.iter().any(|m| m == current) {
+        return None;
+    }
+    models.iter().find(|m| is_embedding_model(m)).cloned()
+}
+
 impl ThinodaApp {
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
         self.protect_prompt_editor_ime(ctx);
@@ -424,6 +440,12 @@ impl ThinodaApp {
         }
         if let Some(job) = &self.ai.test {
             if let Some(r) = job.poll() {
+                if let Ok(models) = &r
+                    && let Some(found) =
+                        discovered_embedding_model(models, &self.settings.ai.embedding_model)
+                {
+                    self.settings.ai.embedding_model = found;
+                }
                 self.ai.test_result = Some(r.map_err(|e| error_text(&e)));
                 self.ai.test = None;
             } else {
@@ -708,7 +730,7 @@ impl ThinodaApp {
         let mut save_api_key = false;
         let mut clear_api_key = false;
         let mut credentials_saved = false;
-        widgets::section(ui, t("AI Assistant"), false, |ui| {
+        widgets::page_section(ui, t("AI Assistant"), |ui| {
             let ai = &mut self.settings.ai;
             widgets::property_field(ui, t("Enable AI assistant"), |ui| {
                 widgets::toggle(ui, &mut ai.enabled, t("Enable AI assistant"))
@@ -785,7 +807,7 @@ impl ThinodaApp {
                     );
                     let mut pick = None;
                     ui.horizontal_wrapped(|ui| {
-                        for m in models.iter().filter(|m| !m.contains("embed")) {
+                        for m in models.iter().filter(|m| !is_embedding_model(m)) {
                             if ui
                                 .selectable_label(self.settings.ai.model == *m, m)
                                 .clicked()
@@ -796,6 +818,27 @@ impl ThinodaApp {
                     });
                     if let Some(m) = pick {
                         self.settings.ai.model = m;
+                    }
+                    let embeddings: Vec<&String> =
+                        models.iter().filter(|m| is_embedding_model(m)).collect();
+                    if embeddings.is_empty() {
+                        widgets::caption(ui, t("No embedding models found on this server"));
+                    } else {
+                        ui.label(t("Embedding models"));
+                        let mut pick = None;
+                        ui.horizontal_wrapped(|ui| {
+                            for m in embeddings {
+                                if ui
+                                    .selectable_label(self.settings.ai.embedding_model == *m, m)
+                                    .clicked()
+                                {
+                                    pick = Some(m.clone());
+                                }
+                            }
+                        });
+                        if let Some(m) = pick {
+                            self.settings.ai.embedding_model = m;
+                        }
                     }
                 }
                 Some(Err(e)) => {
@@ -917,6 +960,48 @@ mod tests {
                 assert!(app.ai.test_result.as_ref().unwrap().is_ok(), "{change}");
             }
         }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn connection_test_fills_a_discovered_embedding_model() {
+        let models: Vec<String> = [
+            "google/gemma-4-e4b",
+            "text-embedding-nomic-embed-text-v1.5",
+            "BAAI/bge-m3",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert!(!is_embedding_model("google/gemma-4-e4b"));
+        assert!(is_embedding_model("BAAI/bge-m3"));
+        assert_eq!(
+            discovered_embedding_model(&models, "").as_deref(),
+            Some("text-embedding-nomic-embed-text-v1.5")
+        );
+        assert_eq!(discovered_embedding_model(&models, "BAAI/bge-m3"), None);
+        assert_eq!(
+            discovered_embedding_model(&models, "missing-model").as_deref(),
+            Some("text-embedding-nomic-embed-text-v1.5")
+        );
+        assert_eq!(
+            discovered_embedding_model(&models[..1], "missing-model"),
+            None
+        );
+
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.embedding_model.clear();
+        app.ai.test = Some(AiJob::spawn_with(AiConfig::default(), move |_| Ok(models)));
+        for _ in 0..200 {
+            app.poll_ai(&Context::default());
+            if app.ai.test.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            app.settings.ai.embedding_model,
+            "text-embedding-nomic-embed-text-v1.5"
+        );
     }
 
     #[test]

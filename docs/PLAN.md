@@ -95,7 +95,8 @@ Those screenshots were inspected; no runtime exceptions, failed requests, AI
 calls or external origins occurred. Owned validation servers were stopped.
 XV1-XV2 are implemented locally and unreleased. XV3 structural numbering and UR6
 (Material Symbols icons) are implemented and locally verified; UR1, UR2 and UR5
-are next.
+are implemented (flat AI page, embedding discovery, compact ribbon by default) and
+UR7, UR3 and UR4 are next.
 
 ### Released work and remaining acceptance
 
@@ -154,7 +155,12 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 
 **User-requested insertions (2026-10-26).** After XV3, deliver UR1 (flat AI settings
 page), UR2 (embedding-model discovery during Test Connection) and UR5 (compact
-ribbon by default, visible setting on every target, including web/Outliner). Then
+ribbon by default, visible setting on every target, including web/Outliner); all
+three are implemented: the AI page is always expanded, Test Connection lists
+embedding models from the same `/models` response and fills a blank or
+unavailable Embedding Model, and the Compact Ribbon switch is shown on every
+target, starts on (saved under a new `ribbon_compact` key so the old default-off
+value is not carried over) and also sizes the Outline ribbon. Then
 deliver UR3 (shared calendar picker for every date input, with non-working days from
 the work week disabled) and UR4 (live in-app Pitch presentation with transitions and
 builds), before XV4. UR6 (one Material Symbols icon vocabulary at Microsoft
@@ -795,11 +801,11 @@ Regression coverage checks unclipped capsule borders, saved pin state and both
 post-command behaviors. This is release preparation, not completion of F1-F6.
 
 **Optional compact ribbon (2026-10-25):** Settings > Editor adds a saved
-Compact Ribbon switch, default off with unchanged standard layout. Opting in
+Compact Ribbon switch (default on since UR5; the standard layout is opt-in). Compact
 reduces the expanded panel from 200 to 160 logical points, uses 72-point primary
 buttons, 34-point secondary/tab targets, smaller icons, tighter spacing and
 recalculated widths/overflow. It does not remove tabs, commands, tooltips or group
-labels, change Outline/QAT density, or alter pinning/command behavior. Coverage
+labels, change QAT density (the Outline ribbon follows the same switch since UR5), or alter pinning/command behavior. Coverage
 includes all eight tabs, both densities, translated/theme/scale combinations,
 rendered fixtures and real settings toggling/save/reload.
 

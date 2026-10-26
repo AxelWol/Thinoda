@@ -493,7 +493,9 @@ those system-owned controls. WinGet publishing remains paused.
 1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.
 2. In Thinoda open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
    (or a LAN server such as `http://192.168.1.216:1234/v1`), leave *Model* empty for automatic
-   selection and click **Test Connection**.
+   selection and click **Test Connection**. The test lists chat models and installed
+   text-embedding models (e.g. `text-embedding-nomic-embed-text-v1.5`); a blank or
+   unavailable *Embedding model* is filled with the first one found.
 3. Select a topic and press **Ctrl+Shift+I** or use the **AI** menu.
 
 Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + API key, or env

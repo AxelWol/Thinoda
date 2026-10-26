@@ -1909,6 +1909,11 @@ impl ThinodaApp {
         } else {
             thinoda_ui::ribbon::Detail::Icon
         };
+        let detail = if self.settings.compact_ribbon {
+            detail.compact()
+        } else {
+            detail
+        };
         let mut action_buttons = |ui: &mut Ui, buttons: &[(&'static str, Action)]| {
             for (label, command) in buttons {
                 let enabled = command.available(&d.doc, &d.view);
@@ -2012,17 +2017,29 @@ impl ThinodaApp {
                                                 (184.0, 136.0 + ui.spacing().item_spacing.y * 3.0)
                                             }
                                             thinoda_ui::ribbon::Detail::CompactIcon => {
-                                                (buttons.len() as f32 * 38.0 - 4.0, 34.0)
+                                                if group_columns == 4 {
+                                                    (buttons.len() as f32 * 38.0 - 4.0, 34.0)
+                                                } else {
+                                                    (buttons.len().min(2) as f32 * 38.0 - 4.0, 72.0)
+                                                }
                                             }
                                         };
+                                        let labeled = matches!(
+                                            detail,
+                                            thinoda_ui::ribbon::Detail::Labeled
+                                                | thinoda_ui::ribbon::Detail::CompactLabeled
+                                        );
+                                        let icon = matches!(
+                                            detail,
+                                            thinoda_ui::ribbon::Detail::Icon
+                                                | thinoda_ui::ribbon::Detail::CompactIcon
+                                        );
                                         ui.set_width(width);
                                         ui.allocate_ui(egui::vec2(width, height), |ui| {
                                             ui.set_min_height(height);
-                                            if detail == thinoda_ui::ribbon::Detail::Labeled {
+                                            if labeled {
                                                 ui.vertical(|ui| action_buttons(ui, buttons));
-                                            } else if detail == thinoda_ui::ribbon::Detail::Icon
-                                                && group_columns < 4
-                                            {
+                                            } else if icon && group_columns < 4 {
                                                 ui.vertical(|ui| {
                                                     for chunk in buttons.chunks(2) {
                                                         ui.horizontal(|ui| {
@@ -4468,7 +4485,6 @@ impl ThinodaApp {
                                 t("Fallback only; choose an installed font covering your script. Document fonts stay unchanged."),
                             );
                         }
-                        #[cfg(any(target_os = "windows", target_os = "macos"))]
                         widgets::property_field(ui, t("Compact Ribbon"), |ui| {
                             widgets::toggle(ui, &mut self.settings.compact_ribbon, t("Compact Ribbon"))
                         });

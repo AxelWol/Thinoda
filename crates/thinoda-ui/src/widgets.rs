@@ -345,6 +345,16 @@ pub fn section<R>(
         .body_returned
 }
 
+/// A titled, always-expanded settings page section (no disclosure toggle).
+pub fn page_section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let p = Palette::of_ui(ui);
+    ui.add(egui::Label::new(
+        egui::RichText::new(title).strong().size(15.0).color(p.text),
+    ));
+    ui.add_space(4.0);
+    ui.vertical(add).inner
+}
+
 /// A row of color swatches, including the current color if it is not a preset.
 /// Returns the clicked color.
 pub fn color_swatches(
