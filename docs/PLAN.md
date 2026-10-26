@@ -9,17 +9,142 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## Current state and next-value plan (2026-10-26)
+
+**This status supersedes older "current", "in progress" and "immediate next"
+entries below.** The detailed execution logs are retained as historical evidence,
+not a fresh list of missing features. This refresh changes documentation and
+priorities; it does not start implementation, reopen delivered work or authorize
+new services/accounts, publishing or permission changes.
+
+**Execution authorization (2026-10-26):** the user subsequently requested starting
+the proposed ordered features, with all languages, light/dark modes, native/web
+targets, consistent UX research and current documentation. This supersedes the
+feature-start restriction for XV1-XV9, not the recorded manual acceptance gaps.
+Start with XV1 and retain the existing deferred stability inventory separately.
+The user also authorized local LM Studio models `google/gemma-4-e4b` and
+`text-embedding-nomic-embed-text-v1.5` when AI-dependent work needs them; XV1
+is fully local/deterministic and makes no AI requests.
+
+**XV1 implementation slice:** the shared Find card now includes marker/label/
+priority and To-Do/Task completion facets plus a read-only View All Notes list.
+Text and facets combine without automatic topic/sheet navigation; Clear resets
+criteria, not document history. The existing Dim others option includes ancestor
+context in Map and Outliner. Notes-mode replacement is disabled; explicit result
+navigation retains existing undoable collapsed-ancestor expansion. Native and web
+use the same egui path, translated into all ten currently shipped catalogs; the
+three additional accepted CJK locales remain an existing unshipped expansion,
+not falsely advertised as supported by these translations.
+
+UX research: [NN/g filter categories and values](https://www.nngroup.com/articles/filter-categories-values/)
+recommends predictable, relevant, jargon-free facets; [WCAG On Input](https://www.w3.org/WAI/WCAG22/Understanding/on-input.html)
+requires predictable context changes. Use plain labeled checkbox groups, OR
+within/AND across groups, stable scope, explicit result navigation, visible
+results/no-results and one Clear action. Keep the existing bounded, scrollable
+search surface and focus reveal, rather than introduce a platform-specific
+navigation window. Validation evidence is recorded after the slice checks.
+
+XV1 verification: 96 core unit tests and 186 app unit tests pass; the four
+search integration/viewport tests and canceled/multitouch search regression pass.
+The new application matrix covers all 11 language settings (ten catalogs plus
+Auto), light/dark/System, Map/Outliner, narrow-window focus reachability,
+cross-sheet result identity, live source invalidation and unchanged history on
+filter/clear. Native all-target and WASM library strict clippy pass. A fresh
+isolated Edge profile ran the rebuilt WASM, created a map and opened the new
+Find/notes/filter surface without browser exceptions, failed requests or AI/
+external-origin calls. Observed-coordinate clicks opened Filters and enabled
+View All Notes; wide and 360x640 screenshots were visually inspected. This
+identified duplicate empty-state text, which was removed. Two intermediate
+attempts failed because the loopback static server returned empty responses;
+rebinding a diagnostic server restored successful startup and interaction.
+Real touch/assistive technology, populated browser result navigation and other
+native host runtime acceptance are not inferred from these checks.
+No services were left running.
+XV1 is implemented and locally verified, not yet released; XV2 is next.
+
+### Released work and remaining acceptance
+
+The F0-F5 implementation is merged through
+[#74](https://github.com/AxelWol/Thinoda/pull/74) and
+[#76](https://github.com/AxelWol/Thinoda/pull/76); release
+[#77](https://github.com/AxelWol/Thinoda/pull/77) delivered
+[v0.12.1](https://github.com/AxelWol/Thinoda/releases/tag/v0.12.1).
+Main CI and the six-target native packaging/publish run succeeded. All ten
+published installer/archive downloads were independently checked against their
+six SHA-256 manifests and GitHub asset digests. macOS signing/notarization passed;
+Windows production Authenticode signing is still absent. Optional WinGet
+publication was skipped, not delivered. The
+[web deployment](https://axelwol.github.io/Thinoda/) at release commit
+`e90f391` started and rendered a map in a fresh Edge profile without runtime or
+network failures. Installation/runtime acceptance is distinct from packaging.
+
+| Workstream | Current state | Do not schedule again / remaining boundary |
+|---|---|---|
+| F0 Fill regression | Released | Retain color, focus, touch and Undo regressions. |
+| F1 native menus/windows | Implementation released | Shared command routing/window ownership exists; real focused-window/global-menu and assistive-technology acceptance remains open. |
+| F2 keyboard profiles | Released | Standard/XMind-compatible/named profiles, capture, conflict review, Apply/Cancel, persistence and live dispatch exist; real OS key/IME delivery remains a host gate. |
+| F3 tasks/calendars/Gantt | Released | Date-only scheduling, calendars, dependency propagation, synchronized editing and export/print integration exist. Do not rebuild Gantt; extend only identified gaps. |
+| F4 Zones/Pitch | Released | Zone editing, reviewed slide generation/order/frames, player/presenter, PDF and ordered PNG exports exist. PPTX, richer delivery settings and full host acceptance are separate work. |
+| F5 AI | Released | Cancellable SSE, scoped chat/depth modes, rewrite/translate/grow/reorganize/refine, saved prompts, explicit-model semantic search/clustering and reviewed Pitch outlines exist. Chat history is per open document, not a claim of saved cross-restart conversations. |
+| F6 integrated acceptance | Partial; host/hardware blocked | Recorded real browser and Windows Gantt/Pitch observations plus application-harness regressions remain valid. macOS/Linux GUI, native focus/menu/accessibility, physical printing and touch-device checks are not passes. |
+| Release/deployment | Complete for v0.12.1 | No duplicate implementation/release PR is needed. Failed v0.12.0 packaging is historical; its tag is not moved. |
+
+GitHub inventory refreshed 2026-10-26: **no open issues or pull requests**.
+Earlier PRs #70 and #72 are merged, not outstanding review work. The remaining
+product inventory lives here and in BACKLOG; closed GitHub work does not close
+manual acceptance or the deferred SS0-SS8 sprint.
+
+### Recommended next work by end-user value
+
+The [source-to-code audit](XMIND-RESEARCH.md#12-thinoda-valuegap-audit-2026-10-26)
+separates missing behavior from existing foundations. Stable work-item IDs and
+testable exit criteria live in
+[BACKLOG](BACKLOG.md#next-value-backlog---xmind-audit-2026-10-26).
+The user has now authorized executing this queue; see the execution note above.
+F6 host checks remain acceptance work when hosts become available, not passes
+or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
+
+| Order | Work item / owner package | End-user outcome | Dependency and smallest complete slice |
+|---|---|---|---|
+| 0 | F6 acceptance and existing gesture/IME gaps / R0-R2, P4 | Trust the newly shipped daily workflows on actual devices. | Use real host evidence; keep unavailable cases blocked. No feature rewrite or claim of screen-reader support from harness tests. |
+| 1 | XV1 faceted navigation + all-notes review / R6 | Find unfinished/high-priority/labeled work and review meeting notes without opening topics individually. | Reuse text search and core marker/label filter; ship visible filter state, connected context, Clear and read-only note results first. |
+| 2 | XV2 nested To-Do progress / R8 | See lightweight checklist completion without scheduling every item. | Preserve `todo: Option<bool>` and separate scheduled Task semantics; define descendant counting, then derived progress and one-Undo subtree completion. |
+| 3 | XV3 structural numbering / R3, R6 | Maintain ordered procedures, outlines and agendas as topics move. | A separate numbering model and computed labels, not title prefixes; native persistence and output fidelity are part of the slice. |
+| 4 | XV4 portable images/attachments / R4, R6 | Reopen and share evidence-rich maps without broken local image paths. | Versioned resource store first, then image insert/render/resize/remove, then attachments. Include recovery, clipboard and merge remapping. |
+| 5 | XV5 DOCX/TextBundle import / R6 | Turn existing documents into useful maps instead of retyping outlines. | Text-only DOCX headings/lists can precede XV4; bundled resources depend on XV4. Current Word/TextBundle export does not imply import. |
+| 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | Reuse saved frames; explicit aspect ratio/fit preview and a clearly labeled image-based PPTX first. Editable PPTX is a separate scope. |
+| 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Plain-string migration, draft/save safety, search and honest format-loss reporting; images alone are not rendered math. |
+| 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
+| 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
+
+XV1-XV3 have the best near-term value relative to scope: they improve existing
+maps without a cloud account, new AI service or binary-resource subsystem.
+XV4 is the next enabling investment, before sticker catalogs, audio or vision AI.
+Spelling dictionaries/suggestions remain P2 under R2; portable content and
+retrieval rank ahead of decorative catalogs. Cloud co-editing, hosted sharing,
+web clipping, background Quick Entry, image/video AI and more package formats
+remain later opt-in projects, not prerequisites for these offline improvements.
+Encryption and existing stability work retain their own risk/acceptance gates;
+their priority is not waived by a feature-value ranking.
+
+For every XV slice: preserve existing documents, undo/recovery and source
+identity; use the shared command/keymap infrastructure; cover Map/Outliner,
+light/dark/Auto, all 13 accepted locales and applicable native/WASM workflows.
+Report unsupported output fields and unavailable host tests explicitly. These
+are acceptance requirements, not statements that today's full matrix passed.
+
 ## Phase 0 — Foundation ✅
 - ✅ Cargo workspace (`core`, `io`, `platform`, `ui`, `canvas`, `ai`, `app`, `xtask`), edition 2024
 - ✅ egui/eframe 0.37 on wgpu (Direct3D 12 / Metal / Vulkan, GL fallback)
 - ✅ `cargo xtask ci` (fmt + clippy `-D warnings` + tests), icon generation
 - ✅ Product research + user-guide digest
 
-## Phase 1 — Core model & editing ✅
+## Phase 1 — Core model & editing 🟡
 - ✅ Workbook → sheets → topic tree, floating topics, relationships, boundaries, summaries
 - ✅ Transactional edits with one-step undo/redo, rollback of failed edits
 - ✅ 15+ structures (map, logic, brace, org, tree, timeline, fishbone, matrix …) with layout engine
-- ✅ Markers, labels, notes, hyperlinks, to-dos, numbering, collapse/expand, search
+- ✅ Markers, labels, plain-text notes, hyperlinks, independent to-dos, collapse/expand, text search
+- ⬜ Structural numbering (XV3); richer note content and checklist roll-up remain separate
 - ✅ Templates and color themes
 
 ## Phase 2 — UI library & canvas ✅
@@ -56,12 +181,15 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 - ✅ cargo-packager config: NSIS (Windows x64/ARM64), `.app` + DMG (macOS arm64/x64),
   `.deb` + AppImage (Ubuntu LTS); file associations for `.thinoda/.xmind/.mm/.opml`
 - ✅ GitHub Actions: CI matrix (Windows x64 + ARM, macOS, Ubuntu) and tag-driven release
-- ⬜ Code signing / notarization (Authenticode, Apple Developer ID)
+- ✅ Apple Developer ID signing/notarization in the published macOS release pipeline
+- ⬜ Windows production Authenticode signing
 - ⬜ Visual regression snapshots
 
-## Phase 6 — XMind parity extras ⬜
-See [BACKLOG.md](BACKLOG.md): Pitch mode, Gantt view, Map Shot, Zone, equations, audio notes,
-attachments, password-protected files, print, custom themes, …
+## Phase 6 — XMind parity extras 🟡
+Zones, Pitch/PDF/slide images, task planning/Gantt, Map Shot, custom themes and
+print integration are implemented; host/output acceptance is not universally
+complete. See the current-state table and [BACKLOG.md](BACKLOG.md) for residual
+gaps, including equations, embedded assets, audio, PPTX and protected files.
 
 ## Remaining-work delivery plan (2026-10-16)
 

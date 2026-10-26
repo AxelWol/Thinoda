@@ -71,6 +71,45 @@ fn rejected_tap(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2, contacts: u64,
 }
 
 #[test]
+fn rejected_search_facets_preserve_criteria_and_documents() {
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut h = harness(theme, 1.0);
+        h.set_size(vec2(1000.0, 900.0));
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Find);
+        h.run_steps(5);
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::CheckBox, t("View All Notes"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(!h.state().search.facets.notes_only);
+        }
+        h.get_by_role_and_label(Role::CheckBox, t("View All Notes"))
+            .click();
+        h.run_steps(5);
+        assert!(h.state().search.facets.notes_only);
+        for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
+            let pos = h
+                .get_by_role_and_label(Role::Button, t("Clear search and filters"))
+                .rect()
+                .center();
+            rejected_tap(&mut h, pos, contacts, cancel);
+            assert!(h.state().search.facets.notes_only);
+        }
+        h.get_by_role_and_label(Role::Button, t("Clear search and filters"))
+            .click();
+        h.run_steps(4);
+        assert!(!h.state().search.facets.active());
+        assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+        assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+}
+
+#[test]
 fn rejected_palette_selection_preserves_query_and_document() {
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         let mut h = harness(theme, 1.0);

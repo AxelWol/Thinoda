@@ -155,7 +155,19 @@ pub struct SearchState {
     pub all_sheets: bool,
     pub current: usize,
     pub dim: bool,
-    pub last_key: (String, usize, String, u64, bool, bool, bool, bool, bool),
+    pub facets: thinoda_core::search::Facets,
+    pub last_key: (
+        String,
+        usize,
+        String,
+        u64,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+        thinoda_core::search::Facets,
+    ),
 }
 
 /// Optional OS integrations (absent in tests and when the profile is unavailable).
@@ -2209,25 +2221,35 @@ impl ThinodaApp {
             o.include_notes,
             o.include_labels,
             self.search.all_sheets,
+            self.search.facets.clone(),
         );
         if key == self.search.last_key {
             return;
         }
         self.search.last_key = key;
-        self.search.hits = if self.search.query.is_empty() {
-            Vec::new()
-        } else if self.search.all_sheets {
-            thinoda_core::search::search_workbook(
-                d.doc.workbook(),
-                &self.search.query,
-                &self.search.opts,
-            )
+        self.search.hits = if self.search.all_sheets {
+            d.doc
+                .workbook()
+                .sheets
+                .iter()
+                .enumerate()
+                .flat_map(|(index, sheet)| {
+                    thinoda_core::search::search_faceted(
+                        sheet,
+                        index,
+                        &self.search.query,
+                        &self.search.opts,
+                        &self.search.facets,
+                    )
+                })
+                .collect()
         } else {
-            thinoda_core::search::search_sheet(
+            thinoda_core::search::search_faceted(
                 d.doc.sheet(),
                 d.doc.active_index(),
                 &self.search.query,
                 &self.search.opts,
+                &self.search.facets,
             )
         };
         self.search.current = 0;
@@ -2239,15 +2261,26 @@ impl ThinodaApp {
             d.view.filter = None;
         }
         if let Some(d) = self.docs.get_mut(self.active) {
-            d.view.filter = (self.search.open && self.search.dim && !self.search.query.is_empty())
-                .then(|| {
-                    self.search
-                        .hits
-                        .iter()
-                        .filter(|h| h.sheet == d.doc.active_index())
-                        .map(|h| h.topic)
-                        .collect()
-                });
+            d.view.filter = (self.search.open
+                && self.search.dim
+                && (!self.search.query.is_empty() || self.search.facets.active()))
+            .then(|| {
+                let mut topics: Vec<_> = self
+                    .search
+                    .hits
+                    .iter()
+                    .filter(|h| h.sheet == d.doc.active_index())
+                    .map(|h| h.topic)
+                    .collect();
+                let ancestors: Vec<_> = topics
+                    .iter()
+                    .flat_map(|id| d.doc.sheet().ancestors(*id))
+                    .collect();
+                topics.extend(ancestors);
+                topics.sort_unstable();
+                topics.dedup();
+                topics
+            });
         }
     }
 
@@ -2300,6 +2333,10 @@ impl ThinodaApp {
     }
 
     pub fn replace_all(&mut self) {
+        if self.search.facets.notes_only {
+            self.toasts.info(t("Replaces topic titles only."));
+            return;
+        }
         if let Some(d) = self.doc_mut() {
             d.view.commit_edit(&mut d.doc);
         }

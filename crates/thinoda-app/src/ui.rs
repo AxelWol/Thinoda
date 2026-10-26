@@ -2080,6 +2080,13 @@ impl ThinodaApp {
                                 continue;
                             };
                             ui.horizontal(|ui| {
+                                if d.view
+                                    .filter
+                                    .as_ref()
+                                    .is_some_and(|keep| !keep.contains(&id))
+                                {
+                                    ui.multiply_opacity(0.3);
+                                }
                                 ui.add_space(depth as f32 * 22.0);
                                 let has_kids = !sheet.children(id).is_empty();
                                 let chevron = if topic.collapsed {
@@ -3553,7 +3560,7 @@ impl ThinodaApp {
                             let n = self.search.hits.len();
                             widgets::caption(
                                 ui,
-                                if self.search.query.is_empty() {
+                                if self.search.query.is_empty() && !self.search.facets.active() {
                                     String::new()
                                 } else if n == 0 {
                                     t("No results").to_string()
@@ -3610,7 +3617,10 @@ impl ThinodaApp {
                                 .accessible_name(t("Replace with"));
                                 ui.horizontal_wrapped(|ui| {
                                     if ui
-                                        .add_enabled(n > 0, egui::Button::new(t("Replace All")))
+                                        .add_enabled(
+                                            n > 0 && !self.search.facets.notes_only,
+                                            egui::Button::new(t("Replace All")),
+                                        )
                                         .clicked()
                                         && touch_allowed
                                     {
@@ -3618,6 +3628,7 @@ impl ThinodaApp {
                                     }
                                 });
                             }
+                            self.search_facets_ui(ui, touch_allowed);
                             reveal_changed_focus(ui);
                         });
                 });

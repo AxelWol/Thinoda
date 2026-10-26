@@ -18,6 +18,7 @@ mod legal_markdown;
 mod map_shot;
 pub mod menus;
 pub mod native_menus;
+mod navigation;
 mod pitch;
 mod planning;
 mod printing;

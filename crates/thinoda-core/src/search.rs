@@ -24,6 +24,118 @@ pub struct SearchHit {
     pub field: MatchField,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    Incomplete,
+    Complete,
+}
+
+/// Values within a facet are ORed; different facets are ANDed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Facets {
+    pub markers: Vec<String>,
+    pub labels: Vec<String>,
+    pub priorities: Vec<u8>,
+    pub todos: Vec<Completion>,
+    pub tasks: Vec<Completion>,
+    pub notes_only: bool,
+}
+
+impl Facets {
+    pub fn active(&self) -> bool {
+        self.notes_only
+            || !self.markers.is_empty()
+            || !self.labels.is_empty()
+            || !self.priorities.is_empty()
+            || !self.todos.is_empty()
+            || !self.tasks.is_empty()
+    }
+
+    pub fn matches(&self, sheet: &Sheet, id: TopicId) -> bool {
+        let Some(topic) = sheet.topic(id) else {
+            return false;
+        };
+        let completion = |done| {
+            if done {
+                Completion::Complete
+            } else {
+                Completion::Incomplete
+            }
+        };
+        let task = sheet.scheduling.tasks.get(&id);
+        (!self.notes_only || topic.has_notes())
+            && (self.markers.is_empty() || topic.markers.iter().any(|m| self.markers.contains(m)))
+            && (self.labels.is_empty() || topic.labels.iter().any(|l| self.labels.contains(l)))
+            && (self.priorities.is_empty()
+                || task
+                    .and_then(|t| t.priority)
+                    .is_some_and(|p| self.priorities.contains(&p))
+                || topic.markers.iter().any(|m| {
+                    m.strip_prefix("priority-")
+                        .and_then(|p| p.parse::<u8>().ok())
+                        .is_some_and(|p| self.priorities.contains(&p))
+                }))
+            && (self.todos.is_empty()
+                || topic
+                    .todo
+                    .is_some_and(|done| self.todos.contains(&completion(done))))
+            && (self.tasks.is_empty()
+                || task
+                    .is_some_and(|t| self.tasks.contains(&completion(t.progress_percent == 100))))
+    }
+}
+
+/// Search and facets share topic identities and stable document order.
+pub fn search_faceted(
+    sheet: &Sheet,
+    sheet_index: usize,
+    needle: &str,
+    opts: &SearchOptions,
+    facets: &Facets,
+) -> Vec<SearchHit> {
+    if needle.is_empty() {
+        if !facets.active() {
+            return Vec::new();
+        }
+        return sheet
+            .all_ids_ordered()
+            .into_iter()
+            .filter(|id| facets.matches(sheet, *id))
+            .map(|topic| SearchHit {
+                sheet: sheet_index,
+                topic,
+                field: if facets.notes_only {
+                    MatchField::Notes
+                } else {
+                    MatchField::Title
+                },
+            })
+            .collect();
+    }
+    if facets.notes_only {
+        return sheet
+            .all_ids_ordered()
+            .into_iter()
+            .filter(|id| {
+                facets.matches(sheet, *id)
+                    && sheet.topics[id]
+                        .notes
+                        .as_deref()
+                        .is_some_and(|n| matches(n, needle, opts))
+            })
+            .map(|topic| SearchHit {
+                sheet: sheet_index,
+                topic,
+                field: MatchField::Notes,
+            })
+            .collect();
+    }
+    search_sheet(sheet, sheet_index, needle, opts)
+        .into_iter()
+        .filter(|hit| facets.matches(sheet, hit.topic))
+        .collect()
+}
+
 fn find_in(hay: &str, needle: &str, opts: &SearchOptions) -> Vec<usize> {
     if needle.is_empty() {
         return vec![];
@@ -230,5 +342,91 @@ mod tests {
         let f = filter_topics(&s, &["priority-1".into()], &[]);
         assert_eq!(f.len(), 2);
         assert_eq!(word_count(&s), 5);
+    }
+
+    #[test]
+    fn facets_combine_or_values_and_groups_without_mutation() {
+        let mut sheet = s();
+        let topic = sheet.children(sheet.root)[0];
+        sheet.topic_mut(topic).unwrap().todo = Some(false);
+        sheet
+            .topic_mut(topic)
+            .unwrap()
+            .markers
+            .push("flag-red".into());
+        sheet.scheduling.tasks.insert(
+            topic,
+            crate::schedule::Task {
+                progress_percent: 100,
+                priority: Some(3),
+                ..Default::default()
+            },
+        );
+        let before = sheet.clone();
+        let mut facets = Facets {
+            labels: vec!["finance".into(), "other".into()],
+            markers: vec!["flag-blue".into(), "flag-red".into()],
+            priorities: vec![3],
+            todos: vec![Completion::Incomplete],
+            tasks: vec![Completion::Complete],
+            ..Default::default()
+        };
+        let hits = search_faceted(&sheet, 4, "", &SearchOptions::default(), &facets);
+        assert_eq!(
+            hits,
+            vec![SearchHit {
+                sheet: 4,
+                topic,
+                field: MatchField::Title
+            }]
+        );
+        facets.priorities = vec![1];
+        assert!(facets.matches(&sheet, topic), "priority markers also match");
+        facets.tasks = vec![Completion::Incomplete];
+        assert!(!facets.matches(&sheet, topic));
+        facets.tasks.push(Completion::Complete);
+        facets.labels = vec!["missing".into()];
+        assert!(!facets.matches(&sheet, topic));
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
+    fn notes_overview_searches_notes_not_titles_and_includes_hidden_and_floating_topics() {
+        let mut sheet = s();
+        let child = sheet.children(sheet.root)[0];
+        let floating = sheet.add_floating("Floating", crate::Vec2::ZERO);
+        sheet.topic_mut(floating).unwrap().notes = Some("APPROVAL memo".into());
+        sheet.topic_mut(sheet.root).unwrap().collapsed = true;
+        let facets = Facets {
+            notes_only: true,
+            ..Default::default()
+        };
+        let opts = SearchOptions::default();
+        let hits = search_faceted(&sheet, 0, "", &opts, &facets);
+        assert_eq!(
+            hits.iter().map(|hit| hit.topic).collect::<Vec<_>>(),
+            vec![child, floating]
+        );
+        assert!(hits.iter().all(|hit| hit.field == MatchField::Notes));
+        assert_eq!(
+            search_faceted(&sheet, 0, "approval", &opts, &facets).len(),
+            2
+        );
+        assert!(search_faceted(&sheet, 0, "Plan budget", &opts, &facets).is_empty());
+        assert_eq!(
+            search_faceted(
+                &sheet,
+                0,
+                "APPROVAL",
+                &SearchOptions {
+                    case_sensitive: true,
+                    ..Default::default()
+                },
+                &facets
+            )
+            .len(),
+            1
+        );
+        assert!(search_faceted(&sheet, 0, "", &opts, &Facets::default()).is_empty());
     }
 }

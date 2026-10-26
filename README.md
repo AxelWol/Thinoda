@@ -356,6 +356,17 @@ those system-owned controls. WinGet publishing remains paused.
   replacement drafts survive resizing. The compact card may temporarily cover
   the inspector. Outline shortcuts yield while search is open, so Tab navigates
   controls rather than adding topics.
+  Find also offers **Filters** for markers, labels, priority, independent To-Do
+  completion and scheduled Task completion. Values within one group match any;
+  different selected groups must all match. Priority checks both topic markers
+  and scheduled Task priority. **View All Notes** lists note previews with
+  sheet/topic names; its search text matches notes only. Results are read-only,
+  with explicit topic buttons to navigate; Replace is disabled in notes mode.
+  The first 100 rows are listed; Previous/Next traverses all matches.
+  **Dim others** preserves matching topics and ancestor context in both views.
+  **Clear search and filters** removes criteria without changing documents,
+  history or saved folding. Explicit result navigation retains the existing
+  undoable ancestor expansion for a collapsed target.
   In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
   focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
 - Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;

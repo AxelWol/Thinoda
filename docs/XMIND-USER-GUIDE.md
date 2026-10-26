@@ -4,6 +4,41 @@ _Last updated: 2026-10-16 15:35:38 UTC (non-binding repository metadata)._ <!-- 
 
 This checklist condenses the desktop-facing behaviors documented in the official XMind user guide at [xmind.com/user-guide](https://xmind.com/user-guide). Verify each item against the cited page; where the guide gives no exact values, defaults, or shortcut, that omission is stated rather than guessed. Keyboard equivalents below are Windows first, followed by the documented Mac equivalent.
 
+## Thinoda reconciliation (2026-10-26)
+
+The sections below describe **XMind**, not assertions that Thinoda implements or
+lacks every item. Current code and the released v0.12.1 baseline were compared
+with this checklist; see the
+[research audit](XMIND-RESEARCH.md#12-thinoda-valuegap-audit-2026-10-26) for exact
+source evidence and [current plan](PLAN.md#current-state-and-next-value-plan-2026-10-26)
+for delivery/acceptance status.
+
+| Guide area | Thinoda state | Follow-up |
+|---|---|---|
+| Preferences: Shortcuts, Task/calendar/Gantt, Zone/Pitch, text/embedding AI | Implementation shipped; native/browser evidence and remaining host gaps are recorded in PLAN. | Do not create duplicate F1-F5 implementation tasks. PPTX and more delivery settings are not implied by Pitch PDF/PNG. |
+| Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
+| To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
+| Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
+| Picture / Attachment | Image references exist; portable embedded-resource authoring is missing. | XV4 |
+| Import | DOCX/TextBundle are exportable, not importable. | XV5; other unsupported importers stay in the broader inventory. |
+| Export / Pitch Mode | Saved framing, PDF and PNG slides exist; PowerPoint export and explicit delivery aspect-ratio choices are missing. | XV6 |
+| Note / Equation | Plain notes exist; structured rich notes and rendered equations are missing. | XV7 |
+| Structure / project-management role research | TreeTable enum/layout exists; editable task columns are missing. | XV8; exact reference interaction still needs verification. |
+| Xmind Agent conversation history | Scoped/depth-guided chat exists; Thinoda explicitly keeps history session-only. | XV9 optional local persistence and named threads, not another chat implementation. |
+| File Cache / Map Shot / Custom Themes / Quick Style / Merge / Mask Data | Existing implementations; not wholly missing. | Retain recovery, export-fidelity and real-host acceptance requirements. Masked copies are not a guarantee of universal anonymization. |
+| Set Password / Audio / cloud collaboration / vision and video AI | Not delivered in this feature release. | Existing R4/R10/R12 and later-service backlog; do not silently expand F5. |
+
+**Subsequent XV1 implementation:** faceted Find and the all-notes overview are
+now implemented and locally verified, not yet released. The row above preserves
+the research baseline; PLAN/BACKLOG record the current evidence and remaining
+host checks. Other XV items remain open.
+
+To-Do vs Task, Numbering, Topic Filtering, View All Notes, Export, Import and
+the [Xmind Agent guide](https://xmind.com/user-guide/xmind-ai-chatbot/web) were
+re-fetched from the official guide on 2026-10-26. Other entries retain their
+earlier source verification and need a reference refresh before exact-parity
+implementation. XMind commercial availability does not impose Thinoda paywalls.
+
 ## Add Topic Button
 - With one topic selected, verify one or two adjacent `+` buttons appear; use the child button to add a subtopic and the sibling button to add a same-level topic.
 - The guide also identifies `Tab` for subtopic and `Enter` for sibling insertion.
@@ -448,4 +483,3 @@ This checklist condenses the desktop-facing behaviors documented in the official
 | Smart Guideline Preferences | `Ctrl+Shift+P` | `Command+,` | Windows shortcut given by Smart Guideline article |
 | Pitch Mode shortcut list | `?` | `?` | In full-screen Pitch Mode, reveals the list; not an entry shortcut |
 | Summary, Callout, Zen, Pitch entry | Customizable / toolbar | Customizable / toolbar | No fixed shortcut listed by the cited pages |
-

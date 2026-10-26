@@ -182,6 +182,19 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("View All Notes", "Alle Notizen anzeigen"),
+    ("Filters", "Filter"),
+    ("Incomplete", "Nicht abgeschlossen"),
+    ("Completed", "Abgeschlossen"),
+    ("Clear search and filters", "Suche und Filter zurücksetzen"),
+    (
+        "Any selected value per group; all selected groups must match.",
+        "Beliebiger gewählter Wert je Gruppe; alle gewählten Gruppen müssen zutreffen.",
+    ),
+    (
+        "First 100 results shown. Use Previous or Next for all results.",
+        "Die ersten 100 Ergebnisse werden angezeigt. Mit Zurück oder Weiter sind alle erreichbar.",
+    ),
     ("Edit mappings", "Tastenbelegungen bearbeiten"),
     ("Rename", "Umbenennen"),
     ("Active shortcuts", "Aktive Tastenkombinationen"),
@@ -2038,6 +2051,7 @@ mod tests {
             include_str!("symbols.rs"),
             include_str!("menus.rs"),
             include_str!("native_menus.rs"),
+            include_str!("navigation.rs"),
             include_str!("ribbon.rs"),
         ] {
             for (offset, _) in source.match_indices("t(") {

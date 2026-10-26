@@ -6,6 +6,13 @@ Sources: xmind.com (structure, features, user guide – 931 indexed pages), the 
 installed **Xmind 26.05.01106** (Electron app, `resources/app.asar` inspected for
 identifiers only), and UI screenshots of the desktop app (German locale).
 
+**Thinoda status refresh, 2026-10-26:** sections 1-11 are the reference product
+inventory, not a list of current Thinoda gaps. The
+[value/gap audit](#12-thinoda-valuegap-audit-2026-10-26) below compares current
+source and v0.12.1 delivery with that inventory. Implementation priorities and
+acceptance are maintained in [PLAN](PLAN.md#current-state-and-next-value-plan-2026-10-26)
+and [BACKLOG](BACKLOG.md#next-value-backlog---xmind-audit-2026-10-26).
+
 ## 1. Desktop UI anatomy (Xmind 26)
 
 | Area | Content |
@@ -195,3 +202,64 @@ AI provider later). All of these are tracked in PLAN/BACKLOG.
 * **"Mark as Completed"** in the context menu.
 * A **presenter "follow" mode** (backlog: needs collaboration).
 * The dark "engineering" theme (`neon`/monochrome) already exists.
+
+## 12. Thinoda value/gap audit (2026-10-26)
+
+Method: read this research and the complete user-guide digest, reconcile current
+PLAN/BACKLOG and GitHub work, inspect the actual model/search/UI/format/render
+surfaces, and re-fetch the official guides cited below. This is a source-based
+capability audit, not a fresh runtime pass of every feature or every XMind guide.
+No XMind binary/assets or third-party map contents were copied.
+
+### Already delivered, not new feature requests
+
+F0-F5 implementation is included in v0.12.1: Fill repair, native menu/window
+routing, named/configurable keyboard profiles, date-only tasks/calendars/Gantt,
+Zones/Pitch with PDF/PNG output, bounded cancellable AI streaming, scoped chat and
+depth modes, rewrite/translate/grow/reorganize/refine, saved prompts, explicit-model
+embeddings search/clustering and reviewed Pitch suggestions. Existing templates,
+custom themes/quick styles, 17 structures, Map Shot, masked derived copies,
+sheet merge and cross-sheet text search must also be reused, not reinvented.
+F6 native OS/device/accessibility acceptance is still partial; an implemented
+command or enum is not proof of full reference interaction parity.
+
+### Confirmed gaps and partially used foundations
+
+The table records the audit baseline. **XV1 has since been implemented and
+locally verified in the current worktree**, extending those foundations; it is
+not yet part of v0.12.1. Current execution/test status is in PLAN/BACKLOG.
+XV2-XV9 remain open.
+
+| Work item | Evidence in current Thinoda source | Reference behavior and end-user value |
+|---|---|---|
+| XV1 faceted navigation + notes overview | `thinoda-core/src/search.rs` has text search and `filter_topics(markers, labels)` with ancestor context. `thinoda-app/src/ui.rs::search_bar` exposes text/scope/notes/labels/dimming, not a complete facet picker or an all-notes overview. | [Topic Filtering](https://xmind.com/user-guide/topic-filtering-new) exposes marker/label/task/priority and text/note navigation; [View All Notes](https://xmind.com/user-guide/view-note-new) consolidates notes and jumps to topics. High-frequency retrieval improvement; extend the foundation rather than claim filtering is wholly absent. |
+| XV2 To-Do roll-up | `Topic.todo` is `Option<bool>`; `edit.rs::set_todo` sets an individual topic. Scheduled Tasks live separately in `schedule.rs`. No derived nested checklist completion is implemented. | [To-Do vs Task](https://xmind.com/user-guide/to-do-vs-task) explicitly distinguishes sub-To-Do aggregate progress from dated/dependent Gantt Tasks. Useful lightweight planning without forcing every checkbox into the scheduler. |
+| XV3 numbering | `model.rs::Topic` has no numbering field and the current source has no structural numbering implementation. The old PLAN Phase 1 "done" claim was inaccurate and is corrected. | [Numbering](https://xmind.com/user-guide/numbering-new) is separate from title text, updates with topic position, supports siblings/tiered numbers/restart, and is not supported by XMind Pitch. Useful for outlines/procedures; do not counterfeit it with title prefixes. |
+| XV4 embedded resources | `Topic.image: Option<String>` is a path/URL reference. Current help and merge UI explicitly warn that references are not embedded attachments. No general workbook binary-asset store is present. | [Picture](https://xmind.com/user-guide/pic-new) and [Attachment](https://xmind.com/user-guide/attachment-new) motivate portable maps. A shared resource model is more valuable than adding sticker/audio/AI-image buttons before content survives exchange and recovery. |
+| XV5 document ingestion | `thinoda-io/src/lib.rs::Format::IMPORTABLE` excludes Word and TextBundle, although both are exportable and recognized by extension. | [Import](https://xmind.com/user-guide/import-new) explicitly includes DOCX and TextBundle. Prioritize common document-to-outline workflows over implementing every competitor format. Resource-bearing imports depend on XV4. |
+| XV6 presentation handoff | `model.rs::Presentation` stores ordered source frames; `thinoda-io/src/presentation.rs` renders those frames to PDF/PNG. `Format` has no PowerPoint variant; no explicit presentation aspect-ratio setting exists. | [Export](https://xmind.com/user-guide/export-new) includes PowerPoint; [Pitch](https://xmind.com/user-guide/pitch-mode-new) describes aspect ratios and delivery options. Start with honest image-based PPTX and fit preview, not promises of editable Office objects or video. |
+| XV7 rich notes / equations | Notes are `Option<String>` edited with a buffered text field in `ui.rs`; current model/Insert surfaces lack an equation content type/render path. | [Note](https://xmind.com/user-guide/note-new) supports rich lists/emphasis; [Equation](https://xmind.com/user-guide/equation-new) supplies editable mathematical/chemical notation. Preserve draft/recovery/search behavior when introducing formatting. |
+| XV8 task Tree Table | `Structure::TreeTable` exists, but `layout.rs` routes it through the same stack family as LogicRight/Matrix. F3 scheduling data exists; task-column Tree Table editing does not. | The earlier project-manager role research calls for start/end/duration columns. This is a useful Thinoda extension grounded in that research, not a newly verified exact XMind column/editing contract. Reuse Gantt's validated schedule engine. |
+| XV9 durable local AI conversations | `thinoda-app/src/ai/chat.rs` stores bounded conversations in `ChatState` and explicitly labels history "session-only". The chat surface/depth modes exist, but reopen-after-restart and multiple named threads per file do not. | [Xmind Agent](https://xmind.com/user-guide/xmind-ai-chatbot/web), "Manage your conversations", documents separate per-file chats and reopening history. Preserve research continuity with optional app-local history, not a hosted account or automatic inclusion in shared documents. |
+
+Re-fetched on 2026-10-26: To-Do vs Task, Numbering, Topic Filtering, View All Notes,
+Export, Import and Xmind Agent (including conversation history). The other linked guides remain prior digest references;
+their detailed behavior must be rechecked before implementation. Defaults,
+unseen controls and undocumented limits are not inferred from screenshots.
+
+### Value ranking and deliberate non-parity
+
+Recommend XV1 -> XV2 -> XV3 first: each helps existing offline maps daily without
+new hosted services or a large binary-content subsystem. XV4 then removes a
+portability blocker and enables richer imports/assets. XV5-XV9 follow as bounded
+workflow improvements, with the precise order/dependencies in PLAN. Remaining
+F6 acceptance remains open. The user's subsequent instruction authorizes XV
+execution while preserving the deferred stability inventory and host limits.
+
+Do not chase cloud feature count: real-time collaboration, hosted permissions,
+web clipping/online research, Quick Entry background lifecycle and image/video AI
+introduce service, privacy or platform commitments. Keep them later and opt-in.
+Prefer original useful templates to copied catalogs. Retain Thinoda's deliberate
+AI preview/review/Apply/Undo model instead of XMind's automatic incremental edits.
+Local-first content, transparent fidelity limits and dependable recovery provide
+more immediate user value than branding, commercial badges or superficial parity.
