@@ -1,4 +1,4 @@
-_Last updated: 2026-10-26 12:49:57 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-26 17:46:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,13 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.14.0](https://github.com/AxelWol/Thinoda/compare/v0.13.0...v0.14.0) (2026-10-26)
+
+
+### Features
+
+* topic numbering, Material Symbols icons and AI reply language ([#81](https://github.com/AxelWol/Thinoda/issues/81)) ([fa9b48b](https://github.com/AxelWol/Thinoda/commit/fa9b48b53965cc32e817bf6c8ce8f445187a037c))
 
 ## [0.13.0](https://github.com/AxelWol/Thinoda/compare/v0.12.1...v0.13.0) (2026-10-26)
 
