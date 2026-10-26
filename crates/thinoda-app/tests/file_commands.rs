@@ -164,7 +164,7 @@ fn file_commands_require_active_documents_and_save_all_preserves_home() {
                 }
                 let export = h.get_by_role_and_label(Role::Button, t("Export"));
                 assert_eq!(export.accesskit_node().is_disabled(), !active);
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 h.get_by_role_and_label(Role::Button, t("File")).click();
                 h.run_steps(3);

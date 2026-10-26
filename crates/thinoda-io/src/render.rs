@@ -345,6 +345,9 @@ fn svg_sheet_with_fonts(
             out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(style.text_color),esc(&line.text)));
             y += block.line_height;
         }
+        if let Some((label, nr)) = &tl.number {
+            out.push_str(&format!("<text class=\"topic-number\" x=\"{:.2}\" y=\"{:.2}\" dominant-baseline=\"central\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\">{}</text>",nr.min.x,nr.center().y,esc(font),style.font_size,col(style.text_color),esc(label)));
+        }
         for (index, (mark, mr)) in tl.markers.iter().enumerate() {
             if let Some(color) = s.topics[id].marker_colors.get(&index) {
                 out.push_str(&colored_marker_svg(mark, *mr, *color));

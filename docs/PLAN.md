@@ -93,7 +93,9 @@ Edge profile created nested To-Dos in WASM and parent-checkbox clicks visibly
 changed both parent/child checkboxes and the badge from 0/1 to 1/1 and back.
 Those screenshots were inspected; no runtime exceptions, failed requests, AI
 calls or external origins occurred. Owned validation servers were stopped.
-XV1-XV2 are implemented locally and unreleased; XV3 structural numbering is next.
+XV1-XV2 are implemented locally and unreleased. XV3 structural numbering and UR6
+(Material Symbols icons) are implemented and locally verified; UR1, UR2 and UR5
+are next.
 
 ### Released work and remaining acceptance
 
@@ -150,6 +152,20 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
 | 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
 
+**User-requested insertions (2026-10-26).** After XV3, deliver UR1 (flat AI settings
+page), UR2 (embedding-model discovery during Test Connection) and UR5 (compact
+ribbon by default, visible setting on every target, including web/Outliner). Then
+deliver UR3 (shared calendar picker for every date input, with non-working days from
+the work week disabled) and UR4 (live in-app Pitch presentation with transitions and
+builds), before XV4. UR6 (one Material Symbols icon vocabulary at Microsoft
+ribbon/Fluent size tiers) ships with XV3; UR7 (one resizable dialog frame with
+title-bar sizing controls, four-edge resize, content-fitting width, vertical scroll
+and icon-tabbed pages) follows UR5 so the UR1/UR3 dialogs adopt it. UR8 (AI replies in the
+selected UI language, English fallback) is implemented: `AiConfig::reply_language`
+carries the UI language into one-shot, transform, chat and Pitch AI system prompts;
+translation keeps its explicit target. Acceptance criteria are in
+[BACKLOG](BACKLOG.md#user-requested-usability-items-2026-10-26).
+
 XV1-XV3 have the best near-term value relative to scope: they improve existing
 maps without a cloud account, new AI service or binary-resource subsystem.
 XV4 is the next enabling investment, before sticker catalogs, audio or vision AI.
@@ -177,7 +193,10 @@ are acceptance requirements, not statements that today's full matrix passed.
 - ✅ Transactional edits with one-step undo/redo, rollback of failed edits
 - ✅ 15+ structures (map, logic, brace, org, tree, timeline, fishbone, matrix …) with layout engine
 - ✅ Markers, labels, plain-text notes, hyperlinks, independent to-dos, collapse/expand, text search
-- ⬜ Structural numbering (XV3); richer note content and checklist roll-up remain separate
+- ✅ Structural numbering (XV3): per-parent None/1,2,3/I,II,III/i,ii,iii/A,B,C/a,b,c with
+  a start value and tiered labels; labels are derived, never written into titles. Text exports omit
+  them; images, PDF, print and Pitch show them. XMind numbering is not imported
+  or exported. Richer note content and checklist roll-up remain separate
 - ✅ Templates and color themes
 
 ## Phase 2 — UI library & canvas ✅

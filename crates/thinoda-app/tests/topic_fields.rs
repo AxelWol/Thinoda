@@ -49,7 +49,7 @@ fn assert_blocked(app: &mut ThinodaApp) {
 }
 
 fn open_insert(h: &mut Harness<'_, ThinodaApp>) {
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(3);
     h.get_by_role_and_label(Role::Button, t("Insert")).click();
     h.run_steps(3);

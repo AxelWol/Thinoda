@@ -533,6 +533,26 @@ fn paint_topic(
         }
     }
 
+    // Structural number.
+    if let Some((label, nr)) = &t.number {
+        let nr = xf.rect(*nr);
+        let font = FontId::new(
+            st.font_size * z,
+            crate::measure::font_family(painter.ctx(), st.font_family.as_deref()),
+        );
+        let pos = pos2(nr.left(), nr.center().y);
+        if st.bold {
+            painter.text(
+                pos + vec2(0.45 * z, 0.0),
+                egui::Align2::LEFT_CENTER,
+                label,
+                font.clone(),
+                text_color,
+            );
+        }
+        painter.text(pos, egui::Align2::LEFT_CENTER, label, font, text_color);
+    }
+
     // Markers.
     for (index, (m, mr)) in t.markers.iter().enumerate() {
         let color = topic.and_then(|t| t.marker_colors.get(&index)).copied();

@@ -103,7 +103,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 h.run_steps(3);
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
                 right_click(&mut h, pos);
-                let ai = format!("✨ {}", t("AI"));
+                let ai = t("AI").to_string();
                 reveal(&mut h, &ai);
                 h.get_by_role_and_label(Role::Button, &ai).click();
                 h.run_steps(3);

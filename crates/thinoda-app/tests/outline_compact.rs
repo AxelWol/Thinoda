@@ -76,7 +76,7 @@ fn long_selected_titles_do_not_hide_outline_actions_or_topics() {
                         h.output().shapes.iter().any(|shape| {
                             matches!(
                                 &shape.shape,
-                                egui::Shape::Path(_) | egui::Shape::LineSegment { .. }
+                                egui::Shape::Text(text) if text.galley.job.text.chars().all(|c| c >= '\u{f0000}')
                             ) && rect.contains_rect(shape.shape.visual_bounding_rect())
                                 && shape
                                     .clip_rect

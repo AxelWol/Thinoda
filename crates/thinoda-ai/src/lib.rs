@@ -37,6 +37,17 @@ pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 /// Environment variable consulted when no API key is configured.
 pub const API_KEY_ENV: &str = "THINODA_AI_API_KEY";
 
+/// System-prompt sentence asking for replies in `language` (an English language name),
+/// falling back to English when the model cannot write it. `None` for a blank name.
+pub fn reply_language_instruction(language: &str) -> Option<String> {
+    let language = language.trim();
+    (!language.is_empty()).then(|| {
+        format!(
+            "Write your entire reply in {language}. If you cannot write {language}, reply in English."
+        )
+    })
+}
+
 /// Connection settings for an OpenAI-compatible endpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -50,6 +61,9 @@ pub struct AiConfig {
     pub temperature: f32,
     pub max_tokens: u32,
     pub timeout_secs: u64,
+    /// English name of the language replies should use (the app's UI language), e.g.
+    /// `"German"`; empty keeps the language of the supplied content.
+    pub reply_language: String,
 }
 
 impl Default for AiConfig {
@@ -61,6 +75,7 @@ impl Default for AiConfig {
             temperature: 0.7,
             max_tokens: 1500,
             timeout_secs: 120,
+            reply_language: String::new(),
         }
     }
 }
@@ -322,7 +337,7 @@ impl Client {
     /// Runs a mind-map task end to end.
     pub fn run(&self, task: &AiTask) -> Result<AiResult> {
         let model = self.resolve_model()?;
-        let text = self.chat(&model, &task.messages())?;
+        let text = self.chat(&model, &task.messages_in(&self.cfg.reply_language))?;
         finish(task, &text, model)
     }
 }

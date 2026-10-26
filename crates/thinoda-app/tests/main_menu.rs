@@ -72,7 +72,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                     .find(|(command, _)| matches!(command, Cmd::Settings))
                     .unwrap();
                 assert_eq!(settings_command.category.as_deref(), Some(t("Edit")));
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 for category in [
                     "File", "Edit", "Sheet", "Insert", "AI", "Tools", "View", "Help",
@@ -111,7 +111,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                     ("View", "Previous Sheet", Cmd::PreviousSheet, "Collapse All"),
                     ("Help", "Quick Start", Cmd::QuickStart, "About Thinoda"),
                 ] {
-                    h.get_by_label(thinoda_ui::icons::MENU).click();
+                    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                     h.run_steps(3);
                     reveal(&mut h, t(category));
                     h.get_by_role_and_label(Role::Button, t(category)).click();
@@ -125,7 +125,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                     h.key_press(egui::Key::Escape);
                     h.run_steps(3);
                 }
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 reveal(&mut h, t("File"));
                 h.get_by_role_and_label(Role::Button, t("File")).click();
@@ -153,7 +153,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 h.key_press(egui::Key::Escape);
                 h.run_steps(2);
                 if h.query_by_role_and_label(Role::Button, t("Edit")).is_none() {
-                    h.get_by_label(thinoda_ui::icons::MENU).click();
+                    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                     h.run_steps(3);
                 }
                 reveal(&mut h, t("Edit"));
@@ -167,7 +167,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                 }
                 h.key_press(egui::Key::Escape);
                 h.run_steps(3);
-                h.get_by_label(thinoda_ui::icons::MENU).click();
+                h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
                 h.run_steps(3);
                 reveal(&mut h, t("Edit"));
                 h.get_by_role_and_label(Role::Button, t("Edit")).click();
@@ -258,7 +258,9 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
             app,
         );
     narrow.run_steps(4);
-    narrow.get_by_label(thinoda_ui::icons::MENU).click();
+    narrow
+        .get_by_label(thinoda_app::i18n::t("Main Menu"))
+        .click();
     narrow.run_steps(3);
     for category in categories {
         narrow.get_by_role_and_label(Role::Button, t(category));

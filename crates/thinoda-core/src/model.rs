@@ -364,6 +364,9 @@ pub struct Topic {
     /// Image reference (resource path inside the file or URL).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Structural numbering applied to this topic's children as one sibling group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_numbering: Option<crate::numbering::Numbering>,
 }
 
 impl Topic {
@@ -385,6 +388,7 @@ impl Topic {
             branch_side: None,
             todo: None,
             image: None,
+            child_numbering: None,
         }
     }
 
@@ -1018,6 +1022,9 @@ impl Sheet {
             }
             if t.id != *id {
                 return Err(format!("topic key {id} != id {}", t.id));
+            }
+            if t.child_numbering.is_some_and(|n| !n.valid()) {
+                return Err(format!("topic {id} has invalid numbering"));
             }
             for c in &t.children {
                 let ct = self.topic(*c).ok_or(format!("child {c} of {id} missing"))?;

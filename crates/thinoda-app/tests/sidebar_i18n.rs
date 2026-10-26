@@ -78,7 +78,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Link, "Kontakt: axelwolters@hotmail.com");
     h.state_mut().dialogs.about = false;
     h.run_steps(2);
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Bearbeiten").click();
     h.run_steps(2);
@@ -102,7 +102,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.get_by_role_and_label(Role::Button, &copy_style).click();
     h.run_steps(2);
     assert!(h.state().style_clipboard.is_some());
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Ansicht").click();
     h.run_steps(2);
@@ -119,7 +119,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Blatt").click();
     h.run_steps(2);
@@ -129,7 +129,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Bearbeiten").click();
     h.run_steps(2);
@@ -145,7 +145,7 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    h.get_by_label(thinoda_ui::icons::MENU).click();
+    h.get_by_label(thinoda_app::i18n::t("Main Menu")).click();
     h.run_steps(2);
     h.get_by_label("Werkzeuge").click();
     h.run_steps(2);
@@ -478,7 +478,8 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(!h.state().dialogs.shortcuts);
-    h.get_by_role_and_label(Role::Button, "☰").click();
+    h.get_by_role_and_label(Role::Button, thinoda_app::i18n::t("Main Menu"))
+        .click();
     h.run_steps(3);
     h.get_by_role_and_label(Role::Button, "Datei").click();
     h.run_steps(3);

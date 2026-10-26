@@ -63,8 +63,28 @@ impl ExportText {
             fontdb,
             ..Default::default()
         };
+        let numbers = sheet.numbering_labels();
         for (&id, topic) in &sheet.topics {
             let style = resolve_style(sheet, id, dark);
+            if let Some(label) = numbers.get(&id) {
+                let key = Key::new(
+                    label,
+                    style.font_size,
+                    style.bold,
+                    f32::INFINITY,
+                    style.font_family.as_deref(),
+                );
+                if let std::collections::hash_map::Entry::Vacant(entry) = result.blocks.entry(key) {
+                    entry.insert(wrap(
+                        label,
+                        style.font_size,
+                        style.bold,
+                        f32::INFINITY,
+                        style.font_family.as_deref().unwrap_or(DEFAULT_FAMILY),
+                        &options,
+                    )?);
+                }
+            }
             let title = if topic.title.trim().is_empty() {
                 " "
             } else {

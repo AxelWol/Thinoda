@@ -160,8 +160,73 @@ pub fn system_fallbacks() -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Appends the available system symbol fonts as fallbacks to egui's default fonts.
-/// Returns the number of fonts installed.
+/// Bundled subset of Google Material Symbols Outlined (Apache-2.0); see [`crate::icons`].
+pub const ICON_FONT: &[u8] = include_bytes!("../assets/icons/ThinodaMaterialSymbols.ttf");
+const ICON_FONT_KEY: &str = "thinoda-material-symbols";
+
+/// Adds the bundled icon font to the default families' fallback chains (idempotent).
+pub fn add_icon_font(defs: &mut FontDefinitions) {
+    if defs.font_data.contains_key(ICON_FONT_KEY) {
+        return;
+    }
+    let mut data = FontData::from_static(ICON_FONT);
+    // Material glyphs sit on the baseline; center them on the line like text.
+    data.tweak.y_offset_factor = 0.1;
+    defs.font_data.insert(ICON_FONT_KEY.into(), Arc::new(data));
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        defs.families
+            .entry(family)
+            .or_default()
+            .push(ICON_FONT_KEY.into());
+    }
+}
+
+/// Makes sure the current fonts include the icon font, for contexts that were not set
+/// up by [`install_fallbacks`] (e.g. test harnesses). When it was missing, the font is
+/// installed for the next pass and this pass draws placeholder boxes instead of panicking.
+pub fn ensure_icon_font(ctx: &Context) {
+    ensure_icon_symbol(ctx, crate::icons::NEW_FILE);
+}
+
+/// Like [`ensure_icon_font`], but checks that the live fonts can draw `symbol` and
+/// returns whether they can. The glyph policy only changes at the next pass, so callers
+/// should skip drawing `symbol` this pass when this returns `false`.
+pub fn ensure_icon_symbol(ctx: &Context, symbol: &str) -> bool {
+    let restore_id = egui::Id::unique("thinoda-icon-font-policy");
+    // `set_fonts` only takes effect in a later pass, so check the live fonts rather
+    // than the (possibly pending) definitions before restoring the caller's policy.
+    let live = ctx.fonts_mut(|f| {
+        let chars = f.characters(&FontFamily::Proportional);
+        symbol
+            .chars()
+            .all(|c| chars.get(&c).is_some_and(|fonts| !fonts.is_empty()))
+    });
+    if live {
+        if let Some(policy) = ctx.data(|d| d.get_temp::<egui::MissingGlyphPolicy>(restore_id)) {
+            ctx.data_mut(|d| d.remove_temp::<egui::MissingGlyphPolicy>(restore_id));
+            ctx.set_missing_glyph_policy(policy);
+        }
+        return true;
+    }
+    if !ctx.fonts(|f| f.definitions().font_data.contains_key(ICON_FONT_KEY)) {
+        let mut defs = ctx.fonts(|f| f.definitions().clone());
+        add_icon_font(&mut defs);
+        ctx.set_fonts(defs);
+    }
+    // Only the first install saves the caller's policy.
+    let policy = ctx.missing_glyph_policy();
+    ctx.data_mut(|d| {
+        if d.get_temp::<egui::MissingGlyphPolicy>(restore_id).is_none() {
+            d.insert_temp(restore_id, policy);
+        }
+    });
+    ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+    ctx.request_repaint();
+    false
+}
+
+/// Appends the bundled icon font and the available system symbol fonts as fallbacks to
+/// egui's default fonts. Returns the number of system fonts installed.
 pub fn install_fallbacks(ctx: &Context) -> usize {
     let mut defs = FontDefinitions::default();
     let mut n = 0;
@@ -177,15 +242,36 @@ pub fn install_fallbacks(ctx: &Context) -> usize {
         }
         n += 1;
     }
-    if n > 0 {
-        ctx.set_fonts(defs);
-    }
+    add_icon_font(&mut defs);
+    ctx.set_fonts(defs);
     n
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_icon_font_installs_restore_the_original_glyph_policy() {
+        let ctx = Context::default();
+        ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Panic);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.label("text before icons");
+            ensure_icon_font(ui.ctx());
+            ensure_icon_font(ui.ctx());
+            assert_eq!(
+                ui.ctx().missing_glyph_policy(),
+                egui::MissingGlyphPolicy::Tofu
+            );
+        });
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ensure_icon_font(ui.ctx());
+            ui.label(crate::icons::SAVE);
+        });
+        output.textures_delta.clear();
+        assert_eq!(ctx.missing_glyph_policy(), egui::MissingGlyphPolicy::Panic);
+    }
 
     #[test]
     fn preferred_fallback_changes_all_chains_without_replacing_primary_faces() {

@@ -162,14 +162,15 @@ graph TD
   focus. Menu replacement drains pending commands first, and window destruction
   removes its subclass before dropping callback data. Native integration errors
   are logged and shown, with the compact menu retained. The Windows/macOS ribbon uses
-  the same tree and snapshot dispatch, with original vector icons, semantic group
+  the same tree and snapshot dispatch, with Material Symbols icons, semantic group
   footers, a large primary command and two-row secondary columns. Width reduction first hides
   secondary captions, then collapses groups into menus; excess groups remain
   reachable through a bounded overflow menu rather than a scrolling button wall.
   Explanatory group text is available on hover and does not occupy command slots.
   Primary, labeled and compact controls use 32/24/16-point icons and at least
-  44-point hit targets. Exhaustive command mappings use semantic line glyphs and
-  action badges; primary/secondary semantic colors differ in both themes.
+  44-point hit targets. Exhaustive command mappings use semantic Material Symbols
+  glyphs, adding a small badge only for variants (sheet, AI, zone, sort);
+  primary/secondary semantic colors differ in both themes.
   Dropdown chevrons reserve caption space and align with its vertical center.
   Ribbon-only task aliases are Home and Capture; native menu taxonomy is unchanged.
   Each command supplies one combined tooltip with its label, binding and help;
@@ -184,6 +185,22 @@ graph TD
   four-point intra-group spacing and recalculated group widths/overflow budgets.
   Labels, semantic colors, shortcuts, pinning and popup command routing are shared;
   Outline and Quick Access retain their existing density.
+  **Icon system (UR6).** `thinoda_ui::icons` is the only icon source: a pinned,
+  subset Google Material Symbols Outlined font (Apache-2.0; FILL 0, GRAD 0,
+  weight 400, optical size 20) whose glyphs are remapped to Supplementary Private
+  Use Area-A so they never collide with text. `assets/icons/build_icon_font.py`
+  regenerates the font and `icons.rs` from `material-symbols.txt`; tests check the
+  manifest, unique glyphs and that every glyph renders. Rules: the same action
+  uses the same symbol on every surface (ribbon, Quick Access, floating bar, node
+  menu, header, footer, Outliner), resolved through `command_icons.rs`; Fit Map
+  (`fit_screen`) is distinct from the Map/Outline switch (`account_tree` /
+  `format_list_bulleted`); sizes follow Microsoft ribbon and Fluent tiers
+  (`SIZE_SMALL` 16 for menus, Quick Access and status bar, `SIZE_TOOLBAR` 20, `SIZE_MEDIUM` 24, `SIZE_LARGE` 32 points);
+  icons inherit the text/semantic color, so Light and Dark need no separate
+  assets. Menu items show the same 16-point command icon in a reserved slot while
+  their accessible name stays the localized label. The font is registered as a fallback of the Proportional and Monospace
+  families on native and web; `ensure_icon_font` installs it on demand for hosts
+  and test harnesses that did not run `install_fallbacks`.
   Short viewports switch to a bounded Ribbon menu. Tab-strip scrollbars cannot
   overlap tab hit targets; keyboard focus reveals horizontally clipped items.
   Pointer-driven ribbon commands are deferred past release so restoring a text

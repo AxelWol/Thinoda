@@ -5,6 +5,7 @@ use egui::{
     TextEdit, Ui, vec2,
 };
 use thinoda_canvas::{Action, MapCanvas};
+use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
     Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers, templates,
     theme::Theme,
@@ -93,19 +94,6 @@ pub(crate) fn touch_numeric_value(
         return (response, true);
     }
     (response, false)
-}
-
-fn command_button<'a>(
-    ctx: &Context,
-    mode: CenterMode,
-    label: &'a str,
-    command: &Cmd,
-) -> egui::Button<'a> {
-    let button = egui::Button::new(label);
-    match ThinodaApp::shortcut_hint_for_mode(ctx, command, mode) {
-        Some(hint) => button.shortcut_text(hint),
-        None => button,
-    }
 }
 
 pub(crate) fn scroll_menu(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
@@ -559,6 +547,7 @@ impl ThinodaApp {
 
     /// Draws one frame of the whole application.
     pub fn draw(&mut self, ui: &mut Ui) {
+        thinoda_ui::fonts::ensure_icon_font(ui.ctx());
         widgets::touch_activation_allowed(ui.ctx());
         if !self.launch_frame(ui) {
             return;
@@ -1004,9 +993,14 @@ impl ThinodaApp {
             if inline_menu_bar {
                 self.main_menu_bar(ui, &mut cmd);
             } else if !cfg!(target_os = "windows") || !self.ribbon_active() {
-                guarded_menu_button(ui, RichText::new(icons::MENU).size(18.0), |ui| {
-                    self.main_menu(ui, &mut cmd)
-                });
+                guarded_menu_button(
+                    ui,
+                    RichText::new(icons::MENU).size(icons::SIZE_TOOLBAR),
+                    |ui| self.main_menu(ui, &mut cmd),
+                )
+                .response
+                .accessible_name(t("Main Menu"))
+                .on_hover_text(t("Main Menu"));
             }
             let header_width = ctx.content_rect().width() * ctx.zoom_factor();
             let compact_header = header_width < 640.0;
@@ -1124,12 +1118,8 @@ impl ThinodaApp {
                         }
                     }
                     let outl = self.mode == CenterMode::Outliner;
-                    let outliner = widgets::icon_button(
-                        ui,
-                        if outl { icons::MAP } else { icons::OUTLINER },
-                        t("Outliner"),
-                        outl,
-                    );
+                    // A toggle: the same Outliner icon as the command, highlighted while active.
+                    let outliner = widgets::icon_button(ui, icons::OUTLINER, t("Outliner"), outl);
                     if outliner.clicked() {
                         cmd = Some(Cmd::ToggleOutliner);
                     }
@@ -1173,8 +1163,17 @@ impl ThinodaApp {
         for entry in entries {
             match entry {
                 MenuEntry::Command { label, command } => {
-                    let button = command_button(ui.ctx(), self.mode, label, command);
-                    let response = ui.add_enabled(self.command_available(command), button);
+                    let shortcut = Self::shortcut_hint_for_mode(ui.ctx(), command, self.mode);
+                    let response = ui
+                        .add_enabled_ui(self.command_available(command), |ui| {
+                            thinoda_ui::ribbon::menu_item(
+                                ui,
+                                Some(crate::command_icons::command_glyph(command)),
+                                label,
+                                shortcut,
+                            )
+                        })
+                        .inner;
                     let response = if let Cmd::OpenPath(path) = command {
                         response.on_hover_text(path.display().to_string())
                     } else {
@@ -1442,7 +1441,10 @@ impl ThinodaApp {
                 widgets::card(ui).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if self.settings.ai.enabled {
-                            if ui.button(t("Expand ideas")).clicked() {
+                            if ui
+                                .button(format!("{} {}", icons::BRAINSTORM, t("Expand ideas")))
+                                .clicked()
+                            {
                                 cmd = Some(Cmd::Ai(crate::ai::AiCommand::Brainstorm));
                             }
                             widgets::vdivider(ui);
@@ -1553,8 +1555,13 @@ impl ThinodaApp {
         });
         let mode = self.mode;
         let mut item = |ui: &mut Ui, label: &str, c: Cmd, enabled: bool| {
+            let shortcut = Self::shortcut_hint_for_mode(ui.ctx(), &c, mode);
+            let icon = crate::command_icons::command_glyph(&c);
             if ui
-                .add_enabled(enabled, command_button(ui.ctx(), mode, label, &c))
+                .add_enabled_ui(enabled, |ui| {
+                    thinoda_ui::ribbon::menu_item(ui, Some(icon), label, shortcut)
+                })
+                .inner
                 .accessible_name(label)
                 .clicked()
             {
@@ -1637,13 +1644,15 @@ impl ThinodaApp {
             }
         });
         if self.settings.ai.enabled {
-            ui.menu_button(format!("✨ {}", t("AI")), |ui| {
+            ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
                 scroll_menu(ui, |ui| {
                     for a in crate::ai::AiCommand::ALL {
                         item(ui, t(a.label()), Cmd::Ai(a), has_sel || !a.needs_topic());
                     }
                 });
-            });
+            })
+            .response
+            .accessible_name(t("AI"));
         }
         if has_link {
             item(ui, t("Open Link"), Cmd::OpenLink, true);
@@ -1807,8 +1816,11 @@ impl ThinodaApp {
                         }
                         for r in recent.iter().take(20) {
                             ui.horizontal(|ui| {
+                                let pin_label = if r.pinned { t("Unpin") } else { t("Pin") };
                                 if ui
-                                    .small_button(if r.pinned { icons::PIN } else { "·" })
+                                    .small_button(if r.pinned { icons::PIN } else { icons::UNPIN })
+                                    .accessible_name(pin_label)
+                                    .on_hover_text(pin_label)
                                     .clicked()
                                 {
                                     self.settings.pin_recent(&r.path, !r.pinned);
@@ -2058,6 +2070,7 @@ impl ThinodaApp {
                         ui.set_max_width(820.0);
                         let sheet = d.doc.sheet().clone();
                         let todo_progress = sheet.todo_progress();
+                        let numbers = sheet.numbering_labels();
                         let mut rows: Vec<(TopicId, usize)> = Vec::new();
                         fn walk(
                             s: &thinoda_core::Sheet,
@@ -2119,6 +2132,9 @@ impl ThinodaApp {
                                     }
                                 } else {
                                     ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                                }
+                                if let Some(number) = numbers.get(&id) {
+                                    ui.label(number);
                                 }
                                 if let Some(todo) = topic.todo {
                                     let progress = todo_progress.get(&id);
@@ -2498,7 +2514,7 @@ impl ThinodaApp {
                     }
                     widgets::vdivider(ui);
                     let minus = ui
-                        .small_button("−")
+                        .small_button(icons::ZOOM_OUT)
                         .on_hover_text(t("Zoom Out"))
                         .accessible_name(t("Zoom Out"));
                     if minus.gained_focus() {
@@ -2536,7 +2552,7 @@ impl ThinodaApp {
                         zoom.scroll_to_me(None);
                     }
                     let plus = ui
-                        .small_button("+")
+                        .small_button(icons::ZOOM_IN)
                         .on_hover_text(t("Zoom In"))
                         .accessible_name(t("Zoom In"));
                     if plus.gained_focus() {
@@ -2759,6 +2775,9 @@ impl ThinodaApp {
                 sheet.structure,
                 Structure::MapClockwise | Structure::MapAnticlockwise | Structure::MapUnbalanced
             );
+        let can_number = sel.iter().all(|id| sheet.parent(*id).is_some());
+        let numbering = sheet.sibling_numbering(primary);
+        let mut numbering_change: Option<Option<Numbering>> = None;
         let mut change: Option<StyleChange> = None;
         ui.label(RichText::new(&topic.title).strong());
         if sel.len() > 1 {
@@ -2932,9 +2951,9 @@ impl ThinodaApp {
                 }
                 widgets::vdivider(ui);
                 for (a, icon, label) in [
-                    (TextAlign::Left, "⬅", "Align Left"),
-                    (TextAlign::Center, "⬌", "Align Center"),
-                    (TextAlign::Right, "➡", "Align Right"),
+                    (TextAlign::Left, icons::TEXT_ALIGN_LEFT, "Align Left"),
+                    (TextAlign::Center, icons::TEXT_ALIGN_CENTER, "Align Center"),
+                    (TextAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align Right"),
                 ] {
                     if widgets::icon_button(ui, icon, t(label), resolved.align == a).clicked()
                         && touch_allowed
@@ -2953,6 +2972,68 @@ impl ThinodaApp {
                     ));
                 }
             });
+        });
+
+        widgets::section(ui, t("Numbering"), true, |ui| {
+            if !can_number {
+                widgets::caption(
+                    ui,
+                    t("Select a subtopic to number it together with its siblings."),
+                );
+                return;
+            }
+            let mut next = numbering;
+            widgets::property_field(ui, t("Numbering"), |ui| {
+                egui::ComboBox::from_id_salt(("topic_numbering", primary))
+                    .selected_text(numbering.map_or(t("None"), |n| n.format.sample()))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut next, None, t("None"));
+                        for format in NumberFormat::ALL {
+                            let value = Some(Numbering {
+                                format,
+                                ..numbering.unwrap_or_default()
+                            });
+                            ui.selectable_value(&mut next, value, format.sample());
+                        }
+                    })
+                    .response
+            });
+            if let Some(current) = numbering {
+                let mut tiered = current.tiered;
+                if ui.checkbox(&mut tiered, t("Tiered numbers")).changed() {
+                    next = Some(Numbering { tiered, ..current });
+                }
+                let mut start = current.start as f32;
+                widgets::property_field(ui, t("Start at"), |ui| {
+                    let (r, commit) = touch_numeric_value(
+                        ui,
+                        &mut start,
+                        "numbering-start",
+                        numeric_owner,
+                        |ui, value| {
+                            ui.add(
+                                egui::DragValue::new(value)
+                                    .range(1.0..=thinoda_core::numbering::MAX_START as f32)
+                                    .speed(0.2)
+                                    .fixed_decimals(0),
+                            )
+                        },
+                    );
+                    let start = start.round() as u32;
+                    if commit && start != current.start {
+                        next = Some(Numbering { start, ..current });
+                    }
+                    r
+                });
+            }
+            widgets::caption(
+                ui,
+                t("Applies to the selected topic and its siblings; numbers update as topics move."),
+            );
+            if touch_allowed && next != numbering {
+                numbering_change = Some(next);
+            }
         });
 
         widgets::section(ui, t("Branch"), true, |ui| {
@@ -3093,6 +3174,18 @@ impl ThinodaApp {
             let _ = d
                 .doc
                 .edit_sheet(label, |s| s.update_style(&sel, |st| f(st)));
+        }
+        if let Some(numbering) = numbering_change {
+            let result = d.doc.edit_sheet("Numbering", |s| {
+                for id in &sel {
+                    s.set_sibling_numbering(*id, numbering)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.toasts
+                    .warning(format!("{}: {error}", t("Not possible here")));
+            }
         }
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
@@ -3598,7 +3691,7 @@ impl ThinodaApp {
                             }
                             ui.horizontal_wrapped(|ui| {
                                 if ui
-                                    .small_button("▲")
+                                    .small_button(icons::ARROW_UP)
                                     .accessible_name(t("Previous result"))
                                     .clicked()
                                     && touch_allowed
@@ -3606,7 +3699,7 @@ impl ThinodaApp {
                                     self.goto_hit(-1);
                                 }
                                 if ui
-                                    .small_button("▼")
+                                    .small_button(icons::ARROW_DOWN)
                                     .accessible_name(t("Next result"))
                                     .clicked()
                                     && touch_allowed

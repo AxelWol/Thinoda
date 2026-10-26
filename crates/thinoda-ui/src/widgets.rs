@@ -107,6 +107,7 @@ pub fn preview_card(
 
 /// A square, frameless icon button with a tooltip. `selected` draws an accent background.
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Response {
+    crate::fonts::ensure_icon_font(ui.ctx());
     let p = Palette::of_ui(ui);
     let size = Vec2::splat(Tokens::ICON_BUTTON);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -140,7 +141,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
             rect.center(),
             Align2::CENTER_CENTER,
             icon,
-            FontId::proportional(16.0),
+            FontId::proportional(crate::icons::SIZE_TOOLBAR),
             color,
         );
     }
@@ -149,6 +150,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str, selected: bool) -> Re
 
 /// A toolbar button with an icon above a small caption (like XMind's top toolbar).
 pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
+    crate::fonts::ensure_icon_font(ui.ctx());
     let enabled = enabled && ui.is_enabled();
     let p = Palette::of_ui(ui);
     let font = FontId::proportional(Tokens::FONT_SMALL);
@@ -189,7 +191,7 @@ pub fn toolbar_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Re
             pos2(rect.center().x, rect.top() + 13.0),
             Align2::CENTER_CENTER,
             icon,
-            FontId::proportional(16.0),
+            FontId::proportional(crate::icons::SIZE_TOOLBAR),
             c,
         );
         ui.painter().text(
@@ -439,6 +441,7 @@ pub fn chip(ui: &mut Ui, text: &str, color: Color32) -> Response {
 
 /// A rounded search field with a leading magnifier glyph.
 pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
+    crate::fonts::ensure_icon_font(ui.ctx());
     let p = Palette::of_ui(ui);
     Frame::new()
         .fill(p.surface_alt)

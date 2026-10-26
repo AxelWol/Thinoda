@@ -163,6 +163,8 @@ pub struct TopicLayout {
     pub image_rect: Option<Rect>,
     pub todo_rect: Option<Rect>,
     pub todo_progress: Option<crate::todo::TodoProgress>,
+    /// Derived structural number, drawn before markers in the title color.
+    pub number: Option<(String, Rect)>,
     pub markers: Vec<(String, Rect)>,
     pub icons: Vec<(Icon, Rect)>,
     pub labels: Vec<(String, Rect)>,
@@ -316,6 +318,7 @@ struct Content {
     title: Rect,
     image: Option<Rect>,
     todo: Option<Rect>,
+    number: Option<(String, Rect)>,
     markers: Vec<(String, Rect)>,
     icons: Vec<(Icon, Rect)>,
     labels: Vec<(String, Rect)>,
@@ -358,6 +361,7 @@ struct Engine<'a> {
     info: HashMap<TopicId, (Vec2, Content, ResolvedStyle, Level, Vec2)>,
     grow: HashMap<TopicId, Dir>,
     todo_progress: HashMap<TopicId, crate::todo::TodoProgress>,
+    numbering: HashMap<TopicId, String>,
 }
 
 /// Lays out the whole sheet.
@@ -370,6 +374,7 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
         info: HashMap::new(),
         grow: HashMap::new(),
         todo_progress: sheet.todo_progress(),
+        numbering: sheet.numbering_labels(),
     };
     let mut items: Vec<(TopicId, Vec2)> = Vec::new();
     let mut connectors = Vec::new();
@@ -677,6 +682,17 @@ impl Engine<'_> {
         let ms = (fs * 1.1).round();
         let gap = 4.0;
         let mut left = 0.0;
+        let number = self.numbering.get(&id).map(|label| {
+            let size = self.measure.measure_with_family(
+                label,
+                fs,
+                style.bold,
+                f32::INFINITY,
+                style.font_family.as_deref(),
+            );
+            left += size.x + gap;
+            (label.clone(), size)
+        });
         if t.todo.is_some() {
             left += ms + gap;
         }
@@ -685,8 +701,13 @@ impl Engine<'_> {
         let n_icons = t.hyperlink.is_some() as usize + t.has_notes() as usize;
         let right = n_icons as f32 * (isz + gap);
         let row_h =
-            ts.y.max(if left > 0.0 { ms } else { 0.0 })
-                .max(if right > 0.0 { isz } else { 0.0 });
+            ts.y.max(if t.todo.is_some() || !t.markers.is_empty() {
+                ms
+            } else {
+                0.0
+            })
+            .max(number.as_ref().map_or(0.0, |(_, size)| size.y))
+            .max(if right > 0.0 { isz } else { 0.0 });
         let lfs = (fs * 0.72).max(9.0);
         let lh = lfs * 1.3 + 4.0;
         let progress_label = t.todo.and_then(|_| {
@@ -740,6 +761,13 @@ impl Engine<'_> {
         let mut x = inner_x + (inner_w - row_w) / 2.0;
         let cy = y + row_h / 2.0;
         let sq = |x: f32, s: f32| Rect::from_min_size(Vec2::new(x, cy - s / 2.0), Vec2::new(s, s));
+        if let Some((label, size)) = number {
+            c.number = Some((
+                label,
+                Rect::from_min_size(Vec2::new(x, cy - size.y / 2.0), size),
+            ));
+            x += size.x + gap;
+        }
         if t.todo.is_some() {
             c.todo = Some(sq(x, ms));
             x += ms + gap;
@@ -795,6 +823,7 @@ impl Engine<'_> {
                     title_rect: mv(content.title),
                     image_rect: content.image.map(mv),
                     todo_rect: content.todo.map(mv),
+                    number: content.number.map(|(label, r)| (label, mv(r))),
                     todo_progress: topic
                         .todo
                         .and_then(|_| self.todo_progress.get(&id).copied()),

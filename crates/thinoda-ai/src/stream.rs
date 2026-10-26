@@ -244,7 +244,7 @@ impl<T> AiStreamJob<T> {
 impl AiStreamJob<AiResult> {
     /// Stream an existing mind-map task and parse its final response into `AiResult`.
     pub fn spawn(cfg: AiConfig, task: AiTask) -> Self {
-        let messages = task.messages();
+        let messages = task.messages_in(&cfg.reply_language);
         spawn_job(cfg, move |cfg, shared| async move {
             let (model, text) = stream_chat(cfg, None, messages, shared).await?;
             finish(&task, &text, model)

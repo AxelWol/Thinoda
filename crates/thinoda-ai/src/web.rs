@@ -96,7 +96,9 @@ impl Client {
     /// Runs a mind-map task end to end.
     pub async fn run(&self, task: &AiTask) -> Result<AiResult> {
         let model = self.resolve_model().await?;
-        let text = self.chat(&model, &task.messages()).await?;
+        let text = self
+            .chat(&model, &task.messages_in(&self.cfg.reply_language))
+            .await?;
         finish(task, &text, model)
     }
 }

@@ -118,3 +118,11 @@ not destructive replacement or a claim that metadata was translated.
 Transformation output is bounded to 64 KiB/500 lines before outline parsing.
 Only a completed valid stream returns a typed result; caller-owned review/Apply
 and source/configuration validation remain mandatory.
+
+## Reply language
+
+`AiConfig::reply_language` holds the English name of the language replies should use
+(Thinoda passes its resolved UI language). `AiTask::messages_in` and the app's chat and
+Pitch prompts append `reply_language_instruction`, which asks for that language and falls
+back to English. A blank value keeps the language of the supplied content; translation
+keeps the target language from the user's instructions.

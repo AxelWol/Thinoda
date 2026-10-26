@@ -138,6 +138,7 @@ pub fn config(s: &AiSettings) -> AiConfig {
             String::new()
         },
         temperature: s.temperature,
+        reply_language: crate::i18n::lang().english_name().into(),
         ..AiConfig::default()
     }
 }
