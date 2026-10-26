@@ -371,9 +371,12 @@ fn streaming_errors_and_missing_terminal_marker_are_not_successes() {
 
 #[test]
 fn cancellation_before_input_and_during_read_discards_late_deltas() {
+    // Never accepted, so the request stays pending until cancellation instead of
+    // racing a fast connection refusal.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let before_input = AiStreamJob::chat(
         AiConfig {
-            base_url: "http://127.0.0.1:9/v1".into(),
+            base_url: format!("http://{}/v1", silent.local_addr().unwrap()),
             model: "test-model".into(),
             ..AiConfig::default()
         },
