@@ -98,6 +98,13 @@ XV1-XV2 are implemented locally and unreleased. XV3 structural numbering and UR6
 are implemented (flat AI page, embedding discovery, compact ribbon by default) and
 UR7, UR3 and UR4 are next.
 
+Release verification (2026-10-26): v0.14.0 main CI and Pages deployment
+succeeded. Release workflow 40371818396 completed all six native package jobs
+and publication successfully. All 16 release assets were downloaded; SHA256
+verification matched all ten packages against the six published checksum
+manifests. Physical-device/native GUI acceptance and Windows production
+signing remain open F6 limitations, not passes inferred from packaging.
+
 ### Released work and remaining acceptance
 
 The F0-F5 implementation is merged through
