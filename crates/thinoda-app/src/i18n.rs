@@ -127,6 +127,46 @@ pub fn t(en: &'static str) -> &'static str {
     t_in(lang(), en)
 }
 
+/// Translated title-row button labels for [`thinoda_ui::Dialog`].
+pub fn dialog_labels() -> thinoda_ui::DialogLabels {
+    thinoda_ui::DialogLabels {
+        hide: t("Minimize").into(),
+        show: t("Expand").into(),
+        maximize: t("Maximize").into(),
+        restore: t("Restore").into(),
+        close: t("Close Window").into(),
+    }
+}
+
+/// Translated labels for [`thinoda_ui::date_field`] calendars.
+pub fn calendar_labels() -> thinoda_ui::CalendarLabels {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    thinoda_ui::CalendarLabels {
+        months: MONTHS.map(|month| t(month).to_owned()),
+        weekdays: WEEKDAYS.map(|day| t(day).to_owned()),
+        previous_month: t("Previous month").into(),
+        next_month: t("Next month").into(),
+        today: t("Today").into(),
+        open_calendar: t("Open calendar").into(),
+        unavailable: t("Non-working day").into(),
+        first_weekday: 0,
+    }
+}
+
 pub fn t_in(lang: Lang, en: &'static str) -> &'static str {
     if lang == Lang::En {
         return en;
@@ -213,6 +253,80 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Generation provider", "Anbieter für Textgenerierung"),
+    ("CLI default", "CLI-Standard"),
+    (
+        "CLI replies are buffered. Tools are disabled; no local files are supplied.",
+        "CLI-Antworten werden gepuffert. Werkzeuge sind deaktiviert; lokale Dateien werden nicht übergeben.",
+    ),
+    ("Check CLI status", "CLI-Status prüfen"),
+    ("Checking CLI…", "CLI wird geprüft…"),
+    (
+        "Signed in according to the CLI. Access and subscription are not verified.",
+        "Laut CLI angemeldet. Zugriff und Abonnement wurden nicht geprüft.",
+    ),
+    (
+        "Not signed in. Run the login command in your terminal, then check again.",
+        "Nicht angemeldet. Den Anmeldebefehl im Terminal ausführen, dann erneut prüfen.",
+    ),
+    (
+        "Authentication status is unknown. This CLI may not support a non-inference check.",
+        "Anmeldestatus unbekannt. Diese CLI unterstützt möglicherweise keine Prüfung ohne Modellanfrage.",
+    ),
+    (
+        "Thinoda never starts login or installation automatically. CLI credentials remain managed by the CLI.",
+        "Thinoda startet Anmeldung oder Installation nie automatisch. Die CLI verwaltet ihre Zugangsdaten selbst.",
+    ),
+    ("Copy login command", "Anmeldebefehl kopieren"),
+    (
+        "Install and login help",
+        "Hilfe zu Installation und Anmeldung",
+    ),
+    ("OpenAI-compatible API", "OpenAI-kompatible API"),
+    (
+        "Embeddings always use this API, never a CLI. Switching providers preserves these settings and credentials.",
+        "Embeddings verwenden immer diese API, nie eine CLI. Beim Anbieterwechsel bleiben diese Einstellungen und Zugangsdaten erhalten.",
+    ),
+    (
+        "Native CLIs are unavailable in the browser. The selection is preserved.",
+        "Native CLIs sind im Browser nicht verfügbar. Die Auswahl bleibt erhalten.",
+    ),
+    (
+        "CLI not found on PATH. Install it, restart Thinoda, then check again.",
+        "CLI nicht im PATH gefunden. Installieren, Thinoda neu starten und erneut prüfen.",
+    ),
+    (
+        "This CLI installation cannot be launched safely. Use a supported native or npm installation.",
+        "Diese CLI-Installation kann nicht sicher gestartet werden. Eine unterstützte native oder npm-Installation verwenden.",
+    ),
+    (
+        "Copilot CLI has no documented isolated mode that disables all user MCP servers and hooks. Generation is unavailable.",
+        "Copilot CLI hat keinen dokumentierten isolierten Modus, der alle Benutzer-MCP-Server und Hooks deaktiviert. Textgenerierung ist nicht verfügbar.",
+    ),
+    (
+        "CLI check failed or is unsupported. Authentication could not be verified.",
+        "CLI-Prüfung fehlgeschlagen oder nicht unterstützt. Die Anmeldung konnte nicht geprüft werden.",
+    ),
+    (
+        "CLI request timed out.",
+        "Zeitüberschreitung bei der CLI-Anfrage.",
+    ),
+    (
+        "CLI output exceeded the safety limit.",
+        "CLI-Ausgabe hat die Sicherheitsgrenze überschritten.",
+    ),
+    (
+        "CLI request failed. Check authentication and update the CLI using its official documentation.",
+        "CLI-Anfrage fehlgeschlagen. Anmeldung prüfen und die CLI gemäß ihrer offiziellen Dokumentation aktualisieren.",
+    ),
+    (
+        "Could not start the isolated CLI process.",
+        "Der isolierte CLI-Prozess konnte nicht gestartet werden.",
+    ),
+    (
+        "Settings > AI selects the generation provider. Native Claude and Codex CLIs use their own login; replies are buffered. Copilot generation is blocked until a documented safe mode is available. Embeddings always use the separate OpenAI-compatible API. Browsers preserve CLI selections but cannot run them.",
+        "Unter Einstellungen > KI wird der Anbieter für Textgenerierung gewählt. Native Claude- und Codex-CLIs nutzen ihre eigene Anmeldung; Antworten werden gepuffert. Copilot-Generierung bleibt bis zu einem dokumentierten sicheren Modus gesperrt. Embeddings nutzen immer die separate OpenAI-kompatible API. Browser behalten CLI-Auswahlen bei, können sie aber nicht ausführen.",
+    ),
     ("View All Notes", "Alle Notizen anzeigen"),
     ("Filters", "Filter"),
     ("Incomplete", "Nicht abgeschlossen"),
@@ -280,6 +394,19 @@ const DE: &[(&str, &str)] = &[
     ("Hide Others", "Andere ausblenden"),
     ("Show All", "Alle einblenden"),
     ("Minimize", "Minimieren"),
+    ("Maximize", "Maximieren"),
+    ("Expand", "Erweitern"),
+    ("Mon", "Mo"),
+    ("Tue", "Di"),
+    ("Wed", "Mi"),
+    ("Thu", "Do"),
+    ("Fri", "Fr"),
+    ("Sat", "Sa"),
+    ("Sun", "So"),
+    ("Today", "Heute"),
+    ("Previous month", "Vorheriger Monat"),
+    ("Next month", "Nächster Monat"),
+    ("Open calendar", "Kalender öffnen"),
     ("Bring All to Front", "Alle nach vorne bringen"),
     (
         "On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.",

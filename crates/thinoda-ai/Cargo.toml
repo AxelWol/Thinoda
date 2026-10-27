@@ -19,6 +19,13 @@ web-time.workspace = true
 ureq.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_Security"] }
 
 # The browser build talks to the server with `fetch` (the endpoint must allow CORS).
 [target.'cfg(target_arch = "wasm32")'.dependencies]

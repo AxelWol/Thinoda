@@ -209,6 +209,9 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                 let selection = h.state().doc().unwrap().view.selection.clone();
                 assert_fit(&h);
                 for (role, label) in [
+                    (Role::Button, "Minimize"),
+                    (Role::Button, "Maximize"),
+                    (Role::Button, "Close Window"),
                     (Role::Button, "Edit mappings"),
                     (Role::TextInput, "Search commands or shortcuts"),
                     (Role::ComboBox, "Shortcut category"),
@@ -218,7 +221,8 @@ fn shortcut_reference_remains_reachable_in_short_scaled_localized_windows() {
                     h.key_press(Key::Tab);
                     h.run_steps(4);
                     assert!(
-                        h.get_by_role_and_label(role, t(label)).is_focused(),
+                        h.query_all_by_role_and_label(role, t(label))
+                            .any(|node| node.is_focused()),
                         "{label}: incorrect Tab order"
                     );
                     assert_fit(&h);

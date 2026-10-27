@@ -241,6 +241,12 @@ impl<T> AiStreamJob<T> {
     }
 }
 
+impl<T> Drop for AiStreamJob<T> {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 impl AiStreamJob<AiResult> {
     /// Stream an existing mind-map task and parse its final response into `AiResult`.
     pub fn spawn(cfg: AiConfig, task: AiTask) -> Self {
@@ -557,6 +563,12 @@ async fn stream_chat(
     messages: Vec<Message>,
     shared: Arc<Shared<impl Sized>>,
 ) -> Result<(String, String)> {
+    if cfg.provider != crate::harness::Provider::OpenAiApi {
+        let model = requested_model.unwrap_or_else(|| cfg.model.clone());
+        let text = crate::harness::chat(&cfg, &model, &messages, || shared.is_cancelled())?;
+        // CLI output is buffered. Do not emit fabricated token-by-token deltas.
+        return Ok((model, text));
+    }
     let client = native_client(&cfg)?;
     let model = match requested_model {
         Some(model) => model,
@@ -770,6 +782,9 @@ async fn stream_chat(
     messages: Vec<Message>,
     shared: Arc<Shared<impl Sized>>,
 ) -> Result<(String, String)> {
+    if cfg.provider != crate::harness::Provider::OpenAiApi {
+        return Err(AiError::Harness(crate::harness::HarnessError::Browser));
+    }
     let model = match requested_model {
         Some(model) => model,
         None => resolve_web_model(&cfg, &shared).await?,

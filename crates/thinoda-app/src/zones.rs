@@ -175,9 +175,14 @@ impl ThinodaApp {
         let blocked = self.any_modal_open();
         let touch = widgets::touch_activation_allowed(ctx);
         let revision = self.docs[index].doc.state_id();
-        egui::Window::new(t("Zones")).id(egui::Id::unique(("zones", &owner.document, owner.sheet)))
-            .open(&mut open).default_size([440.0, 360.0])
-            .max_size(ctx.content_rect().size() - egui::vec2(24.0, 24.0))
+        let labels = crate::i18n::dialog_labels();
+        let _ = thinoda_ui::Dialog::new(egui::Id::unique(("zones", &owner.document, owner.sheet)), t("Zones"))
+            .icon(thinoda_ui::icons::ZONES)
+            .labels(&labels)
+            .open(&mut open)
+            .default_width(440.0)
+            .default_height(360.0)
+            .scroll(false)
             .show(ctx, |ui| {
                 ui.add_enabled_ui(!blocked, |ui| {
                     let doc = &self.docs[index];
@@ -279,60 +284,69 @@ impl ThinodaApp {
         let touch = widgets::touch_activation_allowed(ctx);
         let mut apply = false;
         let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::unique("zone-editor")).show(ctx, |ui| {
-            ui.set_width(420.0_f32.min((ctx.content_rect().width() - 32.0).max(1.0)));
-            ui.heading(t(if editor.id.is_some() {
-                "Edit Zone"
-            } else {
-                "Create Zone"
-            }));
-            egui::ScrollArea::vertical()
-                .max_height((ctx.content_rect().height() - 150.0).max(40.0))
-                .show(ui, |ui| {
-                    let label = ui.label(t("Name"));
-                    ui.add(egui::TextEdit::singleline(&mut editor.name))
-                        .labelled_by(label.id);
-                    let owner = Some(egui::Id::unique((
-                        &editor.owner.document,
-                        editor.owner.sheet,
-                        editor.revision,
-                        editor.owner.viewport,
-                        editor.id,
-                    )));
-                    for (salt, label, value, minimum) in [
-                        ("zone-x", "X", &mut editor.frame.min.x, -f32::MAX),
-                        ("zone-y", "Y", &mut editor.frame.min.y, -f32::MAX),
-                        ("zone-width", "Width", &mut editor.frame.size.x, 100.0),
-                        ("zone-height", "Height", &mut editor.frame.size.y, 100.0),
-                    ] {
-                        let label = ui.label(t(label));
-                        let mut draft = *value;
-                        let (_, commit) = crate::ui::touch_numeric_value(
-                            ui,
-                            &mut draft,
-                            salt,
-                            owner,
-                            |ui, value| {
-                                ui.add(egui::DragValue::new(value).range(minimum..=f32::MAX))
-                                    .labelled_by(label.id)
-                            },
-                        );
-                        if commit {
-                            *value = draft;
+        let title = if editor.id.is_some() {
+            "Edit Zone"
+        } else {
+            "Create Zone"
+        };
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("zone-editor"), t(title))
+            .icon(thinoda_ui::icons::ZONES)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(420.0)
+            .default_height(420.0)
+            .min_size(egui::vec2(300.0, 240.0))
+            .scroll(false)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height((ctx.content_rect().height() - 150.0).max(40.0))
+                    .show(ui, |ui| {
+                        let label = ui.label(t("Name"));
+                        ui.add(egui::TextEdit::singleline(&mut editor.name))
+                            .labelled_by(label.id);
+                        let owner = Some(egui::Id::unique((
+                            &editor.owner.document,
+                            editor.owner.sheet,
+                            editor.revision,
+                            editor.owner.viewport,
+                            editor.id,
+                        )));
+                        for (salt, label, value, minimum) in [
+                            ("zone-x", "X", &mut editor.frame.min.x, -f32::MAX),
+                            ("zone-y", "Y", &mut editor.frame.min.y, -f32::MAX),
+                            ("zone-width", "Width", &mut editor.frame.size.x, 100.0),
+                            ("zone-height", "Height", &mut editor.frame.size.y, 100.0),
+                        ] {
+                            let label = ui.label(t(label));
+                            let mut draft = *value;
+                            let (_, commit) = crate::ui::touch_numeric_value(
+                                ui,
+                                &mut draft,
+                                salt,
+                                owner,
+                                |ui, value| {
+                                    ui.add(egui::DragValue::new(value).range(minimum..=f32::MAX))
+                                        .labelled_by(label.id)
+                                },
+                            );
+                            if commit {
+                                *value = draft;
+                            }
                         }
-                    }
-                    ui.label(t(
-                        "Moving a Zone moves its topics. Minimum size is 100 × 100.",
-                    ));
-                    if let Some(error) = &editor.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
+                        ui.label(t(
+                            "Moving a Zone moves its topics. Minimum size is 100 × 100.",
+                        ));
+                        if let Some(error) = &editor.error {
+                            ui.colored_label(ui.visuals().error_fg_color, error);
+                        }
+                    });
+                ui.horizontal_wrapped(|ui| {
+                    apply = ui.button(t("Apply")).clicked() && touch;
+                    cancel = ui.button(t("Cancel")).clicked() && touch;
                 });
-            ui.horizontal_wrapped(|ui| {
-                apply = ui.button(t("Apply")).clicked() && touch;
-                cancel = ui.button(t("Cancel")).clicked() && touch;
             });
-        });
         if apply && !ime && !editor.composing {
             match self.apply_zone_draft(&editor) {
                 Ok(()) => {
@@ -345,7 +359,7 @@ impl ThinodaApp {
                 }
             }
         }
-        if !(cancel || response.should_close()) || ime || editor.composing {
+        if !(cancel || response.close_requested) || ime || editor.composing {
             self.zones.editor = Some(editor);
         }
     }

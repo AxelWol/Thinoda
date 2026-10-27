@@ -6,7 +6,7 @@ use thinoda_core::{
     quick_styles::{PRESETS, preset},
     theme::{Level, ResolvedStyle, Theme, resolve_style},
 };
-use thinoda_ui::{DialogButton, confirm_dialog, widgets};
+use thinoda_ui::{DialogButton, confirm_dialog_with_labels as confirm_dialog, widgets};
 
 use crate::{
     app::{Cmd, ThinodaApp},
@@ -247,6 +247,7 @@ impl ThinodaApp {
                         (t("Remove"), DialogButton::Danger),
                         (t("Cancel"), DialogButton::Secondary),
                     ],
+                    &crate::i18n::dialog_labels(),
                 ) {
                     keep = false;
                     if choice == 0 {
@@ -321,172 +322,163 @@ impl ThinodaApp {
                         .is_none_or(|gesture| !gesture.canceled);
                 let theme_before_controls = draft.theme.clone();
                 let role_before_controls = draft.role;
-                let response =
-                    egui::Modal::new(egui::Id::unique("custom_theme_editor")).show(ctx, |ui| {
-                        ui.set_width(600.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
-                        ui.heading(t("Custom Theme Editor"));
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .min_scrolled_height((ctx.content_rect().height() - 200.0).max(180.0))
-                            .max_height((ctx.content_rect().height() - 200.0).max(180.0))
-                            .show(ui, |ui| {
-                                let label = ui.label(t("Theme name"));
-                                ui.text_edit_singleline(&mut draft.theme.name)
-                                    .labelled_by(label.id);
-                                widgets::property_field(ui, t("Base theme"), |ui| {
-                                    egui::ComboBox::from_id_salt("custom_base")
-                                        .selected_text(t(Theme::builtin(
-                                            &draft.theme.base_theme_id,
-                                        )
-                                        .name))
-                                        .show_ui(ui, |ui| {
-                                            for id in Theme::IDS {
-                                                ui.selectable_value(
-                                                    &mut draft.theme.base_theme_id,
-                                                    id.into(),
-                                                    t(Theme::builtin(id).name),
-                                                );
-                                            }
-                                        })
-                                        .response
+                let labels = crate::i18n::dialog_labels();
+                let response = thinoda_ui::Dialog::new(
+                    egui::Id::unique("custom_theme_editor"),
+                    t("Custom Theme Editor"),
+                )
+                .icon(thinoda_ui::icons::THEME)
+                .labels(&labels)
+                .modal(true)
+                .close_on_backdrop(true)
+                .default_width(600.0)
+                .default_height(700.0)
+                .min_size(egui::vec2(400.0, 360.0))
+                .scroll(false)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .min_scrolled_height((ctx.content_rect().height() - 200.0).max(180.0))
+                        .max_height((ctx.content_rect().height() - 200.0).max(180.0))
+                        .show(ui, |ui| {
+                            let label = ui.label(t("Theme name"));
+                            ui.text_edit_singleline(&mut draft.theme.name)
+                                .labelled_by(label.id);
+                            widgets::property_field(ui, t("Base theme"), |ui| {
+                                egui::ComboBox::from_id_salt("custom_base")
+                                    .selected_text(t(
+                                        Theme::builtin(&draft.theme.base_theme_id).name
+                                    ))
+                                    .show_ui(ui, |ui| {
+                                        for id in Theme::IDS {
+                                            ui.selectable_value(
+                                                &mut draft.theme.base_theme_id,
+                                                id.into(),
+                                                t(Theme::builtin(id).name),
+                                            );
+                                        }
+                                    })
+                                    .response
+                            });
+                            widgets::property_field(ui, t("Theme Font"), |ui| {
+                                font_selector(
+                                    ui,
+                                    &mut self.fonts,
+                                    &mut draft.theme.font_family,
+                                    t("Default"),
+                                )
+                            });
+                            edit_color(
+                                ui,
+                                t("Light background"),
+                                &mut draft.theme.light_background,
+                            );
+                            edit_color(ui, t("Dark background"), &mut draft.theme.dark_background);
+                            let columns = ((ui.available_width() / 180.0).floor() as usize).max(1);
+                            egui::Grid::new("theme_palette")
+                                .num_columns(columns)
+                                .show(ui, |ui| {
+                                    for (index, color) in draft.theme.palette.iter_mut().enumerate()
+                                    {
+                                        ui.vertical(|ui| {
+                                            ui.set_width(170.0);
+                                            edit_color(
+                                                ui,
+                                                &format!("{} {}", t("Palette color"), index + 1),
+                                                color,
+                                            );
+                                        });
+                                        if (index + 1) % columns == 0 {
+                                            ui.end_row();
+                                        }
+                                    }
                                 });
-                                widgets::property_field(ui, t("Theme Font"), |ui| {
-                                    font_selector(
-                                        ui,
-                                        &mut self.fonts,
-                                        &mut draft.theme.font_family,
-                                        t("Default"),
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        draft.theme.palette.len() < 16,
+                                        egui::Button::new(t("Add color")),
                                     )
-                                });
-                                edit_color(
-                                    ui,
-                                    t("Light background"),
-                                    &mut draft.theme.light_background,
-                                );
-                                edit_color(
-                                    ui,
-                                    t("Dark background"),
-                                    &mut draft.theme.dark_background,
-                                );
-                                let columns =
-                                    ((ui.available_width() / 180.0).floor() as usize).max(1);
-                                egui::Grid::new("theme_palette").num_columns(columns).show(
-                                    ui,
-                                    |ui| {
-                                        for (index, color) in
-                                            draft.theme.palette.iter_mut().enumerate()
-                                        {
-                                            ui.vertical(|ui| {
-                                                ui.set_width(170.0);
-                                                edit_color(
-                                                    ui,
-                                                    &format!(
-                                                        "{} {}",
-                                                        t("Palette color"),
-                                                        index + 1
-                                                    ),
-                                                    color,
-                                                );
-                                            });
-                                            if (index + 1) % columns == 0 {
-                                                ui.end_row();
+                                    .clicked()
+                                {
+                                    draft.theme.palette.push(Color::rgb(46, 124, 246));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        draft.theme.palette.len() > 1,
+                                        egui::Button::new(t("Remove last color")),
+                                    )
+                                    .clicked()
+                                {
+                                    draft.theme.palette.pop();
+                                }
+                            });
+                            let (sheet, ids) = preview(&draft.theme);
+                            let layout = layout_sheet(
+                                &sheet,
+                                &thinoda_canvas::EguiMeasure::new(ui.ctx()),
+                                ui.visuals().dark_mode,
+                            );
+                            let (rect, _) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), 160.0),
+                                egui::Sense::hover(),
+                            );
+                            thinoda_canvas::paint_thumbnail(
+                                ui.painter(),
+                                &sheet,
+                                &layout,
+                                rect,
+                                ui.visuals().dark_mode,
+                            );
+                            widgets::property_field(ui, t("Topic role"), |ui| {
+                                egui::ComboBox::from_id_salt("custom_role")
+                                    .selected_text(t(ROLES[draft.role].1))
+                                    .show_ui(ui, |ui| {
+                                        for (index, (_, label)) in ROLES.into_iter().enumerate() {
+                                            ui.selectable_value(&mut draft.role, index, t(label));
+                                        }
+                                    })
+                                    .response
+                            });
+                            let resolved =
+                                resolve_style(&sheet, ids[draft.role], ui.visuals().dark_mode);
+                            let style = draft.theme.roles.get_mut(ROLES[draft.role].0);
+                            ui.push_id(draft.role, |ui| {
+                                edit_role(ui, style, &resolved, &mut self.fonts)
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button(t("Reset role")).clicked() && activation_allowed {
+                                    *style = TopicStyle::default();
+                                }
+                                egui::ComboBox::from_id_salt("role_preset")
+                                    .selected_text(t("Role preset"))
+                                    .show_ui(ui, |ui| {
+                                        for name in PRESETS {
+                                            if ui.button(t(name)).clicked() && activation_allowed {
+                                                *style = preset(name).unwrap().style;
+                                                ui.close();
                                             }
                                         }
-                                    },
-                                );
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .add_enabled(
-                                            draft.theme.palette.len() < 16,
-                                            egui::Button::new(t("Add color")),
-                                        )
-                                        .clicked()
-                                    {
-                                        draft.theme.palette.push(Color::rgb(46, 124, 246));
-                                    }
-                                    if ui
-                                        .add_enabled(
-                                            draft.theme.palette.len() > 1,
-                                            egui::Button::new(t("Remove last color")),
-                                        )
-                                        .clicked()
-                                    {
-                                        draft.theme.palette.pop();
-                                    }
-                                });
-                                let (sheet, ids) = preview(&draft.theme);
-                                let layout = layout_sheet(
-                                    &sheet,
-                                    &thinoda_canvas::EguiMeasure::new(ui.ctx()),
-                                    ui.visuals().dark_mode,
-                                );
-                                let (rect, _) = ui.allocate_exact_size(
-                                    vec2(ui.available_width(), 160.0),
-                                    egui::Sense::hover(),
-                                );
-                                thinoda_canvas::paint_thumbnail(
-                                    ui.painter(),
-                                    &sheet,
-                                    &layout,
-                                    rect,
-                                    ui.visuals().dark_mode,
-                                );
-                                widgets::property_field(ui, t("Topic role"), |ui| {
-                                    egui::ComboBox::from_id_salt("custom_role")
-                                        .selected_text(t(ROLES[draft.role].1))
-                                        .show_ui(ui, |ui| {
-                                            for (index, (_, label)) in ROLES.into_iter().enumerate()
-                                            {
-                                                ui.selectable_value(
-                                                    &mut draft.role,
-                                                    index,
-                                                    t(label),
-                                                );
-                                            }
-                                        })
-                                        .response
-                                });
-                                let resolved =
-                                    resolve_style(&sheet, ids[draft.role], ui.visuals().dark_mode);
-                                let style = draft.theme.roles.get_mut(ROLES[draft.role].0);
-                                ui.push_id(draft.role, |ui| {
-                                    edit_role(ui, style, &resolved, &mut self.fonts)
-                                });
-                                ui.horizontal(|ui| {
-                                    if ui.button(t("Reset role")).clicked() && activation_allowed {
-                                        *style = TopicStyle::default();
-                                    }
-                                    egui::ComboBox::from_id_salt("role_preset")
-                                        .selected_text(t("Role preset"))
-                                        .show_ui(ui, |ui| {
-                                            for name in PRESETS {
-                                                if ui.button(t(name)).clicked()
-                                                    && activation_allowed
-                                                {
-                                                    *style = preset(name).unwrap().style;
-                                                    ui.close();
-                                                }
-                                            }
-                                        })
-                                        .response
-                                        .accessible_name(t("Role preset"));
-                                });
+                                    })
+                                    .response
+                                    .accessible_name(t("Role preset"));
                             });
-                        if let Some(error) = &draft.error {
-                            ui.colored_label(ui.visuals().error_fg_color, error);
-                        }
-                        ui.horizontal_wrapped(|ui| {
-                            apply = widgets::primary_button(ui, t("Apply Theme")).clicked()
-                                && activation_allowed;
-                            save = widgets::secondary_button(ui, t("Save to Library")).clicked()
-                                && activation_allowed;
-                            if widgets::secondary_button(ui, t("Cancel")).clicked()
-                                && activation_allowed
-                            {
-                                keep = false;
-                            }
                         });
+                    if let Some(error) = &draft.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        apply = widgets::primary_button(ui, t("Apply Theme")).clicked()
+                            && activation_allowed;
+                        save = widgets::secondary_button(ui, t("Save to Library")).clicked()
+                            && activation_allowed;
+                        if widgets::secondary_button(ui, t("Cancel")).clicked()
+                            && activation_allowed
+                        {
+                            keep = false;
+                        }
                     });
+                });
                 if !activation_allowed {
                     if let Some(gesture) = &draft.gesture {
                         draft.theme = gesture.theme.clone();
@@ -499,7 +491,7 @@ impl ThinodaApp {
                 if !pointer_down {
                     draft.gesture = None;
                 }
-                if response.should_close() && activation_allowed {
+                if response.close_requested && activation_allowed {
                     keep = false;
                 }
                 if keep && (apply || save) {

@@ -471,9 +471,17 @@ impl ThinodaApp {
                 .as_ref()
                 .is_none_or(|gesture| !gesture.canceled);
         let settings_before = editor.settings;
-        let response = egui::Modal::new(egui::Id::unique("print-map")).show(ctx, |ui| {
-            ui.set_width((ctx.content_rect().width() - 60.0).clamp(260.0, 860.0));
-            ui.heading(t("Print"));
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("print-map"), t("Print"))
+            .icon(thinoda_ui::icons::PRINT)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(860.0)
+            .default_height(700.0)
+            .min_size(egui::vec2(360.0, 300.0))
+            .scroll(false)
+            .show(ctx, |ui| {
             ui.label(RichText::new(&editor.title).weak());
             ui.separator();
             egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 190.0).max(140.0))
@@ -554,7 +562,7 @@ impl ThinodaApp {
                 });
             }
         }
-        if self.printing.busy() || (!close && !(response.should_close() && activation_allowed)) {
+        if self.printing.busy() || (!close && !(response.close_requested && activation_allowed)) {
             self.printing.editor = Some(editor);
         }
     }

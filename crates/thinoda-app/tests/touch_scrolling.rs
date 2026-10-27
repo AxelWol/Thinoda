@@ -574,8 +574,13 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
                 assert_eq!(h.state().settings, original, "{label}");
                 assert_eq!(Settings::load(&paths).unwrap(), persisted, "{label}");
             }
-            for label in ["Editor", "AI Assistant", "Cloud", "Keyboard Shortcuts"] {
-                let pos = h.get_by_role_and_label(Role::Button, label).rect().center();
+            for (role, label) in [
+                (Role::Tab, "Editor"),
+                (Role::Tab, "AI Assistant"),
+                (Role::Tab, "Cloud"),
+                (Role::Button, "Keyboard Shortcuts"),
+            ] {
+                let pos = h.get_by_role_and_label(role, label).rect().center();
                 rejected_tap(&mut h, pos, contacts, cancel);
                 assert_eq!(h.state().dialogs.settings_tab, SettingsTab::General);
                 assert!(!h.state().dialogs.shortcuts);
@@ -588,8 +593,7 @@ fn rejected_settings_actions_preserve_profile_and_network_drafts() {
             Settings::load(&paths).unwrap().autosave,
             h.state().settings.autosave
         );
-        h.get_by_role_and_label(Role::Button, "AI Assistant")
-            .click();
+        h.get_by_role_and_label(Role::Tab, "AI Assistant").click();
         h.run_steps(4);
         h.state_mut().ai.api_key_draft = Some("local-test-draft".into());
         for (contacts, cancel) in [(1, true), (2, false), (3, false)] {
@@ -936,7 +940,7 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
             let ctx = h.ctx.clone();
             h.state_mut().exec(&ctx, Cmd::Settings);
             h.run_steps(4);
-            let control = h.get_by_role_and_label(Role::Button, t("General")).rect();
+            let control = h.get_by_role_and_label(Role::Tab, t("General")).rect();
             let window = h
                 .ctx
                 .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_settings")))
@@ -947,7 +951,7 @@ fn first_touch_swipes_scroll_menus_and_settings_without_activating_controls() {
                 vec2(0.0, -90.0),
             );
             assert!(
-                h.get_by_role_and_label(Role::Button, t("General"))
+                h.get_by_role_and_label(Role::Tab, t("General"))
                     .rect()
                     .top()
                     < control.top()

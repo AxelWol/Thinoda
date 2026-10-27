@@ -10,10 +10,12 @@
 //!   property rows, sections, chips and search fields.
 //! * [`toast`] – non-blocking notifications.
 //! * [`palette`] – a fuzzy command palette.
-//! * [`dialog`] – modal confirm dialogs.
+//! * [`dialog`] – modal confirm dialogs, the shared resizable dialog frame
+//!   and the icon tab bar.
 //! * [`fonts`] – system symbol-font fallbacks.
 //! * [`icons`] – glyph constants available in egui's built-in fonts.
 
+pub mod date_picker;
 pub mod dialog;
 pub mod fonts;
 pub mod icons;
@@ -24,7 +26,11 @@ pub mod toast;
 pub mod tokens;
 pub mod widgets;
 
-pub use dialog::{DialogButton, confirm_dialog};
+pub use date_picker::{CalendarDate, CalendarLabels, DateFieldResponse, date_field, days_in_month};
+pub use dialog::{
+    Dialog, DialogButton, DialogLabels, DialogResponse, DialogState, confirm_dialog,
+    confirm_dialog_with_labels, tab_bar,
+};
 pub use palette::{Command, CommandPalette, fuzzy_score};
 pub use theme::{ThemeMode, install};
 pub use toast::{ToastKind, Toasts};

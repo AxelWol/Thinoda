@@ -113,9 +113,20 @@ impl ThinodaApp {
         let mut save = false;
         let mut delete = false;
         let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::unique("saved_prompt_editor")).show(ctx, |ui| {
-            ui.set_width(440.0_f32.min((ctx.content_rect().width() - 48.0).max(180.0)));
-            ui.heading(t("Edit saved prompt"));
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(
+            egui::Id::unique("saved_prompt_editor"),
+            t("Edit saved prompt"),
+        )
+        .icon(thinoda_ui::icons::AI)
+        .labels(&labels)
+        .modal(true)
+        .close_on_backdrop(true)
+        .default_width(440.0)
+        .default_height(520.0)
+        .min_size(egui::vec2(320.0, 240.0))
+        .scroll(false)
+        .show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 160.0).max(80.0))
                 .show(ui, |ui| {
@@ -151,7 +162,7 @@ impl ThinodaApp {
                 }
             });
         });
-        if cancel || (response.should_close() && allowed && !editor.composing) {
+        if cancel || (response.close_requested && allowed && !editor.composing) {
             return;
         }
         if save || delete {

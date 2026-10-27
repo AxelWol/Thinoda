@@ -82,60 +82,63 @@ impl ThinodaApp {
         let mut apply = false;
         let mut discard = false;
         let allowed = widgets::touch_activation_allowed(ctx);
-        egui::Window::new(t("Review AI Result"))
-            .id(egui::Id::unique("thinoda_ai_response"))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(520.0)
-            .show(ctx, |ui| {
-                ui.set_max_width((ctx.content_rect().width() - 48.0).max(1.0));
-                ui.label(t(review.target.command.label()));
-                if let Some(doc) = self
-                    .docs
-                    .iter()
-                    .find(|doc| Some(&doc.key) == review.target.doc_key.as_ref())
-                    && let Some(topic) =
-                        review.target.topic.and_then(|id| doc.doc.sheet().topic(id))
-                {
-                    ui.label(&topic.title);
-                }
-                widgets::caption(ui, t("Nothing changes until you apply this result."));
-                ui.label(format!("{}: {}", t("Model"), review.result.model));
-                if review.result.kind == OutputKind::Map {
-                    ui.label(t("This result creates a new map."));
-                }
-                if review.result.kind == OutputKind::Sheet {
-                    ui.label(t("Apply creates a new sheet. The source stays unchanged."));
-                }
-                if let Err(error) = validation {
-                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-                }
-                ui.horizontal_wrapped(|ui| {
-                    apply = ui
-                        .add_enabled(validation.is_ok(), egui::Button::new(t("Apply AI Result")))
-                        .clicked()
-                        && allowed;
-                    discard = ui.button(t("Discard AI Result")).clicked() && allowed;
-                });
-                ui.separator();
-                let text = match &review.result.output {
-                    AiOutput::Text(text) => text.clone(),
-                    AiOutput::Outline(outline) => {
-                        let mut text = outline.title.clone().unwrap_or_default();
-                        text.push('\n');
-                        outline_text(&outline.items, 0, &mut text);
-                        text
-                    }
-                };
-                egui::ScrollArea::vertical()
-                    .max_height((ctx.content_rect().height() - 250.0).max(40.0))
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut text.as_str())
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
+        let labels = crate::i18n::dialog_labels();
+        let _ = thinoda_ui::Dialog::new(
+            egui::Id::unique("thinoda_ai_response"),
+            t("Review AI Result"),
+        )
+        .icon(thinoda_ui::icons::AI)
+        .labels(&labels)
+        .open(&mut open)
+        .default_width(520.0)
+        .scroll(false)
+        .show(ctx, |ui| {
+            ui.set_max_width((ctx.content_rect().width() - 48.0).max(1.0));
+            ui.label(t(review.target.command.label()));
+            if let Some(doc) = self
+                .docs
+                .iter()
+                .find(|doc| Some(&doc.key) == review.target.doc_key.as_ref())
+                && let Some(topic) = review.target.topic.and_then(|id| doc.doc.sheet().topic(id))
+            {
+                ui.label(&topic.title);
+            }
+            widgets::caption(ui, t("Nothing changes until you apply this result."));
+            ui.label(format!("{}: {}", t("Model"), review.result.model));
+            if review.result.kind == OutputKind::Map {
+                ui.label(t("This result creates a new map."));
+            }
+            if review.result.kind == OutputKind::Sheet {
+                ui.label(t("Apply creates a new sheet. The source stays unchanged."));
+            }
+            if let Err(error) = validation {
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.horizontal_wrapped(|ui| {
+                apply = ui
+                    .add_enabled(validation.is_ok(), egui::Button::new(t("Apply AI Result")))
+                    .clicked()
+                    && allowed;
+                discard = ui.button(t("Discard AI Result")).clicked() && allowed;
             });
+            ui.separator();
+            let text = match &review.result.output {
+                AiOutput::Text(text) => text.clone(),
+                AiOutput::Outline(outline) => {
+                    let mut text = outline.title.clone().unwrap_or_default();
+                    text.push('\n');
+                    outline_text(&outline.items, 0, &mut text);
+                    text
+                }
+            };
+            egui::ScrollArea::vertical()
+                .max_height((ctx.content_rect().height() - 250.0).max(40.0))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text.as_str()).desired_width(f32::INFINITY),
+                    );
+                });
+        });
         if apply {
             if let Err(error) = self.apply_ai(&review.target, &review.result) {
                 self.toasts.error(error);
@@ -156,29 +159,34 @@ impl ThinodaApp {
         let mut open = true;
         let mut cancel = false;
         let allowed = widgets::touch_activation_allowed(ctx);
-        egui::Window::new(t("AI is still working…"))
-            .id(egui::Id::unique("thinoda_ai_response"))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(520.0)
-            .show(ctx, |ui| {
-                ui.set_max_width((ctx.content_rect().width() - 48.0).max(1.0));
-                ui.label(t(pending.target.command.label()));
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(format!("{:.0}s", pending.started.elapsed().as_secs_f32()));
-                    cancel = ui.button(t("Cancel AI Request")).clicked() && allowed;
-                });
-                widgets::caption(ui, t("Nothing changes until you apply this result."));
-                egui::ScrollArea::vertical()
-                    .max_height((ctx.content_rect().height() - 220.0).max(40.0))
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut pending.preview.as_str())
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
+        let labels = crate::i18n::dialog_labels();
+        let _ = thinoda_ui::Dialog::new(
+            egui::Id::unique("thinoda_ai_response"),
+            t("AI is still working…"),
+        )
+        .icon(thinoda_ui::icons::AI)
+        .labels(&labels)
+        .open(&mut open)
+        .default_width(520.0)
+        .scroll(false)
+        .show(ctx, |ui| {
+            ui.set_max_width((ctx.content_rect().width() - 48.0).max(1.0));
+            ui.label(t(pending.target.command.label()));
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(format!("{:.0}s", pending.started.elapsed().as_secs_f32()));
+                cancel = ui.button(t("Cancel AI Request")).clicked() && allowed;
             });
+            widgets::caption(ui, t("Nothing changes until you apply this result."));
+            egui::ScrollArea::vertical()
+                .max_height((ctx.content_rect().height() - 220.0).max(40.0))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut pending.preview.as_str())
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+        });
         if cancel || (!open && allowed) {
             self.cancel_ai();
         }

@@ -11,7 +11,10 @@ use thinoda_core::{
     theme::Theme,
 };
 use thinoda_platform::settings::{Language, ThemeMode as SettingsTheme};
-use thinoda_ui::{DialogButton, Palette, Tokens, confirm_dialog, icons, widgets};
+use thinoda_ui::{
+    Dialog, DialogButton, Palette, Tokens, confirm_dialog_with_labels as confirm_dialog, icons,
+    widgets,
+};
 
 use crate::{
     app::{
@@ -3841,6 +3844,7 @@ impl ThinodaApp {
                     (t("Export"), DialogButton::Primary),
                     (t("Cancel"), DialogButton::Secondary),
                 ],
+                &i18n::dialog_labels(),
             ) {
                 self.dialogs.symbol_export = None;
                 self.dialogs.export_owner = None;
@@ -3869,6 +3873,7 @@ impl ThinodaApp {
                     (t("Save"), DialogButton::Primary),
                     (t("Cancel"), DialogButton::Secondary),
                 ],
+                &i18n::dialog_labels(),
             ) {
                 let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
                 let index = self.docs.iter().position(|doc| doc.key == key);
@@ -3911,6 +3916,7 @@ impl ThinodaApp {
                     (t("Export"), DialogButton::Primary),
                     (t("Cancel"), DialogButton::Secondary),
                 ],
+                &i18n::dialog_labels(),
             ) {
                 self.dialogs.mindmanager_export = false;
                 self.dialogs.export_owner = None;
@@ -3951,6 +3957,7 @@ impl ThinodaApp {
                     (t("Import converted copy"), DialogButton::Primary),
                     (t("Cancel"), DialogButton::Secondary),
                 ],
+                &i18n::dialog_labels(),
             ) {
                 self.resolve_import(choice == 0);
             }
@@ -3960,9 +3967,19 @@ impl ThinodaApp {
         if !self.dialogs.recovery.is_empty() {
             let touch_allowed = widgets::touch_activation_allowed(ctx);
             let mut action: Option<(bool, Option<usize>)> = None;
-            egui::Modal::new(egui::Id::unique("thinoda_recovery")).show(ctx, |ui| {
-                ui.set_width(460.0);
-                ui.heading(t("Recover Unsaved Work"));
+            let labels = i18n::dialog_labels();
+            thinoda_ui::Dialog::new(
+                egui::Id::unique("thinoda_recovery"),
+                t("Recover Unsaved Work"),
+            )
+            .icon(icons::RESTORE)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(460.0)
+            .default_height(500.0)
+            .min_size(egui::vec2(340.0, 220.0))
+            .show(ctx, |ui| {
                 ui.label(t(
                     "Thinoda was not closed properly. The following documents can be restored:",
                 ));
@@ -4014,6 +4031,7 @@ impl ThinodaApp {
                     "Do you want to save the changes you made? Your changes will be lost if you don't save them.",
                 ),
                 &buttons,
+                &i18n::dialog_labels(),
             ) {
                 self.dialogs.close = None;
                 match (intent, b) {
@@ -4062,6 +4080,7 @@ impl ThinodaApp {
                 t("File changed on disk"),
                 t("The file was modified by another application or a sync client. Overwrite it?"),
                 &buttons,
+                &i18n::dialog_labels(),
             ) {
                 self.dialogs.conflict = None;
                 let saved = if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
@@ -4100,32 +4119,48 @@ impl ThinodaApp {
             let edit_id = egui::Id::unique("thinoda_rename_input");
             let enter = ctx.memory(|memory| memory.has_focus(edit_id))
                 && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-            egui::Modal::new(egui::Id::unique("thinoda_rename")).show(ctx, |ui| {
-                ui.heading(t("Rename Sheet"));
-                let r = ui
-                    .add(
-                        TextEdit::singleline(&mut draft.name)
-                            .id(edit_id)
-                            .lock_focus(draft.ime_composing)
-                            .desired_width(280.0),
-                    )
-                    .accessible_name(t("Rename Sheet"));
-                if !draft.focus_requested {
-                    r.request_focus();
-                    draft.focus_requested = true;
-                }
-                if !r.has_focus() && !r.lost_focus() {
-                    draft.ime_composing = false;
-                }
-                ui.horizontal(|ui| {
-                    if (widgets::primary_button(ui, t("OK")).clicked() || enter) && touch_allowed {
-                        done = Some(true);
-                    }
-                    if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed {
-                        done = Some(false);
-                    }
-                });
-            });
+            let labels = i18n::dialog_labels();
+            let response =
+                thinoda_ui::Dialog::new(egui::Id::unique("thinoda_rename"), t("Rename Sheet"))
+                    .icon(icons::SHEET)
+                    .labels(&labels)
+                    .modal(true)
+                    .close_on_backdrop(true)
+                    .default_width(360.0)
+                    .default_height(150.0)
+                    .min_size(egui::vec2(320.0, 120.0))
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        let r = ui
+                            .add(
+                                TextEdit::singleline(&mut draft.name)
+                                    .id(edit_id)
+                                    .lock_focus(draft.ime_composing)
+                                    .desired_width(280.0),
+                            )
+                            .accessible_name(t("Rename Sheet"));
+                        if !draft.focus_requested {
+                            r.request_focus();
+                            draft.focus_requested = true;
+                        }
+                        if !r.has_focus() && !r.lost_focus() {
+                            draft.ime_composing = false;
+                        }
+                        ui.horizontal(|ui| {
+                            if (widgets::primary_button(ui, t("OK")).clicked() || enter)
+                                && touch_allowed
+                            {
+                                done = Some(true);
+                            }
+                            if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed
+                            {
+                                done = Some(false);
+                            }
+                        });
+                    });
+            if response.close_requested && touch_allowed {
+                done = Some(false);
+            }
             match done {
                 Some(true) => {
                     if let Some(d) = self.docs.get_mut(self.active) {
@@ -4153,12 +4188,12 @@ impl ThinodaApp {
             self.dialogs.settings_gesture = None;
         }
         if self.dialogs.about {
-            let mut open = true;
             let touch_allowed = widgets::touch_activation_allowed(ctx);
-            egui::Window::new(t("About Thinoda"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
+            let labels = crate::i18n::dialog_labels();
+            let response = Dialog::new(egui::Id::unique("thinoda_about"), t("About Thinoda"))
+                .icon(icons::INFO)
+                .labels(&labels)
+                .default_width(420.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         crate::brand::logo(ui, 72.0);
@@ -4202,7 +4237,7 @@ impl ThinodaApp {
                         self.dialogs.legal.open = true;
                     }
                 });
-            self.dialogs.about = open || !touch_allowed;
+            self.dialogs.about = !response.close_requested || !touch_allowed;
         }
         if self.dialogs.masked_copy {
             let source = self
@@ -4214,13 +4249,13 @@ impl ThinodaApp {
                 self.toasts.warning(t("The document changed. Try again."));
                 return;
             }
-            let mut open = true;
             let mut create = false;
             let mut cancel = false;
             let touch_allowed = widgets::touch_activation_allowed(ctx);
-            egui::Window::new(t("Create Masked Copy…"))
-                .open(&mut open)
-                .collapsible(false)
+            let labels = crate::i18n::dialog_labels();
+            let response = Dialog::new(egui::Id::unique("thinoda_masked_copy"), t("Create Masked Copy…"))
+                .icon(icons::MASK)
+                .labels(&labels)
                 .default_width(460.0)
                 .show(ctx, |ui| {
                     ui.label(t("Creates a new unsaved document. The original is not changed."));
@@ -4231,7 +4266,7 @@ impl ThinodaApp {
                         if ui.button(t("Create Preview")).clicked() && touch_allowed { create = true; }
                     });
                 });
-            self.dialogs.masked_copy = (open || !touch_allowed) && !cancel;
+            self.dialogs.masked_copy = (!response.close_requested || !touch_allowed) && !cancel;
             if !self.dialogs.masked_copy {
                 self.dialogs.masked_copy_owner = None;
             }
@@ -4293,24 +4328,21 @@ impl ThinodaApp {
         let mut credentials_saved = false;
         let mut open_shortcuts = false;
         let mut open_calendar = false;
-        let bounds = ctx.content_rect().shrink(8.0);
+        let bounds = Dialog::bounds(ctx);
         const CONTENT_WIDTH: f32 = 440.0;
         let style = ctx.global_style();
         let frame = egui::Frame::window(&style);
         // Leave room for the minimum-width body without requiring an initial horizontal scroll.
         let default_width =
             CONTENT_WIDTH + frame.total_margin().sum().x + style.spacing.scroll.allocated_width();
-        egui::Window::new(t("Settings"))
-            .id(egui::Id::unique("thinoda_settings"))
-            .frame(frame)
-            .open(&mut open)
+        let labels = i18n::dialog_labels();
+        let response = Dialog::new(egui::Id::unique("thinoda_settings"), t("Settings"))
+            .icon(icons::SETTINGS)
+            .labels(&labels)
             .enabled(!self.dialogs.shortcuts)
             .min_size(egui::Vec2::ZERO)
-            .max_size(bounds.size())
-            .constrain_to(bounds)
             .default_width(default_width)
-            .collapsible(false)
-            .scroll([true, true])
+            .hscroll(true)
             .show(ctx, |ui| {
                 if !ui.is_enabled() {
                     activation_allowed = false;
@@ -4319,22 +4351,31 @@ impl ThinodaApp {
                     }
                 }
                 ui.set_min_width(CONTENT_WIDTH);
+                thinoda_ui::tab_bar(
+                    ui,
+                    &mut self.dialogs.settings_tab,
+                    &[
+                        (SettingsTab::General, icons::TUNE, t("General")),
+                        (SettingsTab::Editor, icons::EDIT, t("Editor")),
+                        (SettingsTab::Ai, icons::AI, t("AI Assistant")),
+                        (SettingsTab::Cloud, icons::CLOUD, t("Cloud")),
+                    ],
+                );
+                if !activation_allowed {
+                    self.dialogs.settings_tab = before_tab;
+                }
                 ui.horizontal_wrapped(|ui| {
-                    for (tab, label) in [
-                        (SettingsTab::General, "General"),
-                        (SettingsTab::Editor, "Editor"),
-                        (SettingsTab::Ai, "AI Assistant"),
-                        (SettingsTab::Cloud, "Cloud"),
-                    ] {
-                        ui.selectable_value(&mut self.dialogs.settings_tab, tab, t(label));
-                    }
-                    if !activation_allowed {
-                        self.dialogs.settings_tab = before_tab;
-                    }
-                    open_shortcuts =
-                        ui.button(t("Keyboard Shortcuts")).clicked() && activation_allowed;
-                    open_calendar = ui.add_enabled(self.doc().is_some(),
-                        egui::Button::new(t("Work Calendar"))).clicked() && activation_allowed;
+                    open_shortcuts = ui
+                        .add(egui::Button::new(t("Keyboard Shortcuts")))
+                        .clicked()
+                        && activation_allowed;
+                    open_calendar = ui
+                        .add_enabled(
+                            self.doc().is_some(),
+                            egui::Button::new(t("Work Calendar")),
+                        )
+                        .clicked()
+                        && activation_allowed;
                 });
                 ui.separator();
                 if self.dialogs.settings_tab == SettingsTab::General {
@@ -4583,6 +4624,9 @@ impl ThinodaApp {
                 }
                 reveal_changed_focus(ui);
             });
+        if response.close_requested {
+            open = false;
+        }
         if !activation_allowed {
             self.settings = before.clone();
             self.accent = before_accent;

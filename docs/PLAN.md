@@ -9,6 +9,37 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## CLI generation provider requirement (2026-10-26)
+
+🟡 **Partial, not release-complete.** User requirement: select installed GitHub
+Copilot, Claude or Codex CLI at the top of the redesigned AI Settings page;
+route chat/map/transform/Pitch through the selected harness; offer localized,
+nonblocking status and manual login/install help. Preserve/migrate OpenAI API
+preferences, keep embeddings explicitly on the API, and preserve unavailable
+CLI selections in browsers. Implemented in this increment (release pending):
+Claude/Codex safe buffered adapters, bounded/reaped subprocess trees, settings
+and per-CLI model persistence, all ten shipped locale catalogs, appearance-neutral
+shared widgets and regression fixtures. No live CLI inference/login was run.
+
+**Copilot blocker:** official CLI documentation has no non-inference auth-status
+command and no invocation that disables all user MCP servers/hooks while retaining
+the CLI's existing credential home. Discovery reports missing/unknown and provides
+official login help; generation fails closed. Resolve with a documented safe
+upstream capability or an explicitly approved constrained integration design.
+Do not mark this whole requirement done or silently fall back to the API.
+Native macOS/Linux behavior and actual installed CLI compatibility still require
+host verification; fixture tests and WASM compilation are not those acceptance checks.
+
+Verification on Windows: `cargo test --locked -p thinoda-ai -p thinoda-platform`
+passes 141 tests (one live test explicitly ignored); the complete app `--lib`
+suite passes 191 tests (including 47 focused AI tests and Pitch tests);
+settings CLI/provider, settings viewport, profile dispatch and sidebar
+locale integration binaries pass four tests, including all shipped languages
+and Light/Dark/System provider layouts. Native all-target clippy for AI/platform/
+app and WASM clippy for web/app/platform/AI pass with `-D warnings`. Workspace
+fmt, diff whitespace and third-party notice checks pass. CLI fixtures use
+PowerShell/Node only, never an actual provider inference/login command.
+
 ## Current state and next-value plan (2026-10-26)
 
 **This status supersedes older "current", "in progress" and "immediate next"
@@ -93,10 +124,40 @@ Edge profile created nested To-Dos in WASM and parent-checkbox clicks visibly
 changed both parent/child checkboxes and the badge from 0/1 to 1/1 and back.
 Those screenshots were inspected; no runtime exceptions, failed requests, AI
 calls or external origins occurred. Owned validation servers were stopped.
-XV1-XV2 are implemented locally and unreleased. XV3 structural numbering and UR6
-(Material Symbols icons) are implemented and locally verified; UR1, UR2 and UR5
-are implemented (flat AI page, embedding discovery, compact ribbon by default) and
-UR7, UR3 and UR4 are next.
+XV1-XV3, UR6 (Material Symbols icons) and UR8 shipped in v0.13.0 via #78/#81;
+UR1, UR2 and UR5 (flat AI page, embedding discovery, compact ribbon by default)
+shipped in v0.14.0 via #82/#83. UR7 (one shared dialog frame, `thinoda_ui::Dialog`,
+used by app dialogs, with icon tabs in Settings) is implemented, release pending.
+UR3 now integrates the shared localized calendar in Task Planning start/due dates
+and Work Calendar exception dates. Scheduling pickers disable non-working dates
+including exceptions; calendar-exception editing allows any date. Typed ISO dates
+retain existing atomic validation and Undo. Calendar selection is draft-only until
+Apply, with arrow/Page Up/Page Down navigation, Enter selection, Escape dismissal,
+bounded month navigation and local-time Today on native/web. Every shipped language
+and Light/Dark/System is covered at 360x640. UR4 (presentation transitions and
+composition) is next, then XV4-XV9; neither is claimed complete.
+
+UR3 UX reference: the [WAI-ARIA date-picker example](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/examples/datepicker-dialog/)
+recommends retaining typed input, a separate calendar button, focused selected/current
+dates, keyboard month navigation and returning focus on selection. The egui calendar
+uses the shared Material icon and theme tokens; unavailable dates have a non-color
+strike indicator. It is not a native HTML ARIA grid, and real assistive-technology
+and physical touch-device acceptance remain F6 work. Calendar popups now stay above
+their modal parent instead of losing clicks to the dialog layer.
+
+2026-10-27 verification: 193 app and 40 shared-UI unit cases pass; app
+integration regressions were exercised in batches, including localized/scaled
+shortcut focus order, startup/save confirmations, calendar start/due picks,
+calendar exceptions, canceled touch and IME. Caption controls follow visual Tab
+order; pointer-only title/backdrop sensors do not become invisible Tab stops.
+The rubber-duck review identified ambiguous Portuguese weekday prefixes and
+an unguarded calendar toggle; explicit translated abbreviations and the shared
+touch guard address both. Confirmation prompts and browser Pitch now also use
+the shared frame. Strict native all-target and WASM library clippy, formatting
+and dependency notices pass. An initial parallel build exhausted the Windows
+pagefile; validation was rerun with a single compiler job rather than changing
+machine settings. Actual native macOS/Linux GUI and physical touch/assistive
+technology checks remain open, not implied by these harness results.
 
 Release verification (2026-10-26): v0.14.0 main CI and Pages deployment
 succeeded. Release workflow 40371818396 completed all six native package jobs

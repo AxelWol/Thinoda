@@ -1,3 +1,26 @@
+Generation provider|Provedor de geração
+CLI default|Padrão da CLI
+CLI replies are buffered. Tools are disabled; no local files are supplied.|As respostas da CLI são armazenadas em buffer. As ferramentas estão desativadas; arquivos locais não são fornecidos.
+Check CLI status|Verificar status da CLI
+Checking CLI…|Verificando CLI…
+Signed in according to the CLI. Access and subscription are not verified.|Sessão iniciada segundo a CLI. O acesso e a assinatura não foram verificados.
+Not signed in. Run the login command in your terminal, then check again.|Sessão não iniciada. Execute o comando de login no terminal e verifique novamente.
+Authentication status is unknown. This CLI may not support a non-inference check.|O status de autenticação é desconhecido. Esta CLI pode não oferecer uma verificação sem solicitação ao modelo.
+Thinoda never starts login or installation automatically. CLI credentials remain managed by the CLI.|O Thinoda nunca inicia o login ou a instalação automaticamente. A CLI continua gerenciando suas credenciais.
+Copy login command|Copiar comando de login
+Install and login help|Ajuda de instalação e login
+OpenAI-compatible API|API compatível com OpenAI
+Embeddings always use this API, never a CLI. Switching providers preserves these settings and credentials.|Os embeddings sempre usam esta API, nunca uma CLI. A troca de provedor mantém estas configurações e credenciais.
+Native CLIs are unavailable in the browser. The selection is preserved.|As CLIs nativas não estão disponíveis no navegador. A seleção é mantida.
+CLI not found on PATH. Install it, restart Thinoda, then check again.|CLI não encontrada no PATH. Instale-a, reinicie o Thinoda e verifique novamente.
+This CLI installation cannot be launched safely. Use a supported native or npm installation.|Esta instalação da CLI não pode ser iniciada com segurança. Use uma instalação nativa ou npm compatível.
+Copilot CLI has no documented isolated mode that disables all user MCP servers and hooks. Generation is unavailable.|O Copilot CLI não tem um modo isolado documentado que desative todos os servidores MCP e hooks do usuário. A geração não está disponível.
+CLI check failed or is unsupported. Authentication could not be verified.|A verificação da CLI falhou ou não é compatível. Não foi possível verificar a autenticação.
+CLI request timed out.|A solicitação à CLI excedeu o tempo limite.
+CLI output exceeded the safety limit.|A saída da CLI excedeu o limite de segurança.
+CLI request failed. Check authentication and update the CLI using its official documentation.|A solicitação à CLI falhou. Verifique a autenticação e atualize a CLI conforme a documentação oficial.
+Could not start the isolated CLI process.|Não foi possível iniciar o processo isolado da CLI.
+Settings > AI selects the generation provider. Native Claude and Codex CLIs use their own login; replies are buffered. Copilot generation is blocked until a documented safe mode is available. Embeddings always use the separate OpenAI-compatible API. Browsers preserve CLI selections but cannot run them.|Configurações > IA seleciona o provedor de geração. As CLIs nativas Claude e Codex usam seu próprio login; as respostas são armazenadas em buffer. A geração Copilot está bloqueada até existir um modo seguro documentado. Os embeddings sempre usam a API compatível com OpenAI separada. Os navegadores mantêm as seleções de CLI, mas não podem executá-las.
 AI Chat|Chat de IA
 AI Pitch outline|Esboço de apresentação com IA
 Pitch instructions|Instruções de apresentação
@@ -391,3 +414,16 @@ XMind-compatible covers supported commands, not every XMind or system shortcut.|
 Review changed bindings before Apply. Cancel leaves saved mappings unchanged.|Revise as alterações antes de Aplicar. Cancelar mantém os atalhos salvos.
 System clipboard and text-editing shortcuts remain owned by the focused editor.|Os atalhos do sistema para área de transferência e edição de texto continuam no editor em foco.
 Choose Edit mappings to create or change a keyboard profile.|Escolha Editar atalhos para criar ou alterar um perfil de teclado.
+Maximize|Maximizar
+Expand|Expandir
+Today|Hoje
+Mon|Seg
+Tue|Ter
+Wed|Qua
+Thu|Qui
+Fri|Sex
+Sat|Sáb
+Sun|Dom
+Previous month|Mês anterior
+Next month|Próximo mês
+Open calendar|Abrir calendário

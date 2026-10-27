@@ -7,6 +7,7 @@
 //! Explicit-model [`embeddings`] batches use the cancellable [`AiEmbeddingJob`].
 
 pub mod embeddings;
+pub mod harness;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mock;
@@ -52,6 +53,7 @@ pub fn reply_language_instruction(language: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiConfig {
+    pub provider: harness::Provider,
     /// Base URL including the API version path, e.g. `http://127.0.0.1:1234/v1`.
     pub base_url: String,
     /// Model id; empty = first chat model reported by `/models`.
@@ -69,6 +71,7 @@ pub struct AiConfig {
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
+            provider: harness::Provider::default(),
             base_url: DEFAULT_BASE_URL.into(),
             model: String::new(),
             api_key: String::new(),
@@ -94,6 +97,8 @@ pub enum AiError {
     Empty,
     #[error("AI request was cancelled")]
     Cancelled,
+    #[error("{0}")]
+    Harness(harness::HarnessError),
 }
 
 pub type Result<T> = std::result::Result<T, AiError>;
@@ -318,6 +323,9 @@ impl Client {
 
     /// Configured model, or the first chat model the server offers.
     pub fn resolve_model(&self) -> Result<String> {
+        if self.cfg.provider != harness::Provider::OpenAiApi {
+            return Ok(self.cfg.model.clone());
+        }
         if !self.cfg.model.trim().is_empty() {
             return pick_model(&self.cfg, None);
         }
@@ -326,6 +334,9 @@ impl Client {
 
     /// One non-streaming chat completion; returns the assistant text.
     pub fn chat(&self, model: &str, messages: &[Message]) -> Result<String> {
+        if self.cfg.provider != harness::Provider::OpenAiApi {
+            return harness::chat_blocking(&self.cfg, model, messages);
+        }
         let body = chat_body(&self.cfg, model, messages);
         let mut req = self.agent.post(self.url("chat/completions"));
         if let Some(k) = self.api_key() {

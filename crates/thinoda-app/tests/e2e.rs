@@ -730,7 +730,7 @@ fn editor_preferences_independently_control_toolbar_and_add_handles() {
     let ctx = h.ctx.clone();
     h.state_mut().exec(&ctx, Cmd::Settings);
     h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Editor").click();
+    h.get_by_role_and_label(Role::Tab, "Editor").click();
     h.run_steps(3);
     let toggle_rect = h
         .get_by_role_and_label(Role::Switch, "Show topic toolbar")

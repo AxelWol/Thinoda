@@ -321,6 +321,8 @@ fn closing_during_import_keeps_unsaved_documents_and_cancel_returns_to_the_map()
     step_until_ready(&mut h);
     assert_eq!(h.state().app.docs.len(), sources.len());
     assert!(h.state().app.docs.iter().all(|doc| doc.is_dirty()));
+    // The shared content-fitting dialog settles its initial size after startup hands off.
+    h.run_steps(3);
     let workbooks: Vec<_> = h
         .state()
         .app

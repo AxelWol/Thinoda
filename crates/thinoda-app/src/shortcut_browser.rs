@@ -137,127 +137,138 @@ impl ThinodaApp {
             .collect();
         let state = &mut self.dialogs.shortcut_browser;
         let mut close = false;
-        let frame = egui::Frame::popup(&ctx.global_style());
-        let response = egui::Modal::new(egui::Id::unique("shortcuts"))
-            .frame(frame)
-            .show(ctx, |ui| {
-                let available = (ctx.content_rect().size()
-                    - frame.total_margin().sum()
-                    - egui::Vec2::splat(16.0))
-                .max(egui::Vec2::ZERO);
-                ui.set_width(available.x.min(640.0));
-                ui.set_height(available.y.min(640.0));
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    let close_label = egui::WidgetText::from(t("Close"));
-                    let close_text = close_label.clone().into_galley(
-                        ui,
-                        Some(egui::TextWrapMode::Extend),
-                        f32::INFINITY,
-                        egui::TextStyle::Button,
-                    );
-                    let close_size = (close_text.size() + ui.spacing().button_padding * 2.0)
-                        .max(ui.spacing().interact_size);
-                    // Reserve the footer first, but register its button last for natural Tab order.
-                    let (_, close_rect) = ui.allocate_space(close_size);
-                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        let mut scroll = egui::ScrollArea::vertical()
-                            .id_salt("shortcut_reference")
-                            .min_scrolled_height(0.0)
-                            .max_height(ui.available_height())
-                            .auto_shrink([false, false]);
-                        if std::mem::take(&mut state.reset_scroll) {
-                            scroll = scroll.vertical_scroll_offset(0.0);
-                        }
-                        scroll.show(ui, |ui| {
-                            ui.heading(t("Keyboard Shortcuts"));
-                            if ui.button(t("Edit mappings")).clicked() && touch_allowed {
-                                state.editor = Some(crate::keymap_editor::KeymapEditor::new(
-                                    &self.settings.keymaps,
-                                ));
+        let labels = crate::i18n::dialog_labels();
+        let response =
+            thinoda_ui::Dialog::new(egui::Id::unique("shortcuts"), t("Keyboard Shortcuts"))
+                .icon(thinoda_ui::icons::KEYBOARD)
+                .labels(&labels)
+                .modal(true)
+                .close_on_backdrop(true)
+                .default_width(640.0)
+                .default_height(640.0)
+                .min_size(egui::vec2(360.0, 280.0))
+                .scroll(false)
+                .show(ctx, |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                        let close_label = egui::WidgetText::from(t("Close"));
+                        let close_text = close_label.clone().into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Extend),
+                            f32::INFINITY,
+                            egui::TextStyle::Button,
+                        );
+                        let close_size = (close_text.size() + ui.spacing().button_padding * 2.0)
+                            .max(ui.spacing().interact_size);
+                        // Reserve the footer first, but register its button last for natural Tab order.
+                        let (_, close_rect) = ui.allocate_space(close_size);
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            let mut scroll = egui::ScrollArea::vertical()
+                                .id_salt("shortcut_reference")
+                                .min_scrolled_height(0.0)
+                                .max_height(ui.available_height())
+                                .auto_shrink([false, false]);
+                            if std::mem::take(&mut state.reset_scroll) {
+                                scroll = scroll.vertical_scroll_offset(0.0);
                             }
-                            ui.label(format!("{}: {scope}", t("View")));
-                            let search = ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut state.query)
-                                        .hint_text(t("Search commands or shortcuts")),
-                                )
-                                .accessible_name(t("Search commands or shortcuts"));
-                            let previous = (state.category.clone(), state.unassigned_only);
-                            ui.horizontal_wrapped(|ui| {
-                                egui::ComboBox::from_id_salt("shortcut_category")
-                                    .selected_text(state.category.as_deref().unwrap_or(t("All")))
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut state.category, None, t("All"));
-                                        for category in categories {
+                            scroll.show(ui, |ui| {
+                                if ui.button(t("Edit mappings")).clicked() && touch_allowed {
+                                    state.editor = Some(crate::keymap_editor::KeymapEditor::new(
+                                        &self.settings.keymaps,
+                                    ));
+                                }
+                                ui.label(format!("{}: {scope}", t("View")));
+                                let search = ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut state.query)
+                                            .hint_text(t("Search commands or shortcuts")),
+                                    )
+                                    .accessible_name(t("Search commands or shortcuts"));
+                                let previous = (state.category.clone(), state.unassigned_only);
+                                ui.horizontal_wrapped(|ui| {
+                                    egui::ComboBox::from_id_salt("shortcut_category")
+                                        .selected_text(
+                                            state.category.as_deref().unwrap_or(t("All")),
+                                        )
+                                        .show_ui(ui, |ui| {
                                             ui.selectable_value(
                                                 &mut state.category,
-                                                Some(category.clone()),
-                                                category,
+                                                None,
+                                                t("All"),
                                             );
-                                        }
-                                    })
-                                    .response
-                                    .accessible_name(t("Shortcut category"));
-                                ui.checkbox(&mut state.unassigned_only, t("Unassigned only"));
-                            });
-                            if !touch_allowed {
-                                (state.category, state.unassigned_only) = previous.clone();
-                            }
-                            let query = state.query.trim().to_lowercase();
-                            let entries: Vec<_> = commands
-                                .iter()
-                                .filter(|command| {
-                                    state.category.as_ref().is_none_or(|category| {
-                                        command.category.as_ref() == Some(category)
-                                    }) && (!state.unassigned_only || command.shortcut.is_none())
-                                        && format!(
-                                            "{} {} {}",
-                                            command.title,
-                                            command.category.as_deref().unwrap_or(""),
-                                            command.shortcut.as_deref().unwrap_or(t("Unassigned"))
-                                        )
-                                        .to_lowercase()
-                                        .contains(&query)
-                                })
-                                .collect();
-                            ui.label(format!("{}: {}", t("Commands"), entries.len()));
-                            state.reset_scroll = search.changed()
-                                || previous != (state.category.clone(), state.unassigned_only);
-                            if entries.is_empty() {
-                                ui.label(t("No matching commands"));
-                            }
-                            for command in entries {
-                                ui.push_id(&command.id, |ui| {
-                                    ui.group(|ui| {
-                                        ui.set_width(ui.available_width() - 8.0);
-                                        ui.label(&command.title);
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.monospace(
+                                            for category in categories {
+                                                ui.selectable_value(
+                                                    &mut state.category,
+                                                    Some(category.clone()),
+                                                    category,
+                                                );
+                                            }
+                                        })
+                                        .response
+                                        .accessible_name(t("Shortcut category"));
+                                    ui.checkbox(&mut state.unassigned_only, t("Unassigned only"));
+                                });
+                                if !touch_allowed {
+                                    (state.category, state.unassigned_only) = previous.clone();
+                                }
+                                let query = state.query.trim().to_lowercase();
+                                let entries: Vec<_> = commands
+                                    .iter()
+                                    .filter(|command| {
+                                        state.category.as_ref().is_none_or(|category| {
+                                            command.category.as_ref() == Some(category)
+                                        }) && (!state.unassigned_only || command.shortcut.is_none())
+                                            && format!(
+                                                "{} {} {}",
+                                                command.title,
+                                                command.category.as_deref().unwrap_or(""),
                                                 command
                                                     .shortcut
                                                     .as_deref()
-                                                    .unwrap_or(t("Unassigned")),
-                                            );
-                                            if let Some(category) = &command.category {
-                                                ui.weak(category);
-                                            }
+                                                    .unwrap_or(t("Unassigned"))
+                                            )
+                                            .to_lowercase()
+                                            .contains(&query)
+                                    })
+                                    .collect();
+                                ui.label(format!("{}: {}", t("Commands"), entries.len()));
+                                state.reset_scroll = search.changed()
+                                    || previous != (state.category.clone(), state.unassigned_only);
+                                if entries.is_empty() {
+                                    ui.label(t("No matching commands"));
+                                }
+                                for command in entries {
+                                    ui.push_id(&command.id, |ui| {
+                                        ui.group(|ui| {
+                                            ui.set_width(ui.available_width() - 8.0);
+                                            ui.label(&command.title);
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.monospace(
+                                                    command
+                                                        .shortcut
+                                                        .as_deref()
+                                                        .unwrap_or(t("Unassigned")),
+                                                );
+                                                if let Some(category) = &command.category {
+                                                    ui.weak(category);
+                                                }
+                                            });
                                         });
                                     });
-                                });
-                            }
-                            ui.label(t(
-                                "Choose Edit mappings to create or change a keyboard profile.",
-                            ));
-                            crate::ui::reveal_changed_focus(ui);
+                                }
+                                ui.label(t(
+                                    "Choose Edit mappings to create or change a keyboard profile.",
+                                ));
+                                crate::ui::reveal_changed_focus(ui);
+                            });
                         });
+                        if ui.put(close_rect, egui::Button::new(close_label)).clicked()
+                            && touch_allowed
+                        {
+                            close = true;
+                        }
                     });
-                    if ui.put(close_rect, egui::Button::new(close_label)).clicked() && touch_allowed
-                    {
-                        close = true;
-                    }
                 });
-            });
-        if close || (response.should_close() && touch_allowed) {
+        if close || (response.close_requested && touch_allowed) {
             self.dialogs.shortcuts = false;
         }
     }

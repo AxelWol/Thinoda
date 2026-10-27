@@ -26,6 +26,7 @@ check
 check_box
 chevron_right
 close
+close_fullscreen
 cloud
 co_present
 content_copy
@@ -53,6 +54,9 @@ fit_screen
 flip
 folder_eye
 folder_open
+format_align_center
+format_align_left
+format_align_right
 format_bold
 format_clear
 format_indent_decrease
@@ -70,6 +74,7 @@ horizontal_distribute
 image
 info
 input
+keep_off
 keyboard
 label
 library_add
@@ -79,12 +84,14 @@ link
 menu
 menu_book
 merge
+minimize
 more_horiz
 move_down
 move_up
 new_window
 newspaper
 note_add
+open_in_full
 open_in_new
 palette
 photo_camera
@@ -117,6 +124,7 @@ summarize
 tab
 today
 translate
+tune
 undo
 unfold_less
 unfold_less_double
@@ -129,7 +137,3 @@ visibility
 warning
 zoom_in
 zoom_out
-format_align_left
-format_align_center
-format_align_right
-keep_off

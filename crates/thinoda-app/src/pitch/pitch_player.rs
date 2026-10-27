@@ -115,20 +115,23 @@ impl ThinodaApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut window = egui::Window::new(t("Pitch"))
-                .id(egui::Id::unique("pitch-player"))
+            let labels = crate::i18n::dialog_labels();
+            let requested_maximized = player.fullscreen;
+            let window = thinoda_ui::Dialog::new(egui::Id::unique("pitch-player"), t("Pitch"))
+                .icon(thinoda_ui::icons::PITCH)
+                .labels(&labels)
                 .open(&mut open)
-                .default_size([1000.0, 650.0])
-                .max_size(ctx.content_rect().size() - egui::vec2(16.0, 16.0));
-            if player.fullscreen {
-                window = window
-                    .fixed_pos(ctx.content_rect().min + egui::vec2(8.0, 8.0))
-                    .fixed_size(ctx.content_rect().size() - egui::vec2(16.0, 16.0));
-            }
+                .default_width(1000.0)
+                .default_height(650.0)
+                .maximized(requested_maximized)
+                .scroll(false);
             let mut keep_playing = true;
-            window.show(ctx, |ui| {
+            let response = window.show(ctx, |ui| {
                 keep_playing = self.pitch_player_ui(ui, &mut player);
             });
+            if player.fullscreen == requested_maximized {
+                player.fullscreen = response.maximized;
+            }
             open &= keep_playing;
         }
         if open {

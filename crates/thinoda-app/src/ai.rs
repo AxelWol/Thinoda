@@ -8,7 +8,7 @@ use thinoda_ai::{
 };
 use thinoda_core::outline::{OutlineNode as CoreNode, add_outline, sheet_from_outline};
 use thinoda_core::{Sheet, TopicId, Workbook};
-use thinoda_platform::settings::AiSettings;
+use thinoda_platform::settings::{AiProvider, AiSettings};
 use thinoda_ui::widgets;
 
 use crate::app::ThinodaApp;
@@ -126,12 +126,24 @@ pub struct AiState {
     pub test: Option<AiJob<Vec<String>>>,
     pub test_result: Option<Result<Vec<String>, String>>,
     test_owner: Option<(String, String)>,
+    cli_check: Option<AiJob<thinoda_ai::harness::CliStatus>>,
+    cli_check_owner: Option<AiProvider>,
+    cli_status: Option<thinoda_ai::harness::CliStatus>,
 }
 
 pub fn config(s: &AiSettings) -> AiConfig {
     AiConfig {
+        provider: match s.provider {
+            AiProvider::OpenAiApi => thinoda_ai::harness::Provider::OpenAiApi,
+            AiProvider::CopilotCli => thinoda_ai::harness::Provider::CopilotCli,
+            AiProvider::ClaudeCli => thinoda_ai::harness::Provider::ClaudeCli,
+            AiProvider::CodexCli => thinoda_ai::harness::Provider::CodexCli,
+        },
         base_url: s.base_url.clone(),
-        model: s.model.clone(),
+        model: s
+            .provider
+            .cli_index()
+            .map_or_else(|| s.model.clone(), |index| s.cli_models[index].clone()),
         api_key: if s.credentials_ready {
             s.api_key.clone()
         } else {
@@ -143,8 +155,16 @@ pub fn config(s: &AiSettings) -> AiConfig {
     }
 }
 
+/// Semantic tools always use the separately configured OpenAI-compatible endpoint.
+pub fn embedding_config(s: &AiSettings) -> AiConfig {
+    let mut cfg = config(s);
+    cfg.provider = thinoda_ai::harness::Provider::OpenAiApi;
+    cfg.model = s.model.clone();
+    cfg
+}
+
 fn config_with_api_key(s: &AiSettings, api_key: &str) -> AiConfig {
-    let mut config = config(s);
+    let mut config = embedding_config(s);
     config.api_key = if !s.credentials_ready && api_key == s.api_key {
         String::new()
     } else {
@@ -202,11 +222,33 @@ pub fn workbook_from_outline(o: &thinoda_ai::Outline) -> Workbook {
 
 fn error_text(e: &AiError) -> String {
     match e {
+        AiError::Harness(error) => t(harness_error_key(*error)).into(),
         AiError::Http(_) => format!(
             "{} ({e})",
             t("AI server not reachable — check Settings › AI")
         ),
         _ => e.to_string(),
+    }
+}
+
+fn harness_error_key(error: thinoda_ai::harness::HarnessError) -> &'static str {
+    use thinoda_ai::harness::HarnessError as E;
+    match error {
+        E::Browser => "Native CLIs are unavailable in the browser. The selection is preserved.",
+        E::Missing => "CLI not found on PATH. Install it, restart Thinoda, then check again.",
+        E::Unsupported => {
+            "This CLI installation cannot be launched safely. Use a supported native or npm installation."
+        }
+        E::CopilotSafety => {
+            "Copilot CLI has no documented isolated mode that disables all user MCP servers and hooks. Generation is unavailable."
+        }
+        E::Probe => "CLI check failed or is unsupported. Authentication could not be verified.",
+        E::Timeout => "CLI request timed out.",
+        E::OutputLimit => "CLI output exceeded the safety limit.",
+        E::Failed => {
+            "CLI request failed. Check authentication and update the CLI using its official documentation."
+        }
+        E::Start => "Could not start the isolated CLI process.",
     }
 }
 
@@ -415,6 +457,21 @@ impl ThinodaApp {
 
     /// Polls background AI work; call every frame.
     pub fn poll_ai(&mut self, ctx: &Context) {
+        if self.ai.cli_check_owner != Some(self.settings.ai.provider) {
+            self.ai.cli_check = None;
+            self.ai.cli_status = None;
+            self.ai.cli_check_owner = None;
+        }
+        if let Some(job) = &self.ai.cli_check {
+            if let Some(result) = job.poll() {
+                self.ai.cli_status = Some(result.unwrap_or(thinoda_ai::harness::CliStatus::Error(
+                    thinoda_ai::harness::HarnessError::Probe,
+                )));
+                self.ai.cli_check = None;
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
         self.poll_pitch_ai(ctx);
         self.poll_semantic(ctx);
         self.poll_ai_chat(ctx);
@@ -603,14 +660,16 @@ impl ThinodaApp {
             .prompted_target
             .as_ref()
             .map(|(target, _)| target.command);
-        egui::Window::new(command.map_or(t("Generate Map with AI"), |cmd| t(cmd.label())))
+        let labels = crate::i18n::dialog_labels();
+        let _ =
+            thinoda_ui::Dialog::new(
+                egui::Id::unique("thinoda_ai_prompt_dialog"),
+                command.map_or(t("Generate Map with AI"), |cmd| t(cmd.label())),
+            )
+            .icon(thinoda_ui::icons::AI)
+            .labels(&labels)
             .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
             .default_width(420.0)
-            .max_height((ctx.content_rect().height() - 32.0).max(80.0))
-            .vscroll(true)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 let l = ui.label(if command == Some(AiCommand::Translate) {
                     t("Target language and translation instructions")
@@ -730,11 +789,111 @@ impl ThinodaApp {
         let mut save_api_key = false;
         let mut clear_api_key = false;
         let mut credentials_saved = false;
+        widgets::property_field(ui, t("Generation provider"), |ui| {
+            egui::ComboBox::from_id_salt("ai-generation-provider")
+                .selected_text(self.settings.ai.provider.label())
+                .show_ui(ui, |ui| {
+                    for provider in AiProvider::ALL {
+                        ui.selectable_value(
+                            &mut self.settings.ai.provider,
+                            provider,
+                            provider.label(),
+                        );
+                    }
+                })
+                .response
+        });
         widgets::page_section(ui, t("AI Assistant"), |ui| {
             let ai = &mut self.settings.ai;
             widgets::property_field(ui, t("Enable AI assistant"), |ui| {
                 widgets::toggle(ui, &mut ai.enabled, t("Enable AI assistant"))
             });
+            if let Some(index) = ai.provider.cli_index() {
+                widgets::property_field(ui, t("Model"), |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut ai.cli_models[index])
+                            .hint_text(t("CLI default")),
+                    )
+                });
+                widgets::caption(
+                    ui,
+                    t("CLI replies are buffered. Tools are disabled; no local files are supplied."),
+                );
+            }
+            if ai.provider != AiProvider::OpenAiApi {
+                let provider = ai.provider;
+                let harness = config(ai).provider;
+                if self.ai.cli_check_owner != Some(provider) && activation_allowed {
+                    self.ai.cli_status = None;
+                    self.ai.cli_check_owner = Some(provider);
+                    self.ai.cli_check = Some(thinoda_ai::harness::check(harness));
+                }
+                let busy = self.ai.cli_check.is_some();
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(t("Check CLI status")))
+                        .clicked()
+                        && activation_allowed
+                    {
+                        self.ai.cli_status = None;
+                        self.ai.cli_check = Some(thinoda_ai::harness::check(harness));
+                    }
+                    if busy {
+                        ui.spinner();
+                        ui.label(t("Checking CLI…"));
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                });
+                use thinoda_ai::harness::CliStatus as S;
+                if let Some(status) = self.ai.cli_status {
+                    let message = match status {
+                        S::Missing => harness_error_key(thinoda_ai::harness::HarnessError::Missing),
+                        S::Authenticated => {
+                            "Signed in according to the CLI. Access and subscription are not verified."
+                        }
+                        S::Unauthenticated => {
+                            "Not signed in. Run the login command in your terminal, then check again."
+                        }
+                        S::Unknown => {
+                            "Authentication status is unknown. This CLI may not support a non-inference check."
+                        }
+                        S::Unsupported => {
+                            harness_error_key(thinoda_ai::harness::HarnessError::Unsupported)
+                        }
+                        S::Browser => harness_error_key(thinoda_ai::harness::HarnessError::Browser),
+                        S::Error(error) => harness_error_key(error),
+                    };
+                    ui.label(t(message));
+                }
+                if provider == AiProvider::CopilotCli {
+                    ui.label(t(harness_error_key(
+                        thinoda_ai::harness::HarnessError::CopilotSafety,
+                    )));
+                }
+                widgets::caption(
+                    ui,
+                    t(
+                        "Thinoda never starts login or installation automatically. CLI credentials remain managed by the CLI.",
+                    ),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.code(harness.login_command());
+                    if ui.button(t("Copy login command")).clicked() && activation_allowed {
+                        ui.ctx().copy_text(harness.login_command().into());
+                    }
+                    ui.hyperlink_to(t("Install and login help"), harness.documentation());
+                });
+            }
+        });
+        widgets::page_section(ui, t("OpenAI-compatible API"), |ui| {
+            let ai = &mut self.settings.ai;
+            widgets::caption(
+                ui,
+                t(
+                    "Embeddings always use this API, never a CLI. Switching providers preserves these settings and credentials.",
+                ),
+            );
             widgets::caption(
                 ui,
                 t("Any OpenAI-compatible server: LM Studio, Ollama, llama.cpp, OpenAI…"),
@@ -742,9 +901,11 @@ impl ThinodaApp {
             widgets::property_field(ui, t("Server URL"), |ui| {
                 ui.text_edit_singleline(&mut ai.base_url)
             });
-            widgets::property_field(ui, t("Model"), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
-            });
+            if ai.provider == AiProvider::OpenAiApi {
+                widgets::property_field(ui, t("Model"), |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
+                });
+            }
             widgets::property_field(ui, t("Embedding model"), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut ai.embedding_model)
@@ -777,9 +938,11 @@ impl ThinodaApp {
                     t("Secure credential storage is unavailable. Save a key to retry, or clear the saved key."),
                 );
             }
-            widgets::property_field(ui, t("Creativity"), |ui| {
-                ui.add(egui::Slider::new(&mut ai.temperature, 0.0..=1.5))
-            });
+            if ai.provider == AiProvider::OpenAiApi {
+                widgets::property_field(ui, t("Creativity"), |ui| {
+                    ui.add(egui::Slider::new(&mut ai.temperature, 0.0..=1.5))
+                });
+            }
             ui.horizontal(|ui| {
                 let busy = self.ai.test.is_some();
                 if ui
@@ -808,9 +971,10 @@ impl ThinodaApp {
                     let mut pick = None;
                     ui.horizontal_wrapped(|ui| {
                         for m in models.iter().filter(|m| !is_embedding_model(m)) {
-                            if ui
-                                .selectable_label(self.settings.ai.model == *m, m)
-                                .clicked()
+                            if self.settings.ai.provider == AiProvider::OpenAiApi
+                                && ui
+                                    .selectable_label(self.settings.ai.model == *m, m)
+                                    .clicked()
                             {
                                 pick = Some(m.clone());
                             }
@@ -885,6 +1049,57 @@ impl ThinodaApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_routing_and_embeddings_are_independent() {
+        let mut settings = AiSettings {
+            model: "api-chat".into(),
+            cli_models: [
+                "copilot-model".into(),
+                "claude-model".into(),
+                "codex-model".into(),
+            ],
+            ..Default::default()
+        };
+        let original_embeddings = embedding_config(&settings);
+        for provider in AiProvider::ALL {
+            settings.provider = provider;
+            let cfg = config(&settings);
+            assert_eq!(
+                cfg.provider.command(),
+                match provider {
+                    AiProvider::OpenAiApi => "",
+                    AiProvider::CopilotCli => "copilot",
+                    AiProvider::ClaudeCli => "claude",
+                    AiProvider::CodexCli => "codex",
+                }
+            );
+            assert_eq!(
+                cfg.model,
+                provider
+                    .cli_index()
+                    .map_or("api-chat", |i| settings.cli_models[i].as_str())
+            );
+            assert_eq!(embedding_config(&settings), original_embeddings);
+            assert_eq!(settings.model, "api-chat");
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cli_probe_results_are_owned_by_provider_selection() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.provider = AiProvider::CodexCli;
+        app.ai.cli_check_owner = Some(AiProvider::ClaudeCli);
+        app.ai.cli_status = Some(thinoda_ai::harness::CliStatus::Authenticated);
+        app.ai.cli_check = Some(AiJob::spawn_with(AiConfig::default(), |_| {
+            Ok(thinoda_ai::harness::CliStatus::Authenticated)
+        }));
+        app.poll_ai(&Context::default());
+        assert!(app.ai.cli_check.is_none());
+        assert!(app.ai.cli_status.is_none());
+        assert!(app.ai.cli_check_owner.is_none());
+    }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
