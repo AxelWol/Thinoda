@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.15.0" # x-release-please-version
+version = "0.16.0" # x-release-please-version
 edition = "2024"
 rust-version = "1.89"
 license = "EUPL-1.2"
@@ -31,13 +31,13 @@ authors = ["Axel Wolters <axelwolters@hotmail.com>"]
 homepage = "https://github.com/AxelWol/Thinoda"
 
 [workspace.dependencies]
-thinoda-core = { path = "crates/thinoda-core", version = "0.15.0" } # x-release-please-version
-thinoda-io = { path = "crates/thinoda-io", version = "0.15.0" } # x-release-please-version
-thinoda-platform = { path = "crates/thinoda-platform", version = "0.15.0" } # x-release-please-version
-thinoda-ui = { path = "crates/thinoda-ui", version = "0.15.0" } # x-release-please-version
-thinoda-canvas = { path = "crates/thinoda-canvas", version = "0.15.0" } # x-release-please-version
-thinoda-ai = { path = "crates/thinoda-ai", version = "0.15.0" } # x-release-please-version
-thinoda-app = { path = "crates/thinoda-app", version = "0.15.0" } # x-release-please-version
+thinoda-core = { path = "crates/thinoda-core", version = "0.16.0" } # x-release-please-version
+thinoda-io = { path = "crates/thinoda-io", version = "0.16.0" } # x-release-please-version
+thinoda-platform = { path = "crates/thinoda-platform", version = "0.16.0" } # x-release-please-version
+thinoda-ui = { path = "crates/thinoda-ui", version = "0.16.0" } # x-release-please-version
+thinoda-canvas = { path = "crates/thinoda-canvas", version = "0.16.0" } # x-release-please-version
+thinoda-ai = { path = "crates/thinoda-ai", version = "0.16.0" } # x-release-please-version
+thinoda-app = { path = "crates/thinoda-app", version = "0.16.0" } # x-release-please-version
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

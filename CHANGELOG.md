@@ -13,6 +13,15 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.16.0](https://github.com/AxelWol/Thinoda/compare/v0.15.0...v0.16.0) (2026-10-27)
+
+
+### Features
+
+* add portable local image authoring and rendering ([#87](https://github.com/AxelWol/Thinoda/issues/87)) ([ffd2217](https://github.com/AxelWol/Thinoda/commit/ffd2217757bfd587cbf35ca3b975c560c7a7969c))
+* extend portable resources and presentation exports ([#90](https://github.com/AxelWol/Thinoda/issues/90)) ([e909385](https://github.com/AxelWol/Thinoda/commit/e909385b83c616e8a236907eb802eb1c64346407))
+* portable attachments and image drag/drop ([#88](https://github.com/AxelWol/Thinoda/issues/88)) ([1fb939e](https://github.com/AxelWol/Thinoda/commit/1fb939e12ecaa417a6e6506a3ac030ec4076269e))
+
 ## [0.15.0](https://github.com/AxelWol/Thinoda/compare/v0.14.0...v0.15.0) (2026-10-27)
 
 
