@@ -458,7 +458,9 @@ impl ThinodaApp {
         let key = cache.source.key.clone();
         let mut book = workbook_from_outline(&outline);
         let doc = self.docs.iter_mut().find(|doc| doc.key == key).unwrap();
-        doc.doc.add_sheet(book.sheets.remove(0));
+        doc.doc
+            .add_sheet(book.sheets.remove(0))
+            .map_err(|error| error.to_string())?;
         doc.view.reset();
         self.cancel_semantic();
         self.ai.semantic.cache = None;

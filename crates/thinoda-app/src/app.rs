@@ -860,9 +860,15 @@ impl ThinodaApp {
                     let mut wb = templates::instantiate("mind-map");
                     let mut sheet = wb.sheets.remove(0);
                     sheet.title = format!("{} {n}", t("Sheet"));
-                    let i = d.doc.add_sheet(sheet);
-                    d.doc.set_active(i);
-                    d.view.reset();
+                    match d.doc.add_sheet(sheet) {
+                        Ok(i) => {
+                            d.doc.set_active(i);
+                            d.view.reset();
+                        }
+                        Err(error) => {
+                            self.toasts.error(format!("{}: {error}", t("New Sheet")));
+                        }
+                    }
                 }
             }
             Cmd::DuplicateSheet => {
@@ -966,7 +972,11 @@ impl ThinodaApp {
                             .iter()
                             .filter(|r| sheet.contains(r.from) != sheet.contains(r.to))
                             .count();
-                        d.doc.add_sheet(sheet);
+                        if let Err(error) = d.doc.add_sheet(sheet) {
+                            self.toasts
+                                .error(format!("{}: {error}", t("Not possible here")));
+                            return;
+                        }
                         d.view.reset();
                         if external > 0 {
                             self.toasts.info(t(
@@ -1467,8 +1477,13 @@ impl ThinodaApp {
         match thinoda_core::clipboard::decode_sheet(&text) {
             Ok(sheet) => {
                 let d = self.doc_mut().unwrap();
-                d.doc.add_sheet(sheet);
-                d.view.reset();
+                match d.doc.add_sheet(sheet) {
+                    Ok(_) => d.view.reset(),
+                    Err(error) => {
+                        self.toasts
+                            .error(format!("{}: {error}", t("Could not paste sheet")));
+                    }
+                }
             }
             Err(e) => {
                 self.toasts

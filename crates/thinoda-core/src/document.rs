@@ -119,6 +119,15 @@ impl Document {
         let before = self.workbook.sheets[index].clone();
         match f(&mut self.workbook.sheets[index]) {
             Ok(v) => {
+                let resources = if self.workbook.sheets[index].resources != before.resources {
+                    self.workbook.validate_resources()
+                } else {
+                    self.workbook.sheets[index].validate_resource_references()
+                };
+                if let Err(error) = resources {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
                 if self.workbook.sheets[index] != before {
                     self.push(
                         label,
@@ -158,6 +167,11 @@ impl Document {
                     .workbook
                     .active_sheet
                     .min(self.workbook.sheets.len() - 1);
+                if let Err(error) = self.workbook.validate_resources() {
+                    self.workbook.sheets = sheets;
+                    self.workbook.active_sheet = active;
+                    return Err(EditError::Invalid(error));
+                }
                 if self.workbook.sheets != sheets {
                     self.push(label, Snapshot::Book { sheets, active });
                 }
@@ -243,13 +257,12 @@ impl Document {
         *self = Document::new(workbook);
     }
 
-    pub fn add_sheet(&mut self, sheet: Sheet) -> usize {
+    pub fn add_sheet(&mut self, sheet: Sheet) -> EditResult<usize> {
         self.edit_book("Add sheet", |wb| {
             wb.sheets.push(sheet);
             wb.active_sheet = wb.sheets.len() - 1;
             Ok(wb.active_sheet)
         })
-        .expect("adding a sheet cannot fail")
     }
 
     /// Appends complete sheets in a single transaction; topic IDs are sheet-scoped.
@@ -545,7 +558,7 @@ mod tests {
     #[test]
     fn sheet_management_is_undoable() {
         let mut d = Document::default();
-        d.add_sheet(Sheet::new("Two", "R2"));
+        d.add_sheet(Sheet::new("Two", "R2")).unwrap();
         assert_eq!(d.workbook().sheets.len(), 2);
         assert_eq!(d.active_index(), 1);
         d.duplicate_sheet(1).unwrap();
@@ -567,7 +580,7 @@ mod tests {
         let mut d = Document::default();
         let root = d.sheet().root;
         d.edit_sheet("A", |s| s.set_title(root, "changed")).unwrap();
-        d.add_sheet(Sheet::new("Two", "R2"));
+        d.add_sheet(Sheet::new("Two", "R2")).unwrap();
         d.undo(); // removes sheet two
         d.undo(); // restores title on sheet 0
         assert_eq!(d.active_index(), 0);

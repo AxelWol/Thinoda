@@ -7,6 +7,7 @@ pub mod fonts;
 mod formats;
 pub mod gantt;
 mod mindmanager;
+mod native_resources;
 mod office;
 pub mod presentation;
 pub mod print;
@@ -426,6 +427,11 @@ pub fn export_bytes_with_consent(
     })?;
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
+    }
+    if format != Format::Thinoda && book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
+        return Err(IoError::Invalid(
+            "this format cannot yet preserve embedded resources; save as .thinoda to retain all bytes".into(),
+        ));
     }
     if symbol_color_loss(book, format) && !opts.allow_symbol_color_loss {
         if format == Format::MindManager {

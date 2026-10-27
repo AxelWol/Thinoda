@@ -75,7 +75,12 @@ fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
     let mut source = ThinodaApp::headless();
     let ctx = egui::Context::default();
     let sheet = rich_sheet();
-    source.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    source
+        .doc_mut()
+        .unwrap()
+        .doc
+        .add_sheet(sheet.clone())
+        .unwrap();
     let source_state = source.doc().unwrap().doc.state_id();
     source.exec(&ctx, Cmd::CopySheet);
     assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
@@ -144,7 +149,7 @@ fn new_sheet_from_topic_copies_owned_annotations_without_changing_the_source() {
     assert_eq!(expected.boundaries.len(), 1);
     assert_eq!(expected.relationships.len(), 1);
     assert_eq!(expected.topic_count(), 3);
-    app.doc_mut().unwrap().doc.add_sheet(sheet);
+    app.doc_mut().unwrap().doc.add_sheet(sheet).unwrap();
     app.doc_mut().unwrap().view.select_only(summary);
     let before = app.doc().unwrap().doc.workbook().clone();
     app.exec(&ctx, Cmd::NewSheetFromTopic);
@@ -226,7 +231,7 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
     let dir = tempfile::tempdir().unwrap();
     let original = dir.path().join("original.thinoda");
     let mut app = ThinodaApp::headless();
-    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet()).unwrap();
     app.doc_mut()
         .unwrap()
         .doc
@@ -276,7 +281,7 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
 #[test]
 fn masked_copy_preview_is_cancelable_and_exports_only_derived_content() {
     let mut app = ThinodaApp::headless();
-    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet()).unwrap();
     app.doc_mut()
         .unwrap()
         .doc
@@ -1070,7 +1075,7 @@ fn structure_gallery_preserves_rich_content_selection_and_undo_for_every_layout(
     use thinoda_core::Structure;
     let mut app = ThinodaApp::headless();
     let sheet = rich_sheet();
-    app.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    app.doc_mut().unwrap().doc.add_sheet(sheet.clone()).unwrap();
     let selected = sheet.children(sheet.root)[1];
     app.doc_mut().unwrap().view.select_only(selected);
     let before = app.doc().unwrap().doc.workbook().clone();

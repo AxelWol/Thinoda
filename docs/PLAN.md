@@ -9,6 +9,42 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## XV4 active slice: portable resource storage (2026-10-27)
+
+UR4 live transitions/composition is implemented in [PR #85](https://github.com/AxelWol/Thinoda/pull/85);
+release/deployment is still pending. XV4 is now **in progress, not complete**.
+The first slice adds sheet-owned, immutable content-addressed resources,
+native archive v3, base64 recovery and versioned sheet clipboard, bounded
+transactional paste/add/duplicate/merge and preservation through undo.
+Resource-free native v2 and legacy image references remain compatible.
+See [the storage contract](ARCHITECTURE.md#key-decisions) for limits and
+ownership. Unsupported output paths fail explicitly until rendering exists.
+
+Research rechecked the official [Local Image](https://xmind.com/user-guide/pic-new)
+and [Attachment](https://xmind.com/user-guide/attachment-new) guides: local images
+support contextual insert, top/bottom placement, drag resize and Reset Size;
+attachments are explicit topic content and opening saves locally **with
+permission**. Thinoda should preserve that predictable selection/context model
+across map/outline/ribbon rather than add separate platform-specific import
+flows. Attachment preview/open must never auto-execute embedded content; the
+web path must offer explicit download rather than promise native application
+launch. These are acceptance criteria for the next slice, not delivered UI.
+
+Next: bounded image decode and actual insert/render/resize/replace/remove UI,
+then attachment save/open consent and supported XMind/external export fidelity.
+Keep all shipped locales, Light/Dark/System, native and WASM gates. Only after
+the complete XV4 workflow is verified continue XV5 through XV9 in order.
+
+Foundation verification: all 213 core/IO tests, 276 app unit/e2e/floating-topic
+tests and three focused real recovery tests pass. Cases cover exact workbook
+byte/count limits, atomic rollback and unchanged history, deduplication,
+owned-only branch copy, legacy v2, malformed/missing/corrupt resources, inline
+v3 rejection, duplicate ZIP central records, unlisted blobs and explicit
+non-native/print/Pitch output refusal. Native all-target and WASM app-library
+strict Clippy pass. This is not a new full-workspace or six-host runtime pass,
+nor evidence that resource authoring, image decode or XMind resource fidelity
+is delivered.
+
 ## CLI generation provider requirement (2026-10-26)
 
 🟡 **Partial, not release-complete.** User requirement: select installed GitHub

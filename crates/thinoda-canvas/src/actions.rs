@@ -829,7 +829,8 @@ mod tests {
             .edit_sheet("Boundary", |s| s.add_boundary(&[s.children(s.root)[0]]))
             .unwrap();
         view.select_object(ObjectSelection::Boundary(object));
-        doc.add_sheet(thinoda_core::Sheet::new("Other", "Root"));
+        doc.add_sheet(thinoda_core::Sheet::new("Other", "Root"))
+            .unwrap();
         doc.set_active(1);
         let before = doc.sheet().clone();
         assert!(!apply_action(&mut doc, &mut view, Action::Delete).unwrap());

@@ -16,6 +16,12 @@ impl ThinodaApp {
             return;
         }
         doc.view.commit_edit(&mut doc.doc);
+        if !doc.doc.sheet().resources.is_empty() {
+            self.toasts.error(t(
+                "Embedded resources are not supported in Pitch yet. Save as .thinoda to preserve them.",
+            ));
+            return;
+        }
         if doc.doc.sheet().presentation.slides.is_empty() {
             self.begin_presentation_editor(ctx);
             return;

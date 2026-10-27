@@ -1829,6 +1829,10 @@ const DE: &[(&str, &str)] = &[
     ("Untitled", "Unbenannt"),
     // Search
     ("Pitch", "Pitch"),
+    (
+        "Embedded resources are not supported in Pitch yet. Save as .thinoda to preserve them.",
+        "Eingebettete Ressourcen werden in Pitch noch nicht unterstützt. Speichern Sie als .thinoda, um sie zu erhalten.",
+    ),
     ("Edit Presentation", "Präsentation bearbeiten"),
     ("Presenter View", "Referentenansicht"),
     ("Generate Slides", "Folien erzeugen"),

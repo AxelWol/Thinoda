@@ -588,7 +588,7 @@ impl ThinodaApp {
             };
             let mut workbook = workbook_from_outline(outline);
             let sheet = workbook.sheets.remove(0);
-            d.doc.add_sheet(sheet);
+            d.doc.add_sheet(sheet).map_err(|error| error.to_string())?;
             d.view.reset();
             return Ok(());
         }

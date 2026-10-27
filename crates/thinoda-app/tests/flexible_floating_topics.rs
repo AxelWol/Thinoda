@@ -45,7 +45,8 @@ fn flexible_floating_map_setting_is_undoable_per_sheet_and_roundtrips() {
     let d = h.state_mut().doc_mut().unwrap();
     let original = d.doc.active_index();
     d.doc
-        .add_sheet(thinoda_core::Sheet::new("Other sheet", "Other center"));
+        .add_sheet(thinoda_core::Sheet::new("Other sheet", "Other center"))
+        .unwrap();
     d.view.reset();
     h.run_steps(3);
     assert!(

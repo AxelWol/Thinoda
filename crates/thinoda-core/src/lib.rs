@@ -23,6 +23,7 @@ pub mod navigation;
 pub mod numbering;
 pub mod outline;
 pub mod quick_styles;
+pub mod resources;
 pub mod schedule;
 pub mod search;
 pub mod templates;

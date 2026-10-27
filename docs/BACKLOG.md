@@ -22,8 +22,8 @@ paid probe inference or installation was performed. The implementation is includ
 in PR #85; this does not remove the Copilot generation blocker.
 
 **Current inventory (2026-10-27):** [PR #85](https://github.com/AxelWol/Thinoda/pull/85)
-is open for the shared dialogs, date inputs and native AI provider increment;
-UR4 is being added on the same branch. Its first native CI failures were the
+is open for the shared dialogs, date inputs, native AI provider and live Pitch
+increment; UR4 is committed on the same branch. Its first native CI failures were the
 shared save-dialog test's ambiguous title query; the fix uses the Window role
 and settled geometry. Merge/release/deployment remain pending, not completed.
 PRs #70, #72, #74, #76 and release #77 are merged. F0-F5 implementation
@@ -83,6 +83,13 @@ Find status without changing scheduled Tasks or the native file schema.
 Priority is end-user frequency, value and enabling dependencies, rather
 than a count of XMind features. On 2026-10-26 the user authorized starting this
 ordered queue with localization/theme/platform coverage and ongoing UX research.
+
+**XV4 is in progress:** sheet-owned bounded resources, native v3 raw-blob
+storage, recovery, resource-aware clipboard and atomic copy/paste/merge/undo
+are the current foundation slice. Image insertion/rendering/resizing and
+attachment authoring/opening remain open; unsupported exports/print/Pitch fail
+explicitly rather than omit embedded bytes. No image UI is claimed by this
+storage work. See the [active slice](PLAN.md#xv4-active-slice-portable-resource-storage-2026-10-27).
 This lifts the earlier feature-start restriction, not the remaining F6 acceptance
 gaps; SS0-SS8 remain deferred. Extend the existing R packages; do not create parallel search, task,
 resource or presentation systems. The

@@ -2692,7 +2692,12 @@ fn numeric_drag_drafts_cannot_outlive_their_inspector_context() {
             h.state_mut().new_doc(workbook);
             h.state_mut().active = 0;
             let sheet = h.state().doc().unwrap().doc.sheet().clone();
-            h.state_mut().doc_mut().unwrap().doc.add_sheet(sheet);
+            h.state_mut()
+                .doc_mut()
+                .unwrap()
+                .doc
+                .add_sheet(sheet)
+                .unwrap();
             h.state_mut().doc_mut().unwrap().doc.set_active(0);
             h.run_steps(8);
             h.get_by_role_and_label(Role::Slider, t("Width"))

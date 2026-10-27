@@ -29,6 +29,32 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Embedded-resource foundation (XV4, authoring not yet delivered)**:
+  `Sheet.resources` owns bounded immutable `Arc<[u8]>` blobs; subtree clipboard,
+  full-sheet copy/merge and undo snapshots carry the bytes without deep-copying
+  every history entry. SHA-256 content IDs use `thinoda-resource:<digest>` image
+  references. Destination metadata wins when equal bytes deduplicate; branch
+  copy includes only its referenced resources, while full-sheet copy preserves
+  the entire store. Masked copies strip all resource bytes and references.
+  Limits are 8 MiB/resource, 32 MiB/sheet, 64 MiB/workbook and 128 logical entries
+  across a workbook, including repeated ownership across sheets. Document edits,
+  sheet add/duplicate/merge and topic paste reject overflowing transactions
+  without altering content/history. Unchanged stores are not rehashed on every
+  title edit. Low-level public model mutation still requires validation, as with
+  other model invariants.
+  Resource-free native archives stay version 2; resource-bearing archives use
+  version 3 with bounded manifest metadata and raw `resources/<digest>` blobs,
+  deduplicated across sheets. Imports validate names, sizes, digests, ownership
+  and resource references without extracting paths or fetching URLs. Recovery
+  uses bounded base64 fields; sheet clipboard uses version 2 only when bytes
+  exist (resource-free clipboard remains version 1), retaining its 16 MiB
+  encoded-payload limit. Older native readers reject version 3 rather than
+  silently discarding bytes. Legacy reference-only image strings still load.
+  Image decode/render/resize and attachment authoring/opening are **not**
+  implemented in this slice. Non-native exports, print/slide rendering and live
+  Pitch reject embedded-resource content explicitly instead of producing
+  apparently complete output with missing content. No external file is opened
+  automatically; future attachment opening requires explicit consent.
 - **Calendar inputs**: `thinoda_ui::date_field` combines an ISO text edit and
   localized, keyboard-operable month popup. The app supplies translated labels
   and `WorkCalendar::is_working_day` availability for task dates; exceptions allow

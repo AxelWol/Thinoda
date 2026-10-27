@@ -29,6 +29,31 @@ pub(super) fn setup(saved: bool) -> ThinodaApp {
 }
 
 #[test]
+fn pitch_does_not_silently_hide_embedded_resources() {
+    let mut app = setup(true);
+    let doc = app.doc_mut().unwrap();
+    doc.doc
+        .edit_sheet("Embed", |sheet| {
+            let reference = sheet
+                .resources
+                .insert(
+                    thinoda_core::resources::Resource::new("evidence.png", "image/png", vec![1])
+                        .unwrap(),
+                )
+                .map_err(thinoda_core::edit::EditError::Invalid)?;
+            sheet.topic_mut(sheet.root).unwrap().image = Some(reference);
+            Ok(())
+        })
+        .unwrap();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let state = app.doc().unwrap().doc.state_id();
+    app.open_pitch(&Context::default(), false);
+    assert!(app.pitch.player.is_none());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
+#[test]
 fn presentation_generation_frames_and_order_apply_as_one_undo_without_changing_topics() {
     let mut app = setup(false);
     let before = app.doc().unwrap().doc.workbook().clone();

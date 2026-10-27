@@ -122,6 +122,7 @@ The AI response has an unexpected format.|A resposta de IA tem um formato inespe
 This result creates a new map.|Este resultado cria um novo mapa.
 Window|Janela
 Pitch|Pitch
+Embedded resources are not supported in Pitch yet. Save as .thinoda to preserve them.|O Pitch ainda não oferece suporte a recursos incorporados. Salve como .thinoda para preservá-los.
 Edit Presentation|Editar apresentação
 Presenter View|Modo apresentador
 Generate Slides|Gerar slides
