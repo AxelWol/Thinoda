@@ -19,7 +19,7 @@ for delivery/acceptance status.
 | Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
 | To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
-| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Local attachment topics and a separate explicit Save/Download action are implemented in the continuation; no external-app launch. XMind resource exchange, image drag/drop and resize handles remain open. | XV4 partial |
+| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. XMind resource exchange, direct resize handles and Outliner previews remain open. | XV4 partial |
 | Import | DOCX/TextBundle are exportable, not importable. | XV5; other unsupported importers stay in the broader inventory. |
 | Export / Pitch Mode | Saved framing, PDF and PNG slides exist; PowerPoint export and explicit delivery aspect-ratio choices are missing. | XV6 |
 | Note / Equation | Plain notes exist; structured rich notes and rendered equations are missing. | XV7 |

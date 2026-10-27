@@ -25,6 +25,7 @@ pub enum Purpose {
     Open,
     Import,
     Merge,
+    Dropped,
     Image(u64),
     Attachment(u64),
 }
@@ -35,6 +36,7 @@ pub struct Picked {
     pub purpose: Purpose,
     pub paths: Vec<PathBuf>,
     pub errors: Vec<String>,
+    pub(crate) image_owner: Option<crate::images::ImageRequest>,
 }
 
 /// Where a save dialog result is written.
@@ -206,18 +208,24 @@ pub fn set_repaint_context(ctx: &egui::Context) {
 
 /// Files dropped onto the window. Desktop: their paths. Web: browsers only expose
 /// contents, which are copied into the VFS and returned later by [`take_picked`].
-pub fn dropped_files(ctx: &egui::Context) -> Vec<PathBuf> {
+pub(crate) fn dropped_files(
+    ctx: &egui::Context,
+    image_owner: Option<crate::images::ImageRequest>,
+) -> Vec<(PathBuf, Option<crate::images::ImageRequest>)> {
     let files = ctx.input(|i| i.raw.dropped_files.clone());
     #[cfg(target_arch = "wasm32")]
     {
         if !files.is_empty() {
-            web::store_dropped(files);
+            web::store_dropped(files, image_owner);
         }
         Vec::new()
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        files.iter().map(|f| f.path().to_path_buf()).collect()
+        files
+            .iter()
+            .map(|file| (file.path().to_path_buf(), image_owner.clone()))
+            .collect()
     }
 }
 
@@ -319,7 +327,10 @@ mod web {
                 Purpose::Attachment(request) => format!("/AttachmentUploads/{request}"),
                 _ => WEB_DOCUMENTS.into(),
             };
-            if matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+            let bounded_image_drop = matches!(picked.purpose, Purpose::Dropped)
+                && crate::images::is_supported_image_path(Path::new(name));
+            if (matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+                || bounded_image_drop)
                 && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
             {
                 return Err("local resource exceeds 8 MiB".into());
@@ -359,6 +370,7 @@ mod web {
                 purpose,
                 paths: Vec::new(),
                 errors: Vec::new(),
+                image_owner: None,
             };
             for handle in handles {
                 if matches!(purpose, Purpose::Image(_) | Purpose::Attachment(_))
@@ -374,12 +386,16 @@ mod web {
         });
     }
 
-    pub(super) fn store_dropped(files: Vec<egui::DroppedFileHandle>) {
+    pub(super) fn store_dropped(
+        files: Vec<egui::DroppedFileHandle>,
+        image_owner: Option<crate::images::ImageRequest>,
+    ) {
         wasm_bindgen_futures::spawn_local(async move {
             let mut picked = Picked {
-                purpose: Purpose::Open,
+                purpose: Purpose::Dropped,
                 paths: Vec::new(),
                 errors: Vec::new(),
+                image_owner,
             };
             for file in files {
                 let name = file.path().to_string_lossy().into_owned();

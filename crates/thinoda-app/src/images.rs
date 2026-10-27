@@ -6,6 +6,21 @@ use std::{
 };
 use thinoda_core::{TopicId, images, resources::Resource};
 
+fn next_request_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+pub(crate) fn is_supported_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["png", "jpg", "jpeg"]
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported))
+        })
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ImageRequest {
     pub request: u64,
@@ -53,9 +68,8 @@ impl ThinodaApp {
         let Some(topic) = doc.view.primary() else {
             return;
         };
-        static NEXT: AtomicU64 = AtomicU64::new(1);
         let owner = ImageRequest {
-            request: NEXT.fetch_add(1, Ordering::Relaxed),
+            request: next_request_id(),
             document: doc.key.clone(),
             sheet: doc.doc.active_index(),
             root: doc.doc.sheet().root,
@@ -76,6 +90,42 @@ impl ThinodaApp {
             }
             self.image_request = None;
         } else if !files::is_web() {
+            self.image_request = None;
+        }
+    }
+
+    pub(crate) fn capture_drop_owner(&mut self, ctx: &egui::Context) -> Option<ImageRequest> {
+        let result: Result<Option<ImageRequest>, String> = (|| {
+            let doc = self.doc_mut().ok_or_else(|| "no map is open".to_owned())?;
+            if doc.view.selection.len() != 1 || doc.view.selected_object.is_some() {
+                return Ok(None);
+            }
+            doc.flush_inspector_edit(ctx)?;
+            doc.view.commit_edit(&mut doc.doc);
+            Ok(ImageRequest::capture(doc, next_request_id()))
+        })();
+        match result {
+            Ok(owner) => owner,
+            Err(error) => {
+                self.toasts.error(error);
+                None
+            }
+        }
+    }
+
+    pub(crate) fn finish_dropped_image(&mut self, owner: Option<ImageRequest>, path: &Path) {
+        let Some(owner) = owner else {
+            self.toasts.error(t("Select a topic first"));
+            return;
+        };
+        let request = owner.request;
+        self.image_request = Some(owner);
+        self.finish_image(request, path);
+        if self
+            .image_request
+            .as_ref()
+            .is_some_and(|owner| owner.request == request)
+        {
             self.image_request = None;
         }
     }
@@ -241,6 +291,51 @@ mod tests {
     }
 
     #[test]
+    fn dropped_images_insert_on_the_selected_topic_and_remain_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("evidence.PNG");
+        let bytes = encoded(180);
+        std::fs::write(&path, &bytes).unwrap();
+        let mut app = ThinodaApp::headless();
+        let topic = app.doc().unwrap().doc.sheet().root;
+
+        assert!(is_supported_image_path(&path));
+        let owner = app.capture_drop_owner(&egui::Context::default());
+        app.finish_dropped_image(owner, &path);
+
+        let doc = app.doc().unwrap();
+        let image = doc.doc.sheet().topics[&topic].image.as_ref().unwrap();
+        let id = image
+            .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+            .unwrap();
+        assert_eq!(
+            doc.doc.sheet().resources.entries[id].bytes(),
+            bytes.as_slice()
+        );
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert!(
+            app.doc().unwrap().doc.sheet().topics[&topic]
+                .image
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn dropped_image_without_single_topic_selection_is_not_inserted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("evidence.jpg");
+        std::fs::write(&path, encoded(180)).unwrap();
+        let mut app = ThinodaApp::headless();
+        app.doc_mut().unwrap().view.selection.clear();
+        let before = app.doc().unwrap().doc.workbook().clone();
+
+        let owner = app.capture_drop_owner(&egui::Context::default());
+        app.finish_dropped_image(owner, &path);
+
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
     fn image_inspector_context_placement_reset_remove_and_themes() {
         for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
             let mut app = ThinodaApp::headless();
@@ -376,5 +471,26 @@ mod tests {
         h.run_steps(12);
         assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
         assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
+    }
+
+    #[test]
+    fn delayed_drop_cannot_mutate_a_changed_selection_or_document_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("evidence.png");
+        std::fs::write(&path, encoded(180)).unwrap();
+        let mut app = ThinodaApp::headless();
+        let owner = app.capture_drop_owner(&egui::Context::default());
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Concurrent edit", |sheet| {
+                sheet.set_title(sheet.root, "Changed")
+            })
+            .unwrap();
+        let before = app.doc().unwrap().doc.workbook().clone();
+
+        app.finish_dropped_image(owner, &path);
+
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     }
 }

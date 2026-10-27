@@ -1833,6 +1833,20 @@ impl ThinodaApp {
                         self.open_path(path);
                     }
                 }
+                files::Purpose::Dropped => {
+                    for path in &picked.paths {
+                        if crate::images::is_supported_image_path(path) {
+                            self.finish_dropped_image(picked.image_owner.clone(), path);
+                            #[cfg(target_arch = "wasm32")]
+                            if let Err(error) = thinoda_platform::fs::remove_file(path) {
+                                self.toasts
+                                    .error(format!("{}: {error}", t("Could not open")));
+                            }
+                        } else {
+                            self.open_path(path);
+                        }
+                    }
+                }
                 files::Purpose::Merge => {
                     self.merge_files(&picked.paths);
                 }
@@ -2181,8 +2195,18 @@ impl ThinodaApp {
             self.zen = false;
         }
         // Drag & drop of files onto the window.
-        for p in files::dropped_files(ctx) {
-            self.open_path(&p);
+        let image_owner =
+            if ctx.input(|input| !input.raw.dropped_files.is_empty()) && self.doc().is_some() {
+                self.capture_drop_owner(ctx)
+            } else {
+                None
+            };
+        for (path, owner) in files::dropped_files(ctx, image_owner) {
+            if crate::images::is_supported_image_path(&path) {
+                self.finish_dropped_image(owner, &path);
+            } else {
+                self.open_path(&path);
+            }
         }
     }
 

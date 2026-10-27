@@ -95,7 +95,9 @@ Save/Download action in the shared inspector. Native destinations and browser
 VFS downloads retain exact bytes; filenames are portable/sanitized, bytes are
 never executed, decoded as trusted documents or opened through external apps.
 All ten catalogs, themes, cancellation and ownership use the same flow.
-XMind resource exchange, drag/drop insertion and handle-based resize remain open.
+Selection-based PNG/JPEG drop insertion is implemented in the current follow-up;
+drop position is not used to infer a topic. XMind resource exchange, direct
+resize handles and Outliner previews remain open.
 Ordinary topic deletion can retain unreferenced blobs in the saved resource store;
 automatic resource cleanup is not delivered, and deletion is not secure erasure.
 Editable non-native exports and unsupported visual resources still fail explicitly rather than

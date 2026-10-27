@@ -133,8 +133,9 @@ those system-owned controls. WinGet publishing remains paused.
   embedded, not linked to the source file. Style > Local Image shows the selected
   topic and filename, with Replace/Remove, proportional Image width, Image below
   topic and Reset Size. Reset fits within 160 × 100 map units without upscaling;
-  resizing is capped at 1024 units per side. Drag/drop insertion and resize
-  handles are not implemented. Files are limited to 8 MiB, 4096 pixels per side
+  resizing is capped at 1024 units per side. Dropping PNG/JPEG files into the
+  app inserts them on the single selected topic; direct resize handles are not
+  implemented. Files are limited to 8 MiB, 4096 pixels per side
   and 4 megapixels; invalid replacements leave the old image intact.
   Map/thumbnail/live Pitch use cached, aspect-preserving previews up to 512 pixels;
   SVG/PNG/JPEG/PDF, print and Pitch exports use original embedded bytes. Native v3,
@@ -163,8 +164,8 @@ those system-owned controls. WinGet publishing remains paused.
   restrictions; automatic resource cleanup is not implemented yet.
   All ten languages and Light/Dark/System share this workflow. Non-native exports
   (including visual output/print/Pitch) explicitly refuse attachment-bearing
-  documents rather than discard bytes. XMind attachment exchange, image drag/drop
-  and direct resize handles remain open; XV4 is not complete.
+  documents rather than discard bytes. XMind resource exchange and direct image
+  resize handles remain open; XV4 is not complete.
 - Map > Theme > Global Font and Style > Text > Font Family use installed system
   font faces, not just stored names. Per-topic Auto inherits the map font.
   Canvas layout, painting, inline editing and Map Shot share the selected face;
