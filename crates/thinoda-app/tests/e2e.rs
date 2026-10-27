@@ -1823,12 +1823,12 @@ fn closing_dirty_tab_asks_and_dont_save_closes() {
     let close_label = format!("Close Tab: {}", app.docs[0].title());
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, &close_label).click();
-    h.run_steps(2);
+    h.run_steps(3);
     assert_eq!(
         h.state().dialogs.close,
         Some(CloseIntent::Tab(h.state().docs[0].key.clone()))
     );
-    h.get_by_label("Save changes?");
+    h.get_by_role_and_label(Role::Window, "Save changes?");
     h.get_by_role_and_label(Role::Button, "Don't Save").click();
     h.run_steps(2);
     assert!(h.state().docs.is_empty(), "tab closed without saving");
