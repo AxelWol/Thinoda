@@ -33,7 +33,7 @@ impl ThinodaApp {
             selected: 0,
             presenter,
             fullscreen: false,
-            preview: Default::default(),
+            playback: Default::default(),
         });
     }
 
@@ -144,8 +144,11 @@ impl ThinodaApp {
     pub(super) fn pitch_player_ui(&mut self, ui: &mut egui::Ui, player: &mut PitchPlayer) -> bool {
         let blocked = self.any_modal_open();
         let touch = widgets::touch_activation_allowed(ui.ctx());
+        let popup_was_open = egui::Popup::is_any_open(ui.ctx());
         let mut previous = false;
         let mut next = false;
+        let mut first = false;
+        let mut last = false;
         let mut exit = false;
         let mut fullscreen = false;
         let mut export = None;
@@ -154,16 +157,38 @@ impl ThinodaApp {
             ..Default::default()
         };
         let count = player.sheet.presentation.slides.len();
+        let steps =
+            pitch_motion::Playback::topic_order(&player.sheet, &player.layout, player.selected)
+                .len()
+                .max(1);
+        let step = player.playback.step.min(steps);
         ui.add_enabled_ui(!blocked, |ui| {
             ui.horizontal_wrapped(|ui| {
+                first = ui
+                    .add_enabled(
+                        player.selected > 0 || step > 1 && player.playback.build_topics,
+                        egui::Button::new(t("First Slide")),
+                    )
+                    .clicked()
+                    && touch;
                 previous = ui
-                    .add_enabled(player.selected > 0, egui::Button::new(t("Previous Slide")))
+                    .add_enabled(
+                        player.selected > 0 || player.playback.build_topics && step > 1,
+                        egui::Button::new(t("Previous Slide")),
+                    )
                     .clicked()
                     && touch;
                 next = ui
                     .add_enabled(
-                        player.selected + 1 < count,
+                        player.selected + 1 < count || player.playback.build_topics && step < steps,
                         egui::Button::new(t("Next Slide")),
+                    )
+                    .clicked()
+                    && touch;
+                last = ui
+                    .add_enabled(
+                        player.selected + 1 < count || player.playback.build_topics && step < steps,
+                        egui::Button::new(t("Last Slide")),
                     )
                     .clicked()
                     && touch;
@@ -197,8 +222,38 @@ impl ThinodaApp {
                     });
                 });
             });
+            ui.horizontal_wrapped(|ui| {
+                let label = ui.label(t("Transition"));
+                let mut transition = player.playback.transition;
+                egui::ComboBox::from_id_salt("pitch-transition")
+                    .selected_text(t(transition.label()))
+                    .show_ui(ui, |ui| {
+                        for value in pitch_motion::Transition::ALL {
+                            ui.selectable_value(&mut transition, value, t(value.label()));
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
+                if touch {
+                    player.playback.transition = transition;
+                }
+                let mut reduce_motion = player.playback.reduce_motion;
+                if ui
+                    .checkbox(&mut reduce_motion, t("Reduce motion"))
+                    .changed()
+                    && touch
+                {
+                    player.playback.reduce_motion = reduce_motion;
+                }
+                let mut build = player.playback.build_topics;
+                if ui.checkbox(&mut build, t("Build topics")).changed() && touch {
+                    player.playback.build_topics = build;
+                    player.playback.step = if build { 1 } else { usize::MAX };
+                }
+            });
         });
         if !blocked
+            && !popup_was_open
             && !egui::Popup::is_any_open(ui.ctx())
             && !ui.ctx().text_edit_focused()
             && ui.ctx().input(|input| input.focused)
@@ -206,6 +261,8 @@ impl ThinodaApp {
         {
             ui.ctx().input_mut(|input| {
                 exit |= input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+                first |= input.consume_key(egui::Modifiers::NONE, egui::Key::Home);
+                last |= input.consume_key(egui::Modifiers::NONE, egui::Key::End);
                 previous |= input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::PageUp);
                 next |= input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
@@ -218,10 +275,26 @@ impl ThinodaApp {
             });
         }
         if previous {
-            player.selected = player.selected.saturating_sub(1);
+            player
+                .playback
+                .navigate(&player.sheet, &player.layout, &mut player.selected, false);
         }
         if next {
-            player.selected = (player.selected + 1).min(count.saturating_sub(1));
+            player
+                .playback
+                .navigate(&player.sheet, &player.layout, &mut player.selected, true);
+        }
+        if first {
+            player.selected = 0;
+            player.playback.step = if player.playback.build_topics {
+                1
+            } else {
+                usize::MAX
+            };
+        }
+        if last {
+            player.selected = count.saturating_sub(1);
+            player.playback.step = usize::MAX;
         }
         if fullscreen {
             player.fullscreen = !player.fullscreen;
@@ -238,7 +311,21 @@ impl ThinodaApp {
             count,
             player.sheet.presentation.slides[player.selected].title
         ));
-        ui.label(t("Right / Space: next · Left: previous · Escape: exit"));
+        ui.label(t(
+            "Right / Space: next · Left: previous · Home / End: first / last · Escape: exit",
+        ));
+        if player.playback.build_topics {
+            let steps =
+                pitch_motion::Playback::topic_order(&player.sheet, &player.layout, player.selected)
+                    .len()
+                    .max(1);
+            ui.label(format!(
+                "{}: {} / {}",
+                t("Build topics"),
+                player.playback.step.min(steps),
+                steps
+            ));
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
             let available = egui::vec2(
                 ui.available_width(),
@@ -246,13 +333,13 @@ impl ThinodaApp {
             );
             if player.presenter && available.x >= 760.0 {
                 ui.horizontal_top(|ui| {
-                    player.preview.show(
+                    player.playback.show(
                         ui,
                         &player.sheet,
+                        &player.layout,
                         player.selected,
-                        0,
-                        &options,
                         egui::vec2((available.x * 0.62 - 8.0).max(1.0), available.y),
+                        options.dark,
                     );
                     ui.vertical(|ui| {
                         ui.strong(t("Map"));
@@ -265,12 +352,11 @@ impl ThinodaApp {
                     });
                 });
             } else {
-                player.preview.show(
+                player.playback.show(
                     ui,
                     &player.sheet,
+                    &player.layout,
                     player.selected,
-                    0,
-                    &options,
                     egui::vec2(
                         available.x,
                         if player.presenter {
@@ -279,6 +365,7 @@ impl ThinodaApp {
                             available.y
                         },
                     ),
+                    options.dark,
                 );
                 if player.presenter {
                     ui.strong(t("Map"));

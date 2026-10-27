@@ -133,6 +133,15 @@ Fit Slide to Content|Ajustar slide ao conteúdo
 Remove Slide|Remover slide
 Export PDF|Exportar PDF
 Export Slide Images|Exportar imagens dos slides
+First Slide|Primeiro slide
+Last Slide|Último slide
+Transition|Transição
+Fade|Dissolver
+Slide|Deslizar
+Push|Empurrar
+Reduce motion|Reduzir movimento
+Build topics|Mostrar tópicos por etapas
+Right / Space: next · Left: previous · Home / End: first / last · Escape: exit|Direita / Espaço: próximo · Esquerda: anterior · Home / End: primeiro / último · Escape: sair
 Slide preview|Prévia do slide
 Slide preview failed|Falha na prévia do slide
 Retry|Tentar novamente

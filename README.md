@@ -113,6 +113,14 @@ language packs, not Thinoda's override. No claim is made that Thinoda translates
 those system-owned controls. WinGet publishing remains paused.
 
 ## Features
+- **Live Pitch** presents saved slides and crops inside the app. Previous/Next
+  buttons, arrows/Page Up/Page Down/Space, Home/End and First/Last buttons navigate;
+  Escape or Exit Pitch closes only the player. Choose None, Fade, Slide, Push or
+  Zoom transitions. **Reduce motion is on by default** on every target; uncheck
+  it explicitly to animate. Build topics reveals visible topics in parent-first
+  order using Next, then advances the slide; Previous reverses the steps.
+  Playback choices are session-only, never change the workbook or exported
+  PDF/PNG slides, and use the same localized, themed controls on native and web.
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Structural numbering (Style > Numbering) labels a parent's children 1, 2, 3 /

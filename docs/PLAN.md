@@ -134,8 +134,52 @@ including exceptions; calendar-exception editing allows any date. Typed ISO date
 retain existing atomic validation and Undo. Calendar selection is draft-only until
 Apply, with arrow/Page Up/Page Down navigation, Enter selection, Escape dismissal,
 bounded month navigation and local-time Today on native/web. Every shipped language
-and Light/Dark/System is covered at 360x640. UR4 (presentation transitions and
-composition) is next, then XV4-XV9; neither is claimed complete.
+and Light/Dark/System is covered at 360x640. UR4 live transitions and topic
+composition are now implemented in the worktree, release pending. XV4 portable
+assets is next, followed by XV5-XV9; those items remain open.
+
+**UR4 implementation (2026-10-27):** extend the existing Pitch player, not a second
+presentation model. The live stage paints the captured immutable layout directly
+inside each saved crop, with uniform aspect-preserving fit. None/Fade/Slide/Push/
+Zoom use a bounded 350 ms smoothstep transition; Zoom interpolates saved framing.
+At most the current and outgoing scene are retained. Optional topic builds reveal
+intersecting topics in parent-before-child paint order without relayout; connectors
+and relationships wait for their endpoints, and group annotations wait for the full
+slide. Next reveals a topic before advancing; Previous reverses steps, and Home/End
+or the new First/Last buttons jump to the beginning/complete ending. Presenter map,
+native fullscreen and browser expansion retain the existing ownership behavior.
+
+Motion is disabled by default on every host and can be stopped immediately using
+the visible Reduce motion control. This conservative cross-platform default does
+not claim automatic detection of every operating system's accessibility setting.
+Transition/build choices belong to this playback session, not the document or
+PDF/PNG output. All shipped catalogs include the controls and expanded keyboard
+hint. The [current XMind Pitch guide](https://xmind.com/user-guide/pitch-mode-new),
+rechecked for this increment, documents windowed/fullscreen/Presenter View and
+step navigation, with aspect ratios and delivery/layout choices as distinct
+settings. Thinoda retains its existing presenter/map context; aspect-ratio and
+PowerPoint handoff stay in XV6 rather than being implied by transitions.
+The [WCAG animation-from-interactions guidance](https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html)
+supports giving people control over nonessential motion; no autoplay or looping
+animation is added. Real host/assistive-technology/physical-touch acceptance remains
+F6 work.
+
+The localized embedded-player integration matrix exercises actual controls at
+360x640 in every language setting and Light/Dark/System, including topic builds,
+transition selection, first/last and exit, while preserving workbook/dirty state.
+Deterministic rendering tests cover all five transitions in both map themes with
+motion enabled/disabled, bounded completion, and retained topic geometry. Popup
+Escape now closes only its popup rather than also exiting Pitch in the same frame.
+PR #85's first CI run failed on every native runner because the shared save dialog
+now exposes both a named Window and title text. Its regression queries the Window
+role explicitly and lets initial content-fit geometry settle before clicking.
+Final local verification: 199 app library tests, all 75 tests in the e2e binary,
+and the isolated all-language/appearance Pitch matrix pass. The touch regression
+uses a 60 Hz harness clock so a simulated tap is not accidentally a one-second
+long press; canceled/multitouch releases remain rejected and ordinary taps work.
+Strict native all-target and WASM library clippy, formatting, whitespace and
+dependency-notice checks pass. The complete integration inventory is still a CI
+gate; these targeted results do not claim a fresh full-workspace pass.
 
 UR3 UX reference: the [WAI-ARIA date-picker example](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/examples/datepicker-dialog/)
 recommends retaining typed input, a separate calendar button, focused selected/current

@@ -573,7 +573,14 @@ graph TD
   restricted command surface; local playback keys do not enter map shortcuts.
   Native fullscreen affects the player viewport only; browser expansion remains
   an in-app window. Presenter context uses the snapshot layout plus the active
-  saved frame. Output workers capture the current draft/player source, write
+  saved frame. `pitch_motion::Playback` paints live saved crops with the canvas
+  renderer rather than waiting for raster-preview workers. Current/outgoing scenes
+  are bounded to two immutable layouts; partial topic builds retain original
+  geometry, hide incomplete connectors/relationships and defer group annotations.
+  Motion is explicitly off by default; session-only transitions use a 350 ms
+  smoothstep and honor the immediate Reduce motion switch. Popup state is sampled
+  before drawing controls so popup dismissal cannot also consume a player shortcut.
+  Output workers capture the current draft/player source, write
   atomically, and use the existing desktop/browser delivery path. Host visual
   acceptance remains separate from headless rendering and ownership evidence.
 - **Localization**: app chrome uses the embedded English/German and

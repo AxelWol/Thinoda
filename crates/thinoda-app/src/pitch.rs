@@ -13,6 +13,7 @@ use thinoda_ui::{Palette, widgets};
 use crate::{app::ThinodaApp, i18n::t};
 
 mod pitch_ai;
+mod pitch_motion;
 mod pitch_player;
 mod pitch_preview;
 use pitch_preview::SlidePreview;
@@ -47,7 +48,7 @@ struct PitchPlayer {
     selected: usize,
     presenter: bool,
     fullscreen: bool,
-    preview: SlidePreview,
+    playback: pitch_motion::Playback,
 }
 
 #[derive(Default)]
