@@ -25,6 +25,7 @@ check fe668
 check_box fe9de
 chevron_right fe5cc
 close fe5cd
+close_fullscreen ff1cf
 cloud ff15c
 co_present feaf0
 content_copy fe14d
@@ -82,12 +83,14 @@ link fe250
 menu fe5d2
 menu_book fea19
 merge feb98
+minimize fe931
 more_horiz fe5d3
 move_down feb61
 move_up feb64
 new_window ff710
 newspaper feb81
 note_add fe89c
+open_in_full ff1ce
 open_in_new fe89e
 palette fe40a
 photo_camera fe412
@@ -120,6 +123,7 @@ summarize ff071
 tab fe8d8
 today fe8df
 translate fe8e2
+tune fe429
 undo fe166
 unfold_less fe5d6
 unfold_less_double ff8cf

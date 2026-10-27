@@ -101,6 +101,11 @@ fn svg_sheet_with_fonts(
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
     frame: Option<thinoda_core::Rect>,
 ) -> Result<String, IoError> {
+    if !s.resources.is_empty() {
+        return Err(IoError::Invalid(
+            "embedded resource rendering is not supported yet; save as .thinoda to retain all bytes".into(),
+        ));
+    }
     let text = text::ExportText::new(s, o.dark, fontdb)?;
     let layout = layout_sheet(s, &text, o.dark);
     let pad = o.padding.max(0.0);

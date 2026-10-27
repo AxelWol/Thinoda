@@ -21,7 +21,7 @@ struct Source {
 impl Source {
     fn valid(&self, app: &ThinodaApp) -> bool {
         app.settings.ai.enabled
-            && self.config == config(&app.settings.ai)
+            && self.config == embedding_config(&app.settings.ai)
             && self.model == app.settings.ai.embedding_model.trim()
             && app.docs.iter().any(|doc| {
                 doc.key == self.key
@@ -237,7 +237,7 @@ impl ThinodaApp {
             sheet: doc.doc.active_index(),
             root: doc.doc.sheet().root,
             revision: doc.doc.state_id(),
-            config: config(&self.settings.ai),
+            config: embedding_config(&self.settings.ai),
             model: model.into(),
             viewport: self.current_viewport,
             topics: topics
@@ -458,7 +458,9 @@ impl ThinodaApp {
         let key = cache.source.key.clone();
         let mut book = workbook_from_outline(&outline);
         let doc = self.docs.iter_mut().find(|doc| doc.key == key).unwrap();
-        doc.doc.add_sheet(book.sheets.remove(0));
+        doc.doc
+            .add_sheet(book.sheets.remove(0))
+            .map_err(|error| error.to_string())?;
         doc.view.reset();
         self.cancel_semantic();
         self.ai.semantic.cache = None;

@@ -2,9 +2,10 @@
 
 use std::collections::BTreeSet;
 
+use chrono::Datelike;
 use egui::Context;
 use thinoda_core::{LocalDate, Task, TopicId, Weekday, WorkCalendar};
-use thinoda_ui::widgets;
+use thinoda_ui::{CalendarDate, widgets};
 
 use crate::{app::ThinodaApp, i18n::t};
 
@@ -241,6 +242,9 @@ impl ThinodaApp {
             return;
         };
         let touch = widgets::touch_activation_allowed(ctx);
+        let calendar_labels = crate::i18n::calendar_labels();
+        let local = chrono::Local::now();
+        let today = CalendarDate::new(local.year(), local.month() as u8, local.day() as u8);
         let mut apply = false;
         let mut remove = false;
         let mut cancel = false;
@@ -249,177 +253,223 @@ impl ThinodaApp {
             PlanningDraft::Calendar { .. } => "Work Calendar",
         };
         let bounds = ctx.content_rect().shrink(12.0);
-        let response = egui::Modal::new(egui::Id::unique("planning-editor")).show(ctx, |ui| {
-            ui.set_width(480.0_f32.min(bounds.width()).max(1.0));
-            ui.heading(t(title));
-            let footer = 100.0;
-            egui::ScrollArea::vertical()
-                .max_height((bounds.height() - footer).max(40.0))
-                .show(ui, |ui| match &mut editor.draft {
-                    PlanningDraft::Task {
-                        topic,
-                        task,
-                        start,
-                        finish,
-                        predecessors,
-                    } => {
-                        if let Some(topic) = sheet.topic(*topic) {
-                            ui.label(&topic.title);
-                        }
-                        ui.label(t(
-                            "Dates use YYYY-MM-DD. Duration counts inclusive working days.",
-                        ));
-                        for (label, value) in [("Start date", start), ("Due date", finish)] {
-                            let label = ui.label(t(label));
-                            ui.add(egui::TextEdit::singleline(value).hint_text("YYYY-MM-DD"))
+        let labels = crate::i18n::dialog_labels();
+        let icon = if matches!(&editor.draft, PlanningDraft::Task { .. }) {
+            thinoda_ui::icons::TASK_PLANNING
+        } else {
+            thinoda_ui::icons::CALENDAR
+        };
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("planning-editor"), t(title))
+            .icon(icon)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(480.0_f32.min(bounds.width()))
+            .default_height(560.0)
+            .min_size(egui::vec2(320.0, 260.0))
+            .scroll(false)
+            .show(ctx, |ui| {
+                let footer = 100.0;
+                egui::ScrollArea::vertical()
+                    .max_height((bounds.height() - footer).max(40.0))
+                    .show(ui, |ui| match &mut editor.draft {
+                        PlanningDraft::Task {
+                            topic,
+                            task,
+                            start,
+                            finish,
+                            predecessors,
+                        } => {
+                            if let Some(topic) = sheet.topic(*topic) {
+                                ui.label(&topic.title);
+                            }
+                            ui.label(t(
+                                "Dates use YYYY-MM-DD. Duration counts inclusive working days.",
+                            ));
+                            for (label, value) in [("Start date", start), ("Due date", finish)] {
+                                let label = ui.label(t(label));
+                                thinoda_ui::date_field(
+                                    ui,
+                                    label.id,
+                                    value,
+                                    &calendar_labels,
+                                    today,
+                                    |date| {
+                                        u16::try_from(date.year)
+                                            .ok()
+                                            .and_then(|year| {
+                                                LocalDate::new(year, date.month, date.day).ok()
+                                            })
+                                            .is_some_and(|date| {
+                                                sheet.scheduling.calendar.is_working_day(date)
+                                            })
+                                    },
+                                )
+                                .text
                                 .labelled_by(label.id);
-                        }
-                        let owner = Some(egui::Id::unique((
-                            "planning-values",
-                            &editor.document,
-                            editor.sheet,
-                            editor.revision,
-                            editor.viewport,
-                            *topic,
-                        )));
-                        let mut duration = f32::from(task.duration_days.unwrap_or(0));
-                        let label = ui.label(t("Working days (0 = unscheduled)"));
-                        let (_, commit) = crate::ui::touch_numeric_value(
-                            ui,
-                            &mut duration,
-                            "duration",
-                            owner,
-                            |ui, value| {
-                                ui.add(egui::DragValue::new(value).range(0..=3650).max_decimals(0))
+                            }
+                            let owner = Some(egui::Id::unique((
+                                "planning-values",
+                                &editor.document,
+                                editor.sheet,
+                                editor.revision,
+                                editor.viewport,
+                                *topic,
+                            )));
+                            let mut duration = f32::from(task.duration_days.unwrap_or(0));
+                            let label = ui.label(t("Working days (0 = unscheduled)"));
+                            let (_, commit) = crate::ui::touch_numeric_value(
+                                ui,
+                                &mut duration,
+                                "duration",
+                                owner,
+                                |ui, value| {
+                                    ui.add(
+                                        egui::DragValue::new(value).range(0..=3650).max_decimals(0),
+                                    )
                                     .labelled_by(label.id)
-                            },
-                        );
-                        if commit {
-                            task.duration_days =
-                                (duration > 0.0).then_some(duration.round() as u16);
-                        }
-                        let label = ui.label(t("Progress"));
-                        let mut progress = f32::from(task.progress_percent);
-                        let (_, commit) = crate::ui::touch_numeric_value(
-                            ui,
-                            &mut progress,
-                            "progress",
-                            owner,
-                            |ui, value| {
-                                ui.add(egui::Slider::new(value, 0.0..=100.0).integer().suffix("%"))
+                                },
+                            );
+                            if commit {
+                                task.duration_days =
+                                    (duration > 0.0).then_some(duration.round() as u16);
+                            }
+                            let label = ui.label(t("Progress"));
+                            let mut progress = f32::from(task.progress_percent);
+                            let (_, commit) = crate::ui::touch_numeric_value(
+                                ui,
+                                &mut progress,
+                                "progress",
+                                owner,
+                                |ui, value| {
+                                    ui.add(
+                                        egui::Slider::new(value, 0.0..=100.0).integer().suffix("%"),
+                                    )
                                     .labelled_by(label.id)
-                            },
-                        );
-                        if commit {
-                            task.progress_percent = progress.round() as u8;
-                        }
-                        let mut priority = f32::from(task.priority.unwrap_or(0));
-                        let label = ui.label(t("Priority (0 = none)"));
-                        let (_, commit) = crate::ui::touch_numeric_value(
-                            ui,
-                            &mut priority,
-                            "priority",
-                            owner,
-                            |ui, value| {
-                                ui.add(egui::DragValue::new(value).range(0..=255).max_decimals(0))
+                                },
+                            );
+                            if commit {
+                                task.progress_percent = progress.round() as u8;
+                            }
+                            let mut priority = f32::from(task.priority.unwrap_or(0));
+                            let label = ui.label(t("Priority (0 = none)"));
+                            let (_, commit) = crate::ui::touch_numeric_value(
+                                ui,
+                                &mut priority,
+                                "priority",
+                                owner,
+                                |ui, value| {
+                                    ui.add(
+                                        egui::DragValue::new(value).range(0..=255).max_decimals(0),
+                                    )
                                     .labelled_by(label.id)
-                            },
-                        );
-                        if commit {
-                            task.priority = (priority > 0.0).then_some(priority.round() as u8);
-                        }
-                        ui.separator();
-                        ui.strong(t("Finish-to-start predecessors"));
-                        for (id, _) in sheet
-                            .scheduling
-                            .tasks
-                            .iter()
-                            .filter(|(id, _)| **id != *topic)
-                        {
-                            let mut selected = predecessors.contains(id);
-                            let label = sheet
-                                .topic(*id)
-                                .map(|topic| topic.title.clone())
-                                .unwrap_or_else(|| id.to_string());
-                            if ui.checkbox(&mut selected, label).changed() && touch {
-                                if selected {
-                                    predecessors.insert(*id);
-                                } else {
-                                    predecessors.remove(id);
+                                },
+                            );
+                            if commit {
+                                task.priority = (priority > 0.0).then_some(priority.round() as u8);
+                            }
+                            ui.separator();
+                            ui.strong(t("Finish-to-start predecessors"));
+                            for (id, _) in sheet
+                                .scheduling
+                                .tasks
+                                .iter()
+                                .filter(|(id, _)| **id != *topic)
+                            {
+                                let mut selected = predecessors.contains(id);
+                                let label = sheet
+                                    .topic(*id)
+                                    .map(|topic| topic.title.clone())
+                                    .unwrap_or_else(|| id.to_string());
+                                if ui.checkbox(&mut selected, label).changed() && touch {
+                                    if selected {
+                                        predecessors.insert(*id);
+                                    } else {
+                                        predecessors.remove(id);
+                                    }
                                 }
                             }
-                        }
-                        ui.label(t(
+                            ui.label(t(
                             "Removing a task also removes its dependencies. To-Do stays unchanged.",
                         ));
-                        remove = ui.button(t("Remove Task")).clicked() && touch;
-                    }
-                    PlanningDraft::Calendar {
-                        calendar,
-                        date,
-                        working,
-                    } => {
-                        ui.label(t(
+                            remove = ui.button(t("Remove Task")).clicked() && touch;
+                        }
+                        PlanningDraft::Calendar {
+                            calendar,
+                            date,
+                            working,
+                        } => {
+                            ui.label(t(
                             "This calendar belongs to the current sheet and is saved with the map.",
                         ));
-                        for weekday in Weekday::ALL {
-                            let mut enabled = calendar.working_weekdays.contains(&weekday);
-                            if ui.checkbox(&mut enabled, t(weekday.name())).changed() && touch {
-                                if enabled {
-                                    calendar.working_weekdays.insert(weekday);
-                                } else {
-                                    calendar.working_weekdays.remove(&weekday);
-                                }
-                            }
-                        }
-                        ui.separator();
-                        ui.strong(t("Dated exceptions"));
-                        let label = ui.label(t("Exception date"));
-                        ui.add(egui::TextEdit::singleline(date).hint_text("YYYY-MM-DD"))
-                            .labelled_by(label.id);
-                        let before_working = *working;
-                        ui.checkbox(working, t("Working day"));
-                        if !touch {
-                            *working = before_working;
-                        }
-                        if ui.button(t("Add Exception")).clicked() && touch {
-                            match date.trim().parse::<LocalDate>() {
-                                Ok(parsed) => {
-                                    calendar.exceptions.insert(parsed, *working);
-                                    date.clear();
-                                }
-                                Err(error) => editor.error = Some(error.to_string()),
-                            }
-                        }
-                        let mut delete = None;
-                        for (date, working) in &calendar.exceptions {
-                            ui.horizontal(|ui| {
-                                ui.label(format!(
-                                    "{date}: {}",
-                                    t(if *working {
-                                        "Working day"
+                            for weekday in Weekday::ALL {
+                                let mut enabled = calendar.working_weekdays.contains(&weekday);
+                                if ui.checkbox(&mut enabled, t(weekday.name())).changed() && touch {
+                                    if enabled {
+                                        calendar.working_weekdays.insert(weekday);
                                     } else {
-                                        "Non-working day"
-                                    })
-                                ));
-                                if ui.button(format!("{} {date}", t("Remove"))).clicked() && touch {
-                                    delete = Some(*date);
+                                        calendar.working_weekdays.remove(&weekday);
+                                    }
                                 }
-                            });
+                            }
+                            ui.separator();
+                            ui.strong(t("Dated exceptions"));
+                            let label = ui.label(t("Exception date"));
+                            thinoda_ui::date_field(
+                                ui,
+                                label.id,
+                                date,
+                                &calendar_labels,
+                                today,
+                                |_| true,
+                            )
+                            .text
+                            .labelled_by(label.id);
+                            let before_working = *working;
+                            ui.checkbox(working, t("Working day"));
+                            if !touch {
+                                *working = before_working;
+                            }
+                            if ui.button(t("Add Exception")).clicked() && touch {
+                                match date.trim().parse::<LocalDate>() {
+                                    Ok(parsed) => {
+                                        calendar.exceptions.insert(parsed, *working);
+                                        date.clear();
+                                    }
+                                    Err(error) => editor.error = Some(error.to_string()),
+                                }
+                            }
+                            let mut delete = None;
+                            for (date, working) in &calendar.exceptions {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!(
+                                        "{date}: {}",
+                                        t(if *working {
+                                            "Working day"
+                                        } else {
+                                            "Non-working day"
+                                        })
+                                    ));
+                                    if ui.button(format!("{} {date}", t("Remove"))).clicked()
+                                        && touch
+                                    {
+                                        delete = Some(*date);
+                                    }
+                                });
+                            }
+                            if let Some(date) = delete {
+                                calendar.exceptions.remove(&date);
+                            }
                         }
-                        if let Some(date) = delete {
-                            calendar.exceptions.remove(&date);
-                        }
-                    }
+                    });
+                if let Some(error) = &editor.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                ui.horizontal_wrapped(|ui| {
+                    apply = ui.button(t("Apply")).clicked() && touch;
+                    cancel = ui.button(t("Cancel")).clicked() && touch;
                 });
-            if let Some(error) = &editor.error {
-                ui.colored_label(ui.visuals().error_fg_color, error);
-            }
-            ui.horizontal_wrapped(|ui| {
-                apply = ui.button(t("Apply")).clicked() && touch;
-                cancel = ui.button(t("Cancel")).clicked() && touch;
             });
-        });
         if (apply || remove) && !ime_event && !editor.composing {
             match self.apply_planning_draft(&editor, remove) {
                 Ok(()) => {
@@ -432,7 +482,7 @@ impl ThinodaApp {
                 }
             }
         }
-        if !(cancel || response.should_close()) || ime_event || editor.composing {
+        if !(cancel || response.close_requested) || ime_event || editor.composing {
             self.planning.editor = Some(editor);
         }
     }

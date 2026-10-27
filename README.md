@@ -113,6 +113,14 @@ language packs, not Thinoda's override. No claim is made that Thinoda translates
 those system-owned controls. WinGet publishing remains paused.
 
 ## Features
+- **Live Pitch** presents saved slides and crops inside the app. Previous/Next
+  buttons, arrows/Page Up/Page Down/Space, Home/End and First/Last buttons navigate;
+  Escape or Exit Pitch closes only the player. Choose None, Fade, Slide, Push or
+  Zoom transitions. **Reduce motion is on by default** on every target; uncheck
+  it explicitly to animate. Build topics reveals visible topics in parent-first
+  order using Next, then advances the slide; Previous reverses the steps.
+  Playback choices are session-only, never change the workbook or exported
+  PDF/PNG slides, and use the same localized, themed controls on native and web.
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Structural numbering (Style > Numbering) labels a parent's children 1, 2, 3 /
@@ -424,7 +432,15 @@ those system-owned controls. WinGet publishing remains paused.
   thin connectors inspired by the supplied visual references; existing saved themes
   and per-topic style overrides remain unchanged.
 - Light/dark theme following the system, English and German UI, personal settings
-- Settings categories for General, Editor, AI and Cloud. Editor preferences independently
+- Every dialog shares one frame: a title row with icon, Minimize/Expand,
+  Maximize/Restore and Close Window buttons, resizing from all four edges and
+  corners, and content that fits the window width with vertical scrolling when long.
+- Task Planning start/due dates and Work Calendar exceptions have localized calendar
+  pickers alongside typed `YYYY-MM-DD` input. Scheduling calendars disable non-working
+  dates and honor dated exceptions. Arrow keys move between available days, Page
+  Up/Down changes month, Enter selects and Escape closes the calendar without closing
+  Planning. Today uses the device's local date; Apply remains one undoable edit.
+- Settings icon tabs for General, Editor, AI and Cloud. Editor preferences independently
   control the topic toolbar and add buttons, set initial map zoom and optionally reuse
   the last structure/theme for new blank maps without changing named templates.
   Settings stays inside short/narrow windows with both-axis scrolling and focus
@@ -503,11 +519,59 @@ Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + A
 system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service),
 not in `settings.toml`.
 
+### Generation providers and native CLIs
+
+At the top of **Settings › AI**, **Generation provider** selects **OpenAI API**
+(the existing OpenAI-compatible implementation), **GitHub Copilot CLI**,
+**Claude CLI**, or **OpenAI Codex CLI**. Old preferences default to OpenAI API.
+API endpoint, chat model, embedding model and credentials are preserved when
+switching; each CLI has its own optional model override.
+
+Claude and Codex generation routes chat, map, transform and Pitch requests to
+their native CLI. Install the CLI using its official instructions and ensure it
+is on the `PATH` visible to Thinoda; restart Thinoda after installation. Settings
+checks the CLI asynchronously, and offers **Check CLI status**, a copyable
+`claude auth login` / `codex login` command and official installation/login links.
+Thinoda does not start interactive login or installation and does not store CLI
+tokens. Status is the CLI's own report, not a subscription, access or token-expiry
+verification. Older versions with unsupported checks are shown as unknown.
+
+**Copilot is currently a blocked integration**, not a working generation provider:
+the official command reference has no non-inference authentication-status command
+and no documented invocation that disables all user MCP servers and hooks without
+changing its credential/configuration home. Thinoda can detect its installation,
+shows unknown authentication and offers `copilot login` help, but refuses generation
+rather than launch uncontrolled user integrations or silently fall back to the API.
+
+CLI responses are buffered, not live token streaming. Claude uses print mode with
+tools, customizations, MCP and non-managed hooks disabled; Codex uses ephemeral
+`exec`, read-only sandbox, no approvals, ignored user configuration, and disabled
+shell, MCP, hooks, apps, agents and web search. Both use an empty temporary working
+directory, stdin prompts, bounded stdout/stderr and a 1–300 second request timeout.
+Unsupported versions fail with an update/login hint; administrative policy may
+still impose restrictions. Windows native executables and standard npm
+Claude/Codex `.cmd`/`.bat` installations are supported by invoking the known Node
+entry point directly, **not by running the batch wrapper**. Arbitrary batch
+wrappers or nonstandard npm layouts are rejected.
+
+**Embeddings always use the separate OpenAI-compatible API settings**, regardless
+of the generation provider. **Test Connection** tests that API and discovers its
+models without asking a CLI to perform inference. In browsers, a persisted CLI
+selection remains selected but generation reports native CLIs unavailable;
+there is no automatic fallback. Switch explicitly to OpenAI API to generate in
+the browser.
+
+Official references:
+[Claude CLI](https://code.claude.com/docs/en/cli-reference),
+[Codex CLI](https://developers.openai.com/codex/cli/reference/),
+[Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+
 ## Build & test
 
 JavaScript tooling and PWA tests use **Node.js 24**, selected by the root
 `.node-version` file. There are no npm dependencies or Node runtime requirements
-for the shipped desktop app; the web app runs WebAssembly/JavaScript in the browser.
+for the shipped desktop app itself (optional npm-installed CLI providers require
+their own Node runtime); the web app runs WebAssembly/JavaScript in the browser.
 
 ```sh
 cargo run -p thinoda-app            # start the app

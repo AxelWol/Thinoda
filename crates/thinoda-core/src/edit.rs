@@ -282,6 +282,7 @@ impl Sheet {
         self.require(id)?;
         let owned = self.owned_subtree_ids(id);
         let mut sheet = self.clone();
+        sheet.resources = self.copy_subtree(id).ok_or(EditError::NotFound)?.resources;
         sheet.root = id;
         sheet.title = self.topic(id).unwrap().title.clone();
         sheet.topics.retain(|id, _| owned.contains(id));
@@ -755,6 +756,24 @@ impl Sheet {
     /// Pastes subtrees as children of `parent` (fresh ids). Returns the new roots.
     pub fn paste(&mut self, parent: TopicId, subtrees: &[Subtree]) -> EditResult<Vec<TopicId>> {
         self.require(parent)?;
+        let resources = self
+            .resources
+            .merged(
+                subtrees
+                    .iter()
+                    .flat_map(|subtree| subtree.resources.entries.values().cloned()),
+            )
+            .map_err(EditError::Invalid)?;
+        for subtree in subtrees {
+            subtree.resources.validate().map_err(EditError::Invalid)?;
+            for topic in &subtree.topics {
+                if let Some(reference) = topic.image.as_deref()
+                    && reference.starts_with(crate::resources::RESOURCE_PREFIX)
+                {
+                    resources.get(reference).map_err(EditError::Invalid)?;
+                }
+            }
+        }
         let mut out = Vec::new();
         for s in subtrees {
             let mut s = s.clone();

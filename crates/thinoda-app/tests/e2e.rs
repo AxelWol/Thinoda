@@ -75,7 +75,12 @@ fn sheet_clipboard_crosses_app_instances_and_pastes_once_with_undo() {
     let mut source = ThinodaApp::headless();
     let ctx = egui::Context::default();
     let sheet = rich_sheet();
-    source.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    source
+        .doc_mut()
+        .unwrap()
+        .doc
+        .add_sheet(sheet.clone())
+        .unwrap();
     let source_state = source.doc().unwrap().doc.state_id();
     source.exec(&ctx, Cmd::CopySheet);
     assert_eq!(source.doc().unwrap().doc.state_id(), source_state);
@@ -144,7 +149,7 @@ fn new_sheet_from_topic_copies_owned_annotations_without_changing_the_source() {
     assert_eq!(expected.boundaries.len(), 1);
     assert_eq!(expected.relationships.len(), 1);
     assert_eq!(expected.topic_count(), 3);
-    app.doc_mut().unwrap().doc.add_sheet(sheet);
+    app.doc_mut().unwrap().doc.add_sheet(sheet).unwrap();
     app.doc_mut().unwrap().view.select_only(summary);
     let before = app.doc().unwrap().doc.workbook().clone();
     app.exec(&ctx, Cmd::NewSheetFromTopic);
@@ -226,7 +231,7 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
     let dir = tempfile::tempdir().unwrap();
     let original = dir.path().join("original.thinoda");
     let mut app = ThinodaApp::headless();
-    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet()).unwrap();
     app.doc_mut()
         .unwrap()
         .doc
@@ -276,7 +281,7 @@ fn separate_sheet_save_roundtrips_rich_content_without_retargeting_or_marking_sa
 #[test]
 fn masked_copy_preview_is_cancelable_and_exports_only_derived_content() {
     let mut app = ThinodaApp::headless();
-    app.doc_mut().unwrap().doc.add_sheet(rich_sheet());
+    app.doc_mut().unwrap().doc.add_sheet(rich_sheet()).unwrap();
     app.doc_mut()
         .unwrap()
         .doc
@@ -730,7 +735,7 @@ fn editor_preferences_independently_control_toolbar_and_add_handles() {
     let ctx = h.ctx.clone();
     h.state_mut().exec(&ctx, Cmd::Settings);
     h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Editor").click();
+    h.get_by_role_and_label(Role::Tab, "Editor").click();
     h.run_steps(3);
     let toggle_rect = h
         .get_by_role_and_label(Role::Switch, "Show topic toolbar")
@@ -1070,7 +1075,7 @@ fn structure_gallery_preserves_rich_content_selection_and_undo_for_every_layout(
     use thinoda_core::Structure;
     let mut app = ThinodaApp::headless();
     let sheet = rich_sheet();
-    app.doc_mut().unwrap().doc.add_sheet(sheet.clone());
+    app.doc_mut().unwrap().doc.add_sheet(sheet.clone()).unwrap();
     let selected = sheet.children(sheet.root)[1];
     app.doc_mut().unwrap().view.select_only(selected);
     let before = app.doc().unwrap().doc.workbook().clone();
@@ -1823,12 +1828,12 @@ fn closing_dirty_tab_asks_and_dont_save_closes() {
     let close_label = format!("Close Tab: {}", app.docs[0].title());
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, &close_label).click();
-    h.run_steps(2);
+    h.run_steps(3);
     assert_eq!(
         h.state().dialogs.close,
         Some(CloseIntent::Tab(h.state().docs[0].key.clone()))
     );
-    h.get_by_label("Save changes?");
+    h.get_by_role_and_label(Role::Window, "Save changes?");
     h.get_by_role_and_label(Role::Button, "Don't Save").click();
     h.run_steps(2);
     assert!(h.state().docs.is_empty(), "tab closed without saving");

@@ -5,7 +5,7 @@ use thinoda_core::{
     quick_styles::{PRESETS, QuickStyle, preset},
     theme::resolve_style,
 };
-use thinoda_ui::{DialogButton, confirm_dialog, widgets};
+use thinoda_ui::{DialogButton, confirm_dialog_with_labels as confirm_dialog, widgets};
 
 use crate::{
     app::{Cmd, ThinodaApp},
@@ -219,34 +219,43 @@ impl ThinodaApp {
         match &mut dialog {
             StyleDialog::Save { draft, error } => {
                 let mut save = false;
-                let response =
-                    egui::Modal::new(egui::Id::unique("save_quick_style")).show(ctx, |ui| {
-                        ui.set_width(360.0);
-                        ui.heading(t("Save Quick Style"));
-                        ui.label(t(
-                            "Saves fixed colors and typography, without topic content.",
-                        ));
-                        let label = ui.label(t("Style name"));
-                        let edit = ui
-                            .text_edit_singleline(&mut draft.name)
-                            .labelled_by(label.id);
-                        if let Some(error) = error.as_ref() {
-                            ui.colored_label(ui.visuals().error_fg_color, error);
+                let labels = crate::i18n::dialog_labels();
+                let response = thinoda_ui::Dialog::new(
+                    egui::Id::unique("save_quick_style"),
+                    t("Save Quick Style"),
+                )
+                .icon(thinoda_ui::icons::QUICK_STYLE)
+                .labels(&labels)
+                .modal(true)
+                .close_on_backdrop(true)
+                .default_width(360.0)
+                .default_height(220.0)
+                .min_size(egui::vec2(300.0, 160.0))
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(t(
+                        "Saves fixed colors and typography, without topic content.",
+                    ));
+                    let label = ui.label(t("Style name"));
+                    let edit = ui
+                        .text_edit_singleline(&mut draft.name)
+                        .labelled_by(label.id);
+                    if let Some(error) = error.as_ref() {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        save = (widgets::primary_button(ui, t("Save")).clicked()
+                            || (edit.lost_focus()
+                                && ui.input_mut(|input| {
+                                    input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                })))
+                            && touch_allowed;
+                        if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed {
+                            keep = false;
                         }
-                        ui.horizontal(|ui| {
-                            save = (widgets::primary_button(ui, t("Save")).clicked()
-                                || (edit.lost_focus()
-                                    && ui.input_mut(|input| {
-                                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                                    })))
-                                && touch_allowed;
-                            if widgets::secondary_button(ui, t("Cancel")).clicked() && touch_allowed
-                            {
-                                keep = false;
-                            }
-                        });
                     });
-                if response.should_close() && touch_allowed {
+                });
+                if response.close_requested && touch_allowed {
                     keep = false;
                 }
                 if save && keep {
@@ -280,6 +289,7 @@ impl ThinodaApp {
                         (t("Remove"), DialogButton::Danger),
                         (t("Cancel"), DialogButton::Secondary),
                     ],
+                    &crate::i18n::dialog_labels(),
                 ) {
                     keep = false;
                     if choice == 0 {

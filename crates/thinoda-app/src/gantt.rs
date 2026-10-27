@@ -156,11 +156,14 @@ impl ThinodaApp {
     #[cfg(target_arch = "wasm32")]
     fn gantt_embedded(&mut self, ctx: &Context, key: &str, sheet: usize) {
         let mut open = true;
-        egui::Window::new(t("Gantt Chart"))
-            .id(egui::Id::unique(("gantt", key, sheet)))
+        let labels = crate::i18n::dialog_labels();
+        let _ = thinoda_ui::Dialog::new(egui::Id::unique(("gantt", key, sheet)), t("Gantt Chart"))
+            .icon(thinoda_ui::icons::GANTT)
+            .labels(&labels)
             .open(&mut open)
-            .default_size([1000.0, 600.0])
-            .max_size(ctx.content_rect().size() - egui::vec2(16.0, 16.0))
+            .default_width(1000.0)
+            .default_height(600.0)
+            .scroll(false)
             .show(ctx, |ui| self.gantt_ui(ui, key, sheet));
         if !open {
             self.gantt.owner = None;

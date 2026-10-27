@@ -82,7 +82,7 @@ fn settings_profile_apply_dispatches_after_closing_dialogs_and_after_restart() {
             click(&mut h, "Close");
             assert!(h.state().dialogs.settings);
             assert_eq!(h.state().dialogs.settings_tab, SettingsTab::Editor);
-            click(&mut h, "Close window");
+            click(&mut h, "Close Window");
             assert!(!h.state().dialogs.settings);
             assert!(!h.state().dialogs.shortcuts);
             assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);

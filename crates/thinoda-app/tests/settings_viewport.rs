@@ -70,8 +70,8 @@ fn reveal(h: &mut Harness<'_, ThinodaApp>, role: Role, label: &'static str) {
 }
 
 fn category(h: &mut Harness<'_, ThinodaApp>, label: &'static str) {
-    reveal(h, Role::Button, label);
-    h.get_by_role_and_label(Role::Button, t(label)).click();
+    reveal(h, Role::Tab, label);
+    h.get_by_role_and_label(Role::Tab, t(label)).click();
     h.run_steps(4);
 }
 
@@ -221,9 +221,11 @@ fn every_settings_category_is_reachable_in_short_narrow_windows() {
                 assert_frame(&h);
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
                 assert_eq!(h.state().doc().unwrap().doc.state_id(), state);
-                let close = h.get_by_role_and_label(Role::Button, "Close window").rect();
+                let close = h
+                    .get_by_role_and_label(Role::Button, t("Close Window"))
+                    .rect();
                 assert!(h.ctx.content_rect().contains_rect(close));
-                h.get_by_role_and_label(Role::Button, "Close window")
+                h.get_by_role_and_label(Role::Button, t("Close Window"))
                     .click();
                 h.run_steps(4);
                 assert!(!h.state().dialogs.settings);

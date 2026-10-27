@@ -30,6 +30,10 @@ pub const ADD: &str = "\u{fe145}"; // add
 pub const REMOVE: &str = "\u{fe15b}"; // remove
 pub const CLOSE: &str = "\u{fe5cd}"; // close
 pub const CHECK: &str = "\u{fe668}"; // check
+pub const MINIMIZE: &str = "\u{fe931}"; // minimize
+pub const MAXIMIZE: &str = "\u{ff1ce}"; // open_in_full
+pub const RESTORE: &str = "\u{ff1cf}"; // close_fullscreen
+pub const TUNE: &str = "\u{fe429}"; // tune
 pub const SETTINGS: &str = "\u{fe8b8}"; // settings
 pub const NEW_FILE: &str = "\u{fe89c}"; // note_add
 pub const OPEN: &str = "\u{fe2c8}"; // folder_open
@@ -167,6 +171,10 @@ pub const ALL: &[(&str, &str, &str)] = &[
     ("REMOVE", REMOVE, "remove"),
     ("CLOSE", CLOSE, "close"),
     ("CHECK", CHECK, "check"),
+    ("MINIMIZE", MINIMIZE, "minimize"),
+    ("MAXIMIZE", MAXIMIZE, "open_in_full"),
+    ("RESTORE", RESTORE, "close_fullscreen"),
+    ("TUNE", TUNE, "tune"),
     ("SETTINGS", SETTINGS, "settings"),
     ("NEW_FILE", NEW_FILE, "note_add"),
     ("OPEN", OPEN, "folder_open"),

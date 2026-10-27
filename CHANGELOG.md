@@ -18,6 +18,7 @@ while the version is `0.x`, breaking changes bump the minor version). See
 
 ### Features
 
+* flat AI settings, embedding discovery, compact ribbon by default (UR1, UR2, UR5) ([#82](https://github.com/AxelWol/Thinoda/issues/82)) ([c84e4d9](https://github.com/AxelWol/Thinoda/commit/c84e4d9a1bb924fe35c3597eb72c6023a1a9f6eb))
 * topic numbering, Material Symbols icons and AI reply language ([#81](https://github.com/AxelWol/Thinoda/issues/81)) ([fa9b48b](https://github.com/AxelWol/Thinoda/commit/fa9b48b53965cc32e817bf6c8ce8f445187a037c))
 
 ## [0.13.0](https://github.com/AxelWol/Thinoda/compare/v0.12.1...v0.13.0) (2026-10-26)

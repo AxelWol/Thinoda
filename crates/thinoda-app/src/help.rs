@@ -69,6 +69,7 @@ const PAGES: &[Page] = &[
         paragraphs: &[
             "Settings controls system/light/dark appearance, language, scaling and editor preferences. Installed fonts are local to each machine; companion devices may need the same fonts.",
             "AI commands require a configured provider and may send selected topic content to that provider. Review provider settings and do not submit confidential content without permission.",
+            "Settings > AI selects the generation provider. Native Claude and Codex CLIs use their own login; replies are buffered. Copilot generation is blocked until a documented safe mode is available. Embeddings always use the separate OpenAI-compatible API. Browsers preserve CLI selections but cannot run them.",
             "Send Feedback opens the public GitHub issue chooser in your browser. It does not upload maps, settings or logs. Review anything you include before submitting an issue.",
             "Project News opens the repository commit history, not an automatic updater. Signing, native platform installation checks and additional cloud services remain under development.",
         ],
@@ -145,12 +146,20 @@ impl ThinodaApp {
         })
         .collect();
         let state = &mut self.dialogs.guide;
-        let response = egui::Modal::new(egui::Id::unique("user_guide")).show(ctx, |ui| {
-            ui.set_width(620.0_f32.min(ctx.content_rect().width() - 48.0).max(240.0));
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("user_guide"), t("User Guide"))
+            .icon(thinoda_ui::icons::USER_GUIDE)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(620.0)
+            .default_height(620.0)
+            .min_size(egui::vec2(320.0, 240.0))
+            .scroll(false)
+            .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 crate::brand::logo(ui, 36.0);
                 ui.vertical(|ui| {
-                    ui.heading(t("User Guide"));
                     ui.weak(format!("Thinoda · {}", t(crate::brand::TAGLINE)));
                 });
             });
@@ -228,7 +237,7 @@ impl ThinodaApp {
                 state.open = false;
             }
         });
-        if response.should_close() && touch_allowed {
+        if response.close_requested && touch_allowed {
             state.open = false;
         }
     }

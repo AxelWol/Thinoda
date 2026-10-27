@@ -9,8 +9,24 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-**Current inventory (2026-10-26):** there are **no open GitHub issues or pull
-requests**. PRs #70, #72, #74, #76 and release #77 are merged. F0-F5 implementation
+### P1 — CLI generation providers (user request, 2026-10-26)
+
+🟡 Partial implementation in the current worktree; see the
+[CLI provider plan](PLAN.md#cli-generation-provider-requirement-2026-10-26).
+Claude/Codex adapters, provider settings, separated API embeddings, localization,
+manual login help and fixture coverage are implemented. Copilot generation is
+blocked pending a documented non-inference status/safe MCP-and-hook-disabled
+invocation; selecting it must show that limitation and never silently use the API.
+Keep cross-platform installed-CLI/manual appearance acceptance open. No login,
+paid probe inference or installation was performed. The implementation is included
+in PR #85; this does not remove the Copilot generation blocker.
+
+**Current inventory (2026-10-27):** [PR #85](https://github.com/AxelWol/Thinoda/pull/85)
+is open for the shared dialogs, date inputs, native AI provider and live Pitch
+increment; UR4 is committed on the same branch. Its first native CI failures were the
+shared save-dialog test's ambiguous title query; the fix uses the Window role
+and settled geometry. Merge/release/deployment remain pending, not completed.
+PRs #70, #72, #74, #76 and release #77 are merged. F0-F5 implementation
 is shipped in [v0.12.1](https://github.com/AxelWol/Thinoda/releases/tag/v0.12.1):
 Fill, native menu/window routing, saved keyboard profiles, task/calendar/Gantt,
 Zones/Pitch and enhanced AI. Main CI, all six native packaging targets and
@@ -57,9 +73,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
 
 ## Next-value backlog - XMind audit (2026-10-26)
 
-These are scoped work items, not new GitHub issues. **XV1-XV2 are implemented and
-locally verified, not yet released; XV3 (structural numbering) and UR6 (Material Symbols icons) are implemented and
-locally verified; XV4-XV9 remain open.** XV1 adds shared Find
+These are scoped work items, not new GitHub issues. **XV1-XV3 and UR6 (Material
+Symbols icons) shipped in v0.13.0; UR1/UR2/UR5 shipped in v0.14.0.
+UR3/UR7 and UR4 are implemented, release pending; XV4-XV9 remain open.** XV1 adds shared Find
 facets and read-only all-notes results with all shipped translations and
 light/dark/System coverage; see PLAN for exact tests/browser evidence and host
 limits. XV2 adds derived leaf-To-Do counts, parent completion/reopen and matching
@@ -67,6 +83,13 @@ Find status without changing scheduled Tasks or the native file schema.
 Priority is end-user frequency, value and enabling dependencies, rather
 than a count of XMind features. On 2026-10-26 the user authorized starting this
 ordered queue with localization/theme/platform coverage and ongoing UX research.
+
+**XV4 is in progress:** sheet-owned bounded resources, native v3 raw-blob
+storage, recovery, resource-aware clipboard and atomic copy/paste/merge/undo
+are the current foundation slice. Image insertion/rendering/resizing and
+attachment authoring/opening remain open; unsupported exports/print/Pitch fail
+explicitly rather than omit embedded bytes. No image UI is claimed by this
+storage work. See the [active slice](PLAN.md#xv4-active-slice-portable-resource-storage-2026-10-27).
 This lifts the earlier feature-start restriction, not the remaining F6 acceptance
 gaps; SS0-SS8 remain deferred. Extend the existing R packages; do not create parallel search, task,
 resource or presentation systems. The
@@ -96,13 +119,13 @@ all native targets plus web, UX research and current documentation.
 
 | ID | Priority / package | Request | Acceptance for a complete first slice |
 |---|---|---|---|
-| UR1 | P1 / R9, R11 — ✅ implemented | **Flat AI settings page.** Remove the collapsible sections from AI settings. When AI is selected in Settings, show the full page. | Every AI control is visible on the AI page without accordion state, with no lost settings or keyboard/a11y order regressions. Scrolls on small/web viewports. |
-| UR2 | P1 / R9 — ✅ implemented | **Embedding model discovery on Test Connection.** Also list the installed text-embedding models (e.g. LM Studio `text-embedding-nomic-embed-text-v1.5`). | The existing explicit Test Connection reads `/v1/models` once and separates chat and embedding candidates by documented name heuristics. An empty or unavailable Embedding Model field is filled with the detected model; an explicit valid choice is never overwritten. Results and a "none found" state are disclosed. No background polling or extra requests. |
-| UR3 | P1 / R8, R11 | **Date pickers for every date input.** For example, Gantt task start and due dates. | One shared localized calendar picker replaces bare date text entry wherever dates are edited. Typed entry stays available for keyboard users. Non-working days from the sheet work-week definition are visibly disabled for scheduling fields, and invalid ranges are rejected with the existing validation. Light/Dark contrast, touch target size, web and Undo are covered. |
-| UR4 | P1 / R7 | **Live in-app presentation mode.** Present the defined Pitch slides inside the app, not only as export. | A full-window presenter plays saved slide order and crops with keyboard, pointer and touch navigation (next/previous/first/last/exit) and a slide counter. Selectable transitions (none/fade/slide/push/zoom) and optional per-slide build-in of topics, with smooth framing between slides. Respect reduced motion and system theme, never edit the document, and work on native and web. Speaker notes, timers and multi-monitor presenter view are later. |
-| UR5 | P1 / R11, R13 — ✅ implemented | **Compact ribbon by default.** Always show the Compact ribbon setting, including for the web app and its Outliner ribbon. | New and migrated settings start compact (the old default-off value cannot be told apart from an explicit choice, so it is not carried over); the enlarged ribbon is opt-in. The setting is visible on every target, applies immediately to Map and Outliner, and persists. |
-| UR6 | P1 / R11, R13 | **One Material Symbols icon vocabulary.** Replace emoji/letter/hand-drawn icons in the floating action bar, node action menu, header, footer, ribbons, menus, Outliner and native quick-access Save/Undo/Redo/Print with Google Material Symbols (Apache-2.0). | A bundled, pinned, subset Material Symbols font (`thinoda_ui::icons`) is the only icon source; the same command uses the same icon everywhere (`command_icons.rs`), Fit Map is distinct from the Map/Outline switch, sibling commands stay distinguishable, and icons follow the Microsoft ribbon/Fluent size tiers (16 small, 20 compact/toolbar, 24, 32 large) in Light/Dark on native and web. Notices, docs and glyph-coverage tests are updated. |
-| UR7 | P1 / R11, R13 | **One dialog frame for every dialog.** About, Help, Settings, Key mapping, Gantt, Print, Labels, Planning, Pitch and other dialogs share one design. | A shared dialog frame has a title bar with maximize/restore, minimize-to-hide and close buttons, a lower-right resize grip and resizable edges on all four sides. Opening sizes fit content width without clipping (bounded by the window); tall content scrolls vertically; very long content is split into tabbed pages with Material icons on the tabs (e.g. Settings: General, Editor, AI Assistant, Cloud, Keyboard Shortcuts, Work Calendar). Escape/close semantics, IME guards, small-window and touch reachability, Light/Dark and all locales are preserved; native and web behave the same. |
+| UR1 | P1 / R9, R11 — ✅ released (#82/#83) | **Flat AI settings page.** Remove the collapsible sections from AI settings. When AI is selected in Settings, show the full page. | Every AI control is visible on the AI page without accordion state, with no lost settings or keyboard/a11y order regressions. Scrolls on small/web viewports. |
+| UR2 | P1 / R9 — ✅ released (#82/#83) | **Embedding model discovery on Test Connection.** Also list the installed text-embedding models (e.g. LM Studio `text-embedding-nomic-embed-text-v1.5`). | The existing explicit Test Connection reads `/v1/models` once and separates chat and embedding candidates by documented name heuristics. An empty or unavailable Embedding Model field is filled with the detected model; an explicit valid choice is never overwritten. Results and a "none found" state are disclosed. No background polling or extra requests. |
+| UR3 | P1 / R8, R11 — implemented, release pending | **Date pickers for every date input.** For example, Gantt task start and due dates. | One shared localized calendar picker replaces bare date text entry wherever dates are edited. Typed entry stays available for keyboard users. Non-working days from the sheet work-week definition are visibly disabled for scheduling fields, and invalid ranges are rejected with the existing validation. Light/Dark contrast, touch target size, web and Undo are covered. |
+| UR4 | P1 / R7 — implemented, release pending | **Live in-app presentation mode.** Present the defined Pitch slides inside the app, not only as export. | Existing full-window presenter now adds First/Last and Home/End, none/fade/slide/push/zoom transitions, optional topic-by-topic builds and smooth saved-frame Zoom. Motion is off by default with an immediate Reduce motion control on every target; automatic OS preference detection is not claimed. Choices are playback-session-only; themes, localized controls, saved crops, source revision ownership and static exports stay intact. All-language/appearance small-window interactions, transition completion, geometry, popup key ownership and touch cancellation are covered. Speaker notes, timers, persisted per-slide choreography and multi-monitor presenter view are later. |
+| UR5 | P1 / R11, R13 — ✅ released (#82/#83) | **Compact ribbon by default.** Always show the Compact ribbon setting, including for the web app and its Outliner ribbon. | New and migrated settings start compact (the old default-off value cannot be told apart from an explicit choice, so it is not carried over); the enlarged ribbon is opt-in. The setting is visible on every target, applies immediately to Map and Outliner, and persists. |
+| UR6 | P1 / R11, R13 — ✅ released (#81) | **One Material Symbols icon vocabulary.** Replace emoji/letter/hand-drawn icons in the floating action bar, node action menu, header, footer, ribbons, menus, Outliner and native quick-access Save/Undo/Redo/Print with Google Material Symbols (Apache-2.0). | A bundled, pinned, subset Material Symbols font (`thinoda_ui::icons`) is the only icon source; the same command uses the same icon everywhere (`command_icons.rs`), Fit Map is distinct from the Map/Outline switch, sibling commands stay distinguishable, and icons follow the Microsoft ribbon/Fluent size tiers (16 small, 20 compact/toolbar, 24, 32 large) in Light/Dark on native and web. Notices, docs and glyph-coverage tests are updated. |
+| UR7 | P1 / R11, R13 — ✅ implemented | **One dialog frame for every dialog.** About, Help, Settings, Key mapping, Gantt, Print, Labels, Planning, Pitch and other dialogs share one design. | A shared dialog frame has a title bar with maximize/restore, minimize-to-hide and close buttons, a lower-right resize grip and resizable edges on all four sides. Opening sizes fit content width without clipping (bounded by the window); tall content scrolls vertically; very long content is split into tabbed pages with Material icons on the tabs (e.g. Settings: General, Editor, AI Assistant, Cloud, Keyboard Shortcuts, Work Calendar). Escape/close semantics, IME guards, small-window and touch reachability, Light/Dark and all locales are preserved; native and web behave the same. Delivered as `thinoda_ui::Dialog` (title row with icon, Minimize/Expand, Maximize/Restore and Close Window; Fluent 28 px caption buttons with 16 px glyphs; four-edge and corner resize; fit-to-window opening height with vertical scroll; modal backdrop with Esc) plus `tab_bar` icon tabs. Every app dialog uses it; Settings pages are icon tabs. |
 | UR8 | P1 / R9 — ✅ implemented | **AI answers in the UI language.** Every AI feature (one-shots, transforms, scoped chat, Pitch AI, brainstorm/generate) currently leaves the reply language to the model. | All AI system prompts state the resolved UI language (Auto resolves to the OS locale) by its English name, ask the model to reply in it, and fall back to English when the model cannot. Translation keeps its explicit target language. User text, prompts and responses stay unchanged otherwise; covered by prompt unit tests for all shipped locales on native and web. |
 
 **Not missing / do not reimplement:** 17 structures including Matrix/TreeTable,

@@ -29,6 +29,39 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Embedded-resource foundation (XV4, authoring not yet delivered)**:
+  `Sheet.resources` owns bounded immutable `Arc<[u8]>` blobs; subtree clipboard,
+  full-sheet copy/merge and undo snapshots carry the bytes without deep-copying
+  every history entry. SHA-256 content IDs use `thinoda-resource:<digest>` image
+  references. Destination metadata wins when equal bytes deduplicate; branch
+  copy includes only its referenced resources, while full-sheet copy preserves
+  the entire store. Masked copies strip all resource bytes and references.
+  Limits are 8 MiB/resource, 32 MiB/sheet, 64 MiB/workbook and 128 logical entries
+  across a workbook, including repeated ownership across sheets. Document edits,
+  sheet add/duplicate/merge and topic paste reject overflowing transactions
+  without altering content/history. Unchanged stores are not rehashed on every
+  title edit. Low-level public model mutation still requires validation, as with
+  other model invariants.
+  Resource-free native archives stay version 2; resource-bearing archives use
+  version 3 with bounded manifest metadata and raw `resources/<digest>` blobs,
+  deduplicated across sheets. Imports validate names, sizes, digests, ownership
+  and resource references without extracting paths or fetching URLs. Recovery
+  uses bounded base64 fields; sheet clipboard uses version 2 only when bytes
+  exist (resource-free clipboard remains version 1), retaining its 16 MiB
+  encoded-payload limit. Older native readers reject version 3 rather than
+  silently discarding bytes. Legacy reference-only image strings still load.
+  Image decode/render/resize and attachment authoring/opening are **not**
+  implemented in this slice. Non-native exports, print/slide rendering and live
+  Pitch reject embedded-resource content explicitly instead of producing
+  apparently complete output with missing content. No external file is opened
+  automatically; future attachment opening requires explicit consent.
+- **Calendar inputs**: `thinoda_ui::date_field` combines an ISO text edit and
+  localized, keyboard-operable month popup. The app supplies translated labels
+  and `WorkCalendar::is_working_day` availability for task dates; exceptions allow
+  every valid date. `chrono::Local` supplies the device-local Today on native and
+  WASM. Picker choices only update planning drafts; existing core validation and
+  atomic edits own Apply/Undo. Popup layering and Escape remain separate from
+  their parent dialog.
 - **One code base for desktop and web**: the web app is the same `thinoda-app`
   compiled to `wasm32-unknown-unknown`. Platform differences live behind
   `thinoda-platform::fs` (std::fs vs. `localStorage` VFS), `thinoda-app::files`
@@ -133,6 +166,16 @@ graph TD
   them, preserving unsaved state. This is not yet per-window Save/Cancel/Discard:
   root/last-window shutdown uses the existing shared app lifecycle, while child
   close has no prompt because it returns the documents instead.
+- **Dialogs**: every app dialog uses `thinoda_ui::Dialog` (UR7). It wraps a
+  title-less `egui::Window` with one shared title row (icon, title,
+  Minimize/Expand, Maximize/Restore, Close Window; Fluent 28 px caption buttons,
+  16 px glyphs), resizing on all four edges and corners, opening height fitted to
+  the app window with vertical scrolling for long content, and optional modal mode
+  (Foreground layer, dimmed backdrop, Esc closes the topmost modal). Per-dialog
+  maximized/hidden/restore state is stored in egui memory under the dialog id;
+  restoring rewrites the `AreaState` so the window returns to its previous rect.
+  Multi-page dialogs use `thinoda_ui::tab_bar` (icon tabs, `Role::Tab`).
+  Button labels are translated via `i18n::dialog_labels()`.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate
@@ -342,13 +385,34 @@ graph TD
   new outline-only sheet in one undo transaction without altering source content.
   Changed source/configuration/drafts cancel pending work and invalidate caches;
   changed queries discard late search results. No index or query is persisted.
+- **AI generation harnesses**: persisted `AiProvider` defaults/migrates to OpenAI
+  API; optional per-CLI models never overwrite the existing API settings/key.
+  `thinoda-ai::harness` routes native Claude/Codex generation from both `Client`
+  and `AiStreamJob`, retaining task parsing and role-labelled language/history
+  instructions. CLI replies are buffered and emit a terminal result only, not
+  fabricated streaming deltas. Discovery and documented non-inference auth probes
+  use worker jobs; only statuses, not raw CLI diagnostics or identity/token
+  details, reach the UI. Unsupported checks remain unknown.
+  CLI adapters pass a bounded JSON transcript over stdin, never a shell command,
+  and run in an empty temporary directory. Both pipes are drained concurrently,
+  each capped at 2 MiB; prompts are capped at 256 KiB, requests at 300 seconds.
+  Cancellation/drop/timeout terminates the process tree (Windows kill-on-close
+  Job Object / POSIX process group), reaps the leader and joins pipe workers.
+  Known Windows npm entry points are invoked via Node directly; arbitrary
+  `.cmd`/`.bat` wrappers fail closed. No CLI credentials are inspected/persisted.
+  Copilot discovery/login help is present but generation fails closed: no
+  documented non-inference status or fully isolated user MCP/hooks invocation
+  was found. This is a delivery blocker, not a completed integration.
+  WASM rejects CLI generation without rewriting the selection or falling back.
+  `embedding_config` is independent of generation provider; semantic indexing
+  always uses the existing OpenAI-compatible embeddings API.
 - **AI off the UI thread**: typed map requests use `AiStreamJob`; connection tests
   retain the existing nonstreaming `AiJob`. Native streaming uses abortable
   Tokio/reqwest I/O; browser streaming uses fetch ReadableStream/AbortController.
   The app drains at most 128 events per frame, previews deltas without mutation,
   and stages successful output for explicit review/Apply only after valid `[DONE]`.
   Apply to an existing map remains one undo step; generated maps open a separate
-  unsaved document without changing the source. Requests require an
+  unsaved document without changing the source. API requests require an
   OpenAI-compatible SSE server; nothing leaves the
   machine when a local server (LM Studio, Ollama) is used.
   Topic requests capture document key, active sheet/root and revision after title
@@ -535,7 +599,14 @@ graph TD
   restricted command surface; local playback keys do not enter map shortcuts.
   Native fullscreen affects the player viewport only; browser expansion remains
   an in-app window. Presenter context uses the snapshot layout plus the active
-  saved frame. Output workers capture the current draft/player source, write
+  saved frame. `pitch_motion::Playback` paints live saved crops with the canvas
+  renderer rather than waiting for raster-preview workers. Current/outgoing scenes
+  are bounded to two immutable layouts; partial topic builds retain original
+  geometry, hide incomplete connectors/relationships and defer group annotations.
+  Motion is explicitly off by default; session-only transitions use a 350 ms
+  smoothstep and honor the immediate Reduce motion switch. Popup state is sampled
+  before drawing controls so popup dismissal cannot also consume a player shortcut.
+  Output workers capture the current draft/player source, write
   atomically, and use the existing desktop/browser delivery path. Host visual
   acceptance remains separate from headless rendering and ownership evidence.
 - **Localization**: app chrome uses the embedded English/German and

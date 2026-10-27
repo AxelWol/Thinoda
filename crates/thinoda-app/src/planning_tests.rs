@@ -8,6 +8,77 @@ fn draft(app: &mut ThinodaApp, ctx: &Context) -> PlanningEditor {
 }
 
 #[test]
+fn exception_picker_accepts_nonworking_days_and_escape_only_closes_calendar() {
+    let app = ThinodaApp::headless();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(600.0, 720.0))
+        .build_ui_state(
+            |ui, app: &mut ThinodaApp| app.planning_dialog(ui.ctx()),
+            app,
+        );
+    let ctx = h.ctx.clone();
+    h.state_mut().begin_task_planning(&ctx, true);
+    if let PlanningDraft::Calendar { date, .. } =
+        &mut h.state_mut().planning.editor.as_mut().unwrap().draft
+    {
+        *date = "2026-10-26".into();
+    }
+    h.run_steps(3);
+    h.get_by_label(t("Open calendar")).click();
+    h.run_steps(3);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().planning.editing());
+    h.get_by_label(t("Open calendar")).click();
+    h.run_steps(2);
+    h.get_by_label("2026-10-31").click();
+    h.run_steps(2);
+    h.get_by_label(t("Apply")).click();
+    h.run_steps(2);
+    assert!(!h.state().planning.editing());
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .scheduling
+            .calendar
+            .exceptions
+            .get(&"2026-10-31".parse().unwrap()),
+        Some(&false)
+    );
+}
+
+#[test]
+fn typed_nonworking_dates_and_inverted_ranges_are_rejected_without_edits() {
+    let mut app = ThinodaApp::headless();
+    let ctx = Context::default();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    for (start_value, due_value) in [
+        ("2026-10-31", ""),
+        ("2026-10-26", "2026-10-25"),
+        ("2026-10-26", "2026-10-31"),
+        ("", "2026-10-30"),
+    ] {
+        let mut editor = draft(&mut app, &ctx);
+        if let PlanningDraft::Task {
+            start,
+            finish,
+            task,
+            ..
+        } = &mut editor.draft
+        {
+            *start = start_value.into();
+            *finish = due_value.into();
+            task.duration_days = Some(1);
+        }
+        assert!(app.apply_planning_draft(&editor, false).is_err());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+}
+
+#[test]
 fn task_edits_are_atomic_undoable_and_preserve_simple_todo() {
     let mut app = ThinodaApp::headless();
     let ctx = Context::default();

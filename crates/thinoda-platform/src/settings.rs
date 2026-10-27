@@ -151,12 +151,53 @@ pub enum AiResponseMode {
     Deep,
 }
 
-/// AI assistant preferences (any OpenAI-compatible server such as LM Studio or Ollama).
+/// Generation harness. Existing settings migrate to the OpenAI-compatible API.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProvider {
+    #[default]
+    OpenAiApi,
+    CopilotCli,
+    ClaudeCli,
+    CodexCli,
+}
+
+impl AiProvider {
+    pub const ALL: [Self; 4] = [
+        Self::OpenAiApi,
+        Self::CopilotCli,
+        Self::ClaudeCli,
+        Self::CodexCli,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenAiApi => "OpenAI API",
+            Self::CopilotCli => "GitHub Copilot CLI",
+            Self::ClaudeCli => "Claude CLI",
+            Self::CodexCli => "OpenAI Codex CLI",
+        }
+    }
+
+    pub fn cli_index(self) -> Option<usize> {
+        match self {
+            Self::OpenAiApi => None,
+            Self::CopilotCli => Some(0),
+            Self::ClaudeCli => Some(1),
+            Self::CodexCli => Some(2),
+        }
+    }
+}
+
+/// AI assistant preferences. Embeddings always use the OpenAI-compatible API.
 /// API keys are stored in the OS credential store; the environment variable remains an override.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiSettings {
     pub enabled: bool,
+    pub provider: AiProvider,
+    /// Separate optional model overrides, preserving API and other CLI choices.
+    pub cli_models: [String; 3],
     pub base_url: String,
     /// Empty = first chat model offered by the server.
     pub model: String,
@@ -182,6 +223,8 @@ impl fmt::Debug for AiSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AiSettings")
             .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("cli_models", &self.cli_models)
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
@@ -202,6 +245,8 @@ impl Default for AiSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            provider: AiProvider::default(),
+            cli_models: Default::default(),
             base_url: "http://127.0.0.1:1234/v1".into(),
             model: String::new(),
             api_key: String::new(),

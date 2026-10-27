@@ -9,6 +9,73 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## XV4 active slice: portable resource storage (2026-10-27)
+
+UR4 live transitions/composition is implemented in [PR #85](https://github.com/AxelWol/Thinoda/pull/85);
+release/deployment is still pending. XV4 is now **in progress, not complete**.
+The first slice adds sheet-owned, immutable content-addressed resources,
+native archive v3, base64 recovery and versioned sheet clipboard, bounded
+transactional paste/add/duplicate/merge and preservation through undo.
+Resource-free native v2 and legacy image references remain compatible.
+See [the storage contract](ARCHITECTURE.md#key-decisions) for limits and
+ownership. Unsupported output paths fail explicitly until rendering exists.
+
+Research rechecked the official [Local Image](https://xmind.com/user-guide/pic-new)
+and [Attachment](https://xmind.com/user-guide/attachment-new) guides: local images
+support contextual insert, top/bottom placement, drag resize and Reset Size;
+attachments are explicit topic content and opening saves locally **with
+permission**. Thinoda should preserve that predictable selection/context model
+across map/outline/ribbon rather than add separate platform-specific import
+flows. Attachment preview/open must never auto-execute embedded content; the
+web path must offer explicit download rather than promise native application
+launch. These are acceptance criteria for the next slice, not delivered UI.
+
+Next: bounded image decode and actual insert/render/resize/replace/remove UI,
+then attachment save/open consent and supported XMind/external export fidelity.
+Keep all shipped locales, Light/Dark/System, native and WASM gates. Only after
+the complete XV4 workflow is verified continue XV5 through XV9 in order.
+
+Foundation verification: all 213 core/IO tests, 276 app unit/e2e/floating-topic
+tests and three focused real recovery tests pass. Cases cover exact workbook
+byte/count limits, atomic rollback and unchanged history, deduplication,
+owned-only branch copy, legacy v2, malformed/missing/corrupt resources, inline
+v3 rejection, duplicate ZIP central records, unlisted blobs and explicit
+non-native/print/Pitch output refusal. Native all-target and WASM app-library
+strict Clippy pass. This is not a new full-workspace or six-host runtime pass,
+nor evidence that resource authoring, image decode or XMind resource fidelity
+is delivered.
+
+## CLI generation provider requirement (2026-10-26)
+
+🟡 **Partial, not release-complete.** User requirement: select installed GitHub
+Copilot, Claude or Codex CLI at the top of the redesigned AI Settings page;
+route chat/map/transform/Pitch through the selected harness; offer localized,
+nonblocking status and manual login/install help. Preserve/migrate OpenAI API
+preferences, keep embeddings explicitly on the API, and preserve unavailable
+CLI selections in browsers. Implemented in this increment (release pending):
+Claude/Codex safe buffered adapters, bounded/reaped subprocess trees, settings
+and per-CLI model persistence, all ten shipped locale catalogs, appearance-neutral
+shared widgets and regression fixtures. No live CLI inference/login was run.
+
+**Copilot blocker:** official CLI documentation has no non-inference auth-status
+command and no invocation that disables all user MCP servers/hooks while retaining
+the CLI's existing credential home. Discovery reports missing/unknown and provides
+official login help; generation fails closed. Resolve with a documented safe
+upstream capability or an explicitly approved constrained integration design.
+Do not mark this whole requirement done or silently fall back to the API.
+Native macOS/Linux behavior and actual installed CLI compatibility still require
+host verification; fixture tests and WASM compilation are not those acceptance checks.
+
+Verification on Windows: `cargo test --locked -p thinoda-ai -p thinoda-platform`
+passes 141 tests (one live test explicitly ignored); the complete app `--lib`
+suite passes 191 tests (including 47 focused AI tests and Pitch tests);
+settings CLI/provider, settings viewport, profile dispatch and sidebar
+locale integration binaries pass four tests, including all shipped languages
+and Light/Dark/System provider layouts. Native all-target clippy for AI/platform/
+app and WASM clippy for web/app/platform/AI pass with `-D warnings`. Workspace
+fmt, diff whitespace and third-party notice checks pass. CLI fixtures use
+PowerShell/Node only, never an actual provider inference/login command.
+
 ## Current state and next-value plan (2026-10-26)
 
 **This status supersedes older "current", "in progress" and "immediate next"
@@ -93,10 +160,91 @@ Edge profile created nested To-Dos in WASM and parent-checkbox clicks visibly
 changed both parent/child checkboxes and the badge from 0/1 to 1/1 and back.
 Those screenshots were inspected; no runtime exceptions, failed requests, AI
 calls or external origins occurred. Owned validation servers were stopped.
-XV1-XV2 are implemented locally and unreleased. XV3 structural numbering and UR6
-(Material Symbols icons) are implemented and locally verified; UR1, UR2 and UR5
-are implemented (flat AI page, embedding discovery, compact ribbon by default) and
-UR7, UR3 and UR4 are next.
+XV1-XV3, UR6 (Material Symbols icons) and UR8 shipped in v0.13.0 via #78/#81;
+UR1, UR2 and UR5 (flat AI page, embedding discovery, compact ribbon by default)
+shipped in v0.14.0 via #82/#83. UR7 (one shared dialog frame, `thinoda_ui::Dialog`,
+used by app dialogs, with icon tabs in Settings) is implemented, release pending.
+UR3 now integrates the shared localized calendar in Task Planning start/due dates
+and Work Calendar exception dates. Scheduling pickers disable non-working dates
+including exceptions; calendar-exception editing allows any date. Typed ISO dates
+retain existing atomic validation and Undo. Calendar selection is draft-only until
+Apply, with arrow/Page Up/Page Down navigation, Enter selection, Escape dismissal,
+bounded month navigation and local-time Today on native/web. Every shipped language
+and Light/Dark/System is covered at 360x640. UR4 live transitions and topic
+composition are now implemented in the worktree, release pending. XV4 portable
+assets is next, followed by XV5-XV9; those items remain open.
+
+**UR4 implementation (2026-10-27):** extend the existing Pitch player, not a second
+presentation model. The live stage paints the captured immutable layout directly
+inside each saved crop, with uniform aspect-preserving fit. None/Fade/Slide/Push/
+Zoom use a bounded 350 ms smoothstep transition; Zoom interpolates saved framing.
+At most the current and outgoing scene are retained. Optional topic builds reveal
+intersecting topics in parent-before-child paint order without relayout; connectors
+and relationships wait for their endpoints, and group annotations wait for the full
+slide. Next reveals a topic before advancing; Previous reverses steps, and Home/End
+or the new First/Last buttons jump to the beginning/complete ending. Presenter map,
+native fullscreen and browser expansion retain the existing ownership behavior.
+
+Motion is disabled by default on every host and can be stopped immediately using
+the visible Reduce motion control. This conservative cross-platform default does
+not claim automatic detection of every operating system's accessibility setting.
+Transition/build choices belong to this playback session, not the document or
+PDF/PNG output. All shipped catalogs include the controls and expanded keyboard
+hint. The [current XMind Pitch guide](https://xmind.com/user-guide/pitch-mode-new),
+rechecked for this increment, documents windowed/fullscreen/Presenter View and
+step navigation, with aspect ratios and delivery/layout choices as distinct
+settings. Thinoda retains its existing presenter/map context; aspect-ratio and
+PowerPoint handoff stay in XV6 rather than being implied by transitions.
+The [WCAG animation-from-interactions guidance](https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html)
+supports giving people control over nonessential motion; no autoplay or looping
+animation is added. Real host/assistive-technology/physical-touch acceptance remains
+F6 work.
+
+The localized embedded-player integration matrix exercises actual controls at
+360x640 in every language setting and Light/Dark/System, including topic builds,
+transition selection, first/last and exit, while preserving workbook/dirty state.
+Deterministic rendering tests cover all five transitions in both map themes with
+motion enabled/disabled, bounded completion, and retained topic geometry. Popup
+Escape now closes only its popup rather than also exiting Pitch in the same frame.
+PR #85's first CI run failed on every native runner because the shared save dialog
+now exposes both a named Window and title text. Its regression queries the Window
+role explicitly and lets initial content-fit geometry settle before clicking.
+Final local verification: 199 app library tests, all 75 tests in the e2e binary,
+and the isolated all-language/appearance Pitch matrix pass. The touch regression
+uses a 60 Hz harness clock so a simulated tap is not accidentally a one-second
+long press; canceled/multitouch releases remain rejected and ordinary taps work.
+Strict native all-target and WASM library clippy, formatting, whitespace and
+dependency-notice checks pass. The complete integration inventory is still a CI
+gate; these targeted results do not claim a fresh full-workspace pass.
+
+UR3 UX reference: the [WAI-ARIA date-picker example](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/examples/datepicker-dialog/)
+recommends retaining typed input, a separate calendar button, focused selected/current
+dates, keyboard month navigation and returning focus on selection. The egui calendar
+uses the shared Material icon and theme tokens; unavailable dates have a non-color
+strike indicator. It is not a native HTML ARIA grid, and real assistive-technology
+and physical touch-device acceptance remain F6 work. Calendar popups now stay above
+their modal parent instead of losing clicks to the dialog layer.
+
+2026-10-27 verification: 193 app and 40 shared-UI unit cases pass; app
+integration regressions were exercised in batches, including localized/scaled
+shortcut focus order, startup/save confirmations, calendar start/due picks,
+calendar exceptions, canceled touch and IME. Caption controls follow visual Tab
+order; pointer-only title/backdrop sensors do not become invisible Tab stops.
+The rubber-duck review identified ambiguous Portuguese weekday prefixes and
+an unguarded calendar toggle; explicit translated abbreviations and the shared
+touch guard address both. Confirmation prompts and browser Pitch now also use
+the shared frame. Strict native all-target and WASM library clippy, formatting
+and dependency notices pass. An initial parallel build exhausted the Windows
+pagefile; validation was rerun with a single compiler job rather than changing
+machine settings. Actual native macOS/Linux GUI and physical touch/assistive
+technology checks remain open, not implied by these harness results.
+
+Release verification (2026-10-26): v0.14.0 main CI and Pages deployment
+succeeded. Release workflow 40371818396 completed all six native package jobs
+and publication successfully. All 16 release assets were downloaded; SHA256
+verification matched all ten packages against the six published checksum
+manifests. Physical-device/native GUI acceptance and Windows production
+signing remain open F6 limitations, not passes inferred from packaging.
 
 ### Released work and remaining acceptance
 

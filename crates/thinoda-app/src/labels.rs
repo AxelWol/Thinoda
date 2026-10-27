@@ -549,7 +549,9 @@ mod tests {
                 }
                 3 => {
                     let d = h.state_mut().doc_mut().unwrap();
-                    d.doc.add_sheet(thinoda_core::Sheet::new("Other", "Other"));
+                    d.doc
+                        .add_sheet(thinoda_core::Sheet::new("Other", "Other"))
+                        .unwrap();
                     d.doc.set_active(1);
                     let root = d.doc.sheet().root;
                     d.view.select_only(root);

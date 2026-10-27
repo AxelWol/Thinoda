@@ -56,7 +56,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-580 crates.
+583 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -124,6 +124,7 @@ LGPL/MPL licensing:
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | <https://github.com/rust-lang/cfg-if> |
 | cgl | 0.3.2 | MIT / Apache-2.0 | <https://github.com/servo/cgl-rs> |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/stream-ciphers> |
+| chrono | 0.4.45 | MIT OR Apache-2.0 | <https://github.com/chronotope/chrono> |
 | cipher | 0.4.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/traits> |
 | clipboard-win | 5.4.1 | BSL-1.0 | <https://github.com/DoumanAsh/clipboard-win> |
 | codespan-reporting | 0.13.1 | Apache-2.0 | <https://github.com/brendanzab/codespan> |
@@ -242,6 +243,8 @@ LGPL/MPL licensing:
 | hyper | 1.12.0 | MIT | <https://github.com/hyperium/hyper> |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | <https://github.com/rustls/hyper-rustls> |
 | hyper-util | 0.1.21 | MIT | <https://github.com/hyperium/hyper-util> |
+| iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | <https://github.com/strawlab/iana-time-zone> |
+| iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | <https://github.com/strawlab/iana-time-zone> |
 | icu_collections | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_normalizer | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |

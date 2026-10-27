@@ -394,12 +394,27 @@ impl ThinodaApp {
         let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ctx);
         if self.map_shot.pending.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
-            egui::Modal::new(egui::Id::unique("map-shot-wait")).show(ctx, |ui| {
-                ui.label(t("Capturing visible map…"));
+            let labels = crate::i18n::dialog_labels();
+            let response = thinoda_ui::Dialog::new(
+                egui::Id::unique("map-shot-wait"),
+                t("Capturing visible map…"),
+            )
+            .icon(thinoda_ui::icons::CAMERA)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(340.0)
+            .default_height(120.0)
+            .min_size(egui::vec2(260.0, 96.0))
+            .resizable(false)
+            .show(ctx, |ui| {
                 if ui.button(t("Cancel")).clicked() && touch_allowed {
                     self.map_shot.cancel();
                 }
             });
+            if response.close_requested && touch_allowed {
+                self.map_shot.cancel();
+            }
             return;
         }
         let Some(editor) = self.map_shot.editor.as_mut() else {
@@ -437,9 +452,17 @@ impl ThinodaApp {
                 .is_none_or(|gesture| !gesture.canceled);
         let before_controls = (editor.crop, editor.square, editor.frame, editor.frame_color);
         let mut close = false;
-        egui::Modal::new(egui::Id::unique("map-shot-editor")).show(ctx, |ui| {
-            ui.set_width(660.0_f32.min((ctx.content_rect().width()-64.0).max(180.0)));
-            ui.heading(t("Map Shot"));
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("map-shot-editor"), t("Map Shot"))
+            .icon(thinoda_ui::icons::CAMERA)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(660.0)
+            .default_height(700.0)
+            .min_size(egui::vec2(360.0, 300.0))
+            .scroll(false)
+            .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((ctx.content_rect().height()*0.7).max(100.0)).show(ui, |ui| {
                 ui.label(t("Visible map only. Drag a region or edit pixel coordinates. Use Export for the complete sheet."));
                 editor.preview(ui);
@@ -478,7 +501,7 @@ impl ThinodaApp {
                 editor.gesture = None;
             }
         });
-        if close {
+        if close || (response.close_requested && activation_allowed) {
             self.map_shot.cancel();
         }
     }

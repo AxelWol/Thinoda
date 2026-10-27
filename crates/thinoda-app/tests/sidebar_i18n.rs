@@ -59,8 +59,8 @@ fn german_sidebar_names_switch_and_edit_the_same_document() {
     let ctx = h.ctx.clone();
     h.state_mut().exec(&ctx, Cmd::Settings);
     h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Allgemein");
-    h.get_by_role_and_label(Role::Button, "Editor").click();
+    h.get_by_role_and_label(Role::Tab, "Allgemein");
+    h.get_by_role_and_label(Role::Tab, "Editor").click();
     h.run_steps(3);
     h.get_by_role_and_label(Role::Switch, "Themen-Symbolleiste anzeigen")
         .click();

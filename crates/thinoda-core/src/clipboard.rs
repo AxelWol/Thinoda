@@ -5,16 +5,22 @@ use crate::outline::{OutlineNode, parse_indented_text, to_indented_text, to_outl
 use serde::{Deserialize, Serialize};
 
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
+const RESOURCE_SHEET_PREFIX: &str = "THINODA-SHEET-2\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
+    let prefix = if sheet.resources.is_empty() {
+        SHEET_PREFIX
+    } else {
+        RESOURCE_SHEET_PREFIX
+    };
     let json = serde_json::to_string(sheet).map_err(|e| e.to_string())?;
-    if json.len() + SHEET_PREFIX.len() > MAX_SHEET_CLIPBOARD_BYTES {
+    if json.len() + prefix.len() > MAX_SHEET_CLIPBOARD_BYTES {
         return Err("sheet clipboard payload exceeds 16 MiB".into());
     }
-    Ok(format!("{SHEET_PREFIX}{json}"))
+    Ok(format!("{prefix}{json}"))
 }
 
 pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
@@ -22,11 +28,20 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         return Err("sheet clipboard payload exceeds 16 MiB".into());
     }
     // Windows clipboard APIs may normalize line endings.
-    let json = text
-        .strip_prefix(SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-1\r\n"))
+    let (version, json) = text
+        .strip_prefix(RESOURCE_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-2\r\n"))
+        .map(|json| (2, json))
+        .or_else(|| {
+            text.strip_prefix(SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-1\r\n"))
+                .map(|json| (1, json))
+        })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version == 1 && !sheet.resources.is_empty() {
+        return Err("embedded resources require sheet clipboard version 2".into());
+    }
     sheet.validate()?;
     Ok(sheet)
 }

@@ -507,6 +507,11 @@ pub struct Subtree {
     pub tasks: BTreeMap<TopicId, Task>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<TaskDependency>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::resources::ResourceStore::is_empty"
+    )]
+    pub resources: crate::resources::ResourceStore,
 }
 
 impl Subtree {
@@ -583,6 +588,11 @@ pub struct Sheet {
     pub theme: ThemeSettings,
     #[serde(default)]
     pub scheduling: SchedulingData,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::resources::ResourceStore::is_empty"
+    )]
+    pub resources: crate::resources::ResourceStore,
     #[serde(default)]
     next_id: u64,
 }
@@ -606,6 +616,7 @@ impl Sheet {
             structure: Structure::default(),
             theme: ThemeSettings::default(),
             scheduling: SchedulingData::default(),
+            resources: Default::default(),
             next_id: 2,
         }
     }
@@ -828,6 +839,22 @@ impl Sheet {
             topics,
             tasks,
             dependencies,
+            resources: crate::resources::ResourceStore {
+                entries: ids
+                    .iter()
+                    .filter_map(|id| self.topics[id].image.as_deref())
+                    .filter_map(|reference| {
+                        reference.strip_prefix(crate::resources::RESOURCE_PREFIX)
+                    })
+                    .filter_map(|id| {
+                        self.resources
+                            .entries
+                            .get(id)
+                            .map(|resource| (id.to_owned(), resource.clone()))
+                    })
+                    .collect(),
+                ..Default::default()
+            },
         })
     }
 
@@ -906,7 +933,11 @@ impl Sheet {
             topics,
             tasks,
             dependencies,
+            resources,
         } = sub;
+        for (id, resource) in resources.entries {
+            self.resources.entries.entry(id).or_insert(resource);
+        }
         for mut t in topics {
             if t.id == root {
                 t.parent = Some(parent);
@@ -931,7 +962,11 @@ impl Sheet {
             topics,
             tasks,
             dependencies,
+            resources,
         } = sub;
+        for (id, resource) in resources.entries {
+            self.resources.entries.entry(id).or_insert(resource);
+        }
         for mut t in topics {
             if t.id == root {
                 t.parent = None;
@@ -1004,8 +1039,25 @@ impl Sheet {
         }
     }
 
+    pub(crate) fn validate_resources(&self) -> Result<(), String> {
+        self.resources.validate()?;
+        self.validate_resource_references()
+    }
+
+    pub(crate) fn validate_resource_references(&self) -> Result<(), String> {
+        for topic in self.topics.values() {
+            if let Some(reference) = topic.image.as_deref()
+                && reference.starts_with(crate::resources::RESOURCE_PREFIX)
+            {
+                self.resources.get(reference)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Checks structural invariants; used by tests and after imports.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_resources()?;
         if !self.contains(self.root) {
             return Err("root topic missing".into());
         }
@@ -1770,6 +1822,7 @@ impl Workbook {
         let mut copy = self.clone();
         copy.metadata = Metadata::default();
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
+            sheet.resources = Default::default();
             sheet.title = format!("Sheet {}", sheet_index + 1);
             sheet.theme.font_family = None;
             if let Some(custom) = &mut sheet.theme.custom_theme {
@@ -1812,8 +1865,34 @@ impl Workbook {
         if self.sheets.is_empty() {
             return Err("workbook has no sheets".into());
         }
+        self.validate_resource_limits()?;
         for (i, s) in self.sheets.iter().enumerate() {
             s.validate().map_err(|e| format!("sheet {i}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_resources(&self) -> Result<(), String> {
+        self.validate_resource_limits()?;
+        for (i, s) in self.sheets.iter().enumerate() {
+            s.validate_resources()
+                .map_err(|e| format!("sheet {i}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn validate_resource_limits(&self) -> Result<(), String> {
+        let resource_bytes = self.sheets.iter().fold(0usize, |total, sheet| {
+            total.saturating_add(sheet.resources.byte_len())
+        });
+        if resource_bytes > crate::resources::MAX_WORKBOOK_RESOURCE_BYTES {
+            return Err("workbook embedded resources exceed 64 MiB".into());
+        }
+        let resource_count = self.sheets.iter().fold(0usize, |total, sheet| {
+            total.saturating_add(sheet.resources.entries.len())
+        });
+        if resource_count > crate::resources::MAX_RESOURCES {
+            return Err("workbook embedded resources exceed 128 entries".into());
         }
         Ok(())
     }

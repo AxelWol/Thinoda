@@ -501,6 +501,46 @@ mod lock_tests {
     use super::*;
 
     #[test]
+    fn recovery_restores_embedded_bytes_and_rejects_missing_resources() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let manager = RecoveryManager::start(&paths).unwrap();
+        let mut book = Workbook::default();
+        let sheet = book.active_mut();
+        let reference = sheet
+            .resources
+            .insert(
+                thinoda_core::resources::Resource::new(
+                    "evidence.txt",
+                    "text/plain",
+                    b"evidence".to_vec(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        sheet.topic_mut(sheet.root).unwrap().image = Some(reference);
+        manager
+            .snapshot("resource", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        let recovered = orphans[0].docs[0].load().unwrap();
+        assert_eq!(recovered, book);
+        drop(orphans);
+        manager.resume().unwrap();
+        book.active_mut().resources.entries.clear();
+        manager
+            .snapshot("resource", SnapshotMeta::default(), &book)
+            .unwrap();
+        manager.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert!(orphans[0].docs[0].load().is_err());
+        drop(orphans);
+        manager.resume().unwrap();
+        manager.finish().unwrap();
+    }
+
+    #[test]
     fn crash_flush_never_waits_for_busy_mutexes() {
         let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
         let manager = RecoveryManager::start(&Paths::from_root(dir.path())).unwrap();

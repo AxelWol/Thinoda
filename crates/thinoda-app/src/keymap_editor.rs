@@ -145,14 +145,17 @@ impl ThinodaApp {
         let mut cancel = false;
         let mut apply = false;
         let mut operation = Ok(());
-        let frame = egui::Frame::popup(&ctx.global_style());
-        let response = egui::Modal::new(egui::Id::unique("shortcuts"))
-            .frame(frame)
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("shortcuts"), t("Keyboard mappings"))
+            .icon(thinoda_ui::icons::KEYBOARD)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(720.0)
+            .default_height(700.0)
+            .min_size(egui::vec2(400.0, 300.0))
+            .scroll(false)
             .show(ctx, |ui| {
-                let available = (ctx.content_rect().size() - frame.total_margin().sum()
-                    - egui::Vec2::splat(16.0)).max(egui::Vec2::ZERO);
-                ui.set_width(available.x.min(720.0));
-                ui.set_height(available.y.min(700.0));
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.horizontal_wrapped(|ui| {
                         if ui.button(t("Cancel")).clicked() && touch { cancel = true; }
@@ -167,7 +170,6 @@ impl ThinodaApp {
                             .min_scrolled_height(0.0)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.heading(t("Keyboard mappings"));
                                 ui.label(format!("{}: {}", t("View"), t(match self.mode {
                                     crate::app::CenterMode::Map => "Mind Map",
                                     crate::app::CenterMode::Outliner => "Outliner",
@@ -312,7 +314,7 @@ impl ThinodaApp {
                 }
             }
         }
-        if !cancel && !(response.should_close() && touch && !editor.composing && !ime_event) {
+        if !cancel && !(response.close_requested && touch && !editor.composing && !ime_event) {
             self.dialogs.shortcut_browser.editor = Some(editor);
         }
     }

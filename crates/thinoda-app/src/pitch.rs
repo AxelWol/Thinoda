@@ -13,6 +13,7 @@ use thinoda_ui::{Palette, widgets};
 use crate::{app::ThinodaApp, i18n::t};
 
 mod pitch_ai;
+mod pitch_motion;
 mod pitch_player;
 mod pitch_preview;
 use pitch_preview::SlidePreview;
@@ -47,7 +48,7 @@ struct PitchPlayer {
     selected: usize,
     presenter: bool,
     fullscreen: bool,
-    preview: SlidePreview,
+    playback: pitch_motion::Playback,
 }
 
 #[derive(Default)]
@@ -192,9 +193,17 @@ impl ThinodaApp {
         let mut add = false;
         let mut fit = false;
         let mut export = None;
-        let response = egui::Modal::new(egui::Id::unique("presentation-editor")).show(ctx, |ui| {
-            ui.set_width(760.0_f32.min((ctx.content_rect().width() - 32.0).max(1.0)));
-            ui.heading(t("Edit Presentation"));
+        let labels = crate::i18n::dialog_labels();
+        let response = thinoda_ui::Dialog::new(egui::Id::unique("presentation-editor"), t("Edit Presentation"))
+            .icon(thinoda_ui::icons::EDIT_PRESENTATION)
+            .labels(&labels)
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(760.0)
+            .default_height(700.0)
+            .min_size(egui::vec2(400.0, 300.0))
+            .scroll(false)
+            .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).max(40.0)).show(ui, |ui| {
                 ui.label(&editor.sheet.title);
                 ui.label(t("Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation."));
@@ -348,7 +357,7 @@ impl ThinodaApp {
                 }
             }
         }
-        if !(cancel || response.should_close()) || ime || editor.composing {
+        if !(cancel || response.close_requested) || ime || editor.composing {
             self.pitch.editor = Some(editor);
         }
     }

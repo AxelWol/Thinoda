@@ -29,6 +29,31 @@ pub(super) fn setup(saved: bool) -> ThinodaApp {
 }
 
 #[test]
+fn pitch_does_not_silently_hide_embedded_resources() {
+    let mut app = setup(true);
+    let doc = app.doc_mut().unwrap();
+    doc.doc
+        .edit_sheet("Embed", |sheet| {
+            let reference = sheet
+                .resources
+                .insert(
+                    thinoda_core::resources::Resource::new("evidence.png", "image/png", vec![1])
+                        .unwrap(),
+                )
+                .map_err(thinoda_core::edit::EditError::Invalid)?;
+            sheet.topic_mut(sheet.root).unwrap().image = Some(reference);
+            Ok(())
+        })
+        .unwrap();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let state = app.doc().unwrap().doc.state_id();
+    app.open_pitch(&Context::default(), false);
+    assert!(app.pitch.player.is_none());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
+#[test]
 fn presentation_generation_frames_and_order_apply_as_one_undo_without_changing_topics() {
     let mut app = setup(false);
     let before = app.doc().unwrap().doc.workbook().clone();
@@ -188,6 +213,7 @@ fn player_harness(width: f32, presenter: bool) -> Harness<'static, Playing> {
     let player = app.pitch.player.take().unwrap();
     Harness::builder()
         .with_size(egui::vec2(width, 650.0))
+        .with_step_dt(1.0 / 60.0)
         .build_ui_state(
             |ui, state: &mut Playing| {
                 if state.open {
@@ -232,6 +258,109 @@ fn playback_pointer_and_keyboard_navigation_preserve_document_and_exit_without_q
                 .commands
                 .contains(&egui::ViewportCommand::Close)
         );
+    }
+}
+
+#[test]
+fn playback_first_last_and_build_controls_are_reachable_and_view_only() {
+    for width in [360.0, 1100.0] {
+        let mut h = player_harness(width, false);
+        h.run_steps(3);
+        let before = h.state().app.doc().unwrap().doc.workbook().clone();
+        for label in ["Last Slide", "Reduce motion", "Build topics"] {
+            assert!(
+                h.ctx
+                    .content_rect()
+                    .contains_rect(h.get_by_label(label).rect())
+            );
+        }
+        h.get_by_label("Last Slide").click();
+        h.run_steps(2);
+        assert_eq!(h.state().player.selected, 2);
+        h.key_press(egui::Key::Home);
+        h.run_steps(2);
+        assert_eq!(h.state().player.selected, 0);
+        h.get_by_label("Build topics").click();
+        h.run_steps(2);
+        assert!(h.state().player.playback.build_topics);
+        assert_eq!(h.state().player.playback.step, 1);
+        h.key_press(egui::Key::End);
+        h.run_steps(2);
+        assert_eq!(h.state().player.selected, 2);
+        assert_eq!(h.state().player.playback.step, usize::MAX);
+        h.get_by_label("First Slide").click();
+        h.run_steps(2);
+        assert_eq!(h.state().player.selected, 0);
+        assert_eq!(h.state().player.playback.step, 1);
+        assert_eq!(h.state().app.doc().unwrap().doc.workbook(), &before);
+        assert!(!h.state().app.doc().unwrap().doc.is_dirty());
+    }
+}
+
+#[test]
+fn playback_popup_does_not_consume_slide_shortcuts() {
+    let mut h = player_harness(360.0, false);
+    h.run_steps(3);
+    h.get_by_label("Transition").click();
+    h.run_steps(2);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    h.key_press(egui::Key::End);
+    h.key_press(egui::Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(h.state().player.selected, 0);
+    assert!(h.state().open);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().open);
+}
+
+#[test]
+fn playback_controls_reject_canceled_and_multitouch_releases() {
+    for label in ["Build topics", "Reduce motion", "Next Slide"] {
+        for (contacts, cancel) in [(1, true), (2, false), (1, false)] {
+            let mut h = player_harness(360.0, false);
+            h.run_steps(3);
+            let pos = h.get_by_label(label).rect().center();
+            h.event(egui::Event::PointerMoved(pos));
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            for phase in [
+                egui::TouchPhase::Start,
+                if cancel {
+                    egui::TouchPhase::Cancel
+                } else {
+                    egui::TouchPhase::End
+                },
+            ] {
+                for id in 1..=contacts {
+                    h.event(egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(1),
+                        id: egui::TouchId(id),
+                        phase,
+                        pos: pos + egui::vec2((id - 1) as f32 * 40.0, 0.0),
+                        force: None,
+                    });
+                }
+                h.run_steps(2);
+            }
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run_steps(4);
+            let activated = contacts == 1 && !cancel;
+            match label {
+                "Build topics" => assert_eq!(h.state().player.playback.build_topics, activated),
+                "Reduce motion" => assert_eq!(h.state().player.playback.reduce_motion, !activated),
+                _ => assert_eq!(h.state().player.selected, usize::from(activated)),
+            }
+        }
     }
 }
 
