@@ -1,7 +1,10 @@
-use crate::{ExportOptions, IoError};
-use std::io::{Cursor, Write};
-use thinoda_core::{TopicId, Workbook};
-use zip::{ZipWriter, write::SimpleFileOptions};
+use crate::{ExportOptions, ImportReport, ImportWarning, IoError};
+use std::{
+    collections::{BTreeSet, HashMap},
+    io::{Cursor, Write},
+};
+use thinoda_core::{OutlineNode, TopicId, Workbook};
+use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -23,6 +26,411 @@ type TopicRow = (
     String,
 );
 
+#[derive(Default)]
+struct DocxParagraph {
+    style: Option<String>,
+    numbering: Option<u32>,
+    list_level: usize,
+    text: String,
+}
+
+fn xml_value(event: &quick_xml::events::BytesStart<'_>) -> Result<Option<String>, IoError> {
+    xml_attribute(event, "val")
+}
+
+fn xml_style_id(event: &quick_xml::events::BytesStart<'_>) -> Result<Option<String>, IoError> {
+    xml_attribute(event, "styleId")
+}
+
+fn xml_attribute(
+    event: &quick_xml::events::BytesStart<'_>,
+    name: &str,
+) -> Result<Option<String>, IoError> {
+    for attribute in event.attributes() {
+        let attribute = attribute.map_err(|error| IoError::Xml(error.to_string()))?;
+        if attribute.key.local_name().as_ref() == name {
+            return Ok(Some(
+                attribute
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .map_err(|error| IoError::Xml(error.to_string()))?
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+fn docx_styles(bytes: &[u8]) -> Result<HashMap<String, usize>, IoError> {
+    let mut reader = quick_xml::Reader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut styles = HashMap::new();
+    let mut style_id: Option<String> = None;
+    let mut xml_depth = 0usize;
+    let mut root_count = 0usize;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(quick_xml::events::Event::Start(event)) => {
+                if xml_depth == 0 {
+                    root_count += 1;
+                }
+                xml_depth += 1;
+                if event.local_name().as_ref() == "style" {
+                    style_id = xml_style_id(&event)?;
+                }
+            }
+            Ok(quick_xml::events::Event::Empty(event)) => {
+                if xml_depth == 0 {
+                    root_count += 1;
+                }
+                if event.local_name().as_ref() == "style" {
+                    let id = xml_style_id(&event)?;
+                    if let Some(id) = id
+                        && let Some(level) = heading_style_level(&id)
+                    {
+                        styles.insert(id, level);
+                    }
+                } else if event.local_name().as_ref() == "outlineLvl"
+                    && let (Some(id), Some(value)) = (style_id.as_ref(), xml_value(&event)?)
+                    && let Ok(level) = value.parse::<usize>()
+                    && level < 9
+                {
+                    styles.insert(id.clone(), level + 1);
+                }
+            }
+            Ok(quick_xml::events::Event::End(event)) => {
+                if xml_depth == 0 {
+                    return Err(IoError::Invalid("malformed DOCX styles XML".into()));
+                }
+                xml_depth -= 1;
+                if event.local_name().as_ref() == "style" {
+                    style_id = None;
+                }
+            }
+            Ok(quick_xml::events::Event::DocType(_)) => {
+                return Err(IoError::Invalid(
+                    "DOCX styles must not contain a document type declaration".into(),
+                ));
+            }
+            Ok(quick_xml::events::Event::Eof) => {
+                if xml_depth != 0 || root_count != 1 {
+                    return Err(IoError::Invalid("malformed DOCX styles XML".into()));
+                }
+                break;
+            }
+            Err(error) => return Err(IoError::Xml(error.to_string())),
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(styles)
+}
+
+fn heading_style_level(style: &str) -> Option<usize> {
+    if style.eq_ignore_ascii_case("Title") {
+        return Some(1);
+    }
+    style
+        .strip_prefix("Heading")
+        .or_else(|| style.strip_prefix("heading"))
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|level| (1..=9).contains(level))
+}
+
+fn docx_paragraphs(bytes: &[u8]) -> Result<(Vec<DocxParagraph>, BTreeSet<ImportWarning>), IoError> {
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut paragraphs = Vec::new();
+    let mut current: Option<DocxParagraph> = None;
+    let mut text_depth = 0usize;
+    let mut warnings = BTreeSet::new();
+    warnings.insert(ImportWarning::Formatting);
+    let mut xml_depth = 0usize;
+    let mut root_count = 0usize;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(event)) => {
+                if xml_depth == 0 {
+                    root_count += 1;
+                }
+                xml_depth += 1;
+                let name = event.local_name();
+                match name.as_ref() {
+                    "p" => {
+                        if current.is_some() {
+                            return Err(IoError::Invalid(
+                                "DOCX paragraphs are nested unexpectedly".into(),
+                            ));
+                        }
+                        current = Some(DocxParagraph::default());
+                    }
+                    "t" if current.is_some() => text_depth += 1,
+                    "pStyle" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)? {
+                            current.as_mut().unwrap().style = Some(value);
+                        }
+                    }
+                    "numId" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)? {
+                            current.as_mut().unwrap().numbering = value.parse().ok();
+                        }
+                    }
+                    "ilvl" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)?
+                            && let Ok(level) = value.parse::<usize>()
+                        {
+                            if level > 2000 {
+                                return Err(IoError::Invalid(
+                                    "DOCX list nesting exceeds 2000 levels".into(),
+                                ));
+                            }
+                            current.as_mut().unwrap().list_level = level;
+                        }
+                    }
+                    "rPr" | "tbl" => {
+                        warnings.insert(ImportWarning::Formatting);
+                    }
+                    "hyperlink" if current.is_some() => {
+                        warnings.insert(ImportWarning::Links);
+                    }
+                    "drawing" | "pict" | "object" | "altChunk" => {
+                        warnings.insert(ImportWarning::Resources);
+                    }
+                    "delText" | "instrText" => {
+                        warnings.insert(ImportWarning::Other);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(event)) => {
+                if xml_depth == 0 {
+                    root_count += 1;
+                }
+                let name = event.local_name();
+                match name.as_ref() {
+                    "p" => {
+                        paragraphs.push(DocxParagraph::default());
+                    }
+                    "pStyle" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)? {
+                            current.as_mut().unwrap().style = Some(value);
+                        }
+                    }
+                    "numId" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)? {
+                            current.as_mut().unwrap().numbering = value.parse().ok();
+                        }
+                    }
+                    "ilvl" if current.is_some() => {
+                        if let Some(value) = xml_value(&event)?
+                            && let Ok(level) = value.parse::<usize>()
+                        {
+                            if level > 2000 {
+                                return Err(IoError::Invalid(
+                                    "DOCX list nesting exceeds 2000 levels".into(),
+                                ));
+                            }
+                            current.as_mut().unwrap().list_level = level;
+                        }
+                    }
+                    "tab" | "br" | "cr" if current.is_some() => {
+                        current.as_mut().unwrap().text.push(' ');
+                    }
+                    "rPr" | "tbl" => {
+                        warnings.insert(ImportWarning::Formatting);
+                    }
+                    "drawing" | "pict" | "object" | "altChunk" => {
+                        warnings.insert(ImportWarning::Resources);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(event)) if text_depth > 0 => {
+                if let Some(paragraph) = current.as_mut() {
+                    let decoded = event.xml_content(quick_xml::XmlVersion::Implicit1_0);
+                    paragraph.text.push_str(&decoded);
+                }
+            }
+            Ok(Event::GeneralRef(event)) if text_depth > 0 => {
+                if let Some(paragraph) = current.as_mut() {
+                    if let Some(character) = event
+                        .resolve_char_ref()
+                        .map_err(|error| IoError::Xml(error.to_string()))?
+                    {
+                        paragraph.text.push(character);
+                    } else {
+                        let reference = format!("&{};", event.as_ref());
+                        let decoded = quick_xml::escape::unescape(&reference)
+                            .map_err(|error| IoError::Xml(error.to_string()))?;
+                        paragraph.text.push_str(&decoded);
+                    }
+                }
+            }
+            Ok(Event::End(event)) => {
+                if xml_depth == 0 {
+                    return Err(IoError::Invalid("malformed DOCX document XML".into()));
+                }
+                xml_depth -= 1;
+                match event.local_name().as_ref() {
+                    "t" => text_depth = text_depth.saturating_sub(1),
+                    "p" => {
+                        if let Some(paragraph) = current.take() {
+                            paragraphs.push(paragraph);
+                            if paragraphs.len() > 100_000 {
+                                return Err(IoError::Invalid(
+                                    "DOCX contains too many paragraphs".into(),
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::DocType(_)) => {
+                return Err(IoError::Invalid(
+                    "DOCX document must not contain a document type declaration".into(),
+                ));
+            }
+            Ok(Event::Eof) => {
+                if xml_depth != 0 || root_count != 1 || current.is_some() {
+                    return Err(IoError::Invalid("malformed DOCX document XML".into()));
+                }
+                break;
+            }
+            Err(error) => return Err(IoError::Xml(error.to_string())),
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok((paragraphs, warnings))
+}
+
+pub(crate) fn docx_import(bytes: &[u8]) -> Result<ImportReport, IoError> {
+    const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+    const MAX_DOCUMENT_XML_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_STYLES_XML_BYTES: u64 = 8 * 1024 * 1024;
+
+    if bytes.len() > MAX_ARCHIVE_BYTES || !bytes.starts_with(b"PK\x03\x04") {
+        return Err(IoError::Invalid("invalid or oversized DOCX archive".into()));
+    }
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let names = crate::validate_document_archive(&mut archive)?;
+    if !names.contains("word/document.xml") {
+        return Err(IoError::Invalid(
+            "DOCX archive is missing word/document.xml".into(),
+        ));
+    }
+    let document =
+        crate::zip_entry_with_limit(&mut archive, "word/document.xml", MAX_DOCUMENT_XML_BYTES)?;
+    let styles = if names.contains("word/styles.xml") {
+        docx_styles(&crate::zip_entry_with_limit(
+            &mut archive,
+            "word/styles.xml",
+            MAX_STYLES_XML_BYTES,
+        )?)?
+    } else {
+        HashMap::new()
+    };
+    let (paragraphs, mut warnings) = docx_paragraphs(&document)?;
+
+    for path in &names {
+        if path.starts_with("word/media/") || path.starts_with("word/embeddings/") {
+            warnings.insert(ImportWarning::Resources);
+        } else if path.starts_with("word/header")
+            || path.starts_with("word/footer")
+            || path.starts_with("word/footnotes")
+            || path.starts_with("word/endnotes")
+        {
+            warnings.insert(ImportWarning::Notes);
+        } else if !matches!(
+            path.as_str(),
+            "[Content_Types].xml"
+                | "_rels/.rels"
+                | "docProps/app.xml"
+                | "docProps/core.xml"
+                | "word/document.xml"
+                | "word/_rels/document.xml.rels"
+                | "word/styles.xml"
+                | "word/numbering.xml"
+                | "word/settings.xml"
+                | "word/theme/theme1.xml"
+                | "word/fontTable.xml"
+                | "word/webSettings.xml"
+        ) && !path.ends_with('/')
+        {
+            warnings.insert(ImportWarning::Other);
+        }
+    }
+
+    let mut first_content = None;
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        if !paragraph.text.trim().is_empty() {
+            first_content = Some(index);
+            break;
+        }
+    }
+    let first_heading = first_content
+        .and_then(|index| paragraphs.get(index))
+        .and_then(|paragraph| {
+            paragraph.style.as_deref().and_then(|style| {
+                styles
+                    .get(style)
+                    .copied()
+                    .or_else(|| heading_style_level(style))
+            })
+        })
+        .filter(|level| *level == 1);
+    let root_title = first_heading
+        .and(first_content)
+        .map(|index| paragraphs[index].text.trim().to_owned())
+        .unwrap_or_else(|| "Document".to_owned());
+
+    let mut items = Vec::new();
+    let mut heading_depth = 0usize;
+    for (index, paragraph) in paragraphs.into_iter().enumerate() {
+        let title = paragraph.text.trim();
+        if title.is_empty() {
+            continue;
+        }
+        let heading = paragraph.style.as_deref().and_then(|style| {
+            styles
+                .get(style)
+                .copied()
+                .or_else(|| heading_style_level(style))
+        });
+        if first_heading.is_some() && Some(index) == first_content {
+            continue;
+        }
+        if let Some(level) = heading {
+            heading_depth = level.saturating_sub(1);
+            items.push((heading_depth, title.to_owned()));
+        } else if paragraph.numbering.is_some_and(|numbering| numbering != 0) {
+            warnings.insert(ImportWarning::Formatting);
+            let depth = heading_depth
+                .saturating_add(1)
+                .saturating_add(paragraph.list_level);
+            items.push((depth, title.to_owned()));
+        } else {
+            items.push((heading_depth.saturating_add(1), title.to_owned()));
+        }
+        if items.len() > 100_000 {
+            return Err(IoError::Invalid("DOCX contains too many topics".into()));
+        }
+    }
+
+    let tree = thinoda_core::outline::build_tree(&items);
+    let root = OutlineNode::new(root_title).with_children(tree);
+    Ok(ImportReport {
+        format: crate::Format::Word,
+        workbook: Workbook::new(thinoda_core::outline::sheet_from_outline(
+            &root.title,
+            &root,
+        )),
+        warnings: warnings.into_iter().collect(),
+    })
+}
+
 fn entries(w: &Workbook, o: &ExportOptions) -> Vec<TopicRow> {
     let s = sheet(w, o);
     let mut out = Vec::new();
@@ -31,6 +439,7 @@ fn entries(w: &Workbook, o: &ExportOptions) -> Vec<TopicRow> {
         if level > 2000 {
             continue;
         }
+
         let t = &s.topics[&id];
         out.push((
             depth,

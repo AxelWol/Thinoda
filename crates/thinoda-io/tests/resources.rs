@@ -36,6 +36,7 @@ fn attachment_native_and_json_roundtrip_preserve_names_and_opaque_bytes() {
         Format::Png,
         Format::Jpeg,
         Format::Pdf,
+        Format::PowerPoint,
     ] {
         assert!(export_bytes(&book, format, &ExportOptions::default()).is_err());
     }
@@ -219,7 +220,10 @@ fn resource_free_v2_and_legacy_image_references_keep_loading() {
 fn exports_printing_and_pitch_fail_explicitly_instead_of_dropping_bytes() {
     let (book, _) = sample();
     for format in Format::EXPORTABLE {
-        if *format != Format::Thinoda {
+        if !matches!(
+            *format,
+            Format::Thinoda | Format::XMind | Format::PowerPoint
+        ) {
             assert!(
                 export_bytes(&book, *format, &Default::default())
                     .unwrap_err()
@@ -229,6 +233,8 @@ fn exports_printing_and_pitch_fail_explicitly_instead_of_dropping_bytes() {
             );
         }
     }
+    assert!(export_bytes(&book, Format::PowerPoint, &Default::default()).is_err());
+    assert!(export_bytes(&book, Format::XMind, &Default::default()).is_err());
     let options = ExportOptions::default();
     let mut sheet = book.active().clone();
     let branch = sheet.add_child(sheet.root, None, "Branch");
@@ -246,4 +252,36 @@ fn exports_printing_and_pitch_fail_explicitly_instead_of_dropping_bytes() {
     assert!(thinoda_io::presentation::export_presentation_png_zip(&sheet, &options).is_err());
     assert!(thinoda_io::presentation::export_presentation_pdf(&sheet, &options).is_err());
     assert!(thinoda_io::print::render_print(&book, 0, Default::default()).is_err());
+}
+
+#[test]
+fn xmind_public_export_api_preserves_verified_embedded_images() {
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        32,
+        24,
+        image::Rgb([80, 120, 200]),
+    ))
+    .write_to(&mut encoded, image::ImageFormat::Png)
+    .unwrap();
+    let bytes = encoded.into_inner();
+    let mut sheet = Sheet::new("Evidence", "Root");
+    let root = sheet.root;
+    let reference = sheet
+        .resources
+        .insert(Resource::new("evidence.png", "image/png", bytes.clone()).unwrap())
+        .unwrap();
+    let topic = sheet.topic_mut(root).unwrap();
+    topic.image = Some(reference.clone());
+    topic.image_size = Some(thinoda_core::Vec2::new(72.0, 48.0));
+    topic.image_below = true;
+    let book = Workbook::new(sheet);
+
+    let exported = export_bytes(&book, Format::XMind, &ExportOptions::default()).unwrap();
+    let restored = import_bytes(Format::XMind, &exported).unwrap();
+    assert_eq!(restored, book);
+    assert_eq!(
+        restored.active().resources.get(&reference).unwrap().bytes(),
+        bytes
+    );
 }

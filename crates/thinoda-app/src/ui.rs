@@ -949,6 +949,7 @@ impl ThinodaApp {
 
     fn conversion_modal_open(&self) -> bool {
         self.dialogs.mindmanager_export
+            || self.dialogs.powerpoint_export
             || self.dialogs.mindmanager_save.is_some()
             || !self.dialogs.imports.is_empty()
     }
@@ -1379,6 +1380,7 @@ impl ThinodaApp {
         };
         d.view.add_control_labels.child = t("Add child topic").into();
         d.view.add_control_labels.sibling = t("Add sibling topic").into();
+        d.view.image_resize_label = t("Resize image").into();
         d.view.relationship_handle_labels = [
             "Relationship start",
             "First curve control",
@@ -2287,6 +2289,48 @@ impl ThinodaApp {
                                 }
                                 if topic.notes.is_some() {
                                     ui.label(RichText::new(icons::NOTE).weak());
+                                }
+                                if let Some(texture) = topic
+                                    .image
+                                    .as_deref()
+                                    .filter(|reference| sheet.resources.get(reference).is_ok())
+                                    .and_then(|reference| {
+                                        thinoda_canvas::resource_preview_texture(
+                                            ui.ctx(),
+                                            &sheet,
+                                            reference,
+                                        )
+                                    })
+                                {
+                                    let size = vec2(48.0, 32.0);
+                                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                                    let source = texture.size_vec2();
+                                    let scale =
+                                        (rect.width() / source.x).min(rect.height() / source.y);
+                                    let image_size = source * scale;
+                                    let image_rect =
+                                        egui::Rect::from_center_size(rect.center(), image_size);
+                                    let tint = if d
+                                        .view
+                                        .filter
+                                        .as_ref()
+                                        .is_some_and(|keep| !keep.contains(&id))
+                                    {
+                                        Color32::WHITE.gamma_multiply(0.3)
+                                    } else {
+                                        Color32::WHITE
+                                    };
+                                    ui.put(
+                                        image_rect,
+                                        egui::Image::new((texture.id(), image_size))
+                                            .fit_to_exact_size(image_size)
+                                            .alt_text(format!(
+                                                "{}: {}",
+                                                t("Image preview"),
+                                                topic.title
+                                            ))
+                                            .tint(tint),
+                                    );
                                 }
                             });
                         }
@@ -3981,7 +4025,10 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
-        if self.dialogs.symbol_export.is_some() || self.dialogs.mindmanager_export {
+        if self.dialogs.symbol_export.is_some()
+            || self.dialogs.mindmanager_export
+            || self.dialogs.powerpoint_export
+        {
             let valid = self.doc().is_some_and(|doc| {
                 self.dialogs.export_owner.as_ref()
                     == Some(&(doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()))
@@ -3989,6 +4036,7 @@ impl ThinodaApp {
             if !valid {
                 self.dialogs.symbol_export = None;
                 self.dialogs.mindmanager_export = false;
+                self.dialogs.powerpoint_export = false;
                 self.dialogs.mindmanager_symbol_color_loss = false;
                 self.dialogs.export_owner = None;
                 self.toasts.warning(t("Not possible here"));
@@ -4089,14 +4137,140 @@ impl ThinodaApp {
             }
             return;
         }
-        if let Some((path, _, warnings)) = self.dialogs.imports.front() {
+        if self.dialogs.powerpoint_export {
+            let owner = self.dialogs.export_owner.clone().expect("validated owner");
+            let mut export = false;
+            let mut cancel = false;
+            let mut can_export = false;
+            let ratio = &mut self.dialogs.powerpoint_aspect_ratio;
+            let preview = &mut self.dialogs.powerpoint_preview;
+            let response = Dialog::new(
+                egui::Id::unique("powerpoint_export"),
+                t("PowerPoint slide size"),
+            )
+            .labels(&i18n::dialog_labels())
+            .modal(true)
+            .close_on_backdrop(true)
+            .default_width(620.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(t(
+                        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
+                    ))
+                    .color(Palette::of_ui(ui).text_muted),
+                );
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.radio_value(
+                        ratio,
+                        thinoda_io::PresentationAspectRatio::Widescreen16x9,
+                        t("Widescreen (16:9)"),
+                    );
+                    ui.radio_value(
+                        ratio,
+                        thinoda_io::PresentationAspectRatio::Standard4x3,
+                        t("Standard (4:3)"),
+                    );
+                });
+                ui.add_space(8.0);
+                let source = self
+                    .docs
+                    .iter()
+                    .find(|doc| doc.key == owner.0)
+                    .filter(|doc| {
+                        doc.doc.active_index() == owner.1 && doc.doc.state_id() == owner.2
+                    });
+                if let Some(document) = source {
+                    let sheet = document.doc.sheet();
+                    if sheet.presentation.slides.is_empty() {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            t("No slides yet. Generate branch and Zone slides, or add the selected branch."),
+                        );
+                    } else {
+                        can_export = true;
+                        ui.label(t("Slide preview"));
+                        let width = ui.available_width().min(560.0);
+                        preview.show(
+                            ui,
+                            sheet,
+                            &owner,
+                            *ratio,
+                            vec2(width, (width * 9.0 / 16.0).clamp(140.0, 315.0)),
+                        );
+                    }
+                } else {
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        t("The document changed. Try again."),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let export_response = ui
+                            .add_enabled_ui(can_export, |ui| {
+                                thinoda_ui::widgets::primary_button(ui, t("Export"))
+                            })
+                            .inner;
+                        if export_response.clicked()
+                            && thinoda_ui::widgets::touch_activation_allowed(ui.ctx())
+                        {
+                            export = true;
+                        }
+                        if thinoda_ui::widgets::secondary_button(ui, t("Cancel")).clicked()
+                            && thinoda_ui::widgets::touch_activation_allowed(ui.ctx())
+                        {
+                            cancel = true;
+                        }
+                    },
+                );
+            });
+            if response.close_requested || cancel {
+                self.dialogs.powerpoint_export = false;
+                self.dialogs.export_owner = None;
+            } else if export {
+                self.dialogs.powerpoint_export = false;
+                self.dialogs.export_owner = None;
+                self.export_confirmed(thinoda_io::Format::PowerPoint, false);
+            }
+            return;
+        }
+        if let Some((path, document, warnings)) = self.dialogs.imports.front() {
             let mut message = format!(
                 "{}\n\n{}",
                 path.display(),
-                t(
-                    "MindManager conversion may omit unsupported content. The source file is preserved."
-                )
+                t("This import may omit unsupported content. The source file is preserved.")
             );
+            let sheet = document.doc.sheet();
+            message.push_str(&format!(
+                "\n\n{} ({}; {}):",
+                t("Converted outline preview"),
+                sheet.topic_count(),
+                t("showing the first 8 topics")
+            ));
+            let mut preview = vec![(sheet.root, 0usize)];
+            for _ in 0..8 {
+                let Some((id, depth)) = preview.pop() else {
+                    break;
+                };
+                let topic = &sheet.topics[&id];
+                let title: String = topic
+                    .title
+                    .chars()
+                    .map(|character| {
+                        if character.is_control() {
+                            ' '
+                        } else {
+                            character
+                        }
+                    })
+                    .take(120)
+                    .collect();
+                message.push_str(&format!("\n{}- {}", "  ".repeat(depth.min(12)), title));
+                preview.extend(topic.children.iter().rev().map(|child| (*child, depth + 1)));
+            }
             for warning in warnings {
                 let label = match warning {
                     thinoda_io::ImportWarning::Formatting => "Formatting and styles",
@@ -4111,7 +4285,7 @@ impl ThinodaApp {
             }
             if let Some(choice) = confirm_dialog(
                 ctx,
-                "mindmanager_import",
+                "document_import_confirmation",
                 t("Import requires confirmation"),
                 &message,
                 &[

@@ -384,7 +384,7 @@ pub fn convert_with_consent(
         }
         log::warn!(
             "{}",
-            t("MindManager conversion may omit unsupported content. The source file is preserved.")
+            t("This import may omit unsupported content. The source file is preserved.")
         );
     }
     let format = Format::from_path(output)

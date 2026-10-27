@@ -253,6 +253,13 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("PowerPoint slide size", "PowerPoint-Folienformat"),
+    (
+        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
+        "Folien werden als flache Bilder exportiert; Text und Formen sind nicht separat bearbeitbar. Der Rahmen wird ohne Beschnitt oder Verzerrung auf das gewählte Seitenverhältnis erweitert.",
+    ),
+    ("Widescreen (16:9)", "Breitbild (16:9)"),
+    ("Standard (4:3)", "Standard (4:3)"),
     ("Attachment", "Anhang"),
     ("Save/Download attachment", "Anhang speichern/herunterladen"),
     ("bytes", "Bytes"),
@@ -281,6 +288,12 @@ const DE: &[(&str, &str)] = &[
         "Ein Thema auswählen und über Einfügen > Anhang eine lokale Datei als Unterthema hinzufügen (1 Byte bis 8 MiB). Stil > Anhang bietet eine separate Aktion zum Speichern/Herunterladen. Dateiinhalte werden nicht interpretiert: Nichts wird geöffnet oder ausgeführt. Als .thinoda speichern, um Anhänge zu behalten; andere Exporte werden noch nicht unterstützt.",
     ),
     ("Local Image", "Lokales Bild"),
+    ("Image preview", "Bildvorschau"),
+    ("Resize image", "Bildgröße ändern"),
+    (
+        "Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.",
+        "Ändern Sie die Größe eines ausgewählten Bildes am Griff unten rechts. Escape bricht ab; Pfeiltasten ändern die Größe bei fokussiertem Griff. Stil > Lokales Bild bietet eine Breitensteuerung für Tastatur und Touch.",
+    ),
     ("Insert image", "Bild einfügen"),
     ("Replace image", "Bild ersetzen"),
     ("Remove image", "Bild entfernen"),
@@ -517,8 +530,8 @@ const DE: &[(&str, &str)] = &[
         "Import erfordert Bestätigung. --allow-lossy nur verwenden, wenn ausgelassene Inhalte akzeptiert werden.",
     ),
     (
-        "MindManager conversion may omit unsupported content. The source file is preserved.",
-        "Die MindManager-Konvertierung kann nicht unterstützte Inhalte auslassen. Die Quelldatei bleibt erhalten.",
+        "This import may omit unsupported content. The source file is preserved.",
+        "Bei diesem Import können nicht unterstützte Inhalte ausgelassen werden. Die Quelldatei bleibt erhalten.",
     ),
     (
         "MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.",
@@ -530,6 +543,14 @@ const DE: &[(&str, &str)] = &[
         "Nur das aktuelle Blatt wird exportiert. Farben, Ressourcen, Beziehungen, erweiterte Layouts und nicht unterstützte Daten können ausgelassen werden. Die Quellarbeitsmappe bleibt unverändert.",
     ),
     ("Import converted copy", "Konvertierte Kopie importieren"),
+    (
+        "Converted outline preview",
+        "Vorschau der konvertierten Gliederung",
+    ),
+    (
+        "showing the first 8 topics",
+        "die ersten 8 Themen werden angezeigt",
+    ),
     ("Formatting and styles", "Formatierung und Stile"),
     ("Rich notes", "Formatierte Notizen"),
     ("Images and attachments", "Bilder und Anhänge"),
@@ -576,6 +597,7 @@ const DE: &[(&str, &str)] = &[
     ("JPEG", "JPEG"),
     ("PDF", "PDF"),
     ("Word", "Word"),
+    ("PowerPoint", "PowerPoint"),
     ("Excel", "Excel"),
     ("CSV", "CSV"),
     ("Legal documents", "Rechtliche Dokumente"),

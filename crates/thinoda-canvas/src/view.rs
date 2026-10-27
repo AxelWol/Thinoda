@@ -24,6 +24,9 @@ use crate::{
 pub const MIN_ZOOM: f32 = 0.1;
 pub const MAX_ZOOM: f32 = 5.0;
 
+#[path = "image_resize.rs"]
+mod image_resize;
+
 /// Call before handling focused-editor shortcuts so IME candidate keys stay in composition.
 pub fn protect_ime_candidate_keys(ctx: &egui::Context, editor_id: Id, composing: &mut bool) {
     let ime_frame = ctx.input(|input| {
@@ -177,6 +180,8 @@ pub struct MapView {
     pub(crate) relationship_drag: Option<crate::relationship_editing::RelationshipDrag>,
     pub titles: NewTopicTitles,
     pub add_control_labels: AddControlLabels,
+    /// Accessible name and tooltip for the selected image's resize handle.
+    pub image_resize_label: String,
     /// Whether the canvas exposes connector add buttons (keyboard actions remain available).
     pub show_add_controls: bool,
     /// View-only alignment feedback during free-placement topic drags.
@@ -191,6 +196,7 @@ pub struct MapView {
     pub accent: Color32,
     editing: Option<EditState>,
     drag: Drag,
+    image_resize: Option<image_resize::Gesture>,
     // Some(false) keeps an unowned/canceled multitouch sequence blocked until all fingers lift.
     touch_navigation: Option<bool>,
     cache: Option<LayoutCache>,
@@ -220,6 +226,7 @@ impl Default for MapView {
             relationship_drag: None,
             titles: NewTopicTitles::default(),
             add_control_labels: AddControlLabels::default(),
+            image_resize_label: "Resize image".into(),
             show_add_controls: true,
             show_alignment_guides: false,
             clipboard: None,
@@ -229,6 +236,7 @@ impl Default for MapView {
             accent: Color32::from_rgb(0x2E, 0x7C, 0xF6),
             editing: None,
             drag: Drag::None,
+            image_resize: None,
             touch_navigation: None,
             cache: None,
             pending_fit: false,
@@ -412,6 +420,7 @@ impl MapView {
         self.selected_object = None;
         self.relationship_from = None;
         self.relationship_drag = None;
+        self.image_resize = None;
         self.editing = None;
         self.drag = Drag::None;
         self.cache = None;
@@ -691,6 +700,7 @@ fn add_handles(view: &MapView, sheet: &Sheet, layout: &Layout) -> Vec<AddHandle>
         || view.selected_object.is_some()
         || view.editing.is_some()
         || view.relationship_from.is_some()
+        || view.image_resize.is_some()
         || !matches!(view.drag, Drag::None)
     {
         return Vec::new();
@@ -756,6 +766,7 @@ impl MapCanvas {
     pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
         view.drag = Drag::None;
         view.relationship_drag = None;
+        view.image_resize = None;
         let rect = ui.available_rect_before_wrap();
         ui.advance_cursor_after_rect(rect);
         view.canvas_rect = rect;
@@ -904,6 +915,7 @@ impl MapCanvas {
             && ui.is_enabled()
             && response.hovered()
             && view.relationship_drag.is_none()
+            && view.image_resize.is_none()
             && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
         {
             let (scroll, zoom_delta, pos) =
@@ -918,13 +930,21 @@ impl MapCanvas {
 
         let space =
             ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
+        let image_handle = image_resize::interact(
+            ui,
+            doc,
+            view,
+            &layout,
+            &mut out.error,
+            !space && !touch_navigation,
+        );
         let relationship_handle = crate::relationship_editing::interact(
             ui,
             doc,
             view,
             &mut layout,
             &mut out.error,
-            !space && !touch_navigation,
+            !space && !touch_navigation && !image_handle,
         );
         let handles = if space
             || touch_navigation
@@ -934,9 +954,11 @@ impl MapCanvas {
         } else {
             add_handles(view, doc.sheet(), &layout)
         };
-        let over_handle = relationship_handle
+        let over_handle = image_handle
+            || relationship_handle
             || pointer.is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
-        let press_on_handle = relationship_handle
+        let press_on_handle = image_handle
+            || relationship_handle
             || ctx
                 .input(|i| i.pointer.press_origin())
                 .is_some_and(|p| handles.iter().any(|h| h.rect().contains(p)));
@@ -1269,6 +1291,7 @@ impl MapCanvas {
             run(doc, view, action, &mut out);
         }
         if view.editing.is_none()
+            && view.image_resize.is_none()
             && !egui::Popup::is_any_open(&ctx)
             && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
             && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
@@ -1318,6 +1341,7 @@ impl MapCanvas {
             omit_zones: false,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
+        image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
         crate::relationship_editing::paint_target(&painter, view, &layout);
         if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {
             for handle in add_handles(view, sheet, &layout) {
@@ -1466,6 +1490,7 @@ impl MapCanvas {
                 _ if space => egui::CursorIcon::Grab,
                 _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
                 _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
+                _ if image_handle => egui::CursorIcon::ResizeNwSe,
                 _ if hovered.is_some() || over_handle => egui::CursorIcon::PointingHand,
                 _ => egui::CursorIcon::Default,
             };

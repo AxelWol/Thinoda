@@ -404,11 +404,18 @@ fn paint_badge(painter: &Painter, t: &TopicLayout, xf: Xf, accent: Color32, bg: 
 #[derive(Clone, Default)]
 struct ImageCache(std::collections::VecDeque<(String, Option<egui::TextureHandle>)>);
 
-fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, dim: bool) -> bool {
+/// Returns a cached, bounded preview texture for a valid embedded PNG/JPEG.
+///
+/// ResourceStore rejects legacy paths and URLs; declared media type must also
+/// match the decoded content so opaque attachments are never treated as images.
+pub fn resource_preview_texture(
+    ctx: &egui::Context,
+    sheet: &Sheet,
+    reference: &str,
+) -> Option<egui::TextureHandle> {
     let id = egui::Id::unique("local-image-cache");
     // Never call load_texture while holding the context data lock.
-    let mut cache = painter
-        .ctx()
+    let mut cache = ctx
         .data_mut(|data| data.remove_temp::<ImageCache>(id))
         .unwrap_or_default();
     let entry = if let Some(index) = cache.0.iter().position(|(id, _)| id == reference) {
@@ -418,10 +425,12 @@ fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, di
             .resources
             .get(reference)
             .ok()
-            .and_then(|r| thinoda_core::images::decode(r.bytes()).ok())
-            .map(|decoded| {
-                let preview = decoded.preview();
-                painter.ctx().load_texture(
+            .and_then(|resource| {
+                let decoded = thinoda_core::images::decode(resource.bytes()).ok()?;
+                (resource.media_type == decoded.media_type).then(|| decoded.preview())
+            })
+            .map(|preview| {
+                ctx.load_texture(
                     reference,
                     egui::ColorImage::from_rgba_unmultiplied(
                         [preview.width as usize, preview.height as usize],
@@ -437,8 +446,15 @@ fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, di
     while cache.0.len() > 128 {
         cache.0.pop_front();
     }
-    painter.ctx().data_mut(|data| data.insert_temp(id, cache));
-    if let Some(texture) = texture {
+    ctx.data_mut(|data| data.insert_temp(id, cache));
+    texture
+}
+
+fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, dim: bool) -> bool {
+    let Some(texture) = resource_preview_texture(painter.ctx(), sheet, reference) else {
+        return false;
+    };
+    {
         let source = texture.size_vec2();
         let scale = (rect.width() / source.x).min(rect.height() / source.y);
         let target = Rect::from_center_size(rect.center(), source * scale);
@@ -448,10 +464,8 @@ fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, di
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE.gamma_multiply(if dim { 0.3 } else { 1.0 }),
         );
-        true
-    } else {
-        false
     }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]

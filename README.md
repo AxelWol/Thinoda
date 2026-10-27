@@ -134,8 +134,11 @@ those system-owned controls. WinGet publishing remains paused.
   topic and filename, with Replace/Remove, proportional Image width, Image below
   topic and Reset Size. Reset fits within 160 × 100 map units without upscaling;
   resizing is capped at 1024 units per side. Dropping PNG/JPEG files into the
-  app inserts them on the single selected topic; direct resize handles are not
-  implemented. Files are limited to 8 MiB, 4096 pixels per side
+  app inserts them on the single selected topic. Drag the selected image's
+  lower-right handle for a proportional outline preview; release inside the
+  canvas commits one undoable resize, and Escape cancels. A focused handle
+  supports arrow keys (Shift for larger steps); the inspector width control
+  remains the keyboard/touch alternative. Files are limited to 8 MiB, 4096 pixels per side
   and 4 megapixels; invalid replacements leave the old image intact.
   Map/thumbnail/live Pitch use cached, aspect-preserving previews up to 512 pixels;
   SVG/PNG/JPEG/PDF, print and Pitch exports use original embedded bytes. Native v3,
@@ -143,8 +146,10 @@ those system-owned controls. WinGet publishing remains paused.
   All shipped languages and Light/Dark/System use the same controls. Browser
   picker results are bound to their original document/sheet/topic/revision;
   canceled or stale requests cannot insert into another selection.
-  XMind image interoperability remains open. Editable non-native
-  exports reject embedded resources rather than discard them; visual output also
+  Thinoda imports and exports the verified bounded XMind PNG/JPEG topic-image
+  resource subset (`xap:resources/...` plus manifest entries); this is not a
+  claim of installed-XMind-app compatibility. Other editable non-native formats
+  reject embedded resources rather than discard them; visual output also
   rejects malformed, missing, unsupported or legacy path/URL images. No URL is
   fetched and no image file is opened automatically.
 - **Local attachment topics (XV4, partial):** select one topic and choose
@@ -164,8 +169,19 @@ those system-owned controls. WinGet publishing remains paused.
   restrictions; automatic resource cleanup is not implemented yet.
   All ten languages and Light/Dark/System share this workflow. Non-native exports
   (including visual output/print/Pitch) explicitly refuse attachment-bearing
-  documents rather than discard bytes. XMind resource exchange and direct image
-  resize handles remain open; XV4 is not complete.
+  documents rather than discard bytes. Direct proportional resize handles and
+  safe Outliner image previews are implemented. The current worktree imports and
+  exports only the bounded PNG/JPEG topic-image pattern verified against
+  `xmind-sdk-js` 2.2.33 at commit
+  `d35e820a2d09995c69bbb452d4edc42b09a13946` (`xap:resources/{componentID}`,
+  manifest `file-entries`). The official `xmind-model` 1.1.12 schema requires
+  only `src`; omitted dimensions are derived proportionally from bounded image
+  bytes, and omitted alignment defaults to top. Explicit alignments other than
+  top/bottom and external URL/path references are rejected, not silently
+  rewritten or resolved. Thinoda's private round trip retains exact bytes,
+  display size and top/bottom placement. XMind attachment package interchange
+  remains unsupported because its schema is unverified; no installed XMind app
+  compatibility test was run, so app interoperability is not claimed.
 - Map > Theme > Global Font and Style > Text > Font Family use installed system
   font faces, not just stored names. Per-topic Auto inherits the map font.
   Canvas layout, painting, inline editing and Map Shot share the selected face;
@@ -521,13 +537,26 @@ those system-owned controls. WinGet publishing remains paused.
   the synthesized pointer release arrives after the last touch contact.
   In short windows, Outline actions scroll separately from topics and the selected
   summary is shortened visually with full text on hover, keeping the list reachable.
-- Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, MindManager `.mmap`
-  and standalone `.xmmap`
+- Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, TextBundle, Word
+  (`.docx`), MindManager `.mmap` and standalone `.xmmap`
+- DOCX import builds a topic hierarchy from paragraphs, heading styles and
+  numbered-list depth; TextBundle imports its Markdown document. Both show a
+  conversion confirmation when detected content is omitted; DOCX also warns
+  that page formatting is not retained. The confirmation previews the first
+  eight converted topics and total count. The original source is preserved,
+  and external relationships are never fetched or executed.
+  This does not preserve Word page layout, embedded resources or all Markdown
+  formatting.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
-- Export: XMind, PNG, JPEG, SVG, PDF, Word, Excel, CSV, Markdown, OPML, TextBundle,
-  and a bounded native MindManager `.mmap` subset. MindManager conversion uses
+- Export: XMind, PNG, JPEG, SVG, PDF, image-based PowerPoint `.pptx`, Word, Excel,
+  CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
+  subset. PowerPoint export previews the first saved Pitch slide, reuses all
+  saved frames and offers 16:9 or 4:3;
+  each slide is a flattened image, not individually editable text/shapes, and
+  unsupported resources are refused. Opening in PowerPoint/LibreOffice is not
+  yet verified. MindManager conversion uses
   explicit loss/sheet-scope warnings and protects imported source files;
   [supported features and verification limits](docs/MINDMANAGER.md).
 - Graphical exports share font-measured title wrapping and reserve whitespace

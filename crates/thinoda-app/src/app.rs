@@ -195,6 +195,9 @@ pub struct RenameSheetDraft {
 #[derive(Default)]
 pub struct Dialogs {
     pub mindmanager_export: bool,
+    pub powerpoint_export: bool,
+    pub powerpoint_aspect_ratio: thinoda_io::PresentationAspectRatio,
+    pub(crate) powerpoint_preview: crate::powerpoint_preview::PowerPointPreview,
     pub mindmanager_symbol_color_loss: bool,
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
     pub(crate) save_close_tab: Option<String>,
@@ -294,6 +297,7 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::Jpeg,
     Format::Svg,
     Format::Pdf,
+    Format::PowerPoint,
     Format::Markdown,
     Format::Word,
     Format::Excel,
@@ -1659,6 +1663,13 @@ impl ThinodaApp {
     }
 
     pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
+        if format == Format::PowerPoint {
+            self.dialogs.powerpoint_export = true;
+            self.dialogs.export_owner = self
+                .doc()
+                .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
+            return;
+        }
         if format == Format::MindManager {
             self.dialogs.mindmanager_export = true;
             self.dialogs.mindmanager_symbol_color_loss = allow_symbol_color_loss;
@@ -1696,6 +1707,7 @@ impl ThinodaApp {
                     Format::Png | Format::Jpeg | Format::Svg | Format::Pdf
                 ),
             scale: 2.0,
+            presentation_aspect_ratio: self.dialogs.powerpoint_aspect_ratio,
             ..Default::default()
         };
         let res = thinoda_io::export_bytes_with_consent(
@@ -3076,7 +3088,31 @@ mod tests {
         assert!(cmds.iter().any(|(c, _)| *c == Cmd::Export(Format::Pdf)));
         assert!(
             cmds.iter()
+                .any(|(command, _)| *command == Cmd::Export(Format::PowerPoint))
+        );
+        assert!(
+            cmds.iter()
                 .any(|(command, _)| *command == Cmd::MoveToNewWindow)
+        );
+    }
+
+    #[test]
+    fn powerpoint_export_requests_an_explicit_slide_ratio() {
+        let mut app = ThinodaApp::headless();
+        let document = app.doc().unwrap();
+        let expected_owner = (
+            document.key.clone(),
+            document.doc.active_index(),
+            document.doc.state_id(),
+        );
+
+        app.export(Format::PowerPoint, false);
+
+        assert!(app.dialogs.powerpoint_export);
+        assert_eq!(app.dialogs.export_owner, Some(expected_owner));
+        assert_eq!(
+            app.dialogs.powerpoint_aspect_ratio,
+            thinoda_io::PresentationAspectRatio::Widescreen16x9
         );
     }
 

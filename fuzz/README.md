@@ -36,10 +36,11 @@ cargo +nightly fuzz run --release opml -- -max_total_time=20 -rss_limit_mb=2048 
 Inputs over 1 MiB are ignored by the targets. XMind accepts raw input as well as
 `JSON\n` and `CONTENT_XML\n` seed envelopes; the latter two are wrapped in a
 small generated ZIP package to exercise each XMind entry parser. The corpus also
-contains tiny generated ZIP package seeds so mutation reaches the archive
-structure, and the raw XMind path includes legacy XML. FreeMind and OPML consume
-XML directly. On successful imports each target checks validation and an exact
-round-trip through Thinoda's native format. Fuzzer crashes and assertion
+contains tiny ZIP package seeds, including PNG image resources with omitted and
+partial dimensions, so mutation reaches image/manifest validation and the
+archive structure; the raw XMind path includes legacy XML. FreeMind and OPML
+consume XML directly. On successful imports each target checks validation and
+an exact round-trip through Thinoda's native format. Fuzzer crashes and assertion
 failures are intentionally not caught; preserve any reproducer under that
 target's corpus and investigate it.
 

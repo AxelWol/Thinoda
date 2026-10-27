@@ -75,7 +75,9 @@ and window lifecycle under "R12 and above." No issue is omitted from the priorit
 
 These are scoped work items, not new GitHub issues. **XV1-XV3 and UR6 (Material
 Symbols icons) shipped in v0.13.0; UR1/UR2/UR5 shipped in v0.14.0.
-UR3/UR7 and UR4 are implemented, release pending; XV4-XV9 remain open.** XV1 adds shared Find
+UR3/UR7 and UR4 are implemented; XV4 is partial, XV5 is implemented locally,
+XV6 is implemented locally with host interoperability open, and XV7-XV9 remain
+open.** XV1 adds shared Find
 facets and read-only all-notes results with all shipped translations and
 light/dark/System coverage; see PLAN for exact tests/browser evidence and host
 limits. XV2 adds derived leaf-To-Do counts, parent completion/reopen and matching
@@ -83,6 +85,18 @@ Find status without changing scheduled Tasks or the native file schema.
 Priority is end-user frequency, value and enabling dependencies, rather
 than a count of XMind features. On 2026-10-26 the user authorized starting this
 ordered queue with localization/theme/platform coverage and ongoing UX research.
+
+XV6 is partially implemented locally: image-based `.pptx` export reuses saved
+Pitch frames, offers 16:9/4:3 choices, previews the first slide at the selected
+ratio and explicitly discloses flattened slides. PowerPoint/LibreOffice opening
+checks remain open; see PLAN for exact coverage and limitations.
+
+Release monitoring (2026-10-27): v0.15.0 now has 10 published packages and six
+checksum manifests; all package hashes match the manifest entries and GitHub
+asset digests. Main CI/Pages for PR #88 passed and the published site returns
+HTTP 200. Release Please PR #89 correctly targets v0.16.0 and includes #87/#88,
+but is open with no reported checks; do not merge until checks and review are
+current.
 
 **XV4 is in progress:** sheet-owned bounded resources, native v3 raw-blob
 storage, recovery, resource-aware clipboard and atomic copy/paste/merge/undo
@@ -96,12 +110,32 @@ VFS downloads retain exact bytes; filenames are portable/sanitized, bytes are
 never executed, decoded as trusted documents or opened through external apps.
 All ten catalogs, themes, cancellation and ownership use the same flow.
 Selection-based PNG/JPEG drop insertion is implemented in the current follow-up;
-drop position is not used to infer a topic. XMind resource exchange, direct
-resize handles and Outliner previews remain open.
+drop position is not used to infer a topic. Direct proportional image resize
+handles are implemented locally, with staged previews, one-step undo,
+stale/interrupted gesture cancellation and keyboard arrows; the inspector width
+control remains the keyboard/touch fallback. Outliner rows now preview valid
+embedded PNG/JPEG images through the shared bounded rendering cache; legacy
+paths/URLs, attachments, unsupported bytes and mismatched media metadata are
+not shown as trusted previews. The current worktree now supports only the
+verified embedded topic-image pattern from `xmind-sdk-js` 2.2.33 at commit
+`d35e820a2d09995c69bbb452d4edc42b09a13946`: bounded PNG/JPEG bytes referenced
+by `xap:resources/{single-component}` and declared in manifest `file-entries`.
+The official `xmind-model` 1.1.12 schema requires only `src`; Thinoda derives
+omitted dimensions proportionally from bounded image bytes and defaults missing
+alignment to top. Explicit alignments other than top/bottom and external
+URL/path references are rejected rather than remapped or resolved. Thinoda
+preserves image bytes, display size and top/bottom placement in its private
+round trip and rejects unverified attachment resources. This is not evidence of
+installed-XMind-app interoperability or support for every XMind version. The
+installed app was not used. Two resource-bearing PNG package seeds now exercise
+missing and partial image metadata; deterministic import/round-trip tests pass.
+The libFuzzer campaign could not run on this Windows host because its MSVC
+AddressSanitizer runtime library is unavailable.
 Ordinary topic deletion can retain unreferenced blobs in the saved resource store;
 automatic resource cleanup is not delivered, and deletion is not secure erasure.
-Editable non-native exports and unsupported visual resources still fail explicitly rather than
-silently omit content. See the [active slice](PLAN.md#xv4-active-slice-portable-resource-storage-2026-10-27).
+Other editable non-native exports and unsupported visual resources still fail
+explicitly rather than silently omit content. See the
+[active slice](PLAN.md#xv4-active-slice-portable-resource-storage-2026-10-27).
 This lifts the earlier feature-start restriction, not the remaining F6 acceptance
 gaps; SS0-SS8 remain deferred. Extend the existing R packages; do not create parallel search, task,
 resource or presentation systems. The
@@ -113,9 +147,9 @@ code evidence and official sources.
 | 1 / XV1 | P1 / R6 | **Faceted navigation and View All Notes.** Implemented locally: unified marker/label/To-Do/Task/priority filters and consolidated notes review. Find action items and meeting context without editing the map. | Reuse search; OR within a facet and AND between selected facets, active-sheet/all-sheet scope, connected ancestor context and a visible Clear action. Offer a read-only note list with topic/sheet identity and jump-to-topic. Changing criteria/scope and clearing never change document history or saved collapse state; explicit result navigation retains the existing undoable ancestor expansion. Deleting results cannot retarget a different topic. Cover empty results, edits while filtered, keyboard navigation and Map/Outliner consistency. |
 | 2 / XV2 | P1 / R8 | **Nested lightweight To-Do progress.** Implemented locally: derived parent counts and explicit subtree completion/reopen improve checklists without requiring dates or Gantt. | Count deepest To-Dos, traversing plain topics and excluding scheduled Tasks/intermediate double-counting. Show completed/total in Map/Outliner/Style and shared graphical output; explicit parent completion/reopen is one undoable subtree edit. Add/remove/reparent/Undo recomputes progress, old files load unchanged, and scheduled Task progress stays unchanged. Find uses derived completion. Preserve the original child checkboxes when adding/removing a parent's checkbox. |
 | 3 / XV3 | P1 / R3, R6 | **Automatic structural numbering.** Despite an old Phase 1 checkmark, the current Topic model has no numbering settings/render path. Useful for procedures, agendas and study outlines. | Store numbering separately from title text; implement None/decimal, sibling application, tiered numbers and explicit restart first. Insert/reorder/reparent recomputes labels deterministically. Match Map/Outliner and declared export/print support, keep search/copy title behavior explicit, persist/recover with Undo/Redo, and disclose unsupported XMind/Pitch fields. Do not add literal prefixes to titles as a shortcut. |
-| 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** Bounded storage and local PNG/JPEG authoring/rendering are merged; local attachment topics with explicit save/download are implemented in the continuation. XMind resource exchange and remaining image interaction parity stay open. This unlocks evidence-rich maps and later illustrations/equations. | Preserve bounded decode, stable IDs, sizing and missing/corrupt-file errors. Keep image insert/render/resize/replace/remove and explicit attachment saving without auto-execution; external-app open is not promised without a consistent safe platform contract. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. |
-| 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both names occur in export support, but neither is in `Format::IMPORTABLE`. Reduce onboarding/retyping for researchers and document authors. | DOCX headings/lists and TextBundle Markdown become deterministic hierarchy with an import preview and omission report. Preserve sources; never fetch external references or execute document content. Test malformed/bounded archives, Unicode, lists/headings and cancellation. Text-only DOCX can ship independently; embedded-resource retention depends on XV4. Do not claim general Word layout fidelity or add every competing app format at once. |
-| 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** PDF/PNG Pitch exists; `.pptx` and explicit delivery aspect ratios are missing. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export a valid image-based PPTX with one rendered slide per saved slide, matching PDF/PNG framing; disclose that shapes/text are not separately editable. Check generated OOXML plus opening in available PowerPoint/LibreOffice hosts; keep unavailable host checks open. Editable PPTX/transitions/video are not implied. |
+| 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** Bounded storage, PNG/JPEG authoring/rendering, selection-based drop/resize, Outliner previews, safe attachment save/download and the verified SDK-compatible XMind image subset are implemented locally; PR #88 is merged. This unlocks evidence-rich maps and later illustrations/equations. | Preserve bounded decode, stable IDs, sizing and missing/corrupt-file errors. Keep image insert/render/resize/replace/remove and explicit attachment saving without auto-execution; external-app open is not promised without a consistent safe platform contract. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. Installed-XMind interoperability and the Linux resource-bearing fuzz campaign remain unverified; topic deletion may leave unreferenced blobs. |
+| 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both formats are implemented locally in `Format::IMPORTABLE` and use the shared loss-confirmation flow; the confirmation previews the first eight topics and total count. | TextBundle Markdown and DOCX paragraphs/headings/numbered-list depth map to deterministic hierarchy. Bounded packages, invalid paths/metadata/XML/UTF-8, Unicode/entities, custom heading styles and loss warnings have focused integration coverage. The app preserves the source and does not fetch relationships or execute content. Word layout, embedded resources and full conversion fidelity are not promised. |
+| 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** Image-based `.pptx` export, explicit aspect-ratio choices and a first-slide fit preview are partially implemented locally. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export one rendered slide per saved slide and disclose that shapes/text are not separately editable. Package/XML, image-dimension and resource checks pass; opening checks in available PowerPoint/LibreOffice hosts remain. Editable PPTX/transitions/video are not implied. |
 | 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Notes are plain strings; equation insertion/rendering is absent. Improve study, engineering and research workflows. | Migrate plain notes losslessly; stage a bounded formatting model/editor with lists/emphasis, searchable plain-text projection and existing save/draft safety. Add an explicit supported LaTeX subset with edit/preview/error handling and export parity. Do not execute arbitrary TeX, lose unsupported formatting silently or mistake an image path for equation support. Deliver notes and equations as separate vertical slices; reuse XV4 for packaged assets where needed. |
 | 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns.** The TreeTable structure exists but currently shares a stacking layout; Gantt has scheduling data, not a task-column Tree Table editor. | Add title/start/due/duration/progress columns using existing validated scheduling edits, with row/topic identity, keyboard navigation and Map/Gantt synchronization. Column changes and sorting do not reorder the underlying topic hierarchy silently. Cover working-day rules, invalid edits, Undo/Redo, saved view choices and output scope. No duplicate scheduling engine. |
 | 9 / XV9 | P2 / R9 | **Durable local AI conversations.** The shipped panel labels history session-only; restarting loses research continuity and there are no named per-file threads. | Add opt-in bounded app-local history and new/rename/select/delete threads keyed to stable document identity. Reopen/restart, Save As, duplicate/moved files and recovery must not mix unrelated conversations. Store no API credentials, never resend on reopen, retain explicit Send/scope review, provide retention/delete controls and keep transcripts out of normal document/export output unless explicitly included. Preserve session-only mode and test failed writes, cancellation and stale-source isolation. |

@@ -1,6 +1,9 @@
-use crate::{ExportOptions, IoError, zip_entry};
+use crate::{ExportOptions, ImportReport, ImportWarning, IoError, zip_entry};
 use serde_json::json;
-use std::io::{Cursor, Write};
+use std::{
+    collections::BTreeSet,
+    io::{Cursor, Write},
+};
 use thinoda_core::{
     OutlineNode, Sheet, TopicId, Workbook,
     outline::{parse_indented_text, to_indented_text},
@@ -115,7 +118,7 @@ pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
                 out.push_str(&topic.title);
                 out.push('\n');
             } else {
-                out.push_str(&"  ".repeat(depth - 2));
+                out.push_str(&"  ".repeat(depth - 1));
                 out.push_str("- ");
                 out.push_str(&topic.title);
                 out.push('\n');
@@ -462,6 +465,101 @@ pub(crate) fn textbundle_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u
     let a = format!("{name}.textbundle/info.json");
     let b = format!("{name}.textbundle/text.md");
     archive(&[(&a, &info), (&b, md.as_bytes())])
+}
+
+pub(crate) fn textbundle_import(bytes: &[u8]) -> Result<ImportReport, IoError> {
+    const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+    const MAX_MARKDOWN_BYTES: u64 = 16 * 1024 * 1024;
+
+    if bytes.len() > MAX_ARCHIVE_BYTES || !bytes.starts_with(b"PK\x03\x04") {
+        return Err(IoError::Invalid(
+            "invalid or oversized TextBundle archive".into(),
+        ));
+    }
+
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let names = crate::validate_document_archive(&mut archive)?;
+    let info_paths: Vec<_> = names
+        .iter()
+        .filter(|name| name.as_str() == "info.json" || name.ends_with(".textbundle/info.json"))
+        .cloned()
+        .collect();
+    if info_paths.len() != 1 {
+        return Err(IoError::Invalid(
+            "TextBundle must contain exactly one info.json".into(),
+        ));
+    }
+
+    let info_path = &info_paths[0];
+    let root = info_path
+        .strip_suffix("info.json")
+        .ok_or_else(|| IoError::Invalid("invalid TextBundle info path".into()))?;
+    if !root.is_empty() && !root.ends_with(".textbundle/") {
+        return Err(IoError::Invalid(
+            "TextBundle info.json must be at the bundle root".into(),
+        ));
+    }
+    let info: serde_json::Value = serde_json::from_slice(&crate::zip_entry_with_limit(
+        &mut archive,
+        info_path,
+        1024 * 1024,
+    )?)?;
+    let version = info.get("version").and_then(serde_json::Value::as_u64);
+    if !matches!(version, Some(1 | 2)) {
+        return Err(IoError::Invalid("unsupported TextBundle version".into()));
+    }
+    let content_type = info
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| IoError::Invalid("TextBundle info.json is missing type".into()))?;
+    if !matches!(
+        content_type,
+        "net.daringfireball.markdown" | "text/markdown"
+    ) {
+        return Err(IoError::Invalid(
+            "TextBundle content type is not Markdown".into(),
+        ));
+    }
+
+    let markdown_path = [format!("{root}text.md"), format!("{root}text.markdown")]
+        .into_iter()
+        .find(|path| names.contains(path))
+        .ok_or_else(|| IoError::Invalid("TextBundle is missing its Markdown document".into()))?;
+    let markdown = crate::zip_entry_with_limit(&mut archive, &markdown_path, MAX_MARKDOWN_BYTES)?;
+    let text = std::str::from_utf8(&markdown)
+        .map_err(|error| IoError::Invalid(format!("TextBundle Markdown is not UTF-8: {error}")))?;
+
+    let mut warnings = BTreeSet::new();
+    let expected_info = info_path.as_str();
+    let expected_markdown = markdown_path.as_str();
+    for path in &names {
+        if path == expected_info || path == expected_markdown || path.ends_with('/') {
+            continue;
+        }
+        if path.starts_with(&format!("{root}assets/")) {
+            warnings.insert(ImportWarning::Resources);
+        } else {
+            warnings.insert(ImportWarning::Other);
+        }
+    }
+    if text.contains("![") {
+        warnings.insert(ImportWarning::Resources);
+    }
+    if text.contains("](") {
+        warnings.insert(ImportWarning::Links);
+    }
+    if ["**", "__", "~~", "`", "\n>", "\n|"]
+        .iter()
+        .any(|marker| text.contains(marker))
+    {
+        warnings.insert(ImportWarning::Formatting);
+    }
+
+    Ok(ImportReport {
+        format: crate::Format::TextBundle,
+        workbook: markdown_import(text.as_bytes())?,
+        warnings: warnings.into_iter().collect(),
+    })
 }
 
 #[cfg(test)]
