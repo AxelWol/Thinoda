@@ -131,10 +131,19 @@ mod imp {
 
     /// Offer bytes to the user as a file download.
     pub fn download(file_name: &str, bytes: &[u8]) -> Result<(), String> {
+        download_as(file_name, bytes, super::mime_for(file_name))
+    }
+
+    /// Opaque attachments always use a download, never an extension-derived active type.
+    pub fn download_opaque(file_name: &str, bytes: &[u8]) -> Result<(), String> {
+        download_as(file_name, bytes, "application/octet-stream")
+    }
+
+    fn download_as(file_name: &str, bytes: &[u8], media_type: &str) -> Result<(), String> {
         let array = js_sys::Uint8Array::from(bytes);
         let parts = js_sys::Array::of1(&array);
         let options = web_sys::BlobPropertyBag::new();
-        options.set_type(super::mime_for(file_name));
+        options.set_type(media_type);
         let blob =
             web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).map_err(err)?;
         let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(err)?;
@@ -225,7 +234,7 @@ mod imp {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use imp::{download, print_html, prompt_file_name};
+pub use imp::{download, download_opaque, print_html, prompt_file_name};
 
 /// Print a prepared PNG page with the browser's print dialog.
 #[cfg(target_arch = "wasm32")]

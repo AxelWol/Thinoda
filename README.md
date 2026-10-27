@@ -142,10 +142,29 @@ those system-owned controls. WinGet publishing remains paused.
   All shipped languages and Light/Dark/System use the same controls. Browser
   picker results are bound to their original document/sheet/topic/revision;
   canceled or stale requests cannot insert into another selection.
-  Attachments and XMind image interoperability remain open. Editable non-native
+  XMind image interoperability remains open. Editable non-native
   exports reject embedded resources rather than discard them; visual output also
   rejects malformed, missing, unsupported or legacy path/URL images. No URL is
   fetched and no image file is opened automatically.
+- **Local attachment topics (XV4, partial):** select one topic and choose
+  Insert > Attachment to pick a local file (1 byte–8 MiB). A child topic with a
+  paperclip title is inserted and selected; source bytes are embedded unchanged,
+  not linked. Any file type can be stored, but nothing is interpreted, executed,
+  fetched or opened. Style > Attachment shows the sanitized filename and byte
+  size, with a separate **Save/Download attachment** action. Desktop asks for a
+  save destination; web prompts for a name and offers a browser download.
+  Save only files you trust. No external application is launched, and insertion
+  never saves or opens the file automatically. Undo/redo, native `.thinoda` v3,
+  recovery and resource-aware branch/sheet clipboard retain bytes and per-topic
+  names; normal Delete removes the topic. Limits remain 32 MiB/sheet,
+  64 MiB/workbook, 128 resource entries and 16 MiB encoded sheet clipboard.
+  Topic deletion can retain unreferenced embedded blobs in the saved archive;
+  it is not secure erasure. Retained blobs still count toward limits and export
+  restrictions; automatic resource cleanup is not implemented yet.
+  All ten languages and Light/Dark/System share this workflow. Non-native exports
+  (including visual output/print/Pitch) explicitly refuse attachment-bearing
+  documents rather than discard bytes. XMind attachment exchange, image drag/drop
+  and direct resize handles remain open; XV4 is not complete.
 - Map > Theme > Global Font and Style > Text > Font Family use installed system
   font faces, not just stored names. Per-topic Auto inherits the map font.
   Canvas layout, painting, inline editing and Map Shot share the selected face;

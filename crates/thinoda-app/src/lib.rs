@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod app;
+mod attachments;
 pub mod brand;
 mod command_icons;
 mod command_ids;

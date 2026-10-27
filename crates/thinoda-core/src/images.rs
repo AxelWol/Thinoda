@@ -116,10 +116,10 @@ pub fn set_image(
     t.image_size = None;
     t.image_below = false;
     if let Some(old) = old
-        && !sheet
-            .topics
-            .values()
-            .any(|t| t.image.as_ref() == Some(&old))
+        && !sheet.topics.values().any(|t| {
+            t.image.as_ref() == Some(&old)
+                || t.attachment.as_ref().is_some_and(|a| a.resource == old)
+        })
         && let Some(id) = old.strip_prefix(crate::resources::RESOURCE_PREFIX)
     {
         sheet.resources.entries.remove(id);
@@ -128,7 +128,21 @@ pub fn set_image(
         if !valid_size(size) {
             return Err("invalid image display size".into());
         }
+        let media_type = resource.media_type.clone();
         let reference = sheet.resources.insert(resource)?;
+        // An opaque attachment may already own these exact bytes. Only an explicit,
+        // bounded image decode may promote its generic metadata; filename suffixes
+        // never establish the type. Per-topic attachment filenames remain unchanged.
+        if let Some(id) = reference.strip_prefix(crate::resources::RESOURCE_PREFIX)
+            && let Some(stored) = sheet.resources.entries.get_mut(id)
+            && stored.media_type == "application/octet-stream"
+            && matches!(media_type.as_str(), "image/png" | "image/jpeg")
+        {
+            if decode(stored.bytes())?.media_type != media_type {
+                return Err("image media type does not match its content".into());
+            }
+            stored.media_type = media_type;
+        }
         let t = sheet
             .topics
             .get_mut(&topic)
@@ -142,6 +156,9 @@ pub fn set_image(
 /// Visual outputs must not silently omit unsupported resource kinds. Unreferenced
 /// PNG/JPEG blobs retained by older edits have no visible placement.
 pub fn validate_visual(sheet: &Sheet) -> Result<std::collections::BTreeMap<String, Vec2>, String> {
+    if sheet.topics.values().any(|t| t.attachment.is_some()) {
+        return Err("visual output does not support attachment topics yet".into());
+    }
     let mut dimensions = std::collections::BTreeMap::new();
     for (id, resource) in &sheet.resources.entries {
         let decoded = decode(resource.bytes())?;
@@ -193,10 +210,81 @@ mod tests {
             assert_eq!(decoded.preview().rgba.len(), 40 * 20 * 4);
             assert!(decode(&bytes[..bytes.len() / 2]).is_err());
         }
+
         for bytes in [b"GIF89a".as_slice(), b"<svg/>", b"", b"not an image"] {
             assert!(decode(bytes).is_err());
         }
         assert!(decode(&vec![0; MAX_RESOURCE_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn image_after_opaque_attachment_promotes_only_verified_type_and_undo_restores_it() {
+        let bytes = encoded(ImageFormat::Png);
+        let mut sheet = crate::Sheet::new("Evidence", "Root");
+        let root = sheet.root;
+        let attachment =
+            crate::attachments::insert(&mut sheet, root, "evidence.bin", bytes.clone()).unwrap();
+        let reference = sheet
+            .topic(attachment)
+            .unwrap()
+            .attachment
+            .as_ref()
+            .unwrap()
+            .resource
+            .clone();
+        let mut doc = Document::new(Workbook::new(sheet));
+        doc.edit_sheet("Image", |s| {
+            set_image(
+                s,
+                root,
+                Some((
+                    Resource::new("image.png", "image/png", bytes.clone()).unwrap(),
+                    default_size(40, 20),
+                )),
+            )
+            .map_err(crate::edit::EditError::Invalid)
+        })
+        .unwrap();
+        assert_eq!(doc.sheet().resources.entries.len(), 1);
+        assert_eq!(
+            doc.sheet().resources.get(&reference).unwrap().media_type,
+            "image/png"
+        );
+        assert_eq!(
+            doc.sheet().resources.get(&reference).unwrap().bytes(),
+            bytes
+        );
+        assert_eq!(
+            doc.sheet()
+                .topic(attachment)
+                .unwrap()
+                .attachment
+                .as_ref()
+                .unwrap()
+                .name,
+            "evidence.bin"
+        );
+        doc.undo();
+        assert_eq!(
+            doc.sheet().resources.get(&reference).unwrap().media_type,
+            "application/octet-stream"
+        );
+        let before = doc.workbook().clone();
+        assert!(
+            doc.edit_sheet("Wrong type", |s| {
+                set_image(
+                    s,
+                    root,
+                    Some((
+                        Resource::new("image.jpg", "image/jpeg", bytes).unwrap(),
+                        default_size(40, 20),
+                    )),
+                )
+                .map_err(crate::edit::EditError::Invalid)
+            })
+            .is_err()
+        );
+        assert_eq!(doc.workbook(), &before);
     }
 
     #[test]

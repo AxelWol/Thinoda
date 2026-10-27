@@ -48,3 +48,4 @@ pub use schedule::{
     MAX_TASK_DURATION_DAYS, SCHEDULING_VERSION, ScheduleError, SchedulingData, Task,
     TaskDependency, Weekday, WorkCalendar,
 };
+pub mod attachments;

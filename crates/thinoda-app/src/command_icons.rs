@@ -21,6 +21,8 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::Print => (I::PRINT, None, T::File),
         Cmd::TaskPlanning => (I::TASK_PLANNING, None, T::Create),
         Cmd::LocalImage => (I::IMAGE, Some(I::ADD), T::Create),
+        Cmd::Attachment => (I::NEW_FILE, Some(I::ADD), T::Create),
+        Cmd::SaveAttachment => (I::SAVE_AS, None, T::File),
         Cmd::CreateZone => (I::ZONES, Some(I::ADD), T::Create),
         Cmd::EditZone => (I::ZONES, Some(I::EDIT), T::Edit),
         Cmd::Zones => (I::ZONES, None, T::View),

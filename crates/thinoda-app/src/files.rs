@@ -26,6 +26,7 @@ pub enum Purpose {
     Import,
     Merge,
     Image(u64),
+    Attachment(u64),
 }
 
 /// Files that finished uploading into the browser VFS.
@@ -145,12 +146,36 @@ pub fn deliver(path: &Path) -> Result<(), String> {
         if is_scratch(path) {
             let _ = pfs::remove_file(path);
         }
+
         result
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = path;
         Ok(())
+    }
+}
+
+/// Same VFS delivery/cleanup as exports, but never infer an active MIME type
+/// (HTML/SVG, for example) from an untrusted attachment filename.
+pub fn deliver_attachment(path: &Path) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = pfs::read(path).map_err(|e| e.to_string())?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment");
+        let name = thinoda_core::attachments::safe_name(name);
+        let result = thinoda_platform::web::download_opaque(&name, &bytes);
+        if is_scratch(path) {
+            let _ = pfs::remove_file(path);
+        }
+        result
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        deliver(path)
     }
 }
 
@@ -273,7 +298,10 @@ mod web {
     }
 
     fn deliver(picked: Picked) {
-        if picked.paths.is_empty() && picked.errors.is_empty() {
+        if picked.paths.is_empty()
+            && picked.errors.is_empty()
+            && !matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+        {
             return;
         }
         INBOX.with(|inbox| inbox.borrow_mut().push(picked));
@@ -288,14 +316,20 @@ mod web {
         match bytes.and_then(|bytes| {
             let directory = match picked.purpose {
                 Purpose::Image(request) => format!("/ImageUploads/{request}"),
+                Purpose::Attachment(request) => format!("/AttachmentUploads/{request}"),
                 _ => WEB_DOCUMENTS.into(),
             };
-            if matches!(picked.purpose, Purpose::Image(_))
+            if matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
                 && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
             {
-                return Err("image exceeds 8 MiB".into());
+                return Err("local resource exceeds 8 MiB".into());
             }
-            store_upload_in(Path::new(&directory), name, &bytes).map_err(|e| e.to_string())
+            let name = if matches!(picked.purpose, Purpose::Attachment(_)) {
+                thinoda_core::attachments::safe_name(name)
+            } else {
+                name.to_owned()
+            };
+            store_upload_in(Path::new(&directory), &name, &bytes).map_err(|e| e.to_string())
         }) {
             Ok(path) => picked.paths.push(path),
             Err(error) => picked.errors.push(format!("{name}: {error}")),
@@ -327,10 +361,10 @@ mod web {
                 errors: Vec::new(),
             };
             for handle in handles {
-                if matches!(purpose, Purpose::Image(_))
+                if matches!(purpose, Purpose::Image(_) | Purpose::Attachment(_))
                     && handle.inner().size() > thinoda_core::resources::MAX_RESOURCE_BYTES as f64
                 {
-                    picked.errors.push("image exceeds 8 MiB".into());
+                    picked.errors.push("local resource exceeds 8 MiB".into());
                     continue;
                 }
                 let bytes = handle.read().await;

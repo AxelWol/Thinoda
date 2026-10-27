@@ -253,6 +253,33 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Attachment", "Anhang"),
+    ("Save/Download attachment", "Anhang speichern/herunterladen"),
+    ("bytes", "Bytes"),
+    (
+        "Opaque file (not inspected)",
+        "Dateiinhalt nicht untersucht",
+    ),
+    (
+        "Could not insert attachment",
+        "Anhang konnte nicht eingefügt werden",
+    ),
+    (
+        "Could not save attachment",
+        "Anhang konnte nicht gespeichert werden",
+    ),
+    (
+        "Attachment request expired. Select a topic and try again.",
+        "Anhangsanfrage abgelaufen. Thema auswählen und erneut versuchen.",
+    ),
+    (
+        "Files stay embedded. Save only files you trust; nothing is opened automatically.",
+        "Dateien bleiben eingebettet. Nur vertrauenswürdige Dateien speichern; nichts wird automatisch geöffnet.",
+    ),
+    (
+        "Select a topic, then Insert > Attachment to add a local file as a child topic (1 byte to 8 MiB). Style > Attachment offers a separate Save/Download action. Files are opaque: nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported yet.",
+        "Ein Thema auswählen und über Einfügen > Anhang eine lokale Datei als Unterthema hinzufügen (1 Byte bis 8 MiB). Stil > Anhang bietet eine separate Aktion zum Speichern/Herunterladen. Dateiinhalte werden nicht interpretiert: Nichts wird geöffnet oder ausgeführt. Als .thinoda speichern, um Anhänge zu behalten; andere Exporte werden noch nicht unterstützt.",
+    ),
     ("Local Image", "Lokales Bild"),
     ("Insert image", "Bild einfügen"),
     ("Replace image", "Bild ersetzen"),

@@ -206,6 +206,8 @@ impl ThinodaApp {
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
                 ("Local Image", Cmd::LocalImage),
+                ("Attachment", Cmd::Attachment),
+                ("Save/Download attachment", Cmd::SaveAttachment),
             ])),
             submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
                 .chain(std::iter::once(MenuEntry::Separator))

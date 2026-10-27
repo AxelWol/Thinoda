@@ -1299,6 +1299,18 @@ impl ThinodaApp {
                                         Cmd::LocalImage,
                                     ),
                                     (
+                                        icons::NEW_FILE,
+                                        "Attachment",
+                                        self.command_available(&Cmd::Attachment),
+                                        Cmd::Attachment,
+                                    ),
+                                    (
+                                        icons::SAVE_AS,
+                                        "Save/Download attachment",
+                                        self.command_available(&Cmd::SaveAttachment),
+                                        Cmd::SaveAttachment,
+                                    ),
+                                    (
                                         icons::TODO,
                                         "To-Do",
                                         has_selection,
@@ -1628,6 +1640,18 @@ impl ThinodaApp {
                 t("Local Image"),
                 Cmd::LocalImage,
                 self.command_available(&Cmd::LocalImage),
+            );
+            item(
+                ui,
+                t("Attachment"),
+                Cmd::Attachment,
+                self.command_available(&Cmd::Attachment),
+            );
+            item(
+                ui,
+                t("Save/Download attachment"),
+                Cmd::SaveAttachment,
+                self.command_available(&Cmd::SaveAttachment),
             );
         }
         ui.separator();
@@ -2904,6 +2928,7 @@ impl ThinodaApp {
         }
         self.quick_styles(ui);
         self.image_properties(ui);
+        self.attachment_properties(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };

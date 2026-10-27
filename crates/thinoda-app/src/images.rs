@@ -12,12 +12,12 @@ pub(crate) struct ImageRequest {
     document: String,
     sheet: usize,
     root: TopicId,
-    topic: TopicId,
+    pub(crate) topic: TopicId,
     revision: u64,
 }
 
 impl ImageRequest {
-    fn matches(&self, doc: &crate::doc::OpenDoc) -> bool {
+    pub(crate) fn matches(&self, doc: &crate::doc::OpenDoc) -> bool {
         self.document == doc.key
             && self.sheet == doc.doc.active_index()
             && self.root == doc.doc.sheet().root
@@ -25,6 +25,17 @@ impl ImageRequest {
             && doc.view.selection == [self.topic]
             && doc.view.selected_object.is_none()
             && !doc.has_inspector_changes()
+    }
+
+    pub(crate) fn capture(doc: &crate::doc::OpenDoc, request: u64) -> Option<Self> {
+        Some(Self {
+            request,
+            document: doc.key.clone(),
+            sheet: doc.doc.active_index(),
+            root: doc.doc.sheet().root,
+            topic: doc.view.primary()?,
+            revision: doc.doc.state_id(),
+        })
     }
 }
 
@@ -84,7 +95,7 @@ impl ThinodaApp {
             return;
         }
         let result = (|| -> Result<(), String> {
-            let bytes = read_image(path)?;
+            let bytes = read_local_resource(path)?;
             let decoded = images::decode(&bytes)?;
             let size = images::default_size(decoded.width, decoded.height);
             let name = path
@@ -112,7 +123,7 @@ impl ThinodaApp {
     }
 }
 
-fn read_image(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read_local_resource(path: &Path) -> Result<Vec<u8>, String> {
     let max = thinoda_core::resources::MAX_RESOURCE_BYTES;
     #[cfg(not(target_arch = "wasm32"))]
     let bytes = {
@@ -127,7 +138,7 @@ fn read_image(path: &Path) -> Result<Vec<u8>, String> {
     #[cfg(target_arch = "wasm32")]
     let bytes = thinoda_platform::fs::read(path).map_err(|e| e.to_string())?;
     if bytes.len() > max {
-        return Err("image exceeds 8 MiB".into());
+        return Err("local resource exceeds 8 MiB".into());
     }
     Ok(bytes)
 }

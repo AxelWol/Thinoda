@@ -29,11 +29,13 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
-- **Embedded resources and local images (XV4, partial)**:
+- **Embedded resources, local images and attachment topics (XV4, partial)**:
   `Sheet.resources` owns bounded immutable `Arc<[u8]>` blobs; subtree clipboard,
   full-sheet copy/merge and undo snapshots carry the bytes without deep-copying
   every history entry. SHA-256 content IDs use `thinoda-resource:<digest>` image
-  references. Destination metadata wins when equal bytes deduplicate; branch
+  references. `Topic.attachment` holds a resource URI plus its own portable
+  basename, preserving different original names for identical bytes. Destination
+  resource metadata wins when equal bytes deduplicate; branch
   copy includes only its referenced resources, while full-sheet copy preserves
   the entire store. Masked copies strip all resource bytes and references.
   Limits are 8 MiB/resource, 32 MiB/sheet, 64 MiB/workbook and 128 logical entries
@@ -58,7 +60,8 @@ graph TD
   capped at 1024 map units/side and checked by transactional edits and imports.
   Layout places the image above/below the title/labels. App insert/replace/reset
   uses a 160 × 100 fit without upscaling; proportional width uses source dimensions.
-  Replace/remove releases only an old image's last reference; undo owns the old
+  Replace/remove releases an old image only when no image or attachment still
+  references it; undo owns the old
   store. Masking clears bytes, references and sizing.
   Picker purpose carries a request ID; its app owner binds document key, active
   sheet/index/root, selected topic and revision. Browser uploads use request-scoped
@@ -73,8 +76,29 @@ graph TD
   orphan blobs; unreferenced valid PNG/JPEG blobs have no visible placement.
   Legacy paths/URLs still load with a map placeholder but cannot produce silently
   incomplete visual output. Other non-native exports still refuse resource-bearing
-  documents. Attachment UI/opening and XMind resource exchange remain open.
-  No external file is opened automatically; attachment opening requires consent.
+  documents. Attachment topics also explicitly reject visual output until a
+  supported representation exists (even if their bytes decode as images).
+  `attachments::insert` adds one child, expands its parent and embeds opaque bytes
+  within a Document transaction. A paperclip title and selected-topic inspector
+  identify the file; the inspector shows its byte size, uninspected status and
+  trust warning. Resource metadata uses `application/octet-stream`: no filename
+  extension establishes trust, no attachment is decoded or imported as a workbook,
+  and there is no type whitelist. Empty files follow the store's existing 1-byte
+  minimum. If a later explicit Local Image action selects the same bytes,
+  bounded verified image decoding may promote shared generic resource metadata
+  to PNG/JPEG without changing any attachment's per-topic filename or bytes;
+  undo restores the metadata. The attachment flow itself never decodes the file.
+  `attachments::safe_name` strips paths, replaces controls/directional
+  controls and unsafe punctuation, bounds UTF-8 length and handles reserved
+  Windows device names. Loaded attachment names/references are validated too.
+  Picker completion/cancellation uses the same ownership contract as images,
+  independent request IDs and request-scoped `/AttachmentUploads` scratch paths.
+  Save/Download is a second command, never an insertion side effect. Native uses
+  a destination chooser and atomic byte write; browser uses VFS scratch delivery
+  with an opaque download Blob MIME, safe filename and cleanup. No shell-open,
+  system-default launch, URL fetching, scripts/macros or auto-open is involved.
+  XMind resource exchange, direct image handles and drag/drop insertion remain
+  open; external-app opening is not promised by this cross-platform contract.
 - **Calendar inputs**: `thinoda_ui::date_field` combines an ISO text edit and
   localized, keyboard-operable month popup. The app supplies translated labels
   and `WorkCalendar::is_working_day` availability for task dates; exceptions allow
