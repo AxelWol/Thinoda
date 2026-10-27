@@ -172,7 +172,7 @@ installed-XMind interoperability or support for every XMind version. The
 libFuzzer campaign remains unverified on this Windows host because the MSVC
 AddressSanitizer runtime is unavailable.
 
-**Outliner image previews (local, uncommitted):** rows show a small preview only
+**Outliner image previews (in PR #90):** rows show a small preview only
 when the topic points to a valid, embedded PNG/JPEG resource. The Outliner calls
 the canvas's existing bounded decode/texture cache; it does not fetch or open
 legacy paths or URLs, and it does not present attachment bytes, unsupported
