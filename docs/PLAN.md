@@ -17,8 +17,8 @@ UR4 live transitions/composition and the XV4 storage foundation were merged in
 The local-image follow-ups are merged in PR #86/#87; release monitoring remains
 separate. Attachment topics were submitted in [PR #88](https://github.com/AxelWol/Thinoda/pull/88)
 against current `main`; its cross-platform CI was pending when this update began.
-This branch adds a follow-up for selection-based image drag/drop; that addition
-is still local and requires its own CI run.
+The selection-based image drag/drop follow-up is now part of PR #88 and its
+cross-platform CI has started on the updated head.
 XV4 is **in progress, not complete**.
 The first slice adds sheet-owned, immutable content-addressed resources,
 native archive v3, base64 recovery and versioned sheet clipboard, bounded
@@ -71,7 +71,7 @@ recovery, owned branch/sheet clipboard and undo preserve opaque bytes. Non-nativ
 editable and visual outputs explicitly refuse attachment-bearing documents,
 including attachments whose bytes happen to be PNG/JPEG.
 
-**Image drop follow-up (local):** dropping PNG/JPEG files onto the app inserts
+**Image drop follow-up (PR #88):** dropping PNG/JPEG files onto the app inserts
 the image on the single selected topic, using the same bounded decode, resource
 store, undo and inspector flow as the picker. Other dropped files keep their
 existing open behavior. The drop is selection-based rather than a pointer-target
@@ -79,7 +79,7 @@ placement; web uploads use the existing VFS drop pipeline and are removed after
 the image bytes are embedded. The selected document/sheet/topic/revision is
 captured before asynchronous web upload, so a stale completion cannot target a
 new selection. Three focused native tests cover selected-topic insertion/undo,
-the no-selection no-op and stale completion; broader platform checks are pending.
+the no-selection no-op and stale completion; cross-platform CI is pending.
 
 Next within XV4: supported XMind resource exchange, direct image resize handles
 and Outliner previews. External-application opening is deliberately not promised
