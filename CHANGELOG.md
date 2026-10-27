@@ -13,6 +13,21 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## [0.15.0](https://github.com/AxelWol/Thinoda/compare/v0.14.0...v0.15.0) (2026-10-27)
+
+
+### Features
+
+* add live Pitch transitions and topic builds ([0e392ca](https://github.com/AxelWol/Thinoda/commit/0e392ca1654a1275207b187821037e4ede31af0e))
+* **core:** add bounded portable resource storage foundation ([aa4acde](https://github.com/AxelWol/Thinoda/commit/aa4acde0c61d76ebcd2d77117e0ef33f39535fbb))
+* shared dialogs, calendar inputs, live Pitch and native AI providers ([#85](https://github.com/AxelWol/Thinoda/issues/85)) ([cbbcf6f](https://github.com/AxelWol/Thinoda/commit/cbbcf6f4a981a4415e43fafd569d1c8b4ce1afeb))
+* unify dialogs, add date pickers and native AI provider selection ([09fe25d](https://github.com/AxelWol/Thinoda/commit/09fe25d2c1abac120cccd1af076e95b9399ce0bc))
+
+
+### Documentation
+
+* record verified v0.14.0 release and deployment ([a19c3d1](https://github.com/AxelWol/Thinoda/commit/a19c3d128947ca7634d25641f403bd0d1e50ddf5))
+
 ## [0.14.0](https://github.com/AxelWol/Thinoda/compare/v0.13.0...v0.14.0) (2026-10-26)
 
 
