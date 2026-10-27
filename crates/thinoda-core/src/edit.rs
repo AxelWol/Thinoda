@@ -767,6 +767,14 @@ impl Sheet {
         for subtree in subtrees {
             subtree.resources.validate().map_err(EditError::Invalid)?;
             for topic in &subtree.topics {
+                if let Some(attachment) = &topic.attachment {
+                    if attachment.name != crate::attachments::safe_name(&attachment.name) {
+                        return Err(EditError::Invalid("invalid attachment filename".into()));
+                    }
+                    resources
+                        .get(&attachment.resource)
+                        .map_err(EditError::Invalid)?;
+                }
                 if let Some(reference) = topic.image.as_deref()
                     && reference.starts_with(crate::resources::RESOURCE_PREFIX)
                 {

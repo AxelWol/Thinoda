@@ -447,3 +447,12 @@ Reset Size|Redefinir tamanho
 PNG/JPEG only. Resizing keeps the aspect ratio.|Apenas PNG/JPEG. O redimensionamento mantém as proporções.
 Could not insert image|Não foi possível inserir a imagem
 Image request expired. Select a topic and try again.|A solicitação de imagem expirou. Selecione um tópico e tente novamente.
+Attachment|Anexo
+Save/Download attachment|Salvar/Baixar anexo
+bytes|bytes
+Opaque file (not inspected)|Arquivo não inspecionado
+Could not insert attachment|Não foi possível inserir o anexo
+Could not save attachment|Não foi possível salvar o anexo
+Attachment request expired. Select a topic and try again.|A solicitação de anexo expirou. Selecione um tópico e tente novamente.
+Files stay embedded. Save only files you trust; nothing is opened automatically.|Os arquivos permanecem incorporados. Salve apenas arquivos confiáveis; nada é aberto automaticamente.
+Select a topic, then Insert > Attachment to add a local file as a child topic (1 byte to 8 MiB). Style > Attachment offers a separate Save/Download action. Files are opaque: nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported yet.|Selecione um tópico e depois Inserir > Anexo para adicionar um arquivo local como subtópico (1 byte a 8 MiB). Estilo > Anexo oferece uma ação separada para salvar/baixar. Os arquivos não são interpretados: nada é aberto ou executado. Salve como .thinoda para preservar os anexos; outras exportações ainda não são compatíveis.

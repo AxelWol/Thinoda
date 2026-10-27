@@ -522,6 +522,13 @@ mod lock_tests {
         sheet.topic_mut(sheet.root).unwrap().image_size =
             Some(thinoda_core::Vec2::new(240.0, 120.0));
         sheet.topic_mut(sheet.root).unwrap().image_below = true;
+        thinoda_core::attachments::insert(
+            sheet,
+            sheet.root,
+            "opaque.docm",
+            b"\0PK\x03\x04macro bytes\xff".to_vec(),
+        )
+        .unwrap();
         manager
             .snapshot("resource", SnapshotMeta::default(), &book)
             .unwrap();

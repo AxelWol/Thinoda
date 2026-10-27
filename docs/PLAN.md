@@ -14,8 +14,12 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 UR4 live transitions/composition and the XV4 storage foundation were merged in
 [PR #85](https://github.com/AxelWol/Thinoda/pull/85) on 2026-10-27 (squash
 `cbbcf6f4a981a4415e43fafd569d1c8b4ce1afeb`, including foundation `aa4acde`).
-The uncommitted local-image continuation below was **not** included; release
-monitoring remains separate. XV4 is **in progress, not complete**.
+The local-image follow-ups are merged in PR #86/#87; release monitoring remains
+separate. Attachment topics were submitted in [PR #88](https://github.com/AxelWol/Thinoda/pull/88)
+against current `main`; its cross-platform CI was pending when this update began.
+The selection-based image drag/drop follow-up is now part of PR #88 and its
+cross-platform CI has started on the updated head.
+XV4 is **in progress, not complete**.
 The first slice adds sheet-owned, immutable content-addressed resources,
 native archive v3, base64 recovery and versioned sheet clipboard, bounded
 transactional paste/add/duplicate/merge and preservation through undo.
@@ -31,9 +35,9 @@ permission**. Thinoda should preserve that predictable selection/context model
 across map/outline/ribbon rather than add separate platform-specific import
 flows. Attachment preview/open must never auto-execute embedded content; the
 web path must offer explicit download rather than promise native application
-launch. Attachment behavior remains acceptance criteria, not delivered UI.
+launch. The attachment continuation implements safe saving only, not app launch.
 
-**Local-image continuation (worktree, not committed/released):** bounded PNG/JPEG
+**Merged local-image continuation:** bounded PNG/JPEG
 decode (8 MiB encoded, 4096/side, 4 megapixels checked before full pixel decode),
 selection-owned native/browser picker, insert/replace/remove, proportional width,
 above/below placement and Reset Size in Style > Local Image. Reset uses a
@@ -46,9 +50,48 @@ renders original bytes. Native v3, recovery, clipboard and undo preserve bytes,
 placement and size. Editable non-native exports still reject resources; visual
 output rejects unsupported/malformed bytes and legacy file/URL references.
 
-Next within XV4: attachment save/open consent and supported XMind/external
-resource exchange. Drag/drop insertion and direct image resize handles are not
-implemented; labeled inspector controls are the intentional first-slice scope.
+**Attachment-topic continuation (PR #88, not released):** select one
+topic and use Insert > Attachment (menu/ribbon, palette, context insert) to choose
+one local file, 1 byte–8 MiB. A child topic with a paperclip title is added and
+selected in one undoable transaction, expanding its parent. It owns a validated
+attachment reference and per-topic portable basename; equal bytes share storage
+without conflating filenames. Files of any type remain opaque, with generic
+`application/octet-stream` metadata rather than extension-based trust or parsing.
+Style > Attachment shows filename, size and an explicit Save/Download action.
+Native saving asks for a destination and writes exact bytes; web saving uses the
+existing VFS download delivery with an opaque MIME type and scratch cleanup.
+No shell/system-default open, macro execution, attachment document import,
+path/URL resolution or automatic saving/opening is provided. Deleting the topic
+uses the ordinary Delete action. Existing resource/clipboard/workbook limits
+continue to apply; missing resources and unsafe loaded filenames fail validation.
+Picker ownership reuses the image document/sheet/root/topic/revision/request
+contract; cancellation and old completions cannot clear a newer request.
+All ten catalogs and Light/Dark/System share the inspector/commands. Native v3,
+recovery, owned branch/sheet clipboard and undo preserve opaque bytes. Non-native
+editable and visual outputs explicitly refuse attachment-bearing documents,
+including attachments whose bytes happen to be PNG/JPEG.
+
+**Image drop follow-up (PR #88):** dropping PNG/JPEG files onto the app inserts
+the image on the single selected topic, using the same bounded decode, resource
+store, undo and inspector flow as the picker. Other dropped files keep their
+existing open behavior. The drop is selection-based rather than a pointer-target
+placement; web uploads use the existing VFS drop pipeline and are removed after
+the image bytes are embedded. The selected document/sheet/topic/revision is
+captured before asynchronous web upload, so a stale completion cannot target a
+new selection. Three focused native tests cover selected-topic insertion/undo,
+the no-selection no-op and stale completion; cross-platform CI is pending.
+
+Next within XV4: supported XMind resource exchange, direct image resize handles
+and Outliner previews. External-application opening is deliberately not promised
+without a consistent safe cross-platform contract.
+General topic deletion still follows the existing resource-store policy:
+unreferenced blobs can remain in the sheet (and saved archive); garbage collection
+is not implemented by this slice. Deleting a topic is not secure byte erasure,
+and retained blobs still count toward limits and unsupported-export refusals.
+Image drag/drop insertion is available for PNG/JPEG files when exactly one topic
+is selected; dropping onto a particular topic without selecting it is not
+implemented. Direct image resize handles remain open; the labeled inspector
+controls are still the accessible editing path.
 Keep all shipped locales, Light/Dark/System, native and WASM gates. Only after
 the complete XV4 workflow is verified continue XV5 through XV9 in order.
 
@@ -63,7 +106,7 @@ nor evidence that resource authoring, image decode or XMind resource fidelity
 was delivered by that foundation commit. The image continuation is separate;
 validation below records its actual checks without implying a six-host runtime pass.
 
-Image-continuation verification on Windows:
+Merged image-continuation verification on Windows (historical, not this run):
 - `cargo test --locked -j1 --workspace`: **956 passed, 2 ignored**, 97 suites.
   This full run preceded the final narrow-portrait inspector edge-case adjustment.
 - Final `cargo test --locked -j1 --workspace --lib`: **598 passed**, including
@@ -83,8 +126,38 @@ Image-continuation verification on Windows:
 
 No interactive browser picker session, real print job or macOS/Linux/ARM runtime
 pass was performed here. The native headless UI/IO tests and WASM compilation do
-not replace those host checks. No commit/push/rebase/release-file update was made;
-the verified image work is intended for a follow-up PR, not the merged foundation.
+not replace those host checks. The image work was subsequently merged in
+PR #86/#87. Attachment verification is recorded separately below rather than
+inheriting those test counts.
+
+Attachment-continuation verification on Windows:
+- A full `cargo test --locked -j1 --workspace` run completed: **966 passed,
+  2 ignored, 97 suites**. Sources were finalized during that run; this is not
+  claimed as a fresh full-workspace run after the final MIME/error-label edits.
+- Final `cargo test --locked -j1 -p thinoda-core -p thinoda-app -p thinoda-io
+  -p thinoda-platform --lib`: **439 passed**, including attachment limits/names,
+  deduplicated per-topic names, missing-resource paste rollback, undo/redo,
+  masking, recovery, cancellation/stale ownership, exact native save bytes,
+  theme/catalog coverage and verified image metadata promotion/rollback.
+- Final `cargo test --locked -j1 -p thinoda-io --tests`: **87 passed**.
+- Final app `command_ids`, `e2e`, `topic_fields`, `sidebar_i18n` and
+  `menu_shortcuts` integration tests: **81 passed**.
+- Final native workspace/all-target and WASM (`thinoda-web`, app, platform,
+  AI, IO) strict Clippy pass with `-D warnings`; fmt and third-party notices pass.
+  Edited-file whitespace/conflict-marker checks and direct self-review pass.
+  No Git diff command was run, per the no-Git instruction.
+- One overlapping verification attempt hit Windows LNK1104 because the earlier
+  run still held the ribbon test executable open. After it exited, final scoped
+  tests were run sequentially and passed. A second complete workspace runtime
+  pass after the final edits was not performed. No OS/pagefile settings changed.
+
+All Cargo checks used the dedicated temporary target, incremental off, one build
+job and live AI disabled. No real native chooser, interactive browser picker/
+download, real print job, optional GPU test, macOS/Linux/ARM runtime or external
+application acceptance was performed. Compilation/headless UI/IO checks do not
+replace those host checks. The attachment implementation was rebased onto
+current `main`, committed and submitted in PR #88. Cross-platform CI is pending;
+this is not a release claim.
 
 ## CLI generation provider requirement (2026-10-26)
 

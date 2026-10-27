@@ -25,7 +25,9 @@ pub enum Purpose {
     Open,
     Import,
     Merge,
+    Dropped,
     Image(u64),
+    Attachment(u64),
 }
 
 /// Files that finished uploading into the browser VFS.
@@ -34,6 +36,7 @@ pub struct Picked {
     pub purpose: Purpose,
     pub paths: Vec<PathBuf>,
     pub errors: Vec<String>,
+    pub(crate) image_owner: Option<crate::images::ImageRequest>,
 }
 
 /// Where a save dialog result is written.
@@ -145,12 +148,36 @@ pub fn deliver(path: &Path) -> Result<(), String> {
         if is_scratch(path) {
             let _ = pfs::remove_file(path);
         }
+
         result
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = path;
         Ok(())
+    }
+}
+
+/// Same VFS delivery/cleanup as exports, but never infer an active MIME type
+/// (HTML/SVG, for example) from an untrusted attachment filename.
+pub fn deliver_attachment(path: &Path) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = pfs::read(path).map_err(|e| e.to_string())?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment");
+        let name = thinoda_core::attachments::safe_name(name);
+        let result = thinoda_platform::web::download_opaque(&name, &bytes);
+        if is_scratch(path) {
+            let _ = pfs::remove_file(path);
+        }
+        result
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        deliver(path)
     }
 }
 
@@ -181,18 +208,24 @@ pub fn set_repaint_context(ctx: &egui::Context) {
 
 /// Files dropped onto the window. Desktop: their paths. Web: browsers only expose
 /// contents, which are copied into the VFS and returned later by [`take_picked`].
-pub fn dropped_files(ctx: &egui::Context) -> Vec<PathBuf> {
+pub(crate) fn dropped_files(
+    ctx: &egui::Context,
+    image_owner: Option<crate::images::ImageRequest>,
+) -> Vec<(PathBuf, Option<crate::images::ImageRequest>)> {
     let files = ctx.input(|i| i.raw.dropped_files.clone());
     #[cfg(target_arch = "wasm32")]
     {
         if !files.is_empty() {
-            web::store_dropped(files);
+            web::store_dropped(files, image_owner);
         }
         Vec::new()
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        files.iter().map(|f| f.path().to_path_buf()).collect()
+        files
+            .iter()
+            .map(|file| (file.path().to_path_buf(), image_owner.clone()))
+            .collect()
     }
 }
 
@@ -273,7 +306,10 @@ mod web {
     }
 
     fn deliver(picked: Picked) {
-        if picked.paths.is_empty() && picked.errors.is_empty() {
+        if picked.paths.is_empty()
+            && picked.errors.is_empty()
+            && !matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+        {
             return;
         }
         INBOX.with(|inbox| inbox.borrow_mut().push(picked));
@@ -288,14 +324,23 @@ mod web {
         match bytes.and_then(|bytes| {
             let directory = match picked.purpose {
                 Purpose::Image(request) => format!("/ImageUploads/{request}"),
+                Purpose::Attachment(request) => format!("/AttachmentUploads/{request}"),
                 _ => WEB_DOCUMENTS.into(),
             };
-            if matches!(picked.purpose, Purpose::Image(_))
+            let bounded_image_drop = matches!(picked.purpose, Purpose::Dropped)
+                && crate::images::is_supported_image_path(Path::new(name));
+            if (matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+                || bounded_image_drop)
                 && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
             {
-                return Err("image exceeds 8 MiB".into());
+                return Err("local resource exceeds 8 MiB".into());
             }
-            store_upload_in(Path::new(&directory), name, &bytes).map_err(|e| e.to_string())
+            let name = if matches!(picked.purpose, Purpose::Attachment(_)) {
+                thinoda_core::attachments::safe_name(name)
+            } else {
+                name.to_owned()
+            };
+            store_upload_in(Path::new(&directory), &name, &bytes).map_err(|e| e.to_string())
         }) {
             Ok(path) => picked.paths.push(path),
             Err(error) => picked.errors.push(format!("{name}: {error}")),
@@ -325,12 +370,13 @@ mod web {
                 purpose,
                 paths: Vec::new(),
                 errors: Vec::new(),
+                image_owner: None,
             };
             for handle in handles {
-                if matches!(purpose, Purpose::Image(_))
+                if matches!(purpose, Purpose::Image(_) | Purpose::Attachment(_))
                     && handle.inner().size() > thinoda_core::resources::MAX_RESOURCE_BYTES as f64
                 {
-                    picked.errors.push("image exceeds 8 MiB".into());
+                    picked.errors.push("local resource exceeds 8 MiB".into());
                     continue;
                 }
                 let bytes = handle.read().await;
@@ -340,12 +386,16 @@ mod web {
         });
     }
 
-    pub(super) fn store_dropped(files: Vec<egui::DroppedFileHandle>) {
+    pub(super) fn store_dropped(
+        files: Vec<egui::DroppedFileHandle>,
+        image_owner: Option<crate::images::ImageRequest>,
+    ) {
         wasm_bindgen_futures::spawn_local(async move {
             let mut picked = Picked {
-                purpose: Purpose::Open,
+                purpose: Purpose::Dropped,
                 paths: Vec::new(),
                 errors: Vec::new(),
+                image_owner,
             };
             for file in files {
                 let name = file.path().to_string_lossy().into_owned();

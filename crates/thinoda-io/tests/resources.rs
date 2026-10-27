@@ -13,6 +13,44 @@ fn sample() -> (Workbook, String) {
     (Workbook::new(sheet), reference)
 }
 
+#[test]
+fn attachment_native_and_json_roundtrip_preserve_names_and_opaque_bytes() {
+    let bytes = b"\0PK\x03\x04opaque macro data\xff";
+    let mut sheet = Sheet::new("Attachments", "Root");
+    let root = sheet.root;
+    for name in ["evidence.docm", "different.exe"] {
+        thinoda_core::attachments::insert(&mut sheet, root, name, bytes.to_vec()).unwrap();
+    }
+    let book = Workbook::new(sheet);
+    let archive_bytes = export_bytes(&book, Format::Thinoda, &Default::default()).unwrap();
+    let restored = import_bytes(Format::Thinoda, &archive_bytes).unwrap();
+    assert_eq!(restored, book);
+    assert_eq!(restored.active().resources.entries.len(), 1);
+    assert_eq!(entries(&archive_bytes).len(), 3); // manifest, content, shared blob
+    let json = serde_json::to_vec(&book).unwrap();
+    assert_eq!(import_bytes(Format::Thinoda, &json).unwrap(), book);
+    for format in [
+        Format::XMind,
+        Format::Markdown,
+        Format::Svg,
+        Format::Png,
+        Format::Jpeg,
+        Format::Pdf,
+    ] {
+        assert!(export_bytes(&book, format, &ExportOptions::default()).is_err());
+    }
+    let mut invalid = book.clone();
+    invalid
+        .active_mut()
+        .topics
+        .values_mut()
+        .find_map(|topic| topic.attachment.as_mut())
+        .unwrap()
+        .name = "../escape.exe".into();
+    assert!(export_bytes(&invalid, Format::Thinoda, &Default::default()).is_err());
+    assert!(import_bytes(Format::Thinoda, &serde_json::to_vec(&invalid).unwrap()).is_err());
+}
+
 fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     (0..archive.len())

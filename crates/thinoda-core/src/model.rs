@@ -364,6 +364,9 @@ pub struct Topic {
     /// Embedded resource URI; legacy paths/URLs remain inert and are never fetched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Opaque embedded file; never opened or decoded as a document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<crate::attachments::Attachment>,
     /// Display size in map units; absent in legacy documents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_size: Option<Vec2>,
@@ -393,6 +396,7 @@ impl Topic {
             branch_side: None,
             todo: None,
             image: None,
+            attachment: None,
             image_size: None,
             image_below: false,
             child_numbering: None,
@@ -849,7 +853,14 @@ impl Sheet {
             resources: crate::resources::ResourceStore {
                 entries: ids
                     .iter()
-                    .filter_map(|id| self.topics[id].image.as_deref())
+                    .flat_map(|id| {
+                        let topic = &self.topics[id];
+                        topic
+                            .image
+                            .as_deref()
+                            .into_iter()
+                            .chain(topic.attachment.as_ref().map(|a| a.resource.as_str()))
+                    })
                     .filter_map(|reference| {
                         reference.strip_prefix(crate::resources::RESOURCE_PREFIX)
                     })
@@ -1053,6 +1064,9 @@ impl Sheet {
 
     pub(crate) fn validate_resource_references(&self) -> Result<(), String> {
         for topic in self.topics.values() {
+            if let Some(attachment) = &topic.attachment {
+                attachment.validate(self)?;
+            }
             if topic
                 .image_size
                 .is_some_and(|size| !crate::images::valid_size(size))
@@ -1860,6 +1874,7 @@ impl Workbook {
                 topic.labels.clear();
                 topic.hyperlink = None;
                 topic.image = None;
+                topic.attachment = None;
                 topic.image_size = None;
                 topic.image_below = false;
                 topic.markers.clear();

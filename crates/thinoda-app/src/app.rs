@@ -58,6 +58,8 @@ pub enum Cmd {
     Print,
     Labels,
     LocalImage,
+    Attachment,
+    SaveAttachment,
     TaskPlanning,
     CreateZone,
     EditZone,
@@ -261,6 +263,7 @@ pub struct ThinodaApp {
     pub(crate) pitch: crate::pitch::PitchState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) image_request: Option<crate::images::ImageRequest>,
+    pub(crate) attachment_request: Option<crate::images::ImageRequest>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
@@ -354,6 +357,7 @@ impl ThinodaApp {
             pitch: Default::default(),
             label_editor: None,
             image_request: None,
+            attachment_request: None,
             fonts: Default::default(),
             font_source: None,
             quick_style_dialog: None,
@@ -742,6 +746,8 @@ impl ThinodaApp {
             }
             Cmd::Labels => self.begin_labels(ctx),
             Cmd::LocalImage => self.begin_image(ctx),
+            Cmd::Attachment => self.begin_attachment(ctx),
+            Cmd::SaveAttachment => self.save_attachment(),
             Cmd::Print => self.begin_print(ctx),
             Cmd::Export(format) => {
                 if let Some(doc) = self.doc_mut() {
@@ -1166,7 +1172,20 @@ impl ThinodaApp {
                         )
                     })
             }
-            Cmd::LocalImage | Cmd::Labels | Cmd::TaskPlanning | Cmd::EditField(_) => {
+            Cmd::SaveAttachment => {
+                self.command_available(&Cmd::Attachment)
+                    && self.doc().is_some_and(|d| {
+                        d.view
+                            .primary()
+                            .and_then(|id| d.doc.sheet().topic(id))
+                            .is_some_and(|t| t.attachment.is_some())
+                    })
+            }
+            Cmd::Attachment
+            | Cmd::LocalImage
+            | Cmd::Labels
+            | Cmd::TaskPlanning
+            | Cmd::EditField(_) => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
                     && !self.dialogs.about
@@ -1800,9 +1819,13 @@ impl ThinodaApp {
         self.toasts.tick(dt);
         files::set_repaint_context(ctx);
         for picked in files::take_picked() {
+            let failure = match picked.purpose {
+                files::Purpose::Attachment(_) => t("Could not insert attachment"),
+                files::Purpose::Image(_) => t("Could not insert image"),
+                _ => t("Could not open"),
+            };
             for error in picked.errors {
-                self.toasts
-                    .error(format!("{}: {error}", t("Could not open")));
+                self.toasts.error(format!("{failure}: {error}"));
             }
             match picked.purpose {
                 files::Purpose::Open | files::Purpose::Import => {
@@ -1810,8 +1833,28 @@ impl ThinodaApp {
                         self.open_path(path);
                     }
                 }
+                files::Purpose::Dropped => {
+                    for path in &picked.paths {
+                        if crate::images::is_supported_image_path(path) {
+                            self.finish_dropped_image(picked.image_owner.clone(), path);
+                            #[cfg(target_arch = "wasm32")]
+                            if let Err(error) = thinoda_platform::fs::remove_file(path) {
+                                self.toasts
+                                    .error(format!("{}: {error}", t("Could not open")));
+                            }
+                        } else {
+                            self.open_path(path);
+                        }
+                    }
+                }
                 files::Purpose::Merge => {
                     self.merge_files(&picked.paths);
+                }
+                files::Purpose::Attachment(request) => {
+                    self.complete_attachment_pick(request, &picked.paths);
+                    for path in &picked.paths {
+                        let _ = thinoda_platform::fs::remove_file(path);
+                    }
                 }
                 files::Purpose::Image(request) => {
                     if let Some(path) = picked.paths.first() {
@@ -2152,8 +2195,18 @@ impl ThinodaApp {
             self.zen = false;
         }
         // Drag & drop of files onto the window.
-        for p in files::dropped_files(ctx) {
-            self.open_path(&p);
+        let image_owner =
+            if ctx.input(|input| !input.raw.dropped_files.is_empty()) && self.doc().is_some() {
+                self.capture_drop_owner(ctx)
+            } else {
+                None
+            };
+        for (path, owner) in files::dropped_files(ctx, image_owner) {
+            if crate::images::is_supported_image_path(&path) {
+                self.finish_dropped_image(owner, &path);
+            } else {
+                self.open_path(&path);
+            }
         }
     }
 
@@ -2598,6 +2651,8 @@ impl ThinodaApp {
             (Cmd::Print, "Print", "", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
             (Cmd::LocalImage, "Local Image", "", "Insert"),
+            (Cmd::Attachment, "Attachment", "", "Insert"),
+            (Cmd::SaveAttachment, "Save/Download attachment", "", "File"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (Cmd::AiChat, "AI Chat", "", "AI"),
             (

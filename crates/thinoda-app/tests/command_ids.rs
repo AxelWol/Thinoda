@@ -102,9 +102,9 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         export.csv export.excel export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
-        file.quit file.save file.save-all file.save-as file.show-in-folder
+        file.quit file.save file.save-all file.save-as file.save-attachment file.show-in-folder
         help.about help.feedback help.project-news help.quick-start help.shortcuts help.user-guide
-        insert.boundary insert.hyperlink insert.labels insert.local-image insert.notes insert.priority-1 insert.priority-2 insert.priority-3
+        insert.attachment insert.boundary insert.hyperlink insert.labels insert.local-image insert.notes insert.priority-1 insert.priority-2 insert.priority-3
         insert.relationship insert.summary insert.task insert.todo insert.zone
         navigation.down navigation.left navigation.right navigation.up
         selection.all selection.descendants selection.invert selection.none selection.root selection.siblings

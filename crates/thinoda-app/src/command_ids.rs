@@ -30,6 +30,8 @@ impl Cmd {
             Self::Print => "file.print",
             Self::Labels => "insert.labels",
             Self::LocalImage => "insert.local-image",
+            Self::Attachment => "insert.attachment",
+            Self::SaveAttachment => "file.save-attachment",
             Self::TaskPlanning => "insert.task",
             Self::CreateZone => "insert.zone",
             Self::EditZone => "edit.zone",

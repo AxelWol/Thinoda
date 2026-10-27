@@ -19,7 +19,7 @@ for delivery/acceptance status.
 | Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
 | To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
-| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, inspector width/reset/above-below, map and visual/Pitch output now build on native v3/recovery/clipboard. Attachments and XMind resource exchange remain missing; no drag/drop or resize handles. | XV4 partial |
+| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. XMind resource exchange, direct resize handles and Outliner previews remain open. | XV4 partial |
 | Import | DOCX/TextBundle are exportable, not importable. | XV5; other unsupported importers stay in the broader inventory. |
 | Export / Pitch Mode | Saved framing, PDF and PNG slides exist; PowerPoint export and explicit delivery aspect-ratio choices are missing. | XV6 |
 | Note / Equation | Plain notes exist; structured rich notes and rendered equations are missing. | XV7 |
@@ -61,6 +61,19 @@ implementation. XMind commercial availability does not impose Thinoda paywalls.
 - Insert > Attachment (toolbar or menu) adds a file as a new topic; clicking it prompts to save locally and opens it with the system default application.
 - Delete the attachment topic with Delete or right-click > Delete.
 - Source: https://xmind.com/user-guide/attachment-new
+
+**Thinoda continuation (source rechecked 2026-10-27):** follows selected-topic
+Insert > Attachment and Delete, but intentionally separates selection from
+delivery. One opaque local file (1 byte–8 MiB) becomes a selected child topic
+with a paperclip title. Style > Attachment shows sanitized filename, byte size
+and uninspected status. **Save/Download attachment** is a second explicit action:
+choose a native destination or request a browser download via the VFS. Exact
+bytes are preserved; no external app is launched, no path/URL is fetched and
+documents/macros/scripts are never interpreted or executed. This is safe saving,
+not XMind's click-to-open/system-default-app behavior or attachment preview parity.
+All ten locales and Light/Dark/System share the same commands and inspector.
+Native v3/recovery/clipboard/undo retain attachments; other exports explicitly
+refuse them. XMind attachment resource interoperability remains open (XV4 partial).
 
 ## Audio Note
 - Desktop: select a topic > Insert > Audio Note; recording requires an enabled microphone. Select the audio-note child to play it; right-click > Save As exports it.
