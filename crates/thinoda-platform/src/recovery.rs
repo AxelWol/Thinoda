@@ -519,6 +519,9 @@ mod lock_tests {
             )
             .unwrap();
         sheet.topic_mut(sheet.root).unwrap().image = Some(reference);
+        sheet.topic_mut(sheet.root).unwrap().image_size =
+            Some(thinoda_core::Vec2::new(240.0, 120.0));
+        sheet.topic_mut(sheet.root).unwrap().image_below = true;
         manager
             .snapshot("resource", SnapshotMeta::default(), &book)
             .unwrap();

@@ -29,7 +29,7 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
-- **Embedded-resource foundation (XV4, authoring not yet delivered)**:
+- **Embedded resources and local images (XV4, partial)**:
   `Sheet.resources` owns bounded immutable `Arc<[u8]>` blobs; subtree clipboard,
   full-sheet copy/merge and undo snapshots carry the bytes without deep-copying
   every history entry. SHA-256 content IDs use `thinoda-resource:<digest>` image
@@ -50,11 +50,31 @@ graph TD
   exist (resource-free clipboard remains version 1), retaining its 16 MiB
   encoded-payload limit. Older native readers reject version 3 rather than
   silently discarding bytes. Legacy reference-only image strings still load.
-  Image decode/render/resize and attachment authoring/opening are **not**
-  implemented in this slice. Non-native exports, print/slide rendering and live
-  Pitch reject embedded-resource content explicitly instead of producing
-  apparently complete output with missing content. No external file is opened
-  automatically; future attachment opening requires explicit consent.
+  `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
+  dimensions before full decoder allocation (4096/side, 4 megapixels), then uses
+  decoder width/height and 64 MiB allocation limits. Conversion to RGBA is bounded
+  by that pixel limit. Original encoded bytes are never rewritten. Topic
+  `image_size`/`image_below` have serialization defaults; finite positive sizing is
+  capped at 1024 map units/side and checked by transactional edits and imports.
+  Layout places the image above/below the title/labels. App insert/replace/reset
+  uses a 160 × 100 fit without upscaling; proportional width uses source dimensions.
+  Replace/remove releases only an old image's last reference; undo owns the old
+  store. Masking clears bytes, references and sizing.
+  Picker purpose carries a request ID; its app owner binds document key, active
+  sheet/index/root, selected topic and revision. Browser uploads use request-scoped
+  VFS scratch paths, removed after dispatch, not the document-open queue.
+  Canvas context LRU caches up to 128 512² RGBA previews (<=128 MiB plus bounded
+  decoder transient memory), including failures, keyed by stable resource URI.
+  Offscreen images are not decoded. Texture creation occurs outside context-data
+  locks. SVG embeds each referenced original blob once in data-URI definitions
+  and reuses it with aspect-fitted transforms; shared raster/PDF/
+  print/Pitch paths inherit image rendering and existing frame/scale limits.
+  Visual output validates all resource types and references, including unsupported
+  orphan blobs; unreferenced valid PNG/JPEG blobs have no visible placement.
+  Legacy paths/URLs still load with a map placeholder but cannot produce silently
+  incomplete visual output. Other non-native exports still refuse resource-bearing
+  documents. Attachment UI/opening and XMind resource exchange remain open.
+  No external file is opened automatically; attachment opening requires consent.
 - **Calendar inputs**: `thinoda_ui::date_field` combines an ISO text edit and
   localized, keyboard-operable month popup. The app supplies translated labels
   and `WorkCalendar::is_working_day` availability for task dates; exceptions allow

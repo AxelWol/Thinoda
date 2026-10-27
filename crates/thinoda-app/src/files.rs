@@ -25,6 +25,7 @@ pub enum Purpose {
     Open,
     Import,
     Merge,
+    Image(u64),
 }
 
 /// Files that finished uploading into the browser VFS.
@@ -285,7 +286,16 @@ mod web {
 
     fn store(picked: &mut Picked, name: &str, bytes: Result<Vec<u8>, String>) {
         match bytes.and_then(|bytes| {
-            store_upload_in(Path::new(WEB_DOCUMENTS), name, &bytes).map_err(|e| e.to_string())
+            let directory = match picked.purpose {
+                Purpose::Image(request) => format!("/ImageUploads/{request}"),
+                _ => WEB_DOCUMENTS.into(),
+            };
+            if matches!(picked.purpose, Purpose::Image(_))
+                && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
+            {
+                return Err("image exceeds 8 MiB".into());
+            }
+            store_upload_in(Path::new(&directory), name, &bytes).map_err(|e| e.to_string())
         }) {
             Ok(path) => picked.paths.push(path),
             Err(error) => picked.errors.push(format!("{name}: {error}")),
@@ -317,6 +327,12 @@ mod web {
                 errors: Vec::new(),
             };
             for handle in handles {
+                if matches!(purpose, Purpose::Image(_))
+                    && handle.inner().size() > thinoda_core::resources::MAX_RESOURCE_BYTES as f64
+                {
+                    picked.errors.push("image exceeds 8 MiB".into());
+                    continue;
+                }
                 let bytes = handle.read().await;
                 store(&mut picked, &handle.file_name(), Ok(bytes));
             }

@@ -11,14 +11,17 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## XV4 active slice: portable resource storage (2026-10-27)
 
-UR4 live transitions/composition is implemented in [PR #85](https://github.com/AxelWol/Thinoda/pull/85);
-release/deployment is still pending. XV4 is now **in progress, not complete**.
+UR4 live transitions/composition and the XV4 storage foundation were merged in
+[PR #85](https://github.com/AxelWol/Thinoda/pull/85) on 2026-10-27 (squash
+`cbbcf6f4a981a4415e43fafd569d1c8b4ce1afeb`, including foundation `aa4acde`).
+The uncommitted local-image continuation below was **not** included; release
+monitoring remains separate. XV4 is **in progress, not complete**.
 The first slice adds sheet-owned, immutable content-addressed resources,
 native archive v3, base64 recovery and versioned sheet clipboard, bounded
 transactional paste/add/duplicate/merge and preservation through undo.
 Resource-free native v2 and legacy image references remain compatible.
 See [the storage contract](ARCHITECTURE.md#key-decisions) for limits and
-ownership. Unsupported output paths fail explicitly until rendering exists.
+ownership. Unsupported output paths fail explicitly.
 
 Research rechecked the official [Local Image](https://xmind.com/user-guide/pic-new)
 and [Attachment](https://xmind.com/user-guide/attachment-new) guides: local images
@@ -28,10 +31,24 @@ permission**. Thinoda should preserve that predictable selection/context model
 across map/outline/ribbon rather than add separate platform-specific import
 flows. Attachment preview/open must never auto-execute embedded content; the
 web path must offer explicit download rather than promise native application
-launch. These are acceptance criteria for the next slice, not delivered UI.
+launch. Attachment behavior remains acceptance criteria, not delivered UI.
 
-Next: bounded image decode and actual insert/render/resize/replace/remove UI,
-then attachment save/open consent and supported XMind/external export fidelity.
+**Local-image continuation (worktree, not committed/released):** bounded PNG/JPEG
+decode (8 MiB encoded, 4096/side, 4 megapixels checked before full pixel decode),
+selection-owned native/browser picker, insert/replace/remove, proportional width,
+above/below placement and Reset Size in Style > Local Image. Reset uses a
+160 × 100 fit without upscaling; display geometry is finite, positive and at most
+1024/side. The inspector identifies the selected topic and filename. Existing
+menu/ribbon/palette/topic insert surfaces share the command; Outliner uses the
+same selection/inspector, not an inline image preview.
+Map/thumbnail rendering caches 512px previews; shared SVG/raster/PDF/print/Pitch
+renders original bytes. Native v3, recovery, clipboard and undo preserve bytes,
+placement and size. Editable non-native exports still reject resources; visual
+output rejects unsupported/malformed bytes and legacy file/URL references.
+
+Next within XV4: attachment save/open consent and supported XMind/external
+resource exchange. Drag/drop insertion and direct image resize handles are not
+implemented; labeled inspector controls are the intentional first-slice scope.
 Keep all shipped locales, Light/Dark/System, native and WASM gates. Only after
 the complete XV4 workflow is verified continue XV5 through XV9 in order.
 
@@ -43,7 +60,31 @@ v3 rejection, duplicate ZIP central records, unlisted blobs and explicit
 non-native/print/Pitch output refusal. Native all-target and WASM app-library
 strict Clippy pass. This is not a new full-workspace or six-host runtime pass,
 nor evidence that resource authoring, image decode or XMind resource fidelity
-is delivered.
+was delivered by that foundation commit. The image continuation is separate;
+validation below records its actual checks without implying a six-host runtime pass.
+
+Image-continuation verification on Windows:
+- `cargo test --locked -j1 --workspace`: **956 passed, 2 ignored**, 97 suites.
+  This full run preceded the final narrow-portrait inspector edge-case adjustment.
+- Final `cargo test --locked -j1 --workspace --lib`: **598 passed**, including
+  the added 1 × 4096 no-per-frame-clamping regression and proportional width,
+  reset/remove/undo across Light/Dark/System, locale keys, picker ownership,
+  bounded decoding, geometry, texture/alpha caching and recovery.
+- Final `cargo test --locked -j1 -p thinoda-io --tests`: **86 passed**, 9 suites,
+  including original-byte/geometry roundtrip, shared SVG blob deduplication,
+  PNG/print/Pitch pixels, PDF image objects and unsupported-resource refusals.
+- Final native workspace/all-target strict Clippy and WASM strict Clippy
+  (`thinoda-web`, app, platform, AI, IO) pass with `-D warnings`.
+  Formatting, whitespace and third-party notices checks pass.
+- All Cargo checks used the dedicated temporary target, incremental off,
+  one build job and live AI disabled. An initial integration-link attempt ran
+  out of disk while writing PDBs; only generated PDBs in that target cache were
+  reclaimed, then verification succeeded. No OS/pagefile settings were changed.
+
+No interactive browser picker session, real print job or macOS/Linux/ARM runtime
+pass was performed here. The native headless UI/IO tests and WASM compilation do
+not replace those host checks. No commit/push/rebase/release-file update was made;
+the verified image work is intended for a follow-up PR, not the merged foundation.
 
 ## CLI generation provider requirement (2026-10-26)
 

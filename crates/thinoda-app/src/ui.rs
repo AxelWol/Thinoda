@@ -1293,6 +1293,12 @@ impl ThinodaApp {
                                         Cmd::Labels,
                                     ),
                                     (
+                                        icons::IMAGE,
+                                        "Local Image",
+                                        self.command_available(&Cmd::LocalImage),
+                                        Cmd::LocalImage,
+                                    ),
+                                    (
                                         icons::TODO,
                                         "To-Do",
                                         has_selection,
@@ -1616,6 +1622,12 @@ impl ThinodaApp {
                 t("Labels"),
                 Cmd::Labels,
                 self.command_available(&Cmd::Labels),
+            );
+            item(
+                ui,
+                t("Local Image"),
+                Cmd::LocalImage,
+                self.command_available(&Cmd::LocalImage),
             );
         }
         ui.separator();
@@ -2749,6 +2761,129 @@ impl ThinodaApp {
             });
     }
 
+    pub(crate) fn image_properties(&mut self, ui: &mut Ui) {
+        let Some(doc) = self.doc() else { return };
+        let Some(id) = doc.view.primary() else { return };
+        let Some(topic) = doc.doc.sheet().topic(id).cloned() else {
+            return;
+        };
+        let enabled = self.command_available(&Cmd::LocalImage) && !self.palette.open;
+        let owner = enabled.then(|| {
+            egui::Id::unique((
+                "image-size",
+                &doc.key,
+                doc.doc.active_index(),
+                id,
+                doc.doc.state_id(),
+            ))
+        });
+        let has_image = topic.image.is_some();
+        let mut pick = false;
+        let mut remove = false;
+        let mut reset = false;
+        let mut width = None;
+        let mut below = topic.image_below;
+        widgets::section(ui, t("Local Image"), true, |ui| {
+            ui.label(&topic.title);
+            ui.add_enabled_ui(enabled, |ui| {
+                pick = ui
+                    .button(if has_image {
+                        t("Replace image")
+                    } else {
+                        t("Insert image")
+                    })
+                    .clicked();
+                if has_image {
+                    if let Some(resource) = topic
+                        .image
+                        .as_deref()
+                        .and_then(|r| self.doc()?.doc.sheet().resources.get(r).ok())
+                    {
+                        ui.label(&resource.name);
+                    }
+                    let mut value = topic
+                        .image_size
+                        .unwrap_or(thinoda_core::layout::IMAGE_SIZE)
+                        .x;
+                    widgets::property_field(ui, t("Image width"), |ui| {
+                        let (response, commit) = touch_numeric_value(
+                            ui,
+                            &mut value,
+                            "image-width",
+                            owner,
+                            |ui, value| {
+                                ui.add(
+                                    egui::DragValue::new(value)
+                                        .range(0.01..=1024.0)
+                                        .fixed_decimals(2)
+                                        .speed(1.0),
+                                )
+                            },
+                        );
+                        if commit
+                            && value
+                                != topic
+                                    .image_size
+                                    .unwrap_or(thinoda_core::layout::IMAGE_SIZE)
+                                    .x
+                        {
+                            width = Some(value);
+                        }
+                        response
+                    });
+                    ui.checkbox(&mut below, t("Image below topic"));
+                    reset = ui.button(t("Reset Size")).clicked();
+                    remove = ui.button(t("Remove image")).clicked();
+                }
+                widgets::caption(ui, t("PNG/JPEG only. Resizing keeps the aspect ratio."));
+            });
+        });
+        let activate = widgets::touch_activation_allowed(ui.ctx()) && enabled;
+        if activate && pick {
+            self.begin_image(ui.ctx());
+        }
+        if activate && (remove || reset || width.is_some() || below != topic.image_below) {
+            let result = (|| -> Result<(), String> {
+                let doc = self.doc_mut().ok_or("image document is closed")?;
+                doc.flush_inspector_edit(ui.ctx())?;
+                let size = if reset || width.is_some() {
+                    let resource = doc
+                        .doc
+                        .sheet()
+                        .resources
+                        .get(topic.image.as_deref().ok_or("image is missing")?)?;
+                    let decoded = thinoda_core::images::decode(resource.bytes())?;
+                    let mut size =
+                        thinoda_core::images::default_size(decoded.width, decoded.height);
+                    if let Some(width) = width {
+                        let ratio = decoded.height as f32 / decoded.width as f32;
+                        let width = width.min(1024.0 / ratio).clamp(f32::MIN_POSITIVE, 1024.0);
+                        size = thinoda_core::Vec2::new(width, width * ratio);
+                    }
+                    Some(size)
+                } else {
+                    topic.image_size
+                };
+                doc.doc
+                    .edit_sheet("Local Image", |sheet| {
+                        if remove {
+                            thinoda_core::images::set_image(sheet, id, None)
+                                .map_err(thinoda_core::edit::EditError::Invalid)?;
+                        } else if let Some(t) = sheet.topics.get_mut(&id) {
+                            t.image_size = size;
+                            t.image_below = below;
+                        }
+                        Ok(())
+                    })
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                self.toasts.error(error);
+            }
+        }
+    }
+
     fn style_tab(&mut self, ui: &mut Ui) {
         if let Some(thinoda_canvas::ObjectSelection::Zone(id)) =
             self.doc().and_then(|doc| doc.view.selected_object)
@@ -2768,6 +2903,7 @@ impl ThinodaApp {
             return;
         }
         self.quick_styles(ui);
+        self.image_properties(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };

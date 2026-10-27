@@ -12,4 +12,5 @@ egui = { workspace = true }
 thinoda-core = { path = "../thinoda-core" }
 
 [dev-dependencies]
+image.workspace = true
 egui_kittest = { workspace = true }

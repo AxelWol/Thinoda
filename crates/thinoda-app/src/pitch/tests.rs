@@ -54,6 +54,40 @@ fn pitch_does_not_silently_hide_embedded_resources() {
 }
 
 #[test]
+fn pitch_accepts_valid_local_images_without_changing_source_or_history() {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        40,
+        20,
+        image::Rgb([250, 10, 20]),
+    ))
+    .write_to(&mut bytes, image::ImageFormat::Png)
+    .unwrap();
+    let resource =
+        thinoda_core::resources::Resource::new("evidence.png", "image/png", bytes.into_inner())
+            .unwrap();
+    let mut app = setup(true);
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Image", |sheet| {
+            thinoda_core::images::set_image(
+                sheet,
+                sheet.root,
+                Some((resource, Vec2::new(160.0, 80.0))),
+            )
+            .map_err(thinoda_core::edit::EditError::Invalid)
+        })
+        .unwrap();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let state = app.doc().unwrap().doc.state_id();
+    app.open_pitch(&Context::default(), false);
+    assert!(app.pitch.player.is_some());
+    assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
+#[test]
 fn presentation_generation_frames_and_order_apply_as_one_undo_without_changing_topics() {
     let mut app = setup(false);
     let before = app.doc().unwrap().doc.workbook().clone();

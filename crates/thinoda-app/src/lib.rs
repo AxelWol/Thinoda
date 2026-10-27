@@ -10,6 +10,7 @@ pub mod files;
 mod gantt;
 mod help;
 pub mod i18n;
+mod images;
 mod keymap_editor;
 pub mod keymaps;
 mod labels;

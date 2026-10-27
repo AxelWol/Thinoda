@@ -128,6 +128,24 @@ those system-owned controls. WinGet publishing remains paused.
   optionally tiered (II.1). Labels appear on the
   map, in the Outliner, images, PDF, print and Pitch; titles, search and text
   exports keep the plain title. XMind numbering is not imported or exported.
+- **Local images (XV4, partial):** select one topic, then Insert > Local Image
+  (menu/ribbon/command palette or topic insert menu). PNG and JPEG files are
+  embedded, not linked to the source file. Style > Local Image shows the selected
+  topic and filename, with Replace/Remove, proportional Image width, Image below
+  topic and Reset Size. Reset fits within 160 × 100 map units without upscaling;
+  resizing is capped at 1024 units per side. Drag/drop insertion and resize
+  handles are not implemented. Files are limited to 8 MiB, 4096 pixels per side
+  and 4 megapixels; invalid replacements leave the old image intact.
+  Map/thumbnail/live Pitch use cached, aspect-preserving previews up to 512 pixels;
+  SVG/PNG/JPEG/PDF, print and Pitch exports use original embedded bytes. Native v3,
+  recovery, clipboard, sheet copy/merge and undo retain original bytes and sizing.
+  All shipped languages and Light/Dark/System use the same controls. Browser
+  picker results are bound to their original document/sheet/topic/revision;
+  canceled or stale requests cannot insert into another selection.
+  Attachments and XMind image interoperability remain open. Editable non-native
+  exports reject embedded resources rather than discard them; visual output also
+  rejects malformed, missing, unsupported or legacy path/URL images. No URL is
+  fetched and no image file is opened automatically.
 - Map > Theme > Global Font and Style > Text > Font Family use installed system
   font faces, not just stored names. Per-topic Auto inherits the map font.
   Canvas layout, painting, inline editing and Map Shot share the selected face;

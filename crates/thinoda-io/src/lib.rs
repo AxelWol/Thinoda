@@ -428,7 +428,11 @@ pub fn export_bytes_with_consent(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
-    if format != Format::Thinoda && book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
+    if !matches!(
+        format,
+        Format::Thinoda | Format::Svg | Format::Png | Format::Jpeg | Format::Pdf
+    ) && book.sheets.iter().any(|sheet| !sheet.resources.is_empty())
+    {
         return Err(IoError::Invalid(
             "this format cannot yet preserve embedded resources; save as .thinoda to retain all bytes".into(),
         ));

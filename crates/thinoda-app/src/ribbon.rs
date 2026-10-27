@@ -126,7 +126,7 @@ fn command_groups<'a>(
                 Cmd::CopyStyle | Cmd::PasteStyle | Cmd::ResetStyle | Cmd::SaveQuickStyle => {
                     t("Styles")
                 }
-                Cmd::EditField(_) | Cmd::Labels => t("Notes"),
+                Cmd::EditField(_) | Cmd::Labels | Cmd::LocalImage => t("Notes"),
                 Cmd::Canvas(
                     Action::StartRelationship
                     | Action::AddSummary

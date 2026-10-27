@@ -361,9 +361,14 @@ pub struct Topic {
     /// this flag applies directly only when no descendant To-Dos remain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo: Option<bool>,
-    /// Image reference (resource path inside the file or URL).
+    /// Embedded resource URI; legacy paths/URLs remain inert and are never fetched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Display size in map units; absent in legacy documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<Vec2>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub image_below: bool,
     /// Structural numbering applied to this topic's children as one sibling group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_numbering: Option<crate::numbering::Numbering>,
@@ -388,6 +393,8 @@ impl Topic {
             branch_side: None,
             todo: None,
             image: None,
+            image_size: None,
+            image_below: false,
             child_numbering: None,
         }
     }
@@ -1046,6 +1053,12 @@ impl Sheet {
 
     pub(crate) fn validate_resource_references(&self) -> Result<(), String> {
         for topic in self.topics.values() {
+            if topic
+                .image_size
+                .is_some_and(|size| !crate::images::valid_size(size))
+            {
+                return Err("invalid image display size".into());
+            }
             if let Some(reference) = topic.image.as_deref()
                 && reference.starts_with(crate::resources::RESOURCE_PREFIX)
             {
@@ -1847,6 +1860,8 @@ impl Workbook {
                 topic.labels.clear();
                 topic.hyperlink = None;
                 topic.image = None;
+                topic.image_size = None;
+                topic.image_below = false;
                 topic.markers.clear();
                 topic.marker_colors.clear();
                 topic.style.font_family = None;

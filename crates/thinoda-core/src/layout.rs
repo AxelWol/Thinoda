@@ -722,15 +722,19 @@ impl Engine<'_> {
             .collect();
         let labels_w =
             label_ws.iter().sum::<f32>() + (label_ws.len().saturating_sub(1)) as f32 * gap;
+        let image_size = t
+            .image_size
+            .filter(|s| crate::images::valid_size(*s))
+            .unwrap_or(IMAGE_SIZE);
         let image_h = if t.image.is_some() {
-            IMAGE_SIZE.y + 6.0
+            image_size.y + 6.0
         } else {
             0.0
         };
         let row_w = left + ts.x + right;
         let inner_w = row_w
             .max(labels_w)
-            .max(if t.image.is_some() { IMAGE_SIZE.x } else { 0.0 });
+            .max(if t.image.is_some() { image_size.x } else { 0.0 });
         let labels_h = if label_ws.is_empty() { 0.0 } else { lh + gap };
         let mut w = (inner_w + 2.0 * px).max(fs * 2.0);
         let content_h = image_h + row_h + labels_h;
@@ -753,10 +757,19 @@ impl Engine<'_> {
         let mut y = (h - content_h) / 2.0;
         if t.image.is_some() {
             c.image = Some(Rect::from_min_size(
-                Vec2::new(inner_x + (inner_w - IMAGE_SIZE.x) / 2.0, y),
-                IMAGE_SIZE,
+                Vec2::new(
+                    inner_x + (inner_w - image_size.x) / 2.0,
+                    if t.image_below {
+                        y + row_h + labels_h + 6.0
+                    } else {
+                        y
+                    },
+                ),
+                image_size,
             ));
-            y += image_h;
+            if !t.image_below {
+                y += image_h;
+            }
         }
         let mut x = inner_x + (inner_w - row_w) / 2.0;
         let cy = y + row_h / 2.0;

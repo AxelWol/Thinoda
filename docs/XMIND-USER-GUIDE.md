@@ -19,7 +19,7 @@ for delivery/acceptance status.
 | Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
 | To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
-| Picture / Attachment | Bounded embedded-resource/native-storage foundation is in progress; image rendering/authoring and attachment save/open UI remain missing. | XV4 |
+| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, inspector width/reset/above-below, map and visual/Pitch output now build on native v3/recovery/clipboard. Attachments and XMind resource exchange remain missing; no drag/drop or resize handles. | XV4 partial |
 | Import | DOCX/TextBundle are exportable, not importable. | XV5; other unsupported importers stay in the broader inventory. |
 | Export / Pitch Mode | Saved framing, PDF and PNG slides exist; PowerPoint export and explicit delivery aspect-ratio choices are missing. | XV6 |
 | Note / Equation | Plain notes exist; structured rich notes and rendered equations are missing. | XV7 |
@@ -241,6 +241,14 @@ implementation. XMind commercial availability does not impose Thinoda paywalls.
 - Insert a local image from Insert > Local Image, or drag a local image onto a topic. Reposition it above/below a topic and resize by dragging.
 - Right-click the image > Reset Size restores its original size.
 - Source: https://xmind.com/user-guide/pic-new
+
+Thinoda implementation, rechecked 2026-10-27: one selected topic owns the local
+PNG/JPEG picker; Style > Local Image provides proportional width, above/below,
+Reset Size (160 × 100 fit, no upscaling), replace and remove. These labeled controls
+are deliberate alternatives to drag/handles for this slice, not full XMind picture
+parity. Original bytes survive native storage/undo and appear in graphical outputs;
+editable non-native resource exchange remains rejected. No external reference is
+fetched or executed.
 
 ## Pitch Mode
 - Enter with the Pitch Mode toolbar button; full-screen, windowed, and Presenter View modes are documented. Presenter View shows the presentation alongside the map.

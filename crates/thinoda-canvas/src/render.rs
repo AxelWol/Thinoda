@@ -253,6 +253,7 @@ pub fn paint_map(
         let topic = sheet.topic(*id);
         paint_topic(
             painter,
+            sheet,
             t,
             topic,
             xf,
@@ -398,8 +399,65 @@ fn paint_badge(painter: &Painter, t: &TopicLayout, xf: Xf, accent: Color32, bg: 
     }
 }
 
+/// Context-owned LRU: at most 128 previews (512² RGBA, <=128 MiB),
+/// including cached failures. Stable URIs avoid per-frame hashing/decoding.
+#[derive(Clone, Default)]
+struct ImageCache(std::collections::VecDeque<(String, Option<egui::TextureHandle>)>);
+
+fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, dim: bool) -> bool {
+    let id = egui::Id::unique("local-image-cache");
+    // Never call load_texture while holding the context data lock.
+    let mut cache = painter
+        .ctx()
+        .data_mut(|data| data.remove_temp::<ImageCache>(id))
+        .unwrap_or_default();
+    let entry = if let Some(index) = cache.0.iter().position(|(id, _)| id == reference) {
+        cache.0.remove(index).expect("existing cache entry")
+    } else {
+        let texture = sheet
+            .resources
+            .get(reference)
+            .ok()
+            .and_then(|r| thinoda_core::images::decode(r.bytes()).ok())
+            .map(|decoded| {
+                let preview = decoded.preview();
+                painter.ctx().load_texture(
+                    reference,
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [preview.width as usize, preview.height as usize],
+                        &preview.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                )
+            });
+        (reference.to_owned(), texture)
+    };
+    let texture = entry.1.clone();
+    cache.0.push_back(entry);
+    while cache.0.len() > 128 {
+        cache.0.pop_front();
+    }
+    painter.ctx().data_mut(|data| data.insert_temp(id, cache));
+    if let Some(texture) = texture {
+        let source = texture.size_vec2();
+        let scale = (rect.width() / source.x).min(rect.height() / source.y);
+        let target = Rect::from_center_size(rect.center(), source * scale);
+        painter.image(
+            texture.id(),
+            target,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE.gamma_multiply(if dim { 0.3 } else { 1.0 }),
+        );
+        true
+    } else {
+        false
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_topic(
     painter: &Painter,
+    sheet: &Sheet,
     t: &TopicLayout,
     topic: Option<&thinoda_core::Topic>,
     xf: Xf,
@@ -483,23 +541,31 @@ fn paint_topic(
     }
 
     let text_color = a(color32(st.text_color));
-    // Image placeholder.
+    // Visible fallback for legacy/malformed images. Successful textures replace it.
     if let Some(ir) = t.image_rect {
         let ir = xf.rect(ir);
-        painter.rect(
-            ir,
-            CornerRadius::same((4.0 * z) as u8),
-            text_color.gamma_multiply(0.08),
-            Stroke::new(1.0, text_color.gamma_multiply(0.3)),
-            StrokeKind::Inside,
-        );
-        painter.text(
-            ir.center(),
-            egui::Align2::CENTER_CENTER,
-            "🖼",
-            FontId::proportional(24.0 * z),
-            text_color.gamma_multiply(0.6),
-        );
+        let rendered = topic
+            .and_then(|t| t.image.as_deref())
+            .is_some_and(|reference| {
+                !painter.clip_rect().intersects(ir)
+                    || paint_image(painter, sheet, reference, ir, dim)
+            });
+        if !rendered {
+            painter.rect(
+                ir,
+                CornerRadius::same((4.0 * z) as u8),
+                text_color.gamma_multiply(0.08),
+                Stroke::new(1.0, text_color.gamma_multiply(0.3)),
+                StrokeKind::Inside,
+            );
+            painter.text(
+                ir.center(),
+                egui::Align2::CENTER_CENTER,
+                "🖼",
+                FontId::proportional(24.0 * z),
+                text_color.gamma_multiply(0.6),
+            );
+        }
     }
 
     // To-Do checkbox.
@@ -915,6 +981,96 @@ fn dashed_rect(painter: &Painter, r: Rect, stroke: Stroke, dash: f32, gap: f32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_texture_is_painted_once_cached_and_alpha_is_preserved() {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            40,
+            20,
+            image::Rgba([255, 0, 0, 128]),
+        ))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+        let resource =
+            thinoda_core::resources::Resource::new("evidence.png", "image/png", bytes.into_inner())
+                .unwrap();
+        let mut sheet = Sheet::new("Image", "Topic");
+        let root = sheet.root;
+        thinoda_core::images::set_image(&mut sheet, root, Some((resource, Vec2::new(160.0, 80.0))))
+            .unwrap();
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, dark);
+            let xf = Xf {
+                origin: pos2(300.0, 300.0),
+                zoom: 1.0,
+            };
+            for frame in 0..3 {
+                let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        xf,
+                        &PaintOptions {
+                            dark,
+                            ..Default::default()
+                        },
+                    );
+                });
+                let cache = ctx
+                    .data(|d| d.get_temp::<ImageCache>(egui::Id::unique("local-image-cache")))
+                    .unwrap();
+                assert_eq!(cache.0.len(), 1);
+                let texture = cache.0[0].1.as_ref().unwrap();
+                assert!(output.shapes.iter().any(
+                    |s| matches!(&s.shape, Shape::Mesh(mesh) if mesh.texture_id == texture.id())
+                ));
+                if frame == 0 {
+                    assert!(output.textures_delta.set.iter().any(|(id, delta)| *id
+                        == texture.id()
+                        && delta.iter().any(|delta| match &delta.image {
+                            egui::ImageData::Color(image) => image.pixels[0].a() == 128,
+                        })));
+                } else {
+                    assert!(
+                        !output
+                            .textures_delta
+                            .set
+                            .iter()
+                            .any(|(id, _)| *id == texture.id())
+                    );
+                }
+                output.textures_delta.clear();
+            }
+        }
+    }
+
+    #[test]
+    fn failed_image_decode_is_cached_and_entry_count_is_bounded() {
+        let ctx = egui::Context::default();
+        let sheet = Sheet::new("Bad image", "Topic");
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            for index in 0..140 {
+                assert!(!paint_image(
+                    &painter,
+                    &sheet,
+                    &format!("legacy-{index}"),
+                    Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0)),
+                    false
+                ));
+            }
+        });
+        let cache = ctx
+            .data(|d| d.get_temp::<ImageCache>(egui::Id::unique("local-image-cache")))
+            .unwrap();
+        assert_eq!(cache.0.len(), 128);
+        assert!(cache.0.iter().all(|(_, texture)| texture.is_none()));
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn selected_summary_paints_descendant_range_frame_and_topic_connector() {
