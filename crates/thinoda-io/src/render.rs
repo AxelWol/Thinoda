@@ -101,11 +101,9 @@ fn svg_sheet_with_fonts(
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
     frame: Option<thinoda_core::Rect>,
 ) -> Result<String, IoError> {
-    if !s.resources.is_empty() {
-        return Err(IoError::Invalid(
-            "embedded resource rendering is not supported yet; save as .thinoda to retain all bytes".into(),
-        ));
-    }
+    let image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
+        IoError::Invalid(format!("embedded resources cannot be rendered: {error}"))
+    })?;
     let text = text::ExportText::new(s, o.dark, fontdb)?;
     let layout = layout_sheet(s, &text, o.dark);
     let pad = o.padding.max(0.0);
@@ -119,6 +117,25 @@ fn svg_sheet_with_fonts(
         b.min.x, b.min.y
     );
     out.push_str("<defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"6\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L0,6 L7,3 z\" fill=\"#777777\"/></marker></defs>");
+    // Embed each referenced blob once, even when thousands of topics share it.
+    out.push_str("<defs>");
+    for (reference, size) in &image_dimensions {
+        use base64::Engine;
+        let resource = s.resources.get(reference).map_err(IoError::Invalid)?;
+        let id = reference
+            .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+            .ok_or_else(|| IoError::Invalid("not an embedded image".into()))?;
+        let data = base64::engine::general_purpose::STANDARD.encode(resource.bytes());
+        out.push_str(&format!(
+            "<image id=\"image-{}\" width=\"{}\" height=\"{}\" xlink:href=\"data:{};base64,{}\"/>",
+            esc(id),
+            size.x,
+            size.y,
+            resource.media_type,
+            data
+        ));
+    }
+    out.push_str("</defs>");
     if !o.transparent {
         out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{}\"/>",b.min.x,b.min.y,col(bg)));
     }
@@ -326,6 +343,22 @@ fn svg_sheet_with_fonts(
         } else {
             out.push_str(&format!(
                 "{shape} fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{sw:.2}\"/>"
+            ));
+        }
+        if let Some(rect) = tl.image_rect
+            && let Some(reference) = s.topic(*id).and_then(|topic| topic.image.as_deref())
+        {
+            let size = image_dimensions
+                .get(reference)
+                .ok_or_else(|| IoError::Invalid("missing image dimensions".into()))?;
+            let scale = (rect.size.x / size.x).min(rect.size.y / size.y);
+            let min = rect.center() - *size * (scale / 2.0);
+            let id = reference
+                .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
+                .ok_or_else(|| IoError::Invalid("not an embedded image".into()))?;
+            out.push_str(&format!(
+                "<use xlink:href=\"#image-{}\" transform=\"translate({:.4} {:.4}) scale({scale:.8})\"/>",
+                esc(id), min.x, min.y
             ));
         }
         let block = text.topic(*id);

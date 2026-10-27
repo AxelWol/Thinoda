@@ -253,6 +253,25 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Local Image", "Lokales Bild"),
+    ("Insert image", "Bild einfügen"),
+    ("Replace image", "Bild ersetzen"),
+    ("Remove image", "Bild entfernen"),
+    ("Image width", "Bildbreite"),
+    ("Image below topic", "Bild unter dem Thema"),
+    ("Reset Size", "Größe zurücksetzen"),
+    (
+        "PNG/JPEG only. Resizing keeps the aspect ratio.",
+        "Nur PNG/JPEG. Größenänderungen behalten das Seitenverhältnis bei.",
+    ),
+    (
+        "Could not insert image",
+        "Bild konnte nicht eingefügt werden",
+    ),
+    (
+        "Image request expired. Select a topic and try again.",
+        "Bildanfrage abgelaufen. Thema auswählen und erneut versuchen.",
+    ),
     ("Generation provider", "Anbieter für Textgenerierung"),
     ("CLI default", "CLI-Standard"),
     (
@@ -2237,6 +2256,7 @@ mod tests {
             include_str!("ai/semantic.rs"),
             include_str!("help.rs"),
             include_str!("labels.rs"),
+            include_str!("images.rs"),
             include_str!("doc.rs"),
             include_str!("map_shot.rs"),
             include_str!("printing.rs"),

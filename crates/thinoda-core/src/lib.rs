@@ -16,6 +16,7 @@ pub mod custom_theme;
 pub mod document;
 pub mod edit;
 pub mod geometry;
+pub mod images;
 pub mod layout;
 pub mod markers;
 pub mod model;

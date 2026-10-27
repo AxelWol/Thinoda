@@ -4496,6 +4496,7 @@ version = "0.14.0"
 dependencies = [
  "egui",
  "egui_kittest",
+ "image",
  "thinoda-core",
 ]
 
@@ -4504,6 +4505,7 @@ name = "thinoda-core"
 version = "0.14.0"
 dependencies = [
  "base64 0.23.1",
+ "image",
  "serde",
  "serde_json",
  "sha2",
@@ -4514,6 +4516,7 @@ dependencies = [
 name = "thinoda-io"
 version = "0.14.0"
 dependencies = [
+ "base64 0.23.1",
  "epaint_default_fonts",
  "image",
  "log",

@@ -1041,3 +1041,13 @@ Sun|Do|Di|Sø|Zo|Dom|Do|Nd
 Previous month|Mes anterior|Mois précédent|Forrige måned|Vorige maand|Mês anterior|Mese precedente|Poprzedni miesiąc
 Next month|Mes siguiente|Mois suivant|Næste måned|Volgende maand|Mês seguinte|Mese successivo|Następny miesiąc
 Open calendar|Abrir calendario|Ouvrir le calendrier|Åbn kalender|Kalender openen|Abrir calendário|Apri calendario|Otwórz kalendarz
+Local Image|Imagen local|Image locale|Lokalt billede|Lokale afbeelding|Imagem local|Immagine locale|Obraz lokalny
+Insert image|Insertar imagen|Insérer une image|Indsæt billede|Afbeelding invoegen|Inserir imagem|Inserisci immagine|Wstaw obraz
+Replace image|Reemplazar imagen|Remplacer l’image|Erstat billede|Afbeelding vervangen|Substituir imagem|Sostituisci immagine|Zastąp obraz
+Remove image|Eliminar imagen|Supprimer l’image|Fjern billede|Afbeelding verwijderen|Remover imagem|Rimuovi immagine|Usuń obraz
+Image width|Ancho de imagen|Largeur de l’image|Billedbredde|Afbeeldingsbreedte|Largura da imagem|Larghezza immagine|Szerokość obrazu
+Image below topic|Imagen debajo del tema|Image sous le sujet|Billede under emnet|Afbeelding onder onderwerp|Imagem abaixo do tópico|Immagine sotto l’argomento|Obraz pod tematem
+Reset Size|Restablecer tamaño|Réinitialiser la taille|Nulstil størrelse|Grootte herstellen|Repor tamanho|Ripristina dimensioni|Przywróć rozmiar
+PNG/JPEG only. Resizing keeps the aspect ratio.|Solo PNG/JPEG. El tamaño mantiene la proporción.|PNG/JPEG uniquement. Les proportions sont conservées.|Kun PNG/JPEG. Størrelsesændring bevarer proportionerne.|Alleen PNG/JPEG. De beeldverhouding blijft behouden.|Apenas PNG/JPEG. O redimensionamento mantém as proporções.|Solo PNG/JPEG. Il ridimensionamento mantiene le proporzioni.|Tylko PNG/JPEG. Zmiana rozmiaru zachowuje proporcje.
+Could not insert image|No se pudo insertar la imagen|Impossible d’insérer l’image|Kunne ikke indsætte billede|Kan afbeelding niet invoegen|Não foi possível inserir a imagem|Impossibile inserire l’immagine|Nie można wstawić obrazu
+Image request expired. Select a topic and try again.|La solicitud de imagen caducó. Selecciona un tema e inténtalo de nuevo.|La demande d’image a expiré. Sélectionnez un sujet et réessayez.|Billedanmodningen er udløbet. Vælg et emne, og prøv igen.|Afbeeldingsverzoek verlopen. Selecteer een onderwerp en probeer opnieuw.|O pedido de imagem expirou. Selecione um tópico e tente novamente.|Richiesta immagine scaduta. Seleziona un argomento e riprova.|Żądanie obrazu wygasło. Wybierz temat i spróbuj ponownie.

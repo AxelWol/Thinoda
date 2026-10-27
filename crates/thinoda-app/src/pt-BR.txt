@@ -437,3 +437,13 @@ Sun|Dom
 Previous month|Mês anterior
 Next month|Próximo mês
 Open calendar|Abrir calendário
+Local Image|Imagem local
+Insert image|Inserir imagem
+Replace image|Substituir imagem
+Remove image|Remover imagem
+Image width|Largura da imagem
+Image below topic|Imagem abaixo do tópico
+Reset Size|Redefinir tamanho
+PNG/JPEG only. Resizing keeps the aspect ratio.|Apenas PNG/JPEG. O redimensionamento mantém as proporções.
+Could not insert image|Não foi possível inserir a imagem
+Image request expired. Select a topic and try again.|A solicitação de imagem expirou. Selecione um tópico e tente novamente.

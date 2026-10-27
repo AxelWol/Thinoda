@@ -57,6 +57,7 @@ pub enum Cmd {
     MapShot,
     Print,
     Labels,
+    LocalImage,
     TaskPlanning,
     CreateZone,
     EditZone,
@@ -259,6 +260,7 @@ pub struct ThinodaApp {
     pub(crate) zones: crate::zones::ZoneState,
     pub(crate) pitch: crate::pitch::PitchState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
+    pub(crate) image_request: Option<crate::images::ImageRequest>,
     pub(crate) fonts: thinoda_ui::fonts::SystemFonts,
     pub(crate) font_source: Option<(String, u64)>,
     pub(crate) quick_style_dialog: Option<crate::quick_styles::StyleDialog>,
@@ -351,6 +353,7 @@ impl ThinodaApp {
             zones: Default::default(),
             pitch: Default::default(),
             label_editor: None,
+            image_request: None,
             fonts: Default::default(),
             font_source: None,
             quick_style_dialog: None,
@@ -738,6 +741,7 @@ impl ThinodaApp {
                 ctx.request_repaint();
             }
             Cmd::Labels => self.begin_labels(ctx),
+            Cmd::LocalImage => self.begin_image(ctx),
             Cmd::Print => self.begin_print(ctx),
             Cmd::Export(format) => {
                 if let Some(doc) = self.doc_mut() {
@@ -1162,7 +1166,7 @@ impl ThinodaApp {
                         )
                     })
             }
-            Cmd::Labels | Cmd::TaskPlanning | Cmd::EditField(_) => {
+            Cmd::LocalImage | Cmd::Labels | Cmd::TaskPlanning | Cmd::EditField(_) => {
                 !self.any_modal_open()
                     && !self.dialogs.settings
                     && !self.dialogs.about
@@ -1808,6 +1812,21 @@ impl ThinodaApp {
                 }
                 files::Purpose::Merge => {
                     self.merge_files(&picked.paths);
+                }
+                files::Purpose::Image(request) => {
+                    if let Some(path) = picked.paths.first() {
+                        self.finish_image(request, path);
+                    }
+                    for path in &picked.paths {
+                        let _ = thinoda_platform::fs::remove_file(path);
+                    }
+                    if self
+                        .image_request
+                        .as_ref()
+                        .is_some_and(|r| r.request == request)
+                    {
+                        self.image_request = None;
+                    }
                 }
             }
         }
@@ -2578,6 +2597,7 @@ impl ThinodaApp {
             (Cmd::MapShot, "Map Shot", "", "Tools"),
             (Cmd::Print, "Print", "", "File"),
             (Cmd::Labels, "Labels", "", "Insert"),
+            (Cmd::LocalImage, "Local Image", "", "Insert"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (Cmd::AiChat, "AI Chat", "", "AI"),
             (

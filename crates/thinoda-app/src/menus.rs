@@ -205,6 +205,7 @@ impl ThinodaApp {
                 ("Notes", Cmd::EditField(FocusField::Notes)),
                 ("Hyperlink", Cmd::EditField(FocusField::Hyperlink)),
                 ("Labels", Cmd::Labels),
+                ("Local Image", Cmd::LocalImage),
             ])),
             submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
                 .chain(std::iter::once(MenuEntry::Separator))

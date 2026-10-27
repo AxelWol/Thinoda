@@ -29,6 +29,7 @@ impl Cmd {
             Self::MapShot => "tools.map-shot",
             Self::Print => "file.print",
             Self::Labels => "insert.labels",
+            Self::LocalImage => "insert.local-image",
             Self::TaskPlanning => "insert.task",
             Self::CreateZone => "insert.zone",
             Self::EditZone => "edit.zone",

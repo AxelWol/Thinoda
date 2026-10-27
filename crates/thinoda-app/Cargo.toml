@@ -48,6 +48,7 @@ env_logger.workspace = true
 
 # Browser build (`crates/thinoda-web`): async file pickers and downloads.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+rfd = { workspace = true, features = ["file-handle-inner"] }
 uuid = { workspace = true, features = ["js"] }
 wasm-bindgen-futures.workspace = true
 
