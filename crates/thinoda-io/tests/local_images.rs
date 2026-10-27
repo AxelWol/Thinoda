@@ -106,6 +106,11 @@ fn local_images_render_in_visual_exports_print_and_pitch() {
             );
             assert!(thinoda_io::presentation::export_presentation_png_zip(sheet, &options).is_ok());
             assert!(thinoda_io::presentation::export_presentation_pdf(sheet, &options).is_ok());
+            assert!(
+                !export_bytes(&book, Format::PowerPoint, &options)
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
 }
@@ -116,7 +121,13 @@ fn unsupported_resources_and_editable_exports_remain_explicit() {
     for format in Format::EXPORTABLE {
         if !matches!(
             format,
-            Format::Thinoda | Format::Svg | Format::Png | Format::Jpeg | Format::Pdf
+            Format::Thinoda
+                | Format::XMind
+                | Format::Svg
+                | Format::Png
+                | Format::Jpeg
+                | Format::Pdf
+                | Format::PowerPoint
         ) {
             assert!(
                 export_bytes(&book, *format, &Default::default()).is_err(),
@@ -126,9 +137,10 @@ fn unsupported_resources_and_editable_exports_remain_explicit() {
     }
     let bad = Resource::new("document.bin", "application/octet-stream", vec![1, 2, 3]).unwrap();
     book.active_mut().resources.insert(bad).unwrap();
-    for format in [Format::Svg, Format::Png, Format::Pdf] {
+    for format in [Format::Svg, Format::Png, Format::Pdf, Format::PowerPoint] {
         assert!(export_bytes(&book, format, &Default::default()).is_err());
     }
+    assert!(export_bytes(&book, Format::XMind, &Default::default()).is_err());
     assert!(export_bytes(&book, Format::Thinoda, &Default::default()).is_ok());
 }
 

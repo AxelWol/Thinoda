@@ -19,9 +19,9 @@ for delivery/acceptance status.
 | Topic Filtering / View All Notes | Text search and core marker/label matching exist; unified faceted navigation and a consolidated notes UI are missing. | XV1 |
 | To-Do vs Task | Independent checkboxes and scheduled Tasks exist; hierarchical checklist progress is missing. | XV2 |
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
-| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. XMind resource exchange, direct resize handles and Outliner previews remain open. | XV4 partial |
-| Import | DOCX/TextBundle are exportable, not importable. | XV5; other unsupported importers stay in the broader inventory. |
-| Export / Pitch Mode | Saved framing, PDF and PNG slides exist; PowerPoint export and explicit delivery aspect-ratio choices are missing. | XV6 |
+| Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. Import/export supports the pinned SDK's verified embedded topic-image subset; XMind attachment package exchange and installed-app interoperability remain unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
+| Import | TextBundle Markdown and bounded DOCX text/hierarchy import are implemented locally with conversion warnings; Word page layout and embedded resources are not preserved. External relationships are never fetched. | XV5; other unsupported importers stay in the broader inventory. |
+| Export / Pitch Mode | Saved framing and PDF/PNG slides exist. A local XV6 slice exports saved Pitch slides to image-based `.pptx`, with explicit 16:9/4:3 choices, a first-slide fit preview and a flattened-slide disclosure. PowerPoint/LibreOffice interoperability remains unverified. | XV6 partial |
 | Note / Equation | Plain notes exist; structured rich notes and rendered equations are missing. | XV7 |
 | Structure / project-management role research | TreeTable enum/layout exists; editable task columns are missing. | XV8; exact reference interaction still needs verification. |
 | Xmind Agent conversation history | Scoped/depth-guided chat exists; Thinoda explicitly keeps history session-only. | XV9 optional local persistence and named threads, not another chat implementation. |
@@ -73,7 +73,9 @@ documents/macros/scripts are never interpreted or executed. This is safe saving,
 not XMind's click-to-open/system-default-app behavior or attachment preview parity.
 All ten locales and Light/Dark/System share the same commands and inspector.
 Native v3/recovery/clipboard/undo retain attachments; other exports explicitly
-refuse them. XMind attachment resource interoperability remains open (XV4 partial).
+refuse them. Thinoda rejects XMind attachment topics because their package
+schema has not been verified; image-only XMind support does not imply
+attachment interoperability or installed-app compatibility (XV4 partial).
 
 ## Audio Note
 - Desktop: select a topic > Insert > Audio Note; recording requires an enabled microphone. Select the audio-note child to play it; right-click > Save As exports it.
@@ -246,6 +248,7 @@ refuse them. XMind attachment resource interoperability remains open (XV4 partia
 ## Outliner
 - Switch via View > Outliner or the lower-right Outliner control. Desktop Outliner currently supports local files only.
 - Enter adds a topic; Tab indents; Shift+Tab outdents. Drag topics to reorganize; Insert offers Note, To-Do, Task, Hyperlink, Label, Image, and Equation.
+- Valid embedded local PNG/JPEG images appear as small, labeled previews beside their topic in the Outliner. Legacy paths/URLs, attachments, and unsupported image data are not previewed.
 - Outliner zoom: Windows `Ctrl++` / `Ctrl+-`; Mac `Command++` / `Command+-`. Show Branch Only: Windows `Ctrl+;`; Mac `Command+;`.
 - File > Export supports PDF, Markdown, Excel, Word, OPML, and TextBundle, with Mind Map/Outliner and sheet/content choices.
 - Source: https://xmind.com/user-guide/outliner-new
@@ -257,11 +260,25 @@ refuse them. XMind attachment resource interoperability remains open (XV4 partia
 
 Thinoda implementation, rechecked 2026-10-27: one selected topic owns the local
 PNG/JPEG picker; Style > Local Image provides proportional width, above/below,
-Reset Size (160 × 100 fit, no upscaling), replace and remove. These labeled controls
-are deliberate alternatives to drag/handles for this slice, not full XMind picture
-parity. Original bytes survive native storage/undo and appear in graphical outputs;
-editable non-native resource exchange remains rejected. No external reference is
-fetched or executed.
+Reset Size (160 × 100 fit, no upscaling), replace and remove. Original bytes
+survive native storage/undo and appear in graphical outputs. Editable
+non-native formats other than the limited XMind image-package subset reject
+resource-bearing documents rather than discard content. No external reference
+is fetched or executed.
+
+**Verified package subset (current worktree):** against
+[`xmind-sdk-js` 2.2.33 at commit `d35e820`](https://github.com/xmindltd/xmind-sdk-js/tree/d35e820a2d09995c69bbb452d4edc42b09a13946),
+`Topic.image` uses `image.src = "xap:resources/{componentID}"`; the returned
+`resources/{componentID}` key is written as bytes and declared in manifest
+`file-entries`. The official `xmind-model` 1.1.12 schema requires only `src`;
+its tests show width/height may be omitted and arbitrary alignment can be set.
+This slice accepts only bounded embedded PNG/JPEG and safe single path
+components. Missing dimensions are derived proportionally from decoded bytes,
+missing alignment defaults to top, and explicit alignment is limited to
+`top`/`bottom`. Thinoda preserves exact bytes, size and placement in its private
+round trip. This does not verify XMind
+attachment package data or every XMind version. No installed XMind app was
+used, so installed-app interoperability is not claimed.
 
 ## Pitch Mode
 - Enter with the Pitch Mode toolbar button; full-screen, windowed, and Presenter View modes are documented. Presenter View shows the presentation alongside the map.

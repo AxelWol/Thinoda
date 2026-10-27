@@ -9,17 +9,75 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## Current next-value state (2026-10-27)
+
+PR #88 merged after the v0.15.0 tag, so its features are not included in that
+release. The v0.15.0 release now has 10 packages and six platform checksum
+manifests; all package hashes match both their manifests and GitHub asset
+digests. The main CI run for PR #88 passed, including its web build and Pages
+deployment, and the published site responds with HTTP 200. Release Please has
+opened [PR #89](https://github.com/AxelWol/Thinoda/pull/89) for v0.16.0 with
+PR #87 and #88 in the changelog. It is still open without reported checks and
+must not be merged until current checks and review requirements are satisfied.
+
+The current local work finishes XV4's bounded XMind image-resource interchange,
+then integrates the PowerPoint fit preview and the already implemented XV5
+DOCX/TextBundle import. XV4 remains partial: the verified SDK-compatible
+resource subset does not establish installed-XMind-app compatibility, the
+resource-bearing fuzz campaign has not run on this Windows host, and deleting
+topics may leave unreferenced blobs (not secure erasure). Continue next with
+XV7; XV8 and XV9 follow in the approved order.
+
+## XV6 local slice: image-based PowerPoint export (2026-10-27)
+
+The local XV6 slice adds `.pptx` to the export menu and stable
+command catalog. Export reuses saved Pitch slide order and frames, asks the
+user to choose 16:9 widescreen or 4:3 standard, and expands the framing to fit
+without cropping, stretching or mutating the source map. Each saved slide is
+rendered as a PNG-backed PowerPoint picture; the export dialog discloses that
+text and shapes are flattened rather than separately editable. Valid embedded
+PNG/JPEG resources render, while attachments, unsupported resources and invalid
+image bytes fail explicitly. The ratio picker previews the first saved slide
+using the same fitted-frame renderer as the exported deck; changing ratios
+refreshes the bounded preview asynchronously without blocking the dialog.
+
+Verification on this host: all 99 `thinoda-io` tests pass, including PPTX
+package-part/XML parsing, slide count/title escaping, image dimensions, both
+aspect ratios, source immutability and resource handling. Preview rendering is
+checked against the selected 16:9/4:3 geometry. The focused app PowerPoint-dialog
+test and command-ID test pass. This does not claim Open XML schema validation or
+an opening test in PowerPoint/LibreOffice; the export is not editable-object PPTX.
+
+## XV5 local slice: safe document import (2026-10-27)
+
+DOCX and TextBundle now use the shared import-report/confirmation workflow.
+TextBundle reads bounded Markdown packages; DOCX maps paragraphs, heading
+styles/outline levels and numbered-list depth into a deterministic topic tree.
+Both preserve the original source and never resolve relationships or execute
+document content. Unsupported formatting, links, notes, resources and other
+losses are surfaced before the converted copy is accepted. The confirmation
+dialog previews the first eight converted topics and total topic count. This is
+a text and hierarchy importer, not a Word layout renderer or a promise to
+retain embedded resources. On Windows, all 98 IO tests, all 211 app library
+tests, strict IO Clippy and the WASM app-library check pass; formatting and
+diff checks pass. Other native-host runtime CI and the full app e2e suite are
+not claimed here.
+
 ## XV4 active slice: portable resource storage (2026-10-27)
 
 UR4 live transitions/composition and the XV4 storage foundation were merged in
 [PR #85](https://github.com/AxelWol/Thinoda/pull/85) on 2026-10-27 (squash
 `cbbcf6f4a981a4415e43fafd569d1c8b4ce1afeb`, including foundation `aa4acde`).
-The local-image follow-ups are merged in PR #86/#87; release monitoring remains
-separate. Attachment topics were submitted in [PR #88](https://github.com/AxelWol/Thinoda/pull/88)
-against current `main`; its cross-platform CI was pending when this update began.
-The selection-based image drag/drop follow-up is now part of PR #88 and its
-cross-platform CI has started on the updated head.
-XV4 is **in progress, not complete**.
+The local-image follow-ups are merged in PR #86/#87. Attachment topics and
+selection-based image drag/drop are merged in
+[PR #88](https://github.com/AxelWol/Thinoda/pull/88) as
+`1fb939e12ecaa417a6e6506a3ac030ec4076269e`. At the latest GitHub status
+refresh (2026-10-27), merge-commit CI reported 9 passed, 0 failed and 2 skipped;
+Release Please was pending, so do not claim release assets are complete.
+XV4 is **in progress, not complete**. The local XMind continuation imports and
+exports only the pinned SDK's validated embedded PNG/JPEG topic-image pattern;
+the exact schema, rejection behavior and remaining interoperability limits are
+recorded below and in the user guide.
 The first slice adds sheet-owned, immutable content-addressed resources,
 native archive v3, base64 recovery and versioned sheet clipboard, bounded
 transactional paste/add/duplicate/merge and preservation through undo.
@@ -43,14 +101,16 @@ selection-owned native/browser picker, insert/replace/remove, proportional width
 above/below placement and Reset Size in Style > Local Image. Reset uses a
 160 × 100 fit without upscaling; display geometry is finite, positive and at most
 1024/side. The inspector identifies the selected topic and filename. Existing
-menu/ribbon/palette/topic insert surfaces share the command; Outliner uses the
-same selection/inspector, not an inline image preview.
+menu/ribbon/palette/topic insert surfaces share the command. Outliner rows now
+show safe previews for valid embedded PNG/JPEG resources while retaining the
+shared selection and inspector workflow.
 Map/thumbnail rendering caches 512px previews; shared SVG/raster/PDF/print/Pitch
 renders original bytes. Native v3, recovery, clipboard and undo preserve bytes,
-placement and size. Editable non-native exports still reject resources; visual
-output rejects unsupported/malformed bytes and legacy file/URL references.
+placement and size. Other editable non-native exports still reject resources outside the verified
+XMind image subset; visual output rejects unsupported/malformed bytes and
+legacy file/URL references.
 
-**Attachment-topic continuation (PR #88, not released):** select one
+**Attachment-topic continuation (merged in PR #88; due in v0.16.0):** select one
 topic and use Insert > Attachment (menu/ribbon, palette, context insert) to choose
 one local file, 1 byte–8 MiB. A child topic with a paperclip title is added and
 selected in one undoable transaction, expanding its parent. It owns a validated
@@ -71,7 +131,7 @@ recovery, owned branch/sheet clipboard and undo preserve opaque bytes. Non-nativ
 editable and visual outputs explicitly refuse attachment-bearing documents,
 including attachments whose bytes happen to be PNG/JPEG.
 
-**Image drop follow-up (PR #88):** dropping PNG/JPEG files onto the app inserts
+**Image drop follow-up (merged in PR #88):** dropping PNG/JPEG files onto the app inserts
 the image on the single selected topic, using the same bounded decode, resource
 store, undo and inspector flow as the picker. Other dropped files keep their
 existing open behavior. The drop is selection-based rather than a pointer-target
@@ -79,10 +139,88 @@ placement; web uploads use the existing VFS drop pipeline and are removed after
 the image bytes are embedded. The selected document/sheet/topic/revision is
 captured before asynchronous web upload, so a stale completion cannot target a
 new selection. Three focused native tests cover selected-topic insertion/undo,
-the no-selection no-op and stale completion; cross-platform CI is pending.
+the no-selection no-op and stale completion. At the latest status refresh, cross-platform CI on the merge commit reported
+9 passed, 0 failed and 2 skipped.
 
-Next within XV4: supported XMind resource exchange, direct image resize handles
-and Outliner previews. External-application opening is deliberately not promised
+**Direct image-resize continuation (local):** a single selected
+embedded image exposes a labeled, constant-screen-size lower-right handle.
+Dragging previews a proportional outline without changing the document; an
+owned release inside the canvas commits one undoable edit, bounded by the core
+1024-unit limit on either side. Escape, stale content/sheet/selection/camera or
+viewport state, lost focus/pointer, touch cancellation, multitouch, disabled UI
+and popups cancel without committing. A focused handle supports arrow keys
+(Shift for larger steps); Style > Local Image remains the keyboard/touch width
+fallback. Labels and offline guidance use all ten shipped locales. This is not
+a claim of native screen-reader or physical touch-hardware verification.
+
+Direct-resize verification on Windows: `cargo test --locked -p thinoda-canvas`
+passes **104 tests** (including seven image-resize regressions), and
+`cargo test --locked -p thinoda-app --lib` passes **211 tests**. Formatting and
+`git diff --check` pass. This does not claim physical touch or screen-reader verification, or successful
+interactive GUI checks on every native host.
+
+**XMind image-resource interchange (local):** import/export handles the bounded
+PNG/JPEG topic-image pattern verified against `xmind-sdk-js` 2.2.33. Import
+requires safe single-component `xap:resources/{id}` references, matching
+manifest entries and bounded supported image bytes; export writes the public
+resource paths and manifest declarations. Private Thinoda round trips retain
+image bytes, size and top/bottom placement. Unsupported alignments, external
+paths/URLs, unreferenced blobs and unverified attachment resources are rejected;
+XMind attachment interchange is not implemented. Focused package validation,
+round-trip and fuzz-seed tests cover these rules. This is not a claim of
+installed-XMind interoperability or support for every XMind version. The
+libFuzzer campaign remains unverified on this Windows host because the MSVC
+AddressSanitizer runtime is unavailable.
+
+**Outliner image previews (local, uncommitted):** rows show a small preview only
+when the topic points to a valid, embedded PNG/JPEG resource. The Outliner calls
+the canvas's existing bounded decode/texture cache; it does not fetch or open
+legacy paths or URLs, and it does not present attachment bytes, unsupported
+content or mismatched media metadata as trusted images. The thumbnail has
+localized alternative text and does not take focus or change title editing,
+keyboard navigation, selection, or shared Map/Outliner selection state.
+
+Preview verification on Windows: the focused preview/selection test and the
+existing Outliner viewport, compact-layout and toolbar suites pass (**5 tests
+across 4 suites**); `cargo test --locked -p thinoda-app --lib` passes **211
+tests**, and `cargo test --locked -p thinoda-canvas` passes **104 tests**.
+`cargo check --locked --target wasm32-unknown-unknown -p thinoda-app --lib`,
+`cargo fmt --all -- --check`, and `git diff --check` pass. This does not claim
+the full app integration suite or interactive GUI/screen-reader verification.
+
+**XMind image-resource continuation (current worktree, not released):** adds
+only the bounded PNG/JPEG image subset verified against
+[`xmind-sdk-js` 2.2.33, commit `d35e820`](https://github.com/xmindltd/xmind-sdk-js/tree/d35e820a2d09995c69bbb452d4edc42b09a13946).
+The pinned `src/core/topic.ts::Topic.image` writes
+`image.src = "xap:resources/{componentID}"` and returns
+`resources/{componentID}`; `src/utils/zipper.ts::updateManifestMetadata`
+stores bytes at that archive key and declares it in `manifest.json`'s
+`file-entries`; `src/common/model.ts::Image` defines `src`, `width`, `height`
+and `align`. Follow-up verification of official `xmind-model` 1.1.12 at
+[`c448b0f`](https://github.com/xmindltd/xmind-model/tree/c448b0fcfc8bee51f68124aae87a57e3947c6b44)
+found the image schema requires only `src`; model tests permit missing width
+and arbitrary alignment values. Its example uses PNG bytes. Thinoda now reads/writes only that
+topic-image pattern, validates safe single-component resource references,
+manifest/archive presence, PNG/JPEG bytes and existing byte/count limits.
+Missing dimensions are derived proportionally from bounded decoded image
+dimensions; a missing alignment defaults to top. Only explicit top/bottom
+alignment is supported; other values fail visibly. External URL/path
+references and attachment topics are rejected explicitly.
+Thinoda's private workbook metadata preserves exact original resource bytes,
+display size and top/bottom placement across its own round trip. The official
+[Picture guide](https://xmind.com/user-guide/pic-new) describes embedded
+images, top/bottom placement, resizing and Reset Size.
+
+This evidence does **not** establish an XMind attachment package schema or
+support for every XMind version. Generated package fixtures are tested; the
+installed XMind application was not used, so do not claim app interoperability.
+No URLs or paths are resolved, and no external files are read. Available fuzz
+corpus now includes two image-bearing PNG packages (missing metadata and partial
+dimensions/alignment) with deterministic import/round-trip tests. The fuzz
+campaign itself was not executable on this Windows host because the required
+MSVC AddressSanitizer runtime library is unavailable; Linux CI remains the
+campaign gate.
+External-application opening is deliberately not promised
 without a consistent safe cross-platform contract.
 General topic deletion still follows the existing resource-store policy:
 unreferenced blobs can remain in the sheet (and saved archive); garbage collection
@@ -90,10 +228,20 @@ is not implemented by this slice. Deleting a topic is not secure byte erasure,
 and retained blobs still count toward limits and unsupported-export refusals.
 Image drag/drop insertion is available for PNG/JPEG files when exactly one topic
 is selected; dropping onto a particular topic without selecting it is not
-implemented. Direct image resize handles remain open; the labeled inspector
-controls are still the accessible editing path.
+implemented. Direct image resize handles are implemented in this continuation;
+the labeled inspector controls remain an alternative accessible editing path.
 Keep all shipped locales, Light/Dark/System, native and WASM gates. Only after
 the complete XV4 workflow is verified continue XV5 through XV9 in order.
+
+Latest focused verification after the SDK optional-metadata compatibility fix:
+`cargo test --locked -p thinoda-io` passes 93 tests, including malformed
+resources, missing/partial dimensions, unsupported alignment and both
+resource-bearing fuzz seeds; `cargo test --locked -p thinoda-canvas` passes 104
+tests; `cargo test --locked -p thinoda-app --lib` passes 211 tests.
+`cargo clippy --locked -p thinoda-io --all-targets -- -D warnings`, the WASM
+app-library check, formatting and `git diff --check` pass. This does not claim
+full-workspace CI, a native XMind application interoperability test or a
+successful local fuzz campaign.
 
 Foundation verification: all 213 core/IO tests, 276 app unit/e2e/floating-topic
 tests and three focused real recovery tests pass. Cases cover exact workbook
@@ -3907,7 +4055,10 @@ First slice implemented (Windows x64 source verification):
   alignment/decorations/connector styles, relationship/boundary colors and element
   classes; legacy topic styles and self-closing property elements. Public JSON
   round trips no longer rely on the private workbook payload. Themes/style references,
-  fixed widths, images/to-dos and legacy structural annotations still have gaps.
+  fixed widths, To-Dos and legacy structural annotations still have gaps. The
+  bounded SDK-compatible PNG/JPEG topic-image package subset now has format
+  contract tests, including omitted/partial dimensions and absent alignment;
+  broader XMind image forms and installed-app interoperability remain unverified.
   These new style mappings have format-contract coverage, not new native-XMind
   visual verification.
 - User follow-ups: tracked individual relationship/boundary/Summary deletion as P1;

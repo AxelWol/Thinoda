@@ -428,6 +428,7 @@ mod tests {
                 "Replace image",
                 "Remove image",
                 "Image width",
+                "Resize image",
                 "Image below topic",
                 "Reset Size",
                 "PNG/JPEG only. Resizing keeps the aspect ratio.",

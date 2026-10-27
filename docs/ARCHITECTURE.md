@@ -19,7 +19,7 @@ graph TD
 | Crate | Responsibility | Depends on egui? |
 |---|---|---|
 | `thinoda-core` | Workbook/sheet/topic model, transactional edits + undo, layout engine for all structures, themes, templates, search, outline conversion | no |
-| `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
+| `thinoda-io` | `.thinoda`, XMind, FreeMind, OPML, Markdown, text, TextBundle Markdown, bounded DOCX text/hierarchy import; bounded MindManager `.mmap` read/write and `.xmmap` import with conversion reports; SVG/PNG/JPEG/PDF/Word/Excel/CSV export; format detection | no |
 | `thinoda-platform` | Paths, settings (TOML), atomic file writes, crash recovery journal + panic hook, cloud folder detection, single instance, system theme; on wasm a `localStorage` virtual file system, downloads and browser printing | no |
 | `thinoda-ai` | Blocking HTTP client (async `fetch` client on wasm) for models/completions/embeddings, bounded SSE, prompts, outline parser, polling `AiJob`/`AiStreamJob`/`AiEmbeddingJob`, local mock server | no |
 | `thinoda-ui` | Design tokens, light/dark visuals, widgets, palette, toasts, dialogs, icons, fonts — **the reusable library for companion apps** | yes |
@@ -29,6 +29,13 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Bounded document conversion (XV5, local implementation):** DOCX and
+  TextBundle are parsed as data only, with validated ZIP paths/counts/expanded
+  bytes and per-document XML/Markdown limits. TextBundle Markdown and DOCX
+  paragraph/heading/list structure become an outline; unsupported content is
+  reported for consent and the import dialog previews at most eight topics.
+  External relationships are never resolved and document content is never
+  executed. This does not claim Word page-layout or embedded-resource fidelity.
 - **Embedded resources, local images and attachment topics (XV4, partial)**:
   `Sheet.resources` owns bounded immutable `Arc<[u8]>` blobs; subtree clipboard,
   full-sheet copy/merge and undo snapshots carry the bytes without deep-copying
@@ -97,8 +104,21 @@ graph TD
   a destination chooser and atomic byte write; browser uses VFS scratch delivery
   with an opaque download Blob MIME, safe filename and cleanup. No shell-open,
   system-default launch, URL fetching, scripts/macros or auto-open is involved.
-  XMind resource exchange, direct image handles and drag/drop insertion remain
-  open; external-app opening is not promised by this cross-platform contract.
+  Selection-based image drop insertion reuses image ownership and bounded decode.
+  Canvas image resizing stages a proportional outline in view state, bounded by
+  `images::MAX_DISPLAY_SIZE`, and commits only on an owned release inside the
+  canvas. Content/sheet/selection/camera/viewport changes and interrupted gestures
+  cancel; labeled keyboard-operable handles supplement the inspector width field.
+  Outliner thumbnails use the canvas's bounded resource decode/texture cache and
+  only show valid embedded PNG/JPEGs with matching declared media types; legacy
+  paths/URLs and opaque attachments remain untrusted. XMind import/export handles
+  only the bounded SDK-compatible PNG/JPEG topic-image package pattern, with
+  strict manifest/path checks; missing dimensions are derived from decoded bytes,
+  missing alignment defaults to top, and unsupported explicit alignment or
+  external references fail visibly. Attachment package interchange and installed
+  XMind application compatibility remain unverified; resource-bearing fuzz
+  fixtures are not yet available. External-app opening is not promised by this
+  cross-platform contract.
 - **Calendar inputs**: `thinoda_ui::date_field` combines an ISO text edit and
   localized, keyboard-operable month popup. The app supplies translated labels
   and `WorkCalendar::is_working_day` availability for task dates; exceptions allow

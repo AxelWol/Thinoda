@@ -15,6 +15,7 @@ mod render;
 mod xmind;
 
 use std::{
+    collections::HashSet,
     fs,
     io::{Read, Write},
     path::Path,
@@ -41,6 +42,7 @@ pub enum Format {
     Jpeg,
     Pdf,
     Word,
+    PowerPoint,
     Excel,
     Csv,
 }
@@ -54,6 +56,8 @@ impl Format {
         Self::PlainText,
         Self::MindManager,
         Self::MindManagerXml,
+        Self::TextBundle,
+        Self::Word,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
         Self::Thinoda,
@@ -69,6 +73,7 @@ impl Format {
         Self::Jpeg,
         Self::Pdf,
         Self::Word,
+        Self::PowerPoint,
         Self::Excel,
         Self::Csv,
     ];
@@ -89,6 +94,7 @@ impl Format {
             "jpg" | "jpeg" => Self::Jpeg,
             "pdf" => Self::Pdf,
             "docx" => Self::Word,
+            "pptx" => Self::PowerPoint,
             "xlsx" => Self::Excel,
             "csv" => Self::Csv,
             _ => return None,
@@ -110,6 +116,7 @@ impl Format {
             Self::Jpeg => &["jpg", "jpeg"],
             Self::Pdf => &["pdf"],
             Self::Word => &["docx"],
+            Self::PowerPoint => &["pptx"],
             Self::Excel => &["xlsx"],
             Self::Csv => &["csv"],
         }
@@ -130,6 +137,7 @@ impl Format {
             Self::Jpeg => "JPEG",
             Self::Pdf => "PDF",
             Self::Word => "Word",
+            Self::PowerPoint => "PowerPoint",
             Self::Excel => "Excel",
             Self::Csv => "CSV",
         }
@@ -152,6 +160,7 @@ pub struct ExportOptions {
     pub scale: f32,
     pub transparent: bool,
     pub padding: f32,
+    pub presentation_aspect_ratio: PresentationAspectRatio,
 }
 impl Default for ExportOptions {
     fn default() -> Self {
@@ -162,6 +171,7 @@ impl Default for ExportOptions {
             scale: 1.0,
             transparent: false,
             padding: 24.0,
+            presentation_aspect_ratio: PresentationAspectRatio::default(),
         }
     }
 }
@@ -211,8 +221,9 @@ pub use gantt::{
 };
 pub use presentation::{
     MAX_PRESENTATION_ARCHIVE_BYTES, MAX_PRESENTATION_IMAGE_PIXELS, MAX_PRESENTATION_IMAGE_SIDE,
-    MAX_PRESENTATION_TOTAL_PIXELS, export_presentation_pdf, export_presentation_png_zip,
-    generate_presentation, render_presentation_slide_png, render_presentation_slide_svg,
+    MAX_PRESENTATION_TOTAL_PIXELS, PresentationAspectRatio, export_presentation_pdf,
+    export_presentation_png_zip, export_presentation_pptx, generate_presentation,
+    render_presentation_slide_png, render_presentation_slide_svg,
 };
 pub use print::PrintDocument;
 
@@ -252,6 +263,11 @@ pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
                     _ => Format::MindManager,
                 });
             }
+        }
+        if z.file_names()
+            .any(|entry| entry.is_ok_and(|value| value == "word/document.xml"))
+        {
+            return Some(Format::Word);
         }
         if z.file_names()
             .any(|entry| entry.is_ok_and(|value| value.ends_with(".textbundle/info.json")))
@@ -312,27 +328,30 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
     if !format.can_import() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
-    if matches!(format, Format::MindManager | Format::MindManagerXml) {
-        let report = mindmanager::import(bytes, format)
-            .map_err(|error| IoError::MindManager(error.to_string()))?;
-        report.workbook.validate().map_err(IoError::Invalid)?;
-        return Ok(report);
-    }
-    let result = match format {
-        Format::Thinoda => formats::native_import(bytes)?,
-        Format::XMind => xmind::import(bytes)?,
-        Format::FreeMind => formats::freemind_import(bytes)?,
-        Format::Opml => formats::opml_import(bytes)?,
-        Format::Markdown => formats::markdown_import(bytes)?,
-        Format::PlainText => formats::text_import(bytes)?,
-        _ => unreachable!(),
+    let report = match format {
+        Format::MindManager | Format::MindManagerXml => mindmanager::import(bytes, format)
+            .map_err(|error| IoError::MindManager(error.to_string()))?,
+        Format::TextBundle => formats::textbundle_import(bytes)?,
+        Format::Word => office::docx_import(bytes)?,
+        _ => {
+            let workbook = match format {
+                Format::Thinoda => formats::native_import(bytes)?,
+                Format::XMind => xmind::import(bytes)?,
+                Format::FreeMind => formats::freemind_import(bytes)?,
+                Format::Opml => formats::opml_import(bytes)?,
+                Format::Markdown => formats::markdown_import(bytes)?,
+                Format::PlainText => formats::text_import(bytes)?,
+                _ => unreachable!(),
+            };
+            ImportReport {
+                format,
+                workbook,
+                warnings: Vec::new(),
+            }
+        }
     };
-    result.validate().map_err(IoError::Invalid)?;
-    Ok(ImportReport {
-        format,
-        workbook: result,
-        warnings: Vec::new(),
-    })
+    report.workbook.validate().map_err(IoError::Invalid)?;
+    Ok(report)
 }
 /// Import a document from disk.
 pub fn import_file(path: &Path) -> Result<Workbook, IoError> {
@@ -344,20 +363,21 @@ pub fn import_file(path: &Path) -> Result<Workbook, IoError> {
 }
 
 /// Largest accepted MindManager input, bounded before parsing.
-const MINDMANAGER_LIMIT: usize = 64 * 1024 * 1024;
+const IMPORT_ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Import bytes whose format is detected from `name` (a file name or path) and
 /// content, as for [`import_file_with_report`]. Used where files arrive as
 /// bytes, for example from a browser file picker or drag and drop.
 pub fn import_named_bytes_with_report(name: &Path, bytes: &[u8]) -> Result<ImportReport, IoError> {
+    let format_hint = Format::from_path(name);
     let bounded = matches!(
-        Format::from_path(name),
-        None | Some(Format::MindManager | Format::MindManagerXml)
+        format_hint,
+        None | Some(
+            Format::MindManager | Format::MindManagerXml | Format::TextBundle | Format::Word
+        )
     );
-    if bounded && bytes.len() > MINDMANAGER_LIMIT {
-        return Err(IoError::Invalid(
-            "MindManager file exceeds size limit".into(),
-        ));
+    if bounded && bytes.len() > IMPORT_ARCHIVE_LIMIT {
+        return Err(IoError::Invalid("import archive exceeds size limit".into()));
     }
     let f = detect_format(name, bytes)
         .ok_or_else(|| IoError::UnsupportedFormat(name.display().to_string()))?;
@@ -376,24 +396,39 @@ pub fn import_named_bytes(name: &Path, bytes: &[u8]) -> Result<Workbook, IoError
 /// File counterpart of [`import_bytes_with_report`].
 pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
     // Bound MindManager file reads before allocating the input buffer.
+    let format_hint = Format::from_path(path);
     let bounded = matches!(
-        Format::from_path(path),
-        None | Some(Format::MindManager | Format::MindManagerXml)
+        format_hint,
+        None | Some(
+            Format::MindManager | Format::MindManagerXml | Format::TextBundle | Format::Word
+        )
     );
-    if bounded && fs::metadata(path)?.len() > 64 * 1024 * 1024 {
-        return Err(IoError::Invalid(
-            "MindManager file exceeds size limit".into(),
-        ));
+    if bounded && fs::metadata(path)?.len() > IMPORT_ARCHIVE_LIMIT as u64 {
+        let message = if matches!(
+            format_hint,
+            Some(Format::MindManager | Format::MindManagerXml)
+        ) {
+            "MindManager file exceeds size limit"
+        } else {
+            "import archive exceeds size limit"
+        };
+        return Err(IoError::Invalid(message.into()));
     }
     let b = if bounded {
         let mut bytes = Vec::new();
         fs::File::open(path)?
-            .take(64 * 1024 * 1024 + 1)
+            .take(IMPORT_ARCHIVE_LIMIT as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() > 64 * 1024 * 1024 {
-            return Err(IoError::Invalid(
-                "MindManager file exceeds size limit".into(),
-            ));
+        if bytes.len() > IMPORT_ARCHIVE_LIMIT {
+            let message = if matches!(
+                format_hint,
+                Some(Format::MindManager | Format::MindManagerXml)
+            ) {
+                "MindManager file exceeds size limit"
+            } else {
+                "import archive exceeds size limit"
+            };
+            return Err(IoError::Invalid(message.into()));
         }
         bytes
     } else {
@@ -428,11 +463,28 @@ pub fn export_bytes_with_consent(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
-    if !matches!(
+    let supports_embedded_resources = matches!(
         format,
-        Format::Thinoda | Format::Svg | Format::Png | Format::Jpeg | Format::Pdf
-    ) && book.sheets.iter().any(|sheet| !sheet.resources.is_empty())
-    {
+        Format::Thinoda
+            | Format::XMind
+            | Format::Svg
+            | Format::Png
+            | Format::Jpeg
+            | Format::Pdf
+            | Format::PowerPoint
+    );
+    if book.sheets.iter().any(|sheet| {
+        !sheet.resources.is_empty()
+            && (!supports_embedded_resources
+                || (format == Format::PowerPoint
+                    && (sheet
+                        .topics
+                        .values()
+                        .any(|topic| topic.attachment.is_some())
+                        || sheet.resources.entries.values().any(|resource| {
+                            !matches!(resource.media_type.as_str(), "image/png" | "image/jpeg")
+                        }))))
+    }) {
         return Err(IoError::Invalid(
             "this format cannot yet preserve embedded resources; save as .thinoda to retain all bytes".into(),
         ));
@@ -464,6 +516,13 @@ pub fn export_bytes_with_consent(
         Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg)?,
         Format::Pdf => render::pdf(book, opts)?,
         Format::Word => office::docx(book, opts)?,
+        Format::PowerPoint => {
+            let sheet = &book.sheets[opts
+                .sheet
+                .unwrap_or(book.active_sheet)
+                .min(book.sheets.len() - 1)];
+            export_presentation_pptx(sheet, opts)?
+        }
         Format::Excel => office::xlsx(book, opts)?,
         Format::Csv => office::csv(book, opts),
         _ => unreachable!(),
@@ -475,7 +534,13 @@ pub fn export_bytes_with_consent(
 pub fn symbol_color_loss(book: &Workbook, format: Format) -> bool {
     !matches!(
         format,
-        Format::Thinoda | Format::XMind | Format::Svg | Format::Png | Format::Jpeg | Format::Pdf
+        Format::Thinoda
+            | Format::XMind
+            | Format::Svg
+            | Format::Png
+            | Format::Jpeg
+            | Format::Pdf
+            | Format::PowerPoint
     ) && book
         .sheets
         .iter()
@@ -523,6 +588,58 @@ pub(crate) fn zip_entry<R: Read + std::io::Seek>(
     name: &str,
 ) -> Result<Vec<u8>, IoError> {
     zip_entry_with_limit(z, name, MAX_ENTRY_SIZE)
+}
+
+pub(crate) fn validate_document_archive<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<HashSet<String>, IoError> {
+    const MAX_ENTRIES: usize = 4096;
+    const MAX_ENTRY_SIZE: u64 = 32 * 1024 * 1024;
+    const MAX_EXPANDED_SIZE: u64 = 128 * 1024 * 1024;
+
+    if archive.len() > MAX_ENTRIES {
+        return Err(IoError::Invalid(
+            "document archive contains too many entries".into(),
+        ));
+    }
+
+    let mut names = HashSet::with_capacity(archive.len());
+    let mut expanded_size = 0u64;
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        let name = file.name()?.to_string();
+        let path = name.strip_suffix('/').unwrap_or(&name);
+        if path.is_empty()
+            || path.starts_with('/')
+            || path
+                .bytes()
+                .any(|byte| byte == b'\\' || byte == b':' || byte.is_ascii_control())
+            || path
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return Err(IoError::Invalid(format!(
+                "document archive contains unsafe path {name}"
+            )));
+        }
+        if !names.insert(name.clone()) {
+            return Err(IoError::Invalid(format!(
+                "document archive contains duplicate entry {name}"
+            )));
+        }
+        if file.size() > MAX_ENTRY_SIZE {
+            return Err(IoError::Invalid(format!(
+                "document archive entry {name} exceeds size limit"
+            )));
+        }
+        expanded_size = expanded_size.saturating_add(file.size());
+        if expanded_size > MAX_EXPANDED_SIZE {
+            return Err(IoError::Invalid(
+                "document archive exceeds expanded size limit".into(),
+            ));
+        }
+    }
+    Ok(names)
 }
 
 pub(crate) fn zip_entry_with_limit<R: Read + std::io::Seek>(

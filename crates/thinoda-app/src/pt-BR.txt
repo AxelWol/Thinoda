@@ -1,4 +1,8 @@
 Generation provider|Provedor de geração
+PowerPoint slide size|Tamanho do slide do PowerPoint
+Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.|Os slides são exportados como imagens; textos e formas não podem ser editados separadamente. O enquadramento se expande para a proporção escolhida sem cortes ou deformações.
+Widescreen (16:9)|Tela ampla (16:9)
+Standard (4:3)|Padrão (4:3)
 CLI default|Padrão da CLI
 CLI replies are buffered. Tools are disabled; no local files are supplied.|As respostas da CLI são armazenadas em buffer. As ferramentas estão desativadas; arquivos locais não são fornecidos.
 Check CLI status|Verificar status da CLI
@@ -229,7 +233,9 @@ No install prompt is available. The app may already be installed, or your browse
 Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.|Não foi possível ler este arquivo MindManager. Ele pode ser inválido, estar criptografado, ser grande demais ou não ser seguro.
 MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.|O MindManager salva uma única folha. Exporte a folha atual ou salve a pasta de trabalho completa como .thinoda.
 Choose a different destination to preserve the imported source.|Escolha outro destino para preservar o arquivo de origem importado.
-MindManager conversion may omit unsupported content. The source file is preserved.|A conversão de MindManager pode omitir conteúdo não suportado. O arquivo de origem é preservado.
+This import may omit unsupported content. The source file is preserved.|Esta importação pode omitir conteúdo não suportado. O arquivo de origem é preservado.
+Converted outline preview|Pré-visualização da estrutura convertida
+showing the first 8 topics|exibindo os 8 primeiros tópicos
 MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.|A exportação para MindManager não pode preservar todo o conteúdo. Use Exportar com confirmação ou salve como .thinoda.
 Only the current sheet is exported. Colors, assets, relationships, advanced layout and unsupported data may be omitted. The source workbook is unchanged.|Só é exportada a folha atual. Podem ser omitidos cores, recursos, relações, layout avançado e dados não suportados. A pasta de trabalho de origem não é alterada.
 Additional or unsupported links|Links adicionais ou não suportados
@@ -438,6 +444,7 @@ Previous month|Mês anterior
 Next month|Próximo mês
 Open calendar|Abrir calendário
 Local Image|Imagem local
+Image preview|Pré-visualização da imagem
 Insert image|Inserir imagem
 Replace image|Substituir imagem
 Remove image|Remover imagem
@@ -456,3 +463,6 @@ Could not save attachment|Não foi possível salvar o anexo
 Attachment request expired. Select a topic and try again.|A solicitação de anexo expirou. Selecione um tópico e tente novamente.
 Files stay embedded. Save only files you trust; nothing is opened automatically.|Os arquivos permanecem incorporados. Salve apenas arquivos confiáveis; nada é aberto automaticamente.
 Select a topic, then Insert > Attachment to add a local file as a child topic (1 byte to 8 MiB). Style > Attachment offers a separate Save/Download action. Files are opaque: nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported yet.|Selecione um tópico e depois Inserir > Anexo para adicionar um arquivo local como subtópico (1 byte a 8 MiB). Estilo > Anexo oferece uma ação separada para salvar/baixar. Os arquivos não são interpretados: nada é aberto ou executado. Salve como .thinoda para preservar os anexos; outras exportações ainda não são compatíveis.
+# Selected-image canvas resize handle.
+Resize image|Redimensionar imagem
+Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.|Redimensione uma imagem selecionada com a alça inferior direita. Escape cancela; as setas redimensionam quando a alça está em foco. Estilo > Imagem local oferece controles de largura por teclado/toque.

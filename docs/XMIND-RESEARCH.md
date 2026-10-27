@@ -244,12 +244,52 @@ not a claim inferred from appearance or harness checks.
 | XV1 faceted navigation + notes overview | `thinoda-core/src/search.rs` has text search and `filter_topics(markers, labels)` with ancestor context. `thinoda-app/src/ui.rs::search_bar` exposes text/scope/notes/labels/dimming, not a complete facet picker or an all-notes overview. | [Topic Filtering](https://xmind.com/user-guide/topic-filtering-new) exposes marker/label/task/priority and text/note navigation; [View All Notes](https://xmind.com/user-guide/view-note-new) consolidates notes and jumps to topics. High-frequency retrieval improvement; extend the foundation rather than claim filtering is wholly absent. |
 | XV2 To-Do roll-up | `Topic.todo` is `Option<bool>`; `edit.rs::set_todo` sets an individual topic. Scheduled Tasks live separately in `schedule.rs`. No derived nested checklist completion is implemented. | [To-Do vs Task](https://xmind.com/user-guide/to-do-vs-task) explicitly distinguishes sub-To-Do aggregate progress from dated/dependent Gantt Tasks. Useful lightweight planning without forcing every checkbox into the scheduler. |
 | XV3 numbering | `model.rs::Topic` has no numbering field and the current source has no structural numbering implementation. The old PLAN Phase 1 "done" claim was inaccurate and is corrected. | [Numbering](https://xmind.com/user-guide/numbering-new) is separate from title text, updates with topic position, supports siblings/tiered numbers/restart, and is not supported by XMind Pitch. Useful for outlines/procedures; do not counterfeit it with title prefixes. |
-| XV4 embedded resources | Partial: bounded resources/native v3/recovery/clipboard support local PNG/JPEG insert/replace/remove, selection-based drop insertion, proportional inspector width/reset/above-below, cached map previews and shared visual/print/Pitch output. Direct handles, Outliner previews, attachments in external XMind packages and XMind resource exchange remain incomplete; unsupported output still fails explicitly. | [Picture](https://xmind.com/user-guide/pic-new), read again 2026-10-27, confirms selected-topic insert, top/bottom placement, drag resize and Reset Size. Thinoda deliberately starts with labeled controls and a bounded default fit; drag/drop reuses the selected-topic workflow rather than guessing from a drop coordinate. [Attachment](https://xmind.com/user-guide/attachment-new) still motivates explicit save/open consent. Preserve original bytes before adding sticker/audio/AI-image buttons. |
+| XV4 embedded resources | Partial: bounded resources/native v3/recovery/clipboard support local PNG/JPEG insert/replace/remove, selection-based drop insertion, proportional inspector width/reset/above-below, cached map and Outliner previews, direct proportional handles with staged preview/cancellation/keyboard/one-step undo, shared visual/print/Pitch output, and a verified bounded XMind topic-image subset. XMind attachment package schema and installed-app interoperability remain unverified; unsupported content fails explicitly. | The pinned [`xmind-sdk-js` 2.2.33 source at `d35e820`](https://github.com/xmindltd/xmind-sdk-js/tree/d35e820a2d09995c69bbb452d4edc42b09a13946) verifies `src/core/topic.ts::Topic.image` uses `xap:resources/{componentID}` and returns `resources/{componentID}`; `src/utils/zipper.ts::updateManifestMetadata` writes bytes to that key and adds it to `manifest.json` `file-entries`. Official `xmind-model` 1.1.12 makes only `src` mandatory; absent dimensions/alignment are accepted by the model. Thinoda supports bounded PNG/JPEG only, strict safe single-component refs, declared archive resources, proportional defaults for missing dimensions, top/bottom alignment, and existing resource limits; its private metadata preserves exact bytes, display size and top/bottom state. Two fuzz corpus seeds and deterministic tests cover absent and partial metadata; the Linux campaign remains pending. The [Picture guide](https://xmind.com/user-guide/pic-new), rechecked 2026-10-27, confirms embedded images, top/bottom placement, resize and Reset Size. The [Attachment guide](https://xmind.com/user-guide/attachment-new) motivates explicit save/open consent, but does not verify the package schema. No installed XMind app was used. |
 | XV5 document ingestion | `thinoda-io/src/lib.rs::Format::IMPORTABLE` excludes Word and TextBundle, although both are exportable and recognized by extension. | [Import](https://xmind.com/user-guide/import-new) explicitly includes DOCX and TextBundle. Prioritize common document-to-outline workflows over implementing every competitor format. Resource-bearing imports depend on XV4. |
 | XV6 presentation handoff | `model.rs::Presentation` stores ordered source frames; `thinoda-io/src/presentation.rs` renders those frames to PDF/PNG. `Format` has no PowerPoint variant; no explicit presentation aspect-ratio setting exists. | [Export](https://xmind.com/user-guide/export-new) includes PowerPoint; [Pitch](https://xmind.com/user-guide/pitch-mode-new) describes aspect ratios and delivery options. Start with honest image-based PPTX and fit preview, not promises of editable Office objects or video. |
 | XV7 rich notes / equations | Notes are `Option<String>` edited with a buffered text field in `ui.rs`; current model/Insert surfaces lack an equation content type/render path. | [Note](https://xmind.com/user-guide/note-new) supports rich lists/emphasis; [Equation](https://xmind.com/user-guide/equation-new) supplies editable mathematical/chemical notation. Preserve draft/recovery/search behavior when introducing formatting. |
 | XV8 task Tree Table | `Structure::TreeTable` exists, but `layout.rs` routes it through the same stack family as LogicRight/Matrix. F3 scheduling data exists; task-column Tree Table editing does not. | The earlier project-manager role research calls for start/end/duration columns. This is a useful Thinoda extension grounded in that research, not a newly verified exact XMind column/editing contract. Reuse Gantt's validated schedule engine. |
 | XV9 durable local AI conversations | `thinoda-app/src/ai/chat.rs` stores bounded conversations in `ChatState` and explicitly labels history "session-only". The chat surface/depth modes exist, but reopen-after-restart and multiple named threads per file do not. | [Xmind Agent](https://xmind.com/user-guide/xmind-ai-chatbot/web), "Manage your conversations", documents separate per-file chats and reopening history. Preserve research continuity with optional app-local history, not a hosted account or automatic inclusion in shared documents. |
+
+### XMind image-package evidence
+
+The official [XMind JavaScript SDK](https://github.com/xmindltd/xmind-sdk-js)
+provides a concrete image-resource example beyond the user-guide behavior. Its
+published package metadata identifies version 2.2.33. At pinned source revision
+[`d35e820`](https://github.com/xmindltd/xmind-sdk-js/tree/d35e820a2d09995c69bbb452d4edc42b09a13946),
+[`Topic.image`](https://github.com/xmindltd/xmind-sdk-js/blob/d35e820a2d09995c69bbb452d4edc42b09a13946/src/core/topic.ts)
+sets the image `src` to `xap:resources/{componentID}` and returns
+`resources/{componentID}` as the archive key;
+[`Zipper.updateManifestMetadata`](https://github.com/xmindltd/xmind-sdk-js/blob/d35e820a2d09995c69bbb452d4edc42b09a13946/src/utils/zipper.ts)
+stores the supplied bytes at that key and adds it to `manifest.json` under
+`file-entries`. The
+[official image example](https://github.com/xmindltd/xmind-sdk-js/blob/d35e820a2d09995c69bbb452d4edc42b09a13946/example/example.image.js)
+uses a PNG fixture. This is evidence for an SDK-compatible image-package
+contract, not proof that every current XMind version uses it or that attachment
+topics share the same schema; the SDK model documents topic images but no attachment representation. The
+initial fuzz corpus did not contain resources. Two bounded PNG package seeds
+have since been added for missing and partial image metadata, with deterministic
+import and round-trip regression tests.
+
+Follow-up verification of the official [`xmind-model` 1.1.12
+schema](https://github.com/xmindltd/xmind-model/blob/c448b0fcfc8bee51f68124aae87a57e3947c6b44/schemas/image.json)
+and its [topic-image tests](https://github.com/xmindltd/xmind-model/blob/c448b0fcfc8bee51f68124aae87a57e3947c6b44/test/models/topic-image.test.js)
+found that only `src` is required: width and height may be absent, and the
+model accepts arbitrary alignment values (including `left`). This confirms why
+the importer must not assume those optional properties are present. Thinoda's
+verified subset derives missing display dimensions proportionally from bounded
+decoded image dimensions, defaults absent alignment to top, and supports only
+explicit top/bottom alignment. Other explicit alignments are rejected rather
+than silently remapped. URL/path references remain rejected and are never
+resolved or fetched. These model tests do not establish which alignments or
+source forms are used by current XMind application exports.
+
+Thinoda's current implementation is limited to this verified image-package
+contract, with bounded decode and manifest/path checks. Attachment/unknown
+resource forms remain unsupported rather than silently discarded or
+interpreted. Generated package fixtures test the supported contract; no
+installed XMind application interoperability or successful local fuzz campaign
+is claimed.
 
 Re-fetched on 2026-10-26: To-Do vs Task, Numbering, Topic Filtering, View All Notes,
 Export, Import and Xmind Agent (including conversation history). The other linked guides remain prior digest references;

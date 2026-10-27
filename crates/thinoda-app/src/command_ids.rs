@@ -109,6 +109,7 @@ impl Cmd {
                 Format::Jpeg => "export.jpeg",
                 Format::Pdf => "export.pdf",
                 Format::Word => "export.word",
+                Format::PowerPoint => "export.powerpoint",
                 Format::Excel => "export.excel",
                 Format::Csv => "export.csv",
             },

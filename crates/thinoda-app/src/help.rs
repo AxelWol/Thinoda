@@ -33,6 +33,7 @@ const PAGES: &[Page] = &[
             "Relationships connect topics. Boundaries group siblings; summaries attach a separate summary topic to a sibling range. Select their line or outline to edit or delete the object.",
             "Labels organize topics without changing their titles. Notes and hyperlinks are available in the sidebar. Ctrl+F searches; Ctrl+H opens replacement, with optional all-sheet scope.",
             "Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.",
+            "Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.",
             "Select a topic, then Insert > Attachment to add a local file as a child topic (1 byte to 8 MiB). Style > Attachment offers a separate Save/Download action. Files are opaque: nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported yet.",
         ],
     },

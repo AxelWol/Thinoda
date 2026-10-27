@@ -23,6 +23,7 @@ pub mod native_menus;
 mod navigation;
 mod pitch;
 mod planning;
+mod powerpoint_preview;
 mod printing;
 mod quick_styles;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
