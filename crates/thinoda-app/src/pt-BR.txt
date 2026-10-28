@@ -1,6 +1,7 @@
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
 Copy note as plain text|Copiar nota como texto simples
+Notes search uses visible Markdown text; oversized notes search the original source.|A pesquisa usa o texto Markdown visível; em notas grandes demais, pesquisa o texto original.
 Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.|Copia o texto Markdown sem formatação nem destinos de links ou imagens. A nota salva não é alterada.
 Markdown preview|Prévia Markdown
 Preview does not open links or load images.|A prévia não abre links nem carrega imagens.

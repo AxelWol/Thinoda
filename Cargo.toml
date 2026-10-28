@@ -69,6 +69,7 @@ wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3.103"
 web-sys = "0.3.103"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [profile.release]
 lto = "thin"

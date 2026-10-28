@@ -21,6 +21,7 @@ pub mod layout;
 pub mod markers;
 pub mod model;
 pub mod navigation;
+pub mod notes;
 pub mod numbering;
 pub mod outline;
 pub mod quick_styles;

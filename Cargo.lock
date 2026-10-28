@@ -4506,6 +4506,7 @@ version = "0.16.0"
 dependencies = [
  "base64 0.23.1",
  "image",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "sha2",
