@@ -42,6 +42,33 @@ structured rich-note persistence and equations remain open. XV8 and XV9 follow.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 
+**Latest status:** PR #93 is merged and its final CI passed. The previously
+approved release CI run `40655897688` passed, but Release Please then refreshed
+PR #92 to `b95e9c2`; the newer run `40663355282` is `action_required` with no
+jobs. Approval does not carry over to the new revision. Main CI `40663307602`
+is running without reported failures. Pages deployment `7381049659` succeeded
+for `e340ee3`, including PR #91 but not yet PR #93. No release merge/publication
+is implied by that successful web deployment.
+
+The next local XV7 slice supplies explicit **Copy note as plain text** inside
+Markdown preview. A bounded, iterative projection removes Markdown presentation
+syntax and link/image destinations while retaining Unicode, code, alternative
+text, checklist state, footnote references and newline/tab block/table boundaries.
+HTML remains literal text, never executed. It uses the preview's byte/event/depth
+limits and is unavailable when limits are exceeded; neither saved notes nor undo
+history are changed. All ten locales and both map/outline inspectors share the
+action. This is a safe interchange aid and projection foundation, not automatic
+search/export integration: legacy strings are still not implicitly reinterpreted.
+Structured rich-note persistence, search wiring/export parity and equations stay
+open before XV8/XV9.
+Verification: 220 app-library tests, six notes UI tests, one all-language
+notes-action test and five offline-help tests passed. The existing 75-test
+end-to-end suite also passed. Clipboard output is asserted directly, along with
+unchanged saved source/state, hidden copy actions above preview limits and
+Unicode/code/list/table/HTML projection cases. Strict Clippy, locked Windows app
+build, locked WASM web check, formatting and diff checks pass. No new full
+workspace, other-host GUI or release-publication claim is made.
+
 **Latest continuation:** PR #91 is merged. Its corrected head passed native CI,
 and the local full-workspace run passed 1,000 tests with two ignored across
 101 suites. Release PR #92 targets v0.17.0; its manifest and all nine workspace

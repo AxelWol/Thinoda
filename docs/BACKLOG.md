@@ -9,6 +9,13 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**XV7 next slice (2026-10-28):** PR #93's reversible lists are merged. Explicit
+bounded plain-text copy from Markdown preview now provides a projection
+foundation without migrating legacy notes or modifying saved content. Search
+integration, structured rich-note storage, export parity and equations remain
+open. The approved release workflow passed, but PR #92's subsequent updated
+revision requires a new workflow authorization.
+
 **Continuation after PR #91 (2026-10-28):** notes emphasis and contextual action
 names are merged; full-workspace local validation passed 1,000 tests, two ignored.
 Reversible bulleted/numbered notes-list authoring is the next local interaction

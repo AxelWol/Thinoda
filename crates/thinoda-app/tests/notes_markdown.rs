@@ -9,6 +9,49 @@ use thinoda_canvas::Action;
 use thinoda_platform::settings::ThemeMode;
 
 #[test]
+fn copying_plain_text_requires_preview_and_does_not_change_the_note_or_undo_history() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        let source = "**café** and [label](https://example.invalid/private)\n\n- first\n- second";
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let revision = doc.doc.state_id();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        h.run_steps(4);
+        assert!(
+            h.query_by_role_and_label(Role::Button, t("Copy note as plain text"))
+                .is_none()
+        );
+        h.get_by_role_and_label(Role::CheckBox, t("Markdown preview"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::CheckBox, t("Markdown preview"))
+            .click();
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::Button, t("Copy note as plain text"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Copy note as plain text"))
+            .click();
+        h.step();
+        assert!(h.output().platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "café and label\nfirst\nsecond")
+        }));
+        let doc = h.state().doc().unwrap();
+        assert_eq!(doc.doc.state_id(), revision);
+        assert_eq!(doc.doc.sheet().root_topic().notes.as_deref(), Some(source));
+    }
+}
+
+#[test]
 fn list_actions_convert_and_toggle_as_single_edits_in_both_views() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
@@ -296,6 +339,10 @@ fn preview_links_are_inert_and_excessive_nesting_keeps_the_original_note() {
             "Note preview limit reached. The full source is preserved and editable."
         ))
         .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, t("Copy note as plain text"))
+            .is_none()
     );
     assert_eq!(
         h.state()

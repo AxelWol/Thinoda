@@ -32,5 +32,17 @@ fn topic_style_and_notes_actions_have_distinct_names_in_every_language() {
                 "{language:?}: ambiguous action {label}"
             );
         }
+        h.get_by_role_and_label(Role::CheckBox, t("Markdown preview"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::CheckBox, t("Markdown preview"))
+            .click();
+        h.run_steps(4);
+        assert_eq!(
+            h.query_all_by_role_and_label(Role::Button, t("Copy note as plain text"))
+                .count(),
+            1,
+            "{language:?}: missing localized plain-text action"
+        );
     }
 }
