@@ -50,6 +50,23 @@ Save, recovery and undo use the existing conflict-checked inspector draft path.
 All ten locales share the controls; rendering uses theme colors and the existing
 offline Markdown renderer on native and web.
 
+**Follow-up (2026-10-28):** the first PR #91 CI run failed on all five
+native targets because the existing style-sidebar regression found two
+controls named "Italic" (topic style and notes). Notes actions now have distinct,
+localized "Bold notes"/"Italic notes" names, and a dedicated all-language UI
+regression checks uniqueness rather than selecting whichever match comes last.
+The notes emphasis actions also remove their own surrounding Markdown markers
+when repeated, retaining the selected Unicode text and leaving topic styles
+unchanged. This completes the reversible emphasis interaction, not the
+structured rich-note/equation milestone.
+
+The corrected revision passes 216 app-library tests, four notes interaction
+tests and one all-language naming regression. Strict app/notes-test Clippy,
+the locked Windows app build and locked WASM web check pass. The original
+75-test end-to-end suite also passes after the label correction. Full-workspace
+validation and refreshed cross-platform GitHub CI remain separate gates;
+no new release or deployment is claimed.
+
 Preview is bounded to 16 KiB, 2,048 parser events and 32 nested containers; notes
 outside those bounds stay fully editable without truncation. The preview does
 not fetch images, execute HTML/TeX, or open links. Other note views, search and

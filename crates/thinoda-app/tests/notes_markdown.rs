@@ -33,14 +33,10 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
             .unwrap()
             .as_sorted_char_range();
         assert_eq!(selected.start.0..selected.end.0, 0..13);
-        h.query_all_by_role_and_label(Role::Button, t("Bold"))
-            .last()
-            .unwrap()
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
             .scroll_to_me();
         h.run_steps(8);
-        h.query_all_by_role_and_label(Role::Button, t("Bold"))
-            .last()
-            .unwrap()
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
             .click();
         h.run_steps(3);
         assert_eq!(
@@ -132,6 +128,55 @@ fn notes_preview_is_opt_in_read_only_and_theme_aware() {
             Some(source)
         );
     }
+}
+
+#[test]
+fn repeated_emphasis_restores_the_original_note_without_changing_topic_style() {
+    let mut app = ThinodaApp::headless();
+    let doc = app.doc_mut().unwrap();
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Fixture", |sheet| {
+            sheet.set_notes(root, Some("café research".into()))
+        })
+        .unwrap();
+    let style = doc.doc.sheet().root_topic().style.clone();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+        .focus();
+    h.run_steps(3);
+    h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    for expected in ["**café research**", "café research"] {
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, t("Bold notes"))
+            .click();
+        h.run_steps(4);
+        let doc = h.state().doc().unwrap();
+        assert_eq!(
+            doc.doc.sheet().root_topic().notes.as_deref(),
+            Some(expected)
+        );
+        assert_eq!(doc.doc.sheet().root_topic().style, style);
+    }
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+    assert_eq!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .root_topic()
+            .notes
+            .as_deref(),
+        Some("**café research**")
+    );
 }
 
 #[test]

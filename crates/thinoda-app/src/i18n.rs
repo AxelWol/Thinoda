@@ -1106,6 +1106,8 @@ const DE: &[(&str, &str)] = &[
     ),
     ("None", "Keine"),
     ("Bold", "Fett"),
+    ("Bold notes", "Notiztext fett"),
+    ("Italic notes", "Notiztext kursiv"),
     ("Bulleted list", "Aufzählung"),
     ("Numbered list", "Nummerierte Liste"),
     ("Markdown preview", "Markdown-Vorschau"),

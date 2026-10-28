@@ -30,6 +30,32 @@ fn format_selection(
         .char_indices()
         .nth(range.end.max(range.start))
         .map_or(source.len(), |(byte, _)| byte);
+    if let Some(delimiter) = match format {
+        Format::Bold => Some("**"),
+        Format::Italic => Some("*"),
+        _ => None,
+    } {
+        let selected = &source[start..end];
+        let inner = selected
+            .strip_prefix(delimiter)
+            .and_then(|text| text.strip_suffix(delimiter));
+        if let Some(inner) = inner {
+            let first = source[..start].chars().count();
+            return (
+                format!("{}{}{}", &source[..start], inner, &source[end..]),
+                first..first + inner.chars().count(),
+            );
+        }
+        if source[..start].ends_with(delimiter) && source[end..].starts_with(delimiter) {
+            let prefix = &source[..start - delimiter.len()];
+            let suffix = &source[end + delimiter.len()..];
+            let first = prefix.chars().count();
+            return (
+                format!("{prefix}{selected}{suffix}"),
+                first..first + selected.chars().count(),
+            );
+        }
+    }
     let (start, end) = match format {
         Format::Bullet | Format::Numbered => {
             let start = source[..start].rfind('\n').map_or(0, |byte| byte + 1);
@@ -119,8 +145,8 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
     }
     ui.horizontal_wrapped(|ui| {
         for (label, format) in [
-            ("Bold", Format::Bold),
-            ("Italic", Format::Italic),
+            ("Bold notes", Format::Bold),
+            ("Italic notes", Format::Italic),
             ("Bulleted list", Format::Bullet),
             ("Numbered list", Format::Numbered),
         ] {
@@ -226,6 +252,29 @@ mod tests {
         assert_eq!(
             format_selection("café\n二", 99..99, Format::Numbered).0,
             "café\n1. 二"
+        );
+    }
+
+    #[test]
+    fn emphasis_is_reversible_for_selected_content_wrappers_and_empty_insertions() {
+        for (format, source, selection) in [
+            (Format::Bold, "a café 🌱 end", 2..8),
+            (Format::Italic, "日本語 note", 0..3),
+            (Format::Bold, "empty", 2..2),
+        ] {
+            let (formatted, inner) = format_selection(source, selection.clone(), format);
+            assert_eq!(
+                format_selection(&formatted, inner, format),
+                (source.to_owned(), selection)
+            );
+        }
+        assert_eq!(
+            format_selection("a **café** end", 2..10, Format::Bold),
+            ("a café end".into(), 2..6)
+        );
+        assert_eq!(
+            format_selection("a *note* end", 2..8, Format::Italic),
+            ("a note end".into(), 2..6)
         );
     }
 

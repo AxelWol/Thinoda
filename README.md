@@ -347,6 +347,8 @@ those system-owned controls. WinGet publishing remains paused.
   notes and their save/recovery/undo behavior; other views and exports may show the
   markup. Preview limits never truncate the editable source, and links/images are
   not opened or fetched. Structured rich text and rendered equations remain planned.
+  The distinct **Bold notes** / **Italic notes** actions do not change topic styles;
+  repeating an action on its selected text removes the surrounding emphasis markers.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.

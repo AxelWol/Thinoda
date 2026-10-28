@@ -1,3 +1,5 @@
+Bold notes|Notas en negrita|Notes en gras|Fed notetekst|Notities vet|Notas a negrito|Note in grassetto|Pogrubienie notatek
+Italic notes|Notas en cursiva|Notes en italique|Kursiv notetekst|Notities cursief|Notas em itálico|Note in corsivo|Kursywa notatek
 Bulleted list|Lista con viñetas|Liste à puces|Punktopstilling|Opsomming|Lista com marcas|Elenco puntato|Lista punktowana
 Numbered list|Lista numerada|Liste numérotée|Nummereret liste|Genummerde lijst|Lista numerada|Elenco numerato|Lista numerowana
 Markdown preview|Vista previa de Markdown|Aperçu Markdown|Markdown-forhåndsvisning|Markdown-voorbeeld|Pré-visualização Markdown|Anteprima Markdown|Podgląd Markdown
