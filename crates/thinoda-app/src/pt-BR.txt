@@ -1,3 +1,8 @@
+Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
+Bold notes|Notas em negrito
+Markdown preview|Prévia Markdown
+Preview does not open links or load images.|A prévia não abre links nem carrega imagens.
+Note preview limit reached. The full source is preserved and editable.|Limite da prévia atingido. O texto completo é preservado e pode ser editado.
 Generation provider|Provedor de geração
 PowerPoint slide size|Tamanho do slide do PowerPoint
 Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.|Os slides são exportados como imagens; textos e formas não podem ser editados separadamente. O enquadramento se expande para a proporção escolhida sem cortes ou deformações.

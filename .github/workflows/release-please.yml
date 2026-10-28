@@ -24,7 +24,6 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
-      pr: ${{ steps.release.outputs.pr }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v5
@@ -32,28 +31,11 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # release-please bumps Cargo.toml; keep Cargo.lock consistent for --locked builds.
-  sync-lockfile:
-    needs: release-please
-    if: needs.release-please.outputs.pr != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Update workspace versions in Cargo.lock
-        run: cargo update --workspace
-      - name: Commit Cargo.lock
-        run: |
-          if git diff --quiet -- Cargo.lock; then exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: sync Cargo.lock with release version" -- Cargo.lock
-          git push
-
+  # The release-please config updates Cargo.toml and Cargo.lock in the same PR
+  # commit. A later lockfile push can lose a race with merging that PR.
+  # Call packaging directly: GITHUB_TOKEN-created tags do not trigger push
+  # workflows. Existing releases need Release's workflow_dispatch, not a rerun
+  # of release-please (which only reports newly created releases).
   packages:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'

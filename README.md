@@ -342,6 +342,13 @@ those system-owned controls. WinGet publishing remains paused.
   existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
   topic; they commit an in-progress topic-title edit before switching views.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
+- Notes include bold/italic selection tools, bulleted/numbered lists and an opt-in
+  offline Markdown preview. Formatting is stored as source text, preserving existing
+  notes and their save/recovery/undo behavior; other views and exports may show the
+  markup. Preview limits never truncate the editable source, and links/images are
+  not opened or fetched. Structured rich text and rendered equations remain planned.
+  The distinct **Bold notes** / **Italic notes** actions do not change topic styles;
+  repeating an action on its selected text removes the surrounding emphasis markers.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.
