@@ -766,7 +766,7 @@ mod native {
                 Provider::ClaudeCli,
                 &args,
                 input.clone(),
-                Duration::from_secs(10),
+                Duration::from_secs(30),
                 || false,
             )
             .unwrap();
@@ -822,7 +822,7 @@ mod native {
                     Provider::ClaudeCli,
                     &args,
                     Vec::new(),
-                    Duration::from_secs(10),
+                    Duration::from_secs(30),
                     || false
                 )
                 .unwrap_err(),

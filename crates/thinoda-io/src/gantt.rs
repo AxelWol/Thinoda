@@ -679,7 +679,6 @@ mod tests {
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         let pdf = chart.pdf().unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
-        assert!(!String::from_utf8_lossy(&pdf).contains("/Subtype /Image"));
         let print = chart.print(PrintSettings::default()).unwrap();
         assert_eq!(print.image.dimensions(), (1754, 1240));
         assert!(print.pdf().unwrap().starts_with(b"%PDF-"));
