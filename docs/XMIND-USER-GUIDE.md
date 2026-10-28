@@ -1,4 +1,4 @@
-_Last updated: 2026-10-28 06:50:11 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-28 13:12:13 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind user guide digest (verification checklist)
 

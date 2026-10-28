@@ -1,4 +1,4 @@
-_Last updated: 2026-10-27 17:28:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-28 13:12:41 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -12,6 +12,25 @@ Entries are generated automatically by
 `main` (`feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major;
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
+
+## [0.17.0](https://github.com/AxelWol/Thinoda/compare/v0.16.0...v0.17.0) (2026-10-28)
+
+
+### Features
+
+* **notes:** add safe Markdown authoring and opt-in preview ([bfd1ee5](https://github.com/AxelWol/Thinoda/commit/bfd1ee5d764dac8340f366703481dba0fc071335))
+* **notes:** copy bounded Markdown projections as plain text ([160bade](https://github.com/AxelWol/Thinoda/commit/160bade7abb27cf38d015f67cadeab99883e6ad2))
+* **notes:** copy bounded Markdown projections as plain text ([#94](https://github.com/AxelWol/Thinoda/issues/94)) ([52e842a](https://github.com/AxelWol/Thinoda/commit/52e842abe0c9c47b1ac8e69b412706a7ffdddec4))
+* **notes:** make list formatting reversible and selection-aware ([c124681](https://github.com/AxelWol/Thinoda/commit/c124681070c1cd215b87c53b3843e7ebf19bfd98))
+* **notes:** make list formatting reversible and selection-aware ([#93](https://github.com/AxelWol/Thinoda/issues/93)) ([0b3ed1b](https://github.com/AxelWol/Thinoda/commit/0b3ed1b0164747b0f7d9ed9b021c7a1f24d3c061))
+* **search:** index visible Markdown note text ([#95](https://github.com/AxelWol/Thinoda/issues/95)) ([b855e3c](https://github.com/AxelWol/Thinoda/commit/b855e3ce9c6692276463a64d9f540772853e88d3))
+
+
+### Bug Fixes
+
+* **ci:** update release manifests and lockfiles atomically ([0eab22f](https://github.com/AxelWol/Thinoda/commit/0eab22fcc513adbbd70c9d286c265126943cb048))
+* **notes:** distinguish formatting actions and make emphasis reversible ([37860f7](https://github.com/AxelWol/Thinoda/commit/37860f7616159eea41abe4cd0d2ed3f19fa14939))
+* restore locked releases and add safe Markdown notes tools ([#91](https://github.com/AxelWol/Thinoda/issues/91)) ([e340ee3](https://github.com/AxelWol/Thinoda/commit/e340ee3c17bf538518e93f19ec0efc40ef169dd8))
 
 ## [0.16.0](https://github.com/AxelWol/Thinoda/compare/v0.15.0...v0.16.0) (2026-10-27)
 
