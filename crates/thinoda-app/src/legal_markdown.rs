@@ -3,7 +3,12 @@
 use egui::{Color32, TextFormat, TextStyle, Ui, text::LayoutJob};
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
-#[derive(Debug)]
+pub(crate) const OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_FOOTNOTES);
+
+#[derive(Clone, Debug)]
 enum Node {
     Element(Tag<'static>, Vec<Node>),
     Leaf(Event<'static>),
@@ -21,24 +26,20 @@ fn parse(text: &str) -> Vec<Node> {
         }
         nodes
     }
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_FOOTNOTES;
-    children(&mut Parser::new_ext(text, options).map(Event::into_static))
+    children(&mut Parser::new_ext(text, OPTIONS).map(Event::into_static))
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Markdown {
-    source: &'static str,
+    source: String,
     nodes: Vec<Node>,
 }
 
 impl Markdown {
-    pub(crate) fn show(&mut self, ui: &mut Ui, source: &'static str) -> Option<String> {
+    pub(crate) fn show(&mut self, ui: &mut Ui, source: &str) -> Option<String> {
         if self.source != source {
             self.nodes = parse(source);
-            self.source = source;
+            self.source = source.to_owned();
         }
         let mut clicked = None;
         ui.scope(|ui| {

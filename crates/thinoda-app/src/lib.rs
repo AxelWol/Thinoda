@@ -21,6 +21,7 @@ mod map_shot;
 pub mod menus;
 pub mod native_menus;
 mod navigation;
+mod notes;
 mod pitch;
 mod planning;
 mod powerpoint_preview;

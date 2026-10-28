@@ -3360,7 +3360,8 @@ impl ThinodaApp {
                 primary,
             );
             restore_inspector_buffer(d, ui, salt, primary, &crate::doc::InspectorField::Notes);
-            let (r, done) = buffered_text(ui, salt, &current, 5, "");
+            let (r, mut done) = buffered_text(ui, salt, &current, 5, "");
+            crate::notes::tools(ui, &r, &current, &mut done);
             if let Err(error) = track_inspector_edit(
                 d,
                 ui,

@@ -9,24 +9,68 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
-## Current next-value state (2026-10-27)
+## Current next-value state (2026-10-28)
 
 PR #88 merged after the v0.15.0 tag, so its features are not included in that
 release. The v0.15.0 release now has 10 packages and six platform checksum
 manifests; all package hashes match both their manifests and GitHub asset
 digests. The main CI run for PR #88 passed, including its web build and Pages
 deployment, and the published site responds with HTTP 200. Release Please has
-opened [PR #89](https://github.com/AxelWol/Thinoda/pull/89) for v0.16.0 with
-PR #87 and #88 in the changelog. It is still open without reported checks and
-must not be merged until current checks and review requirements are satisfied.
+opened [PR #89](https://github.com/AxelWol/Thinoda/pull/89) for v0.16.0.
+PR #89 and [PR #90](https://github.com/AxelWol/Thinoda/pull/90) are now merged.
+PR #90's five native CI targets, WASM build, fuzz smoke and all three sanitized
+30-minute importer campaigns passed. The v0.16.0 release entry exists; its
+downloadable packages are absent. The release PR merged before a follow-up
+lockfile push: its tagged manifest is 0.16.0 but all nine workspace lockfile
+versions are 0.15.0. Locked main/WASM checks and native packaging failed;
+Pages/publication were skipped. A later green Release Please rerun created no
+new release and did not publish packages.
 
-The current local work finishes XV4's bounded XMind image-resource interchange,
-then integrates the PowerPoint fit preview and the already implemented XV5
-DOCX/TextBundle import. XV4 remains partial: the verified SDK-compatible
-resource subset does not establish installed-XMind-app compatibility, the
-resource-bearing fuzz campaign has not run on this Windows host, and deleting
-topics may leave unreferenced blobs (not secure erasure). Continue next with
-XV7; XV8 and XV9 follow in the approved order.
+The local repair updates the lockfile without dependency upgrades, makes future
+release PR manifest/lock changes atomic, removes the follow-up push race and
+enforces locked native CI. The existing direct packaging invocation is retained;
+token-created tag suppression is not the cause. Keep v0.16.0 immutable and
+prepare a fresh corrected release after merge; rerunning the unchanged tag
+cannot repair it. These local fixes are not yet a deployed main/release result.
+
+PR #90 integrates XV4's bounded XMind image-resource interchange, the PowerPoint
+fit preview and XV5 DOCX/TextBundle import. XV4 remains partial: the verified
+SDK-compatible resource subset does not establish installed-XMind-app
+compatibility, and deleting topics may leave unreferenced blobs (not secure
+erasure). The next local slice is XV7's Markdown notes authoring/preview;
+structured rich-note persistence and equations remain open. XV8 and XV9 follow.
+
+## XV7 first slice: Markdown notes tools (2026-10-28)
+
+The existing Notes inspector now offers bold/italic selection wrapping and
+whole-line bulleted/numbered lists, plus an opt-in Markdown preview. This is a
+source-first authoring slice, not a persisted rich-text model: existing notes
+remain literal strings until the user explicitly formats or previews them.
+Save, recovery and undo use the existing conflict-checked inspector draft path.
+All ten locales share the controls; rendering uses theme colors and the existing
+offline Markdown renderer on native and web.
+
+Preview is bounded to 16 KiB, 2,048 parser events and 32 nested containers; notes
+outside those bounds stay fully editable without truncation. The preview does
+not fetch images, execute HTML/TeX, or open links. Other note views, search and
+exports still use the stored source and may display Markdown punctuation; this
+limitation is disclosed beside the controls. A versioned structured-note model,
+searchable plain-text projection, export-format fidelity and rendered equations
+are still acceptance work, so XV7 is not complete.
+
+Research rechecked XMind's [Note](https://xmind.com/user-guide/note-new) and
+[Equation](https://xmind.com/user-guide/equation-new) pages on 2026-10-28. XMind
+offers ordered/unordered lists and bold/italic/underline notes; equations have
+their own editable LaTeX flow. Do not equate this Markdown preview with equation
+rendering or claim underline support.
+
+Verification on Windows: 215 app-library tests, three notes UI regressions,
+eight existing inspector focus/save regressions and five offline-help tests
+passed. Notes checks cover Unicode selection formatting, one-step undo/redo,
+native save/reopen, opt-in preview in Light/Dark/System, inert links and nesting
+limits without source loss. Strict app/notes-test Clippy, the locked native app
+build, locked WASM web check, nine workflow contract tests and Actions lint
+passed. This is not a full-workspace or multi-host GUI acceptance claim.
 
 ## XV6 local slice: image-based PowerPoint export (2026-10-27)
 

@@ -15,6 +15,17 @@ and [BACKLOG](BACKLOG.md#next-value-backlog---xmind-audit-2026-10-26).
 
 ## 1. Desktop UI anatomy (Xmind 26)
 
+**Notes/equations refresh (2026-10-28):** the official
+[Note](https://xmind.com/user-guide/note-new) page confirms ordered/unordered
+lists and bold/italic/underline emphasis. The
+[Equation](https://xmind.com/user-guide/equation-new) page describes separately
+inserted, editable LaTeX with resizing. Thinoda's first XV7 slice deliberately
+adds source-first Markdown tools and an opt-in offline preview without
+reinterpreting legacy notes or claiming full rich-text/LaTeX parity. Exact
+source survives native saves/recovery; search and other views/exports may
+still show markup. Structured notes, plain-text projection and equations
+remain distinct follow-up acceptance items.
+
 | Area | Content |
 |------|---------|
 | Top-left | Hamburger menu, Home button, document title |

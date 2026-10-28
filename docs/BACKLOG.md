@@ -9,6 +9,15 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**Latest continuation (2026-10-28):** PR #90 and the v0.16.0 release PR #89
+are merged. PR #90's platform/WASM checks and three 30-minute importer
+campaigns passed; subsequent main/release workflow failures are under repair,
+not evidence of verified v0.16.0 packages. XV7 has a local first slice:
+Markdown-source bold/italic/list tools and an explicit, bounded, offline preview
+over the existing recovery-backed notes field. Existing notes are not
+automatically converted. Structured rich-note persistence, plain-text search
+projection, export fidelity and rendered equations remain open; see PLAN.
+
 ### P1 — CLI generation providers (user request, 2026-10-26)
 
 🟡 Partial implementation in the current worktree; see the
