@@ -75,6 +75,7 @@ jobs:
       target: x86_64-apple-darwin
       formats: app,dmg
       ref: ${{ needs.verify.outputs.commit }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
     secrets: inherit
 
   windows:
@@ -92,6 +93,7 @@ jobs:
       target: ${{ matrix.target }}
       formats: ${{ matrix.formats }}
       ref: ${{ needs.verify.outputs.commit }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
 
   linux-x86:
     name: Linux x86
@@ -103,6 +105,7 @@ jobs:
       target: x86_64-unknown-linux-gnu
       formats: deb,appimage
       ref: ${{ needs.verify.outputs.commit }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
 
   linux-arm:
     name: Linux ARM64 after Linux x86
@@ -113,6 +116,7 @@ jobs:
       target: aarch64-unknown-linux-gnu
       formats: deb,appimage
       ref: ${{ needs.verify.outputs.commit }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
 
   macos-silicon:
     name: Apple Silicon last
@@ -123,6 +127,7 @@ jobs:
       target: aarch64-apple-darwin
       formats: app,dmg
       ref: ${{ needs.verify.outputs.commit }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
     secrets: inherit
 
   publish:
