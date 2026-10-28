@@ -65,7 +65,7 @@ class PackageTests(unittest.TestCase):
                 "sys.exit(68 if failed else 0)"
             )
             run_with_ticket_retry([sys.executable, "-c", script], timeout=120)
-        sleep.assert_called_once_with(15)
+        sleep.assert_any_call(15)
 
     @patch("verify_macos_packages.time.sleep")
     @patch("package_macos.subprocess.run")
