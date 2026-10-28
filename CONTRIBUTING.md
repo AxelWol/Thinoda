@@ -263,6 +263,15 @@ installers for all platforms. You do not need to bump versions or edit
 `CHANGELOG.md` in your pull request. Details are in the
 [README](README.md#releasing).
 
+The release PR must update workspace versions in `Cargo.toml` and `Cargo.lock`
+atomically. CI uses `--locked`; do not rely on a follow-up lockfile push after
+the PR can already be merged. Release Please invokes packaging directly because
+its token-created tag does not trigger a separate push workflow. Inspect the
+packaging jobs in the release-creating run, not only a later green no-op rerun.
+Never move a published tag or silently build another commit under its version.
+If tagged source cannot build with its committed lockfile, prefer a fresh
+corrected release after the repair is merged.
+
 Packaging resolves the release tag to an immutable commit reachable from fetched
 `origin/main` before any signing job starts; publication checks that the tag still
 selects that commit. Manual artifact-only runs must also target `main`. This

@@ -1,7 +1,9 @@
 """Guard release ordering, native architecture coverage and Node 24 action choices."""
 
 from pathlib import Path
+import json
 import re
+import tomllib
 import unittest
 
 
@@ -25,6 +27,70 @@ def dependencies(block: str) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_release_updates_workspace_lock_versions_atomically(self):
+        config = json.loads((ROOT / "release-please-config.json").read_text())
+        extra_files = config["packages"]["."]["extra-files"]
+        self.assertIn({"type": "generic", "path": "Cargo.toml"}, extra_files)
+        self.assertIn({
+            "type": "toml",
+            "path": "Cargo.lock",
+            "jsonpath": "$.package[?(!@.source)].version",
+        }, extra_files)
+        # The JSONPath must target all and only the workspace packages, not
+        # registry/git dependencies. Guard this assumption as the workspace grows.
+        manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        workspace_names = {
+            tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]["name"]
+            for member in manifest["workspace"]["members"]
+        }
+        lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
+        self.assertEqual(
+            {package["name"] for package in lock["package"] if not package.get("source")},
+            workspace_names,
+        )
+        self.assertEqual(
+            {package["version"] for package in lock["package"] if not package.get("source")},
+            {manifest["workspace"]["package"]["version"]},
+        )
+        source = (WORKFLOWS / "release-please.yml").read_text(encoding="utf-8")
+        self.assertIn("config-file: release-please-config.json", source)
+        self.assertNotIn("sync-lockfile:", source)
+        self.assertNotIn("git push", source)
+
+    def test_native_ci_does_not_silently_repair_a_stale_lockfile(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        native = job(source, "test")
+        self.assertIn("cargo clippy --locked --workspace --all-targets -- -D warnings", native)
+        self.assertIn("cargo test --locked --workspace", native)
+
+    def test_release_please_calls_packaging_without_relying_on_tag_events(self):
+        source = (WORKFLOWS / "release-please.yml").read_text(encoding="utf-8")
+        release = job(source, "release-please")
+        self.assertIn("release_created: ${{ steps.release.outputs.release_created }}", release)
+        self.assertIn("tag_name: ${{ steps.release.outputs.tag_name }}", release)
+        packages = job(source, "packages")
+        self.assertEqual(dependencies(packages), ["release-please"])
+        self.assertIn("if: needs.release-please.outputs.release_created == 'true'", packages)
+        self.assertIn("uses: ./.github/workflows/release.yml", packages)
+        self.assertIn("tag: ${{ needs.release-please.outputs.tag_name }}", packages)
+        self.assertIn("contents: write", packages)
+        for secret in [
+            "WINGET_TOKEN", "MACOS_CERT_P12", "MACOS_CERT_PASSWORD",
+            "MACOS_SIGN_IDENTITY", "KEYCHAIN_PASSWORD", "APPLE_API_KEY_P8",
+            "APPLE_API_KEY_ID", "APPLE_API_ISSUER",
+        ]:
+            self.assertIn(f"{secret}: ${{{{ secrets.{secret} }}}}", packages)
+        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_dispatch:\n    inputs:\n      tag:", source)
+        self.assertIn("  workflow_call:\n    inputs:\n      tag:", source)
+        verify = job(source, "verify")
+        self.assertIn("RELEASE_TAG: ${{ inputs.tag }}", verify)
+        self.assertIn('ref="refs/tags/$RELEASE_TAG"', verify)
+        self.assertIn("ref: ${{ needs.verify.outputs.commit }}", job(source, "macos-intel"))
+        publish = job(source, "publish")
+        self.assertIn("EXPECTED_COMMIT: ${{ needs.verify.outputs.commit }}", publish)
+        self.assertIn("Release tag changed during packaging", publish)
+
     def test_web_tool_download_is_verified_without_elevated_extraction(self):
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         web = job(source, "web")
