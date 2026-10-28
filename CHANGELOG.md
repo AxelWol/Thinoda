@@ -1,4 +1,4 @@
-_Last updated: 2026-10-27 17:28:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-28 13:12:41 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
