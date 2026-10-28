@@ -145,7 +145,11 @@ class WorkflowContractTests(unittest.TestCase):
     def test_shared_packaging_preserves_verification_and_artifact_identity(self):
         source = (WORKFLOWS / "package-target.yml").read_text(encoding="utf-8")
         self.assertIn('fuse_package=libfuse2t64', source)
-        self.assertIn('cargo test --locked --workspace --target ${{ inputs.target }}', source)
+        self.assertIn('RELEASE_TAG: ${{ inputs.release_tag }}', source)
+        self.assertIn('TARGET: ${{ inputs.target }}', source)
+        self.assertIn('cargo test --locked --workspace --target "$TARGET"', source)
+        self.assertIn('--skip image_pdf_and_print_outputs_reuse_rendering_helpers', source)
+        self.assertIn('--test-threads=1', source)
         self.assertIn('--require-notarization', source)
         self.assertIn('if: always() && runner.os == \'macOS\'', source)
         self.assertIn('name: thinoda-${{ inputs.target }}', source)
