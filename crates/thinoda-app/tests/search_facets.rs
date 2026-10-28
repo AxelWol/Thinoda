@@ -169,6 +169,99 @@ fn changed_source_scope_and_document_cannot_reuse_stale_hits() {
 }
 
 #[test]
+fn find_searches_formatted_note_text_without_rewriting_source_or_matching_link_targets() {
+    let mut app = ThinodaApp::new(Settings::default(), Services::default(), &[]);
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::New);
+    let root = app.doc().unwrap().doc.sheet().root;
+    let source = "**Café** and [visible label](https://example.invalid/private)";
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Formatted note", |sheet| {
+            sheet.topic_mut(root).unwrap().notes = Some(source.into());
+            Ok(())
+        })
+        .unwrap();
+    app.search.open = true;
+    app.search.opts.include_notes = true;
+    app.search.query = "Café".into();
+    app.update_search();
+    assert_eq!(app.search.hits.len(), 1);
+    assert_eq!(
+        app.search.hits[0].field,
+        thinoda_core::search::MatchField::Notes
+    );
+    app.search.query = "visible label".into();
+    app.update_search();
+    assert_eq!(app.search.hits.len(), 1);
+    app.search.query = "example.invalid/private".into();
+    app.update_search();
+    assert!(app.search.hits.is_empty());
+    app.search.facets.notes_only = true;
+    app.search.query = "Café".into();
+    app.update_search();
+    assert_eq!(app.search.hits.len(), 1);
+    assert_eq!(
+        app.doc().unwrap().doc.sheet().root_topic().notes.as_deref(),
+        Some(source)
+    );
+
+    let oversized_source = format!("{} oversizedneedle", "x".repeat(16 * 1024));
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Oversized note", |sheet| {
+            sheet.topic_mut(root).unwrap().notes = Some(oversized_source.clone());
+            Ok(())
+        })
+        .unwrap();
+    app.search.query = "oversizedneedle".into();
+    app.update_search();
+    assert_eq!(
+        app.search.hits.len(),
+        1,
+        "notes beyond the projection bound remain searchable as source text"
+    );
+}
+
+#[test]
+fn search_ui_finds_visible_markdown_note_text_when_include_notes_is_enabled() {
+    let mut app = ThinodaApp::new(Settings::default(), Services::default(), &[]);
+    let ctx = egui::Context::default();
+    app.exec(&ctx, Cmd::New);
+    let root = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Formatted note", |sheet| {
+            sheet.topic_mut(root).unwrap().notes =
+                Some("**Café** [visible label](https://example.invalid/private)".into());
+            Ok(())
+        })
+        .unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.run_steps(3);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Find);
+    h.run_steps(4);
+    h.get_by_label(t("Search")).type_text("Café");
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::CheckBox, t("Include notes"))
+        .click();
+    h.run_steps(4);
+    assert_eq!(h.state().search.hits.len(), 1);
+    assert_eq!(h.state().search.hits[0].topic, root);
+    h.get_by_label(t(
+        "Notes search uses visible Markdown text; oversized notes search the original source.",
+    ));
+}
+
+#[test]
 fn note_result_navigation_keeps_sheet_and_topic_identity() {
     let mut app = ThinodaApp::new(Settings::default(), Services::default(), &[]);
     let ctx = egui::Context::default();

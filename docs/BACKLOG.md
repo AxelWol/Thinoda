@@ -9,14 +9,18 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
-**XV7 next slice (2026-10-28):** PR #93's reversible lists are merged. Explicit
-bounded plain-text copy from Markdown preview now provides a projection
-foundation without migrating legacy notes or modifying saved content. Search
-integration, structured rich-note storage, export parity and equations remain
-open. The approved release workflow passed, but PR #92's subsequent updated
-revision requires a new workflow authorization.
+**XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
+bounded Markdown-to-visible-text projection now drives local notes-search
+integration: visible formatted text matches, link destinations do not, and
+over-limit notes fall back to complete source search. App/core focused tests
+pass (five search-facet tests and 146 core tests), as do strict native/WASM
+Clippy, locked native/WASM builds and formatting checks. The full workspace
+suite was not completed in this continuation. Structured rich-note storage,
+broader export parity and equations remain open. Release PR #92's Linux/macOS,
+WASM and fuzz checks passed, while Windows x64/ARM jobs and main CI remain in
+progress; release readiness/publication is unverified.
 
-**Continuation after PR #91 (2026-10-28):** notes emphasis and contextual action
+**Earlier continuation after PR #91 (2026-10-28):** notes emphasis and contextual action
 names are merged; full-workspace local validation passed 1,000 tests, two ignored.
 Reversible bulleted/numbered notes-list authoring is the next local interaction
 slice. XV7's structured model/search projection/export fidelity/equations remain
@@ -174,7 +178,7 @@ code evidence and official sources.
 | 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** Bounded storage, PNG/JPEG authoring/rendering, selection-based drop/resize, Outliner previews, safe attachment save/download and the verified SDK-compatible XMind image subset are implemented locally; PR #88 is merged. This unlocks evidence-rich maps and later illustrations/equations. | Preserve bounded decode, stable IDs, sizing and missing/corrupt-file errors. Keep image insert/render/resize/replace/remove and explicit attachment saving without auto-execution; external-app open is not promised without a consistent safe platform contract. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. Installed-XMind interoperability and the Linux resource-bearing fuzz campaign remain unverified; topic deletion may leave unreferenced blobs. |
 | 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both formats are implemented locally in `Format::IMPORTABLE` and use the shared loss-confirmation flow; the confirmation previews the first eight topics and total count. | TextBundle Markdown and DOCX paragraphs/headings/numbered-list depth map to deterministic hierarchy. Bounded packages, invalid paths/metadata/XML/UTF-8, Unicode/entities, custom heading styles and loss warnings have focused integration coverage. The app preserves the source and does not fetch relationships or execute content. Word layout, embedded resources and full conversion fidelity are not promised. |
 | 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** Image-based `.pptx` export, explicit aspect-ratio choices and a first-slide fit preview are partially implemented locally. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export one rendered slide per saved slide and disclose that shapes/text are not separately editable. Package/XML, image-dimension and resource checks pass; opening checks in available PowerPoint/LibreOffice hosts remain. Editable PPTX/transitions/video are not implied. |
-| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Notes are plain strings; equation insertion/rendering is absent. Improve study, engineering and research workflows. | Migrate plain notes losslessly; stage a bounded formatting model/editor with lists/emphasis, searchable plain-text projection and existing save/draft safety. Add an explicit supported LaTeX subset with edit/preview/error handling and export parity. Do not execute arbitrary TeX, lose unsupported formatting silently or mistake an image path for equation support. Deliver notes and equations as separate vertical slices; reuse XV4 for packaged assets where needed. |
+| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Source-first Markdown authoring, bounded preview/copy and visible-text search are implemented; structured note storage/export parity and equation insertion/rendering remain absent. Improve study, engineering and research workflows. | Migrate plain notes losslessly into a bounded formatting model while preserving draft/save/recovery safety and explicit unsupported-format reporting. Retain the current bounded projection for search/copy. Add an explicit supported LaTeX subset with edit/preview/error handling and export parity as a separate slice. Do not execute arbitrary TeX, lose unsupported formatting silently or mistake an image path for equation support; reuse XV4 for packaged assets where needed. |
 | 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns.** The TreeTable structure exists but currently shares a stacking layout; Gantt has scheduling data, not a task-column Tree Table editor. | Add title/start/due/duration/progress columns using existing validated scheduling edits, with row/topic identity, keyboard navigation and Map/Gantt synchronization. Column changes and sorting do not reorder the underlying topic hierarchy silently. Cover working-day rules, invalid edits, Undo/Redo, saved view choices and output scope. No duplicate scheduling engine. |
 | 9 / XV9 | P2 / R9 | **Durable local AI conversations.** The shipped panel labels history session-only; restarting loses research continuity and there are no named per-file threads. | Add opt-in bounded app-local history and new/rename/select/delete threads keyed to stable document identity. Reopen/restart, Save As, duplicate/moved files and recovery must not mix unrelated conversations. Store no API credentials, never resend on reopen, retain explicit Send/scope review, provide retention/delete controls and keep transcripts out of normal document/export output unless explicitly included. Preserve session-only mode and test failed writes, cancellation and stale-source isolation. |
 

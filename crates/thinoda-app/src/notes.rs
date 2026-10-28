@@ -1,13 +1,8 @@
 //! Markdown source tools over the existing lossless, recovery-backed notes field.
 
 use egui::{Response, Ui};
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 use crate::{i18n::t, legal_markdown::Markdown};
-
-const PREVIEW_BYTES: usize = 16 * 1024;
-const PREVIEW_EVENTS: usize = 2048;
-const PREVIEW_DEPTH: usize = 32;
 
 #[derive(Clone, Copy)]
 enum Format {
@@ -139,88 +134,7 @@ fn list_content(line: &str, format: Format) -> Option<&str> {
 }
 
 fn preview_allowed(source: &str) -> bool {
-    if source.len() > PREVIEW_BYTES {
-        return false;
-    }
-    let mut depth = 0usize;
-    for (count, event) in Parser::new_ext(source, crate::legal_markdown::OPTIONS).enumerate() {
-        if count >= PREVIEW_EVENTS {
-            return false;
-        }
-        match event {
-            Event::Start(_) => {
-                depth += 1;
-                if depth > PREVIEW_DEPTH {
-                    return false;
-                }
-            }
-            Event::End(_) => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    true
-}
-
-/// An explicit Markdown projection; legacy notes are never implicitly reinterpreted.
-fn plain_text(source: &str) -> Option<String> {
-    if !preview_allowed(source) {
-        return None;
-    }
-    let mut output = String::new();
-    let newline = |output: &mut String| {
-        while output.ends_with('\t') {
-            output.pop();
-        }
-        if !output.is_empty() && !output.ends_with('\n') {
-            output.push('\n');
-        }
-    };
-    for event in Parser::new_ext(source, crate::legal_markdown::OPTIONS) {
-        match event {
-            Event::Text(text)
-            | Event::Code(text)
-            | Event::Html(text)
-            | Event::InlineHtml(text)
-            | Event::InlineMath(text)
-            | Event::DisplayMath(text) => output.push_str(&text),
-            Event::SoftBreak | Event::HardBreak => output.push('\n'),
-            Event::Start(
-                Tag::Paragraph
-                | Tag::Heading { .. }
-                | Tag::Item
-                | Tag::CodeBlock(_)
-                | Tag::BlockQuote(_),
-            ) => newline(&mut output),
-            Event::End(
-                TagEnd::Paragraph
-                | TagEnd::Heading(_)
-                | TagEnd::Item
-                | TagEnd::CodeBlock
-                | TagEnd::BlockQuote(_)
-                | TagEnd::TableRow
-                | TagEnd::TableHead
-                | TagEnd::Table,
-            )
-            | Event::Rule => newline(&mut output),
-            Event::End(TagEnd::TableCell) => output.push('\t'),
-            Event::TaskListMarker(checked) => {
-                output.push_str(if checked { "[x] " } else { "[ ] " });
-            }
-            Event::FootnoteReference(name) => {
-                output.push('[');
-                output.push_str(&name);
-                output.push(']');
-            }
-            Event::Start(Tag::FootnoteDefinition(name)) => {
-                newline(&mut output);
-                output.push('[');
-                output.push_str(&name);
-                output.push_str("] ");
-            }
-            _ => {}
-        }
-    }
-    Some(output.trim_end_matches(['\n', '\t']).to_owned())
+    thinoda_core::notes::plain_text_projection(source).is_some()
 }
 
 pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut Option<String>) {
@@ -298,7 +212,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
     }
     if ui.button(t("Copy note as plain text")).clicked() && touch_allowed {
         // The size/complexity check above uses the same parser options as projection.
-        if let Some(text) = plain_text(&source) {
+        if let Some(text) = thinoda_core::notes::plain_text_projection(&source) {
             ui.ctx().copy_text(text);
         }
     }
@@ -423,39 +337,11 @@ mod tests {
     #[test]
     fn preview_bounds_do_not_truncate_or_mutate_source() {
         assert!(preview_allowed("**Bold**\n\n- item\n- *emphasis*"));
-        assert!(preview_allowed(&"x".repeat(PREVIEW_BYTES)));
-        assert!(!preview_allowed(&"x".repeat(PREVIEW_BYTES + 1)));
-        assert!(!preview_allowed(&"> ".repeat(PREVIEW_DEPTH + 1)));
-        assert!(!preview_allowed(&"*a* ".repeat(PREVIEW_EVENTS)));
-    }
-
-    #[test]
-    fn plain_text_preserves_unicode_code_lists_and_boundaries_without_markup_destinations() {
-        assert_eq!(
-            plain_text("# Café\n\n**Bold** and *日本語* `a*b`\n\n- One\n- Two\n\n[Label](https://example.invalid/private) ![Alt](file:///private.png)\n\n```text\ncode\nline\n```").as_deref(),
-            Some("Café\nBold and 日本語 a*b\nOne\nTwo\nLabel Alt\ncode\nline")
-        );
-        assert_eq!(
-            plain_text("- [x] Done\n- [ ] Pending\n\n| A | B |\n| - | - |\n| 1 | 2 |").as_deref(),
-            Some("[x] Done\n[ ] Pending\nA\tB\n1\t2")
-        );
-        assert_eq!(
-            plain_text("first  \nsecond\nthird").as_deref(),
-            Some("first\nsecond\nthird")
-        );
-    }
-
-    #[test]
-    fn projection_is_bounded_and_keeps_literal_html_instead_of_executing_or_silently_discarding_it()
-    {
-        let source =
-            "<script>literal only</script>\n\n$not rendered math$\n\n<!-- literal comment -->";
-        assert_eq!(
-            plain_text(source).as_deref(),
-            Some("<script>literal only</script>\n$not rendered math$\n<!-- literal comment -->")
-        );
-        assert_eq!(plain_text(""), Some(String::new()));
-        assert!(plain_text(&"x".repeat(PREVIEW_BYTES + 1)).is_none());
-        assert!(plain_text(&"> ".repeat(PREVIEW_DEPTH + 1)).is_none());
+        assert!(!preview_allowed(
+            &"x".repeat(thinoda_core::notes::MAX_PROJECTION_BYTES + 1)
+        ));
+        assert!(!preview_allowed(
+            &"> ".repeat(thinoda_core::notes::MAX_PROJECTION_DEPTH + 1)
+        ));
     }
 }

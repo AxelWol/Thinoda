@@ -445,6 +445,10 @@ those system-owned controls. WinGet publishing remains paused.
 - Find (Ctrl+F) in the active sheet or all sheets, including optional notes/labels,
   with sheet-aware navigation. Replace (Ctrl+H) updates topic titles in one undo step,
   including replacements across all sheets; notes and labels are search-only.
+  When **Include notes** is enabled, formatted Markdown notes are searched as visible
+  text (emphasis/list syntax and link destinations are excluded). Notes too large
+  for bounded projection fall back to complete original-text search; saved notes
+  remain unchanged.
   Controls wrap and scroll into view with keyboard focus in narrow/short windows;
   replacement drafts survive resizing. The compact card may temporarily cover
   the inspector. Outline shortcuts yield while search is open, so Tab navigates

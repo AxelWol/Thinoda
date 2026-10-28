@@ -1109,6 +1109,10 @@ const DE: &[(&str, &str)] = &[
     ("Bold notes", "Notiztext fett"),
     ("Copy note as plain text", "Notiz als Klartext kopieren"),
     (
+        "Notes search uses visible Markdown text; oversized notes search the original source.",
+        "Die Suche verwendet sichtbaren Markdown-Text; bei zu großen Notizen wird der Originaltext durchsucht.",
+    ),
+    (
         "Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.",
         "Kopiert Markdown-Text ohne Formatierung oder Link-/Bildziele. Die gespeicherte Notiz bleibt unverändert.",
     ),

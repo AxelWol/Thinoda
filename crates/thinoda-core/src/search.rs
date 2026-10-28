@@ -1,6 +1,13 @@
 //! Find & replace and filtering across topics.
 
 use crate::model::{Sheet, TopicId, Workbook};
+use std::borrow::Cow;
+
+fn searchable_note(note: &str) -> Cow<'_, str> {
+    crate::notes::plain_text_projection(note)
+        .map(Cow::Owned)
+        .unwrap_or(Cow::Borrowed(note))
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SearchOptions {
@@ -137,7 +144,7 @@ pub fn search_faceted(
                     && sheet.topics[id]
                         .notes
                         .as_deref()
-                        .is_some_and(|n| matches(n, needle, opts))
+                        .is_some_and(|note| matches(&searchable_note(note), needle, opts))
             })
             .map(|topic| SearchHit {
                 sheet: sheet_index,
@@ -208,7 +215,10 @@ pub fn search_sheet(
                 topic: id,
                 field: MatchField::Title,
             });
-        } else if opts.include_notes && t.notes.as_deref().is_some_and(|n| matches(n, needle, opts))
+        } else if opts.include_notes
+            && t.notes
+                .as_deref()
+                .is_some_and(|note| matches(&searchable_note(note), needle, opts))
         {
             hits.push(SearchHit {
                 sheet: sheet_index,
@@ -341,6 +351,82 @@ mod tests {
             MatchField::Label
         );
         assert!(search_sheet(&s, 0, "", &o).is_empty());
+    }
+
+    #[test]
+    fn formatted_notes_search_visible_markdown_text_without_link_destinations() {
+        let mut sheet = s();
+        let topic = sheet.children(sheet.root)[0];
+        let source =
+            "**Café** *research* with `code` and [visible label](https://example.invalid/secret)";
+        sheet.topic_mut(topic).unwrap().notes = Some(source.into());
+        let before = sheet.clone();
+        let include_notes = SearchOptions {
+            include_notes: true,
+            ..Default::default()
+        };
+        let hits = search_sheet(&sheet, 0, "research", &include_notes);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].topic, topic);
+        assert_eq!(hits[0].field, MatchField::Notes);
+        assert_eq!(
+            search_sheet(&sheet, 0, "visible label", &include_notes).len(),
+            1
+        );
+        assert!(
+            search_sheet(&sheet, 0, "example.invalid/secret", &include_notes).is_empty(),
+            "link destinations are not note text"
+        );
+        assert!(search_sheet(&sheet, 0, "**Café**", &include_notes).is_empty());
+        assert_eq!(sheet, before, "search does not rewrite note source");
+
+        let notes_only = Facets {
+            notes_only: true,
+            ..Default::default()
+        };
+        let hits = search_faceted(
+            &sheet,
+            0,
+            "Café research",
+            &SearchOptions::default(),
+            &notes_only,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].field, MatchField::Notes);
+        assert!(
+            search_faceted(
+                &sheet,
+                0,
+                "example.invalid",
+                &SearchOptions::default(),
+                &notes_only
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn oversized_markdown_notes_fall_back_to_complete_original_text_for_search() {
+        let mut sheet = s();
+        let topic = sheet.children(sheet.root)[0];
+        let source = format!(
+            "**{}** and searchable fallback",
+            "a".repeat(crate::notes::MAX_PROJECTION_BYTES)
+        );
+        sheet.topic_mut(topic).unwrap().notes = Some(source.clone());
+        let options = SearchOptions {
+            include_notes: true,
+            ..Default::default()
+        };
+        let hit = search_sheet(&sheet, 0, "searchable fallback", &options);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].topic, topic);
+        assert_eq!(hit[0].field, MatchField::Notes);
+        assert!(!search_sheet(&sheet, 0, "**", &options).is_empty());
+        assert_eq!(
+            sheet.topic(topic).unwrap().notes.as_deref(),
+            Some(source.as_str())
+        );
     }
 
     #[test]

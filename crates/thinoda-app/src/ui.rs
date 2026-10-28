@@ -3991,6 +3991,12 @@ impl ThinodaApp {
                                     self.search.show_replace,
                                 ) = options;
                             }
+                            if self.search.opts.include_notes {
+                                widgets::caption(
+                                    ui,
+                                    t("Notes search uses visible Markdown text; oversized notes search the original source."),
+                                );
+                            }
                             if self.search.show_replace {
                                 widgets::caption(ui, t("Replaces topic titles only."));
                                 ui.add(

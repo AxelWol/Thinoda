@@ -11,65 +11,43 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current next-value state (2026-10-28)
 
-PR #88 merged after the v0.15.0 tag, so its features are not included in that
-release. The v0.15.0 release now has 10 packages and six platform checksum
-manifests; all package hashes match both their manifests and GitHub asset
-digests. The main CI run for PR #88 passed, including its web build and Pages
-deployment, and the published site responds with HTTP 200. Release Please has
-opened [PR #89](https://github.com/AxelWol/Thinoda/pull/89) for v0.16.0.
-PR #89 and [PR #90](https://github.com/AxelWol/Thinoda/pull/90) are now merged.
-PR #90's five native CI targets, WASM build, fuzz smoke and all three sanitized
-30-minute importer campaigns passed. The v0.16.0 release entry exists; its
-downloadable packages are absent. The release PR merged before a follow-up
-lockfile push: its tagged manifest is 0.16.0 but all nine workspace lockfile
-versions are 0.15.0. Locked main/WASM checks and native packaging failed;
-Pages/publication were skipped. A later green Release Please rerun created no
-new release and did not publish packages.
+PR #94 is merged. Its explicit bounded Markdown-to-plain-text copy is now
+extended by a shared `thinoda-core` projection for notes search: formatted
+visible text matches without Markdown delimiters or link destinations, while
+notes beyond the projection bounds fall back to complete source-text search.
+This is non-mutating search, not a rich-note data migration. Focused app and core
+tests pass locally (five search-facet integration tests and 146 core tests).
+Strict native/WASM Clippy, the locked native app build, locked WASM app check,
+formatting and whitespace checks also pass. The full workspace test suite was
+not completed in this continuation; its long-running native UI suites were
+stopped after the focused coverage passed.
 
-The local repair updates the lockfile without dependency upgrades, makes future
-release PR manifest/lock changes atomic, removes the follow-up push race and
-enforces locked native CI. The existing direct packaging invocation is retained;
-token-created tag suppression is not the cause. Keep v0.16.0 immutable and
-prepare a fresh corrected release after merge; rerunning the unchanged tag
-cannot repair it. These local fixes are not yet a deployed main/release result.
+Release PR #92 remains open for v0.17.0. Its latest CI run
+`40686820970` has passed the macOS and Linux native jobs, WASM app, importer
+fuzz smoke, timestamp and third-party-notice checks; Windows x64 and ARM jobs
+remain in progress. Main CI run `40686754828` is also in progress. Neither
+status establishes release readiness or package publication.
 
-PR #90 integrates XV4's bounded XMind image-resource interchange, the PowerPoint
-fit preview and XV5 DOCX/TextBundle import. XV4 remains partial: the verified
-SDK-compatible resource subset does not establish installed-XMind-app
-compatibility, and deleting topics may leave unreferenced blobs (not secure
-erasure). The next local slice is XV7's Markdown notes authoring/preview;
-structured rich-note persistence and equations remain open. XV8 and XV9 follow.
+XV4's bounded resource interchange, XV5 DOCX/TextBundle import, and the XV7
+notes authoring, preview, copy, and search slices build on merged PRs #90–#94.
+XV7 remains partial: structured rich-note persistence, search/export fidelity
+beyond plain-text projection, and rendered equations remain open; XV8 and XV9
+follow. XMind app compatibility and secure erasure of unreferenced resource
+blobs remain explicit XV4 limitations.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 
-**Latest status:** PR #93 is merged and its final CI passed. The previously
-approved release CI run `40655897688` passed, but Release Please then refreshed
-PR #92 to `b95e9c2`; the newer run `40663355282` is `action_required` with no
-jobs. Approval does not carry over to the new revision. Main CI `40663307602`
-is running without reported failures. Pages deployment `7381049659` succeeded
-for `e340ee3`, including PR #91 but not yet PR #93. No release merge/publication
-is implied by that successful web deployment.
+**Latest status:** PRs #93 and #94 are merged. Release PR #92's Linux/macOS,
+WASM and fuzz checks passed, but Windows x64/ARM jobs remain in progress; main
+CI is also in progress. Neither establishes release readiness or publication.
 
-The next local XV7 slice supplies explicit **Copy note as plain text** inside
-Markdown preview. A bounded, iterative projection removes Markdown presentation
-syntax and link/image destinations while retaining Unicode, code, alternative
-text, checklist state, footnote references and newline/tab block/table boundaries.
-HTML remains literal text, never executed. It uses the preview's byte/event/depth
-limits and is unavailable when limits are exceeded; neither saved notes nor undo
-history are changed. All ten locales and both map/outline inspectors share the
-action. This is a safe interchange aid and projection foundation, not automatic
-search/export integration: legacy strings are still not implicitly reinterpreted.
-Structured rich-note persistence, search wiring/export parity and equations stay
-open before XV8/XV9.
-Verification: 220 app-library tests, six notes UI tests, one all-language
-notes-action test and five offline-help tests passed. The existing 75-test
-end-to-end suite also passed. Clipboard output is asserted directly, along with
-unchanged saved source/state, hidden copy actions above preview limits and
-Unicode/code/list/table/HTML projection cases. Strict Clippy, locked Windows app
-build, locked WASM web check, formatting and diff checks pass. No new full
-workspace, other-host GUI or release-publication claim is made.
+The bounded projection now also powers notes search. Core search and app-level
+regressions cover formatted visible text, excluded link destinations, unchanged
+saved Markdown, and complete-source fallback for over-limit notes. Search
+integration is local continuation work and does not imply export parity or
+structured rich-note persistence.
 
-**Latest continuation:** PR #91 is merged. Its corrected head passed native CI,
+**Earlier continuation after PR #91:** its corrected head passed native CI,
 and the local full-workspace run passed 1,000 tests with two ignored across
 101 suites. Release PR #92 targets v0.17.0; its manifest and all nine workspace
 lockfile versions match. The release PR's CI is `action_required` with no jobs,
@@ -668,7 +646,7 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 4 | XV4 portable images/attachments / R4, R6 | Reopen and share evidence-rich maps without broken local image paths. | Versioned resource store first, then image insert/render/resize/remove, then attachments. Include recovery, clipboard and merge remapping. |
 | 5 | XV5 DOCX/TextBundle import / R6 | Turn existing documents into useful maps instead of retyping outlines. | Text-only DOCX headings/lists can precede XV4; bundled resources depend on XV4. Current Word/TextBundle export does not imply import. |
 | 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | Reuse saved frames; explicit aspect ratio/fit preview and a clearly labeled image-based PPTX first. Editable PPTX is a separate scope. |
-| 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Plain-string migration, draft/save safety, search and honest format-loss reporting; images alone are not rendered math. |
+| 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Finish lossless structured note storage, draft/save/recovery safety, export parity and honest format-loss reporting while retaining bounded visible-text search; add equations separately. Images alone are not rendered math. |
 | 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
 | 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
 
