@@ -75,15 +75,33 @@ fn format_selection(
     let replacement = match format {
         Format::Bold => format!("**{selected}**"),
         Format::Italic => format!("*{selected}*"),
-        Format::Bullet | Format::Numbered => selected
-            .split('\n')
-            .enumerate()
-            .map(|(index, line)| match format {
-                Format::Numbered => format!("{}. {line}", index + 1),
-                _ => format!("- {line}"),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Format::Bullet | Format::Numbered => {
+            let lines: Vec<_> = selected.split('\n').collect();
+            let remove = lines
+                .iter()
+                .all(|line| list_content(line, format).is_some());
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+                    let (indent, content) = line.split_at(indent);
+                    if remove {
+                        // All selected lines were checked before removing any markers.
+                        format!("{indent}{}", list_content(content, format).unwrap())
+                    } else {
+                        let content = list_content(content, Format::Bullet)
+                            .or_else(|| list_content(content, Format::Numbered))
+                            .unwrap_or(content);
+                        match format {
+                            Format::Numbered => format!("{indent}{}. {content}", index + 1),
+                            _ => format!("{indent}- {content}"),
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
     };
     let start_chars = source[..start].chars().count();
     let selection = match format {
@@ -92,15 +110,32 @@ fn format_selection(
             let start = start_chars + delimiter;
             start..start + selected.chars().count()
         }
-        Format::Bullet | Format::Numbered => {
-            let end = start_chars + replacement.chars().count();
-            end..end
-        }
+        Format::Bullet | Format::Numbered => start_chars..start_chars + replacement.chars().count(),
     };
     (
         format!("{}{}{}", &source[..start], replacement, &source[end..]),
         selection,
     )
+}
+
+fn list_content(line: &str, format: Format) -> Option<&str> {
+    let line = line.trim_start_matches([' ', '\t']);
+    match format {
+        Format::Bullet => line
+            .strip_prefix("- ")
+            .or_else(|| line.strip_prefix("* "))
+            .or_else(|| line.strip_prefix("+ ")),
+        Format::Numbered => {
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            if !(1..=9).contains(&digits) {
+                return None;
+            }
+            line[digits..]
+                .strip_prefix(". ")
+                .or_else(|| line[digits..].strip_prefix(") "))
+        }
+        _ => None,
+    }
 }
 
 fn preview_allowed(source: &str) -> bool {
@@ -268,6 +303,7 @@ mod tests {
                 (source.to_owned(), selection)
             );
         }
+
         assert_eq!(
             format_selection("a **café** end", 2..10, Format::Bold),
             ("a café end".into(), 2..6)
@@ -278,6 +314,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn list_actions_toggle_selected_lines_and_preserve_unicode_indentation_and_suffix() {
+        for format in [Format::Bullet, Format::Numbered] {
+            let source = "intro\n  café\n\t日本語\nend";
+            let (listed, selection) = format_selection(source, 7..17, format);
+            assert_eq!(format_selection(&listed, selection, format).0, source);
+        }
+        assert_eq!(
+            format_selection("- one\n- two", 0..11, Format::Numbered).0,
+            "1. one\n2. two"
+        );
+        assert_eq!(
+            format_selection("3) one\n9. two", 0..13, Format::Bullet).0,
+            "- one\n- two"
+        );
+        assert_eq!(
+            format_selection("- existing\nplain", 0..16, Format::Bullet).0,
+            "- existing\n- plain"
+        );
+    }
+
+    #[test]
+    fn list_detection_does_not_consume_plain_text_or_unbounded_number_prefixes() {
+        for source in [
+            "2026 report",
+            "-dash",
+            "*emphasis*",
+            "1234567890. text",
+            "二. text",
+        ] {
+            assert!(list_content(source, Format::Numbered).is_none());
+            assert!(list_content(source, Format::Bullet).is_none());
+        }
+        let (listed, range) = format_selection("", 0..0, Format::Bullet);
+        assert_eq!(listed, "- ");
+        assert_eq!(format_selection(&listed, range, Format::Bullet).0, "");
+    }
     #[test]
     fn preview_bounds_do_not_truncate_or_mutate_source() {
         assert!(preview_allowed("**Bold**\n\n- item\n- *emphasis*"));

@@ -9,6 +9,81 @@ use thinoda_canvas::Action;
 use thinoda_platform::settings::ThemeMode;
 
 #[test]
+fn list_actions_convert_and_toggle_as_single_edits_in_both_views() {
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        let mut app = ThinodaApp::headless();
+        app.mode = mode;
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        let source = "café\n日本語";
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some(source.into()))
+            })
+            .unwrap();
+        let style = doc.doc.sheet().root_topic().style.clone();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_ui_state(
+                |ui, app: &mut ThinodaApp| {
+                    ui.ctx()
+                        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+                    app.draw(ui);
+                },
+                app,
+            );
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
+            .focus();
+        h.run_steps(3);
+        h.key_press_modifiers(Modifiers::CTRL | Modifiers::COMMAND, Key::A);
+        h.run_steps(3);
+        for (label, expected) in [
+            ("Bulleted list", "- café\n- 日本語"),
+            ("Numbered list", "1. café\n2. 日本語"),
+            ("Numbered list", source),
+        ] {
+            h.get_by_role_and_label(Role::Button, t(label))
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_role_and_label(Role::Button, t(label)).click();
+            h.run_steps(4);
+            let doc = h.state().doc().unwrap();
+            assert_eq!(
+                doc.doc.sheet().root_topic().notes.as_deref(),
+                Some(expected)
+            );
+            assert_eq!(doc.doc.sheet().root_topic().style, style);
+        }
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some("1. café\n2. 日本語")
+        );
+        h.state_mut().exec(&ctx, Cmd::Canvas(Action::Redo));
+        assert_eq!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_deref(),
+            Some(source)
+        );
+    }
+}
+
+#[test]
 fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();

@@ -349,6 +349,9 @@ those system-owned controls. WinGet publishing remains paused.
   not opened or fetched. Structured rich text and rendered equations remain planned.
   The distinct **Bold notes** / **Italic notes** actions do not change topic styles;
   repeating an action on its selected text removes the surrounding emphasis markers.
+  List actions keep the formatted lines selected: repeat to remove their markers,
+  or choose the other list type to convert without stacking prefixes. Existing
+  indentation is retained.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.

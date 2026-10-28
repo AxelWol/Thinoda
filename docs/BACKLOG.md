@@ -9,6 +9,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**Continuation after PR #91 (2026-10-28):** notes emphasis and contextual action
+names are merged; full-workspace local validation passed 1,000 tests, two ignored.
+Reversible bulleted/numbered notes-list authoring is the next local interaction
+slice. XV7's structured model/search projection/export fidelity/equations remain
+open; XV8 and XV9 are not started by this slice. Release PR #92 has matching
+v0.17.0 manifest/lockfile versions, but workflow authorization is still required
+before its CI can establish release readiness.
+
 **Latest continuation (2026-10-28):** PR #90 and the v0.16.0 release PR #89
 are merged. PR #90's platform/WASM checks and three 30-minute importer
 campaigns passed; subsequent main/release workflow failures are under repair,

@@ -42,6 +42,27 @@ structured rich-note persistence and equations remain open. XV8 and XV9 follow.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 
+**Latest continuation:** PR #91 is merged. Its corrected head passed native CI,
+and the local full-workspace run passed 1,000 tests with two ignored across
+101 suites. Release PR #92 targets v0.17.0; its manifest and all nine workspace
+lockfile versions match. The release PR's CI is `action_required` with no jobs,
+so a repository writer must review/authorize the workflow in GitHub before
+release readiness can be assessed. Main CI is running; the last verified Pages
+deployment still predates this merge. No fresh package publication is claimed.
+
+The local next interaction slice makes bulleted/numbered lists reversible:
+format complete selected lines, keep them selected, repeat to remove markers or
+switch list type without stacking prefixes. Preserve indentation and Unicode
+content, and commit through the same conflict-checked notes/undo path. This is
+shared native/web UI, without new locale strings, and does not migrate note data.
+Windows verification: 218 app-library tests and five notes interaction tests
+pass; the 75-test end-to-end suite and all-language names test also pass.
+Coverage includes list conversion/reversal, selected-line boundaries,
+indentation, Unicode and undo/redo without topic-style changes. Strict Clippy,
+the locked native app build and locked WASM web check pass. The CJK UI fixture
+sets the missing-glyph policy before its first frame, so testing does not depend
+on installed CJK fonts. This is not new physical-host or release acceptance.
+
 The existing Notes inspector now offers bold/italic selection wrapping and
 whole-line bulleted/numbered lists, plus an opt-in Markdown preview. This is a
 source-first authoring slice, not a persisted rich-text model: existing notes
