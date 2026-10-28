@@ -34,6 +34,7 @@ const PAGES: &[Page] = &[
             "Labels organize topics without changing their titles. Notes and hyperlinks are available in the sidebar. Ctrl+F searches; Ctrl+H opens replacement, with optional all-sheet scope.",
             "Formatting is stored as Markdown text; other views and exports may show markup.",
             "Preview does not open links or load images.",
+            "Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.",
             "Note preview limit reached. The full source is preserved and editable.",
             "Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.",
             "Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.",

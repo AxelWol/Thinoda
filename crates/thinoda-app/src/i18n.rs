@@ -1107,6 +1107,11 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    ("Copy note as plain text", "Notiz als Klartext kopieren"),
+    (
+        "Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.",
+        "Kopiert Markdown-Text ohne Formatierung oder Link-/Bildziele. Die gespeicherte Notiz bleibt unverändert.",
+    ),
     ("Italic notes", "Notiztext kursiv"),
     ("Bulleted list", "Aufzählung"),
     ("Numbered list", "Nummerierte Liste"),

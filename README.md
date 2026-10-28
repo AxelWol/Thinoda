@@ -352,6 +352,11 @@ those system-owned controls. WinGet publishing remains paused.
   List actions keep the formatted lines selected: repeat to remove their markers,
   or choose the other list type to convert without stacking prefixes. Existing
   indentation is retained.
+  Enable **Markdown preview** to use **Copy note as plain text**: copy visible
+  text without emphasis markup or link/image destinations, while keeping the
+  saved note untouched. Code, image alternative text, checklist state and table
+  cell boundaries are retained. The same preview limits apply; oversized notes
+  are never silently truncated for copying.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.
