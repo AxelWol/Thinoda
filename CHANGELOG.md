@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 10:38:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-28 13:12:41 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -23,6 +23,29 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.18.0](https://github.com/AxelWol/Thinoda/compare/v0.17.0...v0.18.0) (2026-10-29)
+
+
+### Features
+
+* improve notes fidelity, data inspector, and update notifications ([85337ff](https://github.com/AxelWol/Thinoda/commit/85337ff8976629d41a27448d7b92da63d48ba7ab))
+* **io:** preserve supported FreeMind rich-note imports ([a1b8a95](https://github.com/AxelWol/Thinoda/commit/a1b8a954eed7e112a34a73abcebce6358ffbdcc3))
+* **notes:** add bounded offline equation editing and preview ([5ead216](https://github.com/AxelWol/Thinoda/commit/5ead216dc8a1b2b8c67a6765a95e59fe50f7069b))
+* **notes:** preserve explicit versioned Markdown sources ([a771181](https://github.com/AxelWol/Thinoda/commit/a771181c1e41e5fb29292772798449d4bb6e68e7))
+* **notes:** preserve note semantics in Markdown and TextBundle exports ([04098d7](https://github.com/AxelWol/Thinoda/commit/04098d70c026e4af814d82308674843ea74865dc))
+* **notes:** preserve supported formatting in Excel exports ([d6d9385](https://github.com/AxelWol/Thinoda/commit/d6d9385f1c5eccff11bd1ae1315d11dcfdde0a26))
+* **notes:** preserve supported formatting in FreeMind exports ([3f05240](https://github.com/AxelWol/Thinoda/commit/3f052403d31da449bac22676f1cd957654878cb1))
+* **notes:** preserve supported formatting in Word exports ([a432404](https://github.com/AxelWol/Thinoda/commit/a43240467028a9da338cab347c5e51cac68ed634))
+* **notes:** require explicit CSV and OPML format-loss consent ([aa43dda](https://github.com/AxelWol/Thinoda/commit/aa43dda3948180c10c0f54b26c43232d40429435))
+* **ui:** group inspector data and enlarge editing dialogs ([0152368](https://github.com/AxelWol/Thinoda/commit/0152368caed09ad97fd71012d9d30e42d2bda90f))
+* **updates:** check background releases and report safe web upgrades ([e9b7c1e](https://github.com/AxelWol/Thinoda/commit/e9b7c1e4357bfb74365d0c665f7d83bf7813074d))
+
+
+### Bug Fixes
+
+* **export:** prevent PowerPoint repair and validate Office packages ([7efcc1b](https://github.com/AxelWol/Thinoda/commit/7efcc1b2f344b29cfedaf010199a06465a5d9987))
+* **ui:** fit unsaved-work confirmations to their content ([32c4978](https://github.com/AxelWol/Thinoda/commit/32c49782cc819ef93cccfc174d851e760d25db7c))
 
 ## [0.17.0](https://github.com/AxelWol/Thinoda/compare/v0.16.0...v0.17.0) (2026-10-28)
 
