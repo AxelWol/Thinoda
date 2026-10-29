@@ -14,6 +14,8 @@ use thinoda_platform::{
     settings::{Language, Settings, ThemeMode},
 };
 
+static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn harness(mut app: ThinodaApp) -> Harness<'static, ThinodaApp> {
     app.format_tab = FormatTab::Data;
     let mut h = Harness::builder()
@@ -70,6 +72,7 @@ fn text(h: &mut Harness<'_, ThinodaApp>, label: &'static str, text: &str) {
 
 #[test]
 fn enlarged_notes_cancel_apply_undo_save_and_recovery_keep_explicit_commit_boundary() {
+    let _language = LANGUAGE.lock().unwrap();
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
@@ -151,6 +154,7 @@ fn enlarged_notes_cancel_apply_undo_save_and_recovery_keep_explicit_commit_bound
 
 #[test]
 fn equation_enlarge_transfers_scratch_and_cancel_does_not_apply() {
+    let _language = LANGUAGE.lock().unwrap();
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
@@ -193,6 +197,7 @@ fn equation_enlarge_transfers_scratch_and_cancel_does_not_apply() {
 
 #[test]
 fn enlarged_editors_invalidate_on_selection_revision_and_tab_without_applying_elsewhere() {
+    let _language = LANGUAGE.lock().unwrap();
     for equation in [false, true] {
         for stale in 0..6 {
             let mut h = harness(ThinodaApp::headless());
@@ -278,6 +283,7 @@ fn enlarged_editors_invalidate_on_selection_revision_and_tab_without_applying_el
 
 #[test]
 fn enlarged_notes_capture_focused_source_after_blur_and_reuse_formatting_tools() {
+    let _language = LANGUAGE.lock().unwrap();
     let mut h = harness(ThinodaApp::headless());
     text(&mut h, "Notes", "café before enlarge");
     click(&mut h, "Enlarge notes editor");
@@ -337,6 +343,7 @@ fn enlarged_notes_capture_focused_source_after_blur_and_reuse_formatting_tools()
 
 #[test]
 fn enlarged_editors_resize_by_pointer_without_mutating_the_document() {
+    let _language = LANGUAGE.lock().unwrap();
     for equation in [false, true] {
         let mut h = harness(ThinodaApp::headless());
         if equation {
@@ -392,6 +399,7 @@ fn enlarged_editors_resize_by_pointer_without_mutating_the_document() {
 }
 #[test]
 fn enlarged_editors_share_localized_theme_aware_caption_controls_and_geometry() {
+    let _language = LANGUAGE.lock().unwrap();
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             for equation in [false, true] {

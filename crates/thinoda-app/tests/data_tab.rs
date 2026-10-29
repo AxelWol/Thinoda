@@ -6,6 +6,8 @@ use thinoda_app::{
 };
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn harness(app: ThinodaApp, size: egui::Vec2) -> Harness<'static, ThinodaApp> {
     let mut h = Harness::builder()
         .with_size(size)
@@ -18,6 +20,7 @@ fn harness(app: ThinodaApp, size: egui::Vec2) -> Harness<'static, ThinodaApp> {
 
 #[test]
 fn data_is_between_style_and_map_and_separates_topic_content_in_both_views() {
+    let _language = LANGUAGE.lock().unwrap();
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             for mode in [CenterMode::Map, CenterMode::Outliner] {
@@ -92,6 +95,7 @@ fn data_is_between_style_and_map_and_separates_topic_content_in_both_views() {
 
 #[test]
 fn attachment_remains_a_separate_data_group_before_hyperlink() {
+    let _language = LANGUAGE.lock().unwrap();
     for theme in [ThemeMode::Light, ThemeMode::Dark] {
         let mut app = ThinodaApp::headless();
         app.settings.theme = theme;
@@ -123,6 +127,7 @@ fn attachment_remains_a_separate_data_group_before_hyperlink() {
 
 #[test]
 fn switching_from_data_commits_the_owned_draft_once_and_preserves_scroll_positions() {
+    let _language = LANGUAGE.lock().unwrap();
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;

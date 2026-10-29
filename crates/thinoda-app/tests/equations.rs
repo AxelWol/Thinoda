@@ -17,6 +17,8 @@ use thinoda_platform::{
     settings::{Language, Settings, ThemeMode},
 };
 
+static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn harness(mut app: ThinodaApp) -> Harness<'static, ThinodaApp> {
     app.format_tab = thinoda_app::app::FormatTab::Data;
     let mut h = Harness::builder()
@@ -47,6 +49,7 @@ fn source(h: &mut Harness<'_, ThinodaApp>, source: &str) {
 
 #[test]
 fn equations_author_edit_remove_undo_redo_save_reopen_and_recovery_in_both_views() {
+    let _language = LANGUAGE.lock().unwrap();
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
@@ -142,6 +145,7 @@ fn equations_author_edit_remove_undo_redo_save_reopen_and_recovery_in_both_views
 
 #[test]
 fn equations_invalid_draft_cancel_revision_and_selection_changes_never_replace_saved_source() {
+    let _language = LANGUAGE.lock().unwrap();
     let mut app = ThinodaApp::headless();
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
@@ -253,6 +257,7 @@ fn equations_invalid_draft_cancel_revision_and_selection_changes_never_replace_s
 
 #[test]
 fn equations_plain_notes_are_not_reinterpreted_and_map_shot_is_blocked() {
+    let _language = LANGUAGE.lock().unwrap();
     let mut app = ThinodaApp::headless();
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
@@ -291,6 +296,7 @@ fn equations_plain_notes_are_not_reinterpreted_and_map_shot_is_blocked() {
 
 #[test]
 fn equations_authoring_is_localized_and_theme_aware_in_all_ten_languages() {
+    let _language = LANGUAGE.lock().unwrap();
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {
             let mut app = ThinodaApp::new(
@@ -323,6 +329,7 @@ fn equations_authoring_is_localized_and_theme_aware_in_all_ten_languages() {
 
 #[test]
 fn equations_open_after_focused_note_edits_and_apply_as_a_separate_undo_step() {
+    let _language = LANGUAGE.lock().unwrap();
     let mut app = ThinodaApp::headless();
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
