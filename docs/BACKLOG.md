@@ -72,6 +72,17 @@ without repair; parsed regressions and Microsoft SDK validation cover the output
 **Review:** cell text preserves readable list structure, not Excel list objects;
 other export gaps, full rich-note interchange, loss-consent and equations remain.
 
+**XV7a Markdown/TextBundle continuation (2026-10-29):** shared export now indents
+all lines of formatted notes consistently under nested topics and separates
+heading-topic notes as Markdown blocks instead of accidentally turning them into
+code. Legacy plain notes use collision-safe fenced literal blocks, deliberately
+monospaced rather than silently interpreting Markdown/HTML. Stored note source
+and format remain unchanged; TextBundle carries identical Markdown bytes.
+Parser-level regressions cover style/list/hard-break behavior at multiple depths,
+embedded fences, Unicode, full sources above preview limits and selected-sheet
+scope. This is export fidelity, not a note-preserving import round trip; asset
+packaging, other interchange, loss consent and equations remain open.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and

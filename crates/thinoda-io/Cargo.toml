@@ -25,3 +25,4 @@ epaint_default_fonts = "0.37"
 
 [dev-dependencies]
 tempfile.workspace = true
+pulldown-cmark.workspace = true

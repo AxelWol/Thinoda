@@ -106,6 +106,39 @@ pub(crate) fn text_import(b: &[u8]) -> Result<Workbook, IoError> {
     )))
 }
 pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
+    fn note(source: &thinoda_core::notes::NoteContent, indent: usize, out: &mut String) {
+        let padding = " ".repeat(indent);
+        out.push('\n');
+        if source.is_markdown() {
+            for line in source.split('\n') {
+                if !line.is_empty() {
+                    out.push_str(&padding);
+                    out.push_str(line);
+                }
+                out.push('\n');
+            }
+        } else {
+            // A longer fence keeps literal Markdown/HTML and embedded fences inert.
+            let longest = source
+                .split(|character| character != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            let fence = "`".repeat(longest.saturating_add(1).max(3));
+            out.push_str(&padding);
+            out.push_str(&fence);
+            out.push('\n');
+            for line in source.split('\n') {
+                out.push_str(&padding);
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str(&padding);
+            out.push_str(&fence);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
     let sheet = &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)];
     let mut out = String::new();
     let root = &sheet.topics[&sheet.root];
@@ -113,9 +146,7 @@ pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
     out.push_str(&root.title);
     out.push('\n');
     if let Some(notes) = &root.notes {
-        out.push('\n');
-        out.push_str(notes);
-        out.push('\n');
+        note(notes, 0, &mut out);
     }
     fn render_children(sheet: &Sheet, id: TopicId, depth: usize, out: &mut String) {
         for child in &sheet.topics[&id].children {
@@ -131,10 +162,7 @@ pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
                 out.push('\n');
             }
             if let Some(notes) = &topic.notes {
-                out.push_str(&"  ".repeat(depth.saturating_sub(1)));
-                out.push_str("  ");
-                out.push_str(notes);
-                out.push('\n');
+                note(notes, if depth == 1 { 0 } else { depth * 2 }, out);
             }
             render_children(sheet, *child, depth + 1, out);
         }
@@ -557,14 +585,14 @@ pub(crate) fn freemind_import_with_report(b: &[u8]) -> Result<ImportReport, IoEr
     })
 }
 pub(crate) fn textbundle_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
-    let md = String::from_utf8(markdown_export(w, o)).unwrap_or_default();
+    let md = markdown_export(w, o);
     let name = "mindmap";
     let info = serde_json::to_vec(
         &serde_json::json!({"version":2,"type":"net.daringfireball.markdown","transient":false,"creatorURL":"https://thinoda.app"}),
     )?;
     let a = format!("{name}.textbundle/info.json");
     let b = format!("{name}.textbundle/text.md");
-    archive(&[(&a, &info), (&b, md.as_bytes())])
+    archive(&[(&a, &info), (&b, &md)])
 }
 
 pub(crate) fn textbundle_import(bytes: &[u8]) -> Result<ImportReport, IoError> {

@@ -4521,6 +4521,7 @@ dependencies = [
  "epaint_default_fonts",
  "image",
  "log",
+ "pulldown-cmark",
  "quick-xml 0.42.0",
  "resvg",
  "serde",

@@ -119,6 +119,16 @@ graph TD
   Typed `IoError::ExcelNote` errors retain the topic and use all ten catalogs;
   every failure precedes destination writes. SDK and Windows Excel opening
   evidence covers one original rich fixture, not every host/OS or a round trip.
+  Markdown/TextBundle export uses explicitly formatted source directly, without
+  restricting it to the bounded Office subset. Notes under heading topics are
+  separated blocks; nested-topic notes indent every line to the list item's
+  content column while preserving relative source indentation. Plain notes are
+  fenced literal code blocks with a fence longer than any source backtick run,
+  preserving literal Markdown/HTML rather than inferring formatting. This
+  intentionally uses monospaced presentation for plain notes. TextBundle writes
+  these same UTF-8 bytes directly to `mindmap.textbundle/text.md`; no resource
+  fetch or note-format migration occurs. External viewers decide how explicit
+  Markdown HTML/links behave. Existing outline import is not a rich-note inverse.
   Rich-text interchange for other formats and explicit
   export-loss consent remain XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header

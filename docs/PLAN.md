@@ -149,6 +149,29 @@ stored notes or adding platform-specific UI. Other exporters, richer interchange
 explicit export-loss consent, broader host/OS acceptance and equations remain
 open; XV7 is not complete.
 
+**Markdown/TextBundle continuation (2026-10-29):** the shared Markdown exporter
+now emits multiline notes as complete blocks. Explicit Markdown notes below
+heading topics no longer receive accidental code-block indentation; every line
+under a nested topic receives the same container indentation, retaining internal
+paragraphs, lists, hard breaks and source formatting. Legacy plain notes use
+literal fenced code blocks rather than interpreting their punctuation or HTML.
+The fence is longer than every backtick run in the source, so embedded fences
+cannot terminate the literal block. This intentionally displays plain notes in a
+monospaced block, preserving literal meaning instead of guessing formatting.
+No persisted source or note format changes. Markdown-native syntax is not
+restricted to the Word/Excel export subset or truncated by preview bounds.
+TextBundle packages the exact same Markdown bytes, without a silent UTF-8 fallback.
+**Review:** this improves authored-note handoff, not rich-note import or
+asset packaging. Markdown/TextBundle import still interprets outline content and
+requires existing loss reporting where available; it does not restore note
+ownership/format from these blocks. External Markdown viewers control HTML/link
+behavior for explicitly formatted source. Other interchange gaps, export-loss
+consent and equations remain open; XV7 is still partial.
+Windows verification passed all 126 IO tests, strict native and WASM Clippy,
+formatting and whitespace checks. Four parser-based Markdown/TextBundle
+regressions exercise actual CommonMark event structure, not only output strings.
+No external Markdown editor or macOS/Linux runtime acceptance is claimed.
+
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 
 **Latest status:** PRs #93 and #94 are merged. Release PR #92's Linux/macOS,
