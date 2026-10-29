@@ -1,4 +1,6 @@
 //! Markdown source tools over the existing lossless, recovery-backed notes field.
+pub(crate) const EXPORT_SOURCE_WARNING: &str = "This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.";
+pub(crate) const EXPORT_SOURCE_REQUIRED: &str = "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.";
 
 use egui::{Response, Ui};
 

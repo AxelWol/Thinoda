@@ -83,6 +83,16 @@ embedded fences, Unicode, full sources above preview limits and selected-sheet
 scope. This is export fidelity, not a note-preserving import round trip; asset
 packaging, other interchange, loss consent and equations remain open.
 
+**XV7a CSV/OPML continuation (2026-10-29):** declared Markdown notes require a
+separate cancelable export confirmation before the destination picker; CLI/API
+callers must explicitly enable note-format loss. Complete source is retained,
+not rich interpretation or format metadata. Consent is independent of symbol
+colors/general conversion loss and bound to the current document/sheet/revision.
+Only reachable notes on the exported sheet trigger it. OPML encodes tab/CR/LF
+attributes to retain source whitespace. All ten catalogs include guidance.
+**Review:** this is explicit source-only handoff, not rich-note round-trip
+support. Other export omissions, richer interchange and equations remain open.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and

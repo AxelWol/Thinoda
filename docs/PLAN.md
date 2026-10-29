@@ -172,6 +172,29 @@ formatting and whitespace checks. Four parser-based Markdown/TextBundle
 regressions exercise actual CommonMark event structure, not only output strings.
 No external Markdown editor or macOS/Linux runtime acceptance is claimed.
 
+**CSV/OPML note-loss continuation (2026-10-29):** exporting explicitly formatted
+notes now requires separate acknowledgement that these formats retain complete
+Markdown source, not displayed rich text or note-format metadata. Plain notes
+remain literal and do not trigger this warning. Detection follows only the
+selected sheet's reachable exported tree, excluding floating/orphan notes.
+The GUI's translated confirmation is cancelable before the destination picker,
+blocks editing and is invalidated by document, sheet or revision changes.
+Symbol-color confirmation chains independently. CLI callers must supply
+`--allow-note-format-loss`; API callers use `ExportOptions.allow_note_format_loss`.
+Neither general conversion-loss nor symbol-color consent bypasses the new guard.
+OPML attributes encode tabs, CR and LF numerically to prevent XML whitespace
+normalization from changing note source. Refusal preserves the source and any
+existing destination.
+**Review:** this closes one explicit consent gap, not rich-text CSV/OPML
+interchange. Other exporters' omission/format policies, rich-note import,
+broader XMind interoperability and rendered equations remain XV7 work.
+Windows coverage includes localized cancel/edit-blocking behavior in every
+catalog, stale document/sheet/revision consent, independent symbol-color
+chaining, real CLI flag combinations and destination preservation, plus exact
+CSV/OPML source whitespace. App-library and existing MindManager regressions,
+strict native/WASM Clippy and formatting checks pass. No external CSV/OPML host
+acceptance or cross-OS runtime check is claimed.
+
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 
 **Latest status:** PRs #93 and #94 are merged. Release PR #92's Linux/macOS,

@@ -949,6 +949,7 @@ impl ThinodaApp {
 
     fn conversion_modal_open(&self) -> bool {
         self.dialogs.mindmanager_export
+            || self.dialogs.note_export.is_some()
             || self.dialogs.powerpoint_export
             || self.dialogs.mindmanager_save.is_some()
             || !self.dialogs.imports.is_empty()
@@ -968,6 +969,7 @@ impl ThinodaApp {
             || self.dialogs.shortcuts
             || self.dialogs.legal.open
             || self.dialogs.symbol_export.is_some()
+            || self.dialogs.note_export.is_some()
         {
             return true;
         }
@@ -4035,6 +4037,7 @@ impl ThinodaApp {
 
     fn dialogs_ui(&mut self, ctx: &Context) {
         if self.dialogs.symbol_export.is_some()
+            || self.dialogs.note_export.is_some()
             || self.dialogs.mindmanager_export
             || self.dialogs.powerpoint_export
         {
@@ -4044,6 +4047,7 @@ impl ThinodaApp {
             });
             if !valid {
                 self.dialogs.symbol_export = None;
+                self.dialogs.note_export = None;
                 self.dialogs.mindmanager_export = false;
                 self.dialogs.powerpoint_export = false;
                 self.dialogs.mindmanager_symbol_color_loss = false;
@@ -4051,6 +4055,26 @@ impl ThinodaApp {
                 self.toasts.warning(t("Not possible here"));
                 return;
             }
+        }
+        if let Some((format, allow_symbol_color_loss)) = self.dialogs.note_export {
+            if let Some(choice) = confirm_dialog(
+                ctx,
+                "note_export",
+                t("Export note source"),
+                t(crate::notes::EXPORT_SOURCE_WARNING),
+                &[
+                    (t("Export"), DialogButton::Primary),
+                    (t("Cancel"), DialogButton::Secondary),
+                ],
+                &i18n::dialog_labels(),
+            ) {
+                self.dialogs.note_export = None;
+                self.dialogs.export_owner = None;
+                if choice == 0 {
+                    self.export_with_note_consent(format, allow_symbol_color_loss, true);
+                }
+            }
+            return;
         }
         if let Some((_, format)) = self.dialogs.symbol_export {
             if let Some(choice) = confirm_dialog(

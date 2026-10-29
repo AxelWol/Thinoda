@@ -497,6 +497,12 @@ those system-owned controls. WinGet publishing remains paused.
   dialog, and the I/O API refuses by default. CLI conversion must explicitly pass
   `--allow-symbol-color-loss` to produce these lossy formats. External plain-text
   clipboard content has no color fields; internal topic clipboard retains full fidelity.
+- CSV and OPML retain formatted notes as complete Markdown source, not displayed
+  rich text. Export requires a separate, cancelable confirmation before choosing
+  a destination; CLI conversion requires `--allow-note-format-loss` and I/O callers
+  must set `ExportOptions.allow_note_format_loss`. Neither `--allow-lossy` nor
+  symbol-color consent substitutes for this acknowledgement. The original workbook
+  remains unchanged; save as Thinoda to retain note-format metadata.
 - The Map structure selector opens a viewport-bounded, scrollable preview gallery
   with nine collapsible families covering all 17 existing structures. Original sample
   maps use the actual canvas renderer in light/dark mode; layout changes preserve rich

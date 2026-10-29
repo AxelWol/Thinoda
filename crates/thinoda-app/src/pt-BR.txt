@@ -1,5 +1,8 @@
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+Export note source|Exportar origem da nota
+This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.|Este formato não consegue preservar a formatação das notas. Use Exportar com confirmação ou salve como Thinoda.
+This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.|Este formato exporta notas formatadas como código Markdown, não como texto formatado. Todo o código é preservado, mas a formatação não será exibida. A pasta de trabalho de origem não é alterada. Salve como Thinoda para preservar os formatos das notas.
 Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para Excel atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
 Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.|O Excel não consegue preservar a formatação desta nota. Links, imagens, HTML, tabulações e Markdown avançado não são compatíveis. A origem não é alterada; salve como Thinoda.
 FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para FreeMind atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.

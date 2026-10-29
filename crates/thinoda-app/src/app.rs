@@ -203,6 +203,7 @@ pub struct Dialogs {
     pub(crate) save_close_tab: Option<String>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub symbol_export: Option<(usize, Format)>,
+    pub note_export: Option<(Format, bool)>,
     pub(crate) export_owner: Option<(String, usize, u64)>,
     pub guide: crate::help::GuideState,
     pub settings: bool,
@@ -1663,6 +1664,15 @@ impl ThinodaApp {
     }
 
     pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
+        if self.doc().is_some_and(|doc| {
+            thinoda_io::note_format_loss(doc.doc.workbook(), format, &ExportOptions::default())
+        }) {
+            self.dialogs.note_export = Some((format, allow_symbol_color_loss));
+            self.dialogs.export_owner = self
+                .doc()
+                .map(|doc| (doc.key.clone(), doc.doc.active_index(), doc.doc.state_id()));
+            return;
+        }
         if format == Format::PowerPoint {
             self.dialogs.powerpoint_export = true;
             self.dialogs.export_owner = self
@@ -1682,6 +1692,15 @@ impl ThinodaApp {
     }
 
     pub(crate) fn export_confirmed(&mut self, format: Format, allow_symbol_color_loss: bool) {
+        self.export_with_note_consent(format, allow_symbol_color_loss, false);
+    }
+
+    pub(crate) fn export_with_note_consent(
+        &mut self,
+        format: Format,
+        allow_symbol_color_loss: bool,
+        allow_note_format_loss: bool,
+    ) {
         let dark = self
             .applied
             .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
@@ -1701,6 +1720,7 @@ impl ThinodaApp {
         };
         let opts = ExportOptions {
             allow_symbol_color_loss,
+            allow_note_format_loss,
             dark: dark
                 && matches!(
                     format,

@@ -233,7 +233,11 @@ pub(crate) fn opml_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, Io
         let t = &s.topics[&id];
         out.push_str(&format!("<outline text=\"{}\"", escape(&t.title)));
         if let Some(n) = &t.notes {
-            out.push_str(&format!(" _note=\"{}\"", escape(n)));
+            let note = escape(n)
+                .replace('\r', "&#13;")
+                .replace('\n', "&#10;")
+                .replace('\t', "&#9;");
+            out.push_str(&format!(" _note=\"{note}\""));
         }
         if let Some(l) = &t.hyperlink {
             out.push_str(&format!(" _link=\"{}\"", escape(l)));

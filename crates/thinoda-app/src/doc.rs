@@ -414,6 +414,15 @@ pub fn convert_with_consent(
             t(crate::symbols::EXPORT_WARNING)
         ));
     }
+    if thinoda_io::note_format_loss(&report.workbook, format, opts) {
+        if !opts.allow_note_format_loss {
+            return Err(format!(
+                "{} (--allow-note-format-loss)",
+                t(crate::notes::EXPORT_SOURCE_REQUIRED)
+            ));
+        }
+        log::warn!("{}", t(crate::notes::EXPORT_SOURCE_WARNING));
+    }
     if format == Format::MindManager {
         log::warn!(
             "{}",
@@ -448,6 +457,7 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
     match error {
+        thinoda_io::IoError::NoteFormatLossNeedsConfirmation => t(crate::notes::EXPORT_SOURCE_REQUIRED).into(),
         thinoda_io::IoError::ExcelNote { topic, reason } => {
             let message = match reason {
                 thinoda_core::notes::NoteExportError::Limit => crate::notes::EXCEL_LIMIT,

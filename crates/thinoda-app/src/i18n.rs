@@ -1107,6 +1107,15 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    ("Export note source", "Notizquelle exportieren"),
+    (
+        "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.",
+        "Dieses Format kann die Notizformatierung nicht erhalten. Verwenden Sie Exportieren mit Bestätigung oder speichern Sie als Thinoda.",
+    ),
+    (
+        "This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.",
+        "Dieses Format exportiert formatierte Notizen als Markdown-Quelltext, nicht als Rich Text. Der vollständige Quelltext bleibt erhalten, die Formatierung wird jedoch nicht angezeigt. Die Quellarbeitsmappe bleibt unverändert. Speichern Sie als Thinoda, um Notizformate zu erhalten.",
+    ),
     (
         "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
         "Excel-Notizexportlimit erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
@@ -2208,6 +2217,7 @@ mod tests {
     #[test]
     fn formatted_note_export_errors_are_translated_in_every_catalog() {
         for language in TRANSLATED {
+            assert_ne!(t_in(language, "Export note source"), "Export note source");
             for key in [
                 crate::notes::WORD_LIMIT,
                 crate::notes::WORD_UNSUPPORTED,
@@ -2215,6 +2225,8 @@ mod tests {
                 crate::notes::FREEMIND_UNSUPPORTED,
                 crate::notes::EXCEL_LIMIT,
                 crate::notes::EXCEL_UNSUPPORTED,
+                crate::notes::EXPORT_SOURCE_WARNING,
+                crate::notes::EXPORT_SOURCE_REQUIRED,
             ] {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
                 assert!(t_in(language, key).contains("Thinoda"));

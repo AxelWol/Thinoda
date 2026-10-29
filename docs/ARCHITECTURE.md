@@ -129,8 +129,15 @@ graph TD
   these same UTF-8 bytes directly to `mindmap.textbundle/text.md`; no resource
   fetch or note-format migration occurs. External viewers decide how explicit
   Markdown HTML/links behave. Existing outline import is not a rich-note inverse.
-  Rich-text interchange for other formats and explicit
-  export-loss consent remain XV7 work.
+  CSV/OPML export requires `ExportOptions.allow_note_format_loss` when the selected
+  reachable topic tree contains declared Markdown notes. This acknowledgement is
+  independent of symbol-color or general conversion-loss consent. The app binds
+  its cancelable, edit-blocking confirmation to document key, active sheet and
+  revision before choosing a destination; CLI exposes `--allow-note-format-loss`.
+  These formats retain full source, not rich-text interpretation or format
+  metadata. OPML encodes attribute tabs/CR/LF numerically to defeat XML whitespace
+  normalization. Other formats' omission policies and rich-text interchange remain
+  XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
   dimensions before full decoder allocation (4096/side, 4 megapixels), then uses
   decoder width/height and 64 MiB allocation limits. Conversion to RGBA is bounded
