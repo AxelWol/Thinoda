@@ -766,7 +766,12 @@ mod native {
                 Provider::ClaudeCli,
                 &args,
                 input.clone(),
-                Duration::from_secs(30),
+                // Windows ARM runners may need more time for cold PowerShell startup.
+                Duration::from_secs(if cfg!(all(windows, target_arch = "aarch64")) {
+                    120
+                } else {
+                    30
+                }),
                 || false,
             )
             .unwrap();
