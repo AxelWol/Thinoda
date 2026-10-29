@@ -56,7 +56,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-583 crates.
+584 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -437,6 +437,7 @@ LGPL/MPL licensing:
 | security-framework | 3.7.0 | MIT OR Apache-2.0 | <https://github.com/kornelski/rust-security-framework> |
 | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | <https://github.com/kornelski/rust-security-framework> |
 | self_cell | 1.3.0 | Apache-2.0 OR GPL-2.0-only | <https://github.com/Voultapher/self_cell> |
+| semver | 1.0.28 | MIT OR Apache-2.0 | <https://github.com/dtolnay/semver> |
 | send_wrapper | 0.6.0 | MIT/Apache-2.0 | <https://github.com/thk1/send_wrapper> |
 | serde | 1.0.229 | MIT OR Apache-2.0 | <https://github.com/serde-rs/serde> |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | <https://github.com/serde-rs/serde> |

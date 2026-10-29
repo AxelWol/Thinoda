@@ -2,7 +2,7 @@ _Last updated: 2026-10-19 11:38:34 UTC (non-binding repository metadata)._ <!-- 
 
 # Privacy Policy
 
-Effective date: October 19, 2026
+Effective date: October 29, 2026
 
 ## No data collection by Thinoda
 
@@ -35,6 +35,28 @@ You control your saved files. To remove local application data, delete the
 relevant documents, settings and recovery files. Clearing the web app's site
 data removes its browser-stored documents, settings and recovery data; it does
 not remove files you previously downloaded.
+
+## Automatic update checks
+
+On Windows, macOS and Linux, the running app checks the public GitHub API
+(`api.github.com/repos/AxelWol/Thinoda/releases/latest`) at startup and roughly
+every six hours, with bounded retries after errors. GitHub receives the request's
+network metadata (including IP address) and a Thinoda/version User-Agent.
+No documents, filenames, settings, credentials or account tokens are sent.
+The response is used only to offer newer stable release/download links;
+native installers/binaries are not downloaded or executed automatically.
+Following those links opens GitHub in your browser and is subject to
+[GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+
+The web app periodically checks its own hosting origin for an updated service
+worker and downloads public app-shell assets in the background. The host sees
+ordinary web requests, not map content. Browser local storage keeps a
+deployment-scope-specific build baseline and pending update identity solely to
+distinguish an update ready to apply from one actually running on a later launch.
+These records are not tracking identifiers and are not transmitted. Clearing
+site data removes them and suppresses historical update-success notices.
+No checks run after the native app exits; browser suspension/closure can also
+prevent web checks. There is no separate updater service or analytics endpoint.
 
 ## Optional AI connections
 

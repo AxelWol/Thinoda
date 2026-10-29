@@ -8,6 +8,23 @@
 
 use base64::Engine as _;
 
+/// One subscription per application lifetime; JS buffers startup notices until Rust is ready.
+#[cfg(target_arch = "wasm32")]
+pub fn watch_updates(on_notice: impl Fn(String) + 'static) {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(inline_js = "
+        export function thinoda_watch_updates(callback) {
+            window.thinodaPwa?.watchUpdates(callback);
+        }
+    ")]
+    extern "C" {
+        fn thinoda_watch_updates(callback: &js_sys::Function);
+    }
+    let callback = Closure::<dyn Fn(String)>::new(on_notice);
+    thinoda_watch_updates(callback.as_ref().unchecked_ref());
+    callback.forget();
+}
+
 /// Open the web install panel; the browser prompt itself runs from a DOM click.
 #[cfg(target_arch = "wasm32")]
 pub fn install_app(

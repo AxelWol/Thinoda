@@ -18,8 +18,10 @@ published on [Thinoda app for GitHub Pages](https://axelwol.github.io/Thinoda/) 
 
 Thinoda's maintainers do not collect or process your personal data or mind map
 content through the app. Editing and storage happen locally on your device.
-Optional AI connections, cloud-synced folders and web hosting involve the
-services you choose to use. See the [Privacy Policy](PRIVACY.md) for details.
+Automatic update checks contact GitHub (native) or the app's web host (web),
+without sending documents or credentials. Optional AI connections, cloud-synced
+folders and web hosting involve external services. See the
+[Privacy Policy](PRIVACY.md) for details.
 
 ## Download
 Installers for every platform are attached to each
@@ -41,6 +43,26 @@ installers are not code-signed yet and SmartScreen may block first launch.
 The macOS release workflow Developer ID-signs, Apple-notarizes and staples both
 the app and DMG for Apple silicon and Intel. Older releases and local builds may
 still use ad-hoc signatures, which seal contents but do not establish developer trust.
+
+### Background updates
+
+Windows, macOS and Linux apps check GitHub's latest stable release at startup
+and every six hours while running (including overdue checks after resume).
+A dismissible notice shows the running/new version, release notes/changelog
+and a download link. Native binaries are **never automatically downloaded or
+installed**; choose the appropriate package and follow your usual installation
+method. Dismissal lasts for that version in the current app session.
+Offline/error checks retry with backoff; editing remains available.
+
+The web app checks hourly while running and caches a complete new shell in the
+background. **Update ready** means the download is ready, not that the running
+app changed. Save/download work, close **all** app tabs/windows and reopen to
+activate it; there is no forced reload. On a subsequent launch, an observed
+update's actual new build shows **Update installed successfully** with its
+version/build and release/changelog link. Notices follow all ten languages and
+light/dark mode. Browsers can suspend timers and cannot promise checks while
+closed. See [offline use and updates](docs/WEB.md#offline-use-and-updates) for
+storage and lifecycle limitations.
 
 ### Installing on Windows with WinGet
 The Windows installer's final page offers separate labeled options to run Thinoda

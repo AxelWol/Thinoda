@@ -1,9 +1,16 @@
 // The build hook inserts a content revision and the exact compiled app shell.
 const FILES = __THINODA_FILES__;
 const REVISION = "__THINODA_REVISION__";
+const VERSION = "__THINODA_VERSION__";
 const PREFIX = `thinoda-shell:${self.registration.scope}:`;
 const CACHE = PREFIX + REVISION;
 const urls = FILES.map(path => new URL(path, self.registration.scope).href);
+
+self.addEventListener("message", event => {
+    if (event.data?.type === "thinoda-build") {
+        event.source?.postMessage({ type: "thinoda-build", version: VERSION, revision: REVISION });
+    }
+});
 
 self.addEventListener("install", event => {
     event.waitUntil((async () => {

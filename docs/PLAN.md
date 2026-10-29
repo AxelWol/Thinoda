@@ -11,6 +11,104 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current next-value state (2026-10-29)
 
+**New priority: background version checks (2026-10-29, implemented locally;
+independent review completed).** Installed
+web apps periodically check and cache complete new shells while running. Keep
+the current JS/WASM generation until all existing app tabs/windows close; never
+force reload, bypass unsaved-work protection or call `skipWaiting`. Report an
+update as ready while waiting, and as successfully applied only after the new
+build boots on a later launch. Browser suspension/closed apps cannot promise
+continuous polling. Native Windows/macOS/Linux checks run off the UI thread and
+notify about newer stable releases with version, release/changelog and download
+links; native binaries are never downloaded or installed automatically.
+
+Use the running build's own immutable identity, not live service-worker state,
+for applied-version notices. Keep scope-specific persisted web identity and
+separate ready/applied states. Native checks use bounded public GitHub metadata,
+strict stable version comparison, trusted repository HTTPS links, one in-flight
+request, periodic checks and retry backoff. No workbook data or credentials are
+sent. All notices use shared translated light/dark UI and are dismissible.
+Update related user/architecture/web documentation and deterministic tests.
+
+**Concept rubber-duck critique:** automatic web activation while retaining old
+clients contradicts service-worker lifecycle safety. The revised contract above
+explicitly distinguishes background download from next-launch activation.
+Build identity must come from the loaded shell, not a mutable active worker.
+Use a bounded blocking HTTP request on a native worker thread rather than adding
+an app-wide async runtime; request repaint on results and schedule overdue checks
+when the app resumes. Validate all links, handle offline/rate limits without
+success-shaped fallbacks, and preserve long-dialog/unsaved-work behavior. A final
+rubber-duck review of the implementation is required before completion.
+
+**Implementation handoff:** web checks hourly with focus/online/resume signals,
+single-flight and bounded retry backoff. Complete waiting builds emit ready
+notices; scope-specific baseline/pending identities emit applied success only
+after the exact observed shell boots. Missing/unavailable storage suppresses
+success rather than guessing. Normal first installation establishes a baseline.
+The post-build hook embeds immutable package/content identity into loaded HTML
+and normalizes that injection before hashing. Native checks use a 20-second
+timeout, 256 KiB cap, no redirects/tokens, strict stable semver and exact trusted
+repository links, six-hour deadlines and 30-minute-to-four-hour retry backoff.
+Native download/installation stays user initiated. Notices are dismissible for
+the version/build within a session, independent of documents and settings.
+All ten catalogs, privacy/network expectations, README, architecture and web
+update instructions are updated.
+
+**Implementation rubber-duck self-critique (not independent approval):**
+- A waiting worker is not the running app. Ready and applied notices remain
+  separate; only the loaded HTML's immutable identity can establish application.
+  Complete-shell caching and normal activation retain old clients and unsaved work.
+- A mutable cross-tab "current build" record can race and roll back. Per-build
+  seen/pending markers now only advance, even if an old tab sends delayed ready
+  metadata. Concurrent launches can show the same legitimate notice; no tab
+  claims success for an unobserved, unchanged or failed-storage transition.
+- HTTP success must not mean "some JSON arrived." Native checks require HTTP
+  200, strict stable semver, non-draft/non-prerelease metadata, exact trusted
+  release URLs, a global timeout and response cap. Local HTTP fixtures exercise
+  oversized, malformed, rate-limited and redirected responses without external
+  requests. Remote text is not rendered; download links never execute installers.
+- Retry deadlines must survive idle frames and worker-start failure. One worker,
+  completion-triggered repaint and delayed retry repaint avoid both UI blocking
+  and busy repaint. Web callback queues are drained, not left waiting on another
+  input event. Newer releases supersede dismissal; withdrawn releases clear stale UI.
+  Wall-clock overdue detection supplements monotonic native deadlines across
+  Linux suspend, and a web wall-clock rollback cannot suppress checks indefinitely.
+  Live polling is tied to eframe's production lifecycle, not headless draw tests.
+- Build identity injection must not make every hook rerun a new release. The
+  hook normalizes its injection before hashing, with deterministic rerun tests.
+- Trade-offs remain explicit: no closed-browser polling guarantee, no automatic
+  native installer, session-only dismissal, small retained per-build browser
+  metadata, possible missing applied notices when storage/history is unavailable,
+  and no published notes for unreleased development builds. GitHub authenticity
+  and installer trust still depend on the normal release/signing process.
+
+**Verification handoff:** deterministic native update/network/UI and web
+lifecycle tests, all ten languages/light-dark rendering, unsaved-work/undo
+preservation, shared close/save/startup regressions, deterministic PWA generation,
+strict native/workspace and WASM Clippy, production Trunk build, notices/license
+check and documentation-metadata tests pass. A local Chromium production-shell
+smoke check activated the scoped worker, loaded immutable identity and initialized
+per-build tracking with no browser console errors. The full workspace library
+run exposes one unrelated existing failure:
+`thinoda-platform::tests::cloud_prefix_boundaries_case_and_nested_provider`
+(canonical existing directory vs lexical not-yet-existing child through this
+worktree's Windows path alias). It fails in isolation; all other platform tests
+pass. No cloud/path code is changed here. Compilation/smoke checks do not claim
+macOS/Linux runtime QA.
+
+**Final independent rubber-duck critique:** traced the native scheduling/network
+boundary, release/version/link validation, web shell hashing and ready/applied
+state machine, multi-tab/storage failure paths, notice localization/themes and
+document isolation. No blocking defects found. The review identified a factual
+backoff mismatch: web code capped its failure exponent at four (16 minutes)
+while documentation promised one hour. The exponent cap is now six and a
+deterministic boundary/recovery regression checks the full two-minute through
+one-hour sequence. Independent targeted app/xtask/JavaScript tests and a WASM
+build passed; the known path-alias platform test remains unrelated. Small
+per-build tracking keys are retained intentionally; closed-app polling,
+session-only dismissal, missing applied notices without history/storage and
+external host runtime/signing acceptance remain explicit limitations.
+
 [v0.17.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.17.0) now has ten
 downloadable packages and six architecture-specific checksum manifests.
 Release workflow `40767865902` published the assets after PR #97's packaging

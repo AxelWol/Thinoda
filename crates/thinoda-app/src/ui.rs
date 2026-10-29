@@ -633,6 +633,9 @@ impl ThinodaApp {
             self.font_source = font_source;
         }
         self.apply_appearance(&ctx);
+        if viewport == egui::ViewportId::ROOT {
+            self.updates.show(ui);
+        }
         self.handle_close_request(&ctx);
         self.handle_sheet_paste(&ctx);
         self.poll_map_shot(&ctx);

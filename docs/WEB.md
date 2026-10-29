@@ -414,9 +414,40 @@ external links and remote services still need a connection.
 Trunk's post-build hook (`cargo xtask web-pwa`) creates `dist/sw.js` from the
 exact staged artifacts and a content-derived revision. URLs, manifest identity,
 worker scope and caches are relative to the deployment subpath, including
-GitHub Pages. A new worker waits until all existing app windows/tabs close
-before taking over; there is no forced reload or `skipWaiting` during editing.
-Save/download maps before closing and reopen online to receive updates.
+GitHub Pages. The hook also embeds the package version and content revision
+into the **loaded HTML**, so the running shell's identity never comes from a
+mutable service worker.
+
+While running, the app requests `registration.update()` at startup and hourly.
+Focus, online, page-show and visibility/resume events share that throttle and
+one-in-flight guard. Errors retry with exponential backoff (two minutes up to
+one hour), are logged locally, and never produce success notices. Timers may
+be suspended or clamped; **closed/suspended apps cannot guarantee polling**.
+
+The browser automatically downloads a complete new shell into its waiting
+worker's cache. The shared translated light/dark **Update ready** notice shows
+the new version/build, a release/changelog link and close/reopen instructions.
+That is not a successful activation: the new worker waits until **all** existing
+app windows/tabs close before taking over. There is no forced reload,
+`skipWaiting` or `clients.claim`; open and unsaved documents remain untouched.
+Save/download maps before closing. A complete waiting shell can activate on a
+later launch, including offline while the browser retains its cache.
+
+After an observed waiting update actually boots as a different shell, the app
+shows **Update installed successfully** with the running version/build and
+release/changelog link. A scope-specific local-storage baseline and pending
+identity prevent first-install, unchanged-boot and stale-tab false positives.
+Per-build seen/pending markers cannot be rolled back by an older tab.
+Simultaneously launched tabs may each show the same legitimate applied notice.
+Storage failure, clearing site data, or never observing the waiting build can
+suppress the success notice;
+it must never infer success from a downloaded worker or failed storage write.
+Two tiny per-build markers are retained for observed updates/boots; clearing
+site data removes this history together with other browser-local app data.
+Repeated builds of the same package version are distinguished by content revision;
+unreleased development builds may have no corresponding published release notes.
+Dismissal is per version/build within the app session.
+
 Activation removes only obsolete Thinoda shell caches for the same scope.
 Registration/cache failures appear in the browser console and install panel;
 installation alone is not proof that offline caching succeeded.

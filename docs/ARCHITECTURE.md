@@ -2,6 +2,37 @@ _Last updated: 2026-10-27 17:27:36 UTC (non-binding repository metadata)._ <!-- 
 
 # Architecture
 
+## Background version checks
+
+`thinoda-app::updates` owns document-independent, nonmodal notices rendered by
+shared egui visuals/i18n (all ten languages; light/dark). Native production
+services start one bounded blocking `ureq` request on a named worker thread:
+20-second global timeout, 256 KiB response cap, no redirects/authentication,
+public GitHub latest-stable endpoint. Strict `semver` ordering rejects drafts,
+prereleases, malformed tags and downgrades; release URLs must exactly match the
+trusted repository/tag and UI links are constructed locally. No remote Markdown
+or HTML is rendered and no native binary is downloaded/installed. Startup and
+six-hour checks use monotonic deadlines with a wall-clock overdue fallback for
+suspend/resume (Linux monotonic time can pause), at most one in-flight request and
+30-minute-to-four-hour exponential retry backoff. Workers wake egui on completion;
+future deadlines use delayed repaint, never busy repaint. Overdue work resumes
+when the app resumes. Headless apps without native services do not start checks.
+Dismissal is per available version for the current process, not a settings write.
+
+Web JS buffers typed ready/applied messages until the Rust callback subscribes
+through `thinoda-platform::web`, which requests repaint on receipt. The Trunk
+post-build hook embeds immutable loaded-shell version/revision in `index.html`
+and the complete generated worker; the identity injection is normalized before
+hashing so hook reruns are deterministic. The worker's normal lifecycle caches
+updates without taking over old clients. JS polls hourly while running, handles
+resume/online signals with the same throttle, and validates metadata from only
+the actual waiting worker. Scope-specific baseline and immutable per-build
+seen/pending local-storage markers
+report application only after that exact new shell boots, never on first install
+or an old tab. Storage errors fail closed (no applied success). There is no
+`skipWaiting`, `clients.claim`, reload, document mutation or separate updater.
+See [WEB.md](WEB.md#offline-use-and-updates) and [PRIVACY.md](../PRIVACY.md).
+
 ```mermaid
 graph TD
     app[thinoda-app<br/>shell, menus, dialogs, i18n] --> canvas[thinoda-canvas<br/>map view, input, rendering]

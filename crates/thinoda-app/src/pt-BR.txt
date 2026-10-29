@@ -481,3 +481,6 @@ Select a topic, then Insert > Attachment to add a local file as a child topic (1
 # Selected-image canvas resize handle.
 Resize image|Redimensionar imagem
 Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.|Redimensione uma imagem selecionada com a alça inferior direita. Escape cancela; as setas redimensionam quando a alça está em foco. Estilo > Imagem local oferece controles de largura por teclado/toque.
+Version and changelog|Versão e histórico de alterações
+Download new version|Baixar nova versão
+Save your work, then close all app windows and reopen to apply the update.|Salve seu trabalho, feche todas as janelas do aplicativo e abra-o novamente para aplicar a atualização.

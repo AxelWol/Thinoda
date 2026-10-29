@@ -253,6 +253,20 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("New version available", "Neue Version verfügbar"),
+    ("Update ready", "Update bereit"),
+    (
+        "Update installed successfully",
+        "Update erfolgreich installiert",
+    ),
+    ("Current version", "Aktuelle Version"),
+    ("Version and changelog", "Version und Änderungsprotokoll"),
+    ("Download new version", "Neue Version herunterladen"),
+    ("Dismiss", "Ausblenden"),
+    (
+        "Save your work, then close all app windows and reopen to apply the update.",
+        "Speichern Sie Ihre Arbeit, schließen Sie alle App-Fenster und öffnen Sie die App erneut, um das Update anzuwenden.",
+    ),
     ("PowerPoint slide size", "PowerPoint-Folienformat"),
     (
         "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
@@ -2375,6 +2389,7 @@ mod tests {
     #[test]
     fn every_literal_translation_call_is_in_the_catalog() {
         for source in [
+            include_str!("updates.rs"),
             include_str!("ui.rs"),
             include_str!("app.rs"),
             include_str!("ai.rs"),

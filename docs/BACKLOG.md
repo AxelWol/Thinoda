@@ -9,6 +9,18 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**User priority: background version checks (2026-10-29, implemented locally;
+final independent review pending).** Web checks hourly while running, caches a
+complete waiting shell, distinguishes ready from next-launch applied success and
+never reloads unsaved work. Native Windows/macOS/Linux checks at startup/every
+six hours use a bounded worker and offer stable-version release/changelog and
+download links; no native automatic installation. All ten languages and both
+themes use shared nonmodal notices. First installs, stale tabs, storage failure,
+offline/backoff and untrusted release metadata have deterministic coverage.
+Browser closed/suspended polling and cross-OS runtime acceptance remain explicit
+limitations; no always-running updater is promised. Continue XV7 only after
+the update feature's final independent critique and verification handoff.
+
 **Current continuation (2026-10-29):** v0.17.0 has ten published downloads and
 six checksum manifests after PR #97; historical release blockers below are no
 longer current. There are no open GitHub issues at this check. Execution resumes
