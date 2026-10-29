@@ -76,7 +76,11 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     }
     let manifest = serde_json::to_vec(&Manifest {
         format: "thinoda".into(),
-        version: 3,
+        version: if thinoda_core::notes::has_formatted_notes(book) {
+            4
+        } else {
+            3
+        },
         resources: entries,
     })?;
     let content = serde_json::to_vec(&content)?;
@@ -96,10 +100,8 @@ pub(crate) fn hydrate(
     book: &mut Workbook,
 ) -> Result<(), IoError> {
     let manifest: Manifest = serde_json::from_slice(manifest)?;
-    if manifest.format != "thinoda" || manifest.version != 3 {
-        return Err(IoError::Invalid(
-            "invalid version 3 resource manifest".into(),
-        ));
+    if manifest.format != "thinoda" || !matches!(manifest.version, 3 | 4) {
+        return Err(IoError::Invalid("invalid native resource manifest".into()));
     }
     if archive.len() > thinoda_core::resources::MAX_RESOURCES + 2 {
         return Err(IoError::Invalid(
@@ -113,7 +115,7 @@ pub(crate) fn hydrate(
     }
     if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
         return Err(IoError::Invalid(
-            "version 3 resources must be archive entries, not inline data".into(),
+            "native resources must be archive entries, not inline data".into(),
         ));
     }
     let mut names = std::collections::BTreeSet::new();

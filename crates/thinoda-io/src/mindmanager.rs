@@ -374,7 +374,7 @@ fn parse(xml: &[u8], mut warnings: BTreeSet<ImportWarning>) -> Result<ImportRepo
                         b"NotesGroup" if parent == Some(b"Topic") => {}
                         b"NotesXhtmlData" if parent == Some(b"NotesGroup") => {
                             if let Some(topic) = stack.last_mut() {
-                                topic.topic.notes = attr(b"PreviewPlainText");
+                                topic.topic.notes = attr(b"PreviewPlainText").map(Into::into);
                             }
                             if !empty && stack.last().is_none_or(|node| node.topic.notes.is_none())
                             {

@@ -413,7 +413,7 @@ mod tests {
             "**{}** and searchable fallback",
             "a".repeat(crate::notes::MAX_PROJECTION_BYTES)
         );
-        sheet.topic_mut(topic).unwrap().notes = Some(source.clone());
+        sheet.topic_mut(topic).unwrap().notes = Some(source.clone().into());
         let options = SearchOptions {
             include_notes: true,
             ..Default::default()

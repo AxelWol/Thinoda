@@ -445,7 +445,7 @@ fn entries(w: &Workbook, o: &ExportOptions) -> Vec<TopicRow> {
             depth,
             id,
             t.title.clone(),
-            t.notes.clone(),
+            t.notes.as_deref().map(str::to_owned),
             t.labels.join(", "),
             t.markers.join(", "),
             t.hyperlink.clone().unwrap_or_default(),

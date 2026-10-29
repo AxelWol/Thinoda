@@ -3018,7 +3018,12 @@ fn ai_breakdown_creates_todos_and_explain_sets_notes() {
         .click();
     h.run_steps(2);
     let s = h.state().doc().unwrap().doc.sheet();
-    let notes = s.topic(s.root).unwrap().notes.clone().unwrap_or_default();
+    let notes = s
+        .topic(s.root)
+        .unwrap()
+        .notes
+        .as_deref()
+        .unwrap_or_default();
     assert!(notes.contains("A short explanation."), "{notes}");
 }
 

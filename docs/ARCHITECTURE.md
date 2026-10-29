@@ -51,7 +51,7 @@ graph TD
   without altering content/history. Unchanged stores are not rehashed on every
   title edit. Low-level public model mutation still requires validation, as with
   other model invariants.
-  Resource-free native archives stay version 2; resource-bearing archives use
+  Native archives without formatted notes or resources stay version 2; resource-bearing archives use
   version 3 with bounded manifest metadata and raw `resources/<digest>` blobs,
   deduplicated across sheets. Imports validate names, sizes, digests, ownership
   and resource references without extracting paths or fetching URLs. Recovery
@@ -59,6 +59,20 @@ graph TD
   exist (resource-free clipboard remains version 1), retaining its 16 MiB
   encoded-payload limit. Older native readers reject version 3 rather than
   silently discarding bytes. Legacy reference-only image strings still load.
+  Explicitly formatted notes use `NoteContent::Formatted` with
+  `{"format":"markdown-v1","source":"..."}`; legacy plain notes serialize as their
+  original JSON strings. Unknown format versions/fields are rejected. This is a
+  source envelope, not a persisted rich-text AST. Formatting toolbar actions opt
+  the whole note into Markdown, while typing preserves its existing syntax.
+  Native archives containing these envelopes use version 4, with or without
+  resource blobs, and sheet clipboard uses version 3. Older archive/clipboard
+  versions cannot carry formatted envelopes. Recovery and internal subtree/
+  outline copies retain the same type; draft conflict checks compare both source
+  and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
+  limits do not truncate stored source or prevent editing larger notes.
+  XMind private metadata retains the envelope, but its standard plain-note field
+  and other existing textual exporters still contain Markdown source; rich-text
+  interchange and explicit export-loss reporting remain XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
   dimensions before full decoder allocation (4096/side, 4 megapixels), then uses
   decoder width/height and 64 MiB allocation limits. Conversion to RGBA is bounded

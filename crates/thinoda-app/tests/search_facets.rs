@@ -212,7 +212,7 @@ fn find_searches_formatted_note_text_without_rewriting_source_or_matching_link_t
         .unwrap()
         .doc
         .edit_sheet("Oversized note", |sheet| {
-            sheet.topic_mut(root).unwrap().notes = Some(oversized_source.clone());
+            sheet.topic_mut(root).unwrap().notes = Some(oversized_source.clone().into());
             Ok(())
         })
         .unwrap();

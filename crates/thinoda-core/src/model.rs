@@ -335,7 +335,7 @@ pub struct Topic {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notes: Option<String>,
+    pub notes: Option<crate::notes::NoteContent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
     /// XMind compatible marker ids, e.g. `priority-1`, `task-half`, `flag-red`.

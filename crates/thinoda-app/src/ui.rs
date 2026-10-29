@@ -3324,8 +3324,9 @@ impl ThinodaApp {
                 ui,
                 &r,
                 crate::doc::InspectorField::Hyperlink,
-                topic.hyperlink.clone(),
+                topic.hyperlink.clone().map(Into::into),
                 done,
+                false,
             ) {
                 log::warn!("hyperlink draft: {error}");
                 self.toasts.error(error);
@@ -3351,7 +3352,7 @@ impl ThinodaApp {
                 .clicked()
                 && touch_allowed;
             let l = ui.label(t("Notes"));
-            let current = topic.notes.clone().unwrap_or_default();
+            let current = topic.notes.as_deref().unwrap_or_default().to_owned();
             let salt = (
                 "notes",
                 &d.key,
@@ -3361,7 +3362,7 @@ impl ThinodaApp {
             );
             restore_inspector_buffer(d, ui, salt, primary, &crate::doc::InspectorField::Notes);
             let (r, mut done) = buffered_text(ui, salt, &current, 5, "");
-            crate::notes::tools(ui, &r, &current, &mut done);
+            let format_notes = crate::notes::tools(ui, &r, &current, &mut done);
             if let Err(error) = track_inspector_edit(
                 d,
                 ui,
@@ -3369,6 +3370,7 @@ impl ThinodaApp {
                 crate::doc::InspectorField::Notes,
                 topic.notes.clone(),
                 done,
+                format_notes,
             ) {
                 log::warn!("notes draft: {error}");
                 self.toasts.error(error);
@@ -5094,8 +5096,9 @@ fn track_inspector_edit(
     ui: &Ui,
     response: &egui::Response,
     field: crate::doc::InspectorField,
-    original: Option<String>,
+    original: Option<thinoda_core::notes::NoteContent>,
     done: Option<String>,
+    format_notes: bool,
 ) -> Result<(), String> {
     let sheet_root = doc.doc.sheet().root;
     let sheet_index = doc.doc.active_index();
@@ -5115,20 +5118,25 @@ fn track_inspector_edit(
         done.clone()
     };
     if let Some(text) = text {
-        let original = if same_source {
-            doc.inspector_edit.as_ref().unwrap().original.clone()
+        let (original, format_notes) = if same_source {
+            let previous = doc.inspector_edit.as_ref().unwrap();
+            (
+                previous.original.clone(),
+                previous.format_notes || format_notes,
+            )
         } else {
             doc.flush_inspector_edit(ui.ctx())?;
-            original
+            (original, format_notes)
         };
-        doc.inspector_edit =
-            (text != original.clone().unwrap_or_default()).then_some(crate::doc::InspectorEdit {
+        doc.inspector_edit = (text != original.as_deref().unwrap_or_default() || format_notes)
+            .then_some(crate::doc::InspectorEdit {
                 buffer_id: Some(response.id),
                 sheet_index,
                 sheet_root,
                 topic,
                 field,
                 original,
+                format_notes,
                 text,
             });
         if done.is_some() {

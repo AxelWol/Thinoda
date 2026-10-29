@@ -168,6 +168,18 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
                 .as_deref(),
             Some("**café research**")
         );
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
+        );
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("notes.thinoda");
         h.state_mut()
@@ -175,15 +187,10 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
             .unwrap()
             .save_to(&path, false)
             .unwrap();
+        let reopened = OpenDoc::open(&path).unwrap();
         assert_eq!(
-            OpenDoc::open(&path)
-                .unwrap()
-                .doc
-                .sheet()
-                .root_topic()
-                .notes
-                .as_deref(),
-            Some("**café research**")
+            reopened.doc.sheet().root_topic().notes,
+            h.state().doc().unwrap().doc.sheet().root_topic().notes
         );
         let ctx = h.ctx.clone();
         h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
@@ -202,6 +209,18 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
                 .notes
                 .as_deref(),
             Some("**café research**")
+        );
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
         );
     }
 }

@@ -6,12 +6,20 @@ use serde::{Deserialize, Serialize};
 
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
 const RESOURCE_SHEET_PREFIX: &str = "THINODA-SHEET-2\n";
+const FORMATTED_SHEET_PREFIX: &str = "THINODA-SHEET-3\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.resources.is_empty() {
+    let prefix = if sheet.topics.values().any(|topic| {
+        topic
+            .notes
+            .as_ref()
+            .is_some_and(crate::notes::NoteContent::is_markdown)
+    }) {
+        FORMATTED_SHEET_PREFIX
+    } else if sheet.resources.is_empty() {
         SHEET_PREFIX
     } else {
         RESOURCE_SHEET_PREFIX
@@ -29,9 +37,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(RESOURCE_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-2\r\n"))
-        .map(|json| (2, json))
+        .strip_prefix(FORMATTED_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-3\r\n"))
+        .map(|json| (3, json))
+        .or_else(|| {
+            text.strip_prefix(RESOURCE_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-2\r\n"))
+                .map(|json| (2, json))
+        })
         .or_else(|| {
             text.strip_prefix(SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-1\r\n"))
@@ -41,6 +54,16 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
     if version == 1 && !sheet.resources.is_empty() {
         return Err("embedded resources require sheet clipboard version 2".into());
+    }
+    if version < 3
+        && sheet.topics.values().any(|topic| {
+            topic
+                .notes
+                .as_ref()
+                .is_some_and(crate::notes::NoteContent::is_markdown)
+        })
+    {
+        return Err("formatted notes require sheet clipboard version 3".into());
     }
     sheet.validate()?;
     Ok(sheet)
@@ -174,7 +197,7 @@ mod tests {
                 .unwrap_err()
                 .contains("exceeds 16 MiB")
         );
-        sheet.topic_mut(a).unwrap().notes = Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES));
+        sheet.topic_mut(a).unwrap().notes = Some("x".repeat(MAX_SHEET_CLIPBOARD_BYTES).into());
         assert!(encode_sheet(&sheet).is_err());
     }
 

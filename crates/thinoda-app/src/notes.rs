@@ -137,7 +137,13 @@ fn preview_allowed(source: &str) -> bool {
     thinoda_core::notes::plain_text_projection(source).is_some()
 }
 
-pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut Option<String>) {
+pub(crate) fn tools(
+    ui: &mut Ui,
+    response: &Response,
+    current: &str,
+    done: &mut Option<String>,
+) -> bool {
+    let mut formatted = false;
     let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ui.ctx());
     let mut source = done
         .clone()
@@ -171,8 +177,8 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
                         let end = source.chars().count();
                         end..end
                     });
-                let (formatted, selection) = format_selection(&source, selection, format);
-                source = formatted;
+                let (replacement, selection) = format_selection(&source, selection, format);
+                source = replacement;
                 let mut state =
                     egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
                 state
@@ -186,6 +192,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
                 // Commit through the same conflict-checked inspector path as typing.
                 ui.data_mut(|data| data.insert_temp(response.id, source.clone()));
                 *done = Some(source.clone());
+                formatted = true;
             }
         }
     });
@@ -200,7 +207,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
     }
     ui.data_mut(|data| data.insert_temp(preview_id, preview));
     if !preview {
-        return;
+        return formatted;
     }
     ui.small(t("Preview does not open links or load images."));
     if !preview_allowed(&source) {
@@ -208,7 +215,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
             ui.visuals().warn_fg_color,
             t("Note preview limit reached. The full source is preserved and editable."),
         );
-        return;
+        return formatted;
     }
     if ui.button(t("Copy note as plain text")).clicked() && touch_allowed {
         // The size/complexity check above uses the same parser options as projection.
@@ -230,6 +237,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
             });
     });
     ui.data_mut(|data| data.insert_temp(cache_id, markdown));
+    formatted
 }
 
 #[cfg(test)]

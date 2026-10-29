@@ -9,31 +9,47 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
-## Current next-value state (2026-10-28)
+## Current next-value state (2026-10-29)
 
-PR #94 is merged. Its explicit bounded Markdown-to-plain-text copy is now
-extended by a shared `thinoda-core` projection for notes search: formatted
-visible text matches without Markdown delimiters or link destinations, while
-notes beyond the projection bounds fall back to complete source-text search.
-This is non-mutating search, not a rich-note data migration. Focused app and core
-tests pass locally (five search-facet integration tests and 146 core tests).
-Strict native/WASM Clippy, the locked native app build, locked WASM app check,
-formatting and whitespace checks also pass. The full workspace test suite was
-not completed in this continuation; its long-running native UI suites were
-stopped after the focused coverage passed.
+[v0.17.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.17.0) now has ten
+downloadable packages and six architecture-specific checksum manifests.
+Release workflow `40767865902` published the assets after PR #97's packaging
+fixes merged. The existing release tag was not moved. This supersedes the
+release-in-progress statements in the historical entries below.
 
-Release PR #92 remains open for v0.17.0. Its latest CI run
-`40686820970` has passed the macOS and Linux native jobs, WASM app, importer
-fuzz smoke, timestamp and third-party-notice checks; Windows x64 and ARM jobs
-remain in progress. Main CI run `40686754828` is also in progress. Neither
-status establishes release readiness or package publication.
+The next ordered work is **XV7a notes persistence/export fidelity, XV7b rendered
+equations, XV8 task-aware Tree Table, then XV9 durable local AI conversations**.
+The first local XV7a persistence slice introduces an explicit, versioned
+note-content envelope instead of inferring stored formatting from punctuation.
+Legacy JSON strings remain strings and retain their exact source; merely opening,
+typing, searching or previewing a note does not convert it. An explicit notes
+formatting action marks the resulting whole source as `markdown-v1`.
+Further typing retains that declaration, and removing Markdown markers does not
+silently revert its format. Native archives containing formatted notes use
+version 4 so older readers reject them rather than discard the format.
+Sheet clipboard uses version 3 for the same reason. Plain-only archives and
+clipboards retain their existing versions.
 
-XV4's bounded resource interchange, XV5 DOCX/TextBundle import, and the XV7
-notes authoring, preview, copy, and search slices build on merged PRs #90–#94.
-XV7 remains partial: structured rich-note persistence, search/export fidelity
-beyond plain-text projection, and rendered equations remain open; XV8 and XV9
-follow. XMind app compatibility and secure erasure of unreferenced resource
-blobs remain explicit XV4 limitations.
+The format travels with the source through undo/redo, outline conversion,
+branch/sheet clipboard, recovery and native save/reopen. Inspector drafts compare
+the original format as well as text, so a format-only source change cannot be
+overwritten by a stale draft. XMind's private Thinoda metadata retains the envelope;
+its public plain-note field remains a string containing the source, not a
+rich-text interoperability claim.
+
+Verification on Windows: 439 focused core/IO/app-library and integration tests
+passed, including notes, inspector save/focus/recovery, resource/native IO and
+all-language notes controls. Strict native Clippy and the locked WASM web/app
+check passed. This does not claim macOS/Linux runtime or a full workspace e2e run.
+
+**XV7 is still partial.** The new envelope is a versioned source representation,
+not a persisted block/span rich-text tree or a WYSIWYG editor. Full export parity,
+explicit formatting-loss consent/reporting and rendered equations remain open.
+Existing bounded preview/copy/search behavior is unchanged, including full-source
+search fallback above projection limits. Other exports can still expose Markdown
+source as disclosed in the notes UI. XV8 and XV9 are not started by this slice.
+XMind app compatibility, PowerPoint/LibreOffice opening checks and secure erasure
+of unreferenced resource blobs remain separate acceptance gaps.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 

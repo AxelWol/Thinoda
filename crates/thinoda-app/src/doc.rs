@@ -32,7 +32,8 @@ pub(crate) struct InspectorEdit {
     pub sheet_root: TopicId,
     pub topic: TopicId,
     pub field: InspectorField,
-    pub original: Option<String>,
+    pub original: Option<thinoda_core::notes::NoteContent>,
+    pub format_notes: bool,
     pub text: String,
 }
 
@@ -65,20 +66,26 @@ impl InspectorEdit {
             thinoda_core::EditError::Invalid("Inspector source topic no longer exists".into())
         })?;
         let current = match self.field {
-            InspectorField::Hyperlink => &topic.hyperlink,
-            InspectorField::Notes => &topic.notes,
+            InspectorField::Hyperlink => topic.hyperlink.clone().map(Into::into),
+            InspectorField::Notes => topic.notes.clone(),
         };
         let value = self.value();
-        if current.as_deref() == value {
+        let format_changed = self.format_notes
+            && value.is_some()
+            && current.as_ref().is_none_or(|note| !note.is_markdown());
+        if current.as_deref() == value && !format_changed {
             return Ok(());
         }
-        if current != &self.original {
+        if current != self.original {
             return Err(thinoda_core::EditError::Invalid(
                 "Inspector source changed while editing; draft retained".into(),
             ));
         }
         match self.field {
             InspectorField::Hyperlink => sheet.set_hyperlink(self.topic, value.map(str::to_owned)),
+            InspectorField::Notes if self.format_notes => {
+                sheet.set_markdown_notes(self.topic, value.map(str::to_owned))
+            }
             InspectorField::Notes => sheet.set_notes(self.topic, value.map(str::to_owned)),
         }
     }
@@ -185,9 +192,15 @@ impl OpenDoc {
     }
 
     pub(crate) fn has_inspector_changes(&self) -> bool {
-        self.inspector_edit
-            .as_ref()
-            .is_some_and(|edit| edit.value() != edit.original.as_deref())
+        self.inspector_edit.as_ref().is_some_and(|edit| {
+            edit.value() != edit.original.as_deref()
+                || (edit.format_notes
+                    && edit.value().is_some()
+                    && edit
+                        .original
+                        .as_ref()
+                        .is_none_or(|note| !note.is_markdown()))
+        })
     }
 
     pub(crate) fn commit_inspector_edit(&mut self) -> Result<(), String> {
@@ -546,6 +559,88 @@ mod tests {
     }
 
     #[test]
+    fn formatted_draft_recovery_and_failed_save_preserve_format_and_source() {
+        use thinoda_core::notes::NoteContent;
+        use thinoda_platform::Paths;
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        let mut doc = OpenDoc::new(Workbook::default());
+        let root = doc.doc.sheet().root;
+        let source = "**café**\r\n\n- 日本語";
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 0,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Notes,
+            original: None,
+            format_notes: true,
+            text: source.into(),
+        });
+        let before = doc.doc.workbook().clone();
+        doc.snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        let recovered = orphans[0].docs[0].load().unwrap();
+        assert_eq!(
+            recovered.active().root_topic().notes,
+            Some(NoteContent::markdown(source.into()))
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(doc.inspector_edit.is_some());
+        drop(orphans);
+        recovery.resume().unwrap();
+        let invalid = dir.path().join("directory.thinoda");
+        std::fs::create_dir(&invalid).unwrap();
+        assert!(doc.save_to(&invalid, false).is_err());
+        assert!(doc.is_dirty());
+        assert_eq!(
+            doc.doc.sheet().root_topic().notes,
+            recovered.active().root_topic().notes
+        );
+        let path = dir.path().join("saved.thinoda");
+        doc.save_to(&path, false).unwrap();
+        assert_eq!(
+            OpenDoc::open(&path).unwrap().doc.sheet().root_topic().notes,
+            recovered.active().root_topic().notes
+        );
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn note_format_only_changes_do_not_bypass_draft_conflict_checks() {
+        let mut doc = OpenDoc::new(Workbook::default());
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Fixture", |sheet| {
+                sheet.set_notes(root, Some("**literal**".into()))
+            })
+            .unwrap();
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 0,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Notes,
+            original: Some("**literal**".into()),
+            format_notes: false,
+            text: "My pending edit".into(),
+        });
+        doc.doc
+            .edit_sheet("Other edit", |sheet| {
+                sheet.set_markdown_notes(root, Some("**literal**".into()))
+            })
+            .unwrap();
+        let before = doc.doc.workbook().clone();
+        assert!(doc.commit_inspector_edit().is_err());
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.inspector_edit.as_ref().unwrap().text, "My pending edit");
+    }
+
+    #[test]
     fn inspector_drafts_reject_changed_or_missing_sources_without_overwriting_them() {
         for missing in [false, true] {
             let mut doc = OpenDoc::new(Workbook::default());
@@ -561,6 +656,7 @@ mod tests {
                 topic: child,
                 field: InspectorField::Notes,
                 original: None,
+                format_notes: false,
                 text: "Draft to preserve".into(),
             });
             doc.doc
@@ -596,6 +692,7 @@ mod tests {
             topic: root,
             field: InspectorField::Notes,
             original: None,
+            format_notes: false,
             text: "Second sheet only".into(),
         });
         doc.doc.set_active(0);
@@ -622,6 +719,7 @@ mod tests {
             topic: root,
             field: InspectorField::Hyperlink,
             original: None,
+            format_notes: false,
             text: "  https://example.org/  ".into(),
         });
         let output = dir.path().join("separate.thinoda");

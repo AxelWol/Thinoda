@@ -1,6 +1,81 @@
-//! Bounded, non-mutating projections for Markdown-authored topic notes.
+//! Lossless versioned note sources and bounded, non-mutating Markdown projections.
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use serde::{Deserialize, Serialize};
+
+/// Versioned source syntax. Unknown versions are rejected rather than reinterpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoteFormat {
+    #[serde(rename = "markdown-v1")]
+    MarkdownV1,
+}
+
+/// Legacy strings remain literal; explicit formatting uses a versioned envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum NoteContent {
+    Plain(String),
+    Formatted { format: NoteFormat, source: String },
+}
+
+impl NoteContent {
+    pub fn markdown(source: String) -> Self {
+        Self::Formatted {
+            format: NoteFormat::MarkdownV1,
+            source,
+        }
+    }
+
+    pub fn is_markdown(&self) -> bool {
+        matches!(self, Self::Formatted { .. })
+    }
+
+    /// Editing the source never silently changes its declared syntax.
+    pub fn with_source(&self, source: String) -> Self {
+        if self.is_markdown() {
+            Self::markdown(source)
+        } else {
+            Self::Plain(source)
+        }
+    }
+}
+
+impl From<String> for NoteContent {
+    fn from(source: String) -> Self {
+        Self::Plain(source)
+    }
+}
+
+impl From<&str> for NoteContent {
+    fn from(source: &str) -> Self {
+        Self::Plain(source.to_owned())
+    }
+}
+
+impl std::ops::Deref for NoteContent {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match self {
+            Self::Plain(source) | Self::Formatted { source, .. } => source,
+        }
+    }
+}
+
+impl std::fmt::Display for NoteContent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self)
+    }
+}
+
+pub fn has_formatted_notes(book: &crate::Workbook) -> bool {
+    book.sheets.iter().any(|sheet| {
+        sheet
+            .topics
+            .values()
+            .any(|topic| topic.notes.as_ref().is_some_and(NoteContent::is_markdown))
+    })
+}
 
 pub const MAX_PROJECTION_BYTES: usize = 16 * 1024;
 pub const MAX_PROJECTION_EVENTS: usize = 2048;
@@ -94,6 +169,117 @@ pub fn plain_text_projection(source: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_notes_stay_strings_and_formatted_sources_are_versioned() {
+        let source = "**literal**\r\n\n日本語 <tag> [label](file:///private)";
+        let legacy: NoteContent =
+            serde_json::from_str(&serde_json::to_string(source).unwrap()).unwrap();
+        assert_eq!(legacy, NoteContent::Plain(source.into()));
+        assert_eq!(serde_json::to_value(&legacy).unwrap(), source);
+        let formatted = NoteContent::markdown(source.into());
+        assert_eq!(
+            serde_json::to_value(&formatted).unwrap(),
+            serde_json::json!({"format": "markdown-v1", "source": source})
+        );
+        assert_eq!(
+            serde_json::from_value::<NoteContent>(serde_json::to_value(&formatted).unwrap())
+                .unwrap(),
+            formatted
+        );
+        for invalid in [
+            serde_json::json!({"format": "markdown-v2", "source": source}),
+            serde_json::json!({"format": "markdown-v1"}),
+            serde_json::json!({"format": "markdown-v1", "source": source, "unknown": true}),
+        ] {
+            assert!(serde_json::from_value::<NoteContent>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn editing_deleting_undo_and_clipboard_preserve_explicit_format() {
+        let mut doc = crate::Document::new(crate::Workbook::default());
+        let root = doc.sheet().root;
+        doc.edit_sheet("Plain note", |sheet| {
+            sheet.set_notes(root, Some("**literal**".into()))
+        })
+        .unwrap();
+        assert!(
+            !doc.sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
+        );
+        doc.edit_sheet("Format note", |sheet| {
+            sheet.set_markdown_notes(root, Some("**café**".into()))
+        })
+        .unwrap();
+        doc.edit_sheet("Edit source", |sheet| {
+            sheet.set_notes(root, Some("*日本語*".into()))
+        })
+        .unwrap();
+        let sheet = doc.sheet().clone();
+        let encoded = crate::clipboard::encode_sheet(&sheet).unwrap();
+        assert!(encoded.starts_with("THINODA-SHEET-3\n"));
+        assert_eq!(crate::clipboard::decode_sheet(&encoded).unwrap(), sheet);
+        assert_eq!(
+            crate::clipboard::decode_sheet(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+            sheet
+        );
+        assert!(
+            crate::clipboard::decode_sheet(&encoded.replacen(
+                "THINODA-SHEET-3",
+                "THINODA-SHEET-2",
+                1
+            ))
+            .is_err()
+        );
+        let outline = crate::outline::to_outline(&sheet, root);
+        assert_eq!(
+            crate::outline::sheet_from_outline("Copy", &outline)
+                .root_topic()
+                .notes,
+            sheet.root_topic().notes
+        );
+        let payload = crate::clipboard::copy_topics(&sheet, &[root]).unwrap();
+        assert_eq!(
+            payload.subtrees[0]
+                .topics
+                .iter()
+                .find(|topic| topic.id == root)
+                .unwrap()
+                .notes,
+            sheet.root_topic().notes
+        );
+        let mut destination = crate::Sheet::new("Destination", "Root");
+        let pasted = destination
+            .paste(destination.root, &payload.subtrees)
+            .unwrap();
+        assert_eq!(
+            destination.topic(pasted[0]).unwrap().notes,
+            sheet.root_topic().notes
+        );
+        doc.edit_sheet("Delete note", |sheet| sheet.set_notes(root, None))
+            .unwrap();
+        assert!(doc.sheet().root_topic().notes.is_none());
+        doc.undo();
+        assert_eq!(doc.sheet().root_topic().notes, sheet.root_topic().notes);
+        doc.undo();
+        assert_eq!(doc.sheet().root_topic().notes.as_deref(), Some("**café**"));
+        doc.undo();
+        assert_eq!(doc.sheet().root_topic().notes, Some("**literal**".into()));
+        doc.redo();
+        assert!(
+            doc.sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
+        );
+    }
 
     #[test]
     fn projection_keeps_visible_unicode_code_lists_and_table_boundaries() {

@@ -22,7 +22,9 @@ pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     Ok(out.into_inner())
 }
 pub(crate) fn native_export(w: &Workbook) -> Result<Vec<u8>, IoError> {
-    if w.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
+    if w.sheets.iter().any(|sheet| !sheet.resources.is_empty())
+        || thinoda_core::notes::has_formatted_notes(w)
+    {
         return crate::native_resources::export(w);
     }
     let content = serde_json::to_vec(w)?;
@@ -38,7 +40,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        if version > 3 {
+        if version > 4 {
             return Err(IoError::NewerVersion(format!("{version}")));
         }
         if manifest
@@ -48,15 +50,20 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         {
             return Err(IoError::Invalid("manifest format is not thinoda".into()));
         }
-        if version == 3 {
+        if version >= 3 {
             crate::native_resources::validate_directory(&z, bytes)?;
         }
         let mut book: Workbook = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
-        if version == 3 {
+        if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
             return Err(IoError::Invalid(
                 "embedded resources require native format version 3".into(),
+            ));
+        }
+        if version < 4 && thinoda_core::notes::has_formatted_notes(&book) {
+            return Err(IoError::Invalid(
+                "formatted notes require native format version 4".into(),
             ));
         }
         Ok(book)
@@ -419,7 +426,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
 fn xml_node_to_outline(n: XmlNode) -> OutlineNode {
     OutlineNode {
         title: n.title,
-        notes: n.notes,
+        notes: n.notes.map(Into::into),
         link: n.link,
         markers: n.markers,
         children: n.children.into_iter().map(xml_node_to_outline).collect(),

@@ -239,6 +239,21 @@ attachment interoperability or installed-app compatibility (XV4 partial).
 - Shortcut: Windows `Ctrl+Shift+N`; Mac `Shift+Command+N`.
 - Source: https://xmind.com/user-guide/note-new
 
+**Thinoda continuation (reference rechecked 2026-10-29):** source-first
+bold/italic and reversible ordered/unordered lists reuse the same Notes inspector
+in Map and Outliner, with an opt-in offline Markdown preview. An explicit
+formatting action marks the whole source as versioned Markdown; existing plain
+notes are not converted by opening, typing or previewing them. Native v4 files,
+recovery, undo and versioned clipboard retain both source and format. Older
+Thinoda releases cannot open native v4 files; keep a copy before using new
+formatting tools in a document that must remain readable by older versions.
+The source is still editable even when it exceeds preview/projection bounds.
+This is not XMind rich-text parity: underline, a persisted block/span model,
+formatted foreign-file interchange and rendered equations are not delivered.
+XMind export retains the format only in Thinoda's private metadata and exposes
+Markdown source in its standard plain-note field; unchanged private round trips
+are not evidence of installed-XMind-app formatting compatibility.
+
 ## Numbering
 - Select one or more topics > Format > Style > Numbering; choose a style. The text listing does not enumerate the numbering-format names.
 - **Apply to Siblings** copies the style to same-level topics. **Tiered Numbers** inherits the parent’s numbering and defaults off; siblings also enable it. **Start From Begin** restarts at the smallest number and defaults off. Reordering topics automatically renumbers them; choose **None** to remove numbering.
