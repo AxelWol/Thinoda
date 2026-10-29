@@ -71,8 +71,18 @@ graph TD
   and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
   limits do not truncate stored source or prevent editing larger notes.
   XMind private metadata retains the envelope, but its standard plain-note field
-  and other existing textual exporters still contain Markdown source; rich-text
-  interchange and explicit export-loss reporting remain XV7 work.
+  and existing textual exporters other than Word still contain Markdown source.
+  Word derives a bounded `NoteDocument` (paragraphs, styled runs, independent
+  list counters) from declared Markdown without mutating persisted source.
+  The shared projection preflight bounds parsing to 16 KiB / 2,048 events /
+  32 containers; Word additionally caps list nesting at nine. Only paragraphs,
+  bold/italic/strike, inline code, breaks/tabs and ordered/bullet lists are supported.
+  Unsupported syntax fails with typed `IoError::WordNote` before any destination
+  write; the app localizes the guidance and retains the topic title. Legacy plain
+  notes remain literal. Word numbering parts, content types and relationships are
+  emitted only when needed; definitions precede concrete instances, with independent
+  counters per list and note. Rich-text interchange for other formats and explicit
+  export-loss consent remain XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
   dimensions before full decoder allocation (4096/side, 4 megapixels), then uses
   decoder width/height and 64 MiB allocation limits. Conversion to RGBA is bounded

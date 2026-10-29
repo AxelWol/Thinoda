@@ -254,6 +254,22 @@ XMind export retains the format only in Thinoda's private metadata and exposes
 Markdown source in its standard plain-note field; unchanged private round trips
 are not evidence of installed-XMind-app formatting compatibility.
 
+**Word export continuation (2026-10-29):** File > Export > Word preserves
+explicitly formatted Markdown notes as Word paragraphs with bold/italic,
+strikethrough, inline code and real ordered/unordered lists. Nested lists,
+starting numbers and continuation paragraphs retain their meaning. Ordinary
+Markdown line wraps become spaces; explicit hard breaks and tabs remain.
+Plain legacy notes are not interpreted as Markdown.
+Word export rejects unsupported Markdown (including links, images, HTML,
+headings, block quotes, code blocks, tables, task lists and footnotes) rather
+than silently dropping formatting. It also rejects notes exceeding the shared
+16 KiB / 2,048-event / 32-depth processing bounds or nine list levels.
+The error identifies the topic; edit a copy or save as Thinoda to retain the
+complete source. The original map and existing export destination are unchanged.
+This is not full XMind rich-text or Word-import round-trip parity. Word and
+LibreOffice opening checks remain separate host acceptance work.
+Official Export reference rechecked: https://xmind.com/user-guide/export-new
+
 ## Numbering
 - Select one or more topics > Format > Style > Numbering; choose a style. The text listing does not enumerate the numbering-format names.
 - **Apply to Siblings** copies the style to same-level topics. **Tiered Numbers** inherits the parent’s numbering and defaults off; siblings also enable it. **Start From Begin** restarts at the smallest number and defaults off. Reordering topics automatically renumbers them; choose **None** to remove numbering.

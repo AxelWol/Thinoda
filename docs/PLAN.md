@@ -42,6 +42,32 @@ passed, including notes, inspector save/focus/recovery, resource/native IO and
 all-language notes controls. Strict native Clippy and the locked WASM web/app
 check passed. This does not claim macOS/Linux runtime or a full workspace e2e run.
 
+**Word export continuation (2026-10-29):** explicitly declared Markdown notes
+now derive bounded paragraphs/styled runs/lists for `.docx` output. This is a
+non-mutating export representation, not a persisted rich-text migration.
+Word receives bold/italic (including complex-script flags), strikethrough,
+inline-code font, paragraphs, explicit hard breaks, tabs and real ordered/bullet
+numbering. Nested lists use separate counters/indentation; continuation paragraphs
+do not repeat markers, and independent lists/notes keep their starting numbers.
+Soft Markdown line breaks become spaces. Legacy plain notes remain literal.
+
+The Word subset uses the existing 16 KiB / 2,048-event / 32-depth projection
+bounds and at most nine list levels. Links/images, HTML, headings, block quotes,
+fenced/indented code blocks, tables, task lists, footnotes and unsupported controls
+fail explicitly rather than export a partly flattened note. Errors identify the
+topic and provide guidance in all ten catalogs; no link/image/HTML is fetched or
+executed. The source and existing destination are unchanged on failure.
+Only notes in the selected exported topic tree are considered, matching the
+existing Word export scope. No new UI control or platform-specific code is added.
+
+The continuation passed 443 focused core/IO/app-library and integration tests on
+Windows, including parsed DOCX package/XML assertions, formatting/list counters,
+legacy output, export scope, localization and failed-write preservation.
+This is not Open XML schema validation or a Word/LibreOffice host opening check.
+**Review:** fail-closed behavior deliberately favors fidelity over silently
+flattening unsupported Markdown. A future explicit loss-consent flow and broader
+format support remain necessary; other exporters are unchanged by this slice.
+
 **XV7 is still partial.** The new envelope is a versioned source representation,
 not a persisted block/span rich-text tree or a WYSIWYG editor. Full export parity,
 explicit formatting-loss consent/reporting and rendered equations remain open.

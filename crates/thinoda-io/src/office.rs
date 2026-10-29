@@ -6,7 +6,7 @@ use std::{
 use thinoda_core::{OutlineNode, TopicId, Workbook};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-fn esc(s: &str) -> String {
+pub(super) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -496,7 +496,8 @@ fn zip(files: &[(&str, String)]) -> Result<Vec<u8>, IoError> {
 }
 pub(crate) fn docx(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
     let mut body = String::new();
-    for (depth, _, title, note, labels, markers, _) in entries(w, o) {
+    let mut notes = crate::office_notes::WordNotes::default();
+    for (depth, id, title, note, labels, markers, _) in entries(w, o) {
         let (pstyle, heading) = if depth < 6 {
             (
                 format!("<w:pPr><w:pStyle w:val=\"Heading{}\"/></w:pPr>", depth + 1),
@@ -510,10 +511,24 @@ pub(crate) fn docx(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> 
             esc(&heading)
         ));
         if let Some(n) = note {
-            body.push_str(&format!(
-                "<w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
-                esc(&n)
-            ));
+            if sheet(w, o).topics[&id]
+                .notes
+                .as_ref()
+                .is_some_and(|note| note.is_markdown())
+            {
+                let document = thinoda_core::notes::formatted_document(&n).map_err(|reason| {
+                    IoError::WordNote {
+                        topic: sheet(w, o).topics[&id].title.clone(),
+                        reason,
+                    }
+                })?;
+                notes.render(&document, &mut body);
+            } else {
+                body.push_str(&format!(
+                    "<w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+                    esc(&n)
+                ));
+            }
         }
         let extra = [labels, markers]
             .into_iter()
@@ -534,7 +549,23 @@ pub(crate) fn docx(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> 
         styles.push_str(&format!("<w:style w:type=\"paragraph\" w:styleId=\"Heading{i}\"><w:name w:val=\"heading {i}\"/><w:basedOn w:val=\"Normal\"/><w:uiPriority w:val=\"{i}\"/><w:qFormat/><w:pPr><w:outlineLvl w:val=\"{}\"/></w:pPr></w:style>", i - 1));
     }
     styles.push_str("</w:styles>");
-    zip(&[("[Content_Types].xml", "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>".into()), ("_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>".into()), ("word/document.xml", document), ("word/_rels/document.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>".into()), ("word/styles.xml", styles)])
+    let mut types = "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>".to_owned();
+    let mut relationships = "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>".to_owned();
+    let mut files = vec![
+        ("_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>".into()),
+        ("word/document.xml", document),
+        ("word/styles.xml", styles),
+    ];
+    if let Some(numbering) = notes.numbering() {
+        types.push_str("<Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>");
+        relationships.push_str("<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>");
+        files.push(("word/numbering.xml", numbering));
+    }
+    types.push_str("</Types>");
+    relationships.push_str("</Relationships>");
+    files.push(("[Content_Types].xml", types));
+    files.push(("word/_rels/document.xml.rels", relationships));
+    zip(&files)
 }
 fn col_name(n: usize) -> String {
     let mut n = n + 1;

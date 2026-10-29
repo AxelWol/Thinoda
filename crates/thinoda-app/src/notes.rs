@@ -4,6 +4,10 @@ use egui::{Response, Ui};
 
 use crate::{i18n::t, legal_markdown::Markdown};
 
+pub(crate) const WORD_LIMIT: &str =
+    "Word note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
+pub(crate) const WORD_UNSUPPORTED: &str = "Word cannot preserve this note's formatting. Links, images, HTML and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
+
 #[derive(Clone, Copy)]
 enum Format {
     Bold,

@@ -24,6 +24,17 @@ and the locked WASM check. This is not a full structured-rich-text or export-par
 completion: a block/span model, formatting-loss handling and rendered equations
 remain open. No new UI strings or platform-specific controls were introduced.
 
+**XV7a Word continuation (2026-10-29):** declared Markdown notes now export as
+bounded Word paragraphs/runs and actual numbered/bulleted lists, retaining
+bold/italic, strike, inline code, hard breaks/tabs, nesting, continuation paragraphs
+and independent starting counters. Legacy plain notes stay literal. Unsupported
+Markdown and over-limit notes fail before writing, with topic-specific guidance
+in all ten catalogs; the source/destination remain unchanged. Parsed package/XML,
+scope and failure regressions are included in 443 passing focused Windows tests.
+Word/LibreOffice opening and Open XML schema validation remain unverified.
+This is a derived export model, not the persisted rich-text tree; non-Word
+export parity, explicit loss consent and equations remain next XV7 work.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and

@@ -448,6 +448,13 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
     match error {
+        thinoda_io::IoError::WordNote { topic, reason } => {
+            let message = match reason {
+                thinoda_core::notes::NoteExportError::Limit => crate::notes::WORD_LIMIT,
+                thinoda_core::notes::NoteExportError::Unsupported => crate::notes::WORD_UNSUPPORTED,
+            };
+            format!("{}: {topic}", t(message))
+        }
         thinoda_io::IoError::MindManagerExportNeedsConfirmation => t("MindManager export cannot preserve all content. Use Export with confirmation, or save as .thinoda.").into(),
         thinoda_io::IoError::MindManagerExport(detail) => {
             log::warn!("MindManager export failed: {detail}");
@@ -474,6 +481,26 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_note_export_errors_identify_the_topic_and_preserve_localized_guidance() {
+        for (reason, message) in [
+            (
+                thinoda_core::notes::NoteExportError::Limit,
+                crate::notes::WORD_LIMIT,
+            ),
+            (
+                thinoda_core::notes::NoteExportError::Unsupported,
+                crate::notes::WORD_UNSUPPORTED,
+            ),
+        ] {
+            let error = export_error(thinoda_io::IoError::WordNote {
+                topic: "café 日本語".into(),
+                reason,
+            });
+            assert_eq!(error, format!("{}: café 日本語", t(message)));
+        }
+    }
 
     #[test]
     fn destination_identity_errors_do_not_allow_source_preservation_bypass() {

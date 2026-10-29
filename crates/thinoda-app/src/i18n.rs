@@ -1107,6 +1107,14 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    (
+        "Word note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
+        "Limit für den Word-Notizexport erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
+    ),
+    (
+        "Word cannot preserve this note's formatting. Links, images, HTML and advanced Markdown are not supported. The source is unchanged; save as Thinoda.",
+        "Word kann die Formatierung dieser Notiz nicht erhalten. Links, Bilder, HTML und erweitertes Markdown werden nicht unterstützt. Die Quelle bleibt unverändert; speichern Sie als Thinoda.",
+    ),
     ("Copy note as plain text", "Notiz als Klartext kopieren"),
     (
         "Notes search uses visible Markdown text; oversized notes search the original source.",
@@ -2180,6 +2188,16 @@ mod tests {
         Lang::Pl,
         Lang::PtBr,
     ];
+
+    #[test]
+    fn word_note_export_errors_are_translated_in_every_catalog() {
+        for language in TRANSLATED {
+            for key in [crate::notes::WORD_LIMIT, crate::notes::WORD_UNSUPPORTED] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+                assert!(t_in(language, key).contains("Thinoda"));
+            }
+        }
+    }
 
     #[test]
     fn locale_subtags_and_explicit_preferences() {

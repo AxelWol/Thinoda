@@ -9,6 +9,7 @@ pub mod gantt;
 mod mindmanager;
 mod native_resources;
 mod office;
+mod office_notes;
 pub mod presentation;
 pub mod print;
 mod render;
@@ -211,6 +212,11 @@ pub enum IoError {
     MindManager(String),
     #[error("MindManager export failed: {0}")]
     MindManagerExport(String),
+    #[error("Word export cannot preserve the note on topic {topic}: {reason:?}")]
+    WordNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
 }
 
 pub use gantt::{
