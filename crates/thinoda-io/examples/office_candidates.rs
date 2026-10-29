@@ -17,10 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let branch = sheet.add_child(sheet.root, None, "Roadmap & <\"delivery\">");
     sheet.add_child(branch, None, "First milestone: café · 日本語");
     let notes = sheet.add_child(sheet.root, None, "Rich notes");
-    sheet.set_markdown_notes(
-        notes,
-        Some("**Bold *italic*** ~~strike~~ `code`  \nHard break\tTab\n\n3. First\n\n   Continued\n\n   - Nested\n\n4. Second\n\nParagraph\n\n7. Restart".into()),
-    )?;
+    let rich_source = "**Bold *italic*** ~~strike~~ **`code`**  \nHard break\tTab\n\n3. First\n\n   Continued\n\n   - Nested\n\n4. Second\n\nParagraph `_x0041_` &amp; &#x1F600;\n\n7. Restart";
+    sheet.set_markdown_notes(notes, Some(rich_source.into()))?;
     let plain = sheet.add_child(sheet.root, None, "Plain notes");
     let topic = sheet.topic_mut(plain).unwrap();
     topic.notes = Some("Literal **Markdown** & <tags>\nSecond line".into());
@@ -28,12 +26,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     topic.markers = vec!["priority-2".into()];
     topic.hyperlink = Some("https://example.invalid/?a=1&b=2".into());
     let mut book = Workbook::new(sheet);
-    for (name, format) in [
-        ("rich-notes.docx", Format::Word),
-        ("map.xlsx", Format::Excel),
-    ] {
-        export_file(&book, &output.join(name), format, &Default::default())?;
-    }
+    export_file(
+        &book,
+        &output.join("rich-notes.docx"),
+        Format::Word,
+        &Default::default(),
+    )?;
+    let mut excel = book.clone();
+    // Excel rejects tabs, while the independent Word fixture exercises them.
+    excel
+        .active_mut()
+        .set_markdown_notes(notes, Some(rich_source.replace('\t', "  ")))?;
+    export_file(
+        &excel,
+        &output.join("map.xlsx"),
+        Format::Excel,
+        &Default::default(),
+    )?;
     let plain = Workbook::new(Sheet::new("Plain", "Legacy plain notes"));
     export_file(
         &plain,

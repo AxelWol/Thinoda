@@ -1,5 +1,7 @@
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para Excel atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
+Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.|O Excel não consegue preservar a formatação desta nota. Links, imagens, HTML, tabulações e Markdown avançado não são compatíveis. A origem não é alterada; salve como Thinoda.
 FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para FreeMind atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
 FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.|O FreeMind não consegue preservar a formatação desta nota. Links, imagens, HTML, Markdown avançado, tabulações e espaços repetidos não são compatíveis. A origem não é alterada; salve como Thinoda.
 Copy note as plain text|Copiar nota como texto simples

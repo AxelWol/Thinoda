@@ -596,7 +596,8 @@ pub(crate) fn xlsx(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> 
         ));
     }
     sheetdata.push_str("</row>");
-    for (ri, (d, _, title, note, labels, markers, link)) in rows.into_iter().enumerate() {
+    let mut rich_notes = false;
+    for (ri, (d, id, title, note, labels, markers, link)) in rows.into_iter().enumerate() {
         let row = ri + 2;
         sheetdata.push_str(&format!("<row r=\"{row}\">"));
         let values = [
@@ -607,19 +608,55 @@ pub(crate) fn xlsx(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> 
             (depth + 3, link),
         ];
         for (col, value) in values {
+            if col == depth
+                && sheet(w, o).topics[&id]
+                    .notes
+                    .as_ref()
+                    .is_some_and(|note| note.is_markdown())
+            {
+                let render = || {
+                    let document = thinoda_core::notes::formatted_document(&value)?;
+                    crate::office_notes::excel(&document)
+                };
+                let rendered = render().map_err(|reason| IoError::ExcelNote {
+                    topic: sheet(w, o).topics[&id].title.clone(),
+                    reason,
+                })?;
+                rich_notes = true;
+                sheetdata.push_str(&format!(
+                    "<c r=\"{}{row}\" s=\"1\" t=\"inlineStr\"><is>{rendered}</is></c>",
+                    col_name(col)
+                ));
+                continue;
+            }
             sheetdata.push_str(&format!(
                 "<c r=\"{}{row}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
                 col_name(col),
-                esc(&value)
+                crate::office_notes::excel_text(&value)
             ));
         }
         sheetdata.push_str("</row>");
     }
+    let columns = if rich_notes {
+        format!(
+            "<cols><col min=\"{}\" max=\"{}\" width=\"60\" customWidth=\"1\"/></cols>",
+            depth + 1,
+            depth + 1
+        )
+    } else {
+        String::new()
+    };
     let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheetData>{sheetdata}</sheetData></worksheet>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{columns}<sheetData>{sheetdata}</sheetData></worksheet>"
     );
     let workbook = "<?xml version=\"1.0\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Mind Map\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>";
-    zip(&[("[Content_Types].xml", "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>".into()), ("_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>".into()), ("xl/workbook.xml", workbook.into()), ("xl/_rels/workbook.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>".into()), ("xl/worksheets/sheet1.xml", xml)])
+    let mut files = vec![("[Content_Types].xml", "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>".into()), ("_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>".into()), ("xl/workbook.xml", workbook.into()), ("xl/_rels/workbook.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>".into()), ("xl/worksheets/sheet1.xml", xml)];
+    if rich_notes {
+        files[0].1 = files[0].1.replace("</Types>", "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/></Types>");
+        files[3].1 = files[3].1.replace("</Relationships>", "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>");
+        files.push(("xl/styles.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border/></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyAlignment=\"1\"><alignment vertical=\"top\" wrapText=\"1\"/></xf></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>".into()));
+    }
+    zip(&files)
 }
 
 #[cfg(test)]

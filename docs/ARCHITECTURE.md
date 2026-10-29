@@ -89,8 +89,8 @@ graph TD
   and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
   limits do not truncate stored source or prevent editing larger notes.
   XMind private metadata retains the envelope, but its standard plain-note field
-  and existing textual exporters other than Word/FreeMind still contain Markdown source.
-  Word and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
+  and existing textual exporters other than Word/FreeMind/Excel still contain Markdown source.
+  Word, Excel and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
   list counters) from declared Markdown without mutating persisted source.
   The shared projection preflight bounds parsing to 16 KiB / 2,048 events /
   32 containers; formatted export additionally caps list nesting at nine. Only paragraphs,
@@ -107,6 +107,18 @@ graph TD
   FreeMind import still produces plain notes, but styles/lists/multiple paragraphs
   require the shared formatting-loss confirmation; text boundaries and XML
   entities are retained. This is not a rich-note round trip or host-app acceptance.
+  Excel writes inline SpreadsheetML rich-text runs and visible list markers
+  (with independent counters/continuation indentation), not list objects.
+  Formatted cells use a wrapped, top-aligned style and a wider Notes column;
+  the styles part/relationship/content type exist only when formatted notes
+  are exported. `office_notes::excel_text` protects literal `_xHHHH_` sequences
+  and XML text, without creating formulas or hyperlinks. Excel formatted-note
+  output additionally enforces 32,767 UTF-16 units and 253 line feeds
+  ([Excel limits](https://support.microsoft.com/en-us/excel/excel-specifications-and-limits)).
+  Tabs are rejected because Windows Excel suppresses their displayed spacing.
+  Typed `IoError::ExcelNote` errors retain the topic and use all ten catalogs;
+  every failure precedes destination writes. SDK and Windows Excel opening
+  evidence covers one original rich fixture, not every host/OS or a round trip.
   Rich-text interchange for other formats and explicit
   export-loss consent remain XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header

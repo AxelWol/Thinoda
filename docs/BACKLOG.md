@@ -60,6 +60,18 @@ FreeMind/Freeplane host opening or a formatted-note import round trip.
 claiming full XV7 completion. Other formats, explicit export-loss consent, host
 acceptance and equations remain open.
 
+**XV7a Excel continuation (2026-10-29):** formatted notes now export as inline
+rich-text cells with emphasis/strike/code, paragraphs/hard breaks and visible
+nested list markers/counters, rather than raw Markdown. Notes wrap in a wider
+column; legacy plain notes stay literal. Literal SpreadsheetML escape sequences
+are protected and note text never becomes a formula. Shared parsing bounds and
+Excel's rendered-cell length/line-feed limits fail before writing, with guidance
+in all ten catalogs. Tabs are explicitly unsupported after Windows Excel
+acceptance showed that their visual spacing disappears. The rich fixture opened
+without repair; parsed regressions and Microsoft SDK validation cover the output.
+**Review:** cell text preserves readable list structure, not Excel list objects;
+other export gaps, full rich-note interchange, loss-consent and equations remain.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and

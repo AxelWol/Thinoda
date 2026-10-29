@@ -119,8 +119,35 @@ explicit formatting-loss consent/reporting and rendered equations remain open.
 Existing bounded preview/copy/search behavior is unchanged, including full-source
 search fallback above projection limits. Other exports can still expose Markdown
 source as disclosed in the notes UI. XV8 and XV9 are not started by this slice.
-XMind app compatibility, PowerPoint/LibreOffice opening checks and secure erasure
+XMind app compatibility, broader PowerPoint/LibreOffice opening checks and secure erasure
 of unreferenced resource blobs remain separate acceptance gaps.
+
+**Excel export continuation (2026-10-29):** declared Markdown notes now export
+as SpreadsheetML inline rich-text runs, preserving bold/italic/strike and inline
+code fonts instead of showing source markers. Paragraphs/hard breaks and visible
+ordered/bullet markers retain nesting, continuation paragraphs and independent
+starting counters. Excel cells have no structural lists; this is a readable
+cell representation, not an editable list-object or formatted-note round trip.
+Formatted notes wrap in a wider Notes column; plain notes remain literal.
+Spreadsheet encoded-character sequences such as `_x0041_` are escaped so Excel
+does not reinterpret literal text. Note text is always an inline string, never
+a formula or an active external resource.
+
+The shared parsing limits apply, plus Excel's 32,767 UTF-16-unit / 253-line-feed
+cell limits on rendered formatted notes. Unsupported Markdown and tabs fail
+before destination writes with translated topic-specific guidance in all ten
+catalogs. Installed Windows Excel opened the rich fixture without repair and
+displayed emphasis, code, nested markers, Unicode and literal encoded-character
+text. That host check exposed invisible tab spacing, so tabs are explicitly
+rejected instead of being silently dropped. Word retains tab support.
+Parsed-package regressions and Microsoft SDK validation cover the new output.
+Windows verification passed 88 focused IO tests, 224 app-library tests (including
+all-catalog error guidance), four SDK integration tests over eight fresh exports
+and strict native/WASM Clippy. This is not a full workspace or cross-OS run.
+**Review:** this closes Excel's supported-format export gap without migrating
+stored notes or adding platform-specific UI. Other exporters, richer interchange,
+explicit export-loss consent, broader host/OS acceptance and equations remain
+open; XV7 is not complete.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 

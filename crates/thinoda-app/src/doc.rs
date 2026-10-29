@@ -448,6 +448,13 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
     match error {
+        thinoda_io::IoError::ExcelNote { topic, reason } => {
+            let message = match reason {
+                thinoda_core::notes::NoteExportError::Limit => crate::notes::EXCEL_LIMIT,
+                thinoda_core::notes::NoteExportError::Unsupported => crate::notes::EXCEL_UNSUPPORTED,
+            };
+            format!("{}: {topic}", t(message))
+        }
         thinoda_io::IoError::FreeMindNote { topic, reason } => {
             let message = match reason {
                 thinoda_core::notes::NoteExportError::Limit => crate::notes::FREEMIND_LIMIT,
@@ -488,6 +495,28 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excel_note_export_errors_identify_the_topic() {
+        for (reason, message) in [
+            (
+                thinoda_core::notes::NoteExportError::Limit,
+                crate::notes::EXCEL_LIMIT,
+            ),
+            (
+                thinoda_core::notes::NoteExportError::Unsupported,
+                crate::notes::EXCEL_UNSUPPORTED,
+            ),
+        ] {
+            assert_eq!(
+                export_error(thinoda_io::IoError::ExcelNote {
+                    topic: "café 日本語".into(),
+                    reason,
+                }),
+                format!("{}: café 日本語", t(message)),
+            );
+        }
+    }
 
     #[test]
     fn freemind_note_export_errors_identify_the_topic() {

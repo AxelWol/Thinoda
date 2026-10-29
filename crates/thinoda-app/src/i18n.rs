@@ -1108,6 +1108,14 @@ const DE: &[(&str, &str)] = &[
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
     (
+        "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
+        "Excel-Notizexportlimit erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
+    ),
+    (
+        "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.",
+        "Excel kann die Formatierung dieser Notiz nicht erhalten. Links, Bilder, HTML, Tabulatoren und erweitertes Markdown werden nicht unterstützt. Die Quelle bleibt unverändert; speichern Sie als Thinoda.",
+    ),
+    (
         "FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
         "Limit für den FreeMind-Notizexport erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
     ),
@@ -2205,6 +2213,8 @@ mod tests {
                 crate::notes::WORD_UNSUPPORTED,
                 crate::notes::FREEMIND_LIMIT,
                 crate::notes::FREEMIND_UNSUPPORTED,
+                crate::notes::EXCEL_LIMIT,
+                crate::notes::EXCEL_UNSUPPORTED,
             ] {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
                 assert!(t_in(language, key).contains("Thinoda"));

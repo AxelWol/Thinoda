@@ -218,6 +218,11 @@ pub enum IoError {
         topic: String,
         reason: thinoda_core::notes::NoteExportError,
     },
+    #[error("Excel export cannot preserve the note on topic {topic}: {reason:?}")]
+    ExcelNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
     #[error("FreeMind export cannot preserve the note on topic {topic}: {reason:?}")]
     FreeMindNote {
         topic: String,
