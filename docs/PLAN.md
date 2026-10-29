@@ -30,6 +30,25 @@ version 4 so older readers reject them rather than discard the format.
 Sheet clipboard uses version 3 for the same reason. Plain-only archives and
 clipboards retain their existing versions.
 
+**Office compatibility repair (2026-10-29):** the PowerPoint exporter used
+slide-layout ID `1`, below the Open XML minimum `2147483648`. Reusing the master
+ID at that minimum passed SDK schema validation but still prompted PowerPoint
+repair. Layout ID `2147483649`, distinct from master ID `2147483648`, opened
+the dark 4:3 candidate without repair in installed Windows PowerPoint.
+The user's PowerPoint-saved `slides-dark-4x3-fixed.pptx` passes SDK validation; comparison
+with the original retained all three slide IDs and byte-identical PNGs, removed
+no package parts, added Office properties and retained the corrected layout ID.
+This confirms save interoperability, not a proven repair history for that copy.
+
+CI now generates eight original Word/Excel/PowerPoint candidates and validates
+them read-only with Microsoft's Open XML SDK 3.5.1 (`Microsoft365`). Supplemental
+master/layout ID uniqueness checks cover the schema-valid collision; negative
+controls cover all three formats, malformed packages and Office owner files.
+The Office job gates Pages publication and retains fixture artifacts.
+**Review:** schema checks do not replace host acceptance. Only Windows
+PowerPoint dark 4:3 opening/save is established here; Word, Excel, LibreOffice
+and other OS host checks remain open. XV7 remains partial.
+
 The format travels with the source through undo/redo, outline conversion,
 branch/sheet clipboard, recovery and native save/reopen. Inspector drafts compare
 the original format as well as text, so a format-only source change cannot be

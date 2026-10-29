@@ -4,6 +4,8 @@
 **/*.rs.bk
 /dist
 *.pdb
+/.github/tools/OpenXmlValidation/bin/
+/.github/tools/OpenXmlValidation/obj/
 
 __pycache__/
 /crates/thinoda-web/dist

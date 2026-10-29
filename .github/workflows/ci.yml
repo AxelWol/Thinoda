@@ -102,6 +102,39 @@ jobs:
           path: layout-benchmark.json
           if-no-files-found: error
 
+  office:
+    name: Office Open XML validation
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Restore locked Microsoft Open XML SDK
+        run: dotnet restore .github/tools/OpenXmlValidation --locked-mode
+      - name: Build schema validator
+        run: dotnet build .github/tools/OpenXmlValidation --no-restore --configuration Release
+      - name: Generate original Office exports
+        run: cargo run --locked -p thinoda-io --example office_candidates -- "$RUNNER_TEMP/office-fixtures"
+      - name: Validate Word, PowerPoint and Excel, including negative controls
+        env:
+          THINODA_OPENXML_VALIDATOR: ${{ github.workspace }}/.github/tools/OpenXmlValidation/bin/Release/net10.0/OpenXmlValidation.dll
+          THINODA_OFFICE_FIXTURES: ${{ runner.temp }}/office-fixtures
+        run: python .github/scripts/test_openxml_validation.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: office-validation-fixtures
+          path: ${{ runner.temp }}/office-fixtures
+          if-no-files-found: error
+
   web:
     name: web app (wasm32)
     runs-on: ubuntu-24.04
@@ -139,9 +172,9 @@ jobs:
 
   pages:
     name: deploy web app (GitHub Pages)
-    # Publishes only builds of main whose native tests and web build passed.
+    # Publishes only main builds whose native, Office and web checks passed.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [web, test]
+    needs: [web, test, office]
     runs-on: ubuntu-latest
     permissions:
       pages: write

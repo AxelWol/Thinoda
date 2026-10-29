@@ -29,6 +29,24 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Office export acceptance:** image-based PPTX uses slide-master ID
+  `2147483648` and slide-layout ID `2147483649`; layout IDs must be in the
+  schema's high range and must not reuse master IDs. Rust package regressions
+  guard this invariant. CI's `office` job generates eight original fixtures
+  with `cargo run --locked -p thinoda-io --example office_candidates -- <new-directory>`,
+  covering plain/rich Word, Excel and light/dark 16:9/4:3 PowerPoint.
+  `.github/tools/OpenXmlValidation` is a locked .NET 10 tool using Microsoft
+  Open XML SDK 3.5.1, read-only `OpenXmlValidator(Microsoft365)` and a supplemental
+  master/layout ID collision check. It reports package/part/path failures and
+  continues across files, ignoring Office `~$` owner files during directory scans.
+  Build with `dotnet restore .github/tools/OpenXmlValidation --locked-mode` then
+  `dotnet build .github/tools/OpenXmlValidation --no-restore --configuration Release`.
+  Run `.github/scripts/test_openxml_validation.py` with `THINODA_OPENXML_VALIDATOR`
+  pointing to the built DLL and `THINODA_OFFICE_FIXTURES` to the new fixture directory
+  (`THINODA_DOTNET` optionally selects the executable). Tests include deliberately
+  corrupted packages and schema-invalid XML for all three formats. CI retains
+  generated files and gates Pages publication on this job. SDK validation is not
+  a substitute for Office/LibreOffice opening and visual acceptance.
 - **Bounded document conversion (XV5, local implementation):** DOCX and
   TextBundle are parsed as data only, with validated ZIP paths/counts/expanded
   bytes and per-document XML/Markdown limits. TextBundle Markdown and DOCX

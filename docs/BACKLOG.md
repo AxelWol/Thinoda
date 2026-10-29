@@ -14,6 +14,16 @@ six checksum manifests after PR #97; historical release blockers below are no
 longer current. There are no open GitHub issues at this check. Execution resumes
 with XV7a, then XV7b equations, XV8 and XV9.
 
+**Office compatibility continuation (2026-10-29):** PPTX layout IDs now use the
+valid high range without colliding with master IDs. Installed Windows PowerPoint
+opened the corrected dark 4:3 deck without repair. The user's SDK-valid
+`slides-dark-4x3-fixed.pptx` retained
+all three slide IDs/images and the corrected layout ID; its precise repair history
+is not established. CI validates eight generated DOCX/XLSX/PPTX candidates using
+Microsoft's Open XML SDK plus a cross-part master/layout ID uniqueness guard and
+negative controls, before Pages deployment. This supersedes older schema-validation
+gaps below, but not Word/Excel/LibreOffice or cross-OS host-acceptance gaps.
+
 The first local XV7a persistence slice stores explicitly formatted notes in a
 `markdown-v1` source envelope. Legacy strings are preserved without conversion;
 formatting actions opt the whole note into Markdown, typing preserves its format,
