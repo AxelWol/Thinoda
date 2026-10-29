@@ -5,6 +5,7 @@
 //! (including outlined text); JPEG always uses an opaque background.
 pub mod fonts;
 mod formats;
+mod freemind_notes;
 pub mod gantt;
 mod mindmanager;
 mod native_resources;
@@ -217,6 +218,11 @@ pub enum IoError {
         topic: String,
         reason: thinoda_core::notes::NoteExportError,
     },
+    #[error("FreeMind export cannot preserve the note on topic {topic}: {reason:?}")]
+    FreeMindNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
 }
 
 pub use gantt::{
@@ -339,11 +345,11 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
             .map_err(|error| IoError::MindManager(error.to_string()))?,
         Format::TextBundle => formats::textbundle_import(bytes)?,
         Format::Word => office::docx_import(bytes)?,
+        Format::FreeMind => formats::freemind_import_with_report(bytes)?,
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
                 Format::XMind => xmind::import(bytes)?,
-                Format::FreeMind => formats::freemind_import(bytes)?,
                 Format::Opml => formats::opml_import(bytes)?,
                 Format::Markdown => formats::markdown_import(bytes)?,
                 Format::PlainText => formats::text_import(bytes)?,

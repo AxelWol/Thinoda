@@ -1,5 +1,7 @@
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para FreeMind atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
+FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.|O FreeMind não consegue preservar a formatação desta nota. Links, imagens, HTML, Markdown avançado, tabulações e espaços repetidos não são compatíveis. A origem não é alterada; salve como Thinoda.
 Copy note as plain text|Copiar nota como texto simples
 Notes search uses visible Markdown text; oversized notes search the original source.|A pesquisa usa o texto Markdown visível; em notas grandes demais, pesquisa o texto original.
 Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.|Copia o texto Markdown sem formatação nem destinos de links ou imagens. A nota salva não é alterada.

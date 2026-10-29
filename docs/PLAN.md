@@ -68,6 +68,32 @@ This is not Open XML schema validation or a Word/LibreOffice host opening check.
 flattening unsupported Markdown. A future explicit loss-consent flow and broader
 format support remain necessary; other exporters are unchanged by this slice.
 
+**FreeMind export continuation (2026-10-29):** declared Markdown notes now use
+the same bounded export model for safe HTML richcontent, with bold/italic/strike,
+inline code, paragraphs/hard breaks and structural ordered/bullet lists.
+Nested lists, empty parent items, continuation paragraphs and independent
+starting numbers retain their structure. Legacy plain notes remain literal.
+Tabs and repeated spaces fail explicitly because HTML renderer whitespace
+fidelity is not established; all shared unsupported syntax/limits fail before
+writing, with translated topic-specific guidance. No external resources or source
+HTML enter generated rich notes. The Freeplane note reader/writer implementation
+confirms the `richcontent TYPE="NOTE"` HTML envelope; this is format evidence,
+not a completed FreeMind/Freeplane host-opening check.
+
+The existing Thinoda FreeMind importer does not retain rich formatting. It now
+requires the shared formatting-loss confirmation when styles/lists/multiple
+paragraphs are present, instead of silently flattening them. Visible paragraph/
+break boundaries and XML entities survive that conversion.
+**Review:** bounded export fidelity and explicit import-loss reporting are
+implemented without new UI controls, theme-specific colors or platform branches.
+Formatted FreeMind round trips, external-host acceptance, other exporters and
+an explicit export-loss consent flow remain open; XV7 is not complete.
+Verification on Windows: 452 focused core/IO/app-library and integration tests
+passed, including parsed rich-note XML, styles/list structure, exact byte/list
+bounds, import confirmation, entities, localization and failed-write preservation.
+Strict native and WASM Clippy, native application build, formatting and whitespace
+checks passed. This does not establish macOS/Linux runtime or host-app acceptance.
+
 **XV7 is still partial.** The new envelope is a versioned source representation,
 not a persisted block/span rich-text tree or a WYSIWYG editor. Full export parity,
 explicit formatting-loss consent/reporting and rendered equations remain open.

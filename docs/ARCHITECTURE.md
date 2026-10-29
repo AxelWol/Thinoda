@@ -71,17 +71,25 @@ graph TD
   and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
   limits do not truncate stored source or prevent editing larger notes.
   XMind private metadata retains the envelope, but its standard plain-note field
-  and existing textual exporters other than Word still contain Markdown source.
-  Word derives a bounded `NoteDocument` (paragraphs, styled runs, independent
+  and existing textual exporters other than Word/FreeMind still contain Markdown source.
+  Word and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
   list counters) from declared Markdown without mutating persisted source.
   The shared projection preflight bounds parsing to 16 KiB / 2,048 events /
-  32 containers; Word additionally caps list nesting at nine. Only paragraphs,
+  32 containers; formatted export additionally caps list nesting at nine. Only paragraphs,
   bold/italic/strike, inline code, breaks/tabs and ordered/bullet lists are supported.
   Unsupported syntax fails with typed `IoError::WordNote` before any destination
   write; the app localizes the guidance and retains the topic title. Legacy plain
   notes remain literal. Word numbering parts, content types and relationships are
   emitted only when needed; definitions precede concrete instances, with independent
-  counters per list and note. Rich-text interchange for other formats and explicit
+  counters per list and note. FreeMind writes escaped HTML runs and structural
+  `ol`/`ul`/`li` elements inside `richcontent TYPE="NOTE"`, retaining starts,
+  nesting and continuation paragraphs. It rejects tabs/repeated spaces instead
+  of relying on renderer-specific CSS. Typed `IoError::FreeMindNote` failures
+  precede destination writes and have localized topic-specific guidance.
+  FreeMind import still produces plain notes, but styles/lists/multiple paragraphs
+  require the shared formatting-loss confirmation; text boundaries and XML
+  entities are retained. This is not a rich-note round trip or host-app acceptance.
+  Rich-text interchange for other formats and explicit
   export-loss consent remain XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
   dimensions before full decoder allocation (4096/side, 4 megapixels), then uses

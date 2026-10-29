@@ -35,6 +35,21 @@ Word/LibreOffice opening and Open XML schema validation remain unverified.
 This is a derived export model, not the persisted rich-text tree; non-Word
 export parity, explicit loss consent and equations remain next XV7 work.
 
+**XV7a FreeMind continuation (2026-10-29):** declared Markdown notes now export
+as escaped rich-note HTML with bold/italic/strike/code, paragraphs/hard breaks and
+structural ordered/bullet lists. Nesting, starting numbers, empty parent items and
+continuation paragraphs are preserved. The shared bounds and unsupported-syntax
+errors apply; tabs/repeated spaces are additionally rejected rather than relying
+on renderer-specific CSS. Legacy plain exports remain literal, and failures leave
+the map/destination unchanged. All ten catalogs have topic-specific guidance.
+Thinoda FreeMind import still converts rich notes to plain text, now requiring
+formatting-loss confirmation and preserving paragraph/break boundaries and
+entities. Parsed XML and focused regression coverage do not establish an actual
+FreeMind/Freeplane host opening or a formatted-note import round trip.
+**Review:** this closes one export gap without broadening the stored model or
+claiming full XV7 completion. Other formats, explicit export-loss consent, host
+acceptance and equations remain open.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and

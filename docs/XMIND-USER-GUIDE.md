@@ -270,6 +270,22 @@ This is not full XMind rich-text or Word-import round-trip parity. Word and
 LibreOffice opening checks remain separate host acceptance work.
 Official Export reference rechecked: https://xmind.com/user-guide/export-new
 
+**Thinoda FreeMind export continuation (2026-10-29):** File > Export > FreeMind
+now emits explicitly formatted notes as HTML richcontent with bold/italic,
+strikethrough, inline code, paragraphs/hard breaks and real ordered/bullet lists.
+List nesting, starting numbers and continuation paragraphs retain their structure.
+Plain legacy notes remain literal. The same processing limits and unsupported
+Markdown restrictions as Word apply; tabs and repeated spaces are additionally
+rejected rather than silently relying on HTML whitespace behavior. Errors identify
+the topic, with no change to the source or existing destination.
+Opening rich FreeMind notes in Thinoda still converts them to plain text and
+requires formatting-loss confirmation; paragraph/break boundaries and XML entities
+are retained. This is not formatted-note round-trip parity or an installed
+FreeMind/Freeplane compatibility claim.
+Format references: Freeplane's [note writer](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteWriter.java)
+and [note reader](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteBuilder.java)
+establish the rich-note envelope, not renderer fidelity.
+
 ## Numbering
 - Select one or more topics > Format > Style > Numbering; choose a style. The text listing does not enumerate the numbering-format names.
 - **Apply to Siblings** copies the style to same-level topics. **Tiered Numbers** inherits the parent’s numbering and defaults off; siblings also enable it. **Start From Begin** restarts at the smallest number and defaults off. Reordering topics automatically renumbers them; choose **None** to remove numbering.
