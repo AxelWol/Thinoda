@@ -52,13 +52,31 @@ continuation paragraphs are preserved. The shared bounds and unsupported-syntax
 errors apply; tabs/repeated spaces are additionally rejected rather than relying
 on renderer-specific CSS. Legacy plain exports remain literal, and failures leave
 the map/destination unchanged. All ten catalogs have topic-specific guidance.
-Thinoda FreeMind import still converts rich notes to plain text, now requiring
+At this export-only slice, Thinoda FreeMind import converted rich notes to plain text, requiring
 formatting-loss confirmation and preserving paragraph/break boundaries and
 entities. Parsed XML and focused regression coverage do not establish an actual
 FreeMind/Freeplane host opening or a formatted-note import round trip.
 **Review:** this closes one export gap without broadening the stored model or
 claiming full XV7 completion. Other formats, explicit export-loss consent, host
 acceptance and equations remain open.
+
+**XV7a FreeMind import continuation (2026-10-29):** bounded supported HTML notes
+now become explicit editable `markdown-v1`, preserving emphasis/strike/code,
+paragraphs/hard breaks and ordered/bullet lists with nested/empty parent items,
+continuations and independent starts. A shared-parser semantic comparison gates
+the no-warning path; literal Markdown punctuation cannot become accidental syntax.
+Legacy plain envelopes stay plain, including their literal whitespace. Without
+format metadata an unstyled single paragraph cannot be distinguished from legacy
+plain content and intentionally stays plain on reimport.
+Unknown HTML/styles/attributes, mixed inline/block items, unsupported spacing,
+code line breaks, empty paragraphs that Markdown cannot reproduce and processing
+limits keep readable fallback plus cancelable import-loss confirmation.
+**Critique:** generated Markdown is canonicalized/escaped source, not byte-identical
+HTML or Markdown, arbitrary HTML/CSS fidelity or full XV7 completion. IO/app
+regressions and strict native/production-WASM Clippy pass locally. Sanitizer fuzz
+smoke is blocked by the missing Windows ASan linker library; WASM test targets
+have pre-existing native-only API errors. External FreeMind/Freeplane acceptance,
+other interchange gaps and XV7b equations remain open; XV8/XV9 are unchanged.
 
 **XV7a Excel continuation (2026-10-29):** formatted notes now export as inline
 rich-text cells with emphasis/strike/code, paragraphs/hard breaks and visible

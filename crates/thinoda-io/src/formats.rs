@@ -334,7 +334,7 @@ pub(crate) fn freemind_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>
 #[derive(Default)]
 struct XmlNode {
     title: String,
-    notes: Option<String>,
+    notes: Option<thinoda_core::notes::NoteContent>,
     link: Option<String>,
     folded: bool,
     markers: Vec<String>,
@@ -349,22 +349,11 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
     let mut roots = Vec::new();
     let mut title = String::new();
     let mut in_title = false;
-    let mut note_target: Option<usize> = None;
     let mut formatted_notes = false;
-    let mut note_paragraphs = 0;
     loop {
         match r.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let name = e.name().as_ref().to_ascii_lowercase();
-                if note_target.is_some() {
-                    formatted_notes |= e.attributes().next().is_some();
-                    if name == "p" {
-                        note_paragraphs += 1;
-                        formatted_notes |= note_paragraphs > 1;
-                    } else if !matches!(name.as_str(), "html" | "head" | "body") {
-                        formatted_notes = true;
-                    }
-                }
                 if name == "node" || name == "outline" {
                     let mut n = XmlNode::default();
                     for a in e.attributes().flatten() {
@@ -378,7 +367,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
                             "folded" => n.folded = v == "true",
                             "link" => n.link = Some(v),
                             "_link" => n.link = Some(v),
-                            "_note" => n.notes = Some(v),
+                            "_note" => n.notes = Some(v.into()),
                             _ => {}
                         }
                     }
@@ -395,9 +384,33 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
                                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .unwrap_or_default();
                             if v.eq_ignore_ascii_case("NOTE") {
-                                note_target = Some(stack.len().saturating_sub(1));
-                                note_paragraphs = 0;
                                 r.config_mut().trim_text(false);
+                                let (notes, lossy) = crate::freemind_notes::read(
+                                    &mut r,
+                                    e.attributes().count() == 1,
+                                )?;
+                                r.config_mut().trim_text(true);
+                                formatted_notes |= lossy;
+                                if let Some(node) = stack.last_mut() {
+                                    if let Some(previous) = node.notes.take() {
+                                        let visible = |note: thinoda_core::notes::NoteContent| {
+                                            if note.is_markdown() {
+                                                thinoda_core::notes::plain_text_projection(&note)
+                                                    .unwrap_or_else(|| note.to_string())
+                                            } else {
+                                                note.to_string()
+                                            }
+                                        };
+                                        node.notes = Some(
+                                            format!("{}\n{}", visible(previous), visible(notes))
+                                                .into(),
+                                        );
+                                        formatted_notes = true;
+                                    } else {
+                                        node.notes = Some(notes);
+                                    }
+                                }
+                                break;
                             }
                         }
                     }
@@ -425,14 +438,6 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
             }
             Ok(Event::Empty(e)) => {
                 let name = e.name().as_ref().to_ascii_lowercase();
-                if let Some(i) = note_target {
-                    formatted_notes = true;
-                    if name == "br"
-                        && let Some(n) = stack.get_mut(i)
-                    {
-                        n.notes.get_or_insert_with(String::new).push('\n');
-                    }
-                }
                 if name == "node" || name == "outline" {
                     let mut n = XmlNode::default();
                     for a in e.attributes().flatten() {
@@ -444,7 +449,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
                         if k == "text" {
                             n.title = v;
                         } else if k == "_note" {
-                            n.notes = Some(v);
+                            n.notes = Some(v.into());
                         } else if k == "link" || k == "_link" {
                             n.link = Some(v);
                         }
@@ -462,10 +467,6 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
                     .to_string();
                 if in_title {
                     title.push_str(&v);
-                } else if let Some(i) = note_target
-                    && let Some(n) = stack.get_mut(i)
-                {
-                    n.notes.get_or_insert_with(String::new).push_str(&v);
                 }
             }
             Ok(Event::GeneralRef(reference)) => {
@@ -481,43 +482,12 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
                 };
                 if in_title {
                     title.push_str(&value);
-                } else if let Some(i) = note_target
-                    && let Some(n) = stack.get_mut(i)
-                {
-                    n.notes.get_or_insert_with(String::new).push_str(&value);
-                }
-            }
-            Ok(Event::CData(text)) => {
-                if let Some(i) = note_target
-                    && let Some(n) = stack.get_mut(i)
-                {
-                    let text = text.xml_content(quick_xml::XmlVersion::Implicit1_0);
-                    n.notes.get_or_insert_with(String::new).push_str(&text);
-                    formatted_notes = true;
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name().as_ref().to_ascii_lowercase();
                 if name == "title" {
                     in_title = false;
-                }
-                if name == "richcontent" {
-                    if let Some(i) = note_target
-                        && let Some(n) = stack.get_mut(i)
-                        && let Some(notes) = &mut n.notes
-                    {
-                        *notes = notes.trim().to_owned();
-                    }
-                    note_target = None;
-                    r.config_mut().trim_text(true);
-                } else if matches!(name.as_str(), "p" | "li")
-                    && let Some(i) = note_target
-                    && let Some(n) = stack.get_mut(i)
-                {
-                    let notes = n.notes.get_or_insert_with(String::new);
-                    if !notes.ends_with('\n') {
-                        notes.push('\n');
-                    }
                 }
                 if (name == "node" || name == "outline")
                     && let Some(n) = stack.pop()
@@ -543,7 +513,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool
 fn xml_node_to_outline(n: XmlNode) -> OutlineNode {
     OutlineNode {
         title: n.title,
-        notes: n.notes.map(Into::into),
+        notes: n.notes,
         link: n.link,
         markers: n.markers,
         children: n.children.into_iter().map(xml_node_to_outline).collect(),

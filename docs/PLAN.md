@@ -99,19 +99,51 @@ HTML enter generated rich notes. The Freeplane note reader/writer implementation
 confirms the `richcontent TYPE="NOTE"` HTML envelope; this is format evidence,
 not a completed FreeMind/Freeplane host-opening check.
 
-The existing Thinoda FreeMind importer does not retain rich formatting. It now
+At the export-only slice, the Thinoda FreeMind importer did not retain rich formatting. It
 requires the shared formatting-loss confirmation when styles/lists/multiple
 paragraphs are present, instead of silently flattening them. Visible paragraph/
 break boundaries and XML entities survive that conversion.
 **Review:** bounded export fidelity and explicit import-loss reporting are
 implemented without new UI controls, theme-specific colors or platform branches.
-Formatted FreeMind round trips, external-host acceptance, other exporters and
+External-host acceptance, other exporters and
 an explicit export-loss consent flow remain open; XV7 is not complete.
 Verification on Windows: 452 focused core/IO/app-library and integration tests
 passed, including parsed rich-note XML, styles/list structure, exact byte/list
 bounds, import confirmation, entities, localization and failed-write preservation.
 Strict native and WASM Clippy, native application build, formatting and whitespace
 checks passed. This does not establish macOS/Linux runtime or host-app acceptance.
+
+**FreeMind import continuation (2026-10-29):** supported rich-note HTML now imports
+as an explicit `markdown-v1` source. The allowlist covers paragraphs, hard breaks,
+bold/italic/strike/code (including common semantic tag aliases), ordered/bullet
+lists, nested lists, empty parent items, continuation paragraphs and independent
+start counters. Generated Markdown escapes literal punctuation and protects
+delimiter-edge text; reparsing with the shared note parser must reproduce the
+same normalized `NoteDocument` before import proceeds without a loss warning.
+Legacy single-paragraph plain envelopes remain literal `Plain` notes, including
+source whitespace; an unstyled single-paragraph formatted export is indistinguishable
+from that legacy envelope and consequently reimports as plain, not declared Markdown.
+
+Rich conversion is bounded to 16 KiB XML/source, 2,048 XML/Markdown events,
+32 containers and nine list levels. Unsupported tags/attributes/styles, mixed
+inline/block list items, significant raw inline newlines/tabs/repeated spaces,
+code breaks, nonrepresentable empty paragraphs or expanded-source limits retain
+readable plain fallback and the existing explicit formatting-loss confirmation.
+No resources are fetched and no HTML is executed. Duplicate notes are combined
+readably with a warning instead of replacing an earlier note.
+**Critique:** this preserves supported editable semantics, not original HTML,
+original Markdown spelling, arbitrary CSS/HTML whitespace, or a full rich-text
+storage tree. Regenerated source uses escapes/entities; conservative fallback is
+intentional when representation cannot be proved. External FreeMind/Freeplane
+host acceptance, broader interchange fidelity and equations remain open.
+Windows verification: full IO tests, app-library tests and focused app notes/
+import-consent tests pass; strict native all-target and production-WASM Clippy,
+format/diff checks pass. The local sanitizer fuzz smoke could not link the
+missing Windows ASan thunk library. WASM all-target tests hit existing native-only
+printing/test API errors; production WASM Clippy passes. Neither is host acceptance.
+The final 21 app integration tests also passed when run directly from freshly
+rebuilt test artifacts; Cargo's final wrapper run was blocked from replacing the
+user's running `target/debug/thinoda.exe`, which was left undisturbed.
 
 **XV7 is still partial.** The new envelope is a versioned source representation,
 not a persisted block/span rich-text tree or a WYSIWYG editor. Full export parity,

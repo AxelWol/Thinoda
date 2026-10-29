@@ -357,6 +357,10 @@ those system-owned controls. WinGet publishing remains paused.
   saved note untouched. Code, image alternative text, checklist state and table
   cell boundaries are retained. The same preview limits apply; oversized notes
   are never silently truncated for copying.
+  FreeMind/Freeplane import retains a bounded supported HTML note subset as editable
+  Markdown, including styles and nested lists. Unsupported HTML/styles/spacing still
+  require loss confirmation and readable plain conversion. Legacy plain notes are
+  never inferred as Markdown; see the [notes interchange guide](docs/XMIND-USER-GUIDE.md#note).
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.

@@ -278,10 +278,20 @@ Plain legacy notes remain literal. The same processing limits and unsupported
 Markdown restrictions as Word apply; tabs and repeated spaces are additionally
 rejected rather than silently relying on HTML whitespace behavior. Errors identify
 the topic, with no change to the source or existing destination.
-Opening rich FreeMind notes in Thinoda still converts them to plain text and
-requires formatting-loss confirmation; paragraph/break boundaries and XML entities
-are retained. This is not formatted-note round-trip parity or an installed
-FreeMind/Freeplane compatibility claim.
+Opening supported rich FreeMind/Freeplane note HTML in Thinoda now retains editable
+Markdown formatting without a loss prompt: emphasis/strike/code, paragraphs/hard
+breaks, and ordered/bullet lists with nesting, continuations and starting numbers.
+The source is regenerated with protective escapes/entities, not the original HTML
+or Markdown spelling. Legacy single-paragraph plain notes remain literal, even if
+they look like Markdown; unstyled single-paragraph exports likewise return plain.
+Unsupported HTML/styles/attributes, mixed inline/block list items, inline raw
+newlines/tabs/repeated spaces, code line breaks, nonrepresentable empty paragraphs
+or processing limits still require formatting-loss confirmation before opening a
+readable plain converted copy. Cancel leaves the editor/source unchanged. Rich
+conversion is bounded to 16 KiB XML/generated source, 2,048 events, 32 containers
+and nine list levels; source expansion may reach the limit before the visible text.
+No HTML is executed or external resources fetched. Local round-trip regressions
+are not an installed FreeMind/Freeplane compatibility claim.
 Format references: Freeplane's [note writer](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteWriter.java)
 and [note reader](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteBuilder.java)
 establish the rich-note envelope, not renderer fidelity.

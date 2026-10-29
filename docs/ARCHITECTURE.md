@@ -104,9 +104,23 @@ graph TD
   nesting and continuation paragraphs. It rejects tabs/repeated spaces instead
   of relying on renderer-specific CSS. Typed `IoError::FreeMindNote` failures
   precede destination writes and have localized topic-specific guidance.
-  FreeMind import still produces plain notes, but styles/lists/multiple paragraphs
-  require the shared formatting-loss confirmation; text boundaries and XML
-  entities are retained. This is not a rich-note round trip or host-app acceptance.
+  `freemind_notes::read` consumes NOTE envelopes in isolation from the map tree.
+  It builds only a bounded, allowlisted XML tree (16 KiB, 2,048 events, 32
+  containers), derives the shared `NoteDocument`, and generates explicit
+  `markdown-v1` source. Attribute-free HTML/head/body/p, emphasis/strike/code tag
+  aliases, br and ol/ul/li are supported; only ol's bounded `start` attribute is
+  accepted. Lists remain limited to nine levels. Generated text escapes Markdown
+  punctuation and uses entities at delimiter/space boundaries. Adjacent independent
+  lists alternate Markdown markers; code uses collision-safe backtick fences.
+  The shared parser must reproduce the normalized runs/list structure exactly,
+  within its own source/event bounds, before the conversion is considered lossless.
+  Unsupported HTML/styles/spacing or nonrepresentable structure retains streamed
+  readable plain fallback and the existing formatting-loss confirmation. No HTML
+  execution, external-resource fetch or custom entity expansion occurs. Duplicate
+  notes combine readably with a warning. A legacy single-p plain envelope stays
+  `Plain`, even when its text resembles Markdown; unstyled single-p formatted
+  exports cannot be distinguished without metadata and likewise return plain.
+  This is bounded semantic interchange, not original-source or host-app acceptance.
   Excel writes inline SpreadsheetML rich-text runs and visible list markers
   (with independent counters/continuation indentation), not list objects.
   Formatted cells use a wrapped, top-aligned style and a wider Notes column;
