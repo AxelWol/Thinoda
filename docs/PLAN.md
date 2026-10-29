@@ -118,6 +118,107 @@ release-in-progress statements in the historical entries below.
 The next ordered work is **XV7a notes persistence/export fidelity, XV7b rendered
 equations, XV8 task-aware Tree Table, then XV9 durable local AI conversations**.
 
+**XV7b scoped implementation contract (2026-10-29, implemented locally;
+independent review completed):**
+deliver one user-visible **notes equation preview** slice, not topic-equation
+parity. The selected topic's Notes inspector gets an explicit equation editor,
+live offline vector preview, visible validation errors, Apply/Cancel and Remove.
+One canonical fenced `thinoda-math-v1` block lives at the end of an explicitly
+authored `markdown-v1` note. Plain notes are never interpreted as equations on
+open; adding an equation to a nonempty plain note is refused (format it explicitly
+first) so unrelated literal punctuation is not silently reinterpreted.
+Apply replaces only the equation block and commits through the existing
+conflict-checked notes transaction. Drafts are keyed by document/sheet/topic,
+document revision, complete note source and format; stale drafts cannot apply.
+Cancel changes no document metadata. Existing notes text remains editable and
+source-first. Source survives native v4 / clipboard v3, recovery, undo/redo and
+outline copies without adding a field that an older reader could silently drop.
+
+Supported syntax is deliberately not general LaTeX: ASCII letters/digits and
+basic operators, grouping, `\frac{a}{b}`, `^{...}` and `_{...}` (including both
+scripts on one base). Bound source bytes, node count, nesting and layout extents;
+reject unknown commands, malformed groups, duplicate scripts and invalid input
+without replacing the saved block. No chemical-notation, map/Outliner equation
+rendering, resizing, arbitrary TeX, macros, HTML, external fonts or network.
+Non-native exports, visual exports/printing and Map Shot must reject
+equation-bearing content before writing rather than silently omit it; XMind
+equation interchange is deferred without guessing its schema.
+
+**Decision critique:** an internal parser/layout is justified only for this small
+explicit syntax. Investigated `latex2mathml` 0.2.3 (MIT, last published 2020):
+it emits MathML, not egui/vector layout, and would still require a renderer.
+`mathlikeanim-rs` targets general animation/graphics, not a small shared equation
+widget. No dependency is added. Reusing the existing Markdown envelope preserves
+complete source even in older readers, which show a fenced code block; it does
+not confer equation-rendering compatibility. Conservative export refusal is a
+temporary usability trade-off, not export parity. Acceptance requires parser
+and geometry bounds, editor ownership/cancel/error tests, source-preserving
+transaction/native/recovery/clipboard checks, export destination safety,
+all ten languages/light-dark checks, native/WASM compile and strict Clippy.
+Stop after this usable slice; full topic equations remain open for review.
+
+**XV7b local verification and self-critique:** no dependency/schema-field change,
+executable replacement, push or PR. Added four core parser/layout/source
+tests, five IO preservation/omission-guard tests, five app integration tests
+(including Map/Outliner and all ten languages × light/dark), and two app unit
+tests for exact draft ownership and catalog coverage. Passing targeted commands:
+
+- `cargo test -p thinoda-core --lib equation` — 4 passed.
+- `cargo test -p thinoda-io --test equations` — 5 passed; native v4,
+  clipboard v3/older-prefix rejection, internal subtree/outline source, masking,
+  malformed import preservation, every non-native format with lossy consent,
+  destination preservation, direct print/Pitch/Gantt, hidden/floating topics and
+  unselected-sheet guards.
+- `cargo test -p thinoda-app --test equations -- --test-threads=1` — 5 passed;
+  real editor Apply/edit/remove, one-step undo/redo, save/reopen/recovery,
+  unsupported and oversized drafts (full rejected paste retained), Cancel/Escape,
+  revision/topic/document changes, focused-note blur followed by equation editing
+  as a separate undo step, inert plain notes and Map Shot refusal.
+- `cargo test -p thinoda-app --lib equation -- --test-threads=1` — 2 passed.
+- `cargo test -p thinoda-io --test notes_storage --test notes_markdown --test notes_loss --test notes_freemind --test notes_excel --test notes_word` — 36 passed.
+- `cargo test -p thinoda-app --test notes_markdown --test notes_i18n --test notes_export_loss --test inspector_save -- --test-threads=1` — 19 passed.
+- `cargo test -p thinoda-app --lib i18n::tests -- --test-threads=1` — 8 passed;
+  `cargo test -p thinoda-app --test help -- --test-threads=1` — 5 passed.
+- `cargo fmt --all -- --check`, strict native
+  `cargo clippy --workspace --all-targets -- -D warnings`, and strict production
+  WASM Clippy for web/app/platform/ai/io pass. These compile checks do not claim
+  browser or cross-OS runtime acceptance.
+- `python .github/scripts/third_party_notices.py --check` passes unchanged.
+  `python -m unittest discover -s .github/scripts -p test_docs_stamp.py` — 25 passed.
+  `docs_stamp.py --check` correctly refuses uncommitted README source edits
+  ("commit source edits before stamping"); per policy no stamps were hand-edited
+  and no commit was made merely to refresh metadata. `git diff --check` passes.
+
+Self-review fixed Escape leaking through to canvas deselection and removed the
+TextEdit character cap so oversize paste is rejected visibly, never silently
+truncated into a different valid equation. Fresh edit sessions reset canceled
+TextEdit undo state. Equation cancellation uses its own localized label because
+French Undo and generic Cancel share a translation. Offline help remains within
+its existing six section/shortcut groups. Opening waits one frame for the ordinary
+Notes buffer's blur commit, then captures the current revision; a focused note
+edit cannot immediately invalidate the newly opened scratch editor.
+Remaining trade-offs: one trailing
+block only; simple local font metrics rather than professional math typography;
+unapplied scratch drafts are not durable; a reserved marker in any declared
+Markdown note conservatively blocks foreign export even if malformed or merely
+mentioned. Notes source remains editable and native-saveable in all such cases.
+There is deliberately no map/Outliner-row equation, external equation schema,
+full LaTeX/chemistry or equation export parity. `.serena/` is preserved.
+
+**Independent equation review:** no blocking data-loss, draft-ownership or export
+bypass defects found. Review identified a direct-source editing gap: pasted
+CRLF/CR fences were rejected despite otherwise valid structure. Fence recognition
+now accepts LF, CRLF and CR without normalizing the surrounding note. Replacement
+separators preserve a prefix's terminal CR instead of accidentally merging it into
+a newly inserted LF; exact-byte regression coverage includes edit and removal.
+The conservative reserved-marker export rule also catches prose mentioning
+`thinoda-math-v1`; this is disclosed, not general Markdown fence interpretation.
+Final core/IO tests and strict native/WASM Clippy pass. Rebuilding the app
+integration harness through Cargo was blocked by the user-running `thinoda.exe`;
+the previously built five app and five IO equation integration tests passed
+directly without replacing or stopping that application. The new line-ending
+cases ran in freshly rebuilt core tests.
+
 **User-reported exit prompt sizing (2026-10-29, completed locally):** treat the
 full-height unsaved-work prompt as a UX regression ahead of further feature work.
 Shared confirmations now retain a bounded 440-point initial width and fit height

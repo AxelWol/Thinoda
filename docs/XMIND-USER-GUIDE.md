@@ -22,7 +22,7 @@ for delivery/acceptance status.
 | Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. Import/export supports the pinned SDK's verified embedded topic-image subset; XMind attachment package exchange and installed-app interoperability remain unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
 | Import | TextBundle Markdown and bounded DOCX text/hierarchy import are implemented locally with conversion warnings; Word page layout and embedded resources are not preserved. External relationships are never fetched. | XV5; other unsupported importers stay in the broader inventory. |
 | Export / Pitch Mode | Saved framing and PDF/PNG slides exist. A local XV6 slice exports saved Pitch slides to image-based `.pptx`, with explicit 16:9/4:3 choices, a first-slide fit preview and a flattened-slide disclosure. The layout-ID repair bug is fixed; a dark 4:3 deck opened cleanly in Windows PowerPoint and survived an Office save with unchanged slide images. Microsoft SDK checks cover all four appearance/ratio variants; broader host/OS acceptance remains open. | XV6 partial |
-| Note / Equation | Notes have local Markdown-source bold/italic/list tools, an opt-in bounded offline preview and visible-text search/copy. Legacy strings stay unchanged; other views/exports may show source markup. A structured rich-note model, export fidelity and rendered equations remain open. | XV7 partial |
+| Note / Equation | Notes have Markdown-source tools, bounded preview/search/copy and a versioned source envelope. A first equation slice renders fractions/groups/scripts in the selected topic's Notes inspector, with edit/Apply/Cancel/Remove and visible errors. No topic/map-equation, chemical notation or equation export parity is claimed; equation-bearing foreign/visual exports fail explicitly. | XV7 partial |
 | Structure / project-management role research | TreeTable enum/layout exists; editable task columns are missing. | XV8; exact reference interaction still needs verification. |
 | Xmind Agent conversation history | Scoped/depth-guided chat exists; Thinoda explicitly keeps history session-only. | XV9 optional local persistence and named threads, not another chat implementation. |
 | File Cache / Map Shot / Custom Themes / Quick Style / Merge / Mask Data | Existing implementations; not wholly missing. | Retain recovery, export-fidelity and real-host acceptance requirements. Masked copies are not a guarantee of universal anonymization. |
@@ -139,6 +139,30 @@ attachment interoperability or installed-app compatibility (XV4 partial).
 - Select a topic > Insert > Equation (toolbar or menu) to add a LaTeX mathematical or chemical equation.
 - Double-click to edit; drag its frame to resize.
 - Source: https://xmind.com/user-guide/equation-new
+
+**Thinoda XV7b notes-preview slice (2026-10-29):** this is deliberately narrower
+than XMind's topic equation above. Select a topic, open Notes in the Map or
+Outliner inspector and choose **Edit notes equation**. Enter ASCII letters/digits,
+basic operators (`+ - = ( ) [ ] , . / : |`), `{groups}`, `\frac{a}{b}`,
+`x^{2}`, `x_{i}`, or `x_{i}^{2}`. Script arguments must use braces; spaces are
+ignored between atoms, not accepted between a base and its script. Unknown
+commands, empty/mismatched groups and duplicate scripts report visible errors.
+Limits: 512 UTF-8 bytes, 128 parser nodes, eight nested groups and bounded layout.
+Fractions have a real vector bar; scripts are smaller raised/lowered text.
+Apply saves one undoable source edit; Cancel/Escape discards only the scratch
+draft. Edit and Remove work on the existing single trailing fenced block.
+Keep that block at the note's end; otherwise edit the complete Notes source.
+Unapplied scratch drafts are not autosaved/recovered; applied source is.
+Plain notes are never inferred as math; nonempty plain notes must first be
+explicitly formatted as Markdown. Native v4 / clipboard v3 preserve the complete
+`markdown-v1` source with `thinoda-math-v1` fence; older source-aware readers may
+show it as code. No new fields, font/network fetching or TeX execution.
+No double-click map editing, equation frame resize, map/Outliner-row rendering,
+general LaTeX, chemical notation or external XMind equation schema is delivered.
+All non-native exports, including source Markdown and XMind, plus visual/Pitch
+exports, print and Map Shot reject equation-bearing source before writing/capture
+even with lossy consent. Native save remains available; this is a conservative
+anti-omission policy, not export parity.
 
 ## Export
 - File > Export supports PNG, SVG, PDF, Excel, Word, OPML, TextBundle, PowerPoint, Markdown, and other formats; exact availability can vary by app/version.

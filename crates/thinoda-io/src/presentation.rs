@@ -151,6 +151,7 @@ pub fn export_presentation_pptx(
     sheet: &Sheet,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
+    crate::reject_equation_notes(sheet)?;
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
     validate_scale(options.scale)?;

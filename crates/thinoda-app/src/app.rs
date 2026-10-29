@@ -748,6 +748,13 @@ impl ThinodaApp {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
                 }
+                if self.doc().is_some_and(|doc| {
+                    thinoda_core::equations::sheet_has_equations(doc.doc.sheet())
+                }) {
+                    self.toasts
+                        .warning(t(thinoda_core::equations::EXPORT_ERROR));
+                    return;
+                }
                 self.map_shot.requested = true;
                 ctx.request_repaint();
             }

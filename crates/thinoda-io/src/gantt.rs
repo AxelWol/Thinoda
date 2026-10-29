@@ -79,6 +79,7 @@ impl GanttDocument {
 /// Builds a chart in stable topic-ID order. Each row is retained, including tasks
 /// without dates; `bounds` spans every computed date in the sheet's task table.
 pub fn render_gantt(sheet: &Sheet) -> Result<GanttDocument, IoError> {
+    crate::reject_equation_notes(sheet)?;
     let rows = scheduled_rows(sheet)?;
     let bounds = date_bounds(&rows);
     let timeline_days = if let Some(bounds) = bounds {
@@ -209,6 +210,7 @@ pub fn render_gantt_print(
 
 /// Exports the same deterministic task rows as UTF-8 CSV with CRLF line endings.
 pub fn export_gantt_csv(sheet: &Sheet) -> Result<Vec<u8>, IoError> {
+    crate::reject_equation_notes(sheet)?;
     let rows = scheduled_rows(sheet)?;
     let mut csv = String::new();
     append_csv_text(

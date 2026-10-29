@@ -184,6 +184,8 @@ impl Default for ExportOptions {
 /// Import/export error.
 #[derive(Debug, Error)]
 pub enum IoError {
+    #[error("{}", thinoda_core::equations::EXPORT_ERROR)]
+    EquationNotesUnsupported,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("ZIP error: {0}")]
@@ -487,6 +489,11 @@ pub fn export_bytes_with_consent(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
+    if format != Format::Thinoda {
+        for sheet in &book.sheets {
+            reject_equation_notes(sheet)?;
+        }
+    }
     let supports_embedded_resources = matches!(
         format,
         Format::Thinoda
@@ -554,6 +561,16 @@ pub fn export_bytes_with_consent(
         Format::Csv => office::csv(book, opts),
         _ => unreachable!(),
     })
+}
+
+/// Until equation-note export is implemented, no lossy consent can discard it.
+/// Check all topics, including detached/hidden ones, before creating output.
+pub(crate) fn reject_equation_notes(sheet: &thinoda_core::Sheet) -> Result<(), IoError> {
+    if thinoda_core::equations::sheet_has_equations(sheet) {
+        Err(IoError::EquationNotesUnsupported)
+    } else {
+        Ok(())
+    }
 }
 
 /// Whether selected, reachable notes lose their declared rich-text interpretation.

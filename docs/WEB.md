@@ -9,6 +9,14 @@ plain files (HTML, JavaScript glue, `.wasm`), so any static host can serve it.
 There is no server-side code; your maps never leave the browser unless you
 download them or use an AI server.
 
+The shared Notes inspector includes the bounded offline equation-preview editor
+(fractions, groups, superscripts/subscripts), without browser MathML, downloaded
+fonts or a TeX engine. Applied source stays in native v4 Markdown notes for
+save/reopen/recovery/copy; the scratch editor must be applied before it is durable.
+This is not a map/Outliner-row equation. Non-native/visual/Pitch output, printing
+and Map Shot refuse equation-bearing content rather than omit it. See
+[the equation slice and exact syntax](XMIND-USER-GUIDE.md#equation).
+
 ## Build and run locally
 ```sh
 rustup target add wasm32-unknown-unknown

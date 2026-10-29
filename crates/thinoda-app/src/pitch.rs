@@ -417,7 +417,7 @@ impl ThinodaApp {
         } else {
             thinoda_io::export_presentation_pdf(sheet, options)
         }
-        .map_err(|error| error.to_string())
+        .map_err(crate::doc::export_error)
     }
 
     fn poll_pitch_export(&mut self, ctx: &Context) {

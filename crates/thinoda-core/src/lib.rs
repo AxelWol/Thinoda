@@ -15,6 +15,7 @@ pub mod clipboard;
 pub mod custom_theme;
 pub mod document;
 pub mod edit;
+pub mod equations;
 pub mod geometry;
 pub mod images;
 pub mod layout;

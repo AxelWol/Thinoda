@@ -368,7 +368,7 @@ those system-owned controls. WinGet publishing remains paused.
   offline Markdown preview. Formatting is stored as source text, preserving existing
   notes and their save/recovery/undo behavior; other views and exports may show the
   markup. Preview limits never truncate the editable source, and links/images are
-  not opened or fetched. Structured rich text and rendered equations remain planned.
+  not opened or fetched. Structured rich text and full topic-equation parity remain planned.
   The distinct **Bold notes** / **Italic notes** actions do not change topic styles;
   repeating an action on its selected text removes the surrounding emphasis markers.
   List actions keep the formatted lines selected: repeat to remove their markers,
@@ -383,6 +383,32 @@ those system-owned controls. WinGet publishing remains paused.
   Markdown, including styles and nested lists. Unsupported HTML/styles/spacing still
   require loss confirmation and readable plain conversion. Legacy plain notes are
   never inferred as Markdown; see the [notes interchange guide](docs/XMIND-USER-GUIDE.md#note).
+- **Equation preview in notes** is a bounded, offline authoring slice. Select a topic
+  and open Notes in its inspector (in Map or Outliner), then choose **Edit notes
+  equation**. Fractions (`\frac{a}{b}`), superscripts (`x^{2}`), subscripts
+  (`x_{i}`), combined scripts, groups, ASCII letters/digits and basic operators
+  render as text and vector fraction bars, not a source-only image.
+  Apply commits one undoable edit; invalid drafts cannot replace the saved block.
+  **Cancel equation edit** / Escape discard only the equation scratch draft.
+  Editing an existing block and removing it are explicit actions. Nonempty plain
+  notes must first be explicitly formatted as Markdown; opening them never converts
+  their syntax. One `thinoda-math-v1` fenced block is kept at the note's end.
+  Source is limited to 512 bytes, 128 parser nodes and eight nested groups; this is
+  **not general LaTeX or chemical notation**. There is no map/Outliner-row equation,
+  frame resizing, external font loading or TeX execution.
+  Save as `.thinoda` for source-preserving reopen/recovery/copy. Scratch drafts
+  are not recovery documents; apply first. Native v4 and sheet clipboard v3 already
+  preserve the Markdown source envelope, so no additional schema field/version
+  is introduced. Older source-aware readers may display the fence as code.
+  **All non-native exports (including Markdown/XMind), visual/Pitch exports,
+  printing and Map Shot refuse equation-bearing content**, even with lossy consent,
+  rather than silently omit it. Whole-workbook export checks every sheet; direct
+  sheet exports/print/Map Shot check their source sheet. This conservative policy
+  remains until equation-note export support is implemented. The reserved
+  `thinoda-math-v1` marker in any declared Markdown note also triggers this guard
+  when malformed or mentioned in prose; edit the note source to remove it when
+  it is not intended as an equation. Pasted LF, CRLF and CR fence line endings
+  are accepted without rewriting the surrounding note text.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.

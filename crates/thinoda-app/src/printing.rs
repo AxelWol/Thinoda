@@ -154,7 +154,7 @@ impl PrintEditor {
                 } else {
                     render_print(&workbook, sheet, settings)
                 }
-                .map_err(|e| e.to_string());
+                .map_err(crate::doc::export_error);
                 let _ = sender.send(result);
                 repaint.request_repaint();
             });

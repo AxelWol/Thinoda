@@ -119,6 +119,34 @@ graph TD
   outline copies retain the same type; draft conflict checks compare both source
   and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
   limits do not truncate stored source or prevent editing larger notes.
+  The first XV7b slice uses one canonical trailing `thinoda-math-v1` fenced
+  block inside `markdown-v1`, not a new topic field or persisted AST.
+  `thinoda-core::equations` parses an explicit ASCII subset (groups, fraction,
+  super/subscript) with 512-byte / 128-node / eight-level limits and emits glyph
+  positions plus vector fraction rules. Layout accepts local glyph measurement
+  from the frontend and rejects nonfinite/oversize geometry (4096 × 2048 points).
+  `thinoda-app::equations` paints this in the selected topic's Notes inspector,
+  including the Outliner inspector, using theme text colors and bundled/local
+  egui fonts. No TeX engine, network, downloaded font or new dependency is used.
+  A temporary editor draft owns document/sheet/topic ID, full note source/format,
+  revision and visible-frame continuity; changing any invalidates it. Apply
+  enters the existing `InspectorEdit` conflict-checked transaction; Cancel/Escape
+  do not change notes or format. Unapplied scratch drafts are deliberately not
+  recovered; applied source uses normal notes save/recovery/undo/copy.
+  A source-scoped one-frame open request lets an ordinary Notes blur commit
+  complete before the new scratch draft captures its revision.
+  Plain notes are never parsed as math. Nonempty plain notes require explicit
+  Markdown formatting first. Existing malformed/unsupported blocks remain
+  source-editable and saveable; preview reports errors without truncating them.
+  No new native/clipboard version is necessary: v4/v3 already retain all source;
+  older readers that accept those versions show the fence as literal code.
+  `IoError::EquationNotesUnsupported` blocks every non-native workbook export
+  before encoding/writing, irrespective of lossy consent. Shared visual rendering,
+  direct presentation/Gantt output and print also guard their source sheet;
+  Map Shot rejects before capture. Detection conservatively catches the reserved
+  marker even in malformed declared-Markdown notes and all hidden/detached topics.
+  Plain literal markers are inert. Masked copies remove the entire note.
+  This is notes preview only, not a map-layout equation or XMind equation schema.
   XMind private metadata retains the envelope, but its standard plain-note field
   and existing textual exporters other than Word/FreeMind/Excel still contain Markdown source.
   Word, Excel and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent

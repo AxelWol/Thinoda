@@ -457,6 +457,7 @@ pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, Str
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
     match error {
+        thinoda_io::IoError::EquationNotesUnsupported => t(thinoda_core::equations::EXPORT_ERROR).into(),
         thinoda_io::IoError::NoteFormatLossNeedsConfirmation => t(crate::notes::EXPORT_SOURCE_REQUIRED).into(),
         thinoda_io::IoError::ExcelNote { topic, reason } => {
             let message = match reason {

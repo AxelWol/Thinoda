@@ -152,6 +152,8 @@ pub(crate) fn tools(
     response: &Response,
     current: &str,
     done: &mut Option<String>,
+    markdown: bool,
+    revision: u64,
 ) -> bool {
     let mut formatted = false;
     let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ui.ctx());
@@ -209,6 +211,14 @@ pub(crate) fn tools(
     ui.small(t(
         "Formatting is stored as Markdown text; other views and exports may show markup.",
     ));
+    if let Some(replacement) =
+        crate::equations::tools(ui, response, &source, markdown || formatted, revision)
+    {
+        source = replacement;
+        ui.data_mut(|data| data.insert_temp(response.id, source.clone()));
+        *done = Some(source.clone());
+        formatted = true;
+    }
     let preview_id = response.id.with("markdown-preview");
     let mut preview = ui.data(|data| data.get_temp::<bool>(preview_id).unwrap_or(false));
     let previous = preview;

@@ -7,6 +7,7 @@ pub mod brand;
 mod command_icons;
 mod command_ids;
 pub mod doc;
+mod equations;
 pub mod files;
 mod gantt;
 mod help;

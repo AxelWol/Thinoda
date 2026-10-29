@@ -253,6 +253,40 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Equation preview in notes", "Gleichungsvorschau in Notizen"),
+    ("Cancel equation edit", "Gleichungsbearbeitung abbrechen"),
+    (
+        "Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.",
+        "Nur Notizvorschau, keine Gleichung auf der Karte. Natives Speichern erhält den Quelltext; andere Exporte sind gesperrt.",
+    ),
+    (
+        "512 bytes maximum. Use groups, \\frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.",
+        "Maximal 512 Bytes. Gruppen, \\frac{a}{b}, ^{...} und _{...} verwenden. Begrenzte Syntax, kein allgemeines LaTeX und keine Chemie.",
+    ),
+    (
+        "Format this nonempty plain note as Markdown explicitly before adding an equation.",
+        "Diese nicht leere Klartextnotiz vor dem Einfügen einer Gleichung ausdrücklich als Markdown formatieren.",
+    ),
+    ("Edit notes equation", "Notizgleichung bearbeiten"),
+    ("Equation source", "Gleichungsquelltext"),
+    ("Apply notes equation", "Notizgleichung übernehmen"),
+    ("Remove notes equation", "Notizgleichung entfernen"),
+    (
+        "Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.",
+        "Notizen mit Gleichungen können in diesem Format nicht exportiert oder gedruckt werden. Als Thinoda speichern, um den vollständigen Quelltext zu erhalten.",
+    ),
+    (
+        "Invalid equation. Use letters, digits, operators, groups, \\frac{a}{b}, ^{...} and _{...}.",
+        "Ungültige Gleichung. Buchstaben, Ziffern, Operatoren, Gruppen, \\frac{a}{b}, ^{...} und _{...} verwenden.",
+    ),
+    (
+        "Equation limit reached (512 bytes, 128 nodes, 8 levels).",
+        "Gleichungsgrenze erreicht (512 Bytes, 128 Knoten, 8 Ebenen).",
+    ),
+    (
+        "Keep one equation block at the end of the note, or edit the note source directly.",
+        "Einen Gleichungsblock am Ende der Notiz behalten oder den Notizquelltext direkt bearbeiten.",
+    ),
     ("New version available", "Neue Version verfügbar"),
     ("Update ready", "Update bereit"),
     (
@@ -2401,6 +2435,7 @@ mod tests {
             include_str!("labels.rs"),
             include_str!("images.rs"),
             include_str!("notes.rs"),
+            include_str!("equations.rs"),
             include_str!("doc.rs"),
             include_str!("map_shot.rs"),
             include_str!("printing.rs"),
