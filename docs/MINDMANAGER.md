@@ -1,4 +1,4 @@
-_Last updated: 2026-10-18 11:42:49 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-29 11:15:55 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # MindManager compatibility
 
