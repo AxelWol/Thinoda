@@ -1841,6 +1841,38 @@ const DE: &[(&str, &str)] = &[
     ("Central Topic", "Zentrales Thema"),
     // Format panel
     ("Style", "Stil"),
+    ("Data", "Daten"),
+    ("Equation", "Gleichung"),
+    ("Enlarge notes editor", "Notizeneditor vergrößern"),
+    ("Enlarge equation editor", "Gleichungseditor vergrößern"),
+    ("Notes editor", "Notizeneditor"),
+    (
+        "Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere.",
+        "Ein Wechsel der Auswahl, des Tabs oder der Dokumentrevision schließt vergrößerte Editoren ohne Übernahme. Übernimm Änderungen vor dem Bearbeiten an anderer Stelle.",
+    ),
+    ("Equation editor", "Gleichungseditor"),
+    ("Apply notes", "Notizen übernehmen"),
+    ("Cancel notes edit", "Notizenbearbeitung abbrechen"),
+    (
+        "Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered.",
+        "Übernehmen behält Änderungen. Abbrechen verwirft sie. Nicht übernommene Dialogänderungen werden weder gespeichert noch wiederhergestellt.",
+    ),
+    (
+        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.",
+        "Data liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen und Notizgleichungen in Map und Gliederung. Die Aufgabenplanung bleibt unter Stil.",
+    ),
+    (
+        "Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.",
+        "Data > Lokales Bild bietet Breite, Platzierung und Zurücksetzen. Auf der Map änderst du die Größe am Griff unten rechts; Escape bricht ab und Pfeiltasten ändern die Größe eines fokussierten Griffs.",
+    ),
+    (
+        "Insert > Attachment embeds a local file as a child topic (1 byte to 8 MiB). Data > Attachment saves or downloads it separately. Nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported.",
+        "Einfügen > Anhang bettet eine lokale Datei als Unterthema ein (1 Byte bis 8 MiB). Data > Anhang speichert oder lädt sie separat herunter. Nichts wird geöffnet oder ausgeführt. Speichere als .thinoda, um Anhänge zu erhalten; andere Exporte werden nicht unterstützt.",
+    ),
+    (
+        "Select a topic to edit its data.",
+        "Wähle ein Thema aus, um seine Daten zu bearbeiten.",
+    ),
     ("Map", "Map"),
     ("Structure", "Struktur"),
     ("Shape", "Form"),

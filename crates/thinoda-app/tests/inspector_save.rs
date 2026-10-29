@@ -14,6 +14,7 @@ fn draft(
 ) -> Harness<'static, ThinodaApp> {
     let mut app = ThinodaApp::headless();
     app.mode = mode;
+    app.format_tab = thinoda_app::app::FormatTab::Data;
     app.doc_mut().unwrap().save_to(path, false).unwrap();
     let mut h = Harness::builder()
         .with_size(egui::vec2(1200.0, 900.0))

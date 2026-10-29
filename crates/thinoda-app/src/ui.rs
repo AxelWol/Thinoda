@@ -27,6 +27,20 @@ use crate::{
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
 
+fn data_divider(ui: &mut Ui) {
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(8.0);
+}
+
+/// An always-visible data group whose heading also labels its editor.
+fn data_section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui, egui::Id) -> R) -> R {
+    data_divider(ui);
+    let heading = ui.strong(title);
+    ui.add_space(4.0);
+    ui.vertical(|ui| add(ui, heading.id)).inner
+}
+
 #[derive(Clone, Copy)]
 struct NumericDrag {
     owner: Option<egui::Id>,
@@ -808,7 +822,7 @@ impl ThinodaApp {
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
-            self.search_bar(&ctx, center.response.rect);
+            self.search_bar(&ctx);
         }
         self.update_search();
 
@@ -2807,26 +2821,44 @@ impl ThinodaApp {
         widgets::segmented(
             ui,
             &mut tab,
-            &[(FormatTab::Style, t("Style")), (FormatTab::Map, t("Map"))],
+            &[
+                (FormatTab::Style, t("Style")),
+                (FormatTab::Data, t("Data")),
+                (FormatTab::Map, t("Map")),
+            ],
         );
         if self.format_tab != tab {
-            self.format_tab = tab;
-            self.save_settings();
+            let result = self
+                .doc_mut()
+                .map_or(Ok(()), |doc| doc.flush_inspector_edit(ui.ctx()));
+            match result {
+                Ok(()) => {
+                    self.format_tab = tab;
+                    self.save_settings();
+                }
+                Err(error) => {
+                    self.toasts.error(error);
+                    tab = self.format_tab;
+                }
+            }
         }
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
             .id_salt(match tab {
                 FormatTab::Style => "style_scroll",
+                FormatTab::Data => "data_scroll",
                 FormatTab::Map => "map_scroll",
             })
             .show(ui, |ui| {
                 ui.push_id(
                     match tab {
                         FormatTab::Style => "style_content",
+                        FormatTab::Data => "data_content",
                         FormatTab::Map => "map_content",
                     },
                     |ui| match tab {
                         FormatTab::Style => self.style_tab(ui),
+                        FormatTab::Data => self.data_tab(ui),
                         FormatTab::Map => self.map_tab(ui),
                     },
                 );
@@ -2857,7 +2889,6 @@ impl ThinodaApp {
         let mut width = None;
         let mut below = topic.image_below;
         widgets::section(ui, t("Local Image"), true, |ui| {
-            ui.label(&topic.title);
             ui.add_enabled_ui(enabled, |ui| {
                 pick = ui
                     .button(if has_image {
@@ -2976,8 +3007,6 @@ impl ThinodaApp {
             return;
         }
         self.quick_styles(ui);
-        self.image_properties(ui);
-        self.attachment_properties(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -3309,11 +3338,71 @@ impl ThinodaApp {
             change = Some(("Reset Style", Box::new(|st| *st = TopicStyle::default())));
         }
 
+        let mut marker_action = None;
+        if !topic.markers.is_empty() {
+            ui.label(t("Markers"));
+            ui.horizontal_wrapped(|ui| {
+                for (index, m) in topic.markers.iter().enumerate() {
+                    if ui.button(format!("{} ✖", markers::glyph(m))).clicked() && touch_allowed {
+                        marker_action = Some(Cmd::Canvas(Action::RemoveMarker(primary, index)));
+                    }
+                }
+            });
+        }
+        if let Some((label, f)) = change {
+            let _ = d
+                .doc
+                .edit_sheet(label, |s| s.update_style(&sel, |st| f(st)));
+        }
+        if let Some(numbering) = numbering_change {
+            let result = d.doc.edit_sheet("Numbering", |s| {
+                for id in &sel {
+                    s.set_sibling_numbering(*id, numbering)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.toasts
+                    .warning(format!("{}: {error}", t("Not possible here")));
+            }
+        }
+        if let Some(command) = marker_action {
+            self.exec(ui.ctx(), command);
+        }
+        self.task_properties(ui);
+    }
+
+    fn data_tab(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+        // Object styling stays in Style; Data only edits the selected topic.
+        if self.doc().is_some_and(|d| d.view.selected_object.is_some()) {
+            widgets::caption(ui, t("Select a topic to edit its data."));
+            return;
+        }
+        self.image_properties(ui);
+        if self.doc().is_some_and(|doc| {
+            doc.view
+                .primary()
+                .and_then(|id| doc.doc.sheet().topic(id))
+                .is_some_and(|topic| topic.attachment.is_some())
+        }) {
+            data_divider(ui);
+        }
+        self.attachment_properties(ui);
+        let Some(d) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        let sel = d.view.selection.clone();
+        let Some(&primary) = sel.last() else {
+            widgets::caption(ui, t("Select a topic to edit its data."));
+            return;
+        };
+        let Some(topic) = d.doc.sheet().topic(primary).cloned() else {
+            return;
+        };
         let focus = self.focus_field.take();
         let mut edit_labels = false;
-        let mut marker_action = None;
-        widgets::section(ui, t("Topic Properties"), true, |ui| {
-            let l = ui.label(t("Hyperlink"));
+        data_section(ui, t("Hyperlink"), |ui, heading| {
             let current = topic.hyperlink.clone().unwrap_or_default();
             let salt = (
                 "hyperlink",
@@ -3336,7 +3425,7 @@ impl ThinodaApp {
                 log::warn!("hyperlink draft: {error}");
                 self.toasts.error(error);
             }
-            let r = r.labelled_by(l.id);
+            let r = r.labelled_by(heading);
             if focus == Some(FocusField::Hyperlink) {
                 if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
                     self.focus_field = focus;
@@ -3346,7 +3435,8 @@ impl ThinodaApp {
                     r.scroll_to_me(Some(egui::Align::Center));
                 }
             }
-            ui.label(t("Labels"));
+        });
+        data_section(ui, t("Labels"), |ui, _| {
             ui.horizontal_wrapped(|ui| {
                 for label in &topic.labels {
                     ui.label(label);
@@ -3356,8 +3446,10 @@ impl ThinodaApp {
                 .add_enabled(sel.len() == 1, egui::Button::new(t("Edit labels")))
                 .clicked()
                 && touch_allowed;
-            let l = ui.label(t("Notes"));
-            let current = topic.notes.as_deref().unwrap_or_default().to_owned();
+        });
+        let current = topic.notes.as_deref().unwrap_or_default().to_owned();
+        let markdown = topic.notes.as_ref().is_some_and(|note| note.is_markdown());
+        let (r, mut done, mut format_notes) = data_section(ui, t("Notes"), |ui, heading| {
             let salt = (
                 "notes",
                 &d.key,
@@ -3366,28 +3458,16 @@ impl ThinodaApp {
                 primary,
             );
             restore_inspector_buffer(d, ui, salt, primary, &crate::doc::InspectorField::Notes);
-            let (r, mut done) = buffered_text(ui, salt, &current, 5, "");
-            let format_notes = crate::notes::tools(
-                ui,
-                &r,
-                &current,
-                &mut done,
-                topic.notes.as_ref().is_some_and(|note| note.is_markdown()),
-                d.doc.state_id(),
-            );
-            if let Err(error) = track_inspector_edit(
-                d,
-                ui,
-                &r,
-                crate::doc::InspectorField::Notes,
-                topic.notes.clone(),
-                done,
-                format_notes,
-            ) {
-                log::warn!("notes draft: {error}");
-                self.toasts.error(error);
-            }
-            let r = r.labelled_by(l.id);
+            let (r, mut done) = ui
+                .add_enabled_ui(
+                    !crate::notes::enlarged_active(ui.ctx())
+                        && !crate::equations::enlarged_active(ui.ctx()),
+                    |ui| buffered_text(ui, salt, &current, 5, ""),
+                )
+                .inner;
+            let format_notes =
+                crate::notes::tools(ui, &r, &current, &mut done, markdown, d.doc.state_id());
+            let r = r.labelled_by(heading);
             if focus == Some(FocusField::Notes) {
                 if !r.has_focus() || ui.is_sizing_pass() || !ui.is_enabled() {
                     self.focus_field = focus;
@@ -3397,42 +3477,40 @@ impl ThinodaApp {
                     r.scroll_to_me(Some(egui::Align::Center));
                 }
             }
-            if !topic.markers.is_empty() {
-                ui.label(t("Markers"));
-                ui.horizontal_wrapped(|ui| {
-                    for (index, m) in topic.markers.iter().enumerate() {
-                        if ui.button(format!("{} ✖", markers::glyph(m))).clicked() && touch_allowed
-                        {
-                            marker_action = Some(Cmd::Canvas(Action::RemoveMarker(primary, index)));
-                        }
-                    }
-                });
-            }
+            (r, done, format_notes)
         });
-
-        if let Some((label, f)) = change {
-            let _ = d
-                .doc
-                .edit_sheet(label, |s| s.update_style(&sel, |st| f(st)));
-        }
-        if let Some(numbering) = numbering_change {
-            let result = d.doc.edit_sheet("Numbering", |s| {
-                for id in &sel {
-                    s.set_sibling_numbering(*id, numbering)?;
-                }
-                Ok(())
+        if !crate::notes::enlarged_active(ui.ctx()) {
+            format_notes |= data_section(ui, t("Equation"), |ui, _| {
+                crate::notes::equation_tools(
+                    ui,
+                    &r,
+                    &current,
+                    &mut done,
+                    markdown || format_notes,
+                    d.doc.state_id(),
+                )
             });
-            if let Err(error) = result {
-                self.toasts
-                    .warning(format!("{}: {error}", t("Not possible here")));
-            }
         }
+        if let Err(error) = track_inspector_edit(
+            d,
+            ui,
+            &r,
+            crate::doc::InspectorField::Notes,
+            topic.notes.clone(),
+            done,
+            format_notes,
+        ) {
+            log::warn!("notes draft: {error}");
+            self.toasts.error(error);
+        }
+
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
         }
-        if let Some(command) = marker_action {
-            self.exec(ui.ctx(), command);
-        }
+    }
+
+    fn task_properties(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         ui.separator();
         let todo = self.doc().and_then(|doc| {
             if doc.view.selection.len() != 1 {
@@ -3888,34 +3966,17 @@ impl ThinodaApp {
 
     // ----- search bar ---------------------------------------------------------------------------
 
-    fn search_bar(&mut self, ctx: &Context, canvas: egui::Rect) {
+    fn search_bar(&mut self, ctx: &Context) {
         let mut close = false;
         let touch_allowed = widgets::touch_activation_allowed(ctx);
-        let bounds = ctx.content_rect().shrink(8.0);
-        let width = 354.0_f32.min(bounds.width());
-        let right = if canvas.width() >= width {
-            canvas.right().min(bounds.right())
-        } else {
-            bounds.right()
-        };
-        let top = 56.0_f32.min(bounds.top() + bounds.height() * 0.15);
-        let position = egui::pos2((right - width).max(bounds.left()), top);
-        egui::Area::new(egui::Id::unique("thinoda_search"))
-            .fixed_pos(position)
-            .constrain_to(bounds)
+        let response = Dialog::new(egui::Id::unique("thinoda_search"), t("Find and Replace…"))
+            .icon(icons::SEARCH)
+            .labels(&i18n::dialog_labels())
+            .default_width(520.0)
+            .default_height(420.0)
+            .min_size(egui::vec2(280.0, 180.0))
+            .fit_content_height(true)
             .show(ctx, |ui| {
-                let frame = widgets::card(ui);
-                let margin = frame.total_margin().sum();
-                frame.show(ui, |ui| {
-                    ui.set_width((width - margin.x).max(0.0));
-                    // Recompute room each frame instead of inheriting the Area's
-                    // previous compact height when replacement controls appear.
-                    ui.set_max_height((bounds.bottom() - position.y - margin.y).max(0.0));
-                    egui::ScrollArea::vertical()
-                        .id_salt("search_scroll")
-                        .max_height((bounds.bottom() - position.y - margin.y).max(0.0))
-                        .min_scrolled_height(0.0)
-                        .show(ui, |ui| {
                             let r = widgets::search_field(ui, &mut self.search.query, t("Search"));
                             if self.search.focus && ui.is_enabled() && !ui.is_sizing_pass() {
                                 self.search.focus = !r.has_focus();
@@ -3956,16 +4017,16 @@ impl ThinodaApp {
                                 }
                             });
                             let n = self.search.hits.len();
+                            if !self.search.query.is_empty() || self.search.facets.active() {
                             widgets::caption(
                                 ui,
-                                if self.search.query.is_empty() && !self.search.facets.active() {
-                                    String::new()
-                                } else if n == 0 {
+                                if n == 0 {
                                     t("No results").to_string()
                                 } else {
                                     format!("{}/{} {}", self.search.current + 1, n, t("results"))
                                 },
                             );
+                            }
                             if self.search.all_sheets
                                 && let Some(hit) = self.search.hits.get(self.search.current)
                                 && let Some(sheet) = self
@@ -3982,7 +4043,7 @@ impl ThinodaApp {
                                 self.search.dim,
                                 self.search.show_replace,
                             );
-                            ui.horizontal_wrapped(|ui| {
+                            ui.vertical(|ui| {
                                 ui.checkbox(&mut self.search.all_sheets, t("All sheets"));
                                 ui.checkbox(&mut self.search.opts.case_sensitive, t("Match case"));
                                 ui.checkbox(&mut self.search.opts.whole_word, t("Whole word"));
@@ -4012,6 +4073,8 @@ impl ThinodaApp {
                                 );
                             }
                             if self.search.show_replace {
+                                ui.separator();
+                                ui.label(t("Replace with"));
                                 widgets::caption(ui, t("Replaces topic titles only."));
                                 ui.add(
                                     TextEdit::singleline(&mut self.search.replace)
@@ -4034,10 +4097,8 @@ impl ThinodaApp {
                             }
                             self.search_facets_ui(ui, touch_allowed);
                             reveal_changed_focus(ui);
-                        });
-                });
             });
-        if close {
+        if close || response.close_requested {
             self.search.open = false;
         }
         self.apply_search_filter();

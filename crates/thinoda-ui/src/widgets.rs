@@ -459,10 +459,15 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(crate::icons::SEARCH).color(p.text_muted));
+                ui.label(
+                    egui::RichText::new(crate::icons::SEARCH)
+                        .font(FontId::proportional(crate::icons::SIZE_SMALL))
+                        .color(p.text_muted),
+                );
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .hint_text(hint)
+                        .align(Align2::LEFT_CENTER)
                         .frame(egui::Frame::NONE)
                         .desired_width(f32::INFINITY),
                 )
@@ -941,5 +946,55 @@ mod tests {
         harness.get_by_label("Search topics").type_text("roadmap");
         harness.run();
         assert_eq!(harness.state(), "roadmap");
+    }
+
+    #[test]
+    fn search_icon_and_hint_or_query_share_a_vertical_center() {
+        fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Rect {
+            fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
+                match shape {
+                    egui::Shape::Text(shape) if shape.galley.text() == text => {
+                        Some(egui::Rect::from_min_size(shape.pos, shape.galley.size()))
+                    }
+                    egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, text)),
+                    _ => None,
+                }
+            }
+            shapes
+                .iter()
+                .find_map(|shape| find(&shape.shape, text))
+                .unwrap()
+        }
+
+        for dark in [false, true] {
+            for height in [26.0, 40.0] {
+                for hint in ["Search", "Suchen", "Rechercher"] {
+                    for query in ["", "roadmap"] {
+                        let mut h = Harness::new_ui_state(
+                            |ui, query: &mut String| {
+                                ui.ctx().set_visuals(if dark {
+                                    egui::Visuals::dark()
+                                } else {
+                                    egui::Visuals::light()
+                                });
+                                ui.spacing_mut().interact_size.y = height;
+                                search_field(ui, query, hint);
+                            },
+                            query.to_owned(),
+                        );
+                        h.run_steps(3);
+                        let icon = text_rect(&h.output().shapes, crate::icons::SEARCH);
+                        let text = text_rect(
+                            &h.output().shapes,
+                            if query.is_empty() { hint } else { query },
+                        );
+                        assert!(
+                            (icon.center().y - text.center().y).abs() <= 1.0,
+                            "dark={dark}, height={height}, hint={hint}, query={query}: {icon:?} vs {text:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

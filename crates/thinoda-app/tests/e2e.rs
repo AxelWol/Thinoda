@@ -1251,15 +1251,12 @@ fn map_panel_themes_fit_and_can_be_selected() {
     h.run_steps(4);
     assert_eq!(h.state().format_tab, FormatTab::Map);
     let map_tab = h.get_by_role_and_label(Role::Tab, "Map").rect();
+    let style_tab = h.get_by_role_and_label(Role::Tab, "Style").rect();
     assert!(h.state().doc().unwrap().view.canvas_rect().max.x <= map_tab.min.x);
     for id in thinoda_core::theme::Theme::IDS {
         let theme = thinoda_core::theme::Theme::builtin(id);
         let rect = h.get_by_role_and_label(Role::Button, theme.name).rect();
-        assert!(
-            rect.min.x >= map_tab.min.x - map_tab.width(),
-            "{} left sidebar",
-            theme.name
-        );
+        assert!(rect.min.x >= style_tab.min.x, "{} left sidebar", theme.name);
         assert!(rect.max.x <= 1280.0, "{} overflowed: {rect:?}", theme.name);
     }
     let ctx = h.ctx.clone();
@@ -1310,7 +1307,8 @@ fn map_tab_stays_reachable_after_scrolling_style_at_different_scales() {
             let theme = thinoda_core::theme::Theme::builtin(id);
             let rect = h.get_by_role_and_label(Role::Button, theme.name).rect();
             assert!(
-                rect.min.x >= tab.min.x - tab.width() && rect.max.x <= h.ctx.content_rect().right(),
+                rect.min.x >= h.get_by_role_and_label(Role::Tab, "Style").rect().left()
+                    && rect.max.x <= h.ctx.content_rect().right(),
                 "{width}/{scale}: {} overflowed: {rect:?}",
                 theme.name
             );
@@ -2044,9 +2042,11 @@ fn ctrl_h_replaces_and_undo_restores_the_topic() {
     h.run_steps(3);
     h.get_by_label("Search").type_text("Roadmap");
     h.run_steps(2);
-    h.get_by_label("Replace with").click();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Replace with")
+        .click();
     h.run_steps(2);
-    h.get_by_label("Replace with").type_text("Plan");
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Replace with")
+        .type_text("Plan");
     h.run_steps(2);
     h.get_by_label("Replace All").click();
     h.run_steps(2);

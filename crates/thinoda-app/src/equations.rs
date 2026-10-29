@@ -16,6 +16,23 @@ struct Draft {
     owner: Id,
     frame: u64,
     source: String,
+    enlarged: bool,
+}
+
+pub(crate) fn enlarged_active(ctx: &egui::Context) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<Draft>(Id::unique("notes-equation-draft"))
+            .is_some_and(|draft| {
+                draft.enlarged && ctx.cumulative_frame_nr() <= draft.frame.saturating_add(1)
+            })
+    })
+}
+
+pub(crate) fn editing_active(ctx: &egui::Context) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<Draft>(Id::unique("notes-equation-draft"))
+            .is_some_and(|draft| ctx.cumulative_frame_nr() <= draft.frame.saturating_add(1))
+    })
 }
 
 impl Draft {
@@ -90,19 +107,7 @@ pub(crate) fn tools(
     let frame = ui.ctx().cumulative_frame_nr();
     let request_id = id.with("open-request");
     let source_owner = response.id.with((source, markdown));
-    let open_requested = ui.data_mut(|data| {
-        let request = data.get_temp::<(Id, u64)>(request_id);
-        data.remove::<(Id, u64)>(request_id);
-        match request {
-            Some((expected, requested_frame)) if expected == source_owner => {
-                if frame == requested_frame {
-                    data.insert_temp(request_id, (expected, requested_frame));
-                }
-                frame == requested_frame.saturating_add(1)
-            }
-            _ => false,
-        }
-    });
+    let open_requested = crate::notes::editor_open_requested(ui, request_id, source_owner, frame);
     let mut draft = ui.data_mut(|data| {
         let draft = data
             .get_temp::<Draft>(id)
@@ -155,6 +160,7 @@ pub(crate) fn tools(
                     .flatten()
                     .map_or("\\frac{a}{b}+x^{2}", |(_, math)| math)
                     .to_owned(),
+                enlarged: false,
             });
         }
         if !markdown && !source.is_empty() {
@@ -163,64 +169,87 @@ pub(crate) fn tools(
     }
     let mut replacement = None;
     if let Some(mut pending) = draft {
+        let enlarged = pending.enlarged;
         // Consume before TextEdit/canvas handling: cancellation must not also
         // clear the selected topic or escape the surrounding view.
         let mut close = allowed
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        ui.small(t(HELP));
-        let label = ui.label(t("Equation source"));
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut pending.source)
-                .id(id.with(owner))
-                .desired_rows(3)
-                .desired_width(ui.available_width())
-                .code_editor(),
-        );
-        response.labelled_by(label.id);
-        let preview = layout(&pending.source, ui);
-        match &preview {
-            Ok(layout) => paint(ui, &pending.source, layout),
-            Err(error) => {
-                ui.colored_label(ui.visuals().error_fg_color, t(error));
+        let mut content = |ui: &mut Ui| {
+            if enlarged {
+                ui.small(t("Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered."));
+                ui.small(t("Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere."));
             }
+            if !enlarged && ui.button(t("Enlarge equation editor")).clicked() && allowed {
+                pending.enlarged = true;
+            }
+            ui.small(t(HELP));
+            let label = ui.label(t("Equation source"));
+            let response = ui.add(
+                egui::TextEdit::multiline(&mut pending.source)
+                    .id(id.with(owner))
+                    .desired_rows(if enlarged { 10 } else { 3 })
+                    .desired_width(ui.available_width())
+                    .code_editor(),
+            );
+            response.labelled_by(label.id);
+            let preview = layout(&pending.source, ui);
+            match &preview {
+                Ok(layout) => paint(ui, &pending.source, layout),
+                Err(error) => {
+                    ui.colored_label(ui.visuals().error_fg_color, t(error));
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        preview.is_ok(),
+                        egui::Button::new(t("Apply notes equation")),
+                    )
+                    .clicked()
+                    && allowed
+                {
+                    match math::replace_note(source, Some(&pending.source)) {
+                        Ok(note) => {
+                            replacement = Some(note);
+                            close = true;
+                        }
+                        Err(error) => {
+                            ui.colored_label(ui.visuals().error_fg_color, t(error));
+                        }
+                    }
+                }
+                if block.as_ref().is_ok_and(Option::is_some)
+                    && ui.button(t("Remove notes equation")).clicked()
+                    && allowed
+                {
+                    match math::replace_note(source, None) {
+                        Ok(note) => {
+                            replacement = Some(note);
+                            close = true;
+                        }
+                        Err(error) => {
+                            ui.colored_label(ui.visuals().error_fg_color, t(error));
+                        }
+                    }
+                }
+                if ui.button(t("Cancel equation edit")).clicked() && allowed {
+                    close = true;
+                }
+            });
+        };
+        if enlarged {
+            let labels = crate::i18n::dialog_labels();
+            let result = thinoda_ui::Dialog::new(id.with("dialog"), t("Equation editor"))
+                .labels(&labels)
+                .enabled(ui.is_enabled())
+                .default_width(720.0)
+                .default_height(480.0)
+                .min_size(egui::vec2(280.0, 160.0))
+                .show(ui.ctx(), content);
+            close |= result.close_requested;
+        } else {
+            content(ui);
         }
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    preview.is_ok(),
-                    egui::Button::new(t("Apply notes equation")),
-                )
-                .clicked()
-                && allowed
-            {
-                match math::replace_note(source, Some(&pending.source)) {
-                    Ok(note) => {
-                        replacement = Some(note);
-                        close = true;
-                    }
-                    Err(error) => {
-                        ui.colored_label(ui.visuals().error_fg_color, t(error));
-                    }
-                }
-            }
-            if block.as_ref().is_ok_and(Option::is_some)
-                && ui.button(t("Remove notes equation")).clicked()
-                && allowed
-            {
-                match math::replace_note(source, None) {
-                    Ok(note) => {
-                        replacement = Some(note);
-                        close = true;
-                    }
-                    Err(error) => {
-                        ui.colored_label(ui.visuals().error_fg_color, t(error));
-                    }
-                }
-            }
-            if ui.button(t("Cancel equation edit")).clicked() && allowed {
-                close = true;
-            }
-        });
         if !close {
             pending.frame = frame;
             ui.data_mut(|data| data.insert_temp(id, pending));
@@ -265,6 +294,7 @@ mod tests {
             owner,
             frame: 10,
             source: "x".into(),
+            enlarged: false,
         };
         assert!(draft.belongs_to(owner, 11));
         assert!(!draft.belongs_to(owner, 12));

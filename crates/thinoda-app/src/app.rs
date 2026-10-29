@@ -1050,7 +1050,7 @@ impl ThinodaApp {
                 self.zen = false;
                 self.settings.show_format_panel = true;
                 self.sidebar_family = SidebarFamily::Format;
-                self.format_tab = FormatTab::Style;
+                self.format_tab = FormatTab::Data;
                 self.focus_field = Some(f);
                 self.save_settings();
             }

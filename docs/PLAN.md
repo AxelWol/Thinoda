@@ -11,6 +11,52 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current next-value state (2026-10-29)
 
+**Search/Replace follow-up (2026-10-29, implemented locally):** replace the
+floating search card with the shared resizable nonmodal dialog, including its
+localized header, minimize/expand, maximize/restore, close and edge/corner resize.
+Keep query, replacement and options while resizing or minimizing; closing still
+clears the dimming filter. Stack options consistently and label the replacement
+field without changing title-only replacement behavior. Align the search lens
+and placeholder (ghost text), as well as typed text, on the same vertical center
+in the shared search widget for both themes. Cover narrow/scaled windows, all
+ten app languages, keyboard navigation and painted icon/text alignment.
+The caption regression also exposed a shared content-fit cursor reset: isolate
+the scrolling body from the header so controls cannot overlap caption actions.
+
+**Requested inspector slice (2026-10-29):** add Data between Style (Stil) and
+Map in the shared native/web inspector, in Map and Outliner. Move Image,
+Attachment, Hyperlink, Labels, Notes and notes-equation controls into Data.
+Keep appearance, markers and Task Planning in Style; this request concerns
+data, not scheduling dates. Retain visibility/preferences, separate tab scroll
+positions, command navigation, conflict-checked drafts, save/recovery and undo.
+Verify all ten languages/light-dark, narrow windows and affected regressions.
+
+**Final integration critique:** distinct titled groups/dividers now separate
+Image, Attachment, Hyperlink, Labels, Notes and Equation; Markdown preview stays
+inside Notes. The independent review found a missed locale test still looking
+for Notes in Style and an untranslated German Data caption; both are corrected.
+Its scroll/restore failures were not reproducible against the final integrated
+shared-dialog implementation: all three Data tests and all six enlarged-editor
+tests pass together. The supported trade-off remains explicit Apply: unapplied
+scratch is discarded on context/revision changes, not saved or recovered.
+One equation draft is active app-wide; concurrent multi-window editing is not
+claimed. Native/WASM strict Clippy, production Trunk build, app/UI unit suites
+and affected integration suites pass; this is not macOS/Linux host acceptance.
+The final full `thinoda-app`/`thinoda-ui` run passes 549 tests across 74 suites
+(one existing ignored test), including the corrected Notes locale regression.
+Refinement: give Image, Attachment, Hyperlink, Labels, Notes and Equation their
+own titled groups with consistent dividers/whitespace, omit redundant topic
+headings, and keep Markdown preview in Notes rather than the Equation group.
+
+**Follow-up request in the same scope:** explicit enlarge actions for Notes and
+equations should reuse the standard resizable nonmodal dialog, including header
+actions, minimize/maximize/restore and resizing. Preserve context/source/format/
+revision ownership and equation scratch text; avoid parallel conflicting editors.
+Close/cancel must not apply edits; explicit apply is undoable. Selection,
+document or revision changes must never apply a stale draft elsewhere. Cover
+localization/themes, header/resize, cancel/apply/undo, stale/save/recovery and map
+interaction, without broadening the supported equation syntax or storage scope.
+
 **New priority: background version checks (2026-10-29, implemented locally;
 independent review completed).** Installed
 web apps periodically check and cache complete new shells while running. Keep

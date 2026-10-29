@@ -17,7 +17,8 @@ use thinoda_platform::{
     settings::{Language, Settings, ThemeMode},
 };
 
-fn harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
+fn harness(mut app: ThinodaApp) -> Harness<'static, ThinodaApp> {
+    app.format_tab = thinoda_app::app::FormatTab::Data;
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 1100.0))
         .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);

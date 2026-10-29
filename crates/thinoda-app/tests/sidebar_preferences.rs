@@ -103,10 +103,10 @@ fn sidebar_choices_survive_restart_without_changing_maps_or_other_preferences() 
             assert_eq!(app.format_tab, FormatTab::Map);
             assert_eq!(app.settings.theme, theme);
             assert_eq!(app.settings.language, language);
-            for command in [
-                Cmd::TopicStyle,
-                Cmd::EditField(FocusField::Notes),
-                Cmd::EditField(FocusField::Hyperlink),
+            for (command, expected_tab) in [
+                (Cmd::TopicStyle, FormatTab::Style),
+                (Cmd::EditField(FocusField::Notes), FormatTab::Data),
+                (Cmd::EditField(FocusField::Hyperlink), FormatTab::Data),
             ] {
                 exec(&mut h, Cmd::ToggleFormatPanel);
                 if h.state().settings.show_format_panel {
@@ -116,7 +116,7 @@ fn sidebar_choices_survive_restart_without_changing_maps_or_other_preferences() 
                 exec(&mut h, command);
                 let app = restart(&paths);
                 assert_eq!(app.sidebar_family, SidebarFamily::Format);
-                assert_eq!(app.format_tab, FormatTab::Style);
+                assert_eq!(app.format_tab, expected_tab);
                 assert!(app.settings.show_format_panel);
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
                 assert_eq!(h.state().doc().unwrap().doc.state_id(), state);

@@ -441,25 +441,29 @@ impl<'a> Dialog<'a> {
             } else {
                 ui.available_height().max(0.0)
             };
-            if fit && self.fit_content_height {
-                ui.set_max_height(ui.min_rect().height() + max_height);
-            }
             let area = if self.hscroll {
                 egui::ScrollArea::both()
             } else {
                 egui::ScrollArea::vertical()
             };
             Some(
-                area.id_salt(self.id.with("body"))
-                    .max_height(max_height)
-                    .min_scrolled_height(if fit && !self.fit_content_height {
-                        max_height
-                    } else {
-                        max_height.min(64.0)
-                    })
-                    .auto_shrink([false, fit])
-                    .show(ui, add)
-                    .inner,
+                ui.vertical(|ui| {
+                    if fit && self.fit_content_height {
+                        // Changing bounds resets egui's cursor; isolate it from the caption.
+                        ui.set_max_height(max_height);
+                    }
+                    area.id_salt(self.id.with("body"))
+                        .max_height(max_height)
+                        .min_scrolled_height(if fit && !self.fit_content_height {
+                            max_height
+                        } else {
+                            max_height.min(64.0)
+                        })
+                        .auto_shrink([false, fit])
+                        .show(ui, add)
+                        .inner
+                })
+                .inner,
             )
         });
 
@@ -827,6 +831,30 @@ mod tests {
             "{rect:?}"
         );
         assert!(rect.height() > 300.0, "{rect:?}");
+    }
+
+    #[test]
+    fn content_sized_body_does_not_overlap_the_caption() {
+        let ctx = Context::default();
+        let mut last = None;
+        let mut body = None;
+        for _ in 0..4 {
+            run(&ctx, input(vec2(800.0, 500.0)), |ctx| {
+                last = Dialog::new(Id::unique("caption-body"), "Caption")
+                    .fit_content_height(true)
+                    .show(ctx, |ui| {
+                        body = Some(ui.button("First body control").rect);
+                    })
+                    .rect;
+            });
+        }
+        let rect = last.unwrap();
+        let body = body.unwrap();
+        assert!(
+            body.top() > rect.top() + TITLE_ROW_HEIGHT,
+            "{body:?} vs {rect:?}"
+        );
+        assert!(rect.contains_rect(body));
     }
 
     #[test]

@@ -60,6 +60,33 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Inspector content ownership:** the shared native/web Format Panel orders
+  Style, Data, Map in both Map and Outliner. Data reuses the image/attachment
+  helpers and owns Hyperlink, Labels, Notes and the notes-equation tools.
+  Data's non-collapsing field groups use a heading that also labels the field,
+  dividers and consistent spacing; Image/Attachment retain their disclosure
+  controls. Markdown preview stays within Notes; Equation is a sibling group.
+  The equation helper shares the Notes response/owned draft, not a second buffer.
+  Repeated topic headings are omitted. Style
+  retains appearance, object styling, markers, To-Do and Task Planning.
+  Each tab has independent scroll/content salts; document/sheet/topic-scoped
+  text buffers remain recovery-backed. Switching tabs flushes the owning draft
+  through the existing conflict check before changing tabs. Notes/Hyperlink
+  commands and completed image/attachment insertion select Data. `FormatTab`
+  adds the serde value `data`; existing `style`, `map` and unknown-value fallback
+  remain compatible. No new settings schema or document format is introduced.
+  Notes/equation enlarge actions reuse `thinoda_ui::Dialog` (nonmodal, resizable,
+  shared translated header). Enlarged Notes stages a source/format/revision-
+  and response-ID-owned copy; formatting, inert preview and equation tools are
+  shared, not reimplemented. Enlarging an equation retains the same `Draft` and
+  TextEdit ID/undo buffer, only changing the rendering surface. The original
+  editor is disabled while enlarged. Cancel/Close discard scratch; explicit
+  Apply passes through the existing `InspectorEdit` conflict check/undo.
+  Staged dialog edits are not saved/recovered until Apply. Owner/revision or
+  visible-frame discontinuity invalidates scratch, so changing tabs, selection,
+  documents or the map cannot apply it to a different source. Minimizing keeps
+  the draft alive. No modal map lock, document format or persisted editor state
+  is introduced.
 - **Office export acceptance:** image-based PPTX uses slide-master ID
   `2147483648` and slide-layout ID `2147483649`; layout IDs must be in the
   schema's high range and must not reuse master IDs. Rust package regressions
@@ -397,7 +424,16 @@ graph TD
   minimum, and the action row allocates button height rather than remaining
   vertical space. Short save/exit prompts stay compact; long messages scroll.
   Explicitly user-sized/maximized dialogs and other tools retain their prior
-  sizing behavior.
+  sizing behavior. Content-fit bounds are applied inside a separate body child:
+  egui resets the cursor when changing these bounds, so applying them to the
+  parent would place body controls over the caption.
+- **Find/Replace surface**: the nonmodal shared dialog owns persistent
+  minimize/maximize/restore and edge/corner resize state; query, replacement,
+  facets and options remain in `SearchState`. Closing clears the view filter,
+  not the document or query. Vertically stacked options, a persistent replacement
+  label and scroll-to-focus keep controls reachable in narrow/scaled windows.
+  The shared `search_field` uses a fixed-size icon font and centered single-line
+  text alignment for both its hint and entered query.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate

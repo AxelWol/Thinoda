@@ -152,7 +152,7 @@ those system-owned controls. WinGet publishing remains paused.
   exports keep the plain title. XMind numbering is not imported or exported.
 - **Local images (XV4, partial):** select one topic, then Insert > Local Image
   (menu/ribbon/command palette or topic insert menu). PNG and JPEG files are
-  embedded, not linked to the source file. Style > Local Image shows the selected
+  embedded, not linked to the source file. Data > Local Image shows the selected
   topic and filename, with Replace/Remove, proportional Image width, Image below
   topic and Reset Size. Reset fits within 160 × 100 map units without upscaling;
   resizing is capped at 1024 units per side. Dropping PNG/JPEG files into the
@@ -178,7 +178,7 @@ those system-owned controls. WinGet publishing remains paused.
   Insert > Attachment to pick a local file (1 byte–8 MiB). A child topic with a
   paperclip title is inserted and selected; source bytes are embedded unchanged,
   not linked. Any file type can be stored, but nothing is interpreted, executed,
-  fetched or opened. Style > Attachment shows the sanitized filename and byte
+  fetched or opened. Data > Attachment shows the sanitized filename and byte
   size, with a separate **Save/Download attachment** action. Desktop asks for a
   save destination; web prompts for a name and offers a browser download.
   Save only files you trust. No external application is launched, and insertion
@@ -227,12 +227,17 @@ those system-owned controls. WinGet publishing remains paused.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts.
   Escape exits Zen after closing any active editor, search or popup first;
   it does not rely on F11, which browsers may reserve for fullscreen.
-- Search & Replace grows to show its controls without internal scrolling when
-  space permits; short/high-scale windows retain bounded scrolling.
+- Search & Replace uses the shared resizable nonmodal dialog with
+  minimize/expand, maximize/restore and close actions. Query, replacement and
+  options survive resizing/minimizing; closing clears search dimming without
+  changing the document. Options and replacement labels are aligned, and the
+  search lens, hint and typed query are vertically centered in both themes.
+  It grows to show controls when space permits; short/high-scale windows retain
+  bounded scrolling and keyboard focus reveal.
 - Settings > Editor > Show alignment guides optionally shows nearby matching
   topic-group edges/centers during free-placement dragging. It is off by default,
   does not snap positions, and does not change document styles or Undo history.
-- Style, Map and Symbols sidebars reveal newly focused controls during keyboard
+- Style, Data, Map and Symbols sidebars reveal newly focused controls during keyboard
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
@@ -462,7 +467,7 @@ those system-owned controls. WinGet publishing remains paused.
   for main topics. Explicit sides survive balancing and sibling additions. Native
   files and unchanged Thinoda XMind snapshots retain them; public XMind side interchange
   and exact native gesture/visual comparison remain open.
-- Insert > Labels, the topic/context menus and Style > Edit labels open the same
+- Insert > Labels, the topic/context menus and Data > Edit labels open the same
   anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
   remove chips; Apply commits once, while Escape/Cancel/outside click discards the
   draft. Labels are trimmed and deduplicated case-sensitively, retaining order by
@@ -519,11 +524,25 @@ those system-owned controls. WinGet publishing remains paused.
   undoable ancestor expansion for a collapsed target.
   In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
   focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
-- Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
+- Shared right sidebar: Format Panel for Style/Data/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
-  and Style/Map tabs stay visible while their contents scroll independently.
+  and Style/Data/Map tabs stay visible while their contents scroll independently.
   Style reflects the selected topic's resolved properties, including inherited/custom
   colors with checked swatches and hex values; Map controls apply to the entire sheet.
+  Data groups Local Image, Attachment, Hyperlink, Labels, Notes and notes equations
+  in both Map and Outliner. Notes/Hyperlink shortcuts open Data directly.
+  Each has its own titled group with dividers and consistent spacing; Markdown
+  preview stays in Notes, separate from Equation. Topic headings are not repeated.
+  Style retains Task Planning and To-Do controls; Data does not mean scheduling dates.
+  **Enlarge notes editor** and **Enlarge equation editor** open standard resizable
+  nonmodal windows with minimize/maximize/restore/close headers. Notes keeps the
+  existing formatting and preview tools; enlarging an equation retains its scratch
+  source. The ordinary editor is disabled while its enlarged editor is active.
+  **Apply notes** / **Apply notes equation** commits one undoable edit; Cancel or
+  the header Close discards the staged changes. Save/recovery includes applied
+  changes only, not unapplied dialog scratch. Leaving Data, changing selection or
+  changing the source document/revision invalidates the staged editor without
+  applying elsewhere. The map remains interactive; use Apply before other edits.
 - Symbol colors: choose a color (picker or keyboard-editable hex) before inserting
   from either Symbols surface. Placed symbols expose individual color, default-color
   reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
@@ -602,7 +621,7 @@ those system-owned controls. WinGet publishing remains paused.
   sheet menu; ordinary taps and keyboard navigation remain available.
   Status view/zoom/Fit actions and Zoom/Statistics opening also reject canceled
   or multitouch releases, including zoom-menu presets and Fit.
-  The sidebar remembers its Format/Symbols family and last Style/Map tab across
+  The sidebar remembers its Format/Symbols family and last Style/Data/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use
   Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.

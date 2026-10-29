@@ -65,7 +65,7 @@ implementation. XMind commercial availability does not impose Thinoda paywalls.
 **Thinoda continuation (source rechecked 2026-10-27):** follows selected-topic
 Insert > Attachment and Delete, but intentionally separates selection from
 delivery. One opaque local file (1 byte–8 MiB) becomes a selected child topic
-with a paperclip title. Style > Attachment shows sanitized filename, byte size
+with a paperclip title. Data > Attachment shows sanitized filename, byte size
 and uninspected status. **Save/Download attachment** is a second explicit action:
 choose a native destination or request a browser download via the VFS. Exact
 bytes are preserved; no external app is launched, no path/URL is fetched and
@@ -340,7 +340,7 @@ establish the rich-note envelope, not renderer fidelity.
 - Source: https://xmind.com/user-guide/pic-new
 
 Thinoda implementation, rechecked 2026-10-27: one selected topic owns the local
-PNG/JPEG picker; Style > Local Image provides proportional width, above/below,
+PNG/JPEG picker; Data > Local Image provides proportional width, above/below,
 Reset Size (160 × 100 fit, no upscaling), replace and remove. Original bytes
 survive native storage/undo and appear in graphical outputs. Editable
 non-native formats other than the limited XMind image-package subset reject
@@ -439,6 +439,15 @@ used, so installed-app interoperability is not claimed.
 - Source: https://xmind.com/user-guide/structure-new
 
 ## Style
+- Thinoda's shared inspector orders Style, Data, Map. Data owns images,
+  attachments, hyperlinks, labels, notes and notes equations in Map and Outliner.
+  Titled groups/dividers separate each category without repeating the topic
+  heading; Markdown preview remains in Notes and Equation has its own group.
+  Notes/equation enlarge actions open resizable nonmodal editors with shared
+  minimize/maximize/restore/close headers. Apply is one undoable edit; Cancel or
+  Close discards scratch. Save/recovery excludes unapplied dialog edits. Changing
+  the source selection, tab, document or revision invalidates scratch. Task
+  Planning remains in Style.
 - Select a topic and open Format > Style. Up to 31 topic shapes are offered; shape, fill, border, text font/size/color/format/alignment, structure, and branch appearance can be adjusted.
 - Rich text formatting can apply to a selected portion of topic text; no default shape/font sizes are specified by the article.
 - Source: https://xmind.com/user-guide/style-new

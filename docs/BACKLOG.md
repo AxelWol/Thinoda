@@ -9,6 +9,16 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**Inspector/search UX follow-up (2026-10-29, implemented locally):** Data now
+sits between Style and Map with distinct Image, Attachment, Hyperlink, Labels,
+Notes and Equation groups, dividers and consistent spacing. Notes/Equation
+enlargement and Search/Replace reuse the shared resizable nonmodal dialog and
+caption actions. Search icon/hint/query centers align in both themes.
+Editor scratch must be explicitly applied; changing context/revision discards
+unapplied scratch, which is not included in save/recovery. These usability
+improvements do not complete equation export, topic-equation or rich-note-model
+parity. See PLAN for scope and verification.
+
 **XV7b first bounded slice (2026-10-29, local review pending):** the selected
 topic's Notes inspector, in Map and Outliner, now authors/edits/removes one
 offline rendered equation block. Fractions, groups and super/subscripts use a

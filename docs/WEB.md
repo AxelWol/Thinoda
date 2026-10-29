@@ -250,6 +250,21 @@ than being truncated. PPTX and presentation video are not provided.
 
 ## Task planning and Gantt
 
+The shared inspector orders **Style**, **Data**, **Map** in both Map and Outliner.
+**Data** groups Local Image, Attachment, Hyperlink, Labels, Notes and notes-equation
+controls; Notes/Hyperlink commands open it directly. Each tab remembers its own
+scroll position. Style retains appearance, To-Do and Task Planning controls.
+Each data category has its own titled group and divider spacing, without repeated
+topic headings. Markdown preview stays in Notes; Equation is a separate group.
+
+Notes and notes equations offer explicit **Enlarge** actions using the same
+resizable nonmodal dialog as desktop (translated header, minimize/maximize,
+restore and close). Enlarging an equation transfers its scratch source.
+**Apply notes** / **Apply notes equation** commits one undoable change; Cancel
+or Close discards scratch. Unapplied dialog edits are not included in save or
+recovery. Switching tabs/selection/document or editing the source revision
+invalidates scratch rather than applying it elsewhere. The map stays interactive.
+
 Select a topic and choose **Insert > Task Planning**, or use **Task Planning**
 in the Style inspector. Start/due dates use `YYYY-MM-DD`; duration counts
 inclusive working days. An empty start or duration allows an unscheduled draft.
