@@ -9,6 +9,14 @@ plain files (HTML, JavaScript glue, `.wasm`), so any static host can serve it.
 There is no server-side code; your maps never leave the browser unless you
 download them or use an AI server.
 
+The shared Notes inspector includes the bounded offline equation-preview editor
+(fractions, groups, superscripts/subscripts), without browser MathML, downloaded
+fonts or a TeX engine. Applied source stays in native v4 Markdown notes for
+save/reopen/recovery/copy; the scratch editor must be applied before it is durable.
+This is not a map/Outliner-row equation. Non-native/visual/Pitch output, printing
+and Map Shot refuse equation-bearing content rather than omit it. See
+[the equation slice and exact syntax](XMIND-USER-GUIDE.md#equation).
+
 ## Build and run locally
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -242,6 +250,21 @@ than being truncated. PPTX and presentation video are not provided.
 
 ## Task planning and Gantt
 
+The shared inspector orders **Style**, **Data**, **Map** in both Map and Outliner.
+**Data** groups Local Image, Attachment, Hyperlink, Labels, Notes and notes-equation
+controls; Notes/Hyperlink commands open it directly. Each tab remembers its own
+scroll position. Style retains appearance, To-Do and Task Planning controls.
+Each data category has its own titled group and divider spacing, without repeated
+topic headings. Markdown preview stays in Notes; Equation is a separate group.
+
+Notes and notes equations offer explicit **Enlarge** actions using the same
+resizable nonmodal dialog as desktop (translated header, minimize/maximize,
+restore and close). Enlarging an equation transfers its scratch source.
+**Apply notes** / **Apply notes equation** commits one undoable change; Cancel
+or Close discards scratch. Unapplied dialog edits are not included in save or
+recovery. Switching tabs/selection/document or editing the source revision
+invalidates scratch rather than applying it elsewhere. The map stays interactive.
+
 Select a topic and choose **Insert > Task Planning**, or use **Task Planning**
 in the Style inspector. Start/due dates use `YYYY-MM-DD`; duration counts
 inclusive working days. An empty start or duration allows an unscheduled draft.
@@ -414,9 +437,40 @@ external links and remote services still need a connection.
 Trunk's post-build hook (`cargo xtask web-pwa`) creates `dist/sw.js` from the
 exact staged artifacts and a content-derived revision. URLs, manifest identity,
 worker scope and caches are relative to the deployment subpath, including
-GitHub Pages. A new worker waits until all existing app windows/tabs close
-before taking over; there is no forced reload or `skipWaiting` during editing.
-Save/download maps before closing and reopen online to receive updates.
+GitHub Pages. The hook also embeds the package version and content revision
+into the **loaded HTML**, so the running shell's identity never comes from a
+mutable service worker.
+
+While running, the app requests `registration.update()` at startup and hourly.
+Focus, online, page-show and visibility/resume events share that throttle and
+one-in-flight guard. Errors retry with exponential backoff (two minutes up to
+one hour), are logged locally, and never produce success notices. Timers may
+be suspended or clamped; **closed/suspended apps cannot guarantee polling**.
+
+The browser automatically downloads a complete new shell into its waiting
+worker's cache. The shared translated light/dark **Update ready** notice shows
+the new version/build, a release/changelog link and close/reopen instructions.
+That is not a successful activation: the new worker waits until **all** existing
+app windows/tabs close before taking over. There is no forced reload,
+`skipWaiting` or `clients.claim`; open and unsaved documents remain untouched.
+Save/download maps before closing. A complete waiting shell can activate on a
+later launch, including offline while the browser retains its cache.
+
+After an observed waiting update actually boots as a different shell, the app
+shows **Update installed successfully** with the running version/build and
+release/changelog link. A scope-specific local-storage baseline and pending
+identity prevent first-install, unchanged-boot and stale-tab false positives.
+Per-build seen/pending markers cannot be rolled back by an older tab.
+Simultaneously launched tabs may each show the same legitimate applied notice.
+Storage failure, clearing site data, or never observing the waiting build can
+suppress the success notice;
+it must never infer success from a downloaded worker or failed storage write.
+Two tiny per-build markers are retained for observed updates/boots; clearing
+site data removes this history together with other browser-local app data.
+Repeated builds of the same package version are distinguished by content revision;
+unreleased development builds may have no corresponding published release notes.
+Dismissal is per version/build within the app session.
+
 Activation removes only obsolete Thinoda shell caches for the same scope.
 Registration/cache failures appear in the browser console and install panel;
 installation alone is not proof that offline caching succeeded.

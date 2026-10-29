@@ -18,8 +18,10 @@ published on [Thinoda app for GitHub Pages](https://axelwol.github.io/Thinoda/) 
 
 Thinoda's maintainers do not collect or process your personal data or mind map
 content through the app. Editing and storage happen locally on your device.
-Optional AI connections, cloud-synced folders and web hosting involve the
-services you choose to use. See the [Privacy Policy](PRIVACY.md) for details.
+Automatic update checks contact GitHub (native) or the app's web host (web),
+without sending documents or credentials. Optional AI connections, cloud-synced
+folders and web hosting involve external services. See the
+[Privacy Policy](PRIVACY.md) for details.
 
 ## Download
 Installers for every platform are attached to each
@@ -41,6 +43,26 @@ installers are not code-signed yet and SmartScreen may block first launch.
 The macOS release workflow Developer ID-signs, Apple-notarizes and staples both
 the app and DMG for Apple silicon and Intel. Older releases and local builds may
 still use ad-hoc signatures, which seal contents but do not establish developer trust.
+
+### Background updates
+
+Windows, macOS and Linux apps check GitHub's latest stable release at startup
+and every six hours while running (including overdue checks after resume).
+A dismissible notice shows the running/new version, release notes/changelog
+and a download link. Native binaries are **never automatically downloaded or
+installed**; choose the appropriate package and follow your usual installation
+method. Dismissal lasts for that version in the current app session.
+Offline/error checks retry with backoff; editing remains available.
+
+The web app checks hourly while running and caches a complete new shell in the
+background. **Update ready** means the download is ready, not that the running
+app changed. Save/download work, close **all** app tabs/windows and reopen to
+activate it; there is no forced reload. On a subsequent launch, an observed
+update's actual new build shows **Update installed successfully** with its
+version/build and release/changelog link. Notices follow all ten languages and
+light/dark mode. Browsers can suspend timers and cannot promise checks while
+closed. See [offline use and updates](docs/WEB.md#offline-use-and-updates) for
+storage and lifecycle limitations.
 
 ### Installing on Windows with WinGet
 The Windows installer's final page offers separate labeled options to run Thinoda
@@ -130,7 +152,7 @@ those system-owned controls. WinGet publishing remains paused.
   exports keep the plain title. XMind numbering is not imported or exported.
 - **Local images (XV4, partial):** select one topic, then Insert > Local Image
   (menu/ribbon/command palette or topic insert menu). PNG and JPEG files are
-  embedded, not linked to the source file. Style > Local Image shows the selected
+  embedded, not linked to the source file. Data > Local Image shows the selected
   topic and filename, with Replace/Remove, proportional Image width, Image below
   topic and Reset Size. Reset fits within 160 × 100 map units without upscaling;
   resizing is capped at 1024 units per side. Dropping PNG/JPEG files into the
@@ -156,7 +178,7 @@ those system-owned controls. WinGet publishing remains paused.
   Insert > Attachment to pick a local file (1 byte–8 MiB). A child topic with a
   paperclip title is inserted and selected; source bytes are embedded unchanged,
   not linked. Any file type can be stored, but nothing is interpreted, executed,
-  fetched or opened. Style > Attachment shows the sanitized filename and byte
+  fetched or opened. Data > Attachment shows the sanitized filename and byte
   size, with a separate **Save/Download attachment** action. Desktop asks for a
   save destination; web prompts for a name and offers a browser download.
   Save only files you trust. No external application is launched, and insertion
@@ -205,12 +227,17 @@ those system-owned controls. WinGet publishing remains paused.
 - Outliner, Zen mode, command palette (Ctrl+Shift+P), XMind-compatible shortcuts.
   Escape exits Zen after closing any active editor, search or popup first;
   it does not rely on F11, which browsers may reserve for fullscreen.
-- Search & Replace grows to show its controls without internal scrolling when
-  space permits; short/high-scale windows retain bounded scrolling.
+- Search & Replace uses the shared resizable nonmodal dialog with
+  minimize/expand, maximize/restore and close actions. Query, replacement and
+  options survive resizing/minimizing; closing clears search dimming without
+  changing the document. Options and replacement labels are aligned, and the
+  search lens, hint and typed query are vertically centered in both themes.
+  It grows to show controls when space permits; short/high-scale windows retain
+  bounded scrolling and keyboard focus reveal.
 - Settings > Editor > Show alignment guides optionally shows nearby matching
   topic-group edges/centers during free-placement dragging. It is off by default,
   does not snap positions, and does not change document styles or Undo history.
-- Style, Map and Symbols sidebars reveal newly focused controls during keyboard
+- Style, Data, Map and Symbols sidebars reveal newly focused controls during keyboard
   navigation. Focus elsewhere does not scroll the inspector, and manual scrolling
   is preserved until focus changes.
 - The searchable keyboard-shortcut reference scrolls within short/high-scale
@@ -346,7 +373,7 @@ those system-owned controls. WinGet publishing remains paused.
   offline Markdown preview. Formatting is stored as source text, preserving existing
   notes and their save/recovery/undo behavior; other views and exports may show the
   markup. Preview limits never truncate the editable source, and links/images are
-  not opened or fetched. Structured rich text and rendered equations remain planned.
+  not opened or fetched. Structured rich text and full topic-equation parity remain planned.
   The distinct **Bold notes** / **Italic notes** actions do not change topic styles;
   repeating an action on its selected text removes the surrounding emphasis markers.
   List actions keep the formatted lines selected: repeat to remove their markers,
@@ -357,6 +384,36 @@ those system-owned controls. WinGet publishing remains paused.
   saved note untouched. Code, image alternative text, checklist state and table
   cell boundaries are retained. The same preview limits apply; oversized notes
   are never silently truncated for copying.
+  FreeMind/Freeplane import retains a bounded supported HTML note subset as editable
+  Markdown, including styles and nested lists. Unsupported HTML/styles/spacing still
+  require loss confirmation and readable plain conversion. Legacy plain notes are
+  never inferred as Markdown; see the [notes interchange guide](docs/XMIND-USER-GUIDE.md#note).
+- **Equation preview in notes** is a bounded, offline authoring slice. Select a topic
+  and open Notes in its inspector (in Map or Outliner), then choose **Edit notes
+  equation**. Fractions (`\frac{a}{b}`), superscripts (`x^{2}`), subscripts
+  (`x_{i}`), combined scripts, groups, ASCII letters/digits and basic operators
+  render as text and vector fraction bars, not a source-only image.
+  Apply commits one undoable edit; invalid drafts cannot replace the saved block.
+  **Cancel equation edit** / Escape discard only the equation scratch draft.
+  Editing an existing block and removing it are explicit actions. Nonempty plain
+  notes must first be explicitly formatted as Markdown; opening them never converts
+  their syntax. One `thinoda-math-v1` fenced block is kept at the note's end.
+  Source is limited to 512 bytes, 128 parser nodes and eight nested groups; this is
+  **not general LaTeX or chemical notation**. There is no map/Outliner-row equation,
+  frame resizing, external font loading or TeX execution.
+  Save as `.thinoda` for source-preserving reopen/recovery/copy. Scratch drafts
+  are not recovery documents; apply first. Native v4 and sheet clipboard v3 already
+  preserve the Markdown source envelope, so no additional schema field/version
+  is introduced. Older source-aware readers may display the fence as code.
+  **All non-native exports (including Markdown/XMind), visual/Pitch exports,
+  printing and Map Shot refuse equation-bearing content**, even with lossy consent,
+  rather than silently omit it. Whole-workbook export checks every sheet; direct
+  sheet exports/print/Map Shot check their source sheet. This conservative policy
+  remains until equation-note export support is implemented. The reserved
+  `thinoda-math-v1` marker in any declared Markdown note also triggers this guard
+  when malformed or mentioned in prose; edit the note source to remove it when
+  it is not intended as an equation. Pasted LF, CRLF and CR fence line endings
+  are accepted without rewriting the surrounding note text.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.
@@ -410,7 +467,7 @@ those system-owned controls. WinGet publishing remains paused.
   for main topics. Explicit sides survive balancing and sibling additions. Native
   files and unchanged Thinoda XMind snapshots retain them; public XMind side interchange
   and exact native gesture/visual comparison remain open.
-- Insert > Labels, the topic/context menus and Style > Edit labels open the same
+- Insert > Labels, the topic/context menus and Data > Edit labels open the same
   anchored editor. Add comma-separated labels, reuse current-sheet suggestions or
   remove chips; Apply commits once, while Escape/Cancel/outside click discards the
   draft. Labels are trimmed and deduplicated case-sensitively, retaining order by
@@ -467,11 +524,25 @@ those system-owned controls. WinGet publishing remains paused.
   undoable ancestor expansion for a collapsed target.
   In Outline, structural shortcuts apply only to topic rows; toolbar/sidebar
   focus keeps its own keyboard behavior, while non-text Undo/Redo stays available.
-- Shared right sidebar: Format Panel for Style/Map and the smiley for grouped Symbols;
+- Shared right sidebar: Format Panel for Style/Data/Map and the smiley for grouped Symbols;
   click the active selector again to hide/reopen it. Map theme previews wrap to fit,
-  and Style/Map tabs stay visible while their contents scroll independently.
+  and Style/Data/Map tabs stay visible while their contents scroll independently.
   Style reflects the selected topic's resolved properties, including inherited/custom
   colors with checked swatches and hex values; Map controls apply to the entire sheet.
+  Data groups Local Image, Attachment, Hyperlink, Labels, Notes and notes equations
+  in both Map and Outliner. Notes/Hyperlink shortcuts open Data directly.
+  Each has its own titled group with dividers and consistent spacing; Markdown
+  preview stays in Notes, separate from Equation. Topic headings are not repeated.
+  Style retains Task Planning and To-Do controls; Data does not mean scheduling dates.
+  **Enlarge notes editor** and **Enlarge equation editor** open standard resizable
+  nonmodal windows with minimize/maximize/restore/close headers. Notes keeps the
+  existing formatting and preview tools; enlarging an equation retains its scratch
+  source. The ordinary editor is disabled while its enlarged editor is active.
+  **Apply notes** / **Apply notes equation** commits one undoable edit; Cancel or
+  the header Close discards the staged changes. Save/recovery includes applied
+  changes only, not unapplied dialog scratch. Leaving Data, changing selection or
+  changing the source document/revision invalidates the staged editor without
+  applying elsewhere. The map remains interactive; use Apply before other edits.
 - Symbol colors: choose a color (picker or keyboard-editable hex) before inserting
   from either Symbols surface. Placed symbols expose individual color, default-color
   reset, measured contrast and **Remove Symbol** controls in the Symbols panel;
@@ -497,6 +568,12 @@ those system-owned controls. WinGet publishing remains paused.
   dialog, and the I/O API refuses by default. CLI conversion must explicitly pass
   `--allow-symbol-color-loss` to produce these lossy formats. External plain-text
   clipboard content has no color fields; internal topic clipboard retains full fidelity.
+- CSV and OPML retain formatted notes as complete Markdown source, not displayed
+  rich text. Export requires a separate, cancelable confirmation before choosing
+  a destination; CLI conversion requires `--allow-note-format-loss` and I/O callers
+  must set `ExportOptions.allow_note_format_loss`. Neither `--allow-lossy` nor
+  symbol-color consent substitutes for this acknowledgement. The original workbook
+  remains unchanged; save as Thinoda to retain note-format metadata.
 - The Map structure selector opens a viewport-bounded, scrollable preview gallery
   with nine collapsible families covering all 17 existing structures. Original sample
   maps use the actual canvas renderer in light/dark mode; layout changes preserve rich
@@ -544,7 +621,7 @@ those system-owned controls. WinGet publishing remains paused.
   sheet menu; ordinary taps and keyboard navigation remain available.
   Status view/zoom/Fit actions and Zoom/Statistics opening also reject canceled
   or multitouch releases, including zoom-menu presets and Fit.
-  The sidebar remembers its Format/Symbols family and last Style/Map tab across
+  The sidebar remembers its Format/Symbols family and last Style/Data/Map tab across
   restarts, independently of whether the panel is hidden.
   The bottom bar shows the current Map/Outliner view; click it or use
   Ctrl+Shift+O (Command+Shift+O on macOS) to switch without discarding a title draft.

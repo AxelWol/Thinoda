@@ -45,6 +45,7 @@ fn inspector_reveals_keyboard_focus_without_changing_document() {
                     &[],
                 );
                 app.exec(&egui::Context::default(), Cmd::New);
+                app.format_tab = FormatTab::Data;
                 let before = app.doc().unwrap().doc.workbook().clone();
                 let revision = app.doc().unwrap().doc.state_id();
                 let mut h = Harness::builder()
@@ -135,7 +136,7 @@ fn inspector_reveals_keyboard_focus_without_changing_document() {
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
                 assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
                 h.state_mut().sidebar_family = SidebarFamily::Format;
-                h.state_mut().format_tab = FormatTab::Style;
+                h.state_mut().format_tab = FormatTab::Data;
                 h.run_steps(4);
                 h.get_by_role_and_label(Role::MultilineTextInput, t("Notes"))
                     .focus();

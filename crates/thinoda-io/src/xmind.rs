@@ -608,7 +608,7 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
             value["image"] = image;
         }
         if let Some(notes) = &model.notes {
-            value["notes"] = json!({"plain":{"content": notes}});
+            value["notes"] = json!({"plain":{"content": &**notes}});
         }
         if let Some(link) = &model.hyperlink {
             value["href"] = json!(link);
@@ -933,7 +933,7 @@ fn parse_topic(
         .and_then(|x| x.get("content"))
         .and_then(Value::as_str)
     {
-        t.notes = Some(n.to_owned());
+        t.notes = Some(n.into());
     }
     if let Some(a) = v.get("labels").and_then(Value::as_array) {
         t.labels = a
@@ -1495,7 +1495,7 @@ fn import_legacy_xml(bytes: &[u8]) -> Result<Workbook, IoError> {
                 {
                     match kind {
                         "title" => topic.node.title = value,
-                        "plain" => topic.node.notes = Some(value),
+                        "plain" => topic.node.notes = Some(value.into()),
                         "label" => topic.node.labels.push(value),
                         _ => {}
                     }

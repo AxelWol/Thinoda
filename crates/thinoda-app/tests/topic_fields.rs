@@ -166,7 +166,7 @@ fn topic_fields_share_selection_guards_and_preserve_inline_edits() {
                     assert_eq!(h.state().mode, CenterMode::Map);
                     assert!(h.state().settings.show_format_panel);
                     assert_eq!(h.state().sidebar_family, SidebarFamily::Format);
-                    assert_eq!(h.state().format_tab, FormatTab::Style);
+                    assert_eq!(h.state().format_tab, FormatTab::Data);
                     assert_eq!(h.state().doc().unwrap().view.primary(), Some(selected));
                     assert_eq!(h.state().doc().unwrap().doc.sheet(), &before);
                     let role = match field {

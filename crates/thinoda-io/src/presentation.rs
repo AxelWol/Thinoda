@@ -151,6 +151,7 @@ pub fn export_presentation_pptx(
     sheet: &Sheet,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
+    crate::reject_equation_notes(sheet)?;
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
     validate_scale(options.scale)?;
@@ -384,7 +385,7 @@ fn presentation_relationships(slide_count: usize) -> String {
 }
 
 fn slide_master_xml() -> &'static str {
-    r#"<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="1" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"#
+    r#"<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"#
 }
 
 fn slide_master_relationships() -> &'static str {
@@ -722,6 +723,49 @@ mod tests {
                 r#"<p:sldSz cx="{width}" cy="{height}" type="{size_type}"/>"#
             )));
             assert_eq!(presentation.matches("<p:sldId ").count(), 2);
+
+            let mut master = String::new();
+            std::io::Read::read_to_string(
+                &mut archive
+                    .by_name("ppt/slideMasters/slideMaster1.xml")
+                    .unwrap(),
+                &mut master,
+            )
+            .unwrap();
+            let mut reader = quick_xml::Reader::from_reader(master.as_bytes());
+            let mut layouts = 0;
+            loop {
+                match reader.read_event().unwrap() {
+                    quick_xml::events::Event::Empty(element)
+                        if element.name().as_ref() == "p:sldLayoutId" =>
+                    {
+                        layouts += 1;
+                        let attributes: std::collections::BTreeMap<_, _> = element
+                            .attributes()
+                            .map(|attribute| {
+                                let attribute = attribute.unwrap();
+                                (
+                                    attribute.key.as_ref().to_owned(),
+                                    attribute
+                                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                        .unwrap()
+                                        .into_owned(),
+                                )
+                            })
+                            .collect();
+                        // ST_SlideLayoutId is not a shape ID or relationship index.
+                        assert!(attributes["id"].parse::<u32>().unwrap() >= 2_147_483_648);
+                        assert_ne!(
+                            attributes["id"], "2147483648",
+                            "layout must not reuse master ID"
+                        );
+                        assert_eq!(attributes["r:id"], "rId1");
+                    }
+                    quick_xml::events::Event::Eof => break,
+                    _ => {}
+                }
+            }
+            assert_eq!(layouts, 1);
 
             let mut first_slide = String::new();
             std::io::Read::read_to_string(

@@ -9,6 +9,150 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**Inspector/search UX follow-up (2026-10-29, implemented locally):** Data now
+sits between Style and Map with distinct Image, Attachment, Hyperlink, Labels,
+Notes and Equation groups, dividers and consistent spacing. Notes/Equation
+enlargement and Search/Replace reuse the shared resizable nonmodal dialog and
+caption actions. Search icon/hint/query centers align in both themes.
+Editor scratch must be explicitly applied; changing context/revision discards
+unapplied scratch, which is not included in save/recovery. These usability
+improvements do not complete equation export, topic-equation or rich-note-model
+parity. See PLAN for scope and verification.
+
+**XV7b first bounded slice (2026-10-29, local review pending):** the selected
+topic's Notes inspector, in Map and Outliner, now authors/edits/removes one
+offline rendered equation block. Fractions, groups and super/subscripts use a
+bounded internal grammar, not general LaTeX/chemistry. Invalid drafts cannot
+replace a saved equation; Cancel and stale ownership/revision changes are safe.
+Source stays in the existing `markdown-v1` envelope/native v4/clipboard v3 and
+survives save/recovery/undo/copies. All non-native/visual/Pitch exports, printing
+and Map Shot refuse equation-bearing content until preservation/rendering exists.
+**Still open:** actual topic/map/Outliner-row equations, resize, broader notation,
+XMind interoperability and equation export parity. This notes-preview slice does
+not complete XV7b; see the scoped contract and verification in PLAN.
+
+**User priority: background version checks (2026-10-29, implemented locally;
+final independent review pending).** Web checks hourly while running, caches a
+complete waiting shell, distinguishes ready from next-launch applied success and
+never reloads unsaved work. Native Windows/macOS/Linux checks at startup/every
+six hours use a bounded worker and offer stable-version release/changelog and
+download links; no native automatic installation. All ten languages and both
+themes use shared nonmodal notices. First installs, stale tabs, storage failure,
+offline/backoff and untrusted release metadata have deterministic coverage.
+Browser closed/suspended polling and cross-OS runtime acceptance remain explicit
+limitations; no always-running updater is promised. Continue XV7 only after
+the update feature's final independent critique and verification handoff.
+
+**Current continuation (2026-10-29):** v0.17.0 has ten published downloads and
+six checksum manifests after PR #97; historical release blockers below are no
+longer current. There are no open GitHub issues at this check. Execution resumes
+with XV7a, then XV7b equations, XV8 and XV9.
+
+**User-reported exit confirmation sizing (2026-10-29, completed locally):**
+the unsaved-work prompt no longer fills the app height. Shared confirmations
+start at a bounded 440-point width and fit their message/action height, retaining
+scrolling for long content and user resize/maximize. Every-language desktop and
+narrow-window coverage keeps all three actions visible and verifies Cancel
+preserves unsaved work. Other tool dialogs retain their established sizing policy;
+cross-OS runtime acceptance remains separate from native/WASM compilation.
+
+**Office compatibility continuation (2026-10-29):** PPTX layout IDs now use the
+valid high range without colliding with master IDs. Installed Windows PowerPoint
+opened the corrected dark 4:3 deck without repair. The user's SDK-valid
+`slides-dark-4x3-fixed.pptx` retained
+all three slide IDs/images and the corrected layout ID; its precise repair history
+is not established. CI validates eight generated DOCX/XLSX/PPTX candidates using
+Microsoft's Open XML SDK plus a cross-part master/layout ID uniqueness guard and
+negative controls, before Pages deployment. This supersedes older schema-validation
+gaps below, but not Word/Excel/LibreOffice or cross-OS host-acceptance gaps.
+
+The first local XV7a persistence slice stores explicitly formatted notes in a
+`markdown-v1` source envelope. Legacy strings are preserved without conversion;
+formatting actions opt the whole note into Markdown, typing preserves its format,
+and native v4 / sheet clipboard v3 retain it through save/recovery/undo/copy.
+XMind private metadata retains the format; its public plain field still contains
+source text. Focused Windows verification passed 439 tests, strict native Clippy
+and the locked WASM check. This is not a full structured-rich-text or export-parity
+completion: a block/span model, formatting-loss handling and rendered equations
+remain open. No new UI strings or platform-specific controls were introduced.
+
+**XV7a Word continuation (2026-10-29):** declared Markdown notes now export as
+bounded Word paragraphs/runs and actual numbered/bulleted lists, retaining
+bold/italic, strike, inline code, hard breaks/tabs, nesting, continuation paragraphs
+and independent starting counters. Legacy plain notes stay literal. Unsupported
+Markdown and over-limit notes fail before writing, with topic-specific guidance
+in all ten catalogs; the source/destination remain unchanged. Parsed package/XML,
+scope and failure regressions are included in 443 passing focused Windows tests.
+Word/LibreOffice opening and Open XML schema validation remain unverified.
+This is a derived export model, not the persisted rich-text tree; non-Word
+export parity, explicit loss consent and equations remain next XV7 work.
+
+**XV7a FreeMind continuation (2026-10-29):** declared Markdown notes now export
+as escaped rich-note HTML with bold/italic/strike/code, paragraphs/hard breaks and
+structural ordered/bullet lists. Nesting, starting numbers, empty parent items and
+continuation paragraphs are preserved. The shared bounds and unsupported-syntax
+errors apply; tabs/repeated spaces are additionally rejected rather than relying
+on renderer-specific CSS. Legacy plain exports remain literal, and failures leave
+the map/destination unchanged. All ten catalogs have topic-specific guidance.
+At this export-only slice, Thinoda FreeMind import converted rich notes to plain text, requiring
+formatting-loss confirmation and preserving paragraph/break boundaries and
+entities. Parsed XML and focused regression coverage do not establish an actual
+FreeMind/Freeplane host opening or a formatted-note import round trip.
+**Review:** this closes one export gap without broadening the stored model or
+claiming full XV7 completion. Other formats, explicit export-loss consent, host
+acceptance and equations remain open.
+
+**XV7a FreeMind import continuation (2026-10-29):** bounded supported HTML notes
+now become explicit editable `markdown-v1`, preserving emphasis/strike/code,
+paragraphs/hard breaks and ordered/bullet lists with nested/empty parent items,
+continuations and independent starts. A shared-parser semantic comparison gates
+the no-warning path; literal Markdown punctuation cannot become accidental syntax.
+Legacy plain envelopes stay plain, including their literal whitespace. Without
+format metadata an unstyled single paragraph cannot be distinguished from legacy
+plain content and intentionally stays plain on reimport.
+Unknown HTML/styles/attributes, mixed inline/block items, unsupported spacing,
+code line breaks, empty paragraphs that Markdown cannot reproduce and processing
+limits keep readable fallback plus cancelable import-loss confirmation.
+**Critique:** generated Markdown is canonicalized/escaped source, not byte-identical
+HTML or Markdown, arbitrary HTML/CSS fidelity or full XV7 completion. IO/app
+regressions and strict native/production-WASM Clippy pass locally. Sanitizer fuzz
+smoke is blocked by the missing Windows ASan linker library; WASM test targets
+have pre-existing native-only API errors. External FreeMind/Freeplane acceptance,
+other interchange gaps and XV7b equations remain open; XV8/XV9 are unchanged.
+
+**XV7a Excel continuation (2026-10-29):** formatted notes now export as inline
+rich-text cells with emphasis/strike/code, paragraphs/hard breaks and visible
+nested list markers/counters, rather than raw Markdown. Notes wrap in a wider
+column; legacy plain notes stay literal. Literal SpreadsheetML escape sequences
+are protected and note text never becomes a formula. Shared parsing bounds and
+Excel's rendered-cell length/line-feed limits fail before writing, with guidance
+in all ten catalogs. Tabs are explicitly unsupported after Windows Excel
+acceptance showed that their visual spacing disappears. The rich fixture opened
+without repair; parsed regressions and Microsoft SDK validation cover the output.
+**Review:** cell text preserves readable list structure, not Excel list objects;
+other export gaps, full rich-note interchange, loss-consent and equations remain.
+
+**XV7a Markdown/TextBundle continuation (2026-10-29):** shared export now indents
+all lines of formatted notes consistently under nested topics and separates
+heading-topic notes as Markdown blocks instead of accidentally turning them into
+code. Legacy plain notes use collision-safe fenced literal blocks, deliberately
+monospaced rather than silently interpreting Markdown/HTML. Stored note source
+and format remain unchanged; TextBundle carries identical Markdown bytes.
+Parser-level regressions cover style/list/hard-break behavior at multiple depths,
+embedded fences, Unicode, full sources above preview limits and selected-sheet
+scope. This is export fidelity, not a note-preserving import round trip; asset
+packaging, other interchange, loss consent and equations remain open.
+
+**XV7a CSV/OPML continuation (2026-10-29):** declared Markdown notes require a
+separate cancelable export confirmation before the destination picker; CLI/API
+callers must explicitly enable note-format loss. Complete source is retained,
+not rich interpretation or format metadata. Consent is independent of symbol
+colors/general conversion loss and bound to the current document/sheet/revision.
+Only reachable notes on the exported sheet trigger it. OPML encodes tab/CR/LF
+attributes to retain source whitespace. All ten catalogs include guidance.
+**Review:** this is explicit source-only handoff, not rich-note round-trip
+support. Other export omissions, richer interchange and equations remain open.
+
 **XV7 current slice (2026-10-28):** PRs #93 and #94 are merged. A shared
 bounded Markdown-to-visible-text projection now drives local notes-search
 integration: visible formatted text matches, link destinations do not, and
@@ -178,7 +322,7 @@ code evidence and official sources.
 | 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** Bounded storage, PNG/JPEG authoring/rendering, selection-based drop/resize, Outliner previews, safe attachment save/download and the verified SDK-compatible XMind image subset are implemented locally; PR #88 is merged. This unlocks evidence-rich maps and later illustrations/equations. | Preserve bounded decode, stable IDs, sizing and missing/corrupt-file errors. Keep image insert/render/resize/replace/remove and explicit attachment saving without auto-execution; external-app open is not promised without a consistent safe platform contract. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. Installed-XMind interoperability and the Linux resource-bearing fuzz campaign remain unverified; topic deletion may leave unreferenced blobs. |
 | 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both formats are implemented locally in `Format::IMPORTABLE` and use the shared loss-confirmation flow; the confirmation previews the first eight topics and total count. | TextBundle Markdown and DOCX paragraphs/headings/numbered-list depth map to deterministic hierarchy. Bounded packages, invalid paths/metadata/XML/UTF-8, Unicode/entities, custom heading styles and loss warnings have focused integration coverage. The app preserves the source and does not fetch relationships or execute content. Word layout, embedded resources and full conversion fidelity are not promised. |
 | 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** Image-based `.pptx` export, explicit aspect-ratio choices and a first-slide fit preview are partially implemented locally. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export one rendered slide per saved slide and disclose that shapes/text are not separately editable. Package/XML, image-dimension and resource checks pass; opening checks in available PowerPoint/LibreOffice hosts remain. Editable PPTX/transitions/video are not implied. |
-| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Source-first Markdown authoring, bounded preview/copy and visible-text search are implemented; structured note storage/export parity and equation insertion/rendering remain absent. Improve study, engineering and research workflows. | Migrate plain notes losslessly into a bounded formatting model while preserving draft/save/recovery safety and explicit unsupported-format reporting. Retain the current bounded projection for search/copy. Add an explicit supported LaTeX subset with edit/preview/error handling and export parity as a separate slice. Do not execute arbitrary TeX, lose unsupported formatting silently or mistake an image path for equation support; reuse XV4 for packaged assets where needed. |
+| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Source-first Markdown tools/search/copy and a versioned source envelope exist. The first equation slice renders fractions/scripts in the Notes inspector with explicit edit/preview/error handling. A persisted rich-note block/span model, topic-equation parity and equation export support remain open. | Preserve source through native/recovery/undo/copy and legacy literal notes without inference. Equation-note foreign/visual exports currently fail explicitly; complete export preservation before relaxing guards. Extend the bounded grammar only with tests and honest notation claims; do not execute TeX or treat an image path as equation support. |
 | 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns.** The TreeTable structure exists but currently shares a stacking layout; Gantt has scheduling data, not a task-column Tree Table editor. | Add title/start/due/duration/progress columns using existing validated scheduling edits, with row/topic identity, keyboard navigation and Map/Gantt synchronization. Column changes and sorting do not reorder the underlying topic hierarchy silently. Cover working-day rules, invalid edits, Undo/Redo, saved view choices and output scope. No duplicate scheduling engine. |
 | 9 / XV9 | P2 / R9 | **Durable local AI conversations.** The shipped panel labels history session-only; restarting loses research continuity and there are no named per-file threads. | Add opt-in bounded app-local history and new/rename/select/delete threads keyed to stable document identity. Reopen/restart, Save As, duplicate/moved files and recovery must not mix unrelated conversations. Store no API credentials, never resend on reopen, retain explicit Send/scope review, provide retention/delete controls and keep transcripts out of normal document/export output unless explicitly included. Preserve session-only mode and test failed writes, cancellation and stale-source isolation. |
 

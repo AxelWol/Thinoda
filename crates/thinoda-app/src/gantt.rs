@@ -440,9 +440,9 @@ impl ThinodaApp {
     }
     fn gantt_bytes(sheet: &thinoda_core::Sheet, extension: &str) -> Result<Vec<u8>, String> {
         if extension == "csv" {
-            return thinoda_io::export_gantt_csv(sheet).map_err(|error| error.to_string());
+            return thinoda_io::export_gantt_csv(sheet).map_err(crate::doc::export_error);
         }
-        let document = thinoda_io::render_gantt(sheet).map_err(|error| error.to_string())?;
+        let document = thinoda_io::render_gantt(sheet).map_err(crate::doc::export_error)?;
         match extension {
             "svg" => Ok(document.svg.into_bytes()),
             "png" => document.png(1.0).map_err(|error| error.to_string()),

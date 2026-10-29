@@ -21,8 +21,8 @@ for delivery/acceptance status.
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
 | Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. Import/export supports the pinned SDK's verified embedded topic-image subset; XMind attachment package exchange and installed-app interoperability remain unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
 | Import | TextBundle Markdown and bounded DOCX text/hierarchy import are implemented locally with conversion warnings; Word page layout and embedded resources are not preserved. External relationships are never fetched. | XV5; other unsupported importers stay in the broader inventory. |
-| Export / Pitch Mode | Saved framing and PDF/PNG slides exist. A local XV6 slice exports saved Pitch slides to image-based `.pptx`, with explicit 16:9/4:3 choices, a first-slide fit preview and a flattened-slide disclosure. PowerPoint/LibreOffice interoperability remains unverified. | XV6 partial |
-| Note / Equation | Notes have local Markdown-source bold/italic/list tools, an opt-in bounded offline preview and visible-text search/copy. Legacy strings stay unchanged; other views/exports may show source markup. A structured rich-note model, export fidelity and rendered equations remain open. | XV7 partial |
+| Export / Pitch Mode | Saved framing and PDF/PNG slides exist. A local XV6 slice exports saved Pitch slides to image-based `.pptx`, with explicit 16:9/4:3 choices, a first-slide fit preview and a flattened-slide disclosure. The layout-ID repair bug is fixed; a dark 4:3 deck opened cleanly in Windows PowerPoint and survived an Office save with unchanged slide images. Microsoft SDK checks cover all four appearance/ratio variants; broader host/OS acceptance remains open. | XV6 partial |
+| Note / Equation | Notes have Markdown-source tools, bounded preview/search/copy and a versioned source envelope. A first equation slice renders fractions/groups/scripts in the selected topic's Notes inspector, with edit/Apply/Cancel/Remove and visible errors. No topic/map-equation, chemical notation or equation export parity is claimed; equation-bearing foreign/visual exports fail explicitly. | XV7 partial |
 | Structure / project-management role research | TreeTable enum/layout exists; editable task columns are missing. | XV8; exact reference interaction still needs verification. |
 | Xmind Agent conversation history | Scoped/depth-guided chat exists; Thinoda explicitly keeps history session-only. | XV9 optional local persistence and named threads, not another chat implementation. |
 | File Cache / Map Shot / Custom Themes / Quick Style / Merge / Mask Data | Existing implementations; not wholly missing. | Retain recovery, export-fidelity and real-host acceptance requirements. Masked copies are not a guarantee of universal anonymization. |
@@ -65,7 +65,7 @@ implementation. XMind commercial availability does not impose Thinoda paywalls.
 **Thinoda continuation (source rechecked 2026-10-27):** follows selected-topic
 Insert > Attachment and Delete, but intentionally separates selection from
 delivery. One opaque local file (1 byte–8 MiB) becomes a selected child topic
-with a paperclip title. Style > Attachment shows sanitized filename, byte size
+with a paperclip title. Data > Attachment shows sanitized filename, byte size
 and uninspected status. **Save/Download attachment** is a second explicit action:
 choose a native destination or request a browser download via the VFS. Exact
 bytes are preserved; no external app is launched, no path/URL is fetched and
@@ -139,6 +139,30 @@ attachment interoperability or installed-app compatibility (XV4 partial).
 - Select a topic > Insert > Equation (toolbar or menu) to add a LaTeX mathematical or chemical equation.
 - Double-click to edit; drag its frame to resize.
 - Source: https://xmind.com/user-guide/equation-new
+
+**Thinoda XV7b notes-preview slice (2026-10-29):** this is deliberately narrower
+than XMind's topic equation above. Select a topic, open Notes in the Map or
+Outliner inspector and choose **Edit notes equation**. Enter ASCII letters/digits,
+basic operators (`+ - = ( ) [ ] , . / : |`), `{groups}`, `\frac{a}{b}`,
+`x^{2}`, `x_{i}`, or `x_{i}^{2}`. Script arguments must use braces; spaces are
+ignored between atoms, not accepted between a base and its script. Unknown
+commands, empty/mismatched groups and duplicate scripts report visible errors.
+Limits: 512 UTF-8 bytes, 128 parser nodes, eight nested groups and bounded layout.
+Fractions have a real vector bar; scripts are smaller raised/lowered text.
+Apply saves one undoable source edit; Cancel/Escape discards only the scratch
+draft. Edit and Remove work on the existing single trailing fenced block.
+Keep that block at the note's end; otherwise edit the complete Notes source.
+Unapplied scratch drafts are not autosaved/recovered; applied source is.
+Plain notes are never inferred as math; nonempty plain notes must first be
+explicitly formatted as Markdown. Native v4 / clipboard v3 preserve the complete
+`markdown-v1` source with `thinoda-math-v1` fence; older source-aware readers may
+show it as code. No new fields, font/network fetching or TeX execution.
+No double-click map editing, equation frame resize, map/Outliner-row rendering,
+general LaTeX, chemical notation or external XMind equation schema is delivered.
+All non-native exports, including source Markdown and XMind, plus visual/Pitch
+exports, print and Map Shot reject equation-bearing source before writing/capture
+even with lossy consent. Native save remains available; this is a conservative
+anti-omission policy, not export parity.
 
 ## Export
 - File > Export supports PNG, SVG, PDF, Excel, Word, OPML, TextBundle, PowerPoint, Markdown, and other formats; exact availability can vary by app/version.
@@ -239,6 +263,63 @@ attachment interoperability or installed-app compatibility (XV4 partial).
 - Shortcut: Windows `Ctrl+Shift+N`; Mac `Shift+Command+N`.
 - Source: https://xmind.com/user-guide/note-new
 
+**Thinoda continuation (reference rechecked 2026-10-29):** source-first
+bold/italic and reversible ordered/unordered lists reuse the same Notes inspector
+in Map and Outliner, with an opt-in offline Markdown preview. An explicit
+formatting action marks the whole source as versioned Markdown; existing plain
+notes are not converted by opening, typing or previewing them. Native v4 files,
+recovery, undo and versioned clipboard retain both source and format. Older
+Thinoda releases cannot open native v4 files; keep a copy before using new
+formatting tools in a document that must remain readable by older versions.
+The source is still editable even when it exceeds preview/projection bounds.
+This is not XMind rich-text parity: underline, a persisted block/span model,
+formatted foreign-file interchange and rendered equations are not delivered.
+XMind export retains the format only in Thinoda's private metadata and exposes
+Markdown source in its standard plain-note field; unchanged private round trips
+are not evidence of installed-XMind-app formatting compatibility.
+
+**Word export continuation (2026-10-29):** File > Export > Word preserves
+explicitly formatted Markdown notes as Word paragraphs with bold/italic,
+strikethrough, inline code and real ordered/unordered lists. Nested lists,
+starting numbers and continuation paragraphs retain their meaning. Ordinary
+Markdown line wraps become spaces; explicit hard breaks and tabs remain.
+Plain legacy notes are not interpreted as Markdown.
+Word export rejects unsupported Markdown (including links, images, HTML,
+headings, block quotes, code blocks, tables, task lists and footnotes) rather
+than silently dropping formatting. It also rejects notes exceeding the shared
+16 KiB / 2,048-event / 32-depth processing bounds or nine list levels.
+The error identifies the topic; edit a copy or save as Thinoda to retain the
+complete source. The original map and existing export destination are unchanged.
+This is not full XMind rich-text or Word-import round-trip parity. Word and
+LibreOffice opening checks remain separate host acceptance work.
+Official Export reference rechecked: https://xmind.com/user-guide/export-new
+
+**Thinoda FreeMind export continuation (2026-10-29):** File > Export > FreeMind
+now emits explicitly formatted notes as HTML richcontent with bold/italic,
+strikethrough, inline code, paragraphs/hard breaks and real ordered/bullet lists.
+List nesting, starting numbers and continuation paragraphs retain their structure.
+Plain legacy notes remain literal. The same processing limits and unsupported
+Markdown restrictions as Word apply; tabs and repeated spaces are additionally
+rejected rather than silently relying on HTML whitespace behavior. Errors identify
+the topic, with no change to the source or existing destination.
+Opening supported rich FreeMind/Freeplane note HTML in Thinoda now retains editable
+Markdown formatting without a loss prompt: emphasis/strike/code, paragraphs/hard
+breaks, and ordered/bullet lists with nesting, continuations and starting numbers.
+The source is regenerated with protective escapes/entities, not the original HTML
+or Markdown spelling. Legacy single-paragraph plain notes remain literal, even if
+they look like Markdown; unstyled single-paragraph exports likewise return plain.
+Unsupported HTML/styles/attributes, mixed inline/block list items, inline raw
+newlines/tabs/repeated spaces, code line breaks, nonrepresentable empty paragraphs
+or processing limits still require formatting-loss confirmation before opening a
+readable plain converted copy. Cancel leaves the editor/source unchanged. Rich
+conversion is bounded to 16 KiB XML/generated source, 2,048 events, 32 containers
+and nine list levels; source expansion may reach the limit before the visible text.
+No HTML is executed or external resources fetched. Local round-trip regressions
+are not an installed FreeMind/Freeplane compatibility claim.
+Format references: Freeplane's [note writer](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteWriter.java)
+and [note reader](https://github.com/freeplane/freeplane/blob/HEAD/freeplane/src/main/java/org/freeplane/features/note/NoteBuilder.java)
+establish the rich-note envelope, not renderer fidelity.
+
 ## Numbering
 - Select one or more topics > Format > Style > Numbering; choose a style. The text listing does not enumerate the numbering-format names.
 - **Apply to Siblings** copies the style to same-level topics. **Tiered Numbers** inherits the parent’s numbering and defaults off; siblings also enable it. **Start From Begin** restarts at the smallest number and defaults off. Reordering topics automatically renumbers them; choose **None** to remove numbering.
@@ -259,7 +340,7 @@ attachment interoperability or installed-app compatibility (XV4 partial).
 - Source: https://xmind.com/user-guide/pic-new
 
 Thinoda implementation, rechecked 2026-10-27: one selected topic owns the local
-PNG/JPEG picker; Style > Local Image provides proportional width, above/below,
+PNG/JPEG picker; Data > Local Image provides proportional width, above/below,
 Reset Size (160 × 100 fit, no upscaling), replace and remove. Original bytes
 survive native storage/undo and appear in graphical outputs. Editable
 non-native formats other than the limited XMind image-package subset reject
@@ -358,6 +439,15 @@ used, so installed-app interoperability is not claimed.
 - Source: https://xmind.com/user-guide/structure-new
 
 ## Style
+- Thinoda's shared inspector orders Style, Data, Map. Data owns images,
+  attachments, hyperlinks, labels, notes and notes equations in Map and Outliner.
+  Titled groups/dividers separate each category without repeating the topic
+  heading; Markdown preview remains in Notes and Equation has its own group.
+  Notes/equation enlarge actions open resizable nonmodal editors with shared
+  minimize/maximize/restore/close headers. Apply is one undoable edit; Cancel or
+  Close discards scratch. Save/recovery excludes unapplied dialog edits. Changing
+  the source selection, tab, document or revision invalidates scratch. Task
+  Planning remains in Style.
 - Select a topic and open Format > Style. Up to 31 topic shapes are offered; shape, fill, border, text font/size/color/format/alignment, structure, and branch appearance can be adjusted.
 - Rich text formatting can apply to a selected portion of topic text; no default shape/font sizes are specified by the article.
 - Source: https://xmind.com/user-guide/style-new

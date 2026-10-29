@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct OutlineNode {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notes: Option<String>,
+    pub notes: Option<crate::notes::NoteContent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

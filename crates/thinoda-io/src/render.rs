@@ -101,6 +101,7 @@ fn svg_sheet_with_fonts(
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
     frame: Option<thinoda_core::Rect>,
 ) -> Result<String, IoError> {
+    crate::reject_equation_notes(s)?;
     let image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
         IoError::Invalid(format!("embedded resources cannot be rendered: {error}"))
     })?;

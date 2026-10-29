@@ -1,8 +1,18 @@
 //! Markdown source tools over the existing lossless, recovery-backed notes field.
+pub(crate) const EXPORT_SOURCE_WARNING: &str = "This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.";
+pub(crate) const EXPORT_SOURCE_REQUIRED: &str = "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.";
 
-use egui::{Response, Ui};
+use egui::{Id, Response, Ui};
 
 use crate::{i18n::t, legal_markdown::Markdown};
+
+pub(crate) const WORD_LIMIT: &str =
+    "Word note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
+pub(crate) const WORD_UNSUPPORTED: &str = "Word cannot preserve this note's formatting. Links, images, HTML and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
+pub(crate) const FREEMIND_LIMIT: &str = "FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
+pub(crate) const FREEMIND_UNSUPPORTED: &str = "FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.";
+pub(crate) const EXCEL_LIMIT: &str = "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.";
+pub(crate) const EXCEL_UNSUPPORTED: &str = "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.";
 
 #[derive(Clone, Copy)]
 enum Format {
@@ -137,7 +147,163 @@ fn preview_allowed(source: &str) -> bool {
     thinoda_core::notes::plain_text_projection(source).is_some()
 }
 
-pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut Option<String>) {
+#[derive(Clone)]
+struct EnlargedNote {
+    owner: Id,
+    frame: u64,
+    text: String,
+    markdown: bool,
+}
+
+fn enlarged_id() -> Id {
+    Id::unique("enlarged-notes-draft")
+}
+
+pub(crate) fn enlarged_active(ctx: &egui::Context) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<EnlargedNote>(enlarged_id())
+            .is_some_and(|draft| ctx.cumulative_frame_nr() <= draft.frame.saturating_add(1))
+    })
+}
+
+/// Wait for the ordinary Notes blur commit before capturing an editor revision.
+pub(crate) fn editor_open_requested(ui: &Ui, request_id: Id, source_owner: Id, frame: u64) -> bool {
+    ui.data_mut(|data| {
+        let request = data.get_temp::<(Id, u64)>(request_id);
+        data.remove::<(Id, u64)>(request_id);
+        match request {
+            Some((expected, requested_frame)) if expected == source_owner => {
+                if frame == requested_frame {
+                    data.insert_temp(request_id, (expected, requested_frame));
+                }
+                frame == requested_frame.saturating_add(1)
+            }
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn tools(
+    ui: &mut Ui,
+    response: &Response,
+    current: &str,
+    done: &mut Option<String>,
+    markdown: bool,
+    revision: u64,
+) -> bool {
+    let source = done
+        .clone()
+        .or_else(|| ui.data(|data| data.get_temp::<String>(response.id)))
+        .unwrap_or_else(|| current.to_owned());
+    let id = enlarged_id();
+    let frame = ui.ctx().cumulative_frame_nr();
+    let owner = response.id.with((&source, markdown, revision));
+    let source_owner = response.id.with((&source, markdown));
+    let request_id = id.with("open-request");
+    let requested = editor_open_requested(ui, request_id, source_owner, frame);
+    let mut draft = ui.data_mut(|data| {
+        let draft = data
+            .get_temp::<EnlargedNote>(id)
+            .filter(|draft| draft.owner == owner && frame <= draft.frame.saturating_add(1));
+        data.remove::<EnlargedNote>(id);
+        draft
+    });
+    let allowed = ui.is_enabled() && thinoda_ui::widgets::touch_activation_allowed(ui.ctx());
+    if requested && allowed {
+        draft = Some(EnlargedNote {
+            owner,
+            frame,
+            text: source,
+            markdown,
+        });
+        egui::text_edit::TextEditState::default().store(ui.ctx(), id.with(owner));
+    }
+    if let Some(mut pending) = draft {
+        let mut apply = false;
+        let mut cancel = false;
+        let labels = crate::i18n::dialog_labels();
+        let result = thinoda_ui::Dialog::new(id, t("Notes editor"))
+            .labels(&labels)
+            .enabled(ui.is_enabled())
+            .default_width(720.0)
+            .default_height(520.0)
+            .min_size(egui::vec2(280.0, 160.0))
+            .show(ui.ctx(), |ui| {
+                ui.small(t("Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered."));
+                ui.small(t("Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere."));
+                let label = ui.label(t("Notes"));
+                let edit = ui.add_enabled(
+                    !crate::equations::enlarged_active(ui.ctx()),
+                    egui::TextEdit::multiline(&mut pending.text)
+                        .id(id.with(owner))
+                        .desired_rows(12)
+                        .desired_width(f32::INFINITY),
+                );
+                let edit = edit.labelled_by(label.id);
+                // Reuse the same formatting, equation and inert-preview tools.
+                // Their results only replace this staged text until Apply.
+                ui.data_mut(|data| data.insert_temp(edit.id, pending.text.clone()));
+                let mut replacement = None;
+                let mut formatted = tools_inline(
+                    ui,
+                    &edit,
+                    &pending.text,
+                    &mut replacement,
+                );
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                formatted |= thinoda_ui::widgets::page_section(ui, t("Equation"), |ui| {
+                    equation_tools(ui, &edit, &pending.text, &mut replacement, pending.markdown || formatted, revision)
+                });
+                if let Some(replacement) = replacement {
+                    pending.text = replacement;
+                }
+                pending.markdown |= formatted;
+                ui.horizontal_wrapped(|ui| {
+                    apply = ui.add_enabled(
+                        !crate::equations::editing_active(ui.ctx()),
+                        egui::Button::new(t("Apply notes")),
+                    ).clicked();
+                    cancel = ui.button(t("Cancel notes edit")).clicked();
+                });
+            });
+        if apply && allowed {
+            ui.data_mut(|data| data.insert_temp(response.id, pending.text.clone()));
+            *done = Some(pending.text);
+            return pending.markdown;
+        }
+        if !result.close_requested && !cancel {
+            pending.frame = frame;
+            ui.data_mut(|data| data.insert_temp(id, pending));
+        }
+        return false;
+    }
+    if ui
+        .add_enabled(
+            !crate::equations::editing_active(ui.ctx()),
+            egui::Button::new(t("Enlarge notes editor")),
+        )
+        .clicked()
+        && allowed
+    {
+        // Let ordinary Notes blur/commit before capturing its new revision.
+        ui.data_mut(|data| data.insert_temp(request_id, (source_owner, frame)));
+        ui.ctx().request_repaint();
+    }
+    tools_inline(ui, response, current, done)
+}
+
+fn tools_inline(
+    ui: &mut Ui,
+    response: &Response,
+    current: &str,
+    done: &mut Option<String>,
+) -> bool {
+    if crate::equations::enlarged_active(ui.ctx()) {
+        return false;
+    }
+    let mut formatted = false;
     let touch_allowed = thinoda_ui::widgets::touch_activation_allowed(ui.ctx());
     let mut source = done
         .clone()
@@ -171,8 +337,8 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
                         let end = source.chars().count();
                         end..end
                     });
-                let (formatted, selection) = format_selection(&source, selection, format);
-                source = formatted;
+                let (replacement, selection) = format_selection(&source, selection, format);
+                source = replacement;
                 let mut state =
                     egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
                 state
@@ -186,6 +352,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
                 // Commit through the same conflict-checked inspector path as typing.
                 ui.data_mut(|data| data.insert_temp(response.id, source.clone()));
                 *done = Some(source.clone());
+                formatted = true;
             }
         }
     });
@@ -200,7 +367,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
     }
     ui.data_mut(|data| data.insert_temp(preview_id, preview));
     if !preview {
-        return;
+        return formatted;
     }
     ui.small(t("Preview does not open links or load images."));
     if !preview_allowed(&source) {
@@ -208,7 +375,7 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
             ui.visuals().warn_fg_color,
             t("Note preview limit reached. The full source is preserved and editable."),
         );
-        return;
+        return formatted;
     }
     if ui.button(t("Copy note as plain text")).clicked() && touch_allowed {
         // The size/complexity check above uses the same parser options as projection.
@@ -230,11 +397,54 @@ pub(crate) fn tools(ui: &mut Ui, response: &Response, current: &str, done: &mut 
             });
     });
     ui.data_mut(|data| data.insert_temp(cache_id, markdown));
+    formatted
+}
+
+pub(crate) fn equation_tools(
+    ui: &mut Ui,
+    response: &Response,
+    current: &str,
+    done: &mut Option<String>,
+    markdown: bool,
+    revision: u64,
+) -> bool {
+    let source = done
+        .clone()
+        .or_else(|| ui.data(|data| data.get_temp::<String>(response.id)))
+        .unwrap_or_else(|| current.to_owned());
+    if let Some(replacement) = crate::equations::tools(ui, response, &source, markdown, revision) {
+        ui.data_mut(|data| data.insert_temp(response.id, replacement.clone()));
+        *done = Some(replacement);
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enlarged_editor_messages_exist_in_every_catalog() {
+        for language in crate::i18n::Lang::ALL {
+            for key in [
+                "Enlarge notes editor",
+                "Enlarge equation editor",
+                "Notes editor",
+                "Equation editor",
+                "Apply notes",
+                "Cancel notes edit",
+                "Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered.",
+                "Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere.",
+                "Select a topic to edit its data.",
+                "Equation",
+            ] {
+                if language != crate::i18n::Lang::En {
+                    assert_ne!(crate::i18n::t_in(language, key), key, "{language:?}: {key}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn formatting_uses_character_offsets_and_preserves_surrounding_source() {

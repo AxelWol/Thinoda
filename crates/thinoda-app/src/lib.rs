@@ -7,6 +7,7 @@ pub mod brand;
 mod command_icons;
 mod command_ids;
 pub mod doc;
+mod equations;
 pub mod files;
 mod gantt;
 mod help;
@@ -38,6 +39,7 @@ mod symbols;
 mod template_gallery;
 mod theme_editor;
 pub mod ui;
+mod updates;
 mod zones;
 
 pub use app::{Startup, ThinodaApp, start_services};
@@ -55,6 +57,8 @@ pub static UNSAVED_CHANGES: std::sync::atomic::AtomicBool =
 
 impl eframe::App for ThinodaApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Production lifecycle only: headless draw tests must never start live networking.
+        self.updates.poll(ui.ctx(), self.services.paths.is_some());
         #[cfg(target_os = "windows")]
         {
             self.desktop_ribbon = true;

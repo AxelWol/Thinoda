@@ -13,6 +13,17 @@ Entries are generated automatically by
 while the version is `0.x`, breaking changes bump the minor version). See
 [Releasing](README.md#releasing) for details.
 
+## Unreleased
+
+### Added
+
+- Background web-shell update checks with distinct ready and next-launch
+  installed notices, immutable build identity and no forced document reload.
+- Background native stable-release checks with current/new versions, release
+  notes/changelog and download links (no automatic native installation).
+- Dismissible update notices in all ten languages and light/dark mode,
+  bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
 ## [0.17.0](https://github.com/AxelWol/Thinoda/compare/v0.16.0...v0.17.0) (2026-10-28)
 
 

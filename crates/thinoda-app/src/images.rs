@@ -163,7 +163,7 @@ impl ThinodaApp {
             self.zen = false;
             self.settings.show_format_panel = true;
             self.sidebar_family = crate::app::SidebarFamily::Format;
-            self.format_tab = crate::app::FormatTab::Style;
+            self.format_tab = crate::app::FormatTab::Data;
             Ok(())
         })();
         if let Err(error) = result {

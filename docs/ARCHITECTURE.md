@@ -2,6 +2,37 @@ _Last updated: 2026-10-27 17:27:36 UTC (non-binding repository metadata)._ <!-- 
 
 # Architecture
 
+## Background version checks
+
+`thinoda-app::updates` owns document-independent, nonmodal notices rendered by
+shared egui visuals/i18n (all ten languages; light/dark). Native production
+services start one bounded blocking `ureq` request on a named worker thread:
+20-second global timeout, 256 KiB response cap, no redirects/authentication,
+public GitHub latest-stable endpoint. Strict `semver` ordering rejects drafts,
+prereleases, malformed tags and downgrades; release URLs must exactly match the
+trusted repository/tag and UI links are constructed locally. No remote Markdown
+or HTML is rendered and no native binary is downloaded/installed. Startup and
+six-hour checks use monotonic deadlines with a wall-clock overdue fallback for
+suspend/resume (Linux monotonic time can pause), at most one in-flight request and
+30-minute-to-four-hour exponential retry backoff. Workers wake egui on completion;
+future deadlines use delayed repaint, never busy repaint. Overdue work resumes
+when the app resumes. Headless apps without native services do not start checks.
+Dismissal is per available version for the current process, not a settings write.
+
+Web JS buffers typed ready/applied messages until the Rust callback subscribes
+through `thinoda-platform::web`, which requests repaint on receipt. The Trunk
+post-build hook embeds immutable loaded-shell version/revision in `index.html`
+and the complete generated worker; the identity injection is normalized before
+hashing so hook reruns are deterministic. The worker's normal lifecycle caches
+updates without taking over old clients. JS polls hourly while running, handles
+resume/online signals with the same throttle, and validates metadata from only
+the actual waiting worker. Scope-specific baseline and immutable per-build
+seen/pending local-storage markers
+report application only after that exact new shell boots, never on first install
+or an old tab. Storage errors fail closed (no applied success). There is no
+`skipWaiting`, `clients.claim`, reload, document mutation or separate updater.
+See [WEB.md](WEB.md#offline-use-and-updates) and [PRIVACY.md](../PRIVACY.md).
+
 ```mermaid
 graph TD
     app[thinoda-app<br/>shell, menus, dialogs, i18n] --> canvas[thinoda-canvas<br/>map view, input, rendering]
@@ -29,6 +60,51 @@ graph TD
 | `xtask` | `cargo xtask ci`, `icons`, `package` | no |
 
 ## Key decisions
+- **Inspector content ownership:** the shared native/web Format Panel orders
+  Style, Data, Map in both Map and Outliner. Data reuses the image/attachment
+  helpers and owns Hyperlink, Labels, Notes and the notes-equation tools.
+  Data's non-collapsing field groups use a heading that also labels the field,
+  dividers and consistent spacing; Image/Attachment retain their disclosure
+  controls. Markdown preview stays within Notes; Equation is a sibling group.
+  The equation helper shares the Notes response/owned draft, not a second buffer.
+  Repeated topic headings are omitted. Style
+  retains appearance, object styling, markers, To-Do and Task Planning.
+  Each tab has independent scroll/content salts; document/sheet/topic-scoped
+  text buffers remain recovery-backed. Switching tabs flushes the owning draft
+  through the existing conflict check before changing tabs. Notes/Hyperlink
+  commands and completed image/attachment insertion select Data. `FormatTab`
+  adds the serde value `data`; existing `style`, `map` and unknown-value fallback
+  remain compatible. No new settings schema or document format is introduced.
+  Notes/equation enlarge actions reuse `thinoda_ui::Dialog` (nonmodal, resizable,
+  shared translated header). Enlarged Notes stages a source/format/revision-
+  and response-ID-owned copy; formatting, inert preview and equation tools are
+  shared, not reimplemented. Enlarging an equation retains the same `Draft` and
+  TextEdit ID/undo buffer, only changing the rendering surface. The original
+  editor is disabled while enlarged. Cancel/Close discard scratch; explicit
+  Apply passes through the existing `InspectorEdit` conflict check/undo.
+  Staged dialog edits are not saved/recovered until Apply. Owner/revision or
+  visible-frame discontinuity invalidates scratch, so changing tabs, selection,
+  documents or the map cannot apply it to a different source. Minimizing keeps
+  the draft alive. No modal map lock, document format or persisted editor state
+  is introduced.
+- **Office export acceptance:** image-based PPTX uses slide-master ID
+  `2147483648` and slide-layout ID `2147483649`; layout IDs must be in the
+  schema's high range and must not reuse master IDs. Rust package regressions
+  guard this invariant. CI's `office` job generates eight original fixtures
+  with `cargo run --locked -p thinoda-io --example office_candidates -- <new-directory>`,
+  covering plain/rich Word, Excel and light/dark 16:9/4:3 PowerPoint.
+  `.github/tools/OpenXmlValidation` is a locked .NET 10 tool using Microsoft
+  Open XML SDK 3.5.1, read-only `OpenXmlValidator(Microsoft365)` and a supplemental
+  master/layout ID collision check. It reports package/part/path failures and
+  continues across files, ignoring Office `~$` owner files during directory scans.
+  Build with `dotnet restore .github/tools/OpenXmlValidation --locked-mode` then
+  `dotnet build .github/tools/OpenXmlValidation --no-restore --configuration Release`.
+  Run `.github/scripts/test_openxml_validation.py` with `THINODA_OPENXML_VALIDATOR`
+  pointing to the built DLL and `THINODA_OFFICE_FIXTURES` to the new fixture directory
+  (`THINODA_DOTNET` optionally selects the executable). Tests include deliberately
+  corrupted packages and schema-invalid XML for all three formats. CI retains
+  generated files and gates Pages publication on this job. SDK validation is not
+  a substitute for Office/LibreOffice opening and visual acceptance.
 - **Bounded document conversion (XV5, local implementation):** DOCX and
   TextBundle are parsed as data only, with validated ZIP paths/counts/expanded
   bytes and per-document XML/Markdown limits. TextBundle Markdown and DOCX
@@ -51,7 +127,7 @@ graph TD
   without altering content/history. Unchanged stores are not rehashed on every
   title edit. Low-level public model mutation still requires validation, as with
   other model invariants.
-  Resource-free native archives stay version 2; resource-bearing archives use
+  Native archives without formatted notes or resources stay version 2; resource-bearing archives use
   version 3 with bounded manifest metadata and raw `resources/<digest>` blobs,
   deduplicated across sheets. Imports validate names, sizes, digests, ownership
   and resource references without extracting paths or fetching URLs. Recovery
@@ -59,6 +135,109 @@ graph TD
   exist (resource-free clipboard remains version 1), retaining its 16 MiB
   encoded-payload limit. Older native readers reject version 3 rather than
   silently discarding bytes. Legacy reference-only image strings still load.
+  Explicitly formatted notes use `NoteContent::Formatted` with
+  `{"format":"markdown-v1","source":"..."}`; legacy plain notes serialize as their
+  original JSON strings. Unknown format versions/fields are rejected. This is a
+  source envelope, not a persisted rich-text AST. Formatting toolbar actions opt
+  the whole note into Markdown, while typing preserves its existing syntax.
+  Native archives containing these envelopes use version 4, with or without
+  resource blobs, and sheet clipboard uses version 3. Older archive/clipboard
+  versions cannot carry formatted envelopes. Recovery and internal subtree/
+  outline copies retain the same type; draft conflict checks compare both source
+  and format. The existing 16 KiB / 2,048-event / 32-depth preview/projection
+  limits do not truncate stored source or prevent editing larger notes.
+  The first XV7b slice uses one canonical trailing `thinoda-math-v1` fenced
+  block inside `markdown-v1`, not a new topic field or persisted AST.
+  `thinoda-core::equations` parses an explicit ASCII subset (groups, fraction,
+  super/subscript) with 512-byte / 128-node / eight-level limits and emits glyph
+  positions plus vector fraction rules. Layout accepts local glyph measurement
+  from the frontend and rejects nonfinite/oversize geometry (4096 × 2048 points).
+  `thinoda-app::equations` paints this in the selected topic's Notes inspector,
+  including the Outliner inspector, using theme text colors and bundled/local
+  egui fonts. No TeX engine, network, downloaded font or new dependency is used.
+  A temporary editor draft owns document/sheet/topic ID, full note source/format,
+  revision and visible-frame continuity; changing any invalidates it. Apply
+  enters the existing `InspectorEdit` conflict-checked transaction; Cancel/Escape
+  do not change notes or format. Unapplied scratch drafts are deliberately not
+  recovered; applied source uses normal notes save/recovery/undo/copy.
+  A source-scoped one-frame open request lets an ordinary Notes blur commit
+  complete before the new scratch draft captures its revision.
+  Plain notes are never parsed as math. Nonempty plain notes require explicit
+  Markdown formatting first. Existing malformed/unsupported blocks remain
+  source-editable and saveable; preview reports errors without truncating them.
+  No new native/clipboard version is necessary: v4/v3 already retain all source;
+  older readers that accept those versions show the fence as literal code.
+  `IoError::EquationNotesUnsupported` blocks every non-native workbook export
+  before encoding/writing, irrespective of lossy consent. Shared visual rendering,
+  direct presentation/Gantt output and print also guard their source sheet;
+  Map Shot rejects before capture. Detection conservatively catches the reserved
+  marker even in malformed declared-Markdown notes and all hidden/detached topics.
+  Plain literal markers are inert. Masked copies remove the entire note.
+  This is notes preview only, not a map-layout equation or XMind equation schema.
+  XMind private metadata retains the envelope, but its standard plain-note field
+  and existing textual exporters other than Word/FreeMind/Excel still contain Markdown source.
+  Word, Excel and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
+  list counters) from declared Markdown without mutating persisted source.
+  The shared projection preflight bounds parsing to 16 KiB / 2,048 events /
+  32 containers; formatted export additionally caps list nesting at nine. Only paragraphs,
+  bold/italic/strike, inline code, breaks/tabs and ordered/bullet lists are supported.
+  Unsupported syntax fails with typed `IoError::WordNote` before any destination
+  write; the app localizes the guidance and retains the topic title. Legacy plain
+  notes remain literal. Word numbering parts, content types and relationships are
+  emitted only when needed; definitions precede concrete instances, with independent
+  counters per list and note. FreeMind writes escaped HTML runs and structural
+  `ol`/`ul`/`li` elements inside `richcontent TYPE="NOTE"`, retaining starts,
+  nesting and continuation paragraphs. It rejects tabs/repeated spaces instead
+  of relying on renderer-specific CSS. Typed `IoError::FreeMindNote` failures
+  precede destination writes and have localized topic-specific guidance.
+  `freemind_notes::read` consumes NOTE envelopes in isolation from the map tree.
+  It builds only a bounded, allowlisted XML tree (16 KiB, 2,048 events, 32
+  containers), derives the shared `NoteDocument`, and generates explicit
+  `markdown-v1` source. Attribute-free HTML/head/body/p, emphasis/strike/code tag
+  aliases, br and ol/ul/li are supported; only ol's bounded `start` attribute is
+  accepted. Lists remain limited to nine levels. Generated text escapes Markdown
+  punctuation and uses entities at delimiter/space boundaries. Adjacent independent
+  lists alternate Markdown markers; code uses collision-safe backtick fences.
+  The shared parser must reproduce the normalized runs/list structure exactly,
+  within its own source/event bounds, before the conversion is considered lossless.
+  Unsupported HTML/styles/spacing or nonrepresentable structure retains streamed
+  readable plain fallback and the existing formatting-loss confirmation. No HTML
+  execution, external-resource fetch or custom entity expansion occurs. Duplicate
+  notes combine readably with a warning. A legacy single-p plain envelope stays
+  `Plain`, even when its text resembles Markdown; unstyled single-p formatted
+  exports cannot be distinguished without metadata and likewise return plain.
+  This is bounded semantic interchange, not original-source or host-app acceptance.
+  Excel writes inline SpreadsheetML rich-text runs and visible list markers
+  (with independent counters/continuation indentation), not list objects.
+  Formatted cells use a wrapped, top-aligned style and a wider Notes column;
+  the styles part/relationship/content type exist only when formatted notes
+  are exported. `office_notes::excel_text` protects literal `_xHHHH_` sequences
+  and XML text, without creating formulas or hyperlinks. Excel formatted-note
+  output additionally enforces 32,767 UTF-16 units and 253 line feeds
+  ([Excel limits](https://support.microsoft.com/en-us/excel/excel-specifications-and-limits)).
+  Tabs are rejected because Windows Excel suppresses their displayed spacing.
+  Typed `IoError::ExcelNote` errors retain the topic and use all ten catalogs;
+  every failure precedes destination writes. SDK and Windows Excel opening
+  evidence covers one original rich fixture, not every host/OS or a round trip.
+  Markdown/TextBundle export uses explicitly formatted source directly, without
+  restricting it to the bounded Office subset. Notes under heading topics are
+  separated blocks; nested-topic notes indent every line to the list item's
+  content column while preserving relative source indentation. Plain notes are
+  fenced literal code blocks with a fence longer than any source backtick run,
+  preserving literal Markdown/HTML rather than inferring formatting. This
+  intentionally uses monospaced presentation for plain notes. TextBundle writes
+  these same UTF-8 bytes directly to `mindmap.textbundle/text.md`; no resource
+  fetch or note-format migration occurs. External viewers decide how explicit
+  Markdown HTML/links behave. Existing outline import is not a rich-note inverse.
+  CSV/OPML export requires `ExportOptions.allow_note_format_loss` when the selected
+  reachable topic tree contains declared Markdown notes. This acknowledgement is
+  independent of symbol-color or general conversion-loss consent. The app binds
+  its cancelable, edit-blocking confirmation to document key, active sheet and
+  revision before choosing a destination; CLI exposes `--allow-note-format-loss`.
+  These formats retain full source, not rich-text interpretation or format
+  metadata. OPML encodes attribute tabs/CR/LF numerically to defeat XML whitespace
+  normalization. Other formats' omission policies and rich-text interchange remain
+  XV7 work.
   `images::decode` accepts only sniffed PNG/JPEG, checks encoded size and header
   dimensions before full decoder allocation (4096/side, 4 megapixels), then uses
   decoder width/height and 64 MiB allocation limits. Conversion to RGBA is bounded
@@ -240,6 +419,21 @@ graph TD
   restoring rewrites the `AreaState` so the window returns to its previous rect.
   Multi-page dialogs use `thinoda_ui::tab_bar` (icon tabs, `Role::Tab`).
   Button labels are translated via `i18n::dialog_labels()`.
+  Shared confirmations opt into `fit_content_height(true)` at a 440-point initial
+  width: the scroll body can grow up to viewport bounds but reserves only a small
+  minimum, and the action row allocates button height rather than remaining
+  vertical space. Short save/exit prompts stay compact; long messages scroll.
+  Explicitly user-sized/maximized dialogs and other tools retain their prior
+  sizing behavior. Content-fit bounds are applied inside a separate body child:
+  egui resets the cursor when changing these bounds, so applying them to the
+  parent would place body controls over the caption.
+- **Find/Replace surface**: the nonmodal shared dialog owns persistent
+  minimize/maximize/restore and edge/corner resize state; query, replacement,
+  facets and options remain in `SearchState`. Closing clears the view filter,
+  not the document or query. Vertically stacked options, a persistent replacement
+  label and scroll-to-focus keep controls reachable in narrow/scaled windows.
+  The shared `search_field` uses a fixed-size icon font and centered single-line
+  text alignment for both its hint and entered query.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate

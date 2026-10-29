@@ -1125,6 +1125,7 @@ mod tests {
                 topic: root,
                 field,
                 original: None,
+                format_notes: false,
                 text: "Local inspector draft".into(),
             };
             d.inspector_edit = Some(draft.clone());

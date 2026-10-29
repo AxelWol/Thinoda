@@ -89,6 +89,7 @@ pub enum SidebarFamily {
 #[serde(rename_all = "snake_case")]
 pub enum FormatTab {
     Map,
+    Data,
     #[default]
     #[serde(other)]
     Style,

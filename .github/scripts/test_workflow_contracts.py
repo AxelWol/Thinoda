@@ -63,6 +63,21 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo clippy --locked --workspace --all-targets -- -D warnings", native)
         self.assertIn("cargo test --locked --workspace", native)
 
+    def test_office_sdk_validation_gates_web_publication(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        office = job(source, "office")
+        for expected in [
+            "actions/setup-dotnet@v5", 'dotnet-version: "10.0.x"',
+            "dotnet restore .github/tools/OpenXmlValidation --locked-mode",
+            "dotnet build .github/tools/OpenXmlValidation --no-restore",
+            "cargo run --locked -p thinoda-io --example office_candidates",
+            "THINODA_OPENXML_VALIDATOR:", "THINODA_OFFICE_FIXTURES:",
+            "python .github/scripts/test_openxml_validation.py",
+            "if-no-files-found: error",
+        ]:
+            self.assertIn(expected, office)
+        self.assertIn("office", dependencies(job(source, "pages")))
+
     def test_release_please_calls_packaging_without_relying_on_tag_events(self):
         source = (WORKFLOWS / "release-please.yml").read_text(encoding="utf-8")
         release = job(source, "release-please")
@@ -180,7 +195,7 @@ class WorkflowContractTests(unittest.TestCase):
         # the remaining actions are shell-only composites (including nested steps).
         allowed = {
             "actions/checkout@v7", "actions/setup-python@v7",
-            "actions/setup-node@v7", "actions/upload-artifact@v7",
+            "actions/setup-node@v7", "actions/setup-dotnet@v5", "actions/upload-artifact@v7",
             "actions/download-artifact@v8", "actions/deploy-pages@v5",
             "actions/upload-pages-artifact@v5", "Swatinem/rust-cache@v2",
             "softprops/action-gh-release@v3", "googleapis/release-please-action@v5",

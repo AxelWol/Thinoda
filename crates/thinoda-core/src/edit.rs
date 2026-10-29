@@ -409,7 +409,21 @@ impl Sheet {
 
     pub fn set_notes(&mut self, id: TopicId, notes: Option<String>) -> EditResult<()> {
         self.require(id)?;
-        self.topic_mut(id).unwrap().notes = notes.filter(|n| !n.trim().is_empty());
+        let topic = self.topic_mut(id).unwrap();
+        topic.notes = notes
+            .filter(|n| !n.trim().is_empty())
+            .map(|source| match &topic.notes {
+                Some(note) => note.with_source(source),
+                None => source.into(),
+            });
+        Ok(())
+    }
+
+    pub fn set_markdown_notes(&mut self, id: TopicId, notes: Option<String>) -> EditResult<()> {
+        self.require(id)?;
+        self.topic_mut(id).unwrap().notes = notes
+            .filter(|n| !n.trim().is_empty())
+            .map(crate::notes::NoteContent::markdown);
         Ok(())
     }
 

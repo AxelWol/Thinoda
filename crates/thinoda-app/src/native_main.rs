@@ -9,7 +9,7 @@ const HELP: &str = "Thinoda - Give your thoughts shape.
 
 USAGE:
     thinoda [FILES...]
-    thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]
+    thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss] [--allow-note-format-loss]
     thinoda --version
     thinoda --help
 ";
@@ -41,23 +41,29 @@ pub fn main() -> anyhow::Result<()> {
         Some("--convert") => {
             let (Some(i), Some(o)) = (args.get(1), args.get(2)) else {
                 anyhow::bail!(
-                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]"
+                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss] [--allow-note-format-loss]"
                 );
             };
-            if args.len() > 5
-                || args
-                    .iter()
-                    .skip(3)
-                    .any(|a| !matches!(a.as_str(), "--allow-lossy" | "--allow-symbol-color-loss"))
+            if args.len() > 6
+                || args.iter().skip(3).any(|a| {
+                    !matches!(
+                        a.as_str(),
+                        "--allow-lossy" | "--allow-symbol-color-loss" | "--allow-note-format-loss"
+                    )
+                })
             {
                 anyhow::bail!(
-                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss]"
+                    "thinoda --convert <INPUT> <OUTPUT> [--allow-lossy] [--allow-symbol-color-loss] [--allow-note-format-loss]"
                 );
             }
             doc::convert_with_consent(
                 &PathBuf::from(i),
                 &PathBuf::from(o),
                 &thinoda_io::ExportOptions {
+                    allow_note_format_loss: args
+                        .iter()
+                        .skip(3)
+                        .any(|a| a == "--allow-note-format-loss"),
                     allow_symbol_color_loss: args
                         .iter()
                         .skip(3)

@@ -51,25 +51,32 @@ pub fn confirm_dialog_with_labels(
         .modal(true)
         .close_on_backdrop(true)
         .default_width(440.0)
+        .fit_content_height(true)
         .show(ctx, |ui| {
             ui.label(RichText::new(message).color(p.text_muted));
             ui.add_space(12.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for (i, (label, kind)) in buttons.iter().enumerate().rev() {
-                    let r = match kind {
-                        DialogButton::Primary => crate::widgets::primary_button(ui, label),
-                        DialogButton::Secondary => crate::widgets::secondary_button(ui, label),
-                        DialogButton::Danger => ui.add(
-                            egui::Button::new(RichText::new(*label).color(egui::Color32::WHITE))
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), ui.spacing().interact_size.y.max(28.0)),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    for (i, (label, kind)) in buttons.iter().enumerate().rev() {
+                        let r = match kind {
+                            DialogButton::Primary => crate::widgets::primary_button(ui, label),
+                            DialogButton::Secondary => crate::widgets::secondary_button(ui, label),
+                            DialogButton::Danger => ui.add(
+                                egui::Button::new(
+                                    RichText::new(*label).color(egui::Color32::WHITE),
+                                )
                                 .fill(p.danger)
                                 .min_size(egui::vec2(80.0, 28.0)),
-                        ),
-                    };
-                    if r.clicked() && touch_allowed {
-                        pressed = Some(i);
+                            ),
+                        };
+                        if r.clicked() && touch_allowed {
+                            pressed = Some(i);
+                        }
                     }
-                }
-            });
+                },
+            );
         });
     if pressed.is_none() && resp.close_requested && touch_allowed {
         return Some(usize::MAX);
@@ -161,6 +168,7 @@ pub struct Dialog<'a> {
     modal: bool,
     close_on_backdrop: bool,
     default_size: Vec2,
+    fit_content_height: bool,
     min_size: Vec2,
     resizable: bool,
     scroll: bool,
@@ -181,6 +189,7 @@ impl<'a> Dialog<'a> {
             modal: false,
             close_on_backdrop: false,
             default_size: vec2(480.0, 0.0),
+            fit_content_height: false,
             min_size: vec2(240.0, 96.0),
             resizable: true,
             scroll: true,
@@ -233,9 +242,15 @@ impl<'a> Dialog<'a> {
         self
     }
 
-    /// Initial outer height; by default the dialog fits its content.
+    /// Initial outer height; zero uses the minimum height.
     pub fn default_height(mut self, height: f32) -> Self {
         self.default_size.y = height;
+        self
+    }
+
+    /// Fit unresized height to content, with scrolling bounded by the viewport.
+    pub fn fit_content_height(mut self, fit: bool) -> Self {
+        self.fit_content_height = fit;
         self
     }
 
@@ -432,16 +447,23 @@ impl<'a> Dialog<'a> {
                 egui::ScrollArea::vertical()
             };
             Some(
-                area.id_salt(self.id.with("body"))
-                    .max_height(max_height)
-                    .min_scrolled_height(if fit {
-                        max_height
-                    } else {
-                        max_height.min(64.0)
-                    })
-                    .auto_shrink([false, fit])
-                    .show(ui, add)
-                    .inner,
+                ui.vertical(|ui| {
+                    if fit && self.fit_content_height {
+                        // Changing bounds resets egui's cursor; isolate it from the caption.
+                        ui.set_max_height(max_height);
+                    }
+                    area.id_salt(self.id.with("body"))
+                        .max_height(max_height)
+                        .min_scrolled_height(if fit && !self.fit_content_height {
+                            max_height
+                        } else {
+                            max_height.min(64.0)
+                        })
+                        .auto_shrink([false, fit])
+                        .show(ui, add)
+                        .inner
+                })
+                .inner,
             )
         });
 
@@ -761,6 +783,78 @@ mod tests {
             rect.height() > 300.0,
             "long content should use the available height: {rect:?}"
         );
+    }
+
+    #[test]
+    fn short_confirmations_fit_content_instead_of_filling_available_height() {
+        let ctx = Context::default();
+        let id = Id::unique("compact-confirmation");
+        for _ in 0..4 {
+            run(&ctx, input(vec2(1280.0, 900.0)), |ctx| {
+                confirm_dialog(
+                    ctx,
+                    "compact-confirmation",
+                    "Save changes?",
+                    "Do you want to save your changes before exiting?",
+                    &[
+                        ("Save", DialogButton::Primary),
+                        ("Don't Save", DialogButton::Danger),
+                        ("Cancel", DialogButton::Secondary),
+                    ],
+                );
+            });
+        }
+        let rect = ctx.memory(|memory| memory.area_rect(id)).unwrap();
+        assert!(rect.width() <= 460.0, "{rect:?}");
+        assert!(rect.height() <= 220.0, "{rect:?}");
+    }
+
+    #[test]
+    fn content_sized_dialog_still_scrolls_long_content_within_the_viewport() {
+        let ctx = Context::default();
+        let mut last = None;
+        for _ in 0..4 {
+            run(&ctx, input(vec2(800.0, 500.0)), |ctx| {
+                last = Dialog::new(Id::unique("content-sized"), "Long confirmation")
+                    .fit_content_height(true)
+                    .show(ctx, |ui| {
+                        for line in 0..80 {
+                            ui.label(format!("Line {line}"));
+                        }
+                    })
+                    .rect;
+            });
+        }
+        let rect = last.unwrap();
+        assert!(
+            Dialog::bounds(&ctx).expand(1.0).contains_rect(rect),
+            "{rect:?}"
+        );
+        assert!(rect.height() > 300.0, "{rect:?}");
+    }
+
+    #[test]
+    fn content_sized_body_does_not_overlap_the_caption() {
+        let ctx = Context::default();
+        let mut last = None;
+        let mut body = None;
+        for _ in 0..4 {
+            run(&ctx, input(vec2(800.0, 500.0)), |ctx| {
+                last = Dialog::new(Id::unique("caption-body"), "Caption")
+                    .fit_content_height(true)
+                    .show(ctx, |ui| {
+                        body = Some(ui.button("First body control").rect);
+                    })
+                    .rect;
+            });
+        }
+        let rect = last.unwrap();
+        let body = body.unwrap();
+        assert!(
+            body.top() > rect.top() + TITLE_ROW_HEIGHT,
+            "{body:?} vs {rect:?}"
+        );
+        assert!(rect.contains_rect(body));
     }
 
     #[test]

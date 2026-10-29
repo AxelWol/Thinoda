@@ -1,5 +1,26 @@
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+Data|Dados
+Equation|Equação
+Enlarge notes editor|Ampliar editor de notas
+Enlarge equation editor|Ampliar editor de equações
+Notes editor|Editor de notas
+Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere.|Alterar a seleção, aba ou revisão do documento fecha editores ampliados sem aplicar as alterações. Aplique antes de editar em outro lugar.
+Equation editor|Editor de equações
+Apply notes|Aplicar notas
+Cancel notes edit|Cancelar edição de notas
+Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered.|Aplique para manter as alterações. Cancelar descarta as alterações. Alterações não aplicadas na janela não são salvas nem recuperadas.
+Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.|Dados fica entre Estilo e Mapa. Agrupa imagens, anexos, links, rótulos, notas e equações de notas no Mapa e Estrutura. O planejamento de tarefas permanece em Estilo.
+Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.|Dados > Imagem local oferece largura, posição e redefinição. Redimensione no mapa com a alça inferior direita; Escape cancela e as setas ajustam a alça em foco.
+Insert > Attachment embeds a local file as a child topic (1 byte to 8 MiB). Data > Attachment saves or downloads it separately. Nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported.|Inserir > Anexo incorpora um arquivo local como subtópico (1 byte a 8 MiB). Dados > Anexo salva ou baixa o arquivo separadamente. Nada é aberto ou executado. Salve como .thinoda para preservar anexos; outras exportações não são compatíveis.
+Select a topic to edit its data.|Selecione um tópico para editar seus dados.
+Export note source|Exportar origem da nota
+This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.|Este formato não consegue preservar a formatação das notas. Use Exportar com confirmação ou salve como Thinoda.
+This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.|Este formato exporta notas formatadas como código Markdown, não como texto formatado. Todo o código é preservado, mas a formatação não será exibida. A pasta de trabalho de origem não é alterada. Salve como Thinoda para preservar os formatos das notas.
+Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para Excel atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
+Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.|O Excel não consegue preservar a formatação desta nota. Links, imagens, HTML, tabulações e Markdown avançado não são compatíveis. A origem não é alterada; salve como Thinoda.
+FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.|Limite de exportação de notas para FreeMind atingido. A origem não é alterada; encurte a nota ou salve como Thinoda.
+FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.|O FreeMind não consegue preservar a formatação desta nota. Links, imagens, HTML, Markdown avançado, tabulações e espaços repetidos não são compatíveis. A origem não é alterada; salve como Thinoda.
 Copy note as plain text|Copiar nota como texto simples
 Notes search uses visible Markdown text; oversized notes search the original source.|A pesquisa usa o texto Markdown visível; em notas grandes demais, pesquisa o texto original.
 Copies Markdown text without formatting or link/image destinations. The saved note is unchanged.|Copia o texto Markdown sem formatação nem destinos de links ou imagens. A nota salva não é alterada.
@@ -474,3 +495,19 @@ Select a topic, then Insert > Attachment to add a local file as a child topic (1
 # Selected-image canvas resize handle.
 Resize image|Redimensionar imagem
 Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.|Redimensione uma imagem selecionada com a alça inferior direita. Escape cancela; as setas redimensionam quando a alça está em foco. Estilo > Imagem local oferece controles de largura por teclado/toque.
+Version and changelog|Versão e histórico de alterações
+Equation preview in notes|Prévia de equações nas notas
+Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.|Apenas prévia nas notas; não é uma equação do mapa. O formato nativo preserva a fonte; outras exportações estão bloqueadas.
+512 bytes maximum. Use groups, \frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.|Máximo de 512 bytes. Use grupos, \frac{a}{b}, ^{...} e _{...}. Sintaxe limitada, não LaTeX geral nem química.
+Format this nonempty plain note as Markdown explicitly before adding an equation.|Formate explicitamente esta nota de texto não vazia como Markdown antes de adicionar uma equação.
+Edit notes equation|Editar equação da nota
+Equation source|Fonte da equação
+Cancel equation edit|Cancelar edição da equação
+Apply notes equation|Aplicar equação da nota
+Remove notes equation|Remover equação da nota
+Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.|As notas com equações não podem ser exportadas nem impressas neste formato. Salve como Thinoda para preservar a fonte completa.
+Invalid equation. Use letters, digits, operators, groups, \frac{a}{b}, ^{...} and _{...}.|Equação inválida. Use letras, dígitos, operadores, grupos, \frac{a}{b}, ^{...} e _{...}.
+Equation limit reached (512 bytes, 128 nodes, 8 levels).|Limite de equação atingido (512 bytes, 128 nós, 8 níveis).
+Keep one equation block at the end of the note, or edit the note source directly.|Mantenha um bloco de equação no fim da nota ou edite diretamente a fonte da nota.
+Download new version|Baixar nova versão
+Save your work, then close all app windows and reopen to apply the update.|Salve seu trabalho, feche todas as janelas do aplicativo e abra-o novamente para aplicar a atualização.

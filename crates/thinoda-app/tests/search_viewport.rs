@@ -82,6 +82,10 @@ fn find_and_replace_remain_reachable_in_short_windows() {
                 let ctx = h.ctx.clone();
                 h.state_mut().exec(&ctx, Cmd::FindReplace);
                 h.run_steps(5);
+                h.get_by_role_and_label(Role::Window, t("Find and Replace…"));
+                for label in ["Minimize", "Close Window"] {
+                    assert_visible(&h, Role::Button, label);
+                }
                 h.get_by_role_and_label(Role::TextInput, t("Search"))
                     .type_text("Needle");
                 h.run_steps(3);

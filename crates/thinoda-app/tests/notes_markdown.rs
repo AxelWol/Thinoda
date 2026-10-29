@@ -13,6 +13,7 @@ fn copying_plain_text_requires_preview_and_does_not_change_the_note_or_undo_hist
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
         let doc = app.doc_mut().unwrap();
         let root = doc.doc.sheet().root;
         let source = "**café** and [label](https://example.invalid/private)\n\n- first\n- second";
@@ -56,6 +57,7 @@ fn list_actions_convert_and_toggle_as_single_edits_in_both_views() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
         let doc = app.doc_mut().unwrap();
         let root = doc.doc.sheet().root;
         let source = "café\n日本語";
@@ -131,6 +133,7 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
     for mode in [CenterMode::Map, CenterMode::Outliner] {
         let mut app = ThinodaApp::headless();
         app.mode = mode;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
         let mut h = Harness::builder()
             .with_size(egui::vec2(1280.0, 1000.0))
             .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
@@ -168,6 +171,18 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
                 .as_deref(),
             Some("**café research**")
         );
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
+        );
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("notes.thinoda");
         h.state_mut()
@@ -175,15 +190,10 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
             .unwrap()
             .save_to(&path, false)
             .unwrap();
+        let reopened = OpenDoc::open(&path).unwrap();
         assert_eq!(
-            OpenDoc::open(&path)
-                .unwrap()
-                .doc
-                .sheet()
-                .root_topic()
-                .notes
-                .as_deref(),
-            Some("**café research**")
+            reopened.doc.sheet().root_topic().notes,
+            h.state().doc().unwrap().doc.sheet().root_topic().notes
         );
         let ctx = h.ctx.clone();
         h.state_mut().exec(&ctx, Cmd::Canvas(Action::Undo));
@@ -203,6 +213,18 @@ fn notes_formatting_commits_focused_unicode_draft_and_round_trips_with_undo() {
                 .as_deref(),
             Some("**café research**")
         );
+        assert!(
+            h.state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .root_topic()
+                .notes
+                .as_ref()
+                .unwrap()
+                .is_markdown()
+        );
     }
 }
 
@@ -211,6 +233,7 @@ fn notes_preview_is_opt_in_read_only_and_theme_aware() {
     for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
         let mut app = ThinodaApp::headless();
         app.settings.theme = theme;
+        app.format_tab = thinoda_app::app::FormatTab::Data;
         let doc = app.doc_mut().unwrap();
         let root = doc.doc.sheet().root;
         let source = "**Research**\n\n- *First finding*\n- Second finding";
@@ -251,6 +274,7 @@ fn notes_preview_is_opt_in_read_only_and_theme_aware() {
 #[test]
 fn repeated_emphasis_restores_the_original_note_without_changing_topic_style() {
     let mut app = ThinodaApp::headless();
+    app.format_tab = thinoda_app::app::FormatTab::Data;
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
     doc.doc
@@ -300,6 +324,7 @@ fn repeated_emphasis_restores_the_original_note_without_changing_topic_style() {
 #[test]
 fn preview_links_are_inert_and_excessive_nesting_keeps_the_original_note() {
     let mut app = ThinodaApp::headless();
+    app.format_tab = thinoda_app::app::FormatTab::Data;
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
     doc.doc.edit_sheet("Fixture", |sheet| {

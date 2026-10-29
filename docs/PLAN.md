@@ -9,31 +9,484 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
-## Current next-value state (2026-10-28)
+## Current next-value state (2026-10-29)
 
-PR #94 is merged. Its explicit bounded Markdown-to-plain-text copy is now
-extended by a shared `thinoda-core` projection for notes search: formatted
-visible text matches without Markdown delimiters or link destinations, while
-notes beyond the projection bounds fall back to complete source-text search.
-This is non-mutating search, not a rich-note data migration. Focused app and core
-tests pass locally (five search-facet integration tests and 146 core tests).
-Strict native/WASM Clippy, the locked native app build, locked WASM app check,
-formatting and whitespace checks also pass. The full workspace test suite was
-not completed in this continuation; its long-running native UI suites were
-stopped after the focused coverage passed.
+**Search/Replace follow-up (2026-10-29, implemented locally):** replace the
+floating search card with the shared resizable nonmodal dialog, including its
+localized header, minimize/expand, maximize/restore, close and edge/corner resize.
+Keep query, replacement and options while resizing or minimizing; closing still
+clears the dimming filter. Stack options consistently and label the replacement
+field without changing title-only replacement behavior. Align the search lens
+and placeholder (ghost text), as well as typed text, on the same vertical center
+in the shared search widget for both themes. Cover narrow/scaled windows, all
+ten app languages, keyboard navigation and painted icon/text alignment.
+The caption regression also exposed a shared content-fit cursor reset: isolate
+the scrolling body from the header so controls cannot overlap caption actions.
 
-Release PR #92 remains open for v0.17.0. Its latest CI run
-`40686820970` has passed the macOS and Linux native jobs, WASM app, importer
-fuzz smoke, timestamp and third-party-notice checks; Windows x64 and ARM jobs
-remain in progress. Main CI run `40686754828` is also in progress. Neither
-status establishes release readiness or package publication.
+**Requested inspector slice (2026-10-29):** add Data between Style (Stil) and
+Map in the shared native/web inspector, in Map and Outliner. Move Image,
+Attachment, Hyperlink, Labels, Notes and notes-equation controls into Data.
+Keep appearance, markers and Task Planning in Style; this request concerns
+data, not scheduling dates. Retain visibility/preferences, separate tab scroll
+positions, command navigation, conflict-checked drafts, save/recovery and undo.
+Verify all ten languages/light-dark, narrow windows and affected regressions.
 
-XV4's bounded resource interchange, XV5 DOCX/TextBundle import, and the XV7
-notes authoring, preview, copy, and search slices build on merged PRs #90–#94.
-XV7 remains partial: structured rich-note persistence, search/export fidelity
-beyond plain-text projection, and rendered equations remain open; XV8 and XV9
-follow. XMind app compatibility and secure erasure of unreferenced resource
-blobs remain explicit XV4 limitations.
+**Final integration critique:** distinct titled groups/dividers now separate
+Image, Attachment, Hyperlink, Labels, Notes and Equation; Markdown preview stays
+inside Notes. The independent review found a missed locale test still looking
+for Notes in Style and an untranslated German Data caption; both are corrected.
+Its scroll/restore failures were not reproducible against the final integrated
+shared-dialog implementation: all three Data tests and all six enlarged-editor
+tests pass together. The supported trade-off remains explicit Apply: unapplied
+scratch is discarded on context/revision changes, not saved or recovered.
+One equation draft is active app-wide; concurrent multi-window editing is not
+claimed. Native/WASM strict Clippy, production Trunk build, app/UI unit suites
+and affected integration suites pass; this is not macOS/Linux host acceptance.
+The final full `thinoda-app`/`thinoda-ui` run passes 549 tests across 74 suites
+(one existing ignored test), including the corrected Notes locale regression.
+Refinement: give Image, Attachment, Hyperlink, Labels, Notes and Equation their
+own titled groups with consistent dividers/whitespace, omit redundant topic
+headings, and keep Markdown preview in Notes rather than the Equation group.
+
+**Follow-up request in the same scope:** explicit enlarge actions for Notes and
+equations should reuse the standard resizable nonmodal dialog, including header
+actions, minimize/maximize/restore and resizing. Preserve context/source/format/
+revision ownership and equation scratch text; avoid parallel conflicting editors.
+Close/cancel must not apply edits; explicit apply is undoable. Selection,
+document or revision changes must never apply a stale draft elsewhere. Cover
+localization/themes, header/resize, cancel/apply/undo, stale/save/recovery and map
+interaction, without broadening the supported equation syntax or storage scope.
+
+**New priority: background version checks (2026-10-29, implemented locally;
+independent review completed).** Installed
+web apps periodically check and cache complete new shells while running. Keep
+the current JS/WASM generation until all existing app tabs/windows close; never
+force reload, bypass unsaved-work protection or call `skipWaiting`. Report an
+update as ready while waiting, and as successfully applied only after the new
+build boots on a later launch. Browser suspension/closed apps cannot promise
+continuous polling. Native Windows/macOS/Linux checks run off the UI thread and
+notify about newer stable releases with version, release/changelog and download
+links; native binaries are never downloaded or installed automatically.
+
+Use the running build's own immutable identity, not live service-worker state,
+for applied-version notices. Keep scope-specific persisted web identity and
+separate ready/applied states. Native checks use bounded public GitHub metadata,
+strict stable version comparison, trusted repository HTTPS links, one in-flight
+request, periodic checks and retry backoff. No workbook data or credentials are
+sent. All notices use shared translated light/dark UI and are dismissible.
+Update related user/architecture/web documentation and deterministic tests.
+
+**Concept rubber-duck critique:** automatic web activation while retaining old
+clients contradicts service-worker lifecycle safety. The revised contract above
+explicitly distinguishes background download from next-launch activation.
+Build identity must come from the loaded shell, not a mutable active worker.
+Use a bounded blocking HTTP request on a native worker thread rather than adding
+an app-wide async runtime; request repaint on results and schedule overdue checks
+when the app resumes. Validate all links, handle offline/rate limits without
+success-shaped fallbacks, and preserve long-dialog/unsaved-work behavior. A final
+rubber-duck review of the implementation is required before completion.
+
+**Implementation handoff:** web checks hourly with focus/online/resume signals,
+single-flight and bounded retry backoff. Complete waiting builds emit ready
+notices; scope-specific baseline/pending identities emit applied success only
+after the exact observed shell boots. Missing/unavailable storage suppresses
+success rather than guessing. Normal first installation establishes a baseline.
+The post-build hook embeds immutable package/content identity into loaded HTML
+and normalizes that injection before hashing. Native checks use a 20-second
+timeout, 256 KiB cap, no redirects/tokens, strict stable semver and exact trusted
+repository links, six-hour deadlines and 30-minute-to-four-hour retry backoff.
+Native download/installation stays user initiated. Notices are dismissible for
+the version/build within a session, independent of documents and settings.
+All ten catalogs, privacy/network expectations, README, architecture and web
+update instructions are updated.
+
+**Implementation rubber-duck self-critique (not independent approval):**
+- A waiting worker is not the running app. Ready and applied notices remain
+  separate; only the loaded HTML's immutable identity can establish application.
+  Complete-shell caching and normal activation retain old clients and unsaved work.
+- A mutable cross-tab "current build" record can race and roll back. Per-build
+  seen/pending markers now only advance, even if an old tab sends delayed ready
+  metadata. Concurrent launches can show the same legitimate notice; no tab
+  claims success for an unobserved, unchanged or failed-storage transition.
+- HTTP success must not mean "some JSON arrived." Native checks require HTTP
+  200, strict stable semver, non-draft/non-prerelease metadata, exact trusted
+  release URLs, a global timeout and response cap. Local HTTP fixtures exercise
+  oversized, malformed, rate-limited and redirected responses without external
+  requests. Remote text is not rendered; download links never execute installers.
+- Retry deadlines must survive idle frames and worker-start failure. One worker,
+  completion-triggered repaint and delayed retry repaint avoid both UI blocking
+  and busy repaint. Web callback queues are drained, not left waiting on another
+  input event. Newer releases supersede dismissal; withdrawn releases clear stale UI.
+  Wall-clock overdue detection supplements monotonic native deadlines across
+  Linux suspend, and a web wall-clock rollback cannot suppress checks indefinitely.
+  Live polling is tied to eframe's production lifecycle, not headless draw tests.
+- Build identity injection must not make every hook rerun a new release. The
+  hook normalizes its injection before hashing, with deterministic rerun tests.
+- Trade-offs remain explicit: no closed-browser polling guarantee, no automatic
+  native installer, session-only dismissal, small retained per-build browser
+  metadata, possible missing applied notices when storage/history is unavailable,
+  and no published notes for unreleased development builds. GitHub authenticity
+  and installer trust still depend on the normal release/signing process.
+
+**Verification handoff:** deterministic native update/network/UI and web
+lifecycle tests, all ten languages/light-dark rendering, unsaved-work/undo
+preservation, shared close/save/startup regressions, deterministic PWA generation,
+strict native/workspace and WASM Clippy, production Trunk build, notices/license
+check and documentation-metadata tests pass. A local Chromium production-shell
+smoke check activated the scoped worker, loaded immutable identity and initialized
+per-build tracking with no browser console errors. The full workspace library
+run exposes one unrelated existing failure:
+`thinoda-platform::tests::cloud_prefix_boundaries_case_and_nested_provider`
+(canonical existing directory vs lexical not-yet-existing child through this
+worktree's Windows path alias). It fails in isolation; all other platform tests
+pass. No cloud/path code is changed here. Compilation/smoke checks do not claim
+macOS/Linux runtime QA.
+
+**Final independent rubber-duck critique:** traced the native scheduling/network
+boundary, release/version/link validation, web shell hashing and ready/applied
+state machine, multi-tab/storage failure paths, notice localization/themes and
+document isolation. No blocking defects found. The review identified a factual
+backoff mismatch: web code capped its failure exponent at four (16 minutes)
+while documentation promised one hour. The exponent cap is now six and a
+deterministic boundary/recovery regression checks the full two-minute through
+one-hour sequence. Independent targeted app/xtask/JavaScript tests and a WASM
+build passed; the known path-alias platform test remains unrelated. Small
+per-build tracking keys are retained intentionally; closed-app polling,
+session-only dismissal, missing applied notices without history/storage and
+external host runtime/signing acceptance remain explicit limitations.
+
+[v0.17.0](https://github.com/AxelWol/Thinoda/releases/tag/v0.17.0) now has ten
+downloadable packages and six architecture-specific checksum manifests.
+Release workflow `40767865902` published the assets after PR #97's packaging
+fixes merged. The existing release tag was not moved. This supersedes the
+release-in-progress statements in the historical entries below.
+
+The next ordered work is **XV7a notes persistence/export fidelity, XV7b rendered
+equations, XV8 task-aware Tree Table, then XV9 durable local AI conversations**.
+
+**XV7b scoped implementation contract (2026-10-29, implemented locally;
+independent review completed):**
+deliver one user-visible **notes equation preview** slice, not topic-equation
+parity. The selected topic's Notes inspector gets an explicit equation editor,
+live offline vector preview, visible validation errors, Apply/Cancel and Remove.
+One canonical fenced `thinoda-math-v1` block lives at the end of an explicitly
+authored `markdown-v1` note. Plain notes are never interpreted as equations on
+open; adding an equation to a nonempty plain note is refused (format it explicitly
+first) so unrelated literal punctuation is not silently reinterpreted.
+Apply replaces only the equation block and commits through the existing
+conflict-checked notes transaction. Drafts are keyed by document/sheet/topic,
+document revision, complete note source and format; stale drafts cannot apply.
+Cancel changes no document metadata. Existing notes text remains editable and
+source-first. Source survives native v4 / clipboard v3, recovery, undo/redo and
+outline copies without adding a field that an older reader could silently drop.
+
+Supported syntax is deliberately not general LaTeX: ASCII letters/digits and
+basic operators, grouping, `\frac{a}{b}`, `^{...}` and `_{...}` (including both
+scripts on one base). Bound source bytes, node count, nesting and layout extents;
+reject unknown commands, malformed groups, duplicate scripts and invalid input
+without replacing the saved block. No chemical-notation, map/Outliner equation
+rendering, resizing, arbitrary TeX, macros, HTML, external fonts or network.
+Non-native exports, visual exports/printing and Map Shot must reject
+equation-bearing content before writing rather than silently omit it; XMind
+equation interchange is deferred without guessing its schema.
+
+**Decision critique:** an internal parser/layout is justified only for this small
+explicit syntax. Investigated `latex2mathml` 0.2.3 (MIT, last published 2020):
+it emits MathML, not egui/vector layout, and would still require a renderer.
+`mathlikeanim-rs` targets general animation/graphics, not a small shared equation
+widget. No dependency is added. Reusing the existing Markdown envelope preserves
+complete source even in older readers, which show a fenced code block; it does
+not confer equation-rendering compatibility. Conservative export refusal is a
+temporary usability trade-off, not export parity. Acceptance requires parser
+and geometry bounds, editor ownership/cancel/error tests, source-preserving
+transaction/native/recovery/clipboard checks, export destination safety,
+all ten languages/light-dark checks, native/WASM compile and strict Clippy.
+Stop after this usable slice; full topic equations remain open for review.
+
+**XV7b local verification and self-critique:** no dependency/schema-field change,
+executable replacement, push or PR. Added four core parser/layout/source
+tests, five IO preservation/omission-guard tests, five app integration tests
+(including Map/Outliner and all ten languages × light/dark), and two app unit
+tests for exact draft ownership and catalog coverage. Passing targeted commands:
+
+- `cargo test -p thinoda-core --lib equation` — 4 passed.
+- `cargo test -p thinoda-io --test equations` — 5 passed; native v4,
+  clipboard v3/older-prefix rejection, internal subtree/outline source, masking,
+  malformed import preservation, every non-native format with lossy consent,
+  destination preservation, direct print/Pitch/Gantt, hidden/floating topics and
+  unselected-sheet guards.
+- `cargo test -p thinoda-app --test equations -- --test-threads=1` — 5 passed;
+  real editor Apply/edit/remove, one-step undo/redo, save/reopen/recovery,
+  unsupported and oversized drafts (full rejected paste retained), Cancel/Escape,
+  revision/topic/document changes, focused-note blur followed by equation editing
+  as a separate undo step, inert plain notes and Map Shot refusal.
+- `cargo test -p thinoda-app --lib equation -- --test-threads=1` — 2 passed.
+- `cargo test -p thinoda-io --test notes_storage --test notes_markdown --test notes_loss --test notes_freemind --test notes_excel --test notes_word` — 36 passed.
+- `cargo test -p thinoda-app --test notes_markdown --test notes_i18n --test notes_export_loss --test inspector_save -- --test-threads=1` — 19 passed.
+- `cargo test -p thinoda-app --lib i18n::tests -- --test-threads=1` — 8 passed;
+  `cargo test -p thinoda-app --test help -- --test-threads=1` — 5 passed.
+- `cargo fmt --all -- --check`, strict native
+  `cargo clippy --workspace --all-targets -- -D warnings`, and strict production
+  WASM Clippy for web/app/platform/ai/io pass. These compile checks do not claim
+  browser or cross-OS runtime acceptance.
+- `python .github/scripts/third_party_notices.py --check` passes unchanged.
+  `python -m unittest discover -s .github/scripts -p test_docs_stamp.py` — 25 passed.
+  `docs_stamp.py --check` correctly refuses uncommitted README source edits
+  ("commit source edits before stamping"); per policy no stamps were hand-edited
+  and no commit was made merely to refresh metadata. `git diff --check` passes.
+
+Self-review fixed Escape leaking through to canvas deselection and removed the
+TextEdit character cap so oversize paste is rejected visibly, never silently
+truncated into a different valid equation. Fresh edit sessions reset canceled
+TextEdit undo state. Equation cancellation uses its own localized label because
+French Undo and generic Cancel share a translation. Offline help remains within
+its existing six section/shortcut groups. Opening waits one frame for the ordinary
+Notes buffer's blur commit, then captures the current revision; a focused note
+edit cannot immediately invalidate the newly opened scratch editor.
+Remaining trade-offs: one trailing
+block only; simple local font metrics rather than professional math typography;
+unapplied scratch drafts are not durable; a reserved marker in any declared
+Markdown note conservatively blocks foreign export even if malformed or merely
+mentioned. Notes source remains editable and native-saveable in all such cases.
+There is deliberately no map/Outliner-row equation, external equation schema,
+full LaTeX/chemistry or equation export parity. `.serena/` is preserved.
+
+**Independent equation review:** no blocking data-loss, draft-ownership or export
+bypass defects found. Review identified a direct-source editing gap: pasted
+CRLF/CR fences were rejected despite otherwise valid structure. Fence recognition
+now accepts LF, CRLF and CR without normalizing the surrounding note. Replacement
+separators preserve a prefix's terminal CR instead of accidentally merging it into
+a newly inserted LF; exact-byte regression coverage includes edit and removal.
+The conservative reserved-marker export rule also catches prose mentioning
+`thinoda-math-v1`; this is disclosed, not general Markdown fence interpretation.
+Final core/IO tests and strict native/WASM Clippy pass. Rebuilding the app
+integration harness through Cargo was blocked by the user-running `thinoda.exe`;
+the previously built five app and five IO equation integration tests passed
+directly without replacing or stopping that application. The new line-ending
+cases ran in freshly rebuilt core tests.
+
+**User-reported exit prompt sizing (2026-10-29, completed locally):** treat the
+full-height unsaved-work prompt as a UX regression ahead of further feature work.
+Shared confirmations now retain a bounded 440-point initial width and fit height
+to the message and action row, instead of reserving nearly the full viewport.
+Long content can still scroll, and explicit resize/maximize behavior is retained.
+The content-fitting mode is opt-in for confirmations; Settings and other tools
+keep their existing sizing policy.
+**Review:** the fix addresses both the scroll area's minimum-height reservation
+and an action row that consumed remaining vertical space, rather than hardcoding
+one exit-dialog height. Regression coverage checks compact desktop/narrow-window
+geometry and visible Save/Don't Save/Cancel actions in every language; Cancel
+retains dirty work. Shared long-content/maximize/restore and existing save/exit,
+conversion-confirmation and Settings viewport checks pass, as do strict native
+and production-WASM Clippy. This does not claim cross-OS runtime acceptance.
+
+The first local XV7a persistence slice introduces an explicit, versioned
+note-content envelope instead of inferring stored formatting from punctuation.
+Legacy JSON strings remain strings and retain their exact source; merely opening,
+typing, searching or previewing a note does not convert it. An explicit notes
+formatting action marks the resulting whole source as `markdown-v1`.
+Further typing retains that declaration, and removing Markdown markers does not
+silently revert its format. Native archives containing formatted notes use
+version 4 so older readers reject them rather than discard the format.
+Sheet clipboard uses version 3 for the same reason. Plain-only archives and
+clipboards retain their existing versions.
+
+**Office compatibility repair (2026-10-29):** the PowerPoint exporter used
+slide-layout ID `1`, below the Open XML minimum `2147483648`. Reusing the master
+ID at that minimum passed SDK schema validation but still prompted PowerPoint
+repair. Layout ID `2147483649`, distinct from master ID `2147483648`, opened
+the dark 4:3 candidate without repair in installed Windows PowerPoint.
+The user's PowerPoint-saved `slides-dark-4x3-fixed.pptx` passes SDK validation; comparison
+with the original retained all three slide IDs and byte-identical PNGs, removed
+no package parts, added Office properties and retained the corrected layout ID.
+This confirms save interoperability, not a proven repair history for that copy.
+
+CI now generates eight original Word/Excel/PowerPoint candidates and validates
+them read-only with Microsoft's Open XML SDK 3.5.1 (`Microsoft365`). Supplemental
+master/layout ID uniqueness checks cover the schema-valid collision; negative
+controls cover all three formats, malformed packages and Office owner files.
+The Office job gates Pages publication and retains fixture artifacts.
+**Review:** schema checks do not replace host acceptance. Only Windows
+PowerPoint dark 4:3 opening/save is established here; Word, Excel, LibreOffice
+and other OS host checks remain open. XV7 remains partial.
+
+The format travels with the source through undo/redo, outline conversion,
+branch/sheet clipboard, recovery and native save/reopen. Inspector drafts compare
+the original format as well as text, so a format-only source change cannot be
+overwritten by a stale draft. XMind's private Thinoda metadata retains the envelope;
+its public plain-note field remains a string containing the source, not a
+rich-text interoperability claim.
+
+Verification on Windows: 439 focused core/IO/app-library and integration tests
+passed, including notes, inspector save/focus/recovery, resource/native IO and
+all-language notes controls. Strict native Clippy and the locked WASM web/app
+check passed. This does not claim macOS/Linux runtime or a full workspace e2e run.
+
+**Word export continuation (2026-10-29):** explicitly declared Markdown notes
+now derive bounded paragraphs/styled runs/lists for `.docx` output. This is a
+non-mutating export representation, not a persisted rich-text migration.
+Word receives bold/italic (including complex-script flags), strikethrough,
+inline-code font, paragraphs, explicit hard breaks, tabs and real ordered/bullet
+numbering. Nested lists use separate counters/indentation; continuation paragraphs
+do not repeat markers, and independent lists/notes keep their starting numbers.
+Soft Markdown line breaks become spaces. Legacy plain notes remain literal.
+
+The Word subset uses the existing 16 KiB / 2,048-event / 32-depth projection
+bounds and at most nine list levels. Links/images, HTML, headings, block quotes,
+fenced/indented code blocks, tables, task lists, footnotes and unsupported controls
+fail explicitly rather than export a partly flattened note. Errors identify the
+topic and provide guidance in all ten catalogs; no link/image/HTML is fetched or
+executed. The source and existing destination are unchanged on failure.
+Only notes in the selected exported topic tree are considered, matching the
+existing Word export scope. No new UI control or platform-specific code is added.
+
+The continuation passed 443 focused core/IO/app-library and integration tests on
+Windows, including parsed DOCX package/XML assertions, formatting/list counters,
+legacy output, export scope, localization and failed-write preservation.
+This is not Open XML schema validation or a Word/LibreOffice host opening check.
+**Review:** fail-closed behavior deliberately favors fidelity over silently
+flattening unsupported Markdown. A future explicit loss-consent flow and broader
+format support remain necessary; other exporters are unchanged by this slice.
+
+**FreeMind export continuation (2026-10-29):** declared Markdown notes now use
+the same bounded export model for safe HTML richcontent, with bold/italic/strike,
+inline code, paragraphs/hard breaks and structural ordered/bullet lists.
+Nested lists, empty parent items, continuation paragraphs and independent
+starting numbers retain their structure. Legacy plain notes remain literal.
+Tabs and repeated spaces fail explicitly because HTML renderer whitespace
+fidelity is not established; all shared unsupported syntax/limits fail before
+writing, with translated topic-specific guidance. No external resources or source
+HTML enter generated rich notes. The Freeplane note reader/writer implementation
+confirms the `richcontent TYPE="NOTE"` HTML envelope; this is format evidence,
+not a completed FreeMind/Freeplane host-opening check.
+
+At the export-only slice, the Thinoda FreeMind importer did not retain rich formatting. It
+requires the shared formatting-loss confirmation when styles/lists/multiple
+paragraphs are present, instead of silently flattening them. Visible paragraph/
+break boundaries and XML entities survive that conversion.
+**Review:** bounded export fidelity and explicit import-loss reporting are
+implemented without new UI controls, theme-specific colors or platform branches.
+External-host acceptance, other exporters and
+an explicit export-loss consent flow remain open; XV7 is not complete.
+Verification on Windows: 452 focused core/IO/app-library and integration tests
+passed, including parsed rich-note XML, styles/list structure, exact byte/list
+bounds, import confirmation, entities, localization and failed-write preservation.
+Strict native and WASM Clippy, native application build, formatting and whitespace
+checks passed. This does not establish macOS/Linux runtime or host-app acceptance.
+
+**FreeMind import continuation (2026-10-29):** supported rich-note HTML now imports
+as an explicit `markdown-v1` source. The allowlist covers paragraphs, hard breaks,
+bold/italic/strike/code (including common semantic tag aliases), ordered/bullet
+lists, nested lists, empty parent items, continuation paragraphs and independent
+start counters. Generated Markdown escapes literal punctuation and protects
+delimiter-edge text; reparsing with the shared note parser must reproduce the
+same normalized `NoteDocument` before import proceeds without a loss warning.
+Legacy single-paragraph plain envelopes remain literal `Plain` notes, including
+source whitespace; an unstyled single-paragraph formatted export is indistinguishable
+from that legacy envelope and consequently reimports as plain, not declared Markdown.
+
+Rich conversion is bounded to 16 KiB XML/source, 2,048 XML/Markdown events,
+32 containers and nine list levels. Unsupported tags/attributes/styles, mixed
+inline/block list items, significant raw inline newlines/tabs/repeated spaces,
+code breaks, nonrepresentable empty paragraphs or expanded-source limits retain
+readable plain fallback and the existing explicit formatting-loss confirmation.
+No resources are fetched and no HTML is executed. Duplicate notes are combined
+readably with a warning instead of replacing an earlier note.
+**Critique:** this preserves supported editable semantics, not original HTML,
+original Markdown spelling, arbitrary CSS/HTML whitespace, or a full rich-text
+storage tree. Regenerated source uses escapes/entities; conservative fallback is
+intentional when representation cannot be proved. External FreeMind/Freeplane
+host acceptance, broader interchange fidelity and equations remain open.
+Windows verification: full IO tests, app-library tests and focused app notes/
+import-consent tests pass; strict native all-target and production-WASM Clippy,
+format/diff checks pass. The local sanitizer fuzz smoke could not link the
+missing Windows ASan thunk library. WASM all-target tests hit existing native-only
+printing/test API errors; production WASM Clippy passes. Neither is host acceptance.
+The final 21 app integration tests also passed when run directly from freshly
+rebuilt test artifacts; Cargo's final wrapper run was blocked from replacing the
+user's running `target/debug/thinoda.exe`, which was left undisturbed.
+
+**XV7 is still partial.** The new envelope is a versioned source representation,
+not a persisted block/span rich-text tree or a WYSIWYG editor. Full export parity,
+explicit formatting-loss consent/reporting and rendered equations remain open.
+Existing bounded preview/copy/search behavior is unchanged, including full-source
+search fallback above projection limits. Other exports can still expose Markdown
+source as disclosed in the notes UI. XV8 and XV9 are not started by this slice.
+XMind app compatibility, broader PowerPoint/LibreOffice opening checks and secure erasure
+of unreferenced resource blobs remain separate acceptance gaps.
+
+**Excel export continuation (2026-10-29):** declared Markdown notes now export
+as SpreadsheetML inline rich-text runs, preserving bold/italic/strike and inline
+code fonts instead of showing source markers. Paragraphs/hard breaks and visible
+ordered/bullet markers retain nesting, continuation paragraphs and independent
+starting counters. Excel cells have no structural lists; this is a readable
+cell representation, not an editable list-object or formatted-note round trip.
+Formatted notes wrap in a wider Notes column; plain notes remain literal.
+Spreadsheet encoded-character sequences such as `_x0041_` are escaped so Excel
+does not reinterpret literal text. Note text is always an inline string, never
+a formula or an active external resource.
+
+The shared parsing limits apply, plus Excel's 32,767 UTF-16-unit / 253-line-feed
+cell limits on rendered formatted notes. Unsupported Markdown and tabs fail
+before destination writes with translated topic-specific guidance in all ten
+catalogs. Installed Windows Excel opened the rich fixture without repair and
+displayed emphasis, code, nested markers, Unicode and literal encoded-character
+text. That host check exposed invisible tab spacing, so tabs are explicitly
+rejected instead of being silently dropped. Word retains tab support.
+Parsed-package regressions and Microsoft SDK validation cover the new output.
+Windows verification passed 88 focused IO tests, 224 app-library tests (including
+all-catalog error guidance), four SDK integration tests over eight fresh exports
+and strict native/WASM Clippy. This is not a full workspace or cross-OS run.
+**Review:** this closes Excel's supported-format export gap without migrating
+stored notes or adding platform-specific UI. Other exporters, richer interchange,
+explicit export-loss consent, broader host/OS acceptance and equations remain
+open; XV7 is not complete.
+
+**Markdown/TextBundle continuation (2026-10-29):** the shared Markdown exporter
+now emits multiline notes as complete blocks. Explicit Markdown notes below
+heading topics no longer receive accidental code-block indentation; every line
+under a nested topic receives the same container indentation, retaining internal
+paragraphs, lists, hard breaks and source formatting. Legacy plain notes use
+literal fenced code blocks rather than interpreting their punctuation or HTML.
+The fence is longer than every backtick run in the source, so embedded fences
+cannot terminate the literal block. This intentionally displays plain notes in a
+monospaced block, preserving literal meaning instead of guessing formatting.
+No persisted source or note format changes. Markdown-native syntax is not
+restricted to the Word/Excel export subset or truncated by preview bounds.
+TextBundle packages the exact same Markdown bytes, without a silent UTF-8 fallback.
+**Review:** this improves authored-note handoff, not rich-note import or
+asset packaging. Markdown/TextBundle import still interprets outline content and
+requires existing loss reporting where available; it does not restore note
+ownership/format from these blocks. External Markdown viewers control HTML/link
+behavior for explicitly formatted source. Other interchange gaps, export-loss
+consent and equations remain open; XV7 is still partial.
+Windows verification passed all 126 IO tests, strict native and WASM Clippy,
+formatting and whitespace checks. Four parser-based Markdown/TextBundle
+regressions exercise actual CommonMark event structure, not only output strings.
+No external Markdown editor or macOS/Linux runtime acceptance is claimed.
+
+**CSV/OPML note-loss continuation (2026-10-29):** exporting explicitly formatted
+notes now requires separate acknowledgement that these formats retain complete
+Markdown source, not displayed rich text or note-format metadata. Plain notes
+remain literal and do not trigger this warning. Detection follows only the
+selected sheet's reachable exported tree, excluding floating/orphan notes.
+The GUI's translated confirmation is cancelable before the destination picker,
+blocks editing and is invalidated by document, sheet or revision changes.
+Symbol-color confirmation chains independently. CLI callers must supply
+`--allow-note-format-loss`; API callers use `ExportOptions.allow_note_format_loss`.
+Neither general conversion-loss nor symbol-color consent bypasses the new guard.
+OPML attributes encode tabs, CR and LF numerically to prevent XML whitespace
+normalization from changing note source. Refusal preserves the source and any
+existing destination.
+**Review:** this closes one explicit consent gap, not rich-text CSV/OPML
+interchange. Other exporters' omission/format policies, rich-note import,
+broader XMind interoperability and rendered equations remain XV7 work.
+Windows coverage includes localized cancel/edit-blocking behavior in every
+catalog, stale document/sheet/revision consent, independent symbol-color
+chaining, real CLI flag combinations and destination preservation, plus exact
+CSV/OPML source whitespace. App-library and existing MindManager regressions,
+strict native/WASM Clippy and formatting checks pass. No external CSV/OPML host
+acceptance or cross-OS runtime check is claimed.
 
 ## XV7 first slice: Markdown notes tools (2026-10-28)
 

@@ -588,6 +588,8 @@ mod tests {
         assert!(h.state().label_editor.is_some());
         h.get_by_role_and_label(Role::Button, "Cancel").click();
         h.run_steps(3);
+        h.get_by_role_and_label(Role::Tab, "Data").click();
+        h.run_steps(3);
         h.get_by_role_and_label(Role::Button, "Edit labels")
             .scroll_to_me();
         h.run_steps(6);

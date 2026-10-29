@@ -34,6 +34,17 @@ pub fn build() -> anyhow::Result<()> {
 }
 
 fn generate(staging: &Path) -> anyhow::Result<String> {
+    // Normalize our prior injection so repeated hook runs stay content-deterministic.
+    let index = staging.join("index.html");
+    let html = std::fs::read_to_string(&index)?;
+    let html = if let Some((before, rest)) = html.split_once("<!-- thinoda-build -->") {
+        let (_, after) = rest
+            .split_once("<!-- /thinoda-build -->")
+            .context("Incomplete Thinoda build metadata")?;
+        format!("{before}{after}")
+    } else {
+        html
+    };
     let mut paths = Vec::new();
     collect(staging, staging, &mut paths)?;
     paths.sort();
@@ -46,7 +57,11 @@ fn generate(staging: &Path) -> anyhow::Result<String> {
     let mut entries = Vec::new();
     for path in paths {
         path.hash(&mut revision);
-        std::fs::read(staging.join(&path))?.hash(&mut revision);
+        if path == "index.html" {
+            html.as_bytes().hash(&mut revision);
+        } else {
+            std::fs::read(staging.join(&path))?.hash(&mut revision);
+        }
         // Build artifacts have simple names; reject anything needing URL escaping.
         if !path
             .bytes()
@@ -56,12 +71,18 @@ fn generate(staging: &Path) -> anyhow::Result<String> {
         }
         entries.push(format!("\"./{path}\""));
     }
+    let revision = format!("{:016x}", revision.finish());
+    let version = env!("CARGO_PKG_VERSION");
+    if !html.contains("</head>") {
+        bail!("PWA index requires a closing head element");
+    }
+    std::fs::write(&index, html.replacen("</head>", &format!(
+        "<!-- thinoda-build --><meta name=\"thinoda-build\" content=\"{version}:{revision}\"><!-- /thinoda-build --></head>"
+    ), 1))?;
     Ok(include_str!("../../crates/thinoda-web/sw.js")
         .replace("__THINODA_FILES__", &format!("[{}]", entries.join(",")))
-        .replace(
-            "__THINODA_REVISION__",
-            &format!("{:016x}", revision.finish()),
-        ))
+        .replace("__THINODA_VERSION__", version)
+        .replace("__THINODA_REVISION__", &revision))
 }
 
 fn collect(base: &Path, dir: &Path, paths: &mut Vec<String>) -> anyhow::Result<()> {
@@ -114,12 +135,17 @@ mod tests {
     fn shell_generation_is_complete_deterministic_and_content_versioned() {
         let dir = std::env::temp_dir().join(format!("thinoda-pwa-test-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("snippets")).unwrap();
-        std::fs::write(dir.join("index.html"), "<html>").unwrap();
+        std::fs::write(dir.join("index.html"), "<html><head></head>").unwrap();
         assert!(generate(&dir).is_err());
         std::fs::write(dir.join("app.wasm"), b"wasm").unwrap();
         std::fs::write(dir.join("app.js"), "app").unwrap();
         std::fs::write(dir.join("snippets/bridge.js"), "bridge").unwrap();
         let first = generate(&dir).unwrap();
+        assert!(
+            std::fs::read_to_string(dir.join("index.html"))
+                .unwrap()
+                .contains(&format!("content=\"{}:", env!("CARGO_PKG_VERSION")))
+        );
         assert!(first.contains("\"./snippets/bridge.js\""));
         assert!(first.contains("\"./app.wasm\""));
         assert!(!first.contains("__THINODA_"));

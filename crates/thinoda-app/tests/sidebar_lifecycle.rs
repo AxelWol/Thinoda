@@ -65,13 +65,14 @@ fn restored_sidebar_reopens_across_home_views_languages_and_appearance() {
                 }
                 assert!(!Settings::load(&paths).unwrap().show_format_panel);
 
-                for tab in [FormatTab::Style, FormatTab::Map] {
+                for tab in [FormatTab::Style, FormatTab::Data, FormatTab::Map] {
                     h.get_by_role_and_label(Role::Button, t("Format Panel"))
                         .click();
                     h.run_steps(3);
                     assert!(h.state().settings.show_format_panel);
                     let label = match tab {
                         FormatTab::Style => "Style",
+                        FormatTab::Data => "Data",
                         FormatTab::Map => "Map",
                     };
                     let tab_rect = h.get_by_role_and_label(Role::Tab, t(label)).rect();

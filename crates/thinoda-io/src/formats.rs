@@ -22,7 +22,9 @@ pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     Ok(out.into_inner())
 }
 pub(crate) fn native_export(w: &Workbook) -> Result<Vec<u8>, IoError> {
-    if w.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
+    if w.sheets.iter().any(|sheet| !sheet.resources.is_empty())
+        || thinoda_core::notes::has_formatted_notes(w)
+    {
         return crate::native_resources::export(w);
     }
     let content = serde_json::to_vec(w)?;
@@ -38,7 +40,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        if version > 3 {
+        if version > 4 {
             return Err(IoError::NewerVersion(format!("{version}")));
         }
         if manifest
@@ -48,15 +50,20 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         {
             return Err(IoError::Invalid("manifest format is not thinoda".into()));
         }
-        if version == 3 {
+        if version >= 3 {
             crate::native_resources::validate_directory(&z, bytes)?;
         }
         let mut book: Workbook = serde_json::from_slice(&zip_entry(&mut z, "content.json")?)?;
-        if version == 3 {
+        if version >= 3 {
             crate::native_resources::hydrate(&mut z, &manifest_bytes, &mut book)?;
         } else if book.sheets.iter().any(|sheet| !sheet.resources.is_empty()) {
             return Err(IoError::Invalid(
                 "embedded resources require native format version 3".into(),
+            ));
+        }
+        if version < 4 && thinoda_core::notes::has_formatted_notes(&book) {
+            return Err(IoError::Invalid(
+                "formatted notes require native format version 4".into(),
             ));
         }
         Ok(book)
@@ -64,7 +71,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         Ok(serde_json::from_slice(bytes)?)
     }
 }
-fn escape(s: &str) -> String {
+pub(super) fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -99,6 +106,39 @@ pub(crate) fn text_import(b: &[u8]) -> Result<Workbook, IoError> {
     )))
 }
 pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
+    fn note(source: &thinoda_core::notes::NoteContent, indent: usize, out: &mut String) {
+        let padding = " ".repeat(indent);
+        out.push('\n');
+        if source.is_markdown() {
+            for line in source.split('\n') {
+                if !line.is_empty() {
+                    out.push_str(&padding);
+                    out.push_str(line);
+                }
+                out.push('\n');
+            }
+        } else {
+            // A longer fence keeps literal Markdown/HTML and embedded fences inert.
+            let longest = source
+                .split(|character| character != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            let fence = "`".repeat(longest.saturating_add(1).max(3));
+            out.push_str(&padding);
+            out.push_str(&fence);
+            out.push('\n');
+            for line in source.split('\n') {
+                out.push_str(&padding);
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str(&padding);
+            out.push_str(&fence);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
     let sheet = &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)];
     let mut out = String::new();
     let root = &sheet.topics[&sheet.root];
@@ -106,9 +146,7 @@ pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
     out.push_str(&root.title);
     out.push('\n');
     if let Some(notes) = &root.notes {
-        out.push('\n');
-        out.push_str(notes);
-        out.push('\n');
+        note(notes, 0, &mut out);
     }
     fn render_children(sheet: &Sheet, id: TopicId, depth: usize, out: &mut String) {
         for child in &sheet.topics[&id].children {
@@ -124,10 +162,7 @@ pub(crate) fn markdown_export(w: &Workbook, o: &ExportOptions) -> Vec<u8> {
                 out.push('\n');
             }
             if let Some(notes) = &topic.notes {
-                out.push_str(&"  ".repeat(depth.saturating_sub(1)));
-                out.push_str("  ");
-                out.push_str(notes);
-                out.push('\n');
+                note(notes, if depth == 1 { 0 } else { depth * 2 }, out);
             }
             render_children(sheet, *child, depth + 1, out);
         }
@@ -198,7 +233,11 @@ pub(crate) fn opml_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, Io
         let t = &s.topics[&id];
         out.push_str(&format!("<outline text=\"{}\"", escape(&t.title)));
         if let Some(n) = &t.notes {
-            out.push_str(&format!(" _note=\"{}\"", escape(n)));
+            let note = escape(n)
+                .replace('\r', "&#13;")
+                .replace('\n', "&#10;")
+                .replace('\t', "&#9;");
+            out.push_str(&format!(" _note=\"{note}\""));
         }
         if let Some(l) = &t.hyperlink {
             out.push_str(&format!(" _link=\"{}\"", escape(l)));
@@ -220,9 +259,9 @@ pub(crate) fn opml_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, Io
 pub(crate) fn freemind_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
     let s = &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)];
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><map version=\"1.0.1\">");
-    fn rec(s: &Sheet, id: TopicId, out: &mut String, depth: usize) {
+    fn rec(s: &Sheet, id: TopicId, out: &mut String, depth: usize) -> Result<(), IoError> {
         if depth > 2000 {
-            return;
+            return Ok(());
         }
         let t = &s.topics[&id];
         out.push_str(&format!(
@@ -241,14 +280,34 @@ pub(crate) fn freemind_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>
         }
         if t.children.is_empty() && t.notes.is_none() && t.markers.is_empty() {
             out.push_str("/>");
-            return;
+            return Ok(());
         }
         out.push('>');
         if let Some(n) = &t.notes {
-            out.push_str(&format!(
-                "<richcontent TYPE=\"NOTE\"><html><body><p>{}</p></body></html></richcontent>",
-                escape(n)
-            ));
+            out.push_str("<richcontent TYPE=\"NOTE\">");
+            if n.is_markdown() {
+                let document = thinoda_core::notes::formatted_document(n).map_err(|reason| {
+                    IoError::FreeMindNote {
+                        topic: t.title.clone(),
+                        reason,
+                    }
+                })?;
+                // FreeMind's HTML renderer collapses whitespace. Do not rely on
+                // unverified CSS to promise the same tab/space fidelity as Word.
+                if document.paragraphs.iter().any(|paragraph| {
+                    let text: String = paragraph.runs.iter().map(|run| run.text.as_str()).collect();
+                    text.contains('\t') || text.contains("  ")
+                }) {
+                    return Err(IoError::FreeMindNote {
+                        topic: t.title.clone(),
+                        reason: thinoda_core::notes::NoteExportError::Unsupported,
+                    });
+                }
+                out.push_str(&crate::freemind_notes::render(&document));
+            } else {
+                out.push_str(&format!("<html><body><p>{}</p></body></html>", escape(n)));
+            }
+            out.push_str("</richcontent>");
         }
         for m in &t.markers {
             let icon = match m.as_str() {
@@ -263,24 +322,25 @@ pub(crate) fn freemind_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>
             }
         }
         for c in &t.children {
-            rec(s, *c, out, depth + 1);
+            rec(s, *c, out, depth + 1)?;
         }
         out.push_str("</node>");
+        Ok(())
     }
-    rec(s, s.root, &mut out, 0);
+    rec(s, s.root, &mut out, 0)?;
     out.push_str("</map>");
     Ok(out.into_bytes())
 }
 #[derive(Default)]
 struct XmlNode {
     title: String,
-    notes: Option<String>,
+    notes: Option<thinoda_core::notes::NoteContent>,
     link: Option<String>,
     folded: bool,
     markers: Vec<String>,
     children: Vec<XmlNode>,
 }
-fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoError> {
+fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>, bool), IoError> {
     use quick_xml::{Reader, events::Event};
     let mut r = Reader::from_reader(bytes);
     r.config_mut().trim_text(true);
@@ -289,7 +349,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
     let mut roots = Vec::new();
     let mut title = String::new();
     let mut in_title = false;
-    let mut note_target: Option<usize> = None;
+    let mut formatted_notes = false;
     loop {
         match r.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
@@ -307,7 +367,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
                             "folded" => n.folded = v == "true",
                             "link" => n.link = Some(v),
                             "_link" => n.link = Some(v),
-                            "_note" => n.notes = Some(v),
+                            "_note" => n.notes = Some(v.into()),
                             _ => {}
                         }
                     }
@@ -324,7 +384,33 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
                                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .unwrap_or_default();
                             if v.eq_ignore_ascii_case("NOTE") {
-                                note_target = Some(stack.len().saturating_sub(1));
+                                r.config_mut().trim_text(false);
+                                let (notes, lossy) = crate::freemind_notes::read(
+                                    &mut r,
+                                    e.attributes().count() == 1,
+                                )?;
+                                r.config_mut().trim_text(true);
+                                formatted_notes |= lossy;
+                                if let Some(node) = stack.last_mut() {
+                                    if let Some(previous) = node.notes.take() {
+                                        let visible = |note: thinoda_core::notes::NoteContent| {
+                                            if note.is_markdown() {
+                                                thinoda_core::notes::plain_text_projection(&note)
+                                                    .unwrap_or_else(|| note.to_string())
+                                            } else {
+                                                note.to_string()
+                                            }
+                                        };
+                                        node.notes = Some(
+                                            format!("{}\n{}", visible(previous), visible(notes))
+                                                .into(),
+                                        );
+                                        formatted_notes = true;
+                                    } else {
+                                        node.notes = Some(notes);
+                                    }
+                                }
+                                break;
                             }
                         }
                     }
@@ -363,7 +449,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
                         if k == "text" {
                             n.title = v;
                         } else if k == "_note" {
-                            n.notes = Some(v);
+                            n.notes = Some(v.into());
                         } else if k == "link" || k == "_link" {
                             n.link = Some(v);
                         }
@@ -381,19 +467,27 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
                     .to_string();
                 if in_title {
                     title.push_str(&v);
-                } else if let Some(i) = note_target
-                    && let Some(n) = stack.get_mut(i)
+                }
+            }
+            Ok(Event::GeneralRef(reference)) => {
+                let value = if let Some(character) = reference
+                    .resolve_char_ref()
+                    .map_err(|error| IoError::Xml(error.to_string()))?
                 {
-                    n.notes.get_or_insert_with(String::new).push_str(&v);
+                    character.to_string()
+                } else {
+                    quick_xml::escape::resolve_predefined_entity(reference.as_ref())
+                        .ok_or_else(|| IoError::Xml("unknown XML entity".into()))?
+                        .to_owned()
+                };
+                if in_title {
+                    title.push_str(&value);
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name().as_ref().to_ascii_lowercase();
                 if name == "title" {
                     in_title = false;
-                }
-                if name == "richcontent" {
-                    note_target = None;
                 }
                 if (name == "node" || name == "outline")
                     && let Some(n) = stack.pop()
@@ -414,7 +508,7 @@ fn read_xml_tree(bytes: &[u8], opml: bool) -> Result<(String, Vec<XmlNode>), IoE
     if !opml && roots.is_empty() {
         return Err(IoError::Invalid("FreeMind map has no nodes".into()));
     }
-    Ok((title, roots))
+    Ok((title, roots, formatted_notes))
 }
 fn xml_node_to_outline(n: XmlNode) -> OutlineNode {
     OutlineNode {
@@ -427,7 +521,7 @@ fn xml_node_to_outline(n: XmlNode) -> OutlineNode {
     }
 }
 pub(crate) fn opml_import(b: &[u8]) -> Result<Workbook, IoError> {
-    let (sheet_title, mut outlines) = read_xml_tree(b, true)?;
+    let (sheet_title, mut outlines, _) = read_xml_tree(b, true)?;
     let mut root = if outlines.is_empty() {
         OutlineNode::new(if sheet_title.is_empty() {
             "Central Topic"
@@ -448,23 +542,31 @@ pub(crate) fn opml_import(b: &[u8]) -> Result<Workbook, IoError> {
         title, &root,
     )))
 }
-pub(crate) fn freemind_import(b: &[u8]) -> Result<Workbook, IoError> {
-    let (_, mut roots) = read_xml_tree(b, false)?;
+pub(crate) fn freemind_import_with_report(b: &[u8]) -> Result<ImportReport, IoError> {
+    let (_, mut roots, formatted_notes) = read_xml_tree(b, false)?;
     let root = xml_node_to_outline(roots.remove(0));
-    Ok(Workbook::new(thinoda_core::outline::sheet_from_outline(
-        &root.title,
-        &root,
-    )))
+    Ok(ImportReport {
+        format: crate::Format::FreeMind,
+        workbook: Workbook::new(thinoda_core::outline::sheet_from_outline(
+            &root.title,
+            &root,
+        )),
+        warnings: if formatted_notes {
+            vec![ImportWarning::Formatting]
+        } else {
+            Vec::new()
+        },
+    })
 }
 pub(crate) fn textbundle_export(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
-    let md = String::from_utf8(markdown_export(w, o)).unwrap_or_default();
+    let md = markdown_export(w, o);
     let name = "mindmap";
     let info = serde_json::to_vec(
         &serde_json::json!({"version":2,"type":"net.daringfireball.markdown","transient":false,"creatorURL":"https://thinoda.app"}),
     )?;
     let a = format!("{name}.textbundle/info.json");
     let b = format!("{name}.textbundle/text.md");
-    archive(&[(&a, &info), (&b, md.as_bytes())])
+    archive(&[(&a, &info), (&b, &md)])
 }
 
 pub(crate) fn textbundle_import(bytes: &[u8]) -> Result<ImportReport, IoError> {

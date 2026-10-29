@@ -5,10 +5,12 @@
 //! (including outlined text); JPEG always uses an opaque background.
 pub mod fonts;
 mod formats;
+mod freemind_notes;
 pub mod gantt;
 mod mindmanager;
 mod native_resources;
 mod office;
+mod office_notes;
 pub mod presentation;
 pub mod print;
 mod render;
@@ -155,6 +157,8 @@ impl Format {
 pub struct ExportOptions {
     /// Explicit caller acknowledgement for editable formats without symbol-color fields.
     pub allow_symbol_color_loss: bool,
+    /// Explicit acknowledgement that CSV/OPML retain Markdown source, not rich formatting.
+    pub allow_note_format_loss: bool,
     pub sheet: Option<usize>,
     pub dark: bool,
     pub scale: f32,
@@ -166,6 +170,7 @@ impl Default for ExportOptions {
     fn default() -> Self {
         Self {
             allow_symbol_color_loss: false,
+            allow_note_format_loss: false,
             sheet: None,
             dark: false,
             scale: 1.0,
@@ -179,6 +184,8 @@ impl Default for ExportOptions {
 /// Import/export error.
 #[derive(Debug, Error)]
 pub enum IoError {
+    #[error("{}", thinoda_core::equations::EXPORT_ERROR)]
+    EquationNotesUnsupported,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("ZIP error: {0}")]
@@ -207,10 +214,29 @@ pub enum IoError {
         "MindManager export requires confirmation: only the selected sheet and supported features are written"
     )]
     MindManagerExportNeedsConfirmation,
+    #[error(
+        "this format exports formatted notes as Markdown source; explicitly acknowledge note formatting loss or save as .thinoda"
+    )]
+    NoteFormatLossNeedsConfirmation,
     #[error("MindManager import failed: {0}")]
     MindManager(String),
     #[error("MindManager export failed: {0}")]
     MindManagerExport(String),
+    #[error("Word export cannot preserve the note on topic {topic}: {reason:?}")]
+    WordNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
+    #[error("Excel export cannot preserve the note on topic {topic}: {reason:?}")]
+    ExcelNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
+    #[error("FreeMind export cannot preserve the note on topic {topic}: {reason:?}")]
+    FreeMindNote {
+        topic: String,
+        reason: thinoda_core::notes::NoteExportError,
+    },
 }
 
 pub use gantt::{
@@ -333,11 +359,11 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
             .map_err(|error| IoError::MindManager(error.to_string()))?,
         Format::TextBundle => formats::textbundle_import(bytes)?,
         Format::Word => office::docx_import(bytes)?,
+        Format::FreeMind => formats::freemind_import_with_report(bytes)?,
         _ => {
             let workbook = match format {
                 Format::Thinoda => formats::native_import(bytes)?,
                 Format::XMind => xmind::import(bytes)?,
-                Format::FreeMind => formats::freemind_import(bytes)?,
                 Format::Opml => formats::opml_import(bytes)?,
                 Format::Markdown => formats::markdown_import(bytes)?,
                 Format::PlainText => formats::text_import(bytes)?,
@@ -463,6 +489,11 @@ pub fn export_bytes_with_consent(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
+    if format != Format::Thinoda {
+        for sheet in &book.sheets {
+            reject_equation_notes(sheet)?;
+        }
+    }
     let supports_embedded_resources = matches!(
         format,
         Format::Thinoda
@@ -497,6 +528,9 @@ pub fn export_bytes_with_consent(
             "this editable format cannot preserve symbol colors; use Thinoda, XMind, or a visual export, or explicitly acknowledge color loss with allow_symbol_color_loss".into(),
         ));
     }
+    if note_format_loss(book, format, opts) && !opts.allow_note_format_loss {
+        return Err(IoError::NoteFormatLossNeedsConfirmation);
+    }
     Ok(match format {
         Format::Thinoda => formats::native_export(book)?,
         Format::XMind => xmind::export(book)?,
@@ -527,6 +561,42 @@ pub fn export_bytes_with_consent(
         Format::Csv => office::csv(book, opts),
         _ => unreachable!(),
     })
+}
+
+/// Until equation-note export is implemented, no lossy consent can discard it.
+/// Check all topics, including detached/hidden ones, before creating output.
+pub(crate) fn reject_equation_notes(sheet: &thinoda_core::Sheet) -> Result<(), IoError> {
+    if thinoda_core::equations::sheet_has_equations(sheet) {
+        Err(IoError::EquationNotesUnsupported)
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether selected, reachable notes lose their declared rich-text interpretation.
+/// CSV/OPML retain complete Markdown source; acknowledgement never changes the map.
+pub fn note_format_loss(book: &Workbook, format: Format, opts: &ExportOptions) -> bool {
+    if !matches!(format, Format::Csv | Format::Opml) || book.sheets.is_empty() {
+        return false;
+    }
+    let sheet = &book.sheets[opts
+        .sheet
+        .unwrap_or(book.active_sheet)
+        .min(book.sheets.len() - 1)];
+    let mut stack = vec![(sheet.root, 0usize)];
+    let mut visited = HashSet::new();
+    while let Some((id, depth)) = stack.pop() {
+        if depth > 2000 || !visited.insert(id) {
+            continue;
+        }
+        if let Some(topic) = sheet.topics.get(&id) {
+            if topic.notes.as_ref().is_some_and(|note| note.is_markdown()) {
+                return true;
+            }
+            stack.extend(topic.children.iter().map(|child| (*child, depth + 1)));
+        }
+    }
+    false
 }
 
 /// Formats without per-symbol color support. XMind retains the Thinoda metadata payload,

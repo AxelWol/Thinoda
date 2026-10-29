@@ -6,6 +6,11 @@ Thinoda supports a **bounded conversion subset**, not certified or lossless
 MindManager compatibility. Keep original files. Use `.thinoda` for complete
 Thinoda workbooks.
 
+Equation-note blocks (`thinoda-math-v1` in declared Markdown notes) are not
+exported to MindManager, even with lossy consent. Export fails before writing
+or replacing the destination; save as `.thinoda` to retain the complete source.
+This notes-preview slice does not implement a MindManager equation schema.
+
 ## File and save policy
 
 | Operation | Policy |

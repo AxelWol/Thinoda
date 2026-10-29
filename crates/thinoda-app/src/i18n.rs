@@ -253,6 +253,54 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Equation preview in notes", "Gleichungsvorschau in Notizen"),
+    ("Cancel equation edit", "Gleichungsbearbeitung abbrechen"),
+    (
+        "Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.",
+        "Nur Notizvorschau, keine Gleichung auf der Karte. Natives Speichern erhält den Quelltext; andere Exporte sind gesperrt.",
+    ),
+    (
+        "512 bytes maximum. Use groups, \\frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.",
+        "Maximal 512 Bytes. Gruppen, \\frac{a}{b}, ^{...} und _{...} verwenden. Begrenzte Syntax, kein allgemeines LaTeX und keine Chemie.",
+    ),
+    (
+        "Format this nonempty plain note as Markdown explicitly before adding an equation.",
+        "Diese nicht leere Klartextnotiz vor dem Einfügen einer Gleichung ausdrücklich als Markdown formatieren.",
+    ),
+    ("Edit notes equation", "Notizgleichung bearbeiten"),
+    ("Equation source", "Gleichungsquelltext"),
+    ("Apply notes equation", "Notizgleichung übernehmen"),
+    ("Remove notes equation", "Notizgleichung entfernen"),
+    (
+        "Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.",
+        "Notizen mit Gleichungen können in diesem Format nicht exportiert oder gedruckt werden. Als Thinoda speichern, um den vollständigen Quelltext zu erhalten.",
+    ),
+    (
+        "Invalid equation. Use letters, digits, operators, groups, \\frac{a}{b}, ^{...} and _{...}.",
+        "Ungültige Gleichung. Buchstaben, Ziffern, Operatoren, Gruppen, \\frac{a}{b}, ^{...} und _{...} verwenden.",
+    ),
+    (
+        "Equation limit reached (512 bytes, 128 nodes, 8 levels).",
+        "Gleichungsgrenze erreicht (512 Bytes, 128 Knoten, 8 Ebenen).",
+    ),
+    (
+        "Keep one equation block at the end of the note, or edit the note source directly.",
+        "Einen Gleichungsblock am Ende der Notiz behalten oder den Notizquelltext direkt bearbeiten.",
+    ),
+    ("New version available", "Neue Version verfügbar"),
+    ("Update ready", "Update bereit"),
+    (
+        "Update installed successfully",
+        "Update erfolgreich installiert",
+    ),
+    ("Current version", "Aktuelle Version"),
+    ("Version and changelog", "Version und Änderungsprotokoll"),
+    ("Download new version", "Neue Version herunterladen"),
+    ("Dismiss", "Ausblenden"),
+    (
+        "Save your work, then close all app windows and reopen to apply the update.",
+        "Speichern Sie Ihre Arbeit, schließen Sie alle App-Fenster und öffnen Sie die App erneut, um das Update anzuwenden.",
+    ),
     ("PowerPoint slide size", "PowerPoint-Folienformat"),
     (
         "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
@@ -1107,6 +1155,39 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    ("Export note source", "Notizquelle exportieren"),
+    (
+        "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.",
+        "Dieses Format kann die Notizformatierung nicht erhalten. Verwenden Sie Exportieren mit Bestätigung oder speichern Sie als Thinoda.",
+    ),
+    (
+        "This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.",
+        "Dieses Format exportiert formatierte Notizen als Markdown-Quelltext, nicht als Rich Text. Der vollständige Quelltext bleibt erhalten, die Formatierung wird jedoch nicht angezeigt. Die Quellarbeitsmappe bleibt unverändert. Speichern Sie als Thinoda, um Notizformate zu erhalten.",
+    ),
+    (
+        "Excel note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
+        "Excel-Notizexportlimit erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
+    ),
+    (
+        "Excel cannot preserve this note's formatting. Links, images, HTML, tabs and advanced Markdown are not supported. The source is unchanged; save as Thinoda.",
+        "Excel kann die Formatierung dieser Notiz nicht erhalten. Links, Bilder, HTML, Tabulatoren und erweitertes Markdown werden nicht unterstützt. Die Quelle bleibt unverändert; speichern Sie als Thinoda.",
+    ),
+    (
+        "FreeMind note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
+        "Limit für den FreeMind-Notizexport erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
+    ),
+    (
+        "FreeMind cannot preserve this note's formatting. Links, images, HTML, advanced Markdown, tabs and repeated spaces are not supported. The source is unchanged; save as Thinoda.",
+        "FreeMind kann die Formatierung dieser Notiz nicht erhalten. Links, Bilder, HTML, erweitertes Markdown, Tabulatoren und wiederholte Leerzeichen werden nicht unterstützt. Die Quelle bleibt unverändert; speichern Sie als Thinoda.",
+    ),
+    (
+        "Word note export limit reached. The source is unchanged; shorten the note or save as Thinoda.",
+        "Limit für den Word-Notizexport erreicht. Die Quelle bleibt unverändert; kürzen Sie die Notiz oder speichern Sie als Thinoda.",
+    ),
+    (
+        "Word cannot preserve this note's formatting. Links, images, HTML and advanced Markdown are not supported. The source is unchanged; save as Thinoda.",
+        "Word kann die Formatierung dieser Notiz nicht erhalten. Links, Bilder, HTML und erweitertes Markdown werden nicht unterstützt. Die Quelle bleibt unverändert; speichern Sie als Thinoda.",
+    ),
     ("Copy note as plain text", "Notiz als Klartext kopieren"),
     (
         "Notes search uses visible Markdown text; oversized notes search the original source.",
@@ -1760,6 +1841,38 @@ const DE: &[(&str, &str)] = &[
     ("Central Topic", "Zentrales Thema"),
     // Format panel
     ("Style", "Stil"),
+    ("Data", "Daten"),
+    ("Equation", "Gleichung"),
+    ("Enlarge notes editor", "Notizeneditor vergrößern"),
+    ("Enlarge equation editor", "Gleichungseditor vergrößern"),
+    ("Notes editor", "Notizeneditor"),
+    (
+        "Changing the selection, tab or document revision closes enlarged editors without applying their edits. Apply before editing elsewhere.",
+        "Ein Wechsel der Auswahl, des Tabs oder der Dokumentrevision schließt vergrößerte Editoren ohne Übernahme. Übernimm Änderungen vor dem Bearbeiten an anderer Stelle.",
+    ),
+    ("Equation editor", "Gleichungseditor"),
+    ("Apply notes", "Notizen übernehmen"),
+    ("Cancel notes edit", "Notizenbearbeitung abbrechen"),
+    (
+        "Apply to keep edits. Cancel discards them. Unapplied dialog edits are not saved or recovered.",
+        "Übernehmen behält Änderungen. Abbrechen verwirft sie. Nicht übernommene Dialogänderungen werden weder gespeichert noch wiederhergestellt.",
+    ),
+    (
+        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.",
+        "Data liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen und Notizgleichungen in Map und Gliederung. Die Aufgabenplanung bleibt unter Stil.",
+    ),
+    (
+        "Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.",
+        "Data > Lokales Bild bietet Breite, Platzierung und Zurücksetzen. Auf der Map änderst du die Größe am Griff unten rechts; Escape bricht ab und Pfeiltasten ändern die Größe eines fokussierten Griffs.",
+    ),
+    (
+        "Insert > Attachment embeds a local file as a child topic (1 byte to 8 MiB). Data > Attachment saves or downloads it separately. Nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported.",
+        "Einfügen > Anhang bettet eine lokale Datei als Unterthema ein (1 Byte bis 8 MiB). Data > Anhang speichert oder lädt sie separat herunter. Nichts wird geöffnet oder ausgeführt. Speichere als .thinoda, um Anhänge zu erhalten; andere Exporte werden nicht unterstützt.",
+    ),
+    (
+        "Select a topic to edit its data.",
+        "Wähle ein Thema aus, um seine Daten zu bearbeiten.",
+    ),
     ("Map", "Map"),
     ("Structure", "Struktur"),
     ("Shape", "Form"),
@@ -2182,6 +2295,26 @@ mod tests {
     ];
 
     #[test]
+    fn formatted_note_export_errors_are_translated_in_every_catalog() {
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, "Export note source"), "Export note source");
+            for key in [
+                crate::notes::WORD_LIMIT,
+                crate::notes::WORD_UNSUPPORTED,
+                crate::notes::FREEMIND_LIMIT,
+                crate::notes::FREEMIND_UNSUPPORTED,
+                crate::notes::EXCEL_LIMIT,
+                crate::notes::EXCEL_UNSUPPORTED,
+                crate::notes::EXPORT_SOURCE_WARNING,
+                crate::notes::EXPORT_SOURCE_REQUIRED,
+            ] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+                assert!(t_in(language, key).contains("Thinoda"));
+            }
+        }
+    }
+
+    #[test]
     fn locale_subtags_and_explicit_preferences() {
         for (locale, expected) in [
             ("en-US", Lang::En),
@@ -2322,6 +2455,7 @@ mod tests {
     #[test]
     fn every_literal_translation_call_is_in_the_catalog() {
         for source in [
+            include_str!("updates.rs"),
             include_str!("ui.rs"),
             include_str!("app.rs"),
             include_str!("ai.rs"),
@@ -2333,6 +2467,7 @@ mod tests {
             include_str!("labels.rs"),
             include_str!("images.rs"),
             include_str!("notes.rs"),
+            include_str!("equations.rs"),
             include_str!("doc.rs"),
             include_str!("map_shot.rs"),
             include_str!("printing.rs"),
