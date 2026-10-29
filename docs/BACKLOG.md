@@ -14,6 +14,14 @@ six checksum manifests after PR #97; historical release blockers below are no
 longer current. There are no open GitHub issues at this check. Execution resumes
 with XV7a, then XV7b equations, XV8 and XV9.
 
+**User-reported exit confirmation sizing (2026-10-29, completed locally):**
+the unsaved-work prompt no longer fills the app height. Shared confirmations
+start at a bounded 440-point width and fit their message/action height, retaining
+scrolling for long content and user resize/maximize. Every-language desktop and
+narrow-window coverage keeps all three actions visible and verifies Cancel
+preserves unsaved work. Other tool dialogs retain their established sizing policy;
+cross-OS runtime acceptance remains separate from native/WASM compilation.
+
 **Office compatibility continuation (2026-10-29):** PPTX layout IDs now use the
 valid high range without colliding with master IDs. Installed Windows PowerPoint
 opened the corrected dark 4:3 deck without repair. The user's SDK-valid

@@ -19,6 +19,22 @@ release-in-progress statements in the historical entries below.
 
 The next ordered work is **XV7a notes persistence/export fidelity, XV7b rendered
 equations, XV8 task-aware Tree Table, then XV9 durable local AI conversations**.
+
+**User-reported exit prompt sizing (2026-10-29, completed locally):** treat the
+full-height unsaved-work prompt as a UX regression ahead of further feature work.
+Shared confirmations now retain a bounded 440-point initial width and fit height
+to the message and action row, instead of reserving nearly the full viewport.
+Long content can still scroll, and explicit resize/maximize behavior is retained.
+The content-fitting mode is opt-in for confirmations; Settings and other tools
+keep their existing sizing policy.
+**Review:** the fix addresses both the scroll area's minimum-height reservation
+and an action row that consumed remaining vertical space, rather than hardcoding
+one exit-dialog height. Regression coverage checks compact desktop/narrow-window
+geometry and visible Save/Don't Save/Cancel actions in every language; Cancel
+retains dirty work. Shared long-content/maximize/restore and existing save/exit,
+conversion-confirmation and Settings viewport checks pass, as do strict native
+and production-WASM Clippy. This does not claim cross-OS runtime acceptance.
+
 The first local XV7a persistence slice introduces an explicit, versioned
 note-content envelope instead of inferring stored formatting from punctuation.
 Legacy JSON strings remain strings and retain their exact source; merely opening,

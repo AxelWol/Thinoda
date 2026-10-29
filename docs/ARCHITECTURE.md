@@ -333,6 +333,12 @@ graph TD
   restoring rewrites the `AreaState` so the window returns to its previous rect.
   Multi-page dialogs use `thinoda_ui::tab_bar` (icon tabs, `Role::Tab`).
   Button labels are translated via `i18n::dialog_labels()`.
+  Shared confirmations opt into `fit_content_height(true)` at a 440-point initial
+  width: the scroll body can grow up to viewport bounds but reserves only a small
+  minimum, and the action row allocates button height rather than remaining
+  vertical space. Short save/exit prompts stay compact; long messages scroll.
+  Explicitly user-sized/maximized dialogs and other tools retain their prior
+  sizing behavior.
 - **Text input ownership**: Map and Outline use `MapView`'s per-edit IME
   state with the shared `protect_ime_candidate_keys` guard before drawing their
   title text widgets. Candidate
