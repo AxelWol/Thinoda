@@ -180,7 +180,7 @@ pub(crate) fn editable_slide(
     width: u64,
     height: u64,
 ) -> Result<NativeSlide, IoError> {
-    crate::reject_equation_notes(sheet)?;
+    crate::render::validate_equation_notes(sheet)?;
     let dimensions = thinoda_core::images::validate_visual(sheet).map_err(IoError::Invalid)?;
     let text = ExportText::new(sheet, options.dark, crate::fonts::database())?;
     let layout = &resolved.layout;
@@ -529,6 +529,81 @@ pub(crate) fn editable_slide(
                 0.0,
                 false,
             );
+        }
+    }
+    if let Some(appendix) = crate::render::equation_appendix(sheet, layout)? {
+        let start_y = resolved.frame.max().y - appendix.height;
+        draw.text(
+            "Notes equations heading",
+            Rect::from_min_size(
+                Vec2::new(resolved.frame.min.x + 16.0, start_y + 4.0),
+                Vec2::new(240.0, 24.0),
+            ),
+            "Notes equations",
+            16.0,
+            "Segoe UI",
+            grey,
+            true,
+            false,
+            false,
+            false,
+        );
+        let mut y = start_y + 32.0;
+        for row in &appendix.rows {
+            draw.text(
+                &format!("Notes equation topic {}", row.topic),
+                Rect::from_min_size(
+                    Vec2::new(resolved.frame.min.x + 16.0, y),
+                    Vec2::new(row.title_width, 20.0),
+                ),
+                &row.title,
+                14.0,
+                &row.font_family,
+                row.color,
+                false,
+                false,
+                false,
+                false,
+            );
+            let origin_x = resolved.frame.min.x + 24.0 + row.title_width;
+            let origin_y = y + (row.height - row.layout.height) / 2.0;
+            for primitive in &row.layout.primitives {
+                match primitive {
+                    thinoda_core::equations::Primitive::Glyph {
+                        character,
+                        x,
+                        y,
+                        size,
+                    } => draw.text(
+                        "Equation glyph",
+                        Rect::from_min_size(
+                            Vec2::new(origin_x + x - size * 0.2, origin_y + y - size * 0.1),
+                            Vec2::new(size * 0.62, size * 1.2),
+                        ),
+                        &character.to_string(),
+                        *size,
+                        &row.font_family,
+                        row.color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    ),
+                    thinoda_core::equations::Primitive::Rule { x, y, width } => draw.path(
+                        "Equation fraction rule",
+                        &[
+                            Vec2::new(origin_x + x, origin_y + y),
+                            Vec2::new(origin_x + x + width, origin_y + y),
+                        ],
+                        false,
+                        row.color,
+                        1.0,
+                        false,
+                        false,
+                    ),
+                }
+            }
+            y += row.height;
         }
     }
     relationships.push_str("</Relationships>");

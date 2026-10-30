@@ -65,10 +65,13 @@ No release or branch merge is implied by this implementation task.
 
 ### Deliberate boundaries
 
-Keep the current explicit refusal of unsupported resources and note equations.
-Do not silently rasterize unsupported vector/text content. Pixel-identical font
-rendering across Office installations cannot be guaranteed; preserve Unicode,
-editable text and geometry with declared font behavior.
+Keep the current explicit refusal of unsupported resources and unsupported note
+formats. A bounded notes-equation appendix is included only for topics resolved
+as visible on each slide, using native editable text and fraction-rule paths;
+malformed source is rejected. Do not silently rasterize unsupported vector/text
+content. Pixel-identical font rendering across Office installations cannot be
+guaranteed; preserve Unicode, editable text and geometry with declared font
+behavior.
 
 This is not a general-purpose free-layout slide design application. Video,
 persisted choreography, automatic narration, multi-monitor presenter routing,

@@ -6,7 +6,7 @@ use thinoda_core::equations::{self as math, Primitive};
 use crate::i18n::t;
 
 pub(crate) const TITLE: &str = "Equation preview in notes";
-pub(crate) const SCOPE: &str = "Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.";
+pub(crate) const SCOPE: &str = "Notes equations render in visual exports for visible topics. XMind preserves source; CSV/OPML require note-format-loss consent. Map Shot and unsupported formats remain blocked.";
 pub(crate) const HELP: &str = "512 bytes maximum. Use groups, \\frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.";
 pub(crate) const PLAIN_ERROR: &str =
     "Format this nonempty plain note as Markdown explicitly before adding an equation.";

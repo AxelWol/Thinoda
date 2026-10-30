@@ -2,6 +2,7 @@ use crate::{ExportOptions, IoError};
 use std::io::Cursor;
 use thinoda_core::{
     Rect, Sheet, TopicId, Workbook,
+    equations::{self as math, Layout as EquationLayout, Primitive as EquationPrimitive},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, layout_sheet},
     model::TopicShape,
@@ -44,6 +45,129 @@ fn svg_with_fonts(
 pub(crate) fn presentation_layout(s: &Sheet, dark: bool) -> Result<thinoda_core::Layout, IoError> {
     let text = text::ExportText::new(s, dark, crate::fonts::database())?;
     Ok(layout_sheet(s, &text, dark))
+}
+
+pub(crate) struct EquationRow {
+    pub topic: TopicId,
+    pub title: String,
+    pub layout: EquationLayout,
+    pub title_width: f32,
+    pub height: f32,
+    pub color: Color,
+    pub font_family: String,
+}
+
+pub(crate) struct EquationAppendix {
+    pub rows: Vec<EquationRow>,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Validate every authored block, including equations outside a presentation's
+/// visible scope. Imported malformed blocks must never be silently discarded.
+pub(crate) fn validate_equation_notes(sheet: &Sheet) -> Result<(), IoError> {
+    for topic in sheet.topics.values() {
+        let Some(note) = topic.notes.as_ref().filter(|note| math::has_equation(note)) else {
+            continue;
+        };
+        let Some((_, source)) =
+            math::split_note(note).map_err(|_| IoError::EquationNotesUnsupported)?
+        else {
+            continue;
+        };
+        math::parse(source).map_err(|_| IoError::EquationNotesUnsupported)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn equation_appendix(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+) -> Result<Option<EquationAppendix>, IoError> {
+    validate_equation_notes(sheet)?;
+    let mut rows = Vec::new();
+    let mut width = 280.0_f32;
+    let mut height = 48.0_f32;
+    for id in &layout.order {
+        let Some(topic) = sheet.topics.get(id) else {
+            continue;
+        };
+        let Some(note) = topic.notes.as_ref().filter(|note| math::has_equation(note)) else {
+            continue;
+        };
+        let (_, source) = math::split_note(note)
+            .map_err(|_| IoError::EquationNotesUnsupported)?
+            .ok_or(IoError::EquationNotesUnsupported)?;
+        let formula = math::layout(source, 18.0, |_, size| (size * 0.62, size))
+            .map_err(|_| IoError::EquationNotesUnsupported)?;
+        let Some(topic_layout) = layout.topics.get(id) else {
+            continue;
+        };
+        // Appendix labels do not reuse the wrapped topic block, so reserve a
+        // conservative single-line width as well as the map topic's width.
+        let title_width = topic_layout
+            .rect
+            .size
+            .x
+            .max(topic.title.chars().count() as f32 * 14.0);
+        let row_height = formula.height.max(18.0) + 12.0;
+        width = width.max(title_width + formula.width + 40.0);
+        height += row_height;
+        if !width.is_finite()
+            || !height.is_finite()
+            || width > math::MAX_WIDTH
+            || height > math::MAX_HEIGHT
+        {
+            return Err(IoError::EquationNotesUnsupported);
+        }
+        let color = topic_layout.style.text_color;
+        let font_family = topic_layout
+            .style
+            .font_family
+            .as_deref()
+            .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif")
+            .to_owned();
+        rows.push(EquationRow {
+            topic: *id,
+            title: topic.title.clone(),
+            layout: formula,
+            title_width,
+            height: row_height,
+            color,
+            font_family,
+        });
+    }
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(EquationAppendix {
+        rows,
+        width,
+        height,
+    }))
+}
+
+pub(crate) fn extend_equation_frame(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+    frame: Rect,
+) -> Result<Rect, IoError> {
+    let Some(appendix) = equation_appendix(sheet, layout)? else {
+        return Ok(frame);
+    };
+    let width = frame.size.x.max(appendix.width);
+    let height = frame.size.y + appendix.height;
+    if !width.is_finite()
+        || !height.is_finite()
+        || width > math::MAX_WIDTH
+        || height > math::MAX_HEIGHT
+    {
+        return Err(IoError::EquationNotesUnsupported);
+    }
+    Ok(Rect::from_min_size(
+        Vec2::new(frame.center().x - width / 2.0, frame.min.y),
+        Vec2::new(width, height),
+    ))
 }
 
 pub(crate) fn svg_resolved(
@@ -128,7 +252,7 @@ fn svg_layout_with_fonts(
     layout: &thinoda_core::Layout,
     zones: &[thinoda_core::Zone],
 ) -> Result<String, IoError> {
-    crate::reject_equation_notes(s)?;
+    validate_equation_notes(s)?;
     let mut image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
         IoError::Invalid(format!("embedded resources cannot be rendered: {error}"))
     })?;
@@ -139,7 +263,19 @@ fn svg_layout_with_fonts(
     });
     let text = text::ExportText::new(s, o.dark, fontdb)?;
     let pad = o.padding.max(0.0);
-    let b = frame.unwrap_or_else(|| layout.bounds.expand(pad));
+    let base_frame = frame.unwrap_or_else(|| layout.bounds.expand(pad));
+    let appendix = equation_appendix(s, layout)?;
+    let b = if frame.is_none() {
+        appendix.as_ref().map_or(base_frame, |appendix| {
+            let width = base_frame.size.x.max(appendix.width);
+            Rect::from_min_size(
+                Vec2::new(base_frame.center().x - width / 2.0, base_frame.min.y),
+                Vec2::new(width, base_frame.size.y + appendix.height),
+            )
+        })
+    } else {
+        base_frame
+    };
     let max = b.max();
     let width = max.x - b.min.x;
     let height = max.y - b.min.y;
@@ -434,6 +570,56 @@ fn svg_layout_with_fonts(
         for (label, lr) in &tl.labels {
             out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"5\" fill=\"#EEEEEE\"/><text x=\"{:.2}\" y=\"{:.2}\" font-size=\"10\" text-anchor=\"middle\" fill=\"#333333\">{}</text>",lr.min.x,lr.min.y,lr.size.x,lr.size.y,lr.center().x,lr.center().y,esc(label)));
         }
+    }
+    if let Some(appendix) = &appendix {
+        let start_y = b.max().y - appendix.height;
+        out.push_str("<g class=\"notes-equations\">");
+        out.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"sans-serif\" font-size=\"16\" font-weight=\"bold\" fill=\"#555555\">Notes equations</text>",
+            b.min.x + 16.0,
+            start_y + 22.0
+        ));
+        let mut y = start_y + 34.0;
+        for row in &appendix.rows {
+            out.push_str(&format!(
+                "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"14\" fill=\"{}\">{}</text>",
+                b.min.x + 16.0,
+                y + row.height / 2.0,
+                esc(&row.font_family),
+                col(row.color),
+                esc(&row.title)
+            ));
+            let origin_x = b.min.x + 24.0 + row.title_width;
+            let origin_y = y + (row.height - row.layout.height) / 2.0;
+            for primitive in &row.layout.primitives {
+                match primitive {
+                    EquationPrimitive::Glyph {
+                        character,
+                        x,
+                        y,
+                        size,
+                    } => out.push_str(&format!(
+                        "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"{size:.2}\" textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\" fill=\"{}\">{}</text>",
+                        origin_x + x,
+                        origin_y + y + size * 0.8,
+                        esc(&row.font_family),
+                        size * 0.62,
+                        col(row.color),
+                        esc(&character.to_string())
+                    )),
+                    EquationPrimitive::Rule { x, y, width } => out.push_str(&format!(
+                        "<path d=\"M {:.2},{:.2} L {:.2},{:.2}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.2\"/>",
+                        origin_x + x,
+                        origin_y + y,
+                        origin_x + x + width,
+                        origin_y + y,
+                        col(row.color)
+                    )),
+                }
+            }
+            y += row.height;
+        }
+        out.push_str("</g>");
     }
     out.push_str("</svg>");
     Ok(out)

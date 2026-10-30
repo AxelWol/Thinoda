@@ -167,15 +167,22 @@ graph TD
   source-editable and saveable; preview reports errors without truncating them.
   No new native/clipboard version is necessary: v4/v3 already retain all source;
   older readers that accept those versions show the fence as literal code.
-  `IoError::EquationNotesUnsupported` blocks every non-native workbook export
-  before encoding/writing, irrespective of lossy consent. Shared visual rendering,
-  direct presentation/Gantt output and print also guard their source sheet;
-  Map Shot rejects before capture. Detection conservatively catches the reserved
-  marker even in malformed declared-Markdown notes and all hidden/detached topics.
-  Plain literal markers are inert. Masked copies remove the entire note.
-  This is notes preview only, not a map-layout equation or XMind equation schema.
-  XMind private metadata retains the envelope, but its standard plain-note field
-  and existing textual exporters other than Word/FreeMind/Excel still contain Markdown source.
+  Visual SVG/PDF/PNG/JPEG output appends a separately labeled equation section,
+  built from the shared bounded glyph/rule layout. Presentation SVG/PNG/PDF and
+  PPTX include only equations whose owning topics are in the resolved slide;
+  PPTX uses native editable text boxes and freeform fraction rules. The section
+  expands the exported frame rather than covering map content. Print reuses the
+  same SVG path. No equation source or surrounding note prose is copied into
+  visual output. XMind's unchanged private workbook snapshot round-trips the
+  canonical note envelope. CSV/OPML carry its exact source text only after the
+  existing Markdown-format-loss consent; OPML imports it as literal plain text.
+  Other foreign formats still return `IoError::EquationNotesUnsupported` before
+  encoding/writing, irrespective of lossy consent. Every exported source sheet
+  is validated, including hidden/detached malformed equation blocks; plain
+  literal markers remain inert. Map Shot and Gantt still refuse equation notes
+  because those outputs do not provide the equation appendix. Masked copies
+  remove the entire note. This remains notes-only, not a map/Outliner-row
+  equation or general XMind equation schema.
   Word, Excel and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
   list counters) from declared Markdown without mutating persisted source.
   The shared projection preflight bounds parsing to 16 KiB / 2,048 events /

@@ -407,15 +407,20 @@ those system-owned controls. WinGet publishing remains paused.
   are not recovery documents; apply first. Native v4 and sheet clipboard v3 already
   preserve the Markdown source envelope, so no additional schema field/version
   is introduced. Older source-aware readers may display the fence as code.
-  **All non-native exports (including Markdown/XMind), visual/Pitch exports,
-  printing and Map Shot refuse equation-bearing content**, even with lossy consent,
-  rather than silently omit it. Whole-workbook export checks every sheet; direct
-  sheet exports/print/Map Shot check their source sheet. This conservative policy
-  remains until equation-note export support is implemented. The reserved
-  `thinoda-math-v1` marker in any declared Markdown note also triggers this guard
-  when malformed or mentioned in prose; edit the note source to remove it when
-  it is not intended as an equation. Pasted LF, CRLF and CR fence line endings
-  are accepted without rewriting the surrounding note text.
+  SVG/PDF/PNG/JPEG and live presentation SVG/PNG/PDF/PowerPoint exports show a
+  separate Notes equations section built from vector glyphs and fraction rules;
+  presentation exports include only equations belonging to visible slide topics.
+  Print uses the same SVG rendering. XMind preserves the complete source through
+  Thinoda's private workbook snapshot. CSV/OPML retain the exact fenced text only
+  after the existing Markdown-format-loss consent; OPML reopens it as literal
+  plain text, not a rendered equation. **Other foreign formats, Gantt and Map Shot
+  remain blocked** rather than silently omitting equation content. Unselected
+  sheets do not block single-sheet visual exports; XMind validates its full
+  workbook. Malformed/incomplete equation blocks are rejected before replacing
+  output. The reserved `thinoda-math-v1` marker in declared Markdown is treated
+  conservatively, even when malformed or mentioned in prose; remove it from the
+  note source when it is not intended as an equation. Pasted LF, CRLF and CR
+  fence line endings are accepted without rewriting surrounding note text.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.

@@ -290,8 +290,8 @@ const DE: &[(&str, &str)] = &[
     ("Equation preview in notes", "Gleichungsvorschau in Notizen"),
     ("Cancel equation edit", "Gleichungsbearbeitung abbrechen"),
     (
-        "Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.",
-        "Nur Notizvorschau, keine Gleichung auf der Karte. Natives Speichern erhält den Quelltext; andere Exporte sind gesperrt.",
+        "Notes equations render in visual exports for visible topics. XMind preserves source; CSV/OPML require note-format-loss consent. Map Shot and unsupported formats remain blocked.",
+        "Notizgleichungen werden in visuellen Exporten für sichtbare Themen dargestellt. XMind erhält den Quelltext; CSV/OPML erfordern die Zustimmung zum Verlust der Notizformatierung. Map Shot und nicht unterstützte Formate bleiben gesperrt.",
     ),
     (
         "512 bytes maximum. Use groups, \\frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.",
@@ -306,8 +306,8 @@ const DE: &[(&str, &str)] = &[
     ("Apply notes equation", "Notizgleichung übernehmen"),
     ("Remove notes equation", "Notizgleichung entfernen"),
     (
-        "Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.",
-        "Notizen mit Gleichungen können in diesem Format nicht exportiert oder gedruckt werden. Als Thinoda speichern, um den vollständigen Quelltext zu erhalten.",
+        "This format cannot preserve or render notes equations. Save as Thinoda or use a supported vector or source-preserving format.",
+        "Dieses Format kann Notizgleichungen weder erhalten noch darstellen. Als Thinoda speichern oder ein unterstütztes Vektor- bzw. quelltexterhaltendes Format verwenden.",
     ),
     (
         "Invalid equation. Use letters, digits, operators, groups, \\frac{a}{b}, ^{...} and _{...}.",

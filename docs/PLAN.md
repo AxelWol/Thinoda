@@ -23,10 +23,24 @@ subtree controls in Style. Reuse the existing planning dialog/commands and
 validation; no scheduling or persistence changes. Cover Map/Outliner, all ten
 languages, light/dark, narrow layouts and independent tab scroll/draft behavior.
 
-**Next priorities:** finish the bounded XV7 equation/interchange gaps (vector
-export support before broader notation/topic rendering), then XV8 task-aware
-Tree Table, then XV9 opt-in durable local AI conversations. The presentation
-redesign and inspector relocation do not imply those larger items are complete.
+**Current boundary:** the XV7 vector export/interchange blocker is implemented
+below. Broader notation and topic/Outliner-row equation rendering remain
+deliberately open; this phase does not claim complete XV7 or general math
+support. After this bounded phase, the requested queue resumes with XV8
+task-aware Tree Table, then XV9 opt-in durable local AI conversations.
+
+**XV7 equation export/interchange slice (2026-10-30):** equation-bearing notes
+now render in a clearly separated vector appendix in SVG and PDF, in image
+exports rendered from that SVG, and in live presentation SVG/PNG/PDF/PPTX.
+Presentation appendices include only topics resolved as visible; PPTX uses
+editable text and fraction-rule paths. Print shares the SVG renderer. XMind's
+unchanged private workbook snapshot round-trips the full source envelope.
+CSV/OPML retain the exact fenced source only after the existing note-format-loss
+consent; OPML imports it as literal plain text. Other foreign formats, Gantt and
+Map Shot keep explicit refusals. Malformed/incomplete imported blocks are
+rejected before output replacement, even for the newly supported formats.
+The appendix is notes output, not a map/Outliner-row equation; no arbitrary
+LaTeX, chemistry, topic-level equation model, or rich-note AST is claimed.
 
 **Search/Replace follow-up (2026-10-29, implemented locally):** replace the
 floating search card with the shared resizable nonmodal dialog, including its
@@ -203,9 +217,12 @@ scripts on one base). Bound source bytes, node count, nesting and layout extents
 reject unknown commands, malformed groups, duplicate scripts and invalid input
 without replacing the saved block. No chemical-notation, map/Outliner equation
 rendering, resizing, arbitrary TeX, macros, HTML, external fonts or network.
-Non-native exports, visual exports/printing and Map Shot must reject
-equation-bearing content before writing rather than silently omit it; XMind
-equation interchange is deferred without guessing its schema.
+Unsupported foreign exports, Gantt and Map Shot reject equation-bearing content
+before writing rather than silently omit it. SVG/PDF/image and presentation
+exports include a bounded, separately labeled vector equation section for the
+visible topics; malformed/incomplete blocks remain rejected. XMind preserves
+the exact Thinoda source only through its existing private workbook snapshot,
+not through a new public XMind equation schema.
 
 **Decision critique:** an internal parser/layout is justified only for this small
 explicit syntax. Investigated `latex2mathml` 0.2.3 (MIT, last published 2020):
@@ -213,8 +230,9 @@ it emits MathML, not egui/vector layout, and would still require a renderer.
 `mathlikeanim-rs` targets general animation/graphics, not a small shared equation
 widget. No dependency is added. Reusing the existing Markdown envelope preserves
 complete source even in older readers, which show a fenced code block; it does
-not confer equation-rendering compatibility. Conservative export refusal is a
-temporary usability trade-off, not export parity. Acceptance requires parser
+not confer equation-rendering compatibility. CSV/OPML source text and XMind's
+private workbook snapshot are distinct interoperability paths, with only the
+XMind path round-tripping the declared format. Acceptance requires parser
 and geometry bounds, editor ownership/cancel/error tests, source-preserving
 transaction/native/recovery/clipboard checks, export destination safety,
 all ten languages/light-dark checks, native/WASM compile and strict Clippy.
@@ -263,10 +281,10 @@ edit cannot immediately invalidate the newly opened scratch editor.
 Remaining trade-offs: one trailing
 block only; simple local font metrics rather than professional math typography;
 unapplied scratch drafts are not durable; a reserved marker in any declared
-Markdown note conservatively blocks foreign export even if malformed or merely
+Markdown note conservatively marks an equation block even if malformed or merely
 mentioned. Notes source remains editable and native-saveable in all such cases.
 There is deliberately no map/Outliner-row equation, external equation schema,
-full LaTeX/chemistry or equation export parity. `.serena/` is preserved.
+full LaTeX/chemistry or new public XMind equation schema. `.serena/` is preserved.
 
 **Independent equation review:** no blocking data-loss, draft-ownership or export
 bypass defects found. Review identified a direct-source editing gap: pasted
@@ -296,6 +314,25 @@ geometry and visible Save/Don't Save/Cancel actions in every language; Cancel
 retains dirty work. Shared long-content/maximize/restore and existing save/exit,
 conversion-confirmation and Settings viewport checks pass, as do strict native
 and production-WASM Clippy. This does not claim cross-OS runtime acceptance.
+
+**2026-10-30 equation export/interchange implementation verification:** vector
+appendices reuse `thinoda-core::equations::layout`; SVG/PDF/image and print use
+the SVG path, while PPTX emits editable glyph text boxes and fraction-rule paths.
+Presentation appendices use the shared resolved visible-topic set and extend the
+frame without covering map content. XMind round-trips the unchanged canonical
+workbook snapshot; CSV/OPML source text stays exact under the existing note-format
+loss consent. Hidden/detached malformed notes fail before output, outline exports
+refuse equations they would omit, and aggregate appendix geometry is bounded.
+
+Verification passed: `cargo test -p thinoda-core --lib equation` (4),
+`cargo test -p thinoda-io` (148 across 19 suites, including equations and vector
+presentations), `cargo test -p thinoda-app --lib equation` (2), and
+`cargo test -p thinoda-app --test equations -- --test-threads=1` (5, including
+Map/Outliner, all ten languages and both themes). Formatting, `git diff --check`,
+strict workspace/all-target Clippy and strict production-target WASM Clippy pass.
+The PPTX regression inspects native DrawingML text/path content; no new
+installed-PowerPoint/LibreOffice equation-host acceptance is claimed. This work
+does not broaden notation or introduce a topic-equation model.
 
 The first local XV7a persistence slice introduces an explicit, versioned
 note-content envelope instead of inferring stored formatting from punctuation.

@@ -113,7 +113,10 @@ fn resolve_slide(
             IoError::Invalid(format!("presentation slide {slide_index} not found"))
         })?;
     let layout = render::presentation_layout(sheet, options.dark)?;
-    resolve_presentation_slide(sheet, slide, &layout).map_err(IoError::Invalid)
+    let mut resolved =
+        resolve_presentation_slide(sheet, slide, &layout).map_err(IoError::Invalid)?;
+    resolved.frame = render::extend_equation_frame(sheet, &resolved.layout, resolved.frame)?;
+    Ok(resolved)
 }
 
 /// Renders one resolved slide to a bounded PNG for preview textures.
@@ -168,8 +171,8 @@ pub fn export_presentation_pptx(
     sheet: &Sheet,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
-    crate::reject_equation_notes(sheet)?;
     sheet.validate().map_err(IoError::Invalid)?;
+    render::validate_equation_notes(sheet)?;
     validate_slides(sheet)?;
     validate_scale(options.scale)?;
 

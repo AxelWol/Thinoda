@@ -516,7 +516,7 @@ Resize image|Redimensionar imagem
 Resize a selected image with its lower-right handle. Escape cancels; arrow keys resize a focused handle. Style > Local Image provides keyboard/touch width controls.|Redimensione uma imagem selecionada com a alça inferior direita. Escape cancela; as setas redimensionam quando a alça está em foco. Estilo > Imagem local oferece controles de largura por teclado/toque.
 Version and changelog|Versão e histórico de alterações
 Equation preview in notes|Prévia de equações nas notas
-Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.|Apenas prévia nas notas; não é uma equação do mapa. O formato nativo preserva a fonte; outras exportações estão bloqueadas.
+Notes equations render in visual exports for visible topics. XMind preserves source; CSV/OPML require note-format-loss consent. Map Shot and unsupported formats remain blocked.|Equações das notas são renderizadas em exportações visuais para tópicos visíveis. O XMind preserva a fonte; CSV/OPML exigem consentimento para perda da formatação das notas. O Map Shot e formatos não compatíveis continuam bloqueados.
 512 bytes maximum. Use groups, \frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.|Máximo de 512 bytes. Use grupos, \frac{a}{b}, ^{...} e _{...}. Sintaxe limitada, não LaTeX geral nem química.
 Format this nonempty plain note as Markdown explicitly before adding an equation.|Formate explicitamente esta nota de texto não vazia como Markdown antes de adicionar uma equação.
 Edit notes equation|Editar equação da nota
@@ -524,7 +524,7 @@ Equation source|Fonte da equação
 Cancel equation edit|Cancelar edição da equação
 Apply notes equation|Aplicar equação da nota
 Remove notes equation|Remover equação da nota
-Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.|As notas com equações não podem ser exportadas nem impressas neste formato. Salve como Thinoda para preservar a fonte completa.
+This format cannot preserve or render notes equations. Save as Thinoda or use a supported vector or source-preserving format.|Este formato não pode preservar nem renderizar equações das notas. Salve como Thinoda ou use um formato vetorial ou de origem compatível.
 Invalid equation. Use letters, digits, operators, groups, \frac{a}{b}, ^{...} and _{...}.|Equação inválida. Use letras, dígitos, operadores, grupos, \frac{a}{b}, ^{...} e _{...}.
 Equation limit reached (512 bytes, 128 nodes, 8 levels).|Limite de equação atingido (512 bytes, 128 nós, 8 níveis).
 Keep one equation block at the end of the note, or edit the note source directly.|Mantenha um bloco de equação no fim da nota ou edite diretamente a fonte da nota.
