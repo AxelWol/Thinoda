@@ -30,6 +30,17 @@ fraction rule. User requested merging this session to develop/main and a fully
 packaged release after final review. Follow normal CI/release gates; no force
 pushes, moved tags or protection bypass.
 
+**Release recovery (2026-10-30):** v0.19.0 packaging exposed an Ubuntu 22.04
+font fallback defect: missing generic text families used the first loaded face,
+which can be a bitmap emoji or icon font. Native export now retains the embedded
+Ubuntu/Hack text fallbacks and uses them only for unresolved generic families;
+existing resolvable system choices remain unchanged. A symbol-first regression
+covers family selection and vector PDF digits; the equation suite also runs on
+Ubuntu 22.04 with Noto emoji/CJK fonts. Ship this source correction in a patch
+release rather than moving the existing v0.19.0 tag or skipping vector checks.
+Do not unblock dependent feature integration until the corrected release has
+all architecture packages and checksum manifests.
+
 **User review accepted vector presentations (2026-10-30).** Live vector
 authoring, semantic visibility, dynamic slide updates and editable native
 PowerPoint output are implemented; see [PRESENTATIONS.md](PRESENTATIONS.md)
