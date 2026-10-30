@@ -9,6 +9,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**2026-10-30 continuation:** vector presentation redesign is implemented and
+accepted in local user review; see [PRESENTATIONS.md](PRESENTATIONS.md).
+Task Planning now belongs in Data after Equation, including its schedule
+summary and existing editor action; independent To-Do subtree controls stay in
+Style. Next: XV7 equation/export-interchange gaps, XV8 task-aware Tree Table,
+then XV9 optional durable local AI conversations. Historical progress entries
+below remain context rather than a current execution queue.
+
 **Inspector/search UX follow-up (2026-10-29, implemented locally):** Data now
 sits between Style and Map with distinct Image, Attachment, Hyperlink, Labels,
 Notes and Equation groups, dividers and consistent spacing. Notes/Equation

@@ -3369,7 +3369,7 @@ impl ThinodaApp {
         if let Some(command) = marker_action {
             self.exec(ui.ctx(), command);
         }
-        self.task_properties(ui);
+        self.todo_properties(ui);
     }
 
     fn data_tab(&mut self, ui: &mut Ui) {
@@ -3507,9 +3507,11 @@ impl ThinodaApp {
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
         }
+        data_divider(ui);
+        self.task_properties(ui);
     }
 
-    fn task_properties(&mut self, ui: &mut Ui) {
+    fn todo_properties(&mut self, ui: &mut Ui) {
         let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         ui.separator();
         let todo = self.doc().and_then(|doc| {
@@ -3569,8 +3571,11 @@ impl ThinodaApp {
                     self.toasts.error(error);
                 }
             }
-            ui.separator();
         }
+    }
+
+    fn task_properties(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         if let Some(doc) = self.doc()
             && let Some(topic) = doc.view.primary()
             && let Some(task) = doc.doc.sheet().scheduling.tasks.get(&topic)

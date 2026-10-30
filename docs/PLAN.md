@@ -9,7 +9,24 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
-## Current next-value state (2026-10-29)
+## Current next-value state (2026-10-30)
+
+**User review accepted vector presentations (2026-10-30).** Live vector
+authoring, semantic visibility, dynamic slide updates and editable native
+PowerPoint output are implemented; see [PRESENTATIONS.md](PRESENTATIONS.md)
+for both critiques and acceptance boundaries.
+
+**Requested inspector follow-up (2026-10-30, implemented locally):** move
+Task Planning (Aufgabenplanung), including scheduled progress and computed
+start/due dates, from Style to Data after Equation. Keep the independent To-Do
+subtree controls in Style. Reuse the existing planning dialog/commands and
+validation; no scheduling or persistence changes. Cover Map/Outliner, all ten
+languages, light/dark, narrow layouts and independent tab scroll/draft behavior.
+
+**Next priorities:** finish the bounded XV7 equation/interchange gaps (vector
+export support before broader notation/topic rendering), then XV8 task-aware
+Tree Table, then XV9 opt-in durable local AI conversations. The presentation
+redesign and inspector relocation do not imply those larger items are complete.
 
 **Search/Replace follow-up (2026-10-29, implemented locally):** replace the
 floating search card with the shared resizable nonmodal dialog, including its
@@ -26,8 +43,8 @@ the scrolling body from the header so controls cannot overlap caption actions.
 **Requested inspector slice (2026-10-29):** add Data between Style (Stil) and
 Map in the shared native/web inspector, in Map and Outliner. Move Image,
 Attachment, Hyperlink, Labels, Notes and notes-equation controls into Data.
-Keep appearance, markers and Task Planning in Style; this request concerns
-data, not scheduling dates. Retain visibility/preferences, separate tab scroll
+Keep appearance and markers in Style. The later 2026-10-30 request above moves
+Task Planning to Data as well. Retain visibility/preferences, separate tab scroll
 positions, command navigation, conflict-checked drafts, save/recovery and undo.
 Verify all ten languages/light-dark, narrow windows and affected regressions.
 

@@ -21,7 +21,7 @@ const PAGES: &[Page] = &[
             "Create a blank map with Ctrl+N, or open Home, select a template and choose Create. Cancel returns without creating a document.",
             "Select a topic. Tab adds a child; Enter adds a sibling. Space or F2 edits its title. Escape cancels an edit or clears selection.",
             "Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.",
-            "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.",
+            "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes, notes equations and Task Planning in Map and Outliner.",
             "Save with Ctrl+S to a .thinoda file. Use .xmind for interchange. Save As creates a separate destination; export formats may omit unsupported features.",
             "Use Ctrl+Z to undo map edits. On macOS, use Command instead of Ctrl for command shortcuts. Help > Keyboard Shortcuts lists the available bindings.",
             "On Windows and macOS, Ctrl+F1 collapses or expands the ribbon. Alt+1 through Alt+8 selects a category. Escape closes a temporarily opened ribbon.",

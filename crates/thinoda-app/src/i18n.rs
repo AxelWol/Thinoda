@@ -1892,8 +1892,8 @@ const DE: &[(&str, &str)] = &[
         "Übernehmen behält Änderungen. Abbrechen verwirft sie. Nicht übernommene Dialogänderungen werden weder gespeichert noch wiederhergestellt.",
     ),
     (
-        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.",
-        "Data liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen und Notizgleichungen in Map und Gliederung. Die Aufgabenplanung bleibt unter Stil.",
+        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes, notes equations and Task Planning in Map and Outliner.",
+        "Daten liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen, Notizgleichungen und Aufgabenplanung in Map und Gliederung.",
     ),
     (
         "Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.",
