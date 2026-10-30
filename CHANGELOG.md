@@ -24,6 +24,25 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.19.0](https://github.com/AxelWol/Thinoda/compare/v0.18.0...v0.19.0) (2026-10-30)
+
+
+### Features
+
+* **ai:** add opt-in local conversation threads ([fc6e467](https://github.com/AxelWol/Thinoda/commit/fc6e46787d736fde188013471d78f9a8d824d1fc))
+* **equations:** export bounded notes equations ([9cf4c03](https://github.com/AxelWol/Thinoda/commit/9cf4c033e90e292c006c04fc008cc198060c2775))
+* **presentation:** add live vector authoring workspace ([b448c17](https://github.com/AxelWol/Thinoda/commit/b448c17108c97d2055ff02ab61dd4cab87f9007d))
+* **presentation:** resolve live slide scenes and export editable vectors ([cef805c](https://github.com/AxelWol/Thinoda/commit/cef805c2a7e63aa886ad2e60d17252b49c3d2139))
+* **tree-table:** edit task columns through shared planning ([57ff344](https://github.com/AxelWol/Thinoda/commit/57ff34459cb4f307e1c95fd0afd1d32431184e6d))
+* vector presentations, task Tree Table and local AI history ([2a8afe0](https://github.com/AxelWol/Thinoda/commit/2a8afe0413ae6c2ccc3917ef70da24974c34fe37))
+* vector presentations, task Tree Table and local AI history ([2a8afe0](https://github.com/AxelWol/Thinoda/commit/2a8afe0413ae6c2ccc3917ef70da24974c34fe37))
+
+
+### Bug Fixes
+
+* **inspector:** move task planning into Data ([c731ff9](https://github.com/AxelWol/Thinoda/commit/c731ff9321dbddc6fc262ff141c0bc51bc98c691))
+* **presentation:** reserve full thumbnail rail height ([26b5f9c](https://github.com/AxelWol/Thinoda/commit/26b5f9c2c5ea407c9f0703a94c21005fca6c5329))
+
 ## [0.18.0](https://github.com/AxelWol/Thinoda/compare/v0.17.0...v0.18.0) (2026-10-29)
 
 
