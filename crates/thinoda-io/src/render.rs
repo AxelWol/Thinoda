@@ -49,9 +49,9 @@ pub(crate) fn presentation_layout(s: &Sheet, dark: bool) -> Result<thinoda_core:
 
 pub(crate) struct EquationRow {
     pub topic: TopicId,
-    pub title: String,
+    title: text::Block,
     pub layout: EquationLayout,
-    pub title_width: f32,
+    pub equation_y: f32,
     pub height: f32,
     pub color: Color,
     pub font_family: String,
@@ -103,15 +103,17 @@ pub(crate) fn equation_appendix(
         let Some(topic_layout) = layout.topics.get(id) else {
             continue;
         };
-        // Appendix labels do not reuse the wrapped topic block, so reserve a
-        // conservative single-line width as well as the map topic's width.
-        let title_width = topic_layout
-            .rect
-            .size
-            .x
-            .max(topic.title.chars().count() as f32 * 14.0);
-        let row_height = formula.height.max(18.0) + 12.0;
-        width = width.max(title_width + formula.width + 40.0);
+        let color = topic_layout.style.text_color;
+        let font_family = topic_layout
+            .style
+            .font_family
+            .as_deref()
+            .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif")
+            .to_owned();
+        let title = text::equation_title(&topic.title, &font_family)?;
+        let equation_y = title.size.y + 8.0;
+        let row_height = equation_y + formula.height.max(18.0) + 12.0;
+        width = width.max(title.size.x.max(formula.width) + 40.0);
         height += row_height;
         if !width.is_finite()
             || !height.is_finite()
@@ -120,18 +122,11 @@ pub(crate) fn equation_appendix(
         {
             return Err(IoError::EquationNotesUnsupported);
         }
-        let color = topic_layout.style.text_color;
-        let font_family = topic_layout
-            .style
-            .font_family
-            .as_deref()
-            .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif")
-            .to_owned();
         rows.push(EquationRow {
             topic: *id,
-            title: topic.title.clone(),
+            title,
             layout: formula,
-            title_width,
+            equation_y,
             height: row_height,
             color,
             font_family,
@@ -581,16 +576,24 @@ fn svg_layout_with_fonts(
         ));
         let mut y = start_y + 34.0;
         for row in &appendix.rows {
-            out.push_str(&format!(
-                "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"14\" fill=\"{}\">{}</text>",
-                b.min.x + 16.0,
-                y + row.height / 2.0,
-                esc(&row.font_family),
-                col(row.color),
-                esc(&row.title)
-            ));
-            let origin_x = b.min.x + 24.0 + row.title_width;
-            let origin_y = y + (row.height - row.layout.height) / 2.0;
+            out.push_str(&format!("<g id=\"equation-{}-title\">", row.topic));
+            for (index, line) in row.title.lines.iter().enumerate() {
+                let baseline = y
+                    + index as f32 * row.title.line_height
+                    + (row.title.line_height - line.bounds.size.y) / 2.0
+                    - line.bounds.min.y;
+                out.push_str(&format!(
+                    "<text x=\"{:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"14\" textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\" fill=\"{}\">{}</text>",
+                    b.min.x + 16.0 - line.bounds.min.x,
+                    esc(&row.font_family),
+                    line.bounds.size.x,
+                    col(row.color),
+                    esc(&line.text)
+                ));
+            }
+            out.push_str(&format!("</g><g id=\"equation-{}-formula\">", row.topic));
+            let origin_x = b.min.x + 16.0;
+            let origin_y = y + row.equation_y;
             for primitive in &row.layout.primitives {
                 match primitive {
                     EquationPrimitive::Glyph {
@@ -617,6 +620,7 @@ fn svg_layout_with_fonts(
                     )),
                 }
             }
+            out.push_str("</g>");
             y += row.height;
         }
         out.push_str("</g>");

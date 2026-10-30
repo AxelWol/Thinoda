@@ -68,8 +68,10 @@ No release or branch merge is implied by this implementation task.
 Keep the current explicit refusal of unsupported resources and unsupported note
 formats. A bounded notes-equation appendix is included only for topics resolved
 as visible on each slide, using native editable text and fraction-rule paths;
-malformed source is rejected. Do not silently rasterize unsupported vector/text
-content. Pixel-identical font rendering across Office installations cannot be
+topic labels use font-measured, wrapped lines above their equations, with the
+same bounded appendix geometry in SVG, PDF and PowerPoint. Malformed source is
+rejected. Do not silently rasterize unsupported vector/text content.
+Pixel-identical font rendering across Office installations cannot be
 guaranteed; preserve Unicode, editable text and geometry with declared font
 behavior.
 

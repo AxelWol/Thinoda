@@ -548,25 +548,30 @@ pub(crate) fn editable_slide(
             false,
             false,
         );
-        let mut y = start_y + 32.0;
+        let mut y = start_y + 34.0;
         for row in &appendix.rows {
-            draw.text(
-                &format!("Notes equation topic {}", row.topic),
-                Rect::from_min_size(
-                    Vec2::new(resolved.frame.min.x + 16.0, y),
-                    Vec2::new(row.title_width, 20.0),
-                ),
-                &row.title,
-                14.0,
-                &row.font_family,
-                row.color,
-                false,
-                false,
-                false,
-                false,
-            );
-            let origin_x = resolved.frame.min.x + 24.0 + row.title_width;
-            let origin_y = y + (row.height - row.layout.height) / 2.0;
+            for (index, line) in row.title.lines.iter().enumerate() {
+                draw.text(
+                    &format!("Notes equation topic {} line {index}", row.topic),
+                    Rect::from_min_size(
+                        Vec2::new(
+                            resolved.frame.min.x + 16.0,
+                            y + index as f32 * row.title.line_height,
+                        ),
+                        Vec2::new(line.bounds.size.x, row.title.line_height),
+                    ),
+                    &line.text,
+                    14.0,
+                    &row.font_family,
+                    row.color,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
+            }
+            let origin_x = resolved.frame.min.x + 16.0;
+            let origin_y = y + row.equation_y;
             for primitive in &row.layout.primitives {
                 match primitive {
                     thinoda_core::equations::Primitive::Glyph {
