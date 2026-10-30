@@ -13,6 +13,7 @@ use thinoda_ui::{Palette, widgets};
 use crate::{app::ThinodaApp, i18n::t};
 
 mod pitch_ai;
+mod pitch_editor;
 mod pitch_motion;
 mod pitch_player;
 mod pitch_preview;
@@ -33,8 +34,10 @@ struct PitchOwner {
 struct PitchEditor {
     owner: PitchOwner,
     sheet: Sheet,
+    layout: Arc<thinoda_core::Layout>,
     selected: usize,
     generation: u64,
+    next_slide_id: Option<thinoda_core::SlideId>,
     preview: SlidePreview,
     error: Option<String>,
     composing: bool,
@@ -87,8 +90,20 @@ impl ThinodaApp {
                 viewport: ctx.viewport_id(),
             },
             sheet: doc.doc.sheet().clone(),
+            layout: doc.view.layout_for(&doc.doc),
             selected: 0,
             generation: 0,
+            next_slide_id: doc
+                .doc
+                .sheet()
+                .presentation
+                .slides
+                .iter()
+                .map(|slide| slide.id.0)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .map(thinoda_core::SlideId),
             preview: Default::default(),
             error: None,
             composing: false,
@@ -188,10 +203,10 @@ impl ThinodaApp {
                 _ => doc.view.primary().map(PresentationSource::Branch),
             });
         let mut apply = false;
+        let mut powerpoint = false;
         let mut cancel = false;
         let mut generate = false;
         let mut add = false;
-        let mut fit = false;
         let mut export = None;
         let labels = crate::i18n::dialog_labels();
         let response = thinoda_ui::Dialog::new(egui::Id::unique("presentation-editor"), t("Edit Presentation"))
@@ -199,9 +214,9 @@ impl ThinodaApp {
             .labels(&labels)
             .modal(true)
             .close_on_backdrop(true)
-            .default_width(760.0)
+            .default_width(1060.0)
             .default_height(700.0)
-            .min_size(egui::vec2(400.0, 300.0))
+            .min_size(egui::vec2(280.0, 240.0))
             .scroll(false)
             .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).max(40.0)).show(ui, |ui| {
@@ -211,70 +226,7 @@ impl ThinodaApp {
                     generate = ui.button(t("Generate Slides")).clicked() && touch;
                     add = ui.add_enabled(source.is_some(), egui::Button::new(t("Add Selected Branch or Zone"))).clicked() && touch;
                 });
-                if editor.sheet.presentation.slides.is_empty() {
-                    ui.label(t("No slides yet. Generate branch and Zone slides, or add the selected branch."));
-                }
-                let mut move_slide = None;
-                let mut remove = false;
-                egui::ScrollArea::vertical().id_salt("pitch-slide-list").max_height(140.0).show(ui, |ui| {
-                    for (index, slide) in editor.sheet.presentation.slides.iter().enumerate() {
-                        if ui.selectable_label(editor.selected == index, format!("{}. {}", index + 1, slide.title)).clicked() && touch {
-                            editor.selected = index;
-                        }
-                    }
-                });
-                if let Some(slide) = editor.sheet.presentation.slides.get_mut(editor.selected) {
-                    let previous = (slide.title.clone(), slide.frame);
-                    ui.horizontal_wrapped(|ui| {
-                        let label = ui.label(t("Slide title"));
-                        ui.add(egui::TextEdit::singleline(&mut slide.title)).labelled_by(label.id);
-                        fit = ui.button(t("Fit Slide to Content")).clicked() && touch;
-                    });
-                    let owner = Some(egui::Id::unique((&editor.owner.document, editor.owner.sheet,
-                        editor.owner.revision, editor.owner.viewport, slide.id)));
-                    ui.horizontal_wrapped(|ui| {
-                        for (salt, label, value, minimum) in [
-                            ("slide-x", "X", &mut slide.frame.min.x, -f32::MAX),
-                            ("slide-y", "Y", &mut slide.frame.min.y, -f32::MAX),
-                            ("slide-width", "Width", &mut slide.frame.size.x, 1.0),
-                            ("slide-height", "Height", &mut slide.frame.size.y, 1.0),
-                        ] {
-                            let label = ui.label(t(label));
-                            let mut staged = *value;
-                            let (_, commit) = crate::ui::touch_numeric_value(ui, &mut staged, salt, owner, |ui, value| {
-                                ui.add(egui::DragValue::new(value).range(minimum..=f32::MAX)).labelled_by(label.id)
-                            });
-                            if commit { *value = staged; }
-                        }
-                    });
-                    if previous != (slide.title.clone(), slide.frame) {
-                        editor.generation += 1;
-                    }
-                    let count = editor.sheet.presentation.slides.len();
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.add_enabled(editor.selected > 0, egui::Button::new(t("Move Up"))).clicked() && touch {
-                            move_slide = Some(editor.selected - 1);
-                        }
-                        if ui.add_enabled(editor.selected + 1 < count, egui::Button::new(t("Move Down"))).clicked() && touch {
-                            move_slide = Some(editor.selected + 1);
-                        }
-                        remove = ui.button(t("Remove Slide")).clicked() && touch;
-                    });
-                    if let Some(target) = move_slide {
-                        editor.sheet.presentation.slides.swap(editor.selected, target);
-                        editor.selected = target;
-                        editor.generation += 1;
-                    }
-                    if remove {
-                        editor.sheet.presentation.slides.remove(editor.selected);
-                        editor.selected = editor.selected.min(editor.sheet.presentation.slides.len().saturating_sub(1));
-                        editor.generation += 1;
-                    }
-                }
-                if !editor.sheet.presentation.slides.is_empty() {
-                    let size = egui::vec2(ui.available_width(), (ctx.content_rect().height() * 0.3).clamp(100.0, 300.0));
-                    editor.preview.show(ui, &editor.sheet, editor.selected, editor.generation, &options, size);
-                }
+                editor.workspace(ui, touch && !ime && !editor.composing);
                 if let Some(error) = &editor.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -290,17 +242,19 @@ impl ThinodaApp {
             ui.horizontal_wrapped(|ui| {
                 apply = ui.button(t("Apply")).clicked() && touch;
                 cancel = ui.button(t("Cancel")).clicked() && touch;
+                powerpoint = ui.add_enabled(
+                    self.pitch.output.is_none() && !editor.sheet.presentation.slides.is_empty(),
+                    egui::Button::new(t("Apply and export PowerPoint")),
+                ).clicked() && touch;
             });
         });
         if !ime && !editor.composing {
             if generate {
                 match thinoda_io::generate_presentation(&editor.sheet, &options) {
-                    Ok(presentation) => {
-                        editor.sheet.presentation = presentation;
-                        editor.selected = 0;
-                        editor.generation += 1;
-                        editor.error = None;
-                    }
+                    Ok(presentation) => match editor.replace_generated(presentation) {
+                        Ok(()) => editor.error = None,
+                        Err(error) => editor.error = Some(error),
+                    },
                     Err(error) => editor.error = Some(error.to_string()),
                 }
             }
@@ -321,7 +275,7 @@ impl ThinodaApp {
                         }
                         .ok_or_else(|| t("Not possible here").to_string())?
                         .to_string();
-                        editor.sheet.add_presentation_slide(&title, source, frame)
+                        editor.add_slide(&title, source, frame)
                     }) {
                     Ok(_) => {
                         editor.selected = editor.sheet.presentation.slides.len() - 1;
@@ -331,22 +285,22 @@ impl ThinodaApp {
                     Err(error) => editor.error = Some(error),
                 }
             }
-            if fit && let Some(slide) = editor.sheet.presentation.slides.get(editor.selected) {
-                match self.presentation_source_frame(&editor.owner, slide.source) {
-                    Ok(frame) => {
-                        editor.sheet.presentation.slides[editor.selected].frame = frame;
-                        editor.generation += 1;
-                        editor.error = None;
-                    }
-                    Err(error) => editor.error = Some(error),
-                }
-            }
             if let Some(images) = export {
                 self.begin_pitch_export(ctx, editor.sheet.clone(), options, images);
             }
-            if apply {
+            if apply || powerpoint {
                 match self.apply_presentation_draft(&editor) {
                     Ok(()) => {
+                        if powerpoint {
+                            if let Some(index) = self
+                                .docs
+                                .iter()
+                                .position(|doc| doc.key == editor.owner.document)
+                            {
+                                self.active = index;
+                            }
+                            self.export(thinoda_io::Format::PowerPoint, false);
+                        }
                         ctx.request_repaint();
                         return;
                     }

@@ -9,27 +9,63 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**2026-10-30 continuation:** vector presentation redesign is implemented and
+accepted in local user review; see [PRESENTATIONS.md](PRESENTATIONS.md).
+Task Planning now belongs in Data after Equation, including its schedule
+summary and existing editor action; independent To-Do subtree controls stay in
+Style. The bounded XV7 vector export/interchange blocker is implemented below;
+broader notation and topic/Outliner-row equation rendering remain open. After
+this phase, XV8 task-aware Tree Table is now implemented locally; the next
+requested priority XV9 now has a local implementation (manual acceptance open). Historical progress entries below
+remain context rather than a current execution queue.
+
+**XV9 local conversations (2026-10-30, implemented locally):** optional bounded
+named threads with explicit opt-in, transactional native/browser storage,
+canonical-path/content identity, confirmed prune-now retention and per-file/global
+deletion. Session chat remains usable without durable storage. Save As,
+copies/moves, recovery, stale streams and failed writes do not mix histories;
+credentials/context/drafts/partial streams never enter the allowlisted store.
+See [AI-HISTORY.md](AI-HISTORY.md) for verified behavior, privacy and limitations.
+Browser reload/Web Lock/quota and real-platform accessibility/IME/touch/visual
+acceptance remain manual gates; this is not a release or independent QA claim.
+
+**XV8 task-aware Tree Table (2026-10-30, implemented locally):** real topic/task
+cells now reuse Data's planning transaction and scheduling engine. Read-only
+columns, sibling sort and table collapse do not reorder/dirty the document.
+Draft ownership, computed dates, working calendars, selection, Undo/Redo,
+native round-trip and localized narrow light/dark views have regression coverage.
+See [TREE-TABLE.md](TREE-TABLE.md) for behavior and honest map-vs-table output
+boundaries. Optional AI persistence remains untouched.
+
+**XV7 vector/source export slice (2026-10-30):** equation-bearing notes now
+render as a separate vector appendix in SVG/PDF/image and live presentation
+exports; presentation output filters by the resolved visible topic set. PPTX
+uses editable text and fraction-rule paths. XMind round-trips the existing
+canonical source envelope; CSV/OPML retain its raw source only with existing
+note-format-loss consent (OPML imports it as plain text). Malformed blocks are
+rejected before output replacement. Unsupported formats, Gantt and Map Shot
+remain blocked. Follow-on scope is broader notation and any map/Outliner-row
+equation model, not a general LaTeX/chemistry engine.
+
 **Inspector/search UX follow-up (2026-10-29, implemented locally):** Data now
 sits between Style and Map with distinct Image, Attachment, Hyperlink, Labels,
 Notes and Equation groups, dividers and consistent spacing. Notes/Equation
 enlargement and Search/Replace reuse the shared resizable nonmodal dialog and
 caption actions. Search icon/hint/query centers align in both themes.
 Editor scratch must be explicitly applied; changing context/revision discards
-unapplied scratch, which is not included in save/recovery. These usability
-improvements do not complete equation export, topic-equation or rich-note-model
-parity. See PLAN for scope and verification.
+unapplied scratch, which is not included in save/recovery. See PLAN for equation
+export/interchange behavior and the remaining topic-equation/rich-note scope.
 
-**XV7b first bounded slice (2026-10-29, local review pending):** the selected
+**XV7b first bounded slice (2026-10-29, implemented):** the selected
 topic's Notes inspector, in Map and Outliner, now authors/edits/removes one
 offline rendered equation block. Fractions, groups and super/subscripts use a
 bounded internal grammar, not general LaTeX/chemistry. Invalid drafts cannot
 replace a saved equation; Cancel and stale ownership/revision changes are safe.
 Source stays in the existing `markdown-v1` envelope/native v4/clipboard v3 and
-survives save/recovery/undo/copies. All non-native/visual/Pitch exports, printing
-and Map Shot refuse equation-bearing content until preservation/rendering exists.
-**Still open:** actual topic/map/Outliner-row equations, resize, broader notation,
-XMind interoperability and equation export parity. This notes-preview slice does
-not complete XV7b; see the scoped contract and verification in PLAN.
+survives save/recovery/undo/copies. The temporary blanket export refusal from
+this first slice was replaced by the 2026-10-30 vector/source export behavior
+above. **Still open:** actual topic/map/Outliner-row equations, broader notation
+and richer note structure; see the scoped contract and verification in PLAN.
 
 **User priority: background version checks (2026-10-29, implemented locally;
 final independent review pending).** Web checks hourly while running, caches a
@@ -258,10 +294,12 @@ Priority is end-user frequency, value and enabling dependencies, rather
 than a count of XMind features. On 2026-10-26 the user authorized starting this
 ordered queue with localization/theme/platform coverage and ongoing UX research.
 
-XV6 is partially implemented locally: image-based `.pptx` export reuses saved
-Pitch frames, offers 16:9/4:3 choices, previews the first slide at the selected
-ratio and explicitly discloses flattened slides. PowerPoint/LibreOffice opening
-checks remain open; see PLAN for exact coverage and limitations.
+XV6 now has a user-directed vector redesign: shared semantic slide visibility,
+live source framing, a visual authoring workspace and native editable `.pptx`
+objects replace the earlier flattened-image handoff. Keep the 16:9/4:3 picker
+and first-slide preview. The phased contract, critiques and current acceptance
+limits are in [PRESENTATIONS](PRESENTATIONS.md); the historical slices in PLAN
+are evidence of earlier versions, not the current export contract.
 
 Release monitoring (2026-10-27): v0.15.0 now has 10 published packages and six
 checksum manifests; all package hashes match the manifest entries and GitHub
@@ -321,10 +359,10 @@ code evidence and official sources.
 | 3 / XV3 | P1 / R3, R6 | **Automatic structural numbering.** Despite an old Phase 1 checkmark, the current Topic model has no numbering settings/render path. Useful for procedures, agendas and study outlines. | Store numbering separately from title text; implement None/decimal, sibling application, tiered numbers and explicit restart first. Insert/reorder/reparent recomputes labels deterministically. Match Map/Outliner and declared export/print support, keep search/copy title behavior explicit, persist/recover with Undo/Redo, and disclose unsupported XMind/Pitch fields. Do not add literal prefixes to titles as a shortcut. |
 | 4 / XV4 | P1 / R4, R6 | **Portable embedded images and attachments.** Bounded storage, PNG/JPEG authoring/rendering, selection-based drop/resize, Outliner previews, safe attachment save/download and the verified SDK-compatible XMind image subset are implemented locally; PR #88 is merged. This unlocks evidence-rich maps and later illustrations/equations. | Preserve bounded decode, stable IDs, sizing and missing/corrupt-file errors. Keep image insert/render/resize/replace/remove and explicit attachment saving without auto-execution; external-app open is not promised without a consistent safe platform contract. Native save/recovery, clipboard, sheet copy/merge and supported XMind resources preserve bytes/remap references. Exports either include supported content or show precise losses; existing reference-only files keep loading. Installed-XMind interoperability and the Linux resource-bearing fuzz campaign remain unverified; topic deletion may leave unreferenced blobs. |
 | 5 / XV5 | P2 / R6 | **DOCX and TextBundle import.** Both formats are implemented locally in `Format::IMPORTABLE` and use the shared loss-confirmation flow; the confirmation previews the first eight topics and total count. | TextBundle Markdown and DOCX paragraphs/headings/numbered-list depth map to deterministic hierarchy. Bounded packages, invalid paths/metadata/XML/UTF-8, Unicode/entities, custom heading styles and loss warnings have focused integration coverage. The app preserves the source and does not fetch relationships or execute content. Word layout, embedded resources and full conversion fidelity are not promised. |
-| 6 / XV6 | P2 / R7 | **Presentation handoff and framing.** Image-based `.pptx` export, explicit aspect-ratio choices and a first-slide fit preview are partially implemented locally. Make reviewed slides usable outside Thinoda. | Reuse saved slide order/crops in aspect-ratio/fit previews without stretching or source edits. Export one rendered slide per saved slide and disclose that shapes/text are not separately editable. Package/XML, image-dimension and resource checks pass; opening checks in available PowerPoint/LibreOffice hosts remain. Editable PPTX/transitions/video are not implied. |
-| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Source-first Markdown tools/search/copy and a versioned source envelope exist. The first equation slice renders fractions/scripts in the Notes inspector with explicit edit/preview/error handling. A persisted rich-note block/span model, topic-equation parity and equation export support remain open. | Preserve source through native/recovery/undo/copy and legacy literal notes without inference. Equation-note foreign/visual exports currently fail explicitly; complete export preservation before relaxing guards. Extend the bounded grammar only with tests and honest notation claims; do not execute TeX or treat an image path as equation support. |
-| 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns.** The TreeTable structure exists but currently shares a stacking layout; Gantt has scheduling data, not a task-column Tree Table editor. | Add title/start/due/duration/progress columns using existing validated scheduling edits, with row/topic identity, keyboard navigation and Map/Gantt synchronization. Column changes and sorting do not reorder the underlying topic hierarchy silently. Cover working-day rules, invalid edits, Undo/Redo, saved view choices and output scope. No duplicate scheduling engine. |
-| 9 / XV9 | P2 / R9 | **Durable local AI conversations.** The shipped panel labels history session-only; restarting loses research continuity and there are no named per-file threads. | Add opt-in bounded app-local history and new/rename/select/delete threads keyed to stable document identity. Reopen/restart, Save As, duplicate/moved files and recovery must not mix unrelated conversations. Store no API credentials, never resend on reopen, retain explicit Send/scope review, provide retention/delete controls and keep transcripts out of normal document/export output unless explicitly included. Preserve session-only mode and test failed writes, cancellation and stale-source isolation. |
+| 6 / XV6 | P2 / R7 | **Vector presentation authoring and editable handoff.** User-directed redesign supersedes the image-only first slice. | Shared source/visibility/framing resolution, visual vector workspace, live map updates and native editable PowerPoint text/shapes/paths. Preserve legacy crops, ownership/undo, 16:9/4:3 and export safeguards. See PRESENTATIONS for plan, critiques and acceptance boundaries. Video and exported animations remain separate. |
+| 7 / XV7 | P2 / R4 | **Rich notes and rendered equations.** Source-first Markdown tools/search/copy and a versioned source envelope exist. Bounded notes equations render in the Notes inspector and vector output; source-preserving XMind and consent-gated CSV/OPML paths are covered. A persisted rich-note block/span model, topic/Outliner-row equations and broader notation remain open. | Preserve source through native/recovery/undo/copy and legacy literal notes without inference. Keep SVG/PDF/image/presentation appendices vector-backed and visibility-filtered; maintain explicit refusal for formats that cannot represent the block. Extend the bounded grammar only with tests and honest notation claims; do not execute TeX or claim arbitrary LaTeX/chemistry support. |
+| 8 / XV8 | P2 / R3, R8 | **Task-aware Tree Table columns — implemented locally.** Existing structure opens real title/start/due/duration/progress cells using the shared planning transaction. | Stable topic identity, keyboard/selection synchronization, working calendars, explicit errors, Undo/Redo, native round-trip and saved local view choices are covered. Sibling sort/columns never reorder the hierarchy. Map output remains map output; no dedicated table export. See [TREE-TABLE.md](TREE-TABLE.md). |
+| 9 / XV9 | P2 / R9 | **Durable local AI conversations — implemented locally, manual acceptance open.** Optional named per-file threads preserve session-only defaults. | See [AI-HISTORY.md](AI-HISTORY.md): bounded locked/revision-checked storage, exact path/content bindings, explicit Send, confirmed retention/delete, failed-write and stale-stream isolation. No transcripts in documents/exports. Real browser/platform interaction acceptance remains open. |
 
 ### User-requested usability items (2026-10-26)
 

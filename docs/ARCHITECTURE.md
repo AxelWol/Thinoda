@@ -87,7 +87,7 @@ graph TD
   documents or the map cannot apply it to a different source. Minimizing keeps
   the draft alive. No modal map lock, document format or persisted editor state
   is introduced.
-- **Office export acceptance:** image-based PPTX uses slide-master ID
+- **Office export acceptance:** PPTX uses slide-master ID
   `2147483648` and slide-layout ID `2147483649`; layout IDs must be in the
   schema's high range and must not reuse master IDs. Rust package regressions
   guard this invariant. CI's `office` job generates eight original fixtures
@@ -167,15 +167,22 @@ graph TD
   source-editable and saveable; preview reports errors without truncating them.
   No new native/clipboard version is necessary: v4/v3 already retain all source;
   older readers that accept those versions show the fence as literal code.
-  `IoError::EquationNotesUnsupported` blocks every non-native workbook export
-  before encoding/writing, irrespective of lossy consent. Shared visual rendering,
-  direct presentation/Gantt output and print also guard their source sheet;
-  Map Shot rejects before capture. Detection conservatively catches the reserved
-  marker even in malformed declared-Markdown notes and all hidden/detached topics.
-  Plain literal markers are inert. Masked copies remove the entire note.
-  This is notes preview only, not a map-layout equation or XMind equation schema.
-  XMind private metadata retains the envelope, but its standard plain-note field
-  and existing textual exporters other than Word/FreeMind/Excel still contain Markdown source.
+  Visual SVG/PDF/PNG/JPEG output appends a separately labeled equation section,
+  built from the shared bounded glyph/rule layout. Presentation SVG/PNG/PDF and
+  PPTX include only equations whose owning topics are in the resolved slide;
+  PPTX uses native editable text boxes and freeform fraction rules. The section
+  expands the exported frame rather than covering map content. Print reuses the
+  same SVG path. No equation source or surrounding note prose is copied into
+  visual output. XMind's unchanged private workbook snapshot round-trips the
+  canonical note envelope. CSV/OPML carry its exact source text only after the
+  existing Markdown-format-loss consent; OPML imports it as literal plain text.
+  Other foreign formats still return `IoError::EquationNotesUnsupported` before
+  encoding/writing, irrespective of lossy consent. Every exported source sheet
+  is validated, including hidden/detached malformed equation blocks; plain
+  literal markers remain inert. Map Shot and Gantt still refuse equation notes
+  because those outputs do not provide the equation appendix. Masked copies
+  remove the entire note. This remains notes-only, not a map/Outliner-row
+  equation or general XMind equation schema.
   Word, Excel and FreeMind derive a bounded `NoteDocument` (paragraphs, styled runs, independent
   list counters) from declared Markdown without mutating persisted source.
   The shared projection preflight bounds parsing to 16 KiB / 2,048 events /
@@ -841,18 +848,22 @@ graph TD
   empty Zones and their slides are removed. Shared layout bounds include Zone
   frames, so Fit and full-map output account for frames outside topic bounds.
 - **Presentation rendering**: `generate_presentation` creates branch slides in
-  map order followed by Zone slides in Zone order. Single-slide SVG/PNG preview,
-  multipage PDF and ordered PNG ZIP use the same saved frame crop. The renderer
-  draws complete sheet relationships before SVG viewBox clipping, including
-  links crossing Zone/slide edges. Output scale is finite in 0.1-8; raster
+  map order followed by Zone slides in Zone order. The vector redesign adds
+  semantic source isolation, hidden subtrees, depth limits and automatic
+  framing while preserving legacy contextual crops. Editor/player and
+  SVG/PNG/PDF/PPTX share scene resolution, not independently approximated
+  visibility. Native DrawingML objects replace whole-slide PNGs in PPTX;
+  original photos remain pictures. See [the presentation contract](PRESENTATIONS.md).
+  Output scale is finite in 0.1-8; raster
   bounds are 16,384 pixels per side, 16 million pixels per slide and 32 million
   total pixels per archive. PDF/ZIP output is capped at 128 MiB.
 - **Zone/Pitch app ownership**: Zone and presentation editors capture document
   key, sheet root/index, revision and viewport, with explicit Apply/Cancel.
   Canvas Zone move/resize is staged until safe pointer release. Presentation
-  preview holds at most one worker request and accepts only its current
-  generation/index/theme result. Pitch holds an immutable sheet snapshot and
-  layout, never another `OpenDoc`, and closes on source revision/identity change.
+  editor previews paint vector scenes directly. Pitch holds an immutable sheet
+  snapshot and layout, never another `OpenDoc`, and refreshes that snapshot on
+  revision changes while retaining the active slide by stable ID. A changed
+  source identity or an empty deck ends playback safely.
   Native player focus uses the shared keymap/native-menu resolver with a
   restricted command surface; local playback keys do not enter map shortcuts.
   Native fullscreen affects the player viewport only; browser expansion remains

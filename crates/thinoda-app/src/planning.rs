@@ -50,6 +50,44 @@ impl PlanningState {
 }
 
 impl ThinodaApp {
+    /// The table uses the same validated transaction as Data > Task Planning.
+    pub(crate) fn apply_table_task(
+        &mut self,
+        ctx: &Context,
+        topic: TopicId,
+        task: Task,
+        start: String,
+        finish: String,
+    ) -> Result<(), String> {
+        let doc = self
+            .doc()
+            .ok_or_else(|| t("The document changed. Try again.").to_string())?;
+        let editor = PlanningEditor {
+            viewport: ctx.viewport_id(),
+            document: doc.key.clone(),
+            sheet: doc.doc.active_index(),
+            revision: doc.doc.state_id(),
+            draft: PlanningDraft::Task {
+                topic,
+                task,
+                start,
+                finish,
+                predecessors: doc
+                    .doc
+                    .sheet()
+                    .scheduling
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| dependency.successor == topic)
+                    .map(|dependency| dependency.predecessor)
+                    .collect(),
+            },
+            error: None,
+            composing: false,
+        };
+        self.apply_planning_draft(&editor, false)
+    }
+
     pub(crate) fn begin_task_planning(&mut self, ctx: &Context, calendar: bool) {
         let Some(doc) = self.doc_mut() else { return };
         doc.view.commit_edit(&mut doc.doc);
@@ -145,8 +183,28 @@ impl ThinodaApp {
                         .trim()
                         .parse::<LocalDate>()
                         .map_err(|error| error.to_string())?;
-                    let start = task
-                        .start_date
+                    // Resolve dependency-pushed starts with the same engine used by Gantt.
+                    // Do not materialize a computed start as a new explicit constraint.
+                    let mut projection = doc.doc.sheet().clone();
+                    projection.scheduling.tasks.insert(*topic, task.clone());
+                    projection
+                        .scheduling
+                        .dependencies
+                        .retain(|dependency| dependency.successor != *topic);
+                    projection
+                        .scheduling
+                        .dependencies
+                        .extend(predecessors.iter().map(|predecessor| {
+                            thinoda_core::TaskDependency {
+                                predecessor: *predecessor,
+                                successor: *topic,
+                            }
+                        }));
+                    let start = projection
+                        .compute_schedule()
+                        .map_err(|error| error.to_string())?
+                        .get(topic)
+                        .and_then(|task| task.start_date)
                         .ok_or_else(|| t("Set a start date before a due date.").to_string())?;
                     task.duration_days = Some(
                         doc.doc
@@ -186,6 +244,9 @@ impl ThinodaApp {
                                 )?;
                             }
                         }
+                        sheet
+                            .compute_schedule()
+                            .map_err(|error| thinoda_core::EditError::Invalid(error.to_string()))?;
                         Ok(())
                     })
                     .map_err(|error| error.to_string())?;

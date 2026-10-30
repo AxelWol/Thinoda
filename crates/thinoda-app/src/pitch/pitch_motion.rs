@@ -33,6 +33,7 @@ struct Scene {
     step: usize,
     frame: Rect,
     layout: Arc<thinoda_core::Layout>,
+    zones: Vec<thinoda_core::Zone>,
 }
 
 pub(super) struct Playback {
@@ -62,18 +63,30 @@ impl Default for Playback {
 }
 
 impl Playback {
+    pub(super) fn refresh(&mut self) {
+        self.current = None;
+        self.outgoing = None;
+    }
+
     pub(super) fn topic_order(
         sheet: &Sheet,
         layout: &thinoda_core::Layout,
         index: usize,
     ) -> Vec<TopicId> {
-        let frame = sheet.presentation.slides[index].frame;
-        layout
+        let Some(slide) = sheet.presentation.slides.get(index) else {
+            return Vec::new();
+        };
+        let Ok(resolved) = thinoda_core::resolve_presentation_slide(sheet, slide, layout) else {
+            return Vec::new();
+        };
+        let frame = resolved.frame;
+        resolved
+            .layout
             .order
             .iter()
             .copied()
             .filter(|id| {
-                layout.rect(*id).is_some_and(|rect| {
+                resolved.layout.rect(*id).is_some_and(|rect| {
                     rect.min.x < frame.max().x
                         && rect.max().x > frame.min.x
                         && rect.min.y < frame.max().y
@@ -107,7 +120,18 @@ impl Playback {
         }
     }
 
-    fn scene(&self, sheet: &Sheet, layout: &Arc<thinoda_core::Layout>, index: usize) -> Scene {
+    fn scene(
+        &self,
+        sheet: &Sheet,
+        layout: &Arc<thinoda_core::Layout>,
+        index: usize,
+    ) -> Result<Scene, String> {
+        let slide = sheet
+            .presentation
+            .slides
+            .get(index)
+            .ok_or_else(|| t("Slide source is unavailable.").to_string())?;
+        let resolved = thinoda_core::resolve_presentation_slide(sheet, slide, layout)?;
         let order = Self::topic_order(sheet, layout, index);
         let step = if self.build_topics {
             self.step.min(order.len().max(1))
@@ -116,7 +140,7 @@ impl Playback {
         };
         let composed = if self.build_topics && step < order.len() {
             let visible: HashSet<_> = order.iter().take(step).copied().collect();
-            let mut composed = (**layout).clone();
+            let mut composed = resolved.layout;
             composed.topics.retain(|id, _| visible.contains(id));
             composed.order.retain(|id| visible.contains(id));
             composed.connectors.retain(|connector| {
@@ -134,14 +158,19 @@ impl Playback {
             composed.summaries.clear();
             Arc::new(composed)
         } else {
-            Arc::clone(layout)
+            Arc::new(resolved.layout)
         };
-        Scene {
+        Ok(Scene {
             index,
             step,
-            frame: sheet.presentation.slides[index].frame,
+            frame: resolved.frame,
             layout: composed,
-        }
+            zones: if self.build_topics && step < order.len() {
+                Vec::new()
+            } else {
+                resolved.zones
+            },
+        })
     }
 
     pub(super) fn show(
@@ -165,7 +194,17 @@ impl Playback {
             .as_ref()
             .is_none_or(|scene| scene.index != index || scene.step != step)
         {
-            let target = self.scene(sheet, layout, index);
+            let target = match self.scene(sheet, layout, index) {
+                Ok(scene) => scene,
+                Err(_) => {
+                    self.refresh();
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        t("Slide source is unavailable."),
+                    );
+                    return;
+                }
+            };
             self.direction = if self.current.as_ref().is_some_and(|scene| {
                 scene.index > index || scene.index == index && scene.step > step
             }) {
@@ -261,9 +300,11 @@ fn paint_scene(
     let mut painter = painter.with_clip_rect(crop);
     painter.set_opacity(opacity);
     painter.rect_filled(crop, 0.0, background(sheet, dark));
+    let mut paint_sheet = sheet.clone();
+    paint_sheet.zones = scene.zones.clone();
     thinoda_canvas::paint_map(
         &painter,
-        sheet,
+        &paint_sheet,
         &scene.layout,
         xf,
         &thinoda_canvas::PaintOptions {
@@ -320,20 +361,20 @@ mod tests {
             step: 1,
             ..Default::default()
         };
-        let scene = playback.scene(&player.sheet, &player.layout, 0);
+        let scene = playback.scene(&player.sheet, &player.layout, 0).unwrap();
         assert!(order.len() >= 3);
         assert_eq!(scene.layout.order, vec![order[0]]);
         assert_eq!(scene.layout.rect(order[0]), player.layout.rect(order[0]));
         assert!(scene.layout.relationships.is_empty());
         assert!(scene.layout.connectors.is_empty());
         playback.step = 2;
-        let scene = playback.scene(&player.sheet, &player.layout, 0);
+        let scene = playback.scene(&player.sheet, &player.layout, 0).unwrap();
         assert_eq!(scene.layout.order, order[..2]);
         assert_eq!(scene.layout.connectors.len(), 1);
         assert!(scene.layout.relationships.is_empty());
         playback.step = usize::MAX;
-        let complete = playback.scene(&player.sheet, &player.layout, 0);
-        assert!(Arc::ptr_eq(&complete.layout, &player.layout));
+        let complete = playback.scene(&player.sheet, &player.layout, 0).unwrap();
+        assert_eq!(complete.layout.order, order);
         assert_eq!(*player.sheet, before);
     }
 

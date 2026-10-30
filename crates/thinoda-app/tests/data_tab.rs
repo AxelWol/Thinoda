@@ -48,7 +48,7 @@ fn data_is_between_style_and_map_and_separates_topic_content_in_both_views() {
                     for rect in tabs {
                         assert!(h.ctx.content_rect().contains_rect(rect), "{rect:?}");
                     }
-                    h.get_by_role_and_label(Role::Button, t("Task Planning"));
+                    assert!(h.query_by_label(t("Task Planning")).is_none());
                     assert!(h.query_by_label(t("Hyperlink")).is_none());
                     assert!(h.query_by_label(t("Insert image")).is_none());
                     h.get_by_role_and_label(Role::Tab, t("Data")).click();
@@ -83,12 +83,57 @@ fn data_is_between_style_and_map_and_separates_topic_content_in_both_views() {
                         h.query_all_by_role_and_label(Role::Label, title).count() <= 1,
                         "Data must not repeat the topic heading"
                     );
-                    assert!(h.query_by_label(t("Task Planning")).is_none());
+                    h.get_by_role_and_label(Role::Button, t("Task Planning"));
                     assert!(h.query_by_label(t("Quick Styles")).is_none());
                     assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
                     assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn data_task_summary_opens_the_existing_planning_editor_without_changing_the_map() {
+    let _language = LANGUAGE.lock().unwrap();
+    for mode in [CenterMode::Map, CenterMode::Outliner] {
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            let mut app = ThinodaApp::headless();
+            app.mode = mode;
+            app.settings.theme = theme;
+            app.format_tab = FormatTab::Data;
+            let doc = app.doc_mut().unwrap();
+            let root = doc.doc.sheet().root;
+            doc.doc
+                .set_task(
+                    root,
+                    Some(thinoda_core::Task {
+                        start_date: Some("2026-10-26".parse().unwrap()),
+                        duration_days: Some(5),
+                        progress_percent: 40,
+                        ..Default::default()
+                    }),
+                )
+                .unwrap();
+            let before = doc.doc.workbook().clone();
+            let mut h = harness(app, egui::vec2(1280.0, 1000.0));
+            for label in [
+                format!("{}: 40%", t("Progress")),
+                format!("{}: 2026-10-26", t("Start date")),
+                format!("{}: 2026-10-30", t("Due date")),
+            ] {
+                h.get_by_label(&label);
+            }
+            h.get_by_role_and_label(Role::Button, t("Task Planning"))
+                .scroll_to_me();
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::Button, t("Task Planning"))
+                .click();
+            h.run_steps(4);
+            h.get_by_role_and_label(Role::Button, t("Apply"));
+            h.get_by_role_and_label(Role::Button, t("Cancel")).click();
+            h.run_steps(4);
+            assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
         }
     }
 }
@@ -158,11 +203,11 @@ fn switching_from_data_commits_the_owned_draft_once_and_preserves_scroll_positio
                 .as_deref(),
             Some("Owned Data draft")
         );
-        h.get_by_role_and_label(Role::Button, t("Task Planning"))
+        h.get_by_role_and_label(Role::Slider, t("Line Width"))
             .scroll_to_me();
         h.run_steps(8);
         let style_scroll = h
-            .get_by_role_and_label(Role::Button, t("Task Planning"))
+            .get_by_role_and_label(Role::Slider, t("Line Width"))
             .rect();
         h.get_by_role_and_label(Role::Tab, t("Data")).click();
         h.run_steps(6);
@@ -177,7 +222,7 @@ fn switching_from_data_commits_the_owned_draft_once_and_preserves_scroll_positio
         h.get_by_role_and_label(Role::Tab, t("Style")).click();
         h.run_steps(4);
         assert_eq!(
-            h.get_by_role_and_label(Role::Button, t("Task Planning"))
+            h.get_by_role_and_label(Role::Slider, t("Line Width"))
                 .rect()
                 .top(),
             style_scroll.top()

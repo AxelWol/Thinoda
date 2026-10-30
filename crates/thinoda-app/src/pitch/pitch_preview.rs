@@ -4,136 +4,134 @@ use super::*;
 #[path = "preview_tests.rs"]
 mod tests;
 
-type PreviewKey = (u64, usize, bool);
-
-#[derive(Default)]
-pub(super) struct SlidePreview {
-    pending: Option<(PreviewKey, mpsc::Receiver<Result<egui::ColorImage, String>>)>,
-    rendered: Option<(PreviewKey, Result<egui::TextureHandle, String>)>,
+#[cfg(test)]
+thread_local! {
+    // Count actual thumbnail resolver calls, not allocated cards, on this UI/test thread.
+    pub(super) static THUMBNAIL_RESOLVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+/// No image worker or stale texture: the editor paints the same resolved scene as Pitch.
+#[derive(Default)]
+pub(super) struct SlidePreview;
 
 impl SlidePreview {
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
         sheet: &Sheet,
+        layout: &thinoda_core::Layout,
         index: usize,
-        generation: u64,
-        options: &ExportOptions,
         available: egui::Vec2,
-    ) {
-        let key = (generation, index, options.dark);
-        if let Some((requested, receiver)) = &self.pending {
-            let result = match receiver.try_recv() {
-                Ok(result) => Some(result),
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    Some(Err(t("Export worker stopped unexpectedly").into()))
-                }
+    ) -> Option<TopicId> {
+        self.paint(ui, sheet, layout, index, available, true)
+    }
 
-                Err(mpsc::TryRecvError::Empty) => None,
-            };
-            if let Some(result) = result {
-                let requested = *requested;
-                self.pending = None;
-                if requested == key {
-                    self.rendered = Some((
-                        key,
-                        result.map(|image| {
-                            ui.ctx().load_texture(
-                                format!("pitch-slide-{}-{}", generation, index),
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            )
-                        }),
-                    ));
-                }
-            }
+    pub(super) fn thumbnail(
+        &mut self,
+        ui: &mut egui::Ui,
+        sheet: &Sheet,
+        layout: &thinoda_core::Layout,
+        index: usize,
+        available: egui::Vec2,
+    ) -> bool {
+        self.paint(ui, sheet, layout, index, available, false)
+            .is_some()
+    }
+
+    fn paint(
+        &mut self,
+        ui: &mut egui::Ui,
+        sheet: &Sheet,
+        layout: &thinoda_core::Layout,
+        index: usize,
+        available: egui::Vec2,
+        interactive: bool,
+    ) -> Option<TopicId> {
+        let slide = sheet.presentation.slides.get(index)?;
+        // Allocate first so the ScrollArea's viewport can reject offscreen thumbnails.
+        // No resolved layout or cloned paint sheet is kept for any slide between frames.
+        // The selected workspace stage always stays live, even when clipped by scrolling.
+        let (region, response) =
+            ui.allocate_exact_size(available.max(egui::vec2(1.0, 1.0)), egui::Sense::click());
+        if !interactive && !ui.is_rect_visible(region) {
+            return None;
         }
-        if self.pending.is_none()
-            && self
-                .rendered
-                .as_ref()
-                .is_none_or(|(rendered, _)| *rendered != key)
-        {
-            let sheet = sheet.clone();
-            let mut options = options.clone();
-            if let Some(slide) = sheet.presentation.slides.get(index) {
-                options.scale =
-                    (1600.0 / slide.frame.size.x.max(slide.frame.size.y)).clamp(0.1, 8.0);
-            }
-            let (sender, receiver) = mpsc::channel();
-            let repaint = ui.ctx().clone();
-            let viewport = ui.ctx().viewport_id();
-            self.pending = Some((key, receiver));
-            if let Err(error) =
-                thinoda_platform::system::run_background("thinoda-slide-preview", move || {
-                    let result = thinoda_io::render_presentation_slide_png(&sheet, index, &options)
-                        .map_err(|error| error.to_string())
-                        .and_then(|bytes| {
-                            image::load_from_memory(&bytes).map_err(|error| error.to_string())
-                        })
-                        .map(|image| {
-                            let image = image.to_rgba8();
-                            egui::ColorImage::from_rgba_unmultiplied(
-                                [image.width() as usize, image.height() as usize],
-                                image.as_raw(),
-                            )
-                        });
-                    let _ = sender.send(result);
-                    repaint.request_repaint_of(viewport);
-                })
-            {
-                self.pending = None;
-                self.rendered = Some((key, Err(error.to_string())));
-            }
+        #[cfg(test)]
+        if !interactive {
+            THUMBNAIL_RESOLVES.with(|count| count.set(count.get() + 1));
         }
-        if self.pending.is_some() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        let mut retry = false;
-        egui::Frame::new()
-            .fill(Palette::of_ui(ui).surface_alt)
-            .inner_margin(8.0)
-            .show(ui, |ui| {
-                let size = (available - egui::vec2(16.0, 16.0)).max(egui::vec2(1.0, 1.0));
-                ui.set_max_width(size.x);
-                if let Some((rendered, result)) = &self.rendered
-                    && *rendered == key
-                {
-                    match result {
-                        Ok(texture) => {
-                            let dimensions = texture.size_vec2();
-                            let scale = (size.x / dimensions.x).min(size.y / dimensions.y);
-                            let (region, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                            let image_rect =
-                                egui::Rect::from_center_size(region.center(), dimensions * scale);
-                            ui.put(
-                                image_rect,
-                                egui::Image::new(texture)
-                                    .fit_to_exact_size(dimensions * scale)
-                                    .alt_text(t("Slide preview")),
-                            );
-                        }
-                        Err(error) => {
-                            ui.colored_label(
-                                ui.visuals().error_fg_color,
-                                format!("{}: {error}", t("Slide preview failed")),
-                            );
-                            retry = ui.button(t("Retry")).clicked()
-                                && widgets::touch_activation_allowed(ui.ctx());
-                        }
-                    }
+        let resolved = match thinoda_core::resolve_presentation_slide(sheet, slide, layout) {
+            Ok(resolved) => resolved,
+            Err(_) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    t("Slide source is unavailable."),
+                );
+                return None;
+            }
+        };
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::Image,
+                true,
+                if interactive {
+                    t("Slide preview")
                 } else {
-                    ui.allocate_ui(size, |ui| {
-                        ui.spinner();
-                        ui.label(t("Rendering slide…"));
-                    });
-                    if retry {
-                        self.rendered = None;
-                        ui.ctx().request_repaint();
-                    }
-                }
+                    &slide.title
+                },
+            )
+        });
+        let painter = ui.painter_at(region);
+        painter.rect_filled(region, 8.0, Palette::of_ui(ui).surface_alt);
+        let inner = region.shrink(12.0);
+        let zoom = (inner.width() / resolved.frame.size.x.max(1.0))
+            .min(inner.height() / resolved.frame.size.y.max(1.0));
+        let center = resolved.frame.center();
+        let xf = thinoda_canvas::Xf {
+            origin: inner.center() - egui::vec2(center.x, center.y) * zoom,
+            zoom,
+        };
+        let crop = xf.rect(resolved.frame).intersect(inner);
+        let mut paint_sheet = sheet.clone();
+        paint_sheet.zones = resolved.zones;
+        thinoda_canvas::paint_map(
+            &painter.with_clip_rect(crop),
+            &paint_sheet,
+            &resolved.layout,
+            xf,
+            &thinoda_canvas::PaintOptions {
+                dark: Palette::of_ui(ui).dark,
+                ..Default::default()
+            },
+        );
+        let hit = response
+            .hover_pos()
+            .filter(|pos| crop.contains(*pos))
+            .and_then(|pos| {
+                resolved.layout.order.iter().rev().copied().find(|id| {
+                    resolved
+                        .layout
+                        .rect(*id)
+                        .is_some_and(|rect| xf.rect(rect).contains(pos))
+                })
             });
+        if let Some(topic) = hit.filter(|_| interactive) {
+            if let Some(rect) = resolved.layout.rect(topic) {
+                painter.rect_stroke(
+                    xf.rect(rect).intersect(crop),
+                    4.0,
+                    egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            response
+                .clone()
+                .on_hover_text(t("Click a topic to hide its subtree."));
+        }
+        if response.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
+            if interactive { hit } else { Some(sheet.root) }
+        } else {
+            None
+        }
     }
 }

@@ -38,6 +38,7 @@ mod structure_picker;
 mod symbols;
 mod template_gallery;
 mod theme_editor;
+mod tree_table;
 pub mod ui;
 mod updates;
 mod zones;

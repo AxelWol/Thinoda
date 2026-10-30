@@ -25,6 +25,7 @@ pub mod navigation;
 pub mod notes;
 pub mod numbering;
 pub mod outline;
+pub mod presentation;
 pub mod quick_styles;
 pub mod resources;
 pub mod schedule;
@@ -40,11 +41,12 @@ pub use layout::{ApproxMeasure, Layout, TextMeasure, TopicLayout, layout_sheet};
 pub use model::{
     Boundary, BoundaryId, BranchSide, ChildRange, LineShape, MAX_PRESENTATION_COORDINATE,
     MAX_PRESENTATION_NAME_BYTES, MAX_PRESENTATION_SLIDES, MAX_ZONE_MEMBERSHIPS, MAX_ZONES,
-    MIN_ZONE_SIZE, Presentation, PresentationSlide, PresentationSource, Relationship,
-    RelationshipId, Sheet, SlideFrame, SlideId, Structure, Subtree, Summary, SummaryId, TextAlign,
-    Topic, TopicId, TopicShape, TopicStyle, Workbook, Zone, ZoneId,
+    MIN_ZONE_SIZE, Presentation, PresentationScope, PresentationSlide, PresentationSource,
+    Relationship, RelationshipId, Sheet, SlideFrame, SlideId, Structure, Subtree, Summary,
+    SummaryId, TextAlign, Topic, TopicId, TopicShape, TopicStyle, Workbook, Zone, ZoneId,
 };
 pub use outline::OutlineNode;
+pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};
 pub use schedule::{
     ComputedTask, LocalDate, MAX_CALENDAR_EXCEPTIONS, MAX_SCHEDULED_TASKS, MAX_TASK_DEPENDENCIES,
     MAX_TASK_DURATION_DAYS, SCHEDULING_VERSION, ScheduleError, SchedulingData, Task,

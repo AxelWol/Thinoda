@@ -143,6 +143,8 @@ those system-owned controls. WinGet publishing remains paused.
   order using Next, then advances the slide; Previous reverses the steps.
   Playback choices are session-only, never change the workbook or exported
   PDF/PNG slides, and use the same localized, themed controls on native and web.
+  The [vector presentation redesign](docs/PRESENTATIONS.md) documents focused
+  slides, live framing, visual authoring and editable PowerPoint handoff.
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Structural numbering (Style > Numbering) labels a parent's children 1, 2, 3 /
@@ -369,6 +371,19 @@ those system-owned controls. WinGet publishing remains paused.
   existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
   topic; they commit an in-progress topic-title edit before switching views.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
+- **Tree Table** (Map > Structure > Tree Table) opens a compact hierarchical
+  task editor with title, start, due, inclusive working-day duration and progress
+  cells. Click a cell or use Tab/arrows and Enter/F2; Enter/Apply commits one
+  undo step, Escape discards, and Tab applies then advances. Invalid values stay
+  visible without changing the map. Opening the table does not create tasks.
+  Computed dates and dependencies use the existing scheduling engine; Data >
+  Task Planning and Work Calendar provide the full editor. Independent To-Do
+  state is unchanged. Map/Outliner/Gantt share topic selection and saved task data.
+  Columns and ascending sibling sort are local settings, never topic reorderings;
+  collapse is view-only. A horizontal scrollbar keeps columns usable in narrow
+  windows. Unapplied cells are discarded after selection/document/sheet/revision
+  changes and are not saved. Map image/PDF/print still render the **map**, not a
+  table; use Gantt export for scheduled-task output. See [the table guide](docs/TREE-TABLE.md).
 - Notes include bold/italic selection tools, bulleted/numbered lists and an opt-in
   offline Markdown preview. Formatting is stored as source text, preserving existing
   notes and their save/recovery/undo behavior; other views and exports may show the
@@ -405,15 +420,20 @@ those system-owned controls. WinGet publishing remains paused.
   are not recovery documents; apply first. Native v4 and sheet clipboard v3 already
   preserve the Markdown source envelope, so no additional schema field/version
   is introduced. Older source-aware readers may display the fence as code.
-  **All non-native exports (including Markdown/XMind), visual/Pitch exports,
-  printing and Map Shot refuse equation-bearing content**, even with lossy consent,
-  rather than silently omit it. Whole-workbook export checks every sheet; direct
-  sheet exports/print/Map Shot check their source sheet. This conservative policy
-  remains until equation-note export support is implemented. The reserved
-  `thinoda-math-v1` marker in any declared Markdown note also triggers this guard
-  when malformed or mentioned in prose; edit the note source to remove it when
-  it is not intended as an equation. Pasted LF, CRLF and CR fence line endings
-  are accepted without rewriting the surrounding note text.
+  SVG/PDF/PNG/JPEG and live presentation SVG/PNG/PDF/PowerPoint exports show a
+  separate Notes equations section built from vector glyphs and fraction rules;
+  presentation exports include only equations belonging to visible slide topics.
+  Print uses the same SVG rendering. XMind preserves the complete source through
+  Thinoda's private workbook snapshot. CSV/OPML retain the exact fenced text only
+  after the existing Markdown-format-loss consent; OPML reopens it as literal
+  plain text, not a rendered equation. **Other foreign formats, Gantt and Map Shot
+  remain blocked** rather than silently omitting equation content. Unselected
+  sheets do not block single-sheet visual exports; XMind validates its full
+  workbook. Malformed/incomplete equation blocks are rejected before replacing
+  output. The reserved `thinoda-math-v1` marker in declared Markdown is treated
+  conservatively, even when malformed or mentioned in prose; remove it from the
+  note source when it is not intended as an equation. Pasted LF, CRLF and CR
+  fence line endings are accepted without rewriting surrounding note text.
 - Sheet menu and sheet-tab context menu offer Copy/Paste of complete sheets through
   the OS clipboard (including across Thinoda instances), and Save Sheet As for a
   separate `.thinoda`/`.xmind` copy without changing the source save state.
@@ -646,13 +666,13 @@ those system-owned controls. WinGet publishing remains paused.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
-- Export: XMind, PNG, JPEG, SVG, PDF, image-based PowerPoint `.pptx`, Word, Excel,
+- Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
   subset. PowerPoint export previews the first saved Pitch slide, reuses all
-  saved frames and offers 16:9 or 4:3;
-  each slide is a flattened image, not individually editable text/shapes, and
-  unsupported resources are refused. Opening in PowerPoint/LibreOffice is not
-  yet verified. MindManager conversion uses
+  slide visibility/framing and offers 16:9 or 4:3. Text, shapes and connecting
+  paths are separate editable objects; original photos remain images.
+  Unsupported resources are refused. Native-object PowerPoint/LibreOffice
+  opening acceptance is separate from schema validation. MindManager conversion uses
   explicit loss/sheet-scope warnings and protects imported source files;
   [supported features and verification limits](docs/MINDMANAGER.md).
 - Graphical exports share font-measured title wrapping and reserve whitespace
@@ -669,6 +689,18 @@ those system-owned controls. WinGet publishing remains paused.
   English when the model cannot write it; *Translate* keeps the target language you ask for.
 
 ## AI setup (LM Studio)
+
+**Optional local conversations (XV9):** AI Chat remains session-only by default.
+For a saved file, **AI Chat → Local chat history → Enable local history** offers
+named threads and confirmed 7/30/90-day pruning, per-file forgetting and global
+deletion. Only completed exchanges in named threads are persisted; existing
+session messages, drafts, map-context snapshots and credentials are not copied.
+Prompts/replies may contain sensitive data; local history is **not encrypted**.
+Nothing is sent on restore, and transcripts are never included in maps or
+exports. Save As, moved/copied files and recovery do not inherit history.
+See [AI-HISTORY.md](docs/AI-HISTORY.md) for identity, limits, browser Web Lock
+requirements, failures and manual acceptance boundaries.
+
 1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.
 2. In Thinoda open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
    (or a LAN server such as `http://192.168.1.216:1234/v1`), leave *Model* empty for automatic

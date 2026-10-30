@@ -147,6 +147,40 @@ impl Vfs {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
+    /// Bounded decoding for app-local data. Reject oversized envelopes before
+    /// parsing/base64 allocation; malformed entries are not treated as missing.
+    pub fn read_bounded(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        let path = normalize(path);
+        let raw = self
+            .store
+            .get(&Self::key(&path))
+            .ok_or_else(|| not_found(&path))?;
+        if raw.len() > limit.saturating_mul(2).saturating_add(1024) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "storage exceeds limit",
+            ));
+        }
+        let entry: Entry = serde_json::from_str(&raw)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid storage"))?;
+        if entry.l > limit as u64 || entry.d.len() > limit.saturating_add(2) / 3 * 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "storage exceeds limit",
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(entry.d)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid storage"))?;
+        if bytes.len() > limit || bytes.len() as u64 != entry.l {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid storage length",
+            ));
+        }
+        Ok(bytes)
+    }
+
     /// Replace a file in one store operation (atomic with respect to this tab).
     pub fn write(&self, path: &Path, bytes: &[u8], now_ms: u64) -> io::Result<()> {
         let path = normalize(path);

@@ -82,6 +82,10 @@ fn local_images_render_in_visual_exports_print_and_pitch() {
             );
             let sheet = book.active_mut();
             let branch = sheet.add_child(sheet.root, None, "Image slide");
+            let root_image = sheet.topic(sheet.root).unwrap().clone();
+            let topic = sheet.topic_mut(branch).unwrap();
+            topic.image = root_image.image;
+            topic.image_size = root_image.image_size;
             sheet
                 .add_presentation_slide(
                     "Image",

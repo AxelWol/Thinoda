@@ -2,13 +2,16 @@ use crate::{ExportOptions, IoError};
 use std::io::Cursor;
 use thinoda_core::{
     Rect, Sheet, TopicId, Workbook,
+    equations::{self as math, Layout as EquationLayout, Primitive as EquationPrimitive},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, layout_sheet},
     model::TopicShape,
     theme::Theme,
 };
 
+mod pptx;
 mod text;
+pub(crate) use pptx::editable_slide;
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -39,12 +42,142 @@ fn svg_with_fonts(
     svg_sheet_with_fonts(s, o, fontdb, None)
 }
 
-pub(crate) fn svg_with_frame(
-    s: &thinoda_core::Sheet,
+pub(crate) fn presentation_layout(s: &Sheet, dark: bool) -> Result<thinoda_core::Layout, IoError> {
+    let text = text::ExportText::new(s, dark, crate::fonts::database())?;
+    Ok(layout_sheet(s, &text, dark))
+}
+
+pub(crate) struct EquationRow {
+    pub topic: TopicId,
+    title: text::Block,
+    pub layout: EquationLayout,
+    pub equation_y: f32,
+    pub height: f32,
+    pub color: Color,
+    pub font_family: String,
+}
+
+pub(crate) struct EquationAppendix {
+    pub rows: Vec<EquationRow>,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Validate every authored block, including equations outside a presentation's
+/// visible scope. Imported malformed blocks must never be silently discarded.
+pub(crate) fn validate_equation_notes(sheet: &Sheet) -> Result<(), IoError> {
+    for topic in sheet.topics.values() {
+        let Some(note) = topic.notes.as_ref().filter(|note| math::has_equation(note)) else {
+            continue;
+        };
+        let Some((_, source)) =
+            math::split_note(note).map_err(|_| IoError::EquationNotesUnsupported)?
+        else {
+            continue;
+        };
+        math::parse(source).map_err(|_| IoError::EquationNotesUnsupported)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn equation_appendix(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+) -> Result<Option<EquationAppendix>, IoError> {
+    validate_equation_notes(sheet)?;
+    let mut rows = Vec::new();
+    let mut width = 280.0_f32;
+    let mut height = 48.0_f32;
+    for id in &layout.order {
+        let Some(topic) = sheet.topics.get(id) else {
+            continue;
+        };
+        let Some(note) = topic.notes.as_ref().filter(|note| math::has_equation(note)) else {
+            continue;
+        };
+        let (_, source) = math::split_note(note)
+            .map_err(|_| IoError::EquationNotesUnsupported)?
+            .ok_or(IoError::EquationNotesUnsupported)?;
+        let formula = math::layout(source, 18.0, |_, size| (size * 0.62, size))
+            .map_err(|_| IoError::EquationNotesUnsupported)?;
+        let Some(topic_layout) = layout.topics.get(id) else {
+            continue;
+        };
+        let color = topic_layout.style.text_color;
+        let font_family = topic_layout
+            .style
+            .font_family
+            .as_deref()
+            .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif")
+            .to_owned();
+        let title = text::equation_title(&topic.title, &font_family)?;
+        let equation_y = title.size.y + 8.0;
+        let row_height = equation_y + formula.height.max(18.0) + 12.0;
+        width = width.max(title.size.x.max(formula.width) + 40.0);
+        height += row_height;
+        if !width.is_finite()
+            || !height.is_finite()
+            || width > math::MAX_WIDTH
+            || height > math::MAX_HEIGHT
+        {
+            return Err(IoError::EquationNotesUnsupported);
+        }
+        rows.push(EquationRow {
+            topic: *id,
+            title,
+            layout: formula,
+            equation_y,
+            height: row_height,
+            color,
+            font_family,
+        });
+    }
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(EquationAppendix {
+        rows,
+        width,
+        height,
+    }))
+}
+
+pub(crate) fn extend_equation_frame(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+    frame: Rect,
+) -> Result<Rect, IoError> {
+    let Some(appendix) = equation_appendix(sheet, layout)? else {
+        return Ok(frame);
+    };
+    let width = frame.size.x.max(appendix.width);
+    let height = frame.size.y + appendix.height;
+    if !width.is_finite()
+        || !height.is_finite()
+        || width > math::MAX_WIDTH
+        || height > math::MAX_HEIGHT
+    {
+        return Err(IoError::EquationNotesUnsupported);
+    }
+    Ok(Rect::from_min_size(
+        Vec2::new(frame.center().x - width / 2.0, frame.min.y),
+        Vec2::new(width, height),
+    ))
+}
+
+pub(crate) fn svg_resolved(
+    s: &Sheet,
     o: &ExportOptions,
-    frame: thinoda_core::Rect,
+    resolved: &thinoda_core::ResolvedPresentationSlide,
 ) -> Result<String, IoError> {
-    svg_sheet_with_fonts(s, o, crate::fonts::database(), Some(frame))
+    svg_layout_with_fonts(
+        s,
+        o,
+        crate::fonts::database(),
+        Some(resolved.frame),
+        &resolved.layout,
+        &resolved.zones,
+    )
 }
 
 pub(crate) fn branch_frames(
@@ -101,14 +234,43 @@ fn svg_sheet_with_fonts(
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
     frame: Option<thinoda_core::Rect>,
 ) -> Result<String, IoError> {
-    crate::reject_equation_notes(s)?;
-    let image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
+    let text = text::ExportText::new(s, o.dark, fontdb.clone())?;
+    let layout = layout_sheet(s, &text, o.dark);
+    svg_layout_with_fonts(s, o, fontdb, frame, &layout, &s.zones)
+}
+
+fn svg_layout_with_fonts(
+    s: &Sheet,
+    o: &ExportOptions,
+    fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
+    frame: Option<Rect>,
+    layout: &thinoda_core::Layout,
+    zones: &[thinoda_core::Zone],
+) -> Result<String, IoError> {
+    validate_equation_notes(s)?;
+    let mut image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
         IoError::Invalid(format!("embedded resources cannot be rendered: {error}"))
     })?;
+    image_dimensions.retain(|reference, _| {
+        layout.order.iter().any(|id| {
+            s.topic(*id).and_then(|topic| topic.image.as_deref()) == Some(reference.as_str())
+        })
+    });
     let text = text::ExportText::new(s, o.dark, fontdb)?;
-    let layout = layout_sheet(s, &text, o.dark);
     let pad = o.padding.max(0.0);
-    let b = frame.unwrap_or_else(|| layout.bounds.expand(pad));
+    let base_frame = frame.unwrap_or_else(|| layout.bounds.expand(pad));
+    let appendix = equation_appendix(s, layout)?;
+    let b = if frame.is_none() {
+        appendix.as_ref().map_or(base_frame, |appendix| {
+            let width = base_frame.size.x.max(appendix.width);
+            Rect::from_min_size(
+                Vec2::new(base_frame.center().x - width / 2.0, base_frame.min.y),
+                Vec2::new(width, base_frame.size.y + appendix.height),
+            )
+        })
+    } else {
+        base_frame
+    };
     let max = b.max();
     let width = max.x - b.min.x;
     let height = max.y - b.min.y;
@@ -140,7 +302,7 @@ fn svg_sheet_with_fonts(
     if !o.transparent {
         out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{}\"/>",b.min.x,b.min.y,col(bg)));
     }
-    for zone in &s.zones {
+    for zone in zones {
         let r = zone.frame;
         let color = Color::rgb(0x5D, 0x7A, 0x91);
         let fill = Color::rgba(color.r, color.g, color.b, 20);
@@ -404,6 +566,65 @@ fn svg_sheet_with_fonts(
             out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"5\" fill=\"#EEEEEE\"/><text x=\"{:.2}\" y=\"{:.2}\" font-size=\"10\" text-anchor=\"middle\" fill=\"#333333\">{}</text>",lr.min.x,lr.min.y,lr.size.x,lr.size.y,lr.center().x,lr.center().y,esc(label)));
         }
     }
+    if let Some(appendix) = &appendix {
+        let start_y = b.max().y - appendix.height;
+        out.push_str("<g class=\"notes-equations\">");
+        out.push_str(&format!(
+            "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"sans-serif\" font-size=\"16\" font-weight=\"bold\" fill=\"#555555\">Notes equations</text>",
+            b.min.x + 16.0,
+            start_y + 22.0
+        ));
+        let mut y = start_y + 34.0;
+        for row in &appendix.rows {
+            out.push_str(&format!("<g id=\"equation-{}-title\">", row.topic));
+            for (index, line) in row.title.lines.iter().enumerate() {
+                let baseline = y
+                    + index as f32 * row.title.line_height
+                    + (row.title.line_height - line.bounds.size.y) / 2.0
+                    - line.bounds.min.y;
+                out.push_str(&format!(
+                    "<text x=\"{:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"14\" textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\" fill=\"{}\">{}</text>",
+                    b.min.x + 16.0 - line.bounds.min.x,
+                    esc(&row.font_family),
+                    line.bounds.size.x,
+                    col(row.color),
+                    esc(&line.text)
+                ));
+            }
+            out.push_str(&format!("</g><g id=\"equation-{}-formula\">", row.topic));
+            let origin_x = b.min.x + 16.0;
+            let origin_y = y + row.equation_y;
+            for primitive in &row.layout.primitives {
+                match primitive {
+                    EquationPrimitive::Glyph {
+                        character,
+                        x,
+                        y,
+                        size,
+                    } => out.push_str(&format!(
+                        "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"{size:.2}\" textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\" fill=\"{}\">{}</text>",
+                        origin_x + x,
+                        origin_y + y + size * 0.8,
+                        esc(&row.font_family),
+                        size * 0.62,
+                        col(row.color),
+                        esc(&character.to_string())
+                    )),
+                    EquationPrimitive::Rule { x, y, width } => out.push_str(&format!(
+                        "<path d=\"M {:.2},{:.2} L {:.2},{:.2}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.2\"/>",
+                        origin_x + x,
+                        origin_y + y,
+                        origin_x + x + width,
+                        origin_y + y,
+                        col(row.color)
+                    )),
+                }
+            }
+            out.push_str("</g>");
+            y += row.height;
+        }
+        out.push_str("</g>");
+    }
     out.push_str("</svg>");
     Ok(out)
 }
@@ -549,6 +770,12 @@ pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
 }
 
 pub(crate) fn pdf_svg(source: &str) -> Result<Vec<u8>, IoError> {
+    let tree = pdf_svg_tree(source)?;
+    svg2pdf::to_pdf(&tree, Default::default(), Default::default())
+        .map_err(|e| IoError::Invalid(format!("PDF conversion: {e}")))
+}
+
+fn pdf_svg_tree(source: &str) -> Result<svg2pdf::usvg::Tree, IoError> {
     let tree = resvg::usvg::Tree::from_str(
         source,
         &resvg::usvg::Options {
@@ -560,10 +787,58 @@ pub(crate) fn pdf_svg(source: &str) -> Result<Vec<u8>, IoError> {
     // Outline with the same font resolver as raster export. The PDF converter's
     // usvg version differs, so pass normalized SVG rather than incompatible trees.
     let outlined = tree.to_string(&resvg::usvg::WriteOptions::default());
-    let tree = svg2pdf::usvg::Tree::from_str(&outlined, &Default::default())
-        .map_err(|e| IoError::Invalid(format!("PDF SVG parse: {e}")))?;
-    svg2pdf::to_pdf(&tree, Default::default(), Default::default())
-        .map_err(|e| IoError::Invalid(format!("PDF conversion: {e}")))
+    svg2pdf::usvg::Tree::from_str(&outlined, &Default::default())
+        .map_err(|e| IoError::Invalid(format!("PDF SVG parse: {e}")))
+}
+
+/// Compose independent vector SVG form XObjects into a multipage PDF. Text is
+/// outlined with the same fonts as SVG exports; only original photos are images.
+pub(crate) fn pdf_svg_pages(
+    pages: &[(String, f32, f32)],
+    limit: usize,
+) -> Result<Vec<u8>, IoError> {
+    use pdf_writer::{Content, Finish, Name, Pdf, Ref};
+    use std::collections::HashMap;
+
+    let mut alloc = Ref::new(1);
+    let catalog = alloc.bump();
+    let page_tree = alloc.bump();
+    let page_ids: Vec<_> = pages.iter().map(|_| alloc.bump()).collect();
+    let mut pdf = Pdf::new();
+    pdf.catalog(catalog).pages(page_tree);
+    pdf.pages(page_tree)
+        .kids(page_ids.iter().copied())
+        .count(pages.len() as i32);
+    for ((source, width, height), page_id) in pages.iter().zip(page_ids) {
+        let tree = pdf_svg_tree(source)?;
+        let (chunk, object) = svg2pdf::to_chunk(&tree, Default::default())
+            .map_err(|e| IoError::Invalid(format!("PDF conversion: {e}")))?;
+        let mut references = HashMap::new();
+        let chunk = chunk.renumber(|old| *references.entry(old).or_insert_with(|| alloc.bump()));
+        let object = references[&object];
+        let content_id = alloc.bump();
+        let name = Name(b"Slide");
+        let mut page = pdf.page(page_id);
+        page.parent(page_tree);
+        page.media_box(pdf_writer::Rect::new(0.0, 0.0, *width, *height));
+        page.contents(content_id);
+        page.resources().x_objects().pair(name, object);
+        page.finish();
+        let mut content = Content::new();
+        content
+            .transform([*width, 0.0, 0.0, *height, 0.0, 0.0])
+            .x_object(name);
+        pdf.stream(content_id, &content.finish());
+        pdf.extend(&chunk);
+        if pdf.as_bytes().len() > limit {
+            return Err(IoError::PresentationLimit("PDF size"));
+        }
+    }
+    let bytes = pdf.finish();
+    if bytes.len() > limit {
+        return Err(IoError::PresentationLimit("PDF size"));
+    }
+    Ok(bytes)
 }
 
 /// Wraps an opaque JPEG in a single PDF page. Page dimensions are PDF points,
