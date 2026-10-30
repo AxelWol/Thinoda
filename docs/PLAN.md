@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 12:36:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-30 17:30:12 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 
@@ -9,7 +9,91 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
-## Current next-value state (2026-10-29)
+## Current next-value state (2026-10-30)
+
+**Ordered continuation and release handoff (2026-10-30):** equation vector
+handoff, task-aware Tree Table and opt-in local named AI conversations are
+implemented in that order. See [PRESENTATIONS.md](PRESENTATIONS.md),
+[TREE-TABLE.md](TREE-TABLE.md) and [AI-HISTORY.md](AI-HISTORY.md) for precise
+contracts and remaining limits. An independent integration critique found no
+blocking defects and verified shared scheduling transactions, filtered equation
+appendices and revision-checked local-history ownership. Its Unicode appendix
+title measurement concern was corrected with measured multiline layout and
+regressions. Broader equation notation/topic rendering, dedicated table export
+and automatic history expiration remain separate work, not claimed parity.
+
+The Office CI fixtures now include a Unicode-labelled fraction/script equation
+in all four appearance/ratio PPTX decks. All eight Office files pass Microsoft's
+SDK including negative controls; the fresh light 16:9 deck opens in installed
+Windows PowerPoint without repair and exposes editable equation glyphs and
+fraction rule. User requested merging this session to develop/main and a fully
+packaged release after final review. Follow normal CI/release gates; no force
+pushes, moved tags or protection bypass.
+
+**Release recovery (2026-10-30):** v0.19.0 packaging exposed an Ubuntu 22.04
+font fallback defect: missing generic text families used the first loaded face,
+which can be a bitmap emoji or icon font. Native export now retains the embedded
+Ubuntu/Hack text fallbacks and uses them only for unresolved generic families;
+existing resolvable system choices remain unchanged. A symbol-first regression
+covers family selection and vector PDF digits; the equation suite also runs on
+Ubuntu 22.04 with Noto emoji/CJK fonts. Ship this source correction in a patch
+release rather than moving the existing v0.19.0 tag or skipping vector checks.
+Do not unblock dependent feature integration until the corrected release has
+all architecture packages and checksum manifests.
+
+**User review accepted vector presentations (2026-10-30).** Live vector
+authoring, semantic visibility, dynamic slide updates and editable native
+PowerPoint output are implemented; see [PRESENTATIONS.md](PRESENTATIONS.md)
+for both critiques and acceptance boundaries.
+
+**Requested inspector follow-up (2026-10-30, implemented locally):** move
+Task Planning (Aufgabenplanung), including scheduled progress and computed
+start/due dates, from Style to Data after Equation. Keep the independent To-Do
+subtree controls in Style. Reuse the existing planning dialog/commands and
+validation; no scheduling or persistence changes. Cover Map/Outliner, all ten
+languages, light/dark, narrow layouts and independent tab scroll/draft behavior.
+
+**Current boundary:** the XV7 vector export/interchange blocker is implemented
+below. Broader notation and topic/Outliner-row equation rendering remain
+deliberately open; this phase does not claim complete XV7 or general math
+support. XV8 task-aware Tree Table is implemented locally below; the next
+requested priority XV9 is implemented locally as described below, with manual
+platform/browser acceptance still open.
+
+**XV9 local conversations (2026-10-30, implemented locally):** opt-in app-local
+named threads, transactional bounded storage and confirmed retention/delete
+controls extend the existing chat without changing workbook/recovery schemas.
+Canonical path plus saved-byte SHA-256 binds exact reopen/restart; same-path
+session saves advance the binding, while Save As, copies/moves and recovery do
+not inherit history. Defaults remain session-only; explicit Send/current scope,
+thread/document/viewport ownership and completed-pair-only persistence are kept.
+Native storage is locked/atomic/revision checked; browser durability requires
+Web Locks and writable localStorage rather than volatile VFS fallback.
+See [AI-HISTORY.md](AI-HISTORY.md) for privacy, prune-now retention, conservative
+re-enable/conflict behavior, verification and outstanding manual gates. No push,
+PR, merge, release or independent QA approval is part of this slice.
+
+**XV8 task-aware Tree Table (2026-10-30, implemented locally):** the existing
+Tree Table structure now opens real title/start/due/duration/progress cells,
+with shared planning validation, computed dependency dates, one-step edits,
+safe drafts, keyboard/selection synchronization and view-only columns/sibling
+sort persisted in local settings. Opening does not schedule topics or change
+independent To-Do. Map/PDF/Print still render the map, not a table; Gantt keeps
+its existing output. See [TREE-TABLE.md](TREE-TABLE.md) for behavior, verification,
+self-review and limits. XV9 is not started by this change.
+
+**XV7 equation export/interchange slice (2026-10-30):** equation-bearing notes
+now render in a clearly separated vector appendix in SVG and PDF, in image
+exports rendered from that SVG, and in live presentation SVG/PNG/PDF/PPTX.
+Presentation appendices include only topics resolved as visible; PPTX uses
+editable text and fraction-rule paths. Print shares the SVG renderer. XMind's
+unchanged private workbook snapshot round-trips the full source envelope.
+CSV/OPML retain the exact fenced source only after the existing note-format-loss
+consent; OPML imports it as literal plain text. Other foreign formats, Gantt and
+Map Shot keep explicit refusals. Malformed/incomplete imported blocks are
+rejected before output replacement, even for the newly supported formats.
+The appendix is notes output, not a map/Outliner-row equation; no arbitrary
+LaTeX, chemistry, topic-level equation model, or rich-note AST is claimed.
 
 **Search/Replace follow-up (2026-10-29, implemented locally):** replace the
 floating search card with the shared resizable nonmodal dialog, including its
@@ -26,8 +110,8 @@ the scrolling body from the header so controls cannot overlap caption actions.
 **Requested inspector slice (2026-10-29):** add Data between Style (Stil) and
 Map in the shared native/web inspector, in Map and Outliner. Move Image,
 Attachment, Hyperlink, Labels, Notes and notes-equation controls into Data.
-Keep appearance, markers and Task Planning in Style; this request concerns
-data, not scheduling dates. Retain visibility/preferences, separate tab scroll
+Keep appearance and markers in Style. The later 2026-10-30 request above moves
+Task Planning to Data as well. Retain visibility/preferences, separate tab scroll
 positions, command navigation, conflict-checked drafts, save/recovery and undo.
 Verify all ten languages/light-dark, narrow windows and affected regressions.
 
@@ -186,9 +270,12 @@ scripts on one base). Bound source bytes, node count, nesting and layout extents
 reject unknown commands, malformed groups, duplicate scripts and invalid input
 without replacing the saved block. No chemical-notation, map/Outliner equation
 rendering, resizing, arbitrary TeX, macros, HTML, external fonts or network.
-Non-native exports, visual exports/printing and Map Shot must reject
-equation-bearing content before writing rather than silently omit it; XMind
-equation interchange is deferred without guessing its schema.
+Unsupported foreign exports, Gantt and Map Shot reject equation-bearing content
+before writing rather than silently omit it. SVG/PDF/image and presentation
+exports include a bounded, separately labeled vector equation section for the
+visible topics; malformed/incomplete blocks remain rejected. XMind preserves
+the exact Thinoda source only through its existing private workbook snapshot,
+not through a new public XMind equation schema.
 
 **Decision critique:** an internal parser/layout is justified only for this small
 explicit syntax. Investigated `latex2mathml` 0.2.3 (MIT, last published 2020):
@@ -196,8 +283,9 @@ it emits MathML, not egui/vector layout, and would still require a renderer.
 `mathlikeanim-rs` targets general animation/graphics, not a small shared equation
 widget. No dependency is added. Reusing the existing Markdown envelope preserves
 complete source even in older readers, which show a fenced code block; it does
-not confer equation-rendering compatibility. Conservative export refusal is a
-temporary usability trade-off, not export parity. Acceptance requires parser
+not confer equation-rendering compatibility. CSV/OPML source text and XMind's
+private workbook snapshot are distinct interoperability paths, with only the
+XMind path round-tripping the declared format. Acceptance requires parser
 and geometry bounds, editor ownership/cancel/error tests, source-preserving
 transaction/native/recovery/clipboard checks, export destination safety,
 all ten languages/light-dark checks, native/WASM compile and strict Clippy.
@@ -246,10 +334,10 @@ edit cannot immediately invalidate the newly opened scratch editor.
 Remaining trade-offs: one trailing
 block only; simple local font metrics rather than professional math typography;
 unapplied scratch drafts are not durable; a reserved marker in any declared
-Markdown note conservatively blocks foreign export even if malformed or merely
+Markdown note conservatively marks an equation block even if malformed or merely
 mentioned. Notes source remains editable and native-saveable in all such cases.
 There is deliberately no map/Outliner-row equation, external equation schema,
-full LaTeX/chemistry or equation export parity. `.serena/` is preserved.
+full LaTeX/chemistry or new public XMind equation schema. `.serena/` is preserved.
 
 **Independent equation review:** no blocking data-loss, draft-ownership or export
 bypass defects found. Review identified a direct-source editing gap: pasted
@@ -279,6 +367,25 @@ geometry and visible Save/Don't Save/Cancel actions in every language; Cancel
 retains dirty work. Shared long-content/maximize/restore and existing save/exit,
 conversion-confirmation and Settings viewport checks pass, as do strict native
 and production-WASM Clippy. This does not claim cross-OS runtime acceptance.
+
+**2026-10-30 equation export/interchange implementation verification:** vector
+appendices reuse `thinoda-core::equations::layout`; SVG/PDF/image and print use
+the SVG path, while PPTX emits editable glyph text boxes and fraction-rule paths.
+Presentation appendices use the shared resolved visible-topic set and extend the
+frame without covering map content. XMind round-trips the unchanged canonical
+workbook snapshot; CSV/OPML source text stays exact under the existing note-format
+loss consent. Hidden/detached malformed notes fail before output, outline exports
+refuse equations they would omit, and aggregate appendix geometry is bounded.
+
+Verification passed: `cargo test -p thinoda-core --lib equation` (4),
+`cargo test -p thinoda-io` (148 across 19 suites, including equations and vector
+presentations), `cargo test -p thinoda-app --lib equation` (2), and
+`cargo test -p thinoda-app --test equations -- --test-threads=1` (5, including
+Map/Outliner, all ten languages and both themes). Formatting, `git diff --check`,
+strict workspace/all-target Clippy and strict production-target WASM Clippy pass.
+The PPTX regression inspects native DrawingML text/path content; no new
+installed-PowerPoint/LibreOffice equation-host acceptance is claimed. This work
+does not broaden notation or introduce a topic-equation model.
 
 The first local XV7a persistence slice introduces an explicit, versioned
 note-content envelope instead of inferring stored formatting from punctuation.
@@ -568,7 +675,18 @@ limits without source loss. Strict app/notes-test Clippy, the locked native app
 build, locked WASM web check, nine workflow contract tests and Actions lint
 passed. This is not a full-workspace or multi-host GUI acceptance claim.
 
-## XV6 local slice: image-based PowerPoint export (2026-10-27)
+## XV6 vector redesign: active follow-up
+
+The user has requested live, source-focused vector slides, interactive authoring,
+graceful updates after map edits and genuinely editable PowerPoint objects.
+[PRESENTATIONS](PRESENTATIONS.md) is the implementation contract, prioritized
+phase plan, concept critique and acceptance record. It supersedes the
+image-only limitation of the historical first slice below. Existing slide crops
+remain backward compatible; new focus/visibility settings must be shared by all
+renderers. Native PPTX objects need fresh schema and installed-Office evidence;
+the earlier bitmap-deck opening check does not establish that acceptance.
+
+## XV6 historical slice: image-based PowerPoint export (2026-10-27)
 
 The local XV6 slice adds `.pptx` to the export menu and stable
 command catalog. Export reuses saved Pitch slide order and frames, asks the
@@ -1098,10 +1216,10 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 3 | XV3 structural numbering / R3, R6 | Maintain ordered procedures, outlines and agendas as topics move. | A separate numbering model and computed labels, not title prefixes; native persistence and output fidelity are part of the slice. |
 | 4 | XV4 portable images/attachments / R4, R6 | Reopen and share evidence-rich maps without broken local image paths. | Versioned resource store first, then image insert/render/resize/remove, then attachments. Include recovery, clipboard and merge remapping. |
 | 5 | XV5 DOCX/TextBundle import / R6 | Turn existing documents into useful maps instead of retyping outlines. | Text-only DOCX headings/lists can precede XV4; bundled resources depend on XV4. Current Word/TextBundle export does not imply import. |
-| 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | Reuse saved frames; explicit aspect ratio/fit preview and a clearly labeled image-based PPTX first. Editable PPTX is a separate scope. |
+| 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | The original image-only slice is superseded by the user-directed vector scope in PRESENTATIONS: semantic visibility, live framing, visual authoring and native editable PPTX objects, with explicit ratio/fit preview and legacy compatibility. |
 | 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Finish lossless structured note storage, draft/save/recovery safety, export parity and honest format-loss reporting while retaining bounded visible-text search; add equations separately. Images alone are not rendered math. |
-| 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
-| 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
+| 8 | XV8 task-oriented Tree Table / R3, R8 | Implemented locally: real title/date/duration/progress cells, shared planning validation and view-only columns/sibling sort. | See [TREE-TABLE.md](TREE-TABLE.md); map output is not table output. No independent task model. |
+| 9 | XV9 durable local AI conversations / R9 | Implemented locally: opt-in named per-file threads preserve session-only defaults. | See [AI-HISTORY.md](AI-HISTORY.md) for path/content identity, transactional storage, privacy, explicit retention/delete and remaining manual platform/browser gates. No hosted account, credentials in transcripts or conversation export with maps. |
 
 **User-requested insertions (2026-10-26).** After XV3, deliver UR1 (flat AI settings
 page), UR2 (embedding-model discovery during Test Connection) and UR5 (compact

@@ -1,5 +1,5 @@
 //! Original Office fixtures for SDK validation and installed-Office acceptance.
-use thinoda_core::{Sheet, Workbook};
+use thinoda_core::{Color, Sheet, TopicShape, Vec2, Workbook};
 use thinoda_io::{
     ExportOptions, Format, PresentationAspectRatio, export_file, generate_presentation,
 };
@@ -50,12 +50,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Format::Word,
         &Default::default(),
     )?;
+    // Native presentation primitives: all topic shapes, annotation ownership,
+    // both connector paths and real PNG/JPEG pictures (never slide pictures).
+    let sheet = book.active_mut();
+    let mut shape_topics = Vec::new();
+    for (index, shape) in TopicShape::ALL.into_iter().enumerate() {
+        let id = sheet.add_child(branch, None, format!("Editable {shape:?}"));
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.style.shape = Some(shape);
+        topic.style.italic = Some(true);
+        topic.style.underline = Some(true);
+        topic.style.strikethrough = Some(index % 2 == 0);
+        topic.markers = vec!["priority-2".into()];
+        topic.labels = vec!["Native label".into()];
+        topic.todo = Some(index % 2 == 0);
+        topic.marker_colors.insert(0, Color::rgb(10, 120, 60));
+        shape_topics.push(id);
+    }
+    sheet.add_boundary(&shape_topics[..2])?;
+    sheet.add_summary(&shape_topics[..2], "Editable summary")?;
+    sheet.add_relationship(shape_topics[0], shape_topics[1])?;
+    for (id, format, media) in [
+        (shape_topics[2], image::ImageFormat::Png, "image/png"),
+        (shape_topics[3], image::ImageFormat::Jpeg, "image/jpeg"),
+    ] {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            32,
+            16,
+            image::Rgb([30, 120, 210]),
+        ))
+        .write_to(&mut bytes, format)?;
+        let resource = thinoda_core::resources::Resource::new(
+            "Original fixture photo",
+            media,
+            bytes.into_inner(),
+        )?;
+        thinoda_core::images::set_image(sheet, id, Some((resource, Vec2::new(80.0, 40.0))))?;
+    }
+    let floating = sheet.add_floating("Zone root", Vec2::new(700.0, 500.0));
+    sheet.add_child(floating, None, "Zone descendant");
+    sheet.create_zone(
+        "Native zone",
+        vec![floating],
+        thinoda_core::Rect::from_min_size(Vec2::new(600.0, 400.0), Vec2::new(500.0, 300.0)),
+    )?;
     export_file(
         &plain,
         &output.join("plain.xlsx"),
         Format::Excel,
         &Default::default(),
     )?;
+    let equation_topic = book.active_mut().add_child(branch, None, "数式 · café");
+    let equation_note = thinoda_core::equations::replace_note(
+        "**Editable vector equation**\n",
+        Some("\\frac{a}{b}+x_{i}^{2}"),
+    )?;
+    book.active_mut()
+        .set_markdown_notes(equation_topic, Some(equation_note))?;
     for (appearance, dark) in [("light", false), ("dark", true)] {
         let options = ExportOptions {
             dark,

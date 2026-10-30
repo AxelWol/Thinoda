@@ -22,7 +22,21 @@ pub(super) struct Line {
 pub(super) struct Block {
     pub lines: Vec<Line>,
     pub line_height: f32,
-    size: Vec2,
+    pub size: Vec2,
+}
+
+pub(super) fn equation_title(text: &str, family: &str) -> Result<Block, IoError> {
+    wrap(
+        text,
+        14.0,
+        false,
+        420.0,
+        family,
+        &usvg::Options {
+            fontdb: crate::fonts::database(),
+            ..Default::default()
+        },
+    )
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]

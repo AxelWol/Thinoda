@@ -292,10 +292,42 @@ impl Default for QuickAccessSettings {
     }
 }
 
+/// Ascending sibling order in the local Tree Table projection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TreeTableSort {
+    Title,
+    Start,
+    Due,
+    Duration,
+    Progress,
+    #[default]
+    #[serde(other)]
+    Hierarchy,
+}
+
+/// Bounded, local view preferences; never part of a document's topic hierarchy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TreeTableSettings {
+    pub columns: [bool; 4],
+    pub sort: TreeTableSort,
+}
+
+impl Default for TreeTableSettings {
+    fn default() -> Self {
+        Self {
+            columns: [true; 4],
+            sort: TreeTableSort::Hierarchy,
+        }
+    }
+}
+
 /// Persisted preferences. Unknown fields are ignored and missing fields default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub tree_table: TreeTableSettings,
     pub theme: ThemeMode,
     pub language: Language,
     /// Only autosave documents that already have an original file path.
@@ -351,6 +383,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            tree_table: TreeTableSettings::default(),
             theme: ThemeMode::System,
             language: Language::Auto,
             autosave: true,

@@ -7,7 +7,7 @@ pub const MAX_DEPTH: usize = 8;
 pub const MAX_WIDTH: f32 = 4096.0;
 pub const MAX_HEIGHT: f32 = 2048.0;
 pub const FENCE: &str = "```thinoda-math-v1\n";
-pub const EXPORT_ERROR: &str = "Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.";
+pub const EXPORT_ERROR: &str = "This format cannot preserve or render notes equations. Save as Thinoda or use a supported vector or source-preserving format.";
 pub const SYNTAX_ERROR: &str =
     "Invalid equation. Use letters, digits, operators, groups, \\frac{a}{b}, ^{...} and _{...}.";
 pub const LIMIT_ERROR: &str = "Equation limit reached (512 bytes, 128 nodes, 8 levels).";

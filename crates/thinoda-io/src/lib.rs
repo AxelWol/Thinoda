@@ -267,8 +267,8 @@ pub use gantt::{
 pub use presentation::{
     MAX_PRESENTATION_ARCHIVE_BYTES, MAX_PRESENTATION_IMAGE_PIXELS, MAX_PRESENTATION_IMAGE_SIDE,
     MAX_PRESENTATION_TOTAL_PIXELS, PresentationAspectRatio, export_presentation_pdf,
-    export_presentation_png_zip, export_presentation_pptx, generate_presentation,
-    render_presentation_slide_png, render_presentation_slide_svg,
+    export_presentation_png_zip, export_presentation_pptx, fit_presentation_frame,
+    generate_presentation, render_presentation_slide_png, render_presentation_slide_svg,
 };
 pub use print::PrintDocument;
 
@@ -544,8 +544,42 @@ pub fn export_bytes_with_consent(
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
     if format != Format::Thinoda {
-        for sheet in &book.sheets {
-            reject_equation_notes(sheet)?;
+        let equation_support = matches!(
+            format,
+            Format::XMind
+                | Format::Opml
+                | Format::Csv
+                | Format::Svg
+                | Format::Png
+                | Format::Jpeg
+                | Format::Pdf
+                | Format::PowerPoint
+        );
+        if equation_support {
+            let exported_sheets: Box<dyn Iterator<Item = &thinoda_core::Sheet>> =
+                if format == Format::XMind {
+                    Box::new(book.sheets.iter())
+                } else {
+                    let index = opts
+                        .sheet
+                        .unwrap_or(book.active_sheet)
+                        .min(book.sheets.len() - 1);
+                    Box::new(std::iter::once(&book.sheets[index]))
+                };
+            for sheet in exported_sheets {
+                render::validate_equation_notes(sheet)?;
+                if matches!(format, Format::Opml | Format::Csv)
+                    && equation_notes_outside_outline(sheet)
+                {
+                    return Err(IoError::EquationNotesUnsupported);
+                }
+            }
+        } else if book
+            .sheets
+            .iter()
+            .any(thinoda_core::equations::sheet_has_equations)
+        {
+            return Err(IoError::EquationNotesUnsupported);
         }
     }
     let supports_embedded_resources = matches!(
@@ -620,7 +654,7 @@ pub fn export_bytes_with_consent(
     })
 }
 
-/// Until equation-note export is implemented, no lossy consent can discard it.
+/// Formats which do not preserve or render notes equations still refuse them.
 /// Check all topics, including detached/hidden ones, before creating output.
 pub(crate) fn reject_equation_notes(sheet: &thinoda_core::Sheet) -> Result<(), IoError> {
     if thinoda_core::equations::sheet_has_equations(sheet) {
@@ -654,6 +688,29 @@ pub fn note_format_loss(book: &Workbook, format: Format, opts: &ExportOptions) -
         }
     }
     false
+}
+
+/// CSV/OPML emit only the central hierarchy. Refuse equation notes on detached
+/// topics (or beyond the exporters' depth bound) rather than silently dropping
+/// their source while claiming an equation-capable interchange path.
+fn equation_notes_outside_outline(sheet: &thinoda_core::Sheet) -> bool {
+    let mut included = HashSet::new();
+    let mut stack = vec![(sheet.root, 0usize)];
+    while let Some((id, depth)) = stack.pop() {
+        if depth > 2000 || !included.insert(id) {
+            continue;
+        }
+        if let Some(topic) = sheet.topics.get(&id) {
+            stack.extend(topic.children.iter().map(|child| (*child, depth + 1)));
+        }
+    }
+    sheet.topics.iter().any(|(id, topic)| {
+        !included.contains(id)
+            && topic
+                .notes
+                .as_ref()
+                .is_some_and(thinoda_core::equations::has_equation)
+    })
 }
 
 /// Formats without per-symbol color support. XMind retains the Thinoda metadata payload,

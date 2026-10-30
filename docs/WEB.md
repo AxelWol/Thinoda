@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 12:36:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-30 07:44:33 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda for the web
 
@@ -225,9 +225,12 @@ and 64 KiB of output; each suggested title is at most 256 UTF-8 bytes.
 Choose **View > Edit Presentation**. **Generate Slides** replaces only the
 current draft with central-topic child branches in map order, then Zones in Zone
 order. Alternatively, select a branch or Zone before opening the editor and use
-**Add Selected Branch or Zone**. Edit slide titles, reorder or remove slides,
-and adjust X/Y/width/height; **Fit Slide to Content** restores source bounds.
-The preview uses the same saved crop as export. **Apply** saves all changes as
+**Add Selected Branch or Zone**. The vector slide workspace supports title,
+order, visibility and framing edits. New slides isolate their source branch or
+Zone; legacy slides retain contextual framing until changed. Automatic framing
+tracks current visible content; manual framing preserves the saved viewport.
+Hiding a subtree never deletes it from the map. The preview and exports share
+the same semantic visibility rules. **Apply** saves all changes as
 one Undo entry; **Cancel** leaves the saved presentation unchanged.
 
 Choose **View > Pitch** to play the saved presentation, or **Presenter View** to
@@ -236,17 +239,22 @@ opens the editor first; apply the slides and choose Pitch again. Use the
 **Previous Slide** / **Next Slide** buttons, Left/Right, Page Up/Down or Space
 (next), and **Exit Pitch** or Escape to exit. Native fullscreen is scoped to the
 player window (also F11); the browser's **Expand Player** remains inside its tab.
-Closing playback never closes the map. Playback is read-only and closes with an
-explanation if its source changes, rather than showing a disconnected revision.
+Closing playback never closes the map. Playback is read-only and refreshes
+after map edits, retaining the current slide by ID where possible. Source
+deletion removes dependent slides; an empty deck or changed source identity
+ends playback with an explanation instead of showing unrelated content.
 Pitch/editor/presenter entry commands can be rebound in keyboard settings;
 playback arrows are local, not global map shortcuts.
 
 **Export PDF** produces a multipage vector presentation. **Export Slide Images**
 produces a ZIP with ordered `slides/slide-001.png` files. The editor exports its
-current draft without applying it; the player exports its captured saved
+current draft without applying it; the player exports its current saved
 presentation. Neither changes the map. The browser downloads these outputs;
 native builds use a save dialog. Oversized frames/outputs fail visibly rather
-than being truncated. PPTX and presentation video are not provided.
+than being truncated. **File > Export > PowerPoint** offers 16:9/4:3 and native
+editable text, vector shapes and connecting paths; original photos remain
+images. Playback transitions are not exported animations. Presentation video
+is not provided. See [the presentation contract and acceptance notes](PRESENTATIONS.md).
 
 ## Task planning and Gantt
 

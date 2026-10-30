@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 10:38:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-30 09:27:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Privacy Policy
 
@@ -77,6 +77,19 @@ want content sent to an AI server.
 On desktop, API keys saved through Settings are kept in the operating system's
 credential store rather than the settings file. In the web app, the key is kept
 in session storage for the current tab, not in persistent local storage.
+
+### Optional local conversation history
+
+AI Chat is session-only unless you explicitly enable local history for a saved
+file. Named threads store authored prompts and completed assistant replies,
+names/timestamps and bounded file identity metadata in application-local storage.
+Prompts and replies can themselves contain sensitive data. This history is
+**not encrypted** and is never included in normal maps, recovery or exports.
+No credentials, system/context snapshots, drafts or partial streams are stored,
+and reopening does not send anything to a provider. Confirmed age-based pruning,
+per-file forgetting and global deletion are available in AI Chat; failed writes
+leave transcripts in memory. Deletion is not secure erasure of backups or
+provider-side copies. See [local history behavior](docs/AI-HISTORY.md).
 
 ## Cloud folders, printing and external links
 

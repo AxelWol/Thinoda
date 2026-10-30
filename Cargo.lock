@@ -4822,7 +4822,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ai"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "js-sys",
  "libc",
@@ -4842,7 +4842,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-app"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4878,7 +4878,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-canvas"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -4888,7 +4888,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-core"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -4902,13 +4902,14 @@ dependencies = [
 
 [[package]]
 name = "thinoda-io"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "base64 0.23.1",
  "epaint_default_fonts",
  "getrandom 0.3.4",
  "image",
  "log",
+ "pdf-writer",
  "pulldown-cmark",
  "quick-xml 0.42.0",
  "resvg",
@@ -4925,7 +4926,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-platform"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "base64 0.23.1",
  "cc",
@@ -4937,6 +4938,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thinoda-core",
  "thiserror 2.0.21",
@@ -4950,7 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ui"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -4960,7 +4962,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-web"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "eframe",
  "egui",
@@ -6502,7 +6504,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.18.0"
+version = "0.19.1"
 dependencies = [
  "anyhow",
  "image",

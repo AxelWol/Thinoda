@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 14:02:51 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-30 18:12:07 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -23,6 +23,33 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.19.1](https://github.com/AxelWol/Thinoda/compare/v0.19.0...v0.19.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **export:** preserve vector text on incomplete Linux font installations ([60002d8](https://github.com/AxelWol/Thinoda/commit/60002d8afbf6aeedd0be1e76c9f8f092b4a12aed))
+* **export:** use text fonts for unresolved generic families ([5da54e3](https://github.com/AxelWol/Thinoda/commit/5da54e37252cb0320943ccf1192e98bb24623e83))
+
+## [0.19.0](https://github.com/AxelWol/Thinoda/compare/v0.18.0...v0.19.0) (2026-10-30)
+
+
+### Features
+
+* **ai:** add opt-in local conversation threads ([fc6e467](https://github.com/AxelWol/Thinoda/commit/fc6e46787d736fde188013471d78f9a8d824d1fc))
+* **equations:** export bounded notes equations ([9cf4c03](https://github.com/AxelWol/Thinoda/commit/9cf4c033e90e292c006c04fc008cc198060c2775))
+* **presentation:** add live vector authoring workspace ([b448c17](https://github.com/AxelWol/Thinoda/commit/b448c17108c97d2055ff02ab61dd4cab87f9007d))
+* **presentation:** resolve live slide scenes and export editable vectors ([cef805c](https://github.com/AxelWol/Thinoda/commit/cef805c2a7e63aa886ad2e60d17252b49c3d2139))
+* **tree-table:** edit task columns through shared planning ([57ff344](https://github.com/AxelWol/Thinoda/commit/57ff34459cb4f307e1c95fd0afd1d32431184e6d))
+* vector presentations, task Tree Table and local AI history ([2a8afe0](https://github.com/AxelWol/Thinoda/commit/2a8afe0413ae6c2ccc3917ef70da24974c34fe37))
+* vector presentations, task Tree Table and local AI history ([2a8afe0](https://github.com/AxelWol/Thinoda/commit/2a8afe0413ae6c2ccc3917ef70da24974c34fe37))
+
+
+### Bug Fixes
+
+* **inspector:** move task planning into Data ([c731ff9](https://github.com/AxelWol/Thinoda/commit/c731ff9321dbddc6fc262ff141c0bc51bc98c691))
+* **presentation:** reserve full thumbnail rail height ([26b5f9c](https://github.com/AxelWol/Thinoda/commit/26b5f9c2c5ea407c9f0703a94c21005fca6c5329))
 
 ## [0.18.0](https://github.com/AxelWol/Thinoda/compare/v0.17.0...v0.18.0) (2026-10-29)
 

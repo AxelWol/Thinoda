@@ -5,10 +5,9 @@ use std::sync::{Arc, OnceLock};
 
 /// System fonts plus embedded fallbacks, loaded once per process.
 ///
-/// Browsers do not expose system font files, so the web build (and systems
-/// without fonts, such as minimal containers) render text with the fonts that
-/// egui embeds. Generic families map to a loaded face so `sans-serif` and
-/// `monospace` always resolve.
+/// Browsers do not expose system font files, so the web build renders text with
+/// the fonts that egui embeds. Native exports also retain these text fallbacks:
+/// the first system face may be a bitmap emoji or icon font.
 pub fn database() -> Arc<Database> {
     static DB: OnceLock<Arc<Database>> = OnceLock::new();
     DB.get_or_init(|| Arc::new(build(!cfg!(target_arch = "wasm32"))))
@@ -20,10 +19,8 @@ pub(crate) fn build(system: bool) -> Database {
     if system {
         db.load_system_fonts();
     }
-    if db.is_empty() {
-        db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
-        db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
-    }
+    db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+    db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
     configure_generic_families(&mut db);
     db
 }
@@ -44,34 +41,21 @@ fn configure_generic_families(db: &mut Database) {
     let has_fantasy = has_family(Family::Fantasy);
     let has_monospace = has_family(Family::Monospace);
 
-    let sans = first_family(db);
-    let mono = db
-        .faces()
-        .filter_map(|face| face.families.first())
-        .map(|(name, _)| name.clone())
-        .find(|name| Some(name) != sans.as_ref());
-
-    if !has_sans && let Some(sans) = &sans {
-        db.set_sans_serif_family(sans.clone());
+    if !has_sans {
+        db.set_sans_serif_family("Ubuntu");
     }
-    if !has_serif && let Some(sans) = &sans {
-        db.set_serif_family(sans.clone());
+    if !has_serif {
+        db.set_serif_family("Ubuntu");
     }
-    if !has_cursive && let Some(sans) = &sans {
-        db.set_cursive_family(sans.clone());
+    if !has_cursive {
+        db.set_cursive_family("Ubuntu");
     }
-    if !has_fantasy && let Some(sans) = &sans {
-        db.set_fantasy_family(sans);
+    if !has_fantasy {
+        db.set_fantasy_family("Ubuntu");
     }
-    if !has_monospace && let Some(mono) = mono.or(sans) {
-        db.set_monospace_family(mono);
+    if !has_monospace {
+        db.set_monospace_family("Hack");
     }
-}
-
-fn first_family(db: &Database) -> Option<String> {
-    db.faces()
-        .find_map(|face| face.families.first())
-        .map(|(name, _)| name.clone())
 }
 
 #[cfg(test)]
@@ -98,6 +82,7 @@ mod tests {
 
         let mut db = Database::new();
         db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+        db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
         db.set_serif_family("Unavailable serif");
         db.set_sans_serif_family("Unavailable sans");
         db.set_cursive_family("Unavailable cursive");
@@ -130,5 +115,69 @@ mod tests {
         )
         .unwrap();
         assert!(tree.node_by_id("line").is_some());
+    }
+
+    #[test]
+    fn missing_generic_families_prefer_text_fonts_over_first_loaded_symbols() {
+        use resvg::usvg::fontdb::{Family, Query};
+
+        let mut db = Database::new();
+        db.load_font_data(
+            include_bytes!("../../thinoda-ui/assets/icons/ThinodaMaterialSymbols.ttf").to_vec(),
+        );
+        db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+        db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
+        db.set_sans_serif_family("Unavailable sans");
+        db.set_monospace_family("Unavailable monospace");
+
+        configure_generic_families(&mut db);
+
+        for (family, expected) in [(Family::SansSerif, "Ubuntu"), (Family::Monospace, "Hack")] {
+            let id = db
+                .query(&Query {
+                    families: &[family],
+                    ..Query::default()
+                })
+                .unwrap();
+            assert!(
+                db.face(id)
+                    .unwrap()
+                    .families
+                    .iter()
+                    .any(|(name, _)| name == expected),
+                "{family:?} must use a text font, not the first loaded symbol face"
+            );
+        }
+
+        let tree = resvg::usvg::Tree::from_str(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="30"><text id="digits" y="20" font-family="sans-serif" font-size="18">x2+3</text></svg>"#,
+            &resvg::usvg::Options {
+                fontdb: Arc::new(db),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(tree.node_by_id("digits").is_some());
+        let outlined = tree.to_string(&resvg::usvg::WriteOptions::default());
+        assert!(!outlined.contains("<image"));
+        let tree = svg2pdf::usvg::Tree::from_str(&outlined, &Default::default()).unwrap();
+        let pdf = svg2pdf::to_pdf(&tree, Default::default(), Default::default()).unwrap();
+        assert!(!String::from_utf8_lossy(&pdf).contains("/Subtype /Image"));
+    }
+
+    #[test]
+    fn configured_system_text_families_are_preserved() {
+        let mut db = build(false);
+        db.set_sans_serif_family("Hack");
+        db.set_monospace_family("Ubuntu");
+        configure_generic_families(&mut db);
+        assert_eq!(
+            db.family_name(&resvg::usvg::fontdb::Family::SansSerif),
+            "Hack"
+        );
+        assert_eq!(
+            db.family_name(&resvg::usvg::fontdb::Family::Monospace),
+            "Ubuntu"
+        );
     }
 }

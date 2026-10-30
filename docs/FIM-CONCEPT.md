@@ -852,6 +852,26 @@ renders exercise the supplied source at wide and narrow widths.
   this separate native target because a reopened review app held the default
   executable locked; the running review session was not interrupted.
 
+### Post-release integration critique
+
+Integration was held until the release owner verified v0.19.1: all six native
+architecture jobs, publication, all 16 assets and their checksum manifests.
+The failed v0.19.0 source was not retried or retagged to bypass its PDF regression.
+
+The released chat-history work and responsive snapshot saving both changed
+document save completion. Simply choosing either side of that conflict would
+lose chat association or restore synchronous saving. The worker now returns
+both the file fingerprint and the chat binding derived from the exact written
+bytes. Completion installs these identities while newer editor content remains
+dirty. A gated-worker regression checks that the binding belongs to the disk
+snapshot, not edits made during the write. Both sets of German translations are
+retained; the released Tree Table and presentation functionality remains intact.
+
+Integration verification passed: 582 application tests (two intentionally
+ignored), the additional exact-byte background-save binding regression, and all
+342 core/IO tests. Native all-target and shared-browser strict Clippy, formatting,
+third-party notices and the 25 documentation-metadata tests also passed.
+
 ### Remaining scope, not hidden success
 
 This is an integrated loss-preserving authoring release, not completion of every

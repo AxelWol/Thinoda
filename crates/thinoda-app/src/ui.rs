@@ -579,6 +579,7 @@ impl ThinodaApp {
         let previous_viewport = self.current_viewport;
         self.current_viewport = viewport;
         self.activate_document_window(viewport);
+        self.guard_table_draft(&ctx);
         self.prepare_keymap(&ctx);
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
@@ -797,13 +798,24 @@ impl ThinodaApp {
                     self.home(ui);
                 } else if self.mode == CenterMode::Outliner {
                     self.outliner(ui);
+                } else if self.task_table_visible() {
+                    self.tree_table_ui(ui);
                 } else {
+                    if self
+                        .doc()
+                        .is_some_and(|doc| doc.doc.sheet().structure == Structure::TreeTable)
+                        && ui.button(t("Tree Table")).clicked()
+                        && widgets::touch_activation_allowed(&ctx)
+                    {
+                        self.tree_table.map_preview = false;
+                    }
                     self.map(ui);
                 }
             });
 
         if show_doc
             && self.mode == CenterMode::Map
+            && !self.task_table_visible()
             && !self.zen
             && !self.any_modal_open()
             && !self.dialogs.settings
@@ -813,6 +825,7 @@ impl ThinodaApp {
 
         if show_doc
             && self.mode == CenterMode::Map
+            && !self.task_table_visible()
             && !self.search.open
             && !self.palette.open
             && !self.any_modal_open()
@@ -3439,7 +3452,7 @@ impl ThinodaApp {
         if let Some(command) = marker_action {
             self.exec(ui.ctx(), command);
         }
-        self.task_properties(ui);
+        self.todo_properties(ui);
     }
 
     fn data_tab(&mut self, ui: &mut Ui) {
@@ -3577,9 +3590,11 @@ impl ThinodaApp {
         if edit_labels {
             self.exec(ui.ctx(), Cmd::Labels);
         }
+        data_divider(ui);
+        self.task_properties(ui);
     }
 
-    fn task_properties(&mut self, ui: &mut Ui) {
+    fn todo_properties(&mut self, ui: &mut Ui) {
         let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         ui.separator();
         let todo = self.doc().and_then(|doc| {
@@ -3639,8 +3654,11 @@ impl ThinodaApp {
                     self.toasts.error(error);
                 }
             }
-            ui.separator();
         }
+    }
+
+    fn task_properties(&mut self, ui: &mut Ui) {
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
         if let Some(doc) = self.doc()
             && let Some(topic) = doc.view.primary()
             && let Some(task) = doc.doc.sheet().scheduling.tasks.get(&topic)
@@ -4332,7 +4350,7 @@ impl ThinodaApp {
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new(t(
-                        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
+                        "Slides use editable text, vector shapes and paths. Photos remain images. The frame expands to the selected ratio without cropping or stretching.",
                     ))
                     .color(Palette::of_ui(ui).text_muted),
                 );

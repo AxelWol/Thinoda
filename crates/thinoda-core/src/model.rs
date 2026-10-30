@@ -483,6 +483,15 @@ pub enum PresentationSource {
     Zone(ZoneId),
 }
 
+/// Whether a slide shows the legacy spatial context or only its source's content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PresentationScope {
+    #[default]
+    Context,
+    Source,
+}
+
 /// Saved frame and ordering for one generated or user-curated slide.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresentationSlide {
@@ -490,6 +499,16 @@ pub struct PresentationSlide {
     pub title: String,
     pub source: PresentationSource,
     pub frame: SlideFrame,
+    #[serde(default)]
+    pub scope: PresentationScope,
+    #[serde(default)]
+    pub auto_frame: bool,
+    /// Hide these topics and their owned descendants. Deleted IDs are ignored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_topics: Vec<TopicId>,
+    /// Maximum source-relative depth; zero shows only the source roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1566,6 +1585,10 @@ impl Sheet {
             title: title.trim().to_string(),
             source,
             frame,
+            scope: PresentationScope::Source,
+            auto_frame: true,
+            hidden_topics: Vec::new(),
+            max_depth: None,
         };
         validate_presentation_name(&slide.title, "slide")?;
         validate_frame(slide.frame, false)?;
@@ -1601,6 +1624,7 @@ impl Sheet {
             .find(|slide| slide.id == id)
             .ok_or_else(|| format!("presentation slide {id} not found"))?;
         slide.frame = frame;
+        slide.auto_frame = false;
         Ok(())
     }
 

@@ -125,6 +125,8 @@ impl InspectorEdit {
 
 /// One open document (a tab).
 pub struct OpenDoc {
+    /// App-local chat binding, never serialized into the workbook or recovery.
+    pub(crate) chat_identity: Option<thinoda_platform::chat_history::Binding>,
     /// Stable key used for recovery snapshots.
     pub key: String,
     pub doc: Document,
@@ -158,6 +160,7 @@ impl OpenDoc {
         view.select_only(doc.sheet().root);
         let state = doc.state_id();
         Self {
+            chat_identity: None,
             key: uuid::Uuid::new_v4().simple().to_string(),
             doc,
             view,
@@ -205,6 +208,14 @@ impl OpenDoc {
             d.path = Some(path.to_path_buf());
             d.format = format;
             d.fingerprint = fingerprint(path).ok();
+            d.chat_identity = (|| {
+                let (binding, bytes) =
+                    thinoda_platform::chat_history::Binding::read_document(path).ok()?;
+                let current = thinoda_io::import_bytes_with_report(format, &bytes).ok()?;
+                // A background import may have finished before an external
+                // replacement. Never bind its old workbook to the newer file.
+                (current.workbook == *d.doc.workbook()).then_some(binding)
+            })();
         } else {
             // Imported from a foreign format: saving asks for a new native file name.
             d.import_source = Some(pfs::canonicalize(path).map_err(|e| e.to_string())?);
@@ -401,11 +412,12 @@ impl OpenDoc {
         path: &Path,
         format: Format,
         state: u64,
-        identity: Option<FileFingerprint>,
+        identity: WrittenWorkbook,
     ) {
+        self.chat_identity = identity.chat_identity;
         self.path = Some(path.to_path_buf());
         self.format = format;
-        self.fingerprint = identity;
+        self.fingerprint = identity.fingerprint;
         self.ignore_conflict = false;
         self.autosave_retry_at = None;
         if self.doc.state_id() == state {
@@ -596,6 +608,12 @@ pub fn convert_with_consent(
     atomic_write(output, &bytes, false).map_err(|e| e.to_string())
 }
 
+/// Identities of the bytes actually written, independent of newer editor changes.
+pub(crate) struct WrittenWorkbook {
+    fingerprint: Option<FileFingerprint>,
+    chat_identity: Option<thinoda_platform::chat_history::Binding>,
+}
+
 /// Serializes and atomically writes a workbook prepared by [`OpenDoc::prepare_save`].
 /// Runs on the file worker thread; returns the written file's identity.
 pub(crate) fn write_workbook(
@@ -603,11 +621,18 @@ pub(crate) fn write_workbook(
     format: Format,
     path: &Path,
     backup: bool,
-) -> Result<Option<FileFingerprint>, String> {
+) -> Result<WrittenWorkbook, String> {
     let bytes = thinoda_io::export_bytes(workbook, format, &ExportOptions::default())
         .map_err(export_error)?;
     atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
-    Ok(fingerprint(path).ok())
+    Ok(WrittenWorkbook {
+        fingerprint: fingerprint(path).ok(),
+        chat_identity: if is_native(format) {
+            thinoda_platform::chat_history::Binding::from_bytes(path, &bytes).ok()
+        } else {
+            None
+        },
+    })
 }
 
 pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {

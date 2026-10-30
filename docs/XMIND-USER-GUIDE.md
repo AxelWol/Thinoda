@@ -1,4 +1,4 @@
-_Last updated: 2026-10-29 12:36:08 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-10-30 08:26:32 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # XMind user guide digest (verification checklist)
 
@@ -21,8 +21,8 @@ for delivery/acceptance status.
 | Numbering | No structural numbering model/rendering in current Thinoda. | XV3; old Phase 1 checkmark corrected. |
 | Picture / Attachment | Bounded local PNG/JPEG insert/replace/remove, selection-based drag/drop, inspector width/reset/above-below, map and visual/Pitch output build on native v3/recovery/clipboard. Direct proportional resize handles (staged preview, cancellation, keyboard arrows, one-step undo) are implemented locally. Import/export supports the pinned SDK's verified embedded topic-image subset; XMind attachment package exchange and installed-app interoperability remain unverified. Local attachment topics and a separate explicit Save/Download action are implemented; no external-app launch. Outliner previews are implemented. | XV4 partial |
 | Import | TextBundle Markdown and bounded DOCX text/hierarchy import are implemented locally with conversion warnings; Word page layout and embedded resources are not preserved. External relationships are never fetched. | XV5; other unsupported importers stay in the broader inventory. |
-| Export / Pitch Mode | Saved framing and PDF/PNG slides exist. A local XV6 slice exports saved Pitch slides to image-based `.pptx`, with explicit 16:9/4:3 choices, a first-slide fit preview and a flattened-slide disclosure. The layout-ID repair bug is fixed; a dark 4:3 deck opened cleanly in Windows PowerPoint and survived an Office save with unchanged slide images. Microsoft SDK checks cover all four appearance/ratio variants; broader host/OS acceptance remains open. | XV6 partial |
-| Note / Equation | Notes have Markdown-source tools, bounded preview/search/copy and a versioned source envelope. A first equation slice renders fractions/groups/scripts in the selected topic's Notes inspector, with edit/Apply/Cancel/Remove and visible errors. No topic/map-equation, chemical notation or equation export parity is claimed; equation-bearing foreign/visual exports fail explicitly. | XV7 partial |
+| Export / Pitch Mode | The user-directed vector redesign adds semantic source isolation, live framing, visual vector authoring and native editable PowerPoint text/shapes/paths. Preserve 16:9/4:3 and legacy crops. The previous bitmap-deck Office opening check is historical, not acceptance for native objects; see PRESENTATIONS for the current plan and evidence. | XV6 vector follow-up |
+| Note / Equation | Notes have Markdown-source tools, bounded preview/search/copy and a versioned source envelope. Notes equations render in the selected topic's inspector and a separate vector appendix in visual exports; XMind preserves the Thinoda source snapshot, while CSV/OPML source export retains existing format-loss consent. No topic/map-equation, chemical notation or public XMind equation schema is claimed. | XV7 partial |
 | Structure / project-management role research | TreeTable enum/layout exists; editable task columns are missing. | XV8; exact reference interaction still needs verification. |
 | Xmind Agent conversation history | Scoped/depth-guided chat exists; Thinoda explicitly keeps history session-only. | XV9 optional local persistence and named threads, not another chat implementation. |
 | File Cache / Map Shot / Custom Themes / Quick Style / Merge / Mask Data | Existing implementations; not wholly missing. | Retain recovery, export-fidelity and real-host acceptance requirements. Masked copies are not a guarantee of universal anonymization. |
@@ -158,11 +158,16 @@ explicitly formatted as Markdown. Native v4 / clipboard v3 preserve the complete
 `markdown-v1` source with `thinoda-math-v1` fence; older source-aware readers may
 show it as code. No new fields, font/network fetching or TeX execution.
 No double-click map editing, equation frame resize, map/Outliner-row rendering,
-general LaTeX, chemical notation or external XMind equation schema is delivered.
-All non-native exports, including source Markdown and XMind, plus visual/Pitch
-exports, print and Map Shot reject equation-bearing source before writing/capture
-even with lossy consent. Native save remains available; this is a conservative
-anti-omission policy, not export parity.
+general LaTeX, chemical notation or public XMind equation schema is delivered.
+SVG/PDF/PNG/JPEG and presentation SVG/PNG/PDF/PowerPoint exports show a
+separately labeled vector equation section; presentation equations are limited
+to resolved visible topics and PowerPoint uses editable text/rule shapes. Print
+uses the same SVG path. XMind round-trips the complete note envelope through
+Thinoda's private workbook snapshot. CSV/OPML retain exact fenced source only
+after the existing Markdown-format-loss consent; OPML imports it as literal
+plain text. Other foreign formats, Gantt and Map Shot refuse equation-bearing
+content, and malformed/incomplete blocks are rejected before output replacement.
+Native save remains the complete source-preserving path.
 
 ## Export
 - File > Export supports PNG, SVG, PDF, Excel, Word, OPML, TextBundle, PowerPoint, Markdown, and other formats; exact availability can vary by app/version.

@@ -320,11 +320,101 @@ const DE: &[(&str, &str)] = &[
         "Vor einem Auswahlwechsel übernehmen; Abbrechen verwirft diesen Entwurf.",
     ),
     ("FIM data", "FIM-Daten"),
+    (
+        "Enter a unique thread name (1–80 bytes, no control characters).",
+        "Einen eindeutigen Gesprächsnamen eingeben (1–80 Bytes, keine Steuerzeichen).",
+    ),
+    ("Local chat history", "Lokaler Chatverlauf"),
+    (
+        "Local chat history is enabled.",
+        "Der lokale Chatverlauf ist aktiviert.",
+    ),
+    (
+        "History operation failed; transcripts kept in memory.",
+        "Verlaufsaktion fehlgeschlagen; Gespräche bleiben im Arbeitsspeicher.",
+    ),
+    (
+        "Prompts and replies may contain sensitive data. Local history is not encrypted. Never included in maps or exports.",
+        "Fragen und Antworten können sensible Daten enthalten. Der lokale Verlauf ist nicht verschlüsselt und wird nie in Maps oder Exporte aufgenommen.",
+    ),
+    (
+        "Save the document first. Save As, moved files and recovery do not inherit history.",
+        "Zuerst das Dokument speichern. Speichern unter, verschobene Dateien und Wiederherstellungen übernehmen keinen Verlauf.",
+    ),
+    (
+        "Close and reopen this document before enabling history again. Session transcripts remain available here.",
+        "Vor erneutem Aktivieren das Dokument schließen und wieder öffnen. Sitzungsgespräche bleiben hier verfügbar.",
+    ),
+    ("Enable local history", "Lokalen Verlauf aktivieren"),
+    (
+        "Session-only conversation",
+        "Gespräch nur für diese Sitzung",
+    ),
+    ("Conversation", "Gespräch"),
+    ("New thread", "Neues Gespräch"),
+    ("Thread name", "Gesprächsname"),
+    ("Delete thread", "Gespräch löschen"),
+    (
+        "Disable and forget this file",
+        "Für diese Datei deaktivieren und vergessen",
+    ),
+    ("days", "Tage"),
+    (
+        "Retention is applied only on confirmation; it deletes older threads across all files.",
+        "Die Aufbewahrungsfrist wird erst nach Bestätigung angewandt; ältere Gespräche aller Dateien werden gelöscht.",
+    ),
+    (
+        "Delete all local chat history",
+        "Alle lokalen Chatverläufe löschen",
+    ),
+    (
+        "Confirm local history change?",
+        "Änderung des lokalen Verlaufs bestätigen?",
+    ),
+    ("Confirm", "Bestätigen"),
+    (
+        "Existing session messages are not copied. Create a named thread to save future completed exchanges.",
+        "Bisherige Sitzungsnachrichten werden nicht kopiert. Ein benanntes Gespräch speichert künftige abgeschlossene Dialoge.",
+    ),
+    ("Slides", "Folien"),
+    ("Duplicate Slide", "Folie duplizieren"),
+    ("Slide source", "Folienquelle"),
+    ("Slide content", "Folieninhalt"),
+    ("Source subtree", "Quellzweig"),
+    ("Map context", "Kartenkontext"),
+    ("Auto-fit content", "Inhalt automatisch einpassen"),
+    ("Limit topic depth", "Thementiefe begrenzen"),
+    ("Topic depth", "Thementiefe"),
+    ("Hidden topics", "Ausgeblendete Themen"),
+    ("Missing topic", "Fehlendes Thema"),
+    ("Restore topic", "Thema wieder einblenden"),
+    ("Restore all topics", "Alle Themen wieder einblenden"),
+    ("Topic visibility", "Themensichtbarkeit"),
+    (
+        "Apply and export PowerPoint",
+        "Anwenden und als PowerPoint exportieren",
+    ),
+    (
+        "The presentation sheet is unavailable.",
+        "Das Präsentationsblatt ist nicht verfügbar.",
+    ),
+    (
+        "Presentation refreshed from the current map.",
+        "Präsentation anhand der aktuellen Karte aktualisiert.",
+    ),
+    (
+        "Slide source is unavailable.",
+        "Die Folienquelle ist nicht verfügbar.",
+    ),
+    (
+        "Click a topic to hide its subtree.",
+        "Klicken Sie auf ein Thema, um seinen Zweig auszublenden.",
+    ),
     ("Equation preview in notes", "Gleichungsvorschau in Notizen"),
     ("Cancel equation edit", "Gleichungsbearbeitung abbrechen"),
     (
-        "Notes preview only; not a map equation. Native save preserves the source; other exports are blocked.",
-        "Nur Notizvorschau, keine Gleichung auf der Karte. Natives Speichern erhält den Quelltext; andere Exporte sind gesperrt.",
+        "Notes equations render in visual exports for visible topics. XMind preserves source; CSV/OPML require note-format-loss consent. Map Shot and unsupported formats remain blocked.",
+        "Notizgleichungen werden in visuellen Exporten für sichtbare Themen dargestellt. XMind erhält den Quelltext; CSV/OPML erfordern die Zustimmung zum Verlust der Notizformatierung. Map Shot und nicht unterstützte Formate bleiben gesperrt.",
     ),
     (
         "512 bytes maximum. Use groups, \\frac{a}{b}, ^{...} and _{...}. Limited syntax, not general LaTeX or chemistry.",
@@ -339,8 +429,8 @@ const DE: &[(&str, &str)] = &[
     ("Apply notes equation", "Notizgleichung übernehmen"),
     ("Remove notes equation", "Notizgleichung entfernen"),
     (
-        "Equation notes cannot be exported or printed in this format. Save as Thinoda to preserve the complete source.",
-        "Notizen mit Gleichungen können in diesem Format nicht exportiert oder gedruckt werden. Als Thinoda speichern, um den vollständigen Quelltext zu erhalten.",
+        "This format cannot preserve or render notes equations. Save as Thinoda or use a supported vector or source-preserving format.",
+        "Dieses Format kann Notizgleichungen weder erhalten noch darstellen. Als Thinoda speichern oder ein unterstütztes Vektor- bzw. quelltexterhaltendes Format verwenden.",
     ),
     (
         "Invalid equation. Use letters, digits, operators, groups, \\frac{a}{b}, ^{...} and _{...}.",
@@ -370,8 +460,8 @@ const DE: &[(&str, &str)] = &[
     ),
     ("PowerPoint slide size", "PowerPoint-Folienformat"),
     (
-        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
-        "Folien werden als flache Bilder exportiert; Text und Formen sind nicht separat bearbeitbar. Der Rahmen wird ohne Beschnitt oder Verzerrung auf das gewählte Seitenverhältnis erweitert.",
+        "Slides use editable text, vector shapes and paths. Photos remain images. The frame expands to the selected ratio without cropping or stretching.",
+        "Folien enthalten bearbeitbaren Text, Vektorformen und Pfade. Fotos bleiben Bilder. Der Rahmen wird ohne Beschnitt oder Verzerrung auf das gewählte Seitenverhältnis erweitert.",
     ),
     ("Widescreen (16:9)", "Breitbild (16:9)"),
     ("Standard (4:3)", "Standard (4:3)"),
@@ -1051,6 +1141,27 @@ const DE: &[(&str, &str)] = &[
     ("Fishbone (left)", "Fischgräte (links)"),
     ("Matrix", "Matrix"),
     ("Tree Table", "Baumtabelle"),
+    ("Duration", "Dauer"),
+    ("Table columns", "Tabellenspalten"),
+    (
+        "Sort siblings (view only)",
+        "Geschwister sortieren (nur Ansicht)",
+    ),
+    ("Document order", "Dokumentreihenfolge"),
+    ("Tree Table help", "Hilfe zur Baumtabelle"),
+    ("Invalid task value", "Ungültiger Aufgabenwert"),
+    (
+        "Displayed dates are computed; editing Start date changes its explicit constraint.",
+        "Angezeigte Daten sind berechnet; das Bearbeiten des Startdatums ändert dessen explizite Vorgabe.",
+    ),
+    (
+        "Map image, PDF and print output render the map, not this table. Use Gantt export for scheduled task output.",
+        "Kartenbild, PDF und Druck geben die Karte aus, nicht diese Tabelle. Für geplante Aufgaben den Gantt-Export verwenden.",
+    ),
+    (
+        "Tree Table edits real topics and tasks. Tab moves between cells; arrows navigate; Enter edits or applies; Escape cancels. Blank cells do not schedule untouched topics. Sorting and columns are local views, not hierarchy edits.",
+        "Die Baumtabelle bearbeitet echte Themen und Aufgaben. Tab wechselt Zellen; Pfeile navigieren; Eingabe bearbeitet oder übernimmt; Escape verwirft. Leere Zellen planen unberührte Themen nicht ein. Sortierung und Spalten sind lokale Ansichten, keine Hierarchieänderungen.",
+    ),
     ("Create Masked Copy…", "Maskierte Kopie erstellen…"),
     ("Create Preview", "Vorschau erstellen"),
     (
@@ -1925,8 +2036,8 @@ const DE: &[(&str, &str)] = &[
         "Übernehmen behält Änderungen. Abbrechen verwirft sie. Nicht übernommene Dialogänderungen werden weder gespeichert noch wiederhergestellt.",
     ),
     (
-        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes and notes equations in Map and Outliner. Task Planning stays in Style.",
-        "Data liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen und Notizgleichungen in Map und Gliederung. Die Aufgabenplanung bleibt unter Stil.",
+        "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes, notes equations and Task Planning in Map and Outliner.",
+        "Daten liegt zwischen Stil und Map. Hier findest du Bilder, Anhänge, Hyperlinks, Labels, Notizen, Notizgleichungen und Aufgabenplanung in Map und Gliederung.",
     ),
     (
         "Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.",
@@ -2537,6 +2648,7 @@ mod tests {
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),
+            include_str!("ai/chat_history.rs"),
             include_str!("ai/prompts.rs"),
             include_str!("ai/semantic.rs"),
             include_str!("help.rs"),
@@ -2556,6 +2668,7 @@ mod tests {
             include_str!("planning.rs"),
             include_str!("zones.rs"),
             include_str!("pitch.rs"),
+            include_str!("pitch/pitch_editor.rs"),
             include_str!("pitch/pitch_player.rs"),
             include_str!("pitch/pitch_preview.rs"),
             include_str!("pitch/pitch_ai.rs"),

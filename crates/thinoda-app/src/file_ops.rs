@@ -22,7 +22,6 @@ use std::{
 
 use egui::{Context, ViewportId};
 use thinoda_io::Format;
-use thinoda_platform::fs::FileFingerprint;
 use thinoda_ui::tokens::Palette;
 
 use crate::{ThinodaApp, doc::OpenDoc, i18n::t, startup::display_name};
@@ -163,7 +162,7 @@ struct Saving {
     /// Browser: download the written file once it is complete.
     deliver: bool,
     autosave: bool,
-    work: Work<Option<FileFingerprint>>,
+    work: Work<crate::doc::WrittenWorkbook>,
 }
 
 #[derive(Default)]
@@ -278,7 +277,7 @@ impl ThinodaApp {
         let format = doc.prepare_save(target)?;
         let workbook = doc.doc.workbook().clone();
         let path = target.to_path_buf();
-        let job: Job<Option<FileFingerprint>> =
+        let job: Job<crate::doc::WrittenWorkbook> =
             Box::new(move || crate::doc::write_workbook(&workbook, format, &path, backup));
         self.file_ops.save = Some(Saving {
             key: doc.key.clone(),
@@ -391,7 +390,7 @@ impl ThinodaApp {
         &mut self,
         ctx: &Context,
         save: Saving,
-        result: Result<Option<FileFingerprint>, String>,
+        result: Result<crate::doc::WrittenWorkbook, String>,
     ) {
         let index = self.docs.iter().position(|doc| doc.key == save.key);
         let saved = match result {
@@ -511,6 +510,50 @@ mod tests {
             .texts()
             .filter(|text| text.starts_with("Could not save"))
             .count()
+    }
+
+    #[test]
+    fn background_save_binds_chat_to_written_bytes_not_newer_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.queue_save(0, &path, false, false, false).unwrap();
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        let doc = app.doc_mut().unwrap();
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Newer edit", |sheet| sheet.set_title(root, "Still unsaved"))
+            .unwrap();
+        app.pause_file_workers(false);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while app.file_ops.saving() {
+            assert!(Instant::now() < deadline, "save never completed");
+            app.poll_file_ops(&ctx);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let expected = thinoda_platform::chat_history::Binding::from_bytes(&path, &bytes).unwrap();
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.chat_identity.as_ref(), Some(&expected));
+        assert!(doc.is_dirty());
+        assert_ne!(
+            doc.chat_identity,
+            Some(
+                thinoda_platform::chat_history::Binding::from_bytes(
+                    &path,
+                    &thinoda_io::export_bytes(
+                        doc.doc.workbook(),
+                        thinoda_io::Format::Thinoda,
+                        &thinoda_io::ExportOptions::default(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+            )
+        );
     }
 
     #[test]
