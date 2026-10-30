@@ -31,6 +31,65 @@ It also embeds a subset of Google Material Symbols Outlined (crate `thinoda-ui`,
 `assets/icons/ThinodaMaterialSymbols.ttf`; Apache License 2.0, see `assets/icons/LICENSE`)
 as its icon font.
 
+## Embedded W3C schemas
+
+The `xsd-schema` dependency includes unmodified W3C `xml.xsd` and `xlink.xsd`
+documents. Thinoda uses the former for offline FIM schema compilation. These
+documents are not covered by the crate's MIT/Apache license choice.
+
+Copyright © World Wide Web Consortium.
+<https://www.w3.org/copyright/software-license-2023/>
+
+Sources: <https://www.w3.org/2009/01/xml.xsd> and
+<https://www.w3.org/XML/2008/06/xlink.xsd>. No modifications.
+The following full notice is reproduced under its permission to redistribute:
+
+```text
+Software and Document license - 2023 version
+
+Status: This document is in effect since 1 January 2023.
+
+This work is being provided by the copyright holders under the following
+license.
+
+License
+
+By obtaining and/or copying this work, you (the licensee) agree that you have
+read, understood, and will comply with the following terms and conditions.
+
+Permission to copy, modify, and distribute this work, with or without
+modification, for any purpose and without fee or royalty is hereby granted,
+provided that you include the following on ALL copies of the work or portions
+thereof, including modifications:
+
+- The full text of this NOTICE in a location viewable to users of the
+  redistributed or derivative work.
+- Any pre-existing intellectual property disclaimers, notices, or terms and
+  conditions. If none exist, the W3C software and document short notice
+  should be included.
+- Notice of any changes or modifications, through a copyright statement on
+  the new code or document such as "This software or document includes
+  material copied from or derived from [title and URI of the W3C document].
+  Copyright © [$year-of-document] World Wide Web Consortium.
+  https://www.w3.org/copyright/software-license-2023/"
+
+Disclaimers
+
+THIS WORK IS PROVIDED "AS IS," AND COPYRIGHT HOLDERS MAKE NO REPRESENTATIONS
+OR WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO, WARRANTIES OF
+MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE
+SOFTWARE OR DOCUMENT WILL NOT INFRINGE ANY THIRD PARTY PATENTS, COPYRIGHTS,
+TRADEMARKS OR OTHER RIGHTS.
+
+COPYRIGHT HOLDERS WILL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, SPECIAL OR
+CONSEQUENTIAL DAMAGES ARISING OUT OF ANY USE OF THE SOFTWARE OR DOCUMENT.
+
+The name and trademarks of copyright holders may NOT be used in advertising or
+publicity pertaining to the work without specific, written prior permission.
+Title to copyright in this work will at all times remain with copyright
+holders.
+```
+
 ## Notable licenses
 
 - **MPL-2.0** (`option-ext`): file-level copyleft. The unmodified source is
@@ -56,7 +115,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-584 crates.
+614 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -112,6 +171,8 @@ LGPL/MPL licensing:
 | block2 | 0.5.1 | MIT | <https://github.com/madsmtm/objc2> |
 | block2 | 0.6.2 | MIT | <https://github.com/madsmtm/objc2> |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | <https://github.com/smol-rs/blocking> |
+| borsh | 1.8.1 | MIT OR Apache-2.0 | <https://github.com/near/borsh-rs> |
+| borsh-derive | 1.8.1 | Apache-2.0 | <https://github.com/near/borsh-rs> |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | <https://github.com/fitzgen/bumpalo> |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | <https://github.com/Lokathor/bytemuck> |
 | bytemuck_derive | 1.12.1 | Zlib OR Apache-2.0 OR MIT | <https://github.com/Lokathor/bytemuck> |
@@ -174,6 +235,7 @@ LGPL/MPL licensing:
 | either | 1.19.0 | MIT OR Apache-2.0 | <https://github.com/rayon-rs/either> |
 | emath | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/emath> |
 | endi | 1.1.1 | MIT | <https://github.com/zeenix/endi> |
+| enum_dispatch | 0.3.13 | MIT OR Apache-2.0 | <https://gitlab.com/antonok/enum_dispatch> |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 | <https://github.com/meithecatte/enumflags2> |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 | <https://github.com/meithecatte/enumflags2> |
 | enumn | 0.1.14 | MIT OR Apache-2.0 | <https://github.com/dtolnay/enumn> |
@@ -245,13 +307,23 @@ LGPL/MPL licensing:
 | hyper-util | 0.1.21 | MIT | <https://github.com/hyperium/hyper-util> |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | <https://github.com/strawlab/iana-time-zone> |
 | iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | <https://github.com/strawlab/iana-time-zone> |
+| icu_casemap | 1.5.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_casemap_data | 1.5.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_collections | 1.5.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_collections | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_locid | 1.5.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_locid_transform | 1.5.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_locid_transform_data | 1.5.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_normalizer | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_normalizer_data | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_properties | 1.5.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_properties | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_properties_data | 1.5.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_properties_data | 2.3.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_provider | 1.5.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | icu_provider | 2.3.1 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| icu_provider_macros | 1.5.0 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | idna | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/servo/rust-url/> |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT | <https://github.com/hsivonen/idna_adapter> |
 | image | 0.25.10 | MIT OR Apache-2.0 | <https://github.com/image-rs/image> |
@@ -277,6 +349,7 @@ LGPL/MPL licensing:
 | khronos-egl | 6.0.0 | MIT/Apache-2.0 | <https://github.com/timothee-haudebourg/khronos-egl> |
 | kurbo | 0.11.3 | Apache-2.0 OR MIT | <https://github.com/linebender/kurbo> |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | <https://github.com/linebender/kurbo> |
+| lalrpop-util | 0.22.2 | Apache-2.0 OR MIT | <https://github.com/lalrpop/lalrpop> |
 | libc | 0.2.190 | MIT OR Apache-2.0 | <https://github.com/rust-lang/libc> |
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT | <https://github.com/diwic/dbus-rs> |
 | libloading | 0.8.9 | ISC | <https://github.com/nagisa/rust_libloading/> |
@@ -286,6 +359,7 @@ LGPL/MPL licensing:
 | linux-keyutils | 0.2.5 | Apache-2.0 OR MIT | <https://github.com/landhb/linux-keyutils> |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/sunfishcode/linux-raw-sys> |
 | linux-raw-sys | 0.4.15 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/sunfishcode/linux-raw-sys> |
+| litemap | 0.7.5 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | litemap | 0.8.3 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | litrs | 1.0.1 | MIT OR Apache-2.0 | <https://github.com/LukasKalbertodt/litrs> |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | <https://github.com/Amanieu/parking_lot> |
@@ -397,9 +471,12 @@ LGPL/MPL licensing:
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | <https://github.com/r-efi/r-efi> |
 | rand | 0.10.3 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand | 0.8.8 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
+| rand | 0.9.5 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
+| rand_chacha | 0.9.0 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand_core> |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
+| rand_core | 0.9.5 | MIT OR Apache-2.0 | <https://github.com/rust-random/rand> |
 | rand_pcg | 0.10.2 | MIT OR Apache-2.0 | <https://github.com/rust-random/rngs> |
 | range-alloc | 0.1.5 | MIT OR Apache-2.0 | <https://github.com/gfx-rs/range-alloc> |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | <https://github.com/rust-windowing/raw-window-handle> |
@@ -412,6 +489,7 @@ LGPL/MPL licensing:
 | regex | 1.13.1 | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
+| regexml-fork | 0.3.0 | Apache-2.0 OR MPL-2.0 | <https://github.com/semyonc/regexml> |
 | renderdoc-sys | 1.1.0 | MIT OR Apache-2.0 | <https://github.com/ebkalderon/renderdoc-rs> |
 | reqwest | 0.12.28 | MIT OR Apache-2.0 | <https://github.com/seanmonstar/reqwest> |
 | resvg | 0.48.1 | Apache-2.0 OR MIT | <https://github.com/linebender/resvg> |
@@ -419,8 +497,10 @@ LGPL/MPL licensing:
 | rgb | 0.8.53 | MIT | <https://github.com/kornelski/rust-rgb> |
 | ring | 0.17.14 | Apache-2.0 AND ISC | <https://github.com/briansmith/ring> |
 | ron | 0.12.2 | MIT OR Apache-2.0 | <https://github.com/ron-rs/ron> |
+| roxmltree | 0.19.0 | MIT OR Apache-2.0 | <https://github.com/RazrFalcon/roxmltree> |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 | <https://github.com/RazrFalcon/roxmltree> |
 | roxmltree | 0.21.1 | MIT OR Apache-2.0 | <https://github.com/RazrFalcon/roxmltree> |
+| rust_decimal | 1.43.0 | MIT | <https://github.com/paupino/rust-decimal> |
 | rustc-hash | 1.1.0 | Apache-2.0/MIT | <https://github.com/rust-lang-nursery/rustc-hash> |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | <https://github.com/rust-lang/rustc-hash> |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/bytecodealliance/rustix> |
@@ -472,6 +552,7 @@ LGPL/MPL licensing:
 | syn | 2.0.119 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
 | syn | 3.0.9 | MIT OR Apache-2.0 | <https://github.com/dtolnay/syn> |
 | sync_wrapper | 1.0.2 | Apache-2.0 | <https://github.com/Actyx/sync_wrapper> |
+| synstructure | 0.13.2 | MIT | <https://github.com/mystor/synstructure> |
 | synstructure | 0.14.0 | MIT | <https://github.com/mystor/synstructure> |
 | sys-locale | 0.3.2 | MIT OR Apache-2.0 | <https://github.com/1Password/sys-locale> |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | <https://github.com/Stebalien/tempfile> |
@@ -487,6 +568,7 @@ LGPL/MPL licensing:
 | tiny-skia | 0.12.0 | BSD-3-Clause | <https://github.com/linebender/tiny-skia> |
 | tiny-skia-path | 0.11.4 | BSD-3-Clause | <https://github.com/RazrFalcon/tiny-skia/tree/master/path> |
 | tiny-skia-path | 0.12.0 | BSD-3-Clause | <https://github.com/linebender/tiny-skia/tree/master/path> |
+| tinystr | 0.7.6 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | tinystr | 0.8.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | <https://github.com/Lokathor/tinyvec> |
 | tokio | 1.53.3 | MIT | <https://github.com/tokio-rs/tokio> |
@@ -515,6 +597,7 @@ LGPL/MPL licensing:
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | <https://github.com/servo/unicode-bidi> |
 | unicode-general-category | 1.1.0 | Apache-2.0 | <https://github.com/yeslogic/unicode-general-category> |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | <https://github.com/dtolnay/unicode-ident> |
+| unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | <https://github.com/unicode-rs/unicode-normalization> |
 | unicode-properties | 0.1.4 | MIT/Apache-2.0 | <https://github.com/unicode-rs/unicode-properties> |
 | unicode-script | 0.5.8 | MIT OR Apache-2.0 | <https://github.com/unicode-rs/unicode-script> |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | <https://github.com/unicode-rs/unicode-segmentation> |
@@ -601,6 +684,7 @@ LGPL/MPL licensing:
 | winnow | 1.0.4 | MIT | <https://github.com/winnow-rs/winnow> |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | <https://github.com/bytecodealliance/wit-bindgen> |
 | wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | <https://github.com/YaLTeR/wl-clipboard-rs> |
+| writeable | 0.5.5 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | writeable | 0.6.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | x11-dl | 2.21.0 | MIT | <https://github.com/AltF02/x11-rs.git> |
 | x11rb | 0.13.2 | MIT OR Apache-2.0 | <https://github.com/psychon/x11rb> |
@@ -610,8 +694,11 @@ LGPL/MPL licensing:
 | xkbcommon-dl | 0.4.2 | MIT | <https://github.com/rust-windowing/xkbcommon-dl> |
 | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib | <https://github.com/notgull/xkeysym> |
 | xmlwriter | 0.1.0 | MIT | <https://github.com/RazrFalcon/xmlwriter> |
+| xsd-schema | 0.3.0 | MIT OR Apache-2.0 | <https://github.com/semyonc/xsd-schema> |
 | yeslogic-fontconfig-sys | 6.0.1 | MIT | <https://github.com/yeslogic/fontconfig-rs> |
+| yoke | 0.7.5 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | yoke | 0.8.3 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| yoke-derive | 0.7.5 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | yoke-derive | 0.8.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | zbus | 4.4.0 | MIT | <https://github.com/dbus2/zbus/> |
 | zbus | 5.19.0 | MIT | <https://github.com/z-galaxy/zbus/> |
@@ -630,7 +717,9 @@ LGPL/MPL licensing:
 | zeroize | 1.9.1 | Apache-2.0 OR MIT | <https://github.com/RustCrypto/utils> |
 | zeroize_derive | 1.5.0 | Apache-2.0 OR MIT | <https://github.com/RustCrypto/utils> |
 | zerotrie | 0.2.5 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| zerovec | 0.10.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | zerovec | 0.11.8 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
+| zerovec-derive | 0.10.4 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | zerovec-derive | 0.11.6 | Unicode-3.0 | <https://github.com/unicode-org/icu4x> |
 | zip | 9.0.4 | MIT | <https://github.com/zip-rs/zip2> |
 | zlib-rs | 0.6.8 | Zlib | <https://github.com/trifectatechfoundation/zlib-rs> |

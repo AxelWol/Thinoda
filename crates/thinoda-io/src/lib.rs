@@ -3,6 +3,7 @@
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
 //! Graphical output shares font-measured title layout. PDF keeps vector paths
 //! (including outlined text); JPEG always uses an opaque background.
+pub mod fim;
 pub mod fonts;
 mod formats;
 mod freemind_notes;
