@@ -1,12 +1,12 @@
-//! Deterministic slide generation and exports using saved presentation frames.
+//! Deterministic slide generation and live, source-aware presentation exports.
 
 use image::ImageFormat;
-use thinoda_core::{Presentation, PresentationSlide, PresentationSource, Rect, Sheet, SlideId};
-
-use crate::{
-    ExportOptions, IoError,
-    render::{self, PdfImagePage},
+use thinoda_core::{
+    Presentation, PresentationScope, PresentationSlide, PresentationSource, Rect,
+    ResolvedPresentationSlide, Sheet, SlideId, resolve_presentation_slide,
 };
+
+use crate::{ExportOptions, IoError, render};
 
 const PPTX_IMAGE_WIDTH: f32 = 1280.0;
 const EMU_PER_INCH: u64 = 914_400;
@@ -65,6 +65,10 @@ pub fn generate_presentation(
             title,
             source: PresentationSource::Branch(*root),
             frame,
+            scope: PresentationScope::Source,
+            auto_frame: true,
+            hidden_topics: Vec::new(),
+            max_depth: None,
         });
     }
     for zone in &sheet.zones {
@@ -73,6 +77,10 @@ pub fn generate_presentation(
             title: zone.name.clone(),
             source: PresentationSource::Zone(zone.id),
             frame: zone.frame,
+            scope: PresentationScope::Source,
+            auto_frame: true,
+            hidden_topics: Vec::new(),
+            max_depth: None,
         });
     }
     if slides.len() > thinoda_core::MAX_PRESENTATION_SLIDES {
@@ -83,39 +91,47 @@ pub fn generate_presentation(
     Ok(presentation)
 }
 
-/// Renders a saved slide with all sheet content clipped to its saved frame.
-/// Relationships are drawn from the full sheet before the SVG viewport clips them.
+/// Renders live slide content using the shared core resolver and original map geometry.
+/// Legacy contextual slides retain spatial clipping; source slides exclude unrelated content.
 pub fn render_presentation_slide_svg(
     sheet: &Sheet,
     slide_index: usize,
     options: &ExportOptions,
 ) -> Result<String, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
+    let resolved = resolve_slide(sheet, slide_index, options)?;
+    render::svg_resolved(sheet, options, &resolved)
+}
+
+fn resolve_slide(
+    sheet: &Sheet,
+    slide_index: usize,
+    options: &ExportOptions,
+) -> Result<ResolvedPresentationSlide, IoError> {
     let slide =
         sheet.presentation.slides.get(slide_index).ok_or_else(|| {
             IoError::Invalid(format!("presentation slide {slide_index} not found"))
         })?;
-    render::svg_with_frame(sheet, options, slide.frame)
+    let layout = render::presentation_layout(sheet, options.dark)?;
+    resolve_presentation_slide(sheet, slide, &layout).map_err(IoError::Invalid)
 }
 
-/// Renders one saved slide frame to a bounded PNG for preview textures.
+/// Renders one resolved slide to a bounded PNG for preview textures.
 pub fn render_presentation_slide_png(
     sheet: &Sheet,
     slide_index: usize,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
     validate_scale(options.scale)?;
-    let slide =
-        sheet.presentation.slides.get(slide_index).ok_or_else(|| {
-            IoError::Invalid(format!("presentation slide {slide_index} not found"))
-        })?;
+    sheet.validate().map_err(IoError::Invalid)?;
+    let resolved = resolve_slide(sheet, slide_index, options)?;
     let mut total_pixels = 0;
-    image_dimensions(slide.frame, options.scale, &mut total_pixels)?;
-    let svg = render_presentation_slide_svg(sheet, slide_index, options)?;
+    image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
+    let svg = render::svg_resolved(sheet, options, &resolved)?;
     render::raster_svg(&svg, options.scale, ImageFormat::Png)
 }
 
-/// Exports the saved slide frames, in presentation order, as `slides/slide-NNN.png`.
+/// Exports resolved slides, in presentation order, as `slides/slide-NNN.png`.
 pub fn export_presentation_png_zip(
     sheet: &Sheet,
     options: &ExportOptions,
@@ -126,9 +142,10 @@ pub fn export_presentation_png_zip(
 
     let mut total_pixels = 0;
     let mut rendered = Vec::with_capacity(sheet.presentation.slides.len());
-    for (index, slide) in sheet.presentation.slides.iter().enumerate() {
-        image_dimensions(slide.frame, options.scale, &mut total_pixels)?;
-        let svg = render::svg_with_frame(sheet, options, slide.frame)?;
+    for index in 0..sheet.presentation.slides.len() {
+        let resolved = resolve_slide(sheet, index, options)?;
+        image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
+        let svg = render::svg_resolved(sheet, options, &resolved)?;
         let png = render::raster_svg(&svg, options.scale, ImageFormat::Png)?;
         rendered.push((format!("slides/slide-{:03}.png", index + 1), png));
     }
@@ -143,7 +160,7 @@ pub fn export_presentation_png_zip(
     Ok(archive)
 }
 
-/// Exports saved slide frames as a fixed-size, image-based PowerPoint presentation.
+/// Exports live slide content as editable native PowerPoint shapes, text and connectors.
 ///
 /// Each saved frame is fitted to the selected deck aspect ratio by extending its
 /// viewport, so its original content is neither stretched nor cropped.
@@ -160,18 +177,31 @@ pub fn export_presentation_pptx(
     let (target_ratio, target_height, width_emu, height_emu, size_type) = ratio.dimensions();
     let target_width = PPTX_IMAGE_WIDTH.min(target_height * target_ratio);
     let mut total_pixels = 0;
-    let mut images = Vec::with_capacity(sheet.presentation.slides.len());
+    let mut native_slides = Vec::with_capacity(sheet.presentation.slides.len());
+    let mut native_bytes = 0usize;
 
     for (index, slide) in sheet.presentation.slides.iter().enumerate() {
-        let png = render_pptx_slide(
-            sheet,
-            index,
-            options,
-            target_ratio,
-            target_width,
-            &mut total_pixels,
-        )?;
-        images.push((index + 1, slide.title.clone(), png));
+        let mut resolved = resolve_slide(sheet, index, options)?;
+        resolved.frame = fit_frame(resolved.frame, target_ratio)?;
+        // Keep the existing side, area and aggregate complexity guards even
+        // though this path no longer allocates a slide-sized bitmap.
+        let scale = ((target_width - 0.1) / resolved.frame.size.x).clamp(0.1, 8.0);
+        image_dimensions(resolved.frame, scale, &mut total_pixels)?;
+        let native =
+            render::editable_slide(sheet, &resolved, options, index + 1, width_emu, height_emu)?;
+        native_bytes = native_bytes
+            .saturating_add(native.shapes.len())
+            .saturating_add(
+                native
+                    .media
+                    .iter()
+                    .map(|(_, data)| data.len())
+                    .sum::<usize>(),
+            );
+        if native_bytes > MAX_PRESENTATION_ARCHIVE_BYTES {
+            return Err(IoError::PresentationLimit("archive size"));
+        }
+        native_slides.push((index + 1, slide.title.clone(), native));
     }
 
     let mut entries: Vec<(String, Vec<u8>)> = vec![
@@ -218,17 +248,16 @@ pub fn export_presentation_pptx(
             theme_xml().as_bytes().to_vec(),
         ),
     ];
-    for (index, title, png) in images {
+    for (index, title, native) in native_slides {
         let slide_number = format!("{index}");
         let slide_path = format!("ppt/slides/slide{slide_number}.xml");
         let rels_path = format!("ppt/slides/_rels/slide{slide_number}.xml.rels");
-        let media_path = format!("ppt/media/image{slide_number}.png");
         entries.push((
             slide_path,
-            slide_xml(index as u32, &title, width_emu, height_emu).into_bytes(),
+            slide_xml(&title, &native.shapes, &native.background).into_bytes(),
         ));
-        entries.push((rels_path, slide_relationships(index).into_bytes()));
-        entries.push((media_path, png));
+        entries.push((rels_path, native.relationships.into_bytes()));
+        entries.extend(native.media);
     }
 
     let archive_entries: Vec<_> = entries
@@ -270,11 +299,9 @@ fn render_pptx_slide(
     target_width: f32,
     total_pixels: &mut u64,
 ) -> Result<Vec<u8>, IoError> {
-    let slide =
-        sheet.presentation.slides.get(slide_index).ok_or_else(|| {
-            IoError::Invalid(format!("presentation slide {slide_index} not found"))
-        })?;
-    let frame = fit_frame(slide.frame, target_ratio)?;
+    let mut resolved = resolve_slide(sheet, slide_index, options)?;
+    let frame = fit_frame(resolved.frame, target_ratio)?;
+    resolved.frame = frame;
     let scale = ((target_width - 0.1) / frame.size.x).clamp(0.1, 8.0);
     image_dimensions(frame, scale, total_pixels)?;
     let render_options = ExportOptions {
@@ -283,8 +310,16 @@ fn render_pptx_slide(
         transparent: false,
         ..options.clone()
     };
-    let svg = render::svg_with_frame(sheet, &render_options, frame)?;
+    let svg = render::svg_resolved(sheet, &render_options, &resolved)?;
     render::raster_svg(&svg, scale, ImageFormat::Png)
+}
+
+/// Extends a slide viewport to the selected deck ratio without stretching or cropping.
+pub fn fit_presentation_frame(
+    frame: Rect,
+    ratio: PresentationAspectRatio,
+) -> Result<Rect, IoError> {
+    fit_frame(frame, ratio.dimensions().0)
 }
 
 fn fit_frame(frame: Rect, aspect_ratio: f32) -> Result<Rect, IoError> {
@@ -316,7 +351,7 @@ fn fit_frame(frame: Rect, aspect_ratio: f32) -> Result<Rect, IoError> {
     Ok(fitted)
 }
 
-fn xml_escape(value: &str) -> String {
+pub(crate) fn xml_escape(value: &str) -> String {
     value
         .chars()
         .filter(|character| {
@@ -337,6 +372,7 @@ fn content_types(slide_count: usize) -> String {
     let mut xml = String::from(
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#,
     );
+    xml.push_str(r#"<Default Extension="jpg" ContentType="image/jpeg"/>"#);
     for index in 1..=slide_count {
         xml.push_str(&format!(
             r#"<Override PartName="/ppt/slides/slide{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#
@@ -400,16 +436,10 @@ fn slide_layout_relationships() -> &'static str {
     r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>"#
 }
 
-fn slide_xml(index: u32, title: &str, width_emu: u64, height_emu: u64) -> String {
+fn slide_xml(title: &str, shapes: &str, background: &str) -> String {
     let title = xml_escape(title);
     format!(
-        r#"<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld name="{title}"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr><p:pic><p:nvPicPr><p:cNvPr id="2" name="Slide {index} image"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width_emu}" cy="{height_emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#
-    )
-}
-
-fn slide_relationships(index: usize) -> String {
-    format!(
-        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image{index}.png"/></Relationships>"#
+        r#"<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld name="{title}"><p:bg><p:bgPr>{background}<a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>{shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#
     )
 }
 
@@ -417,44 +447,33 @@ fn theme_xml() -> &'static str {
     r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Thinoda"><a:themeElements><a:clrScheme name="Thinoda"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="Thinoda"><a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="Thinoda"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>"#
 }
 
-/// Exports the saved slide frames, in presentation order, as a multi-page PDF.
+/// Exports resolved slides, in presentation order, as a multi-page PDF.
 pub fn export_presentation_pdf(sheet: &Sheet, options: &ExportOptions) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
     validate_scale(options.scale)?;
 
     let mut total_pixels = 0;
-    let mut images = Vec::with_capacity(sheet.presentation.slides.len());
-    for slide in &sheet.presentation.slides {
-        let (width, height) = image_dimensions(slide.frame, options.scale, &mut total_pixels)?;
-        let page_width = slide.frame.size.x * 0.75;
-        let page_height = slide.frame.size.y * 0.75;
+    let mut pages = Vec::with_capacity(sheet.presentation.slides.len());
+    let mut source_bytes = 0usize;
+    for index in 0..sheet.presentation.slides.len() {
+        let resolved = resolve_slide(sheet, index, options)?;
+        image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
+        let page_width = resolved.frame.size.x * 0.75;
+        let page_height = resolved.frame.size.y * 0.75;
         if page_width > MAX_PRESENTATION_PAGE_POINTS || page_height > MAX_PRESENTATION_PAGE_POINTS {
             return Err(IoError::PresentationLimit("PDF page dimensions"));
         }
         let mut opaque_options = options.clone();
         opaque_options.transparent = false;
-        let svg = render::svg_with_frame(sheet, &opaque_options, slide.frame)?;
-        let jpg = render::raster_svg(&svg, options.scale, ImageFormat::Jpeg)?;
-        images.push((jpg, width, height, page_width, page_height));
+        let svg = render::svg_resolved(sheet, &opaque_options, &resolved)?;
+        source_bytes = source_bytes.saturating_add(svg.len());
+        if source_bytes > MAX_PRESENTATION_ARCHIVE_BYTES {
+            return Err(IoError::PresentationLimit("PDF source size"));
+        }
+        pages.push((svg, page_width, page_height));
     }
-    let pages: Vec<_> = images
-        .iter()
-        .map(
-            |(jpg, width, height, page_width, page_height)| PdfImagePage {
-                jpg,
-                width: *width,
-                height: *height,
-                page_width: *page_width,
-                page_height: *page_height,
-            },
-        )
-        .collect();
-    let pdf = render::image_pdf_pages(&pages);
-    if pdf.len() > MAX_PRESENTATION_ARCHIVE_BYTES {
-        return Err(IoError::PresentationLimit("PDF size"));
-    }
-    Ok(pdf)
+    render::pdf_svg_pages(&pages, MAX_PRESENTATION_ARCHIVE_BYTES)
 }
 
 fn validate_slides(sheet: &Sheet) -> Result<(), IoError> {
@@ -546,6 +565,11 @@ mod tests {
                 frame(180.0, 40.0, 180.0, 160.0),
             )
             .unwrap();
+        // This fixture represents a pre-redesign saved deck.
+        for slide in &mut sheet.presentation.slides {
+            slide.scope = PresentationScope::Context;
+            slide.auto_frame = false;
+        }
         sheet.validate().unwrap();
         sheet
     }
@@ -633,9 +657,11 @@ mod tests {
         let pdf = export_presentation_pdf(&sheet, &ExportOptions::default()).unwrap();
         let pdf = String::from_utf8_lossy(&pdf);
         assert!(pdf.contains("/Count 2"));
-        assert_eq!(pdf.matches("/Type /Page ").count(), 2);
-        assert!(pdf.contains("/MediaBox [0 0 135.000 105.000]"));
-        assert!(pdf.contains("/MediaBox [0 0 135.000 120.000]"));
+        assert_eq!(pdf.matches("/Type /Page\n").count(), 2);
+        assert!(pdf.contains("/MediaBox [0 0 135 105]"));
+        assert!(pdf.contains("/MediaBox [0 0 135 120]"));
+        assert!(!pdf.contains("/Subtype /Image"));
+        assert!(!pdf.contains("/DCTDecode"));
         assert_eq!(sheet, before);
     }
 
@@ -651,20 +677,18 @@ mod tests {
         sheet.presentation.slides[0].title = r#"Roadmap & <"delivery">"#.into();
         let before = sheet.clone();
 
-        for (ratio, size_type, width, height, image_dimensions) in [
+        for (ratio, size_type, width, height) in [
             (
                 PresentationAspectRatio::Widescreen16x9,
                 "screen16x9",
                 "12192000",
                 "6858000",
-                (1280, 720),
             ),
             (
                 PresentationAspectRatio::Standard4x3,
                 "screen4x3",
                 "9144000",
                 "6858000",
-                (1280, 960),
             ),
         ] {
             let options = ExportOptions {
@@ -690,11 +714,10 @@ mod tests {
                 "ppt/slides/slide2.xml",
                 "ppt/slides/_rels/slide1.xml.rels",
                 "ppt/slides/_rels/slide2.xml.rels",
-                "ppt/media/image1.png",
-                "ppt/media/image2.png",
             ] {
                 assert!(names.contains(name), "missing PPTX part {name}");
             }
+            assert!(!names.iter().any(|name| name.starts_with("ppt/media/")));
 
             for index in 0..archive.len() {
                 let name = archive.by_index(index).unwrap().name().unwrap().to_string();
@@ -774,18 +797,11 @@ mod tests {
             )
             .unwrap();
             assert!(first_slide.contains("Roadmap &amp; &lt;&quot;delivery&quot;&gt;"));
-            assert!(first_slide.contains(&format!(r#"<a:ext cx="{width}" cy="{height}"/>"#)));
-
-            let mut image = Vec::new();
-            std::io::Read::read_to_end(
-                &mut archive.by_name("ppt/media/image1.png").unwrap(),
-                &mut image,
-            )
-            .unwrap();
-            assert_eq!(
-                image::load_from_memory(&image).unwrap().dimensions(),
-                image_dimensions
-            );
+            assert!(first_slide.contains("<a:t>Branch</a:t>"));
+            assert!(first_slide.contains("<a:custGeom>"));
+            assert!(!first_slide.contains("<p:cxnSp>"));
+            assert!(first_slide.contains("<a:cubicBezTo>"));
+            assert!(!first_slide.contains("<p:pic>"));
             let preview = render_presentation_pptx_slide_png(&sheet, 0, &options).unwrap();
             let preview_dimensions = image::load_from_memory(&preview).unwrap().dimensions();
             assert_eq!(preview_dimensions.0, 640);
@@ -825,6 +841,10 @@ mod tests {
                     .unwrap_or(TopicId(0)),
             ),
             frame: frame(0.0, 0.0, 1_000_000.0, 1_000_000.0),
+            scope: PresentationScope::Context,
+            auto_frame: false,
+            hidden_topics: Vec::new(),
+            max_depth: None,
         });
         assert!(export_presentation_pdf(&sheet, &ExportOptions::default()).is_err());
         assert!(export_presentation_png_zip(&sheet, &ExportOptions::default()).is_err());

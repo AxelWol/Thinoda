@@ -248,8 +248,8 @@ pub use gantt::{
 pub use presentation::{
     MAX_PRESENTATION_ARCHIVE_BYTES, MAX_PRESENTATION_IMAGE_PIXELS, MAX_PRESENTATION_IMAGE_SIDE,
     MAX_PRESENTATION_TOTAL_PIXELS, PresentationAspectRatio, export_presentation_pdf,
-    export_presentation_png_zip, export_presentation_pptx, generate_presentation,
-    render_presentation_slide_png, render_presentation_slide_svg,
+    export_presentation_png_zip, export_presentation_pptx, fit_presentation_frame,
+    generate_presentation, render_presentation_slide_png, render_presentation_slide_svg,
 };
 pub use print::PrintDocument;
 
