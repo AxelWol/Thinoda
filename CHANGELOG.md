@@ -24,6 +24,14 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.19.1](https://github.com/AxelWol/Thinoda/compare/v0.19.0...v0.19.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **export:** preserve vector text on incomplete Linux font installations ([60002d8](https://github.com/AxelWol/Thinoda/commit/60002d8afbf6aeedd0be1e76c9f8f092b4a12aed))
+* **export:** use text fonts for unresolved generic families ([5da54e3](https://github.com/AxelWol/Thinoda/commit/5da54e37252cb0320943ccf1192e98bb24623e83))
+
 ## [0.19.0](https://github.com/AxelWol/Thinoda/compare/v0.18.0...v0.19.0) (2026-10-30)
 
 
