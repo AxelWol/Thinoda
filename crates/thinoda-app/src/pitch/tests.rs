@@ -241,6 +241,55 @@ struct Playing {
     open: bool,
 }
 
+#[test]
+fn powerpoint_editor_action_applies_one_draft_and_opens_the_existing_export_flow() {
+    let app = setup(true);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 900.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::EditPresentation);
+    h.run_steps(3);
+    h.state_mut()
+        .pitch
+        .editor
+        .as_mut()
+        .unwrap()
+        .sheet
+        .presentation
+        .slides[0]
+        .title = "Export this draft".into();
+    h.run_steps(3);
+    let export = h.get_by_label("Apply and export PowerPoint");
+    assert!(
+        h.ctx.content_rect().contains_rect(export.rect()),
+        "{:?} {:?}",
+        export.rect(),
+        h.ctx.content_rect()
+    );
+    export.click();
+    h.run_steps(3);
+    assert!(
+        h.state().pitch.editor.is_none(),
+        "{:?}",
+        h.state()
+            .pitch
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.error.as_ref())
+    );
+    assert!(h.state().dialogs.powerpoint_export);
+    assert_eq!(
+        h.state().doc().unwrap().doc.sheet().presentation.slides[0].title,
+        "Export this draft"
+    );
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.doc.undo());
+    assert_eq!(doc.doc.workbook(), &before);
+    assert!(!doc.doc.undo());
+}
+
 fn player_harness(width: f32, presenter: bool) -> Harness<'static, Playing> {
     let mut app = setup(true);
     app.open_pitch(&Context::default(), presenter);
@@ -475,26 +524,125 @@ fn presentation_outputs_use_the_captured_frames_without_changing_the_source() {
 }
 
 #[test]
-fn stale_playback_closes_without_touching_the_revised_document_or_root_window() {
+fn playback_refreshes_map_changes_without_touching_document_or_history() {
     let mut app = setup(true);
     let ctx = Context::default();
     app.open_pitch(&ctx, false);
+    let mut player = app.pitch.player.take().unwrap();
     let doc = app.doc_mut().unwrap();
     let root = doc.doc.sheet().root;
     doc.doc
         .edit_sheet("External edit", |sheet| sheet.set_title(root, "Revised"))
         .unwrap();
     let before = doc.doc.workbook().clone();
-    let mut output = ctx.run_ui(egui::RawInput::default(), |_| app.pitch_window(&ctx));
-    output.textures_delta.clear();
-    assert!(app.pitch.player.is_none());
+    let revision = app.doc().unwrap().doc.state_id();
+    assert!(app.refresh_pitch(&mut player).unwrap());
+    assert_eq!(player.sheet.topic(root).unwrap().title, "Revised");
+    assert_eq!(player.owner.revision, revision);
+    assert!(!app.refresh_pitch(&mut player).unwrap());
     assert_eq!(app.docs.len(), 1);
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
-    assert!(
-        !output.viewport_output[&egui::ViewportId::ROOT]
-            .commands
-            .contains(&egui::ViewportCommand::Close)
+    assert_eq!(app.doc().unwrap().doc.state_id(), revision);
+}
+
+#[test]
+fn playback_refresh_retains_slide_identity_and_handles_deleted_or_empty_decks() {
+    let mut app = setup(true);
+    app.open_pitch(&Context::default(), false);
+    let mut player = app.pitch.player.take().unwrap();
+    player.selected = 1;
+    let id = player.sheet.presentation.slides[1].id;
+    let doc = app.doc_mut().unwrap();
+    let mut presentation = doc.doc.sheet().presentation.clone();
+    presentation.slides.swap(0, 1);
+    doc.doc.replace_presentation(presentation).unwrap();
+    assert!(app.refresh_pitch(&mut player).unwrap());
+    assert_eq!(player.selected, 0);
+    assert_eq!(player.sheet.presentation.slides[player.selected].id, id);
+    let doc = app.doc_mut().unwrap();
+    let mut presentation = doc.doc.sheet().presentation.clone();
+    presentation.slides.remove(0);
+    doc.doc.replace_presentation(presentation).unwrap();
+    assert!(app.refresh_pitch(&mut player).unwrap());
+    assert_eq!(player.selected, 0);
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .replace_presentation(Default::default())
+        .unwrap();
+    assert!(app.refresh_pitch(&mut player).unwrap());
+    assert!(player.sheet.presentation.slides.is_empty());
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(360.0, 650.0))
+        .build_ui_state(
+            |ui, state: &mut Playing| {
+                if state.open {
+                    state.open = state.app.pitch_player_ui(ui, &mut state.player);
+                }
+            },
+            Playing {
+                app,
+                player,
+                open: true,
+            },
+        );
+    h.run_steps(3);
+    assert!(h.state().open);
+    h.get_by_label("No slides yet. Generate branch and Zone slides, or add the selected branch.");
+    h.get_by_label("Exit Pitch").click();
+    h.run_steps(2);
+    assert!(!h.state().open);
+}
+
+#[test]
+fn playback_ignores_unrelated_sheet_edits_and_never_switches_to_the_active_sheet() {
+    let mut app = setup(true);
+    app.open_pitch(&Context::default(), false);
+    let mut player = app.pitch.player.take().unwrap();
+    let before = Arc::clone(&player.sheet);
+    let layout = Arc::clone(&player.layout);
+    let doc = app.doc_mut().unwrap();
+    doc.doc.add_sheet(Sheet::new("Other", "Unrelated")).unwrap();
+    doc.doc.set_active(1);
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Other edit", |sheet| sheet.set_title(root, "Private edit"))
+        .unwrap();
+    assert!(!app.refresh_pitch(&mut player).unwrap());
+    assert!(Arc::ptr_eq(&player.sheet, &before));
+    assert!(Arc::ptr_eq(&player.layout, &layout));
+    assert_eq!(player.owner.sheet, 0);
+    // Refresh the captured sheet even while another sheet remains active.
+    let doc = app.doc_mut().unwrap();
+    doc.doc.set_active(0);
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Pitch edit", |sheet| sheet.set_title(root, "Live edit"))
+        .unwrap();
+    doc.doc.set_active(1);
+    assert!(app.refresh_pitch(&mut player).unwrap());
+    assert_eq!(
+        player.sheet.topic(player.sheet.root).unwrap().title,
+        "Live edit"
     );
+    assert_eq!(app.doc().unwrap().doc.active_index(), 1);
+}
+
+#[test]
+fn playback_does_not_substitute_a_different_sheet_when_original_is_replaced() {
+    let mut app = setup(true);
+    app.open_pitch(&Context::default(), false);
+    let mut player = app.pitch.player.take().unwrap();
+    let before = Arc::clone(&player.sheet);
+    // Replacing with an unrelated root must never display that sheet under the old slide.
+    let mut unrelated = Sheet::new("Unrelated", "Private");
+    let new_root = unrelated
+        .insert_child(unrelated.root, "Different root")
+        .unwrap();
+    unrelated.root = new_root;
+    app.doc_mut().unwrap().doc.replace(Workbook::new(unrelated));
+    assert!(app.refresh_pitch(&mut player).is_err());
+    assert_eq!(*player.sheet, *before);
 }
 
 #[test]

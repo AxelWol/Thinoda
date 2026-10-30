@@ -4259,7 +4259,7 @@ impl ThinodaApp {
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new(t(
-                        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
+                        "Slides use editable text, vector shapes and paths. Photos remain images. The frame expands to the selected ratio without cropping or stretching.",
                     ))
                     .color(Palette::of_ui(ui).text_muted),
                 );

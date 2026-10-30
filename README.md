@@ -143,6 +143,8 @@ those system-owned controls. WinGet publishing remains paused.
   order using Next, then advances the slide; Previous reverses the steps.
   Playback choices are session-only, never change the workbook or exported
   PDF/PNG slides, and use the same localized, themed controls on native and web.
+  The [vector presentation redesign](docs/PRESENTATIONS.md) documents focused
+  slides, live framing, visual authoring and editable PowerPoint handoff.
 - Mind map, logic, brace, org, tree, timeline, fishbone and matrix structures; floating topics,
   relationships, boundaries, summaries, markers, labels, notes, links, to-dos, numbering
 - Structural numbering (Style > Numbering) labels a parent's children 1, 2, 3 /
@@ -646,13 +648,13 @@ those system-owned controls. WinGet publishing remains paused.
 - XMind reopening honors edits made by other applications rather than silently
   restoring a stale private snapshot. Unchanged Thinoda exports retain lossless
   reopening; supported public theme defaults and inline overrides are imported.
-- Export: XMind, PNG, JPEG, SVG, PDF, image-based PowerPoint `.pptx`, Word, Excel,
+- Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
   subset. PowerPoint export previews the first saved Pitch slide, reuses all
-  saved frames and offers 16:9 or 4:3;
-  each slide is a flattened image, not individually editable text/shapes, and
-  unsupported resources are refused. Opening in PowerPoint/LibreOffice is not
-  yet verified. MindManager conversion uses
+  slide visibility/framing and offers 16:9 or 4:3. Text, shapes and connecting
+  paths are separate editable objects; original photos remain images.
+  Unsupported resources are refused. Native-object PowerPoint/LibreOffice
+  opening acceptance is separate from schema validation. MindManager conversion uses
   explicit loss/sheet-scope warnings and protects imported source files;
   [supported features and verification limits](docs/MINDMANAGER.md).
 - Graphical exports share font-measured title wrapping and reserve whitespace

@@ -253,6 +253,40 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    ("Slides", "Folien"),
+    ("Duplicate Slide", "Folie duplizieren"),
+    ("Slide source", "Folienquelle"),
+    ("Slide content", "Folieninhalt"),
+    ("Source subtree", "Quellzweig"),
+    ("Map context", "Kartenkontext"),
+    ("Auto-fit content", "Inhalt automatisch einpassen"),
+    ("Limit topic depth", "Thementiefe begrenzen"),
+    ("Topic depth", "Thementiefe"),
+    ("Hidden topics", "Ausgeblendete Themen"),
+    ("Missing topic", "Fehlendes Thema"),
+    ("Restore topic", "Thema wieder einblenden"),
+    ("Restore all topics", "Alle Themen wieder einblenden"),
+    ("Topic visibility", "Themensichtbarkeit"),
+    (
+        "Apply and export PowerPoint",
+        "Anwenden und als PowerPoint exportieren",
+    ),
+    (
+        "The presentation sheet is unavailable.",
+        "Das Präsentationsblatt ist nicht verfügbar.",
+    ),
+    (
+        "Presentation refreshed from the current map.",
+        "Präsentation anhand der aktuellen Karte aktualisiert.",
+    ),
+    (
+        "Slide source is unavailable.",
+        "Die Folienquelle ist nicht verfügbar.",
+    ),
+    (
+        "Click a topic to hide its subtree.",
+        "Klicken Sie auf ein Thema, um seinen Zweig auszublenden.",
+    ),
     ("Equation preview in notes", "Gleichungsvorschau in Notizen"),
     ("Cancel equation edit", "Gleichungsbearbeitung abbrechen"),
     (
@@ -303,8 +337,8 @@ const DE: &[(&str, &str)] = &[
     ),
     ("PowerPoint slide size", "PowerPoint-Folienformat"),
     (
-        "Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.",
-        "Folien werden als flache Bilder exportiert; Text und Formen sind nicht separat bearbeitbar. Der Rahmen wird ohne Beschnitt oder Verzerrung auf das gewählte Seitenverhältnis erweitert.",
+        "Slides use editable text, vector shapes and paths. Photos remain images. The frame expands to the selected ratio without cropping or stretching.",
+        "Folien enthalten bearbeitbaren Text, Vektorformen und Pfade. Fotos bleiben Bilder. Der Rahmen wird ohne Beschnitt oder Verzerrung auf das gewählte Seitenverhältnis erweitert.",
     ),
     ("Widescreen (16:9)", "Breitbild (16:9)"),
     ("Standard (4:3)", "Standard (4:3)"),
@@ -2480,6 +2514,7 @@ mod tests {
             include_str!("planning.rs"),
             include_str!("zones.rs"),
             include_str!("pitch.rs"),
+            include_str!("pitch/pitch_editor.rs"),
             include_str!("pitch/pitch_player.rs"),
             include_str!("pitch/pitch_preview.rs"),
             include_str!("pitch/pitch_ai.rs"),

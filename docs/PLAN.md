@@ -568,7 +568,18 @@ limits without source loss. Strict app/notes-test Clippy, the locked native app
 build, locked WASM web check, nine workflow contract tests and Actions lint
 passed. This is not a full-workspace or multi-host GUI acceptance claim.
 
-## XV6 local slice: image-based PowerPoint export (2026-10-27)
+## XV6 vector redesign: active follow-up
+
+The user has requested live, source-focused vector slides, interactive authoring,
+graceful updates after map edits and genuinely editable PowerPoint objects.
+[PRESENTATIONS](PRESENTATIONS.md) is the implementation contract, prioritized
+phase plan, concept critique and acceptance record. It supersedes the
+image-only limitation of the historical first slice below. Existing slide crops
+remain backward compatible; new focus/visibility settings must be shared by all
+renderers. Native PPTX objects need fresh schema and installed-Office evidence;
+the earlier bitmap-deck opening check does not establish that acceptance.
+
+## XV6 historical slice: image-based PowerPoint export (2026-10-27)
 
 The local XV6 slice adds `.pptx` to the export menu and stable
 command catalog. Export reuses saved Pitch slide order and frames, asks the
@@ -1098,7 +1109,7 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 3 | XV3 structural numbering / R3, R6 | Maintain ordered procedures, outlines and agendas as topics move. | A separate numbering model and computed labels, not title prefixes; native persistence and output fidelity are part of the slice. |
 | 4 | XV4 portable images/attachments / R4, R6 | Reopen and share evidence-rich maps without broken local image paths. | Versioned resource store first, then image insert/render/resize/remove, then attachments. Include recovery, clipboard and merge remapping. |
 | 5 | XV5 DOCX/TextBundle import / R6 | Turn existing documents into useful maps instead of retyping outlines. | Text-only DOCX headings/lists can precede XV4; bundled resources depend on XV4. Current Word/TextBundle export does not imply import. |
-| 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | Reuse saved frames; explicit aspect ratio/fit preview and a clearly labeled image-based PPTX first. Editable PPTX is a separate scope. |
+| 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | The original image-only slice is superseded by the user-directed vector scope in PRESENTATIONS: semantic visibility, live framing, visual authoring and native editable PPTX objects, with explicit ratio/fit preview and legacy compatibility. |
 | 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Finish lossless structured note storage, draft/save/recovery safety, export parity and honest format-loss reporting while retaining bounded visible-text search; add equations separately. Images alone are not rendered math. |
 | 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
 | 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |

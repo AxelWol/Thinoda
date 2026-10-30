@@ -1,3 +1,22 @@
+Slides|Slides
+Duplicate Slide|Duplicar slide
+Slide source|Origem do slide
+Slide content|Conteúdo do slide
+Source subtree|Subárvore de origem
+Map context|Contexto do mapa
+Auto-fit content|Ajustar conteúdo automaticamente
+Limit topic depth|Limitar profundidade dos tópicos
+Topic depth|Profundidade dos tópicos
+Hidden topics|Tópicos ocultos
+Missing topic|Tópico ausente
+Restore topic|Mostrar tópico novamente
+Restore all topics|Mostrar todos os tópicos
+Topic visibility|Visibilidade dos tópicos
+Apply and export PowerPoint|Aplicar e exportar para PowerPoint
+The presentation sheet is unavailable.|A folha da apresentação não está disponível.
+Presentation refreshed from the current map.|Apresentação atualizada a partir do mapa atual.
+Slide source is unavailable.|A origem do slide não está disponível.
+Click a topic to hide its subtree.|Clique em um tópico para ocultar sua subárvore.
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
 Data|Dados
@@ -29,7 +48,7 @@ Preview does not open links or load images.|A prévia não abre links nem carreg
 Note preview limit reached. The full source is preserved and editable.|Limite da prévia atingido. O texto completo é preservado e pode ser editado.
 Generation provider|Provedor de geração
 PowerPoint slide size|Tamanho do slide do PowerPoint
-Slides are exported as flat images, not separately editable text or shapes. The frame expands to the selected ratio without cropping or stretching.|Os slides são exportados como imagens; textos e formas não podem ser editados separadamente. O enquadramento se expande para a proporção escolhida sem cortes ou deformações.
+Slides use editable text, vector shapes and paths. Photos remain images. The frame expands to the selected ratio without cropping or stretching.|Os slides usam texto editável, formas vetoriais e caminhos. As fotos continuam sendo imagens. O enquadramento se expande para a proporção escolhida sem cortes ou deformações.
 Widescreen (16:9)|Tela ampla (16:9)
 Standard (4:3)|Padrão (4:3)
 CLI default|Padrão da CLI

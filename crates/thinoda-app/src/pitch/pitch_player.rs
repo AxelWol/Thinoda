@@ -5,6 +5,64 @@ fn player_viewport() -> egui::ViewportId {
 }
 
 impl ThinodaApp {
+    /// Follow the captured sheet and slide identity.
+    /// An edit to another sheet advances the revision but does not restart this scene.
+    pub(super) fn refresh_pitch(&mut self, player: &mut PitchPlayer) -> Result<bool, String> {
+        let doc = self
+            .docs
+            .iter_mut()
+            .find(|doc| doc.key == player.owner.document)
+            .ok_or_else(|| t("The presentation sheet is unavailable.").to_string())?;
+        // Topic IDs are sheet-local. Never search other sheets for a matching root:
+        // an unrelated sheet can have the same ID.
+        let index = player.owner.sheet;
+        let sheet = doc
+            .doc
+            .workbook()
+            .sheets
+            .get(index)
+            .filter(|sheet| sheet.root == player.owner.root)
+            .ok_or_else(|| t("The presentation sheet is unavailable.").to_string())?;
+        if doc.doc.state_id() == player.owner.revision && sheet != player.sheet.as_ref() {
+            return Err(t("The presentation sheet is unavailable.").to_string());
+        }
+        player.owner.revision = doc.doc.state_id();
+        player.owner.sheet = index;
+        if sheet == player.sheet.as_ref() {
+            return Ok(false);
+        }
+        thinoda_core::images::validate_visual(sheet).map_err(|error| error.to_string())?;
+        let selected = player
+            .sheet
+            .presentation
+            .slides
+            .get(player.selected)
+            .map(|slide| slide.id);
+        let next = sheet
+            .presentation
+            .slides
+            .iter()
+            .position(|slide| Some(slide.id) == selected)
+            .unwrap_or_else(|| {
+                player
+                    .selected
+                    .min(sheet.presentation.slides.len().saturating_sub(1))
+            });
+        player.sheet = Arc::new(sheet.clone());
+        player.layout = if doc.doc.active_index() == index {
+            doc.view.layout_for(&doc.doc)
+        } else {
+            Arc::new(thinoda_core::layout_sheet(
+                &player.sheet,
+                &thinoda_core::ApproxMeasure,
+                doc.view.dark,
+            ))
+        };
+        player.selected = next;
+        player.playback.refresh();
+        Ok(true)
+    }
+
     pub(crate) fn is_pitch_viewport(&self) -> bool {
         !crate::files::is_web() && self.current_viewport == player_viewport()
     }
@@ -46,21 +104,16 @@ impl ThinodaApp {
         let Some(mut player) = self.pitch.player.take() else {
             return;
         };
-        let valid = self.docs.iter().any(|doc| {
-            doc.key == player.owner.document
-                && doc.doc.state_id() == player.owner.revision
-                && doc
-                    .doc
-                    .workbook()
-                    .sheets
-                    .get(player.owner.sheet)
-                    .is_some_and(|sheet| sheet.root == player.owner.root)
-        });
-        if !valid {
-            self.toasts.warning(t(
-                "The document changed. Restart Pitch to show the current map.",
-            ));
-            return;
+        match self.refresh_pitch(&mut player) {
+            Ok(true) => {
+                self.toasts
+                    .info(t("Presentation refreshed from the current map."));
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.toasts.warning(error);
+                return;
+            }
         }
         let mut open = true;
         #[cfg(not(target_arch = "wasm32"))]
@@ -161,6 +214,7 @@ impl ThinodaApp {
             ..Default::default()
         };
         let count = player.sheet.presentation.slides.len();
+        player.selected = player.selected.min(count.saturating_sub(1));
         let steps =
             pitch_motion::Playback::topic_order(&player.sheet, &player.layout, player.selected)
                 .len()
@@ -309,6 +363,12 @@ impl ThinodaApp {
         if let Some(images) = export {
             self.begin_pitch_export(ui.ctx(), (*player.sheet).clone(), options.clone(), images);
         }
+        if count == 0 {
+            ui.label(t(
+                "No slides yet. Generate branch and Zone slides, or add the selected branch.",
+            ));
+            return !exit;
+        }
         ui.label(format!(
             "{} / {} · {}",
             player.selected + 1,
@@ -387,16 +447,24 @@ impl ThinodaApp {
 }
 
 fn presenter_map(ui: &mut egui::Ui, player: &PitchPlayer, size: egui::Vec2, dark: bool) {
+    let Some(slide) = player.sheet.presentation.slides.get(player.selected) else {
+        return;
+    };
+    let Ok(resolved) =
+        thinoda_core::resolve_presentation_slide(&player.sheet, slide, &player.layout)
+    else {
+        ui.label(t("Slide source is unavailable."));
+        return;
+    };
     let (rect, _) = ui.allocate_exact_size(size.max(egui::vec2(1.0, 1.0)), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let background = thinoda_core::theme::Theme::for_settings(&player.sheet.theme)
         .background(&player.sheet.theme, dark);
     painter.rect_filled(rect, 4.0, thinoda_canvas::color32(background));
     let rect = rect.shrink(5.0);
-    let bounds = player
-        .layout
-        .bounds
-        .union(&player.sheet.presentation.slides[player.selected].frame);
+    // The presenter orientation panel intentionally shows context outside the isolated
+    // stage. Only its highlighted frame comes from the resolved slide.
+    let bounds = player.layout.bounds.union(&resolved.frame);
     let zoom = (rect.width() / bounds.size.x.max(1.0)).min(rect.height() / bounds.size.y.max(1.0));
     let center = bounds.center();
     let xf = thinoda_canvas::Xf {
@@ -414,9 +482,130 @@ fn presenter_map(ui: &mut egui::Ui, player: &PitchPlayer, size: egui::Vec2, dark
         },
     );
     painter.rect_stroke(
-        xf.rect(player.sheet.presentation.slides[player.selected].frame),
+        xf.rect(resolved.frame),
         0.0,
         egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
         egui::StrokeKind::Inside,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn painted_texts(output: &egui::FullOutput) -> Vec<String> {
+        fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => texts.push(text.galley.text().to_string()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn presenter_orientation_paints_full_map_and_original_zones_but_stage_stays_isolated() {
+        for dark in [false, true] {
+            let mut app = super::super::tests::setup(true);
+            let ctx = Context::default();
+            ctx.set_visuals(if dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            app.open_pitch(&ctx, true);
+            let mut player = app.pitch.player.take().unwrap();
+            Arc::make_mut(&mut player.sheet).presentation.slides[0]
+                .frame
+                .min
+                .x += 5000.0;
+            let before = Arc::clone(&player.sheet);
+            let slide = &player.sheet.presentation.slides[player.selected];
+            let resolved =
+                thinoda_core::resolve_presentation_slide(&player.sheet, slide, &player.layout)
+                    .unwrap();
+            assert!(resolved.layout.order.len() < player.layout.order.len());
+            assert!(resolved.zones.is_empty());
+            assert_ne!(resolved.frame, slide.frame);
+            let raw = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            let mut orientation = ctx.run_ui(raw(), |ui| {
+                presenter_map(ui, &player, egui::vec2(850.0, 600.0), dark);
+            });
+            orientation.textures_delta.clear();
+            let texts = painted_texts(&orientation);
+            for label in [
+                "Center",
+                "First branch",
+                "Second branch",
+                "Floating",
+                "Zone",
+            ] {
+                assert!(
+                    texts.iter().any(|text| text == label),
+                    "missing orientation text: {label}: {texts:?}"
+                );
+            }
+            // The orientation outline uses the shared effective auto-frame, not the
+            // legacy saved frame. Its stroke must be present in the painted panel.
+            let panel = orientation
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.rect.size() == egui::vec2(850.0, 600.0) => {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+                .shrink(5.0);
+            let bounds = player.layout.bounds.union(&resolved.frame);
+            let zoom = (panel.width() / bounds.size.x.max(1.0))
+                .min(panel.height() / bounds.size.y.max(1.0));
+            let center = bounds.center();
+            let xf = thinoda_canvas::Xf {
+                origin: panel.center() - egui::vec2(center.x, center.y) * zoom,
+                zoom,
+            };
+            assert!(orientation.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Rect(rect)
+                    if rect.stroke.width == 2.0 && rect.stroke.color == Palette::of(&ctx).accent
+                    && rect.rect == xf.rect(resolved.frame)
+            )));
+            let mut stage = ctx.run_ui(raw(), |ui| {
+                player.playback.show(
+                    ui,
+                    &player.sheet,
+                    &player.layout,
+                    player.selected,
+                    egui::vec2(850.0, 600.0),
+                    dark,
+                );
+            });
+            stage.textures_delta.clear();
+            let texts = painted_texts(&stage);
+            assert!(texts.iter().any(|text| text == "First branch"));
+            for excluded in ["Center", "Second branch", "Floating", "Zone"] {
+                assert!(
+                    !texts.iter().any(|text| text == excluded),
+                    "stage leaked {excluded}"
+                );
+            }
+            assert_eq!(player.sheet, before);
+        }
+    }
 }
