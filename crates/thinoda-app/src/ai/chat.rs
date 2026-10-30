@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use thinoda_ai::Message;
 use thinoda_platform::settings::AiResponseMode;
 
+#[path = "chat_history.rs"]
+mod history;
 #[cfg(test)]
 #[path = "chat_tests.rs"]
 mod tests;
@@ -33,6 +35,7 @@ impl Scope {
 
 #[derive(Default)]
 struct Conversation {
+    thread_id: String,
     draft: String,
     messages: Vec<Message>,
     error: Option<String>,
@@ -51,7 +54,8 @@ impl Conversation {
     }
 
     fn needs_storage(&self) -> bool {
-        !self.draft.is_empty()
+        !self.thread_id.is_empty()
+            || !self.draft.is_empty()
             || !self.messages.is_empty()
             || self.error.is_some()
             || self.scope != Scope::Selection
@@ -67,14 +71,17 @@ struct PendingChat {
     viewport: egui::ViewportId,
     prompt: String,
     preview: String,
+    thread_id: String,
+    durable: bool,
 }
 
-/// Session-only per-document conversations; opening the panel never sends data.
+/// Session-only by default, with opt-in local named threads. Opening never sends data.
 #[derive(Default)]
 pub struct ChatState {
     pub open: bool,
     threads: BTreeMap<String, Conversation>,
     pending: Option<PendingChat>,
+    history: history::HistoryState,
 }
 
 impl ChatState {
@@ -181,6 +188,14 @@ impl ThinodaApp {
     }
 
     pub(super) fn protect_ai_chat_input(&mut self, ctx: &Context) {
+        let name_id = egui::Id::unique("chat_thread_name");
+        if self.ai.chat.open && ctx.memory(|memory| memory.has_focus(name_id)) {
+            thinoda_canvas::protect_ime_candidate_keys(
+                ctx,
+                name_id,
+                &mut self.ai.chat.history.composing,
+            );
+        }
         if self.ai.chat.open
             && let Some(key) = self.doc().map(|doc| doc.key.clone())
             && let Some(thread) = self.ai.chat.threads.get_mut(&key)
@@ -199,6 +214,7 @@ impl ThinodaApp {
     }
 
     pub(super) fn poll_ai_chat(&mut self, ctx: &Context) {
+        self.sync_chat_bindings();
         self.ai
             .chat
             .threads
@@ -226,11 +242,16 @@ impl ThinodaApp {
             pending.job.cancel();
             return;
         };
+        if thread.thread_id != pending.thread_id {
+            pending.job.cancel();
+            return;
+        }
         if oversized {
             pending.job.cancel();
             thread.error = Some(t("AI reply is too large. Try a shorter request.").into());
             return;
         }
+        let mut completed = false;
         match finished.unwrap() {
             Ok(text)
                 if text.len() <= MAX_REPLY_BYTES
@@ -247,10 +268,14 @@ impl ThinodaApp {
                     thread.draft.clear();
                 }
                 thread.error = None;
+                completed = true;
             }
             Ok(text) if text.trim().is_empty() => thread.error = Some(error_text(&AiError::Empty)),
             Ok(_) => thread.error = Some(t("AI reply is too large. Try a shorter request.").into()),
             Err(error) => thread.error = Some(error_text(&error)),
+        }
+        if completed && pending.durable {
+            self.persist_chat_thread(&pending.doc_key);
         }
     }
 
@@ -300,6 +325,9 @@ impl ThinodaApp {
             viewport: self.current_viewport,
             prompt: thread.draft.clone(),
             preview: String::new(),
+            thread_id: thread.thread_id.clone(),
+            durable: !thread.thread_id.is_empty()
+                && self.ai.chat.history.documents.contains_key(key),
         });
         thread.error = None;
     }
@@ -323,7 +351,7 @@ impl ThinodaApp {
                 self.ai.chat.open = false;
             }
         });
-        widgets::caption(ui, t("Chat history is session-only."));
+        self.chat_history_controls(ui, &key);
         self.semantic_panel(ui);
         if !self.ai.chat.threads.contains_key(&key)
             && self.ai.chat.threads.len() >= MAX_CONVERSATIONS
@@ -483,6 +511,7 @@ impl ThinodaApp {
             && self.ai.review.is_none()
             && !self.ai.chat.is_busy()
             && !self.pitch.ai_busy()
+            && !self.ai.chat.history.confirming()
             && scope_context.is_ok()
             && !thread.confirm_clear
             && thread.replacement.is_none()
@@ -513,7 +542,9 @@ impl ThinodaApp {
                 self.cancel_ai_chat();
             }
             if !thread.messages.is_empty()
-                && ui.button(t("Clear conversation")).clicked()
+                && ui
+                    .add_enabled(!pending_here, egui::Button::new(t("Clear conversation")))
+                    .clicked()
                 && allowed
             {
                 thread.confirm_clear = true;
@@ -526,9 +557,11 @@ impl ThinodaApp {
                     if pending_here {
                         self.cancel_ai_chat();
                     }
-                    thread.messages.clear();
-                    thread.error = None;
-                    thread.confirm_clear = false;
+                    if self.clear_durable_chat(&key, &thread) {
+                        thread.messages.clear();
+                        thread.error = None;
+                        thread.confirm_clear = false;
+                    }
                 }
                 if ui.button(t("Cancel")).clicked() && allowed {
                     thread.confirm_clear = false;

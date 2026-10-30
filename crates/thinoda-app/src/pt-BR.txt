@@ -1,4 +1,10 @@
 Slides|Slides
+Local chat history|Histórico local do chat
+Disable and forget this file|Desativar e esquecer este arquivo
+Save the document first. Save As, moved files and recovery do not inherit history.|Salve primeiro o documento. Salvar como, arquivos movidos e recuperação não herdam o histórico.
+Retention is applied only on confirmation; it deletes older threads across all files.|A retenção só é aplicada após confirmação; exclui conversas antigas de todos os arquivos.
+Existing session messages are not copied. Create a named thread to save future completed exchanges.|As mensagens existentes da sessão não são copiadas. Crie uma conversa com nome para salvar futuras trocas completas.
+Prompts and replies may contain sensitive data. Local history is not encrypted. Never included in maps or exports.|As perguntas e respostas podem conter dados sensíveis. O histórico local não é criptografado. Nunca é incluído em mapas ou exportações.
 Duplicate Slide|Duplicar slide
 Slide source|Origem do slide
 Slide content|Conteúdo do slide

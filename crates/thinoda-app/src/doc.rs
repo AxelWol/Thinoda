@@ -93,6 +93,8 @@ impl InspectorEdit {
 
 /// One open document (a tab).
 pub struct OpenDoc {
+    /// App-local chat binding, never serialized into the workbook or recovery.
+    pub(crate) chat_identity: Option<thinoda_platform::chat_history::Binding>,
     /// Stable key used for recovery snapshots.
     pub key: String,
     pub doc: Document,
@@ -120,6 +122,7 @@ impl OpenDoc {
         view.select_only(doc.sheet().root);
         let state = doc.state_id();
         Self {
+            chat_identity: None,
             key: uuid::Uuid::new_v4().simple().to_string(),
             doc,
             view,
@@ -162,6 +165,14 @@ impl OpenDoc {
             d.path = Some(path.to_path_buf());
             d.format = format;
             d.fingerprint = fingerprint(path).ok();
+            d.chat_identity = (|| {
+                let (binding, bytes) =
+                    thinoda_platform::chat_history::Binding::read_document(path).ok()?;
+                let current = thinoda_io::import_bytes_with_report(format, &bytes).ok()?;
+                // A background import may have finished before an external
+                // replacement. Never bind its old workbook to the newer file.
+                (current.workbook == *d.doc.workbook()).then_some(binding)
+            })();
         } else {
             // Imported from a foreign format: saving asks for a new native file name.
             d.import_source = Some(pfs::canonicalize(path).map_err(|e| e.to_string())?);
@@ -286,6 +297,11 @@ impl OpenDoc {
             thinoda_io::export_bytes(self.doc.workbook(), format, &ExportOptions::default())
                 .map_err(export_error)?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
+        self.chat_identity = if is_native(format) {
+            thinoda_platform::chat_history::Binding::from_bytes(path, &bytes).ok()
+        } else {
+            None
+        };
         self.path = Some(path.to_path_buf());
         self.format = format;
         self.fingerprint = fingerprint(path).ok();

@@ -689,6 +689,18 @@ those system-owned controls. WinGet publishing remains paused.
   English when the model cannot write it; *Translate* keeps the target language you ask for.
 
 ## AI setup (LM Studio)
+
+**Optional local conversations (XV9):** AI Chat remains session-only by default.
+For a saved file, **AI Chat → Local chat history → Enable local history** offers
+named threads and confirmed 7/30/90-day pruning, per-file forgetting and global
+deletion. Only completed exchanges in named threads are persisted; existing
+session messages, drafts, map-context snapshots and credentials are not copied.
+Prompts/replies may contain sensitive data; local history is **not encrypted**.
+Nothing is sent on restore, and transcripts are never included in maps or
+exports. Save As, moved/copied files and recovery do not inherit history.
+See [AI-HISTORY.md](docs/AI-HISTORY.md) for identity, limits, browser Web Lock
+requirements, failures and manual acceptance boundaries.
+
 1. Start LM Studio, load a chat model (e.g. `google/gemma-4-e4b`) and enable the local server.
 2. In Thinoda open **Settings › AI Assistant**, set *Server URL* to `http://127.0.0.1:1234/v1`
    (or a LAN server such as `http://192.168.1.216:1234/v1`), leave *Model* empty for automatic

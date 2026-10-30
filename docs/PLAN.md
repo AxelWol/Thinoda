@@ -27,7 +27,21 @@ languages, light/dark, narrow layouts and independent tab scroll/draft behavior.
 below. Broader notation and topic/Outliner-row equation rendering remain
 deliberately open; this phase does not claim complete XV7 or general math
 support. XV8 task-aware Tree Table is implemented locally below; the next
-requested priority is XV9 opt-in durable local AI conversations.
+requested priority XV9 is implemented locally as described below, with manual
+platform/browser acceptance still open.
+
+**XV9 local conversations (2026-10-30, implemented locally):** opt-in app-local
+named threads, transactional bounded storage and confirmed retention/delete
+controls extend the existing chat without changing workbook/recovery schemas.
+Canonical path plus saved-byte SHA-256 binds exact reopen/restart; same-path
+session saves advance the binding, while Save As, copies/moves and recovery do
+not inherit history. Defaults remain session-only; explicit Send/current scope,
+thread/document/viewport ownership and completed-pair-only persistence are kept.
+Native storage is locked/atomic/revision checked; browser durability requires
+Web Locks and writable localStorage rather than volatile VFS fallback.
+See [AI-HISTORY.md](AI-HISTORY.md) for privacy, prune-now retention, conservative
+re-enable/conflict behavior, verification and outstanding manual gates. No push,
+PR, merge, release or independent QA approval is part of this slice.
 
 **XV8 task-aware Tree Table (2026-10-30, implemented locally):** the existing
 Tree Table structure now opens real title/start/due/duration/progress cells,
@@ -1175,7 +1189,7 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | The original image-only slice is superseded by the user-directed vector scope in PRESENTATIONS: semantic visibility, live framing, visual authoring and native editable PPTX objects, with explicit ratio/fit preview and legacy compatibility. |
 | 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Finish lossless structured note storage, draft/save/recovery safety, export parity and honest format-loss reporting while retaining bounded visible-text search; add equations separately. Images alone are not rendered math. |
 | 8 | XV8 task-oriented Tree Table / R3, R8 | Implemented locally: real title/date/duration/progress cells, shared planning validation and view-only columns/sibling sort. | See [TREE-TABLE.md](TREE-TABLE.md); map output is not table output. No independent task model. |
-| 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
+| 9 | XV9 durable local AI conversations / R9 | Implemented locally: opt-in named per-file threads preserve session-only defaults. | See [AI-HISTORY.md](AI-HISTORY.md) for path/content identity, transactional storage, privacy, explicit retention/delete and remaining manual platform/browser gates. No hosted account, credentials in transcripts or conversation export with maps. |
 
 **User-requested insertions (2026-10-26).** After XV3, deliver UR1 (flat AI settings
 page), UR2 (embedding-model discovery during Test Connection) and UR5 (compact

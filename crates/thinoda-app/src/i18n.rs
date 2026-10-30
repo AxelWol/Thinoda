@@ -253,6 +253,62 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    (
+        "Enter a unique thread name (1–80 bytes, no control characters).",
+        "Einen eindeutigen Gesprächsnamen eingeben (1–80 Bytes, keine Steuerzeichen).",
+    ),
+    ("Local chat history", "Lokaler Chatverlauf"),
+    (
+        "Local chat history is enabled.",
+        "Der lokale Chatverlauf ist aktiviert.",
+    ),
+    (
+        "History operation failed; transcripts kept in memory.",
+        "Verlaufsaktion fehlgeschlagen; Gespräche bleiben im Arbeitsspeicher.",
+    ),
+    (
+        "Prompts and replies may contain sensitive data. Local history is not encrypted. Never included in maps or exports.",
+        "Fragen und Antworten können sensible Daten enthalten. Der lokale Verlauf ist nicht verschlüsselt und wird nie in Maps oder Exporte aufgenommen.",
+    ),
+    (
+        "Save the document first. Save As, moved files and recovery do not inherit history.",
+        "Zuerst das Dokument speichern. Speichern unter, verschobene Dateien und Wiederherstellungen übernehmen keinen Verlauf.",
+    ),
+    (
+        "Close and reopen this document before enabling history again. Session transcripts remain available here.",
+        "Vor erneutem Aktivieren das Dokument schließen und wieder öffnen. Sitzungsgespräche bleiben hier verfügbar.",
+    ),
+    ("Enable local history", "Lokalen Verlauf aktivieren"),
+    (
+        "Session-only conversation",
+        "Gespräch nur für diese Sitzung",
+    ),
+    ("Conversation", "Gespräch"),
+    ("New thread", "Neues Gespräch"),
+    ("Thread name", "Gesprächsname"),
+    ("Delete thread", "Gespräch löschen"),
+    (
+        "Disable and forget this file",
+        "Für diese Datei deaktivieren und vergessen",
+    ),
+    ("days", "Tage"),
+    (
+        "Retention is applied only on confirmation; it deletes older threads across all files.",
+        "Die Aufbewahrungsfrist wird erst nach Bestätigung angewandt; ältere Gespräche aller Dateien werden gelöscht.",
+    ),
+    (
+        "Delete all local chat history",
+        "Alle lokalen Chatverläufe löschen",
+    ),
+    (
+        "Confirm local history change?",
+        "Änderung des lokalen Verlaufs bestätigen?",
+    ),
+    ("Confirm", "Bestätigen"),
+    (
+        "Existing session messages are not copied. Create a named thread to save future completed exchanges.",
+        "Bisherige Sitzungsnachrichten werden nicht kopiert. Ein benanntes Gespräch speichert künftige abgeschlossene Dialoge.",
+    ),
     ("Slides", "Folien"),
     ("Duplicate Slide", "Folie duplizieren"),
     ("Slide source", "Folienquelle"),
@@ -2516,6 +2572,7 @@ mod tests {
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),
+            include_str!("ai/chat_history.rs"),
             include_str!("ai/prompts.rs"),
             include_str!("ai/semantic.rs"),
             include_str!("help.rs"),
