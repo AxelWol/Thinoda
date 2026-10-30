@@ -50,6 +50,10 @@ const PAGES: &[Page] = &[
             "Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.",
             "Data > Local Image provides width, placement and reset controls. Resize on the map with the lower-right handle; Escape cancels and arrow keys resize a focused handle.",
             "Insert > Attachment embeds a local file as a child topic (1 byte to 8 MiB). Data > Attachment saves or downloads it separately. Nothing is opened or executed. Save as .thinoda to retain attachments; other exports are not supported.",
+            crate::tree_table::HELP,
+            "Dates use YYYY-MM-DD. Duration counts inclusive working days.",
+            "Displayed dates are computed; editing Start date changes its explicit constraint.",
+            crate::tree_table::OUTPUT,
         ],
     },
     Page {

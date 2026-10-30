@@ -1018,6 +1018,27 @@ const DE: &[(&str, &str)] = &[
     ("Fishbone (left)", "Fischgräte (links)"),
     ("Matrix", "Matrix"),
     ("Tree Table", "Baumtabelle"),
+    ("Duration", "Dauer"),
+    ("Table columns", "Tabellenspalten"),
+    (
+        "Sort siblings (view only)",
+        "Geschwister sortieren (nur Ansicht)",
+    ),
+    ("Document order", "Dokumentreihenfolge"),
+    ("Tree Table help", "Hilfe zur Baumtabelle"),
+    ("Invalid task value", "Ungültiger Aufgabenwert"),
+    (
+        "Displayed dates are computed; editing Start date changes its explicit constraint.",
+        "Angezeigte Daten sind berechnet; das Bearbeiten des Startdatums ändert dessen explizite Vorgabe.",
+    ),
+    (
+        "Map image, PDF and print output render the map, not this table. Use Gantt export for scheduled task output.",
+        "Kartenbild, PDF und Druck geben die Karte aus, nicht diese Tabelle. Für geplante Aufgaben den Gantt-Export verwenden.",
+    ),
+    (
+        "Tree Table edits real topics and tasks. Tab moves between cells; arrows navigate; Enter edits or applies; Escape cancels. Blank cells do not schedule untouched topics. Sorting and columns are local views, not hierarchy edits.",
+        "Die Baumtabelle bearbeitet echte Themen und Aufgaben. Tab wechselt Zellen; Pfeile navigieren; Eingabe bearbeitet oder übernimmt; Escape verwirft. Leere Zellen planen unberührte Themen nicht ein. Sortierung und Spalten sind lokale Ansichten, keine Hierarchieänderungen.",
+    ),
     ("Create Masked Copy…", "Maskierte Kopie erstellen…"),
     ("Create Preview", "Vorschau erstellen"),
     (

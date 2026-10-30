@@ -8,6 +8,63 @@ fn draft(app: &mut ThinodaApp, ctx: &Context) -> PlanningEditor {
 }
 
 #[test]
+fn due_date_uses_new_predecessors_without_materializing_their_computed_start() {
+    let mut app = ThinodaApp::headless();
+    let ctx = Context::default();
+    let root = app.doc().unwrap().doc.sheet().root;
+    let child = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Successor", |sheet| {
+            Ok(sheet.add_child(root, None, "Dependency successor"))
+        })
+        .unwrap();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .set_task(
+            root,
+            Some(Task {
+                start_date: Some("2026-10-30".parse().unwrap()),
+                duration_days: Some(1),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+    app.doc_mut().unwrap().view.select_only(child);
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let mut editor = draft(&mut app, &ctx);
+    if let PlanningDraft::Task {
+        finish,
+        predecessors,
+        task,
+        ..
+    } = &mut editor.draft
+    {
+        *finish = "2026-11-03".into();
+        task.duration_days = Some(1);
+        predecessors.insert(root);
+    }
+    app.apply_planning_draft(&editor, false).unwrap();
+    let doc = app.doc_mut().unwrap();
+    assert_eq!(doc.doc.sheet().scheduling.tasks[&child].start_date, None);
+    assert_eq!(
+        doc.doc.sheet().scheduling.tasks[&child].duration_days,
+        Some(2)
+    );
+    assert_eq!(
+        doc.doc.sheet().compute_schedule().unwrap()[&child]
+            .finish_date
+            .unwrap()
+            .to_string(),
+        "2026-11-03"
+    );
+    doc.doc.undo();
+    assert_eq!(doc.doc.workbook(), &before);
+}
+
+#[test]
 fn exception_picker_accepts_nonworking_days_and_escape_only_closes_calendar() {
     let app = ThinodaApp::headless();
     let mut h = Harness::builder()

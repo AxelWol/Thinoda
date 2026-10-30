@@ -579,6 +579,7 @@ impl ThinodaApp {
         let previous_viewport = self.current_viewport;
         self.current_viewport = viewport;
         self.activate_document_window(viewport);
+        self.guard_table_draft(&ctx);
         self.prepare_keymap(&ctx);
         // Menus can dismiss an open popup before its own input field is drawn.
         self.protect_labels_ime(&ctx);
@@ -797,13 +798,24 @@ impl ThinodaApp {
                     self.home(ui);
                 } else if self.mode == CenterMode::Outliner {
                     self.outliner(ui);
+                } else if self.task_table_visible() {
+                    self.tree_table_ui(ui);
                 } else {
+                    if self
+                        .doc()
+                        .is_some_and(|doc| doc.doc.sheet().structure == Structure::TreeTable)
+                        && ui.button(t("Tree Table")).clicked()
+                        && widgets::touch_activation_allowed(&ctx)
+                    {
+                        self.tree_table.map_preview = false;
+                    }
                     self.map(ui);
                 }
             });
 
         if show_doc
             && self.mode == CenterMode::Map
+            && !self.task_table_visible()
             && !self.zen
             && !self.any_modal_open()
             && !self.dialogs.settings
@@ -813,6 +825,7 @@ impl ThinodaApp {
 
         if show_doc
             && self.mode == CenterMode::Map
+            && !self.task_table_visible()
             && !self.search.open
             && !self.palette.open
             && !self.any_modal_open()

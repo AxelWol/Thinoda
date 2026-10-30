@@ -371,6 +371,19 @@ those system-owned controls. WinGet publishing remains paused.
   existing Ctrl+Shift+N / Ctrl+K shortcuts. These commands require one selected
   topic; they commit an in-progress topic-title edit before switching views.
   Previous/Next Sheet (Ctrl+PageUp/Down) wraps between sheets and commits pending title edits.
+- **Tree Table** (Map > Structure > Tree Table) opens a compact hierarchical
+  task editor with title, start, due, inclusive working-day duration and progress
+  cells. Click a cell or use Tab/arrows and Enter/F2; Enter/Apply commits one
+  undo step, Escape discards, and Tab applies then advances. Invalid values stay
+  visible without changing the map. Opening the table does not create tasks.
+  Computed dates and dependencies use the existing scheduling engine; Data >
+  Task Planning and Work Calendar provide the full editor. Independent To-Do
+  state is unchanged. Map/Outliner/Gantt share topic selection and saved task data.
+  Columns and ascending sibling sort are local settings, never topic reorderings;
+  collapse is view-only. A horizontal scrollbar keeps columns usable in narrow
+  windows. Unapplied cells are discarded after selection/document/sheet/revision
+  changes and are not saved. Map image/PDF/print still render the **map**, not a
+  table; use Gantt export for scheduled-task output. See [the table guide](docs/TREE-TABLE.md).
 - Notes include bold/italic selection tools, bulleted/numbered lists and an opt-in
   offline Markdown preview. Formatting is stored as source text, preserving existing
   notes and their save/recovery/undo behavior; other views and exports may show the

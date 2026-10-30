@@ -26,8 +26,17 @@ languages, light/dark, narrow layouts and independent tab scroll/draft behavior.
 **Current boundary:** the XV7 vector export/interchange blocker is implemented
 below. Broader notation and topic/Outliner-row equation rendering remain
 deliberately open; this phase does not claim complete XV7 or general math
-support. After this bounded phase, the requested queue resumes with XV8
-task-aware Tree Table, then XV9 opt-in durable local AI conversations.
+support. XV8 task-aware Tree Table is implemented locally below; the next
+requested priority is XV9 opt-in durable local AI conversations.
+
+**XV8 task-aware Tree Table (2026-10-30, implemented locally):** the existing
+Tree Table structure now opens real title/start/due/duration/progress cells,
+with shared planning validation, computed dependency dates, one-step edits,
+safe drafts, keyboard/selection synchronization and view-only columns/sibling
+sort persisted in local settings. Opening does not schedule topics or change
+independent To-Do. Map/PDF/Print still render the map, not a table; Gantt keeps
+its existing output. See [TREE-TABLE.md](TREE-TABLE.md) for behavior, verification,
+self-review and limits. XV9 is not started by this change.
 
 **XV7 equation export/interchange slice (2026-10-30):** equation-bearing notes
 now render in a clearly separated vector appendix in SVG and PDF, in image
@@ -1165,7 +1174,7 @@ or a blocker to the newly authorized XV implementation. SS0-SS8 remain deferred.
 | 5 | XV5 DOCX/TextBundle import / R6 | Turn existing documents into useful maps instead of retyping outlines. | Text-only DOCX headings/lists can precede XV4; bundled resources depend on XV4. Current Word/TextBundle export does not imply import. |
 | 6 | XV6 interoperable presentation output / R7 | Reuse curated Pitch slides in normal presentation workflows. | The original image-only slice is superseded by the user-directed vector scope in PRESENTATIONS: semantic visibility, live framing, visual authoring and native editable PPTX objects, with explicit ratio/fit preview and legacy compatibility. |
 | 7 | XV7 rich notes and equations / R4 | Keep formatted research, study and engineering content in the map. | Finish lossless structured note storage, draft/save/recovery safety, export parity and honest format-loss reporting while retaining bounded visible-text search; add equations separately. Images alone are not rendered math. |
-| 8 | XV8 task-oriented Tree Table / R3, R8 | Review and edit dates/duration/progress in a compact planning table. | Reuse F3 schedule operations; the current TreeTable layout enum is not a task-column editor. |
+| 8 | XV8 task-oriented Tree Table / R3, R8 | Implemented locally: real title/date/duration/progress cells, shared planning validation and view-only columns/sibling sort. | See [TREE-TABLE.md](TREE-TABLE.md); map output is not table output. No independent task model. |
 | 9 | XV9 durable local AI conversations / R9 | Resume research after restart and separate discussions by task. | Extend session-only chat with optional bounded app-local persistence and named threads; no hosted account, credentials in transcripts or automatic conversation export with maps. |
 
 **User-requested insertions (2026-10-26).** After XV3, deliver UR1 (flat AI settings
