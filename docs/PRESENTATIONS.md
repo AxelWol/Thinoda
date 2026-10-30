@@ -179,6 +179,10 @@ map cloning. A 512-slide, 436-topic fixture resolves four vertical or two
 horizontal thumbnails per frame, with a regression cap of eight independent of
 deck length. Twenty debug redraws took 39-44 ms per layout/appearance combination;
 this is focused fixture evidence, not a universal device performance guarantee.
+Local review also exposed a zero-height rail allocation that clipped the first
+thumbnail and its title. The wide workspace now reserves the scroll viewport
+and heading height; a paint-clip regression covers the complete first card in
+both appearances.
 
 Separate integration acceptance uncovered two export issues:
 

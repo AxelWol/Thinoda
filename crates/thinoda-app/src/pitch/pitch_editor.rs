@@ -73,9 +73,11 @@ impl PitchEditor {
         let before = self.sheet.presentation.clone();
         if ui.available_width() >= 720.0 {
             let width = ui.available_width();
+            let filmstrip_height =
+                430.0 + ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y;
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
-                    egui::vec2((width * 0.22).min(210.0), 0.0),
+                    egui::vec2((width * 0.22).min(210.0), filmstrip_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| self.filmstrip(ui, touch, false),
                 );

@@ -137,6 +137,55 @@ fn unsafe_touch_does_not_change_visibility_or_framing() {
 }
 
 #[test]
+fn wide_workspace_does_not_clip_the_first_slide_card() {
+    for dark in [false, true] {
+        let mut editor = editor();
+        let ctx = Context::default();
+        ctx.set_visuals(if dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
+        for frame in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame as f64 / 60.0),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100.0, 1000.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| editor.workspace(ui, true),
+            );
+            output.textures_delta.clear();
+            if frame == 2 {
+                let card = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        egui::epaint::Shape::Rect(rect)
+                            if rect.stroke.width == 2.0
+                                && rect.rect.width() > 140.0
+                                && rect.rect.height() > 90.0 =>
+                        {
+                            Some((clipped.clip_rect, rect.rect))
+                        }
+                        _ => None,
+                    })
+                    .expect("selected slide card is painted");
+                assert!(
+                    card.0.contains_rect(card.1),
+                    "first slide card {:?} is clipped by {:?}",
+                    card.1,
+                    card.0
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn near_limit_filmstrip_resolves_only_viewport_thumbnails_not_every_slide_on_redraw() {
     use super::super::pitch_preview::THUMBNAIL_RESOLVES;
     // Both map size and deck size are deliberately nontrivial. Cloning the full map
