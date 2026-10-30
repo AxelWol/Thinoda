@@ -101,6 +101,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Format::Excel,
         &Default::default(),
     )?;
+    let equation_topic = book.active_mut().add_child(branch, None, "数式 · café");
+    let equation_note = thinoda_core::equations::replace_note(
+        "**Editable vector equation**\n",
+        Some("\\frac{a}{b}+x_{i}^{2}"),
+    )?;
+    book.active_mut()
+        .set_markdown_notes(equation_topic, Some(equation_note))?;
     for (appearance, dark) in [("light", false), ("dark", true)] {
         let options = ExportOptions {
             dark,

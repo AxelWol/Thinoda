@@ -11,6 +11,25 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current next-value state (2026-10-30)
 
+**Ordered continuation and release handoff (2026-10-30):** equation vector
+handoff, task-aware Tree Table and opt-in local named AI conversations are
+implemented in that order. See [PRESENTATIONS.md](PRESENTATIONS.md),
+[TREE-TABLE.md](TREE-TABLE.md) and [AI-HISTORY.md](AI-HISTORY.md) for precise
+contracts and remaining limits. An independent integration critique found no
+blocking defects and verified shared scheduling transactions, filtered equation
+appendices and revision-checked local-history ownership. Its Unicode appendix
+title measurement concern was corrected with measured multiline layout and
+regressions. Broader equation notation/topic rendering, dedicated table export
+and automatic history expiration remain separate work, not claimed parity.
+
+The Office CI fixtures now include a Unicode-labelled fraction/script equation
+in all four appearance/ratio PPTX decks. All eight Office files pass Microsoft's
+SDK including negative controls; the fresh light 16:9 deck opens in installed
+Windows PowerPoint without repair and exposes editable equation glyphs and
+fraction rule. User requested merging this session to develop/main and a fully
+packaged release after final review. Follow normal CI/release gates; no force
+pushes, moved tags or protection bypass.
+
 **User review accepted vector presentations (2026-10-30).** Live vector
 authoring, semantic visibility, dynamic slide updates and editable native
 PowerPoint output are implemented; see [PRESENTATIONS.md](PRESENTATIONS.md)
