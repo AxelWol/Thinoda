@@ -8,7 +8,11 @@ use thinoda_io::{
     Format,
     fim::{Dialect, ExchangeReport},
 };
-use thinoda_ui::{Dialog, widgets};
+use thinoda_ui::{
+    Dialog,
+    tokens::{Palette, Tokens},
+    widgets,
+};
 
 use crate::{
     app::ThinodaApp,
@@ -454,7 +458,8 @@ impl ThinodaApp {
         let primary = doc.view.primary();
         let source = source.clone();
         let selection = (key.clone(), index, primary);
-        if self.fim.selection.as_ref() != Some(&selection) {
+        let selection_changed = self.fim.selection.as_ref() != Some(&selection);
+        if selection_changed {
             self.fim.selected_record = None;
             self.fim.page = 0;
             self.fim.selection = Some(selection);
@@ -470,8 +475,9 @@ impl ThinodaApp {
             .as_ref()
             .filter(|(owner, sheet, _)| owner == &key && *sheet == index)
             .map(|(_, _, record)| *record);
+        let map_record = primary.and_then(|id| source.record_for_topic(id));
         let selected = selected
-            .or_else(|| primary.and_then(|id| source.record_for_topic(id)))
+            .or(map_record)
             .unwrap_or_else(|| source.root_record());
         let records = source.records();
         let bound_topic = source.topic_for_record(selected);
@@ -502,6 +508,39 @@ impl ThinodaApp {
             ui,
             t("Save drafts as .thinoda. XDF export requires valid schemas and semantics."),
         );
+        let palette = Palette::of_ui(ui);
+        if let Some(metadata) = &metadata {
+            let highlighted = map_record == Some(selected);
+            let entry = egui::Frame::new()
+                .inner_margin(6.0)
+                .corner_radius(Tokens::RADIUS_S)
+                .stroke(egui::Stroke::new(
+                    if highlighted { 2.0 } else { 1.0 },
+                    if highlighted {
+                        palette.accent
+                    } else {
+                        palette.border
+                    },
+                ))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    if let Some(record) = records.iter().find(|record| record.record == selected) {
+                        ui.add(egui::Label::new(egui::RichText::new(&record.name).strong()).wrap());
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(kind_label(metadata.kind));
+                        if let Some(identity) = &metadata.identity {
+                            ui.label(identity);
+                        }
+                        if let Some(version) = &metadata.version {
+                            ui.label(version);
+                        }
+                    });
+                });
+            if selection_changed && highlighted {
+                entry.response.scroll_to_me(None);
+            }
+        }
         let mut change = None;
         widgets::section(ui, t("FIM validation"), true, |ui| {
             self.schema_controls(ui, dialect);
@@ -604,15 +643,6 @@ impl ThinodaApp {
         }
         if let Some(metadata) = &metadata {
             ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                ui.strong(kind_label(metadata.kind));
-                if let Some(identity) = &metadata.identity {
-                    ui.label(identity);
-                }
-                if let Some(version) = &metadata.version {
-                    ui.label(version);
-                }
-            });
             if metadata.usages > 1 {
                 ui.label(format!("{} · {}", t("Shared definition"), metadata.usages));
                 let usages: Vec<_> = self
@@ -794,14 +824,14 @@ impl ThinodaApp {
                 self.fim.page = 0;
             }
             for record in &records {
-                if ui
-                    .add(
-                        egui::Button::new(format!("{} · {}", kind_label(record.kind), record.name))
-                            .selected(selected == record.record)
-                            .wrap(),
-                    )
-                    .clicked()
-                {
+                let mut button =
+                    egui::Button::new(format!("{} · {}", kind_label(record.kind), record.name))
+                        .selected(selected == record.record)
+                        .wrap();
+                if map_record == Some(record.record) {
+                    button = button.stroke(egui::Stroke::new(2.0, palette.accent));
+                }
+                if ui.add(button).clicked() {
                     self.fim.selected_record = Some((key.clone(), index, record.record));
                     self.fim.page = 0;
                     if let Some(topic) = source.topic_for_record(record.record)

@@ -60,6 +60,174 @@ fn fourth_tab_shows_fim_identity_without_installing_or_validating() {
     assert!(h.state().command_available(&Cmd::Export(Format::FimXdf3)));
 }
 
+fn accent_entry_rect(h: &Harness<'_, ThinodaApp>, identity: &str) -> Option<egui::Rect> {
+    let label = h.get_by_role_and_label(Role::Label, identity).rect();
+    h.output().shapes.iter().find_map(|shape| {
+        if let egui::Shape::Rect(frame) = &shape.shape
+            && frame.stroke.color == h.state().accent
+            && frame.stroke.width == 2.0
+            && frame.rect.contains_rect(label)
+            && shape.clip_rect.contains_rect(frame.rect)
+        {
+            Some(frame.rect)
+        } else {
+            None
+        }
+    })
+}
+
+#[test]
+fn map_selection_reveals_accent_outlined_fim_entries_in_both_themes() {
+    use thinoda_platform::settings::ThemeMode;
+    for theme in [ThemeMode::Light, ThemeMode::Dark] {
+        let mut app = app();
+        app.settings.theme = theme;
+        app.accent = egui::Color32::from_rgb(194, 66, 122);
+        let root = app.docs[0].doc.sheet().root;
+        let field = app.docs[0].doc.sheet().topics[&root].children[0];
+        let state = app.docs[0].doc.state_id();
+        let mut h = harness(app);
+        assert!(accent_entry_rect(&h, "S00000000001").is_some());
+
+        h.state_mut().docs[0].view.select_only(field);
+        h.run_steps(5);
+        assert!(accent_entry_rect(&h, "F00000000001").is_some());
+        let field_position = {
+            let doc = &h.state().docs[0];
+            doc.view.selected_topic_rect(&doc.doc).unwrap().center()
+        };
+        h.state_mut().docs[0].view.select_only(root);
+        h.run_steps(5);
+        assert!(accent_entry_rect(&h, "S00000000001").is_some());
+        h.event(egui::Event::PointerMoved(field_position));
+        h.event(egui::Event::PointerButton {
+            pos: field_position,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton {
+            pos: field_position,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(5);
+        assert_eq!(h.state().docs[0].view.primary(), Some(field));
+        assert!(accent_entry_rect(&h, "F00000000001").is_some());
+
+        h.state_mut().accent = egui::Color32::from_rgb(24, 152, 108);
+        h.run_steps(4);
+        assert!(accent_entry_rect(&h, "F00000000001").is_some());
+        h.get_by_label("Document metadata").click();
+        h.run_steps(4);
+        let row = h
+            .get_by_role_and_label(Role::Button, "F · Postal code")
+            .rect();
+        assert!(h.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Rect(frame)
+                if frame.stroke.color == h.state().accent
+                    && frame.stroke.width == 2.0
+                    && frame.rect.expand(0.1).contains_rect(row))
+        }));
+
+        h.state_mut().format_tab = FormatTab::Style;
+        h.run_steps(3);
+        assert!(h.query_by_label("FIM · XDF3").is_none());
+        h.state_mut().docs[0].view.select_only(root);
+        h.run_steps(3);
+        h.state_mut().format_tab = FormatTab::Fim;
+        h.run_steps(5);
+        assert!(accent_entry_rect(&h, "S00000000001").is_some());
+        assert_eq!(h.state().docs[0].doc.state_id(), state);
+        assert_eq!(
+            thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+            source()
+        );
+    }
+}
+
+#[test]
+fn selection_highlight_does_not_rebind_a_pending_fim_draft() {
+    let mut app = app();
+    let root = app.docs[0].doc.sheet().root;
+    let field = app.docs[0].doc.sheet().topics[&root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Button, "0:*").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+        .focus();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+        .type_text("1:3");
+    h.run_steps(3);
+    h.state_mut().docs[0].view.select_only(root);
+    h.run_steps(5);
+    assert!(accent_entry_rect(&h, "S00000000001").is_some());
+    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data");
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+    h.get_by_role_and_label(Role::Button, "Apply").click();
+    h.run_steps(4);
+    let fim = h.state().docs[0].doc.sheet().fim.as_ref().unwrap();
+    assert_eq!(
+        fim.topic_metadata(field).unwrap().cardinality.as_deref(),
+        Some("1:3")
+    );
+    assert!(fim.topic_metadata(root).unwrap().cardinality.is_none());
+}
+
+#[test]
+fn shared_definition_highlight_identifies_only_the_selected_occurrence() {
+    let mut app = app();
+    let doc = &mut app.docs[0];
+    let root = doc.doc.sheet().root;
+    let field = doc.doc.sheet().topics[&root].children[0];
+    doc.doc
+        .edit_sheet("Duplicate occurrence", |sheet| {
+            sheet
+                .apply_fim_change(FimChange::Duplicate { topic: field })
+                .map_err(|error| thinoda_core::EditError::Invalid(error.to_string()))
+        })
+        .unwrap();
+    let occurrences = doc.doc.sheet().topics[&root].children.clone();
+    assert_eq!(occurrences.len(), 2);
+    doc.view.select_only(field);
+    let before = thinoda_io::fim::export_document(doc.doc.sheet()).unwrap();
+    let mut h = harness(app);
+    h.get_by_label("Document metadata").click();
+    h.run_steps(4);
+    for (selected, topic) in occurrences.into_iter().enumerate() {
+        h.state_mut().docs[0].view.select_only(topic);
+        h.run_steps(5);
+        assert!(accent_entry_rect(&h, "F00000000001").is_some());
+        let rows: Vec<_> = h
+            .query_all_by_role_and_label(Role::Button, "F · Postal code")
+            .map(|node| node.rect())
+            .collect();
+        assert_eq!(rows.len(), 2);
+        for (index, row) in rows.into_iter().enumerate() {
+            let highlighted = h.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(frame)
+                    if frame.stroke.color == h.state().accent
+                        && frame.stroke.width == 2.0
+                        && frame.rect.expand(0.1).contains_rect(row))
+            });
+            assert_eq!(highlighted, index == selected);
+        }
+    }
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        before
+    );
+}
+
 #[test]
 fn map_title_cardinality_and_undo_preserve_source_and_native_bindings() {
     let dir = tempfile::tempdir().unwrap();
@@ -223,6 +391,7 @@ fn associated_rule_is_reachable_from_structure_without_selecting_an_unrelated_to
         .click();
     h.run_steps(3);
     h.get_by_role_and_label(Role::Label, "R00000000001");
+    assert!(accent_entry_rect(&h, "R00000000001").is_none());
     assert_eq!(h.state().docs[0].view.primary(), Some(root));
     assert_eq!(
         thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
@@ -330,6 +499,14 @@ fn fim_sidebar_and_tree_render_with_realistic_source() {
             header.min.x >= 0.0 && header.max.x <= width,
             "{name}: {header:?}"
         );
+        assert!(
+            h.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.text() == "FIM · XDF3"
+                    && shape.clip_rect.contains_rect(header))
+            }),
+            "{name}: revealing the initial selection must not scroll the FIM heading out of view"
+        );
         if !outline {
             let canvas = h.state().docs[0].view.canvas_rect();
             assert!(
@@ -337,6 +514,16 @@ fn fim_sidebar_and_tree_render_with_realistic_source() {
                 "{name}: canvas {canvas:?} overlaps FIM {header:?}"
             );
         }
+        let sheet = h.state().docs[0].doc.sheet();
+        let identity = sheet
+            .fim
+            .as_ref()
+            .unwrap()
+            .topic_metadata(sheet.root)
+            .unwrap()
+            .identity
+            .unwrap();
+        assert!(accent_entry_rect(&h, &identity).is_some());
         let image = h.render().expect("FIM workspace GPU rendering");
         if let Some(directory) = &output {
             image.save(directory.join(format!("{name}.png"))).unwrap();

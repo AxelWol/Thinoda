@@ -638,7 +638,9 @@ those system-owned controls. WinGet publishing remains paused.
 - FIM documents open in the right-facing tree layout. The fourth **FIM** tab
   exposes identities, occurrence cardinalities, shared definitions, rules,
   code lists and ordered source metadata. Structure shows F/G/C/R badges and
-  cardinalities. XML source data stays separate from visual annotations;
+  cardinalities. Map selection highlights the corresponding FIM entry with an
+  accent-color outline in light and dark mode. XML source data stays separate
+  from visual annotations;
   save `.thinoda` to retain the complete source and presentation bindings.
   Validated same-dialect XDF export requires both semantic checks and the
   official exchange schemas. Installation asks before downloading the pinned

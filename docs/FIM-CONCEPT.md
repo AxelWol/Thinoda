@@ -645,6 +645,12 @@ normative validation or automatic rule execution.
 | 6 | Same-dialect validated export and conversion preview | Exact output passes official exchange XSD plus semantic gates; property-by-property round-trip/conversion matrix |
 | 7 | Hardening, performance, documentation, final independent critique | Fix findings; malformed/cycle/size corpus, native/web checks, human workflow acceptance |
 
+Additional user-directed phase 5 acceptance: while the right-hand FIM tab is
+open, selecting a map node reveals its corresponding FIM entry with a rectangle
+in the configured accent color. The rectangle must work in light and dark
+themes, identify the exact occurrence rather than every reused identity, and
+leave canonical content and pending form drafts unchanged.
+
 No phase can be marked complete because its API exists. Its gate needs retained
 evidence. Do not ship a read-only XML text box as "full FIM editing", a blanket
 ban on structural changes as "integrity", or hand-picked tag checks as "XSD
@@ -729,6 +735,10 @@ Implemented application workflows:
 - Inspector access to all ordered source elements and attributes, with search,
   pagination, explicit insertion position, namespace-aware insertion/removal,
   retained Apply/Cancel drafts and one-occurrence conflict repair.
+- Map selection reveals an accent-outlined FIM summary entry and outlines its
+  corresponding document-metadata row. Both themes use the configured accent;
+  associated-record browsing is not mistaken for selection of an unrelated
+  containment node.
 - Definition rename, shared reuse, duplicate, independent identity variants,
   cardinality edits and guarded structural operations. Referenced objects and
   unresolved/ambiguous/external dependencies have navigable source locations.
@@ -788,6 +798,15 @@ command preflight committed a title merely when opening a modal or changing
 views. Shortcut groups are now compile-time-sized to the page count. Preflight
 validates a cloned draft without committing; operation-specific commits retain
 their integrity checks. All failing application targets were rerun successfully.
+
+The selection-highlight follow-up uses exact occurrence bindings, not identity
+equality: only the selected reuse receives a rectangle. Its summary remains
+available while a pending scalar draft retains its original target. The
+rectangle uses the theme palette's live configured accent, with no hard-coded
+light/dark colors. Revealing an entry scrolls only as needed rather than forcing
+the FIM heading offscreen. Regressions cover actual map clicks, changing accents,
+both themes, hidden/reopened tabs, reused definitions and pending drafts; GPU
+renders exercise the supplied source at wide and narrow widths.
 
 ### Verification evidence
 
