@@ -2,6 +2,27 @@ _Last updated: 2026-10-29 12:36:08 UTC (non-binding repository metadata)._ <!-- 
 
 # Architecture
 
+## Document open and save progress
+
+	hinoda-app::file_ops keeps the UI painting while documents are imported or
+written, so large models (for example FIM) show a nonmodal busy card with a
+spinner and the file name. The interactive app (startup::launch) uses
+FileWorkMode::Background: open/import requests from menus, pickers, drag and
+drop, instance forwarding and recent files are queued and imported on a named
+	hinoda-file worker thread, one file at a time in the requesting window; a
+save first commits view/inspector/FIM drafts on the UI thread and then writes a
+clone of the committed workbook on the worker. Results are applied only on the
+UI thread. A save marks the document saved only if its content state still
+equals the written snapshot, so edits made while writing stay unsaved and keep
+their recovery snapshot. While a save runs, new saves, Save All, closing tabs or
+windows and Quit are refused; Save All and the close-tab dialog continue when the
+write finished (and stop on failure). Errors keep the previous toasts and
+conflict protection. Progress within one file is not measurable, so the spinner
+is indeterminate; a progress bar only counts finished files of a multi-file
+open. FileWorkMode::Inline (the default) keeps the synchronous API for tests
+and operation callers. Sheet-only MindManager saves, merges and exports remain
+synchronous.
+
 ## Background version checks
 
 `thinoda-app::updates` owns document-independent, nonmodal notices rendered by

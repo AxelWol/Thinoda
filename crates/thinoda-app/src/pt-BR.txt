@@ -511,3 +511,6 @@ Equation limit reached (512 bytes, 128 nodes, 8 levels).|Limite de equação ati
 Keep one equation block at the end of the note, or edit the note source directly.|Mantenha um bloco de equação no fim da nota ou edite diretamente a fonte da nota.
 Download new version|Baixar nova versão
 Save your work, then close all app windows and reopen to apply the update.|Salve seu trabalho, feche todas as janelas do aplicativo e abra-o novamente para aplicar a atualização.
+Saving file:|Salvando arquivo:
+The file writer stopped unexpectedly|O salvamento do arquivo parou inesperadamente
+Wait until the file is saved|Aguarde até o arquivo ser salvo

@@ -226,6 +226,7 @@ pub struct ThinodaApp {
     pub docs: Vec<OpenDoc>,
     pub active: usize,
     pub(crate) document_windows: HashMap<String, egui::ViewportId>,
+    pub(crate) file_ops: crate::file_ops::FileOps,
     pub(crate) window_active_documents: HashMap<egui::ViewportId, String>,
     pub(crate) current_viewport: egui::ViewportId,
     pub(crate) drawing_document_window: bool,
@@ -322,6 +323,7 @@ impl ThinodaApp {
         let mut app = Self {
             docs: Vec::new(),
             document_windows: HashMap::new(),
+            file_ops: Default::default(),
             window_active_documents: HashMap::new(),
             current_viewport: egui::ViewportId::ROOT,
             drawing_document_window: false,
@@ -489,20 +491,28 @@ impl ThinodaApp {
     }
 
     pub fn open_path(&mut self, path: &Path) {
-        if let Some(i) = self
-            .docs
-            .iter()
-            .position(|d| d.path.as_deref() == Some(path))
-        {
-            self.active = i;
-            let key = self.docs[i].key.clone();
-            self.assign_document_window(&key, self.current_viewport);
+        if self.activate_open_path(path) {
             return;
         }
         if self.dialogs.imports.iter().any(|(p, ..)| p == path) {
             return;
         }
         self.add_opened(path, OpenDoc::open_with_report(path));
+    }
+
+    /// Activates the tab of `path` in the current window if it is already open.
+    pub(crate) fn activate_open_path(&mut self, path: &Path) -> bool {
+        let Some(i) = self
+            .docs
+            .iter()
+            .position(|d| d.path.as_deref() == Some(path))
+        else {
+            return false;
+        };
+        self.active = i;
+        let key = self.docs[i].key.clone();
+        self.assign_document_window(&key, self.current_viewport);
+        true
     }
 
     /// Adds the result of opening `path` as a tab, or reports the error as a toast.
@@ -684,11 +694,11 @@ impl ThinodaApp {
                         if let Some(dir) = f.parent() {
                             self.settings.last_open_dir = Some(dir.to_path_buf());
                         }
-                        self.open_path(&f);
+                        self.request_open(&f);
                     }
                 }
             }
-            Cmd::OpenPath(p) => self.open_path(&p),
+            Cmd::OpenPath(p) => self.request_open(&p),
             Cmd::Save => {
                 self.save_active(false);
             }
@@ -730,7 +740,7 @@ impl ThinodaApp {
                 )
                 .unwrap_or_default()
                 {
-                    self.open_path(&f);
+                    self.request_open(&f);
                 }
             }
             Cmd::MergeFiles => {
@@ -1164,19 +1174,27 @@ impl ThinodaApp {
             }
             Cmd::Export(Format::FimXdf2 | Format::FimXdf3) => {
                 self.save_all.is_none()
+                    && !self.file_ops.saving()
                     && self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some())
             }
             Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => {
-                self.save_all.is_none() && self.doc().is_some()
+                self.save_all.is_none() && !self.file_ops.saving() && self.doc().is_some()
             }
-            Cmd::SaveAll => self.save_all.is_none() && !self.docs.is_empty(),
-            Cmd::Quit => self.save_all.is_none(),
-            Cmd::CloseWindow => !files::is_web() && self.save_all.is_none(),
-            Cmd::CloseTab(index) => self.save_all.is_none() && *index < self.docs.len(),
+            Cmd::SaveAll => {
+                self.save_all.is_none() && !self.file_ops.saving() && !self.docs.is_empty()
+            }
+            Cmd::Quit => self.save_all.is_none() && !self.file_ops.saving(),
+            Cmd::CloseWindow => {
+                !files::is_web() && self.save_all.is_none() && !self.file_ops.saving()
+            }
+            Cmd::CloseTab(index) => {
+                self.save_all.is_none() && !self.file_ops.saving() && *index < self.docs.len()
+            }
             Cmd::MoveToNewWindow => {
                 !cfg!(target_arch = "wasm32")
                     && self.current_viewport == egui::ViewportId::ROOT
                     && self.save_all.is_none()
+                    && !self.file_ops.saving()
                     && !self.any_modal_open()
                     && self
                         .doc()
@@ -1606,6 +1624,10 @@ impl ThinodaApp {
 
     /// Saves the active document. Returns `false` if the user cancelled or saving failed.
     pub fn save_active(&mut self, save_as: bool) -> bool {
+        if self.file_ops.saving() {
+            self.toasts.warning(t("Not possible here"));
+            return false;
+        }
         if self.dialogs.mindmanager_save.is_some() {
             return false;
         }
@@ -1650,12 +1672,8 @@ impl ThinodaApp {
             self.dialogs.mindmanager_save = Some((d.key.clone(), target, false));
             return false;
         }
-        let saved = self.save_active_to(&target, backup);
         // Browser: a newly chosen file name is also downloaded; later saves stay in browser storage.
-        if saved && chosen {
-            self.deliver(&target);
-        }
-        saved
+        self.save_active_file(&target, backup, chosen)
     }
 
     /// Web: downloads a written file (desktop: no-op).
@@ -1665,7 +1683,19 @@ impl ThinodaApp {
         }
     }
 
+    /// Saves the active document to `target`. Returns `true` once it was written; with
+    /// background file work the write is only queued and `false` is returned while
+    /// [`FileOps::saving_key`](crate::file_ops) reports the pending save. The result is then
+    /// applied, including the Save All and close-tab continuations, when it completes.
     pub(crate) fn save_active_to(&mut self, target: &Path, backup: bool) -> bool {
+        self.save_active_file(target, backup, false)
+    }
+
+    fn save_active_file(&mut self, target: &Path, backup: bool, deliver: bool) -> bool {
+        if self.file_ops.saving() {
+            self.toasts.warning(t("Not possible here"));
+            return false;
+        }
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
@@ -1682,6 +1712,14 @@ impl ThinodaApp {
             self.dialogs.conflict = Some(d.key.clone());
             return false;
         }
+        if !self.file_ops.inline() {
+            if let Err(e) = self.queue_save(self.active, target, backup, deliver, false) {
+                self.docs[self.active].ignore_conflict = false;
+                self.toasts.error(format!("{}: {e}", t("Could not save")));
+            }
+            return false;
+        }
+        let d = &mut self.docs[self.active];
         match d.save_to(target, backup) {
             Ok(()) => {
                 if let Some(r) = &self.services.recovery {
@@ -1691,6 +1729,9 @@ impl ThinodaApp {
                 self.save_settings();
                 self.toasts
                     .success(format!("{} {}", t("Saved to"), target.display()));
+                if deliver {
+                    self.deliver(target);
+                }
                 true
             }
             Err(e) => {
@@ -1800,7 +1841,7 @@ impl ThinodaApp {
     }
 
     pub fn request_close_tab(&mut self, i: usize) {
-        if self.save_all.is_some() {
+        if self.save_all.is_some() || self.file_ops.saving() {
             self.toasts.warning(t("Not possible here"));
             return;
         }
@@ -1840,7 +1881,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn resolve_save_close_tab(&mut self, key: &str, saved: bool) {
-        if self.dialogs.save_close_tab.as_deref() != Some(key) {
+        if self.dialogs.save_close_tab.as_deref() != Some(key) || self.file_ops.saving_key(key) {
             return;
         }
         if !saved
@@ -1889,6 +1930,7 @@ impl ThinodaApp {
 
     pub fn housekeeping(&mut self, ctx: &Context) {
         self.poll_fim(ctx);
+        self.poll_file_ops(ctx);
         for doc in &mut self.docs {
             if let Some(error) = doc.view.take_title_error() {
                 log::warn!("title commit: {error}");
@@ -1911,7 +1953,7 @@ impl ThinodaApp {
             match picked.purpose {
                 files::Purpose::Open | files::Purpose::Import => {
                     for path in &picked.paths {
-                        self.open_path(path);
+                        self.request_open(path);
                     }
                 }
                 files::Purpose::Dropped => {
@@ -1924,7 +1966,7 @@ impl ThinodaApp {
                                     .error(format!("{}: {error}", t("Could not open")));
                             }
                         } else {
-                            self.open_path(path);
+                            self.request_open(path);
                         }
                     }
                 }
@@ -1974,24 +2016,39 @@ impl ThinodaApp {
             }
         }
         // Autosave of documents that already have a native file.
-        if self.settings.autosave && self.save_all.is_none() {
+        if self.settings.autosave && self.save_all.is_none() && !self.file_ops.saving() {
             let interval = self.settings.autosave_interval_secs.max(5) as f32;
             let backup = self.settings.backup_on_save;
-            for d in &mut self.docs {
+            let background = !self.file_ops.inline();
+            let mut queued = None;
+            for (index, d) in self.docs.iter_mut().enumerate() {
                 if d.is_dirty()
                     && d.path.is_some()
                     && is_native(d.format)
                     && d.view.editing_topic().is_none()
                     && d.idle_secs() >= interval
+                    && d.autosave_due()
                     && !d.changed_on_disk()
                 {
                     let p = d.path.clone().unwrap();
+                    if background {
+                        // One write at a time, behind the busy indicator.
+                        queued = Some((index, p));
+                        break;
+                    }
                     if let Err(e) = d.save_to(&p, backup) {
+                        d.autosave_failed(interval);
                         self.toasts.error(format!("{}: {e}", t("Could not save")));
                     } else if let Some(r) = &self.services.recovery {
                         let _ = r.remove(&d.key);
                     }
                 }
+            }
+            if let Some((index, path)) = queued
+                && let Err(e) = self.queue_save(index, &path, backup, false, true)
+            {
+                self.docs[index].autosave_failed(interval);
+                self.toasts.error(format!("{}: {e}", t("Could not save")));
             }
         }
         // Files forwarded from secondary instances (e.g. double-click in Explorer/Finder).
@@ -2013,7 +2070,7 @@ impl ThinodaApp {
                 .unwrap_or_default();
             if !paths.is_empty() {
                 for p in paths {
-                    self.open_path(&p);
+                    self.request_open(&p);
                 }
                 ctx.send_viewport_cmd(ViewportCommand::Focus);
             }
@@ -2094,6 +2151,12 @@ impl ThinodaApp {
                 }
             }
             if self.save_all.is_some() {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                return;
+            }
+            if self.file_ops.saving() {
+                // Quitting would abandon a partly applied save; the file stays intact.
+                self.toasts.warning(t("Wait until the file is saved"));
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                 return;
             }
@@ -2289,7 +2352,7 @@ impl ThinodaApp {
             if crate::images::is_supported_image_path(&path) {
                 self.finish_dropped_image(owner, &path);
             } else {
-                self.open_path(&path);
+                self.request_open(&path);
             }
         }
     }

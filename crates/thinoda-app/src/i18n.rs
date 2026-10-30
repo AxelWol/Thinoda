@@ -2343,6 +2343,15 @@ const DE: &[(&str, &str)] = &[
         "The file loader stopped unexpectedly",
         "Das Laden der Datei wurde unerwartet abgebrochen",
     ),
+    ("Saving file:", "Datei wird gespeichert:"),
+    (
+        "The file writer stopped unexpectedly",
+        "Das Speichern der Datei wurde unerwartet abgebrochen",
+    ),
+    (
+        "Wait until the file is saved",
+        "Warten Sie, bis die Datei gespeichert ist",
+    ),
 ];
 
 #[cfg(test)]

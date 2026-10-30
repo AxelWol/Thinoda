@@ -14,6 +14,7 @@ pub(crate) struct SaveAll {
 impl ThinodaApp {
     pub(crate) fn begin_save_all(&mut self, ctx: &egui::Context, close_after: Option<CloseIntent>) {
         if self.save_all.is_some()
+            || self.file_ops.saving()
             || self.any_modal_open()
             || self.dialogs.settings
             || self.dialogs.about
@@ -84,7 +85,8 @@ impl ThinodaApp {
                 self.save_all.as_mut().unwrap().remaining.pop_front();
                 continue;
             }
-            if self.save_dialog_for(&key) {
+            if self.save_dialog_for(&key) || self.file_ops.saving_key(&key) {
+                // Resumed by the dialog or by the completed background write.
                 self.restore_save_origin();
             } else {
                 self.stop_save_all();
@@ -116,7 +118,16 @@ impl ThinodaApp {
         {
             return false;
         }
+        if self.file_ops.saving_key(key) {
+            // Still writing; the completed write resolves the batch.
+            return true;
+        }
         if saved {
+            // Edits made while a background write ran stay unsaved instead of being
+            // written again by this batch.
+            if let Some(batch) = &mut self.save_all {
+                batch.remaining.pop_front();
+            }
             self.continue_save_all(ctx);
         } else if self.save_dialog_for(key) {
             self.restore_save_origin();

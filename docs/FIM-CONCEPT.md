@@ -757,6 +757,14 @@ Implemented application workflows:
 - Generic structural edits are reconciled transactionally or rolled back.
   Unsupported subtree paste/extraction and foreign editable exports explicitly
   refuse silent FIM loss; image/presentation projections are not FIM backups.
+- Opening and saving large models stays responsive on the desktop: launch files,
+  later opens/imports and saves run on worker threads behind a busy card naming
+  the file (multi-file opens count finished files; no per-file percentage).
+  Saves write a committed snapshot after drafts were applied and mark the
+  document saved only if it still holds exactly that content, so edits or
+  drafts made during the write stay unsaved, including for Save All and
+  close-tab saves. The browser has no worker: the card paints first, then the
+  page is unresponsive until that file is done.
 
 ### Final rubber-duck critique and fixes
 

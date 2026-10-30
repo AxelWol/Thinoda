@@ -850,6 +850,7 @@ impl ThinodaApp {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
             self.ai_busy_overlay(&ctx);
+            self.file_busy_overlay(&ctx);
             self.ai_review_window(&ctx);
             self.saved_prompt_dialog(&ctx);
         }

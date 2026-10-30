@@ -532,6 +532,11 @@ the raw error under **Technical details**:
   blocking desktop client; `AiJob` uses it on wasm.
 - Time comes from `web-time` and background work runs inline on wasm because
   browsers do not allow `std::thread` without special headers.
+- Opening and saving documents shows the same busy card with the file name as on
+  the desktop. Without worker threads the import or write still runs on the
+  page's main thread: it starts only after a frame with the indicator was
+  presented, so the indicator stays visible, but the page does not respond (and
+  the spinner does not animate) until that file is done.
 - The web entry point installs pointer feedback for enabled, hovered click-only
   controls, including custom tabs and buttons. Text, resize and drag cursors
   retain precedence; desktop cursor behavior is unchanged.

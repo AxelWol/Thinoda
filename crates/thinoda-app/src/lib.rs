@@ -8,6 +8,7 @@ mod command_icons;
 mod command_ids;
 pub mod doc;
 mod equations;
+pub mod file_ops;
 pub mod files;
 mod fim;
 mod fim_schemas;

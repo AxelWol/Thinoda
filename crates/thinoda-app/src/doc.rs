@@ -144,6 +144,8 @@ pub struct OpenDoc {
     pub(crate) fim_edit: Option<FimEdit>,
     snapshot_inspector_edit: Option<InspectorEdit>,
     last_seen_inspector_edit: Option<InspectorEdit>,
+    /// After a failed autosave, the next automatic attempt waits until then.
+    pub(crate) autosave_retry_at: Option<Instant>,
     snapshot_title: Option<(TopicId, String, String)>,
     fim_draft_revision: u64,
     snapshot_fim_revision: u64,
@@ -171,6 +173,7 @@ impl OpenDoc {
             fim_edit: None,
             snapshot_inspector_edit: None,
             last_seen_inspector_edit: None,
+            autosave_retry_at: None,
             snapshot_title: None,
             fim_draft_revision: 0,
             snapshot_fim_revision: 0,
@@ -309,6 +312,26 @@ impl OpenDoc {
         }
     }
 
+    /// Whether autosave may try again; a failed attempt waits one more interval.
+    pub(crate) fn autosave_due(&self) -> bool {
+        self.autosave_retry_at
+            .is_none_or(|retry| Instant::now() >= retry)
+    }
+
+    /// Defers automatic saving after a failed attempt instead of retrying each frame.
+    pub(crate) fn autosave_failed(&mut self, interval: f32) {
+        self.autosave_retry_at =
+            Some(Instant::now() + std::time::Duration::from_secs_f32(interval));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn backdate_change(&mut self, secs: u64) {
+        let earlier = self
+            .last_change
+            .checked_sub(std::time::Duration::from_secs(secs));
+        self.last_change = earlier.unwrap_or(self.last_change);
+    }
+
     pub fn idle_secs(&self) -> f32 {
         self.last_change.elapsed().as_secs_f32()
     }
@@ -343,6 +366,18 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
+        let format = self.prepare_save(path)?;
+        let state = self.doc.state_id();
+        let identity = write_workbook(self.doc.workbook(), format, path, backup)?;
+        self.finish_save(path, format, state, identity);
+        Ok(())
+    }
+
+    /// Commits pending drafts and validates `path` as a save destination.
+    ///
+    /// The committed workbook is what a following [`write_workbook`] must write; its
+    /// `state_id` identifies that content for [`Self::finish_save`].
+    pub(crate) fn prepare_save(&mut self, path: &Path) -> Result<Format, String> {
         self.view
             .try_commit_edit(&mut self.doc)
             .map_err(|error| error.to_string())?;
@@ -354,16 +389,28 @@ impl OpenDoc {
         if format == Format::MindManager && self.doc.workbook().sheets.len() != 1 {
             return Err(t("MindManager saves one sheet. Export the current sheet or save the complete workbook as .thinoda.").into());
         }
-        let bytes =
-            thinoda_io::export_bytes(self.doc.workbook(), format, &ExportOptions::default())
-                .map_err(export_error)?;
-        atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
+        Ok(format)
+    }
+
+    /// Records a completed write of the content identified by `state`.
+    ///
+    /// The document only becomes clean when it still holds exactly that content and
+    /// no newer draft exists; later edits stay unsaved.
+    pub(crate) fn finish_save(
+        &mut self,
+        path: &Path,
+        format: Format,
+        state: u64,
+        identity: Option<FileFingerprint>,
+    ) {
         self.path = Some(path.to_path_buf());
         self.format = format;
-        self.fingerprint = fingerprint(path).ok();
+        self.fingerprint = identity;
         self.ignore_conflict = false;
-        self.doc.mark_saved();
-        Ok(())
+        self.autosave_retry_at = None;
+        if self.doc.state_id() == state {
+            self.doc.mark_saved();
+        }
     }
 
     /// Writes just the active sheet without marking or retargeting the source document.
@@ -547,6 +594,20 @@ pub fn convert_with_consent(
             t("MindManager export cannot preserve all content. Use --allow-lossy only if you accept omitted content.").into()
         } else { export_error(error) })?;
     atomic_write(output, &bytes, false).map_err(|e| e.to_string())
+}
+
+/// Serializes and atomically writes a workbook prepared by [`OpenDoc::prepare_save`].
+/// Runs on the file worker thread; returns the written file's identity.
+pub(crate) fn write_workbook(
+    workbook: &Workbook,
+    format: Format,
+    path: &Path,
+    backup: bool,
+) -> Result<Option<FileFingerprint>, String> {
+    let bytes = thinoda_io::export_bytes(workbook, format, &ExportOptions::default())
+        .map_err(export_error)?;
+    atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
+    Ok(fingerprint(path).ok())
 }
 
 pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {

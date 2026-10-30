@@ -1168,3 +1168,6 @@ Previous|Anterior|Précédent|Forrige|Vorige|Anterior|Precedente|Poprzedni
 Next|Siguiente|Suivant|Næste|Volgende|Seguinte|Successivo|Następny
 Append|Añadir al final|Ajouter à la fin|Tilføj til sidst|Achteraan toevoegen|Acrescentar no fim|Aggiungi alla fine|Dodaj na końcu
 Insert before|Insertar antes de|Insérer avant|Indsæt før|Invoegen vóór|Inserir antes de|Inserisci prima di|Wstaw przed
+Saving file:|Guardando archivo:|Enregistrement du fichier :|Gemmer fil:|Bestand opslaan:|A guardar ficheiro:|Salvataggio del file:|Zapisywanie pliku:
+The file writer stopped unexpectedly|El guardado del archivo se detuvo inesperadamente|L'enregistrement du fichier s'est arrêté de manière inattendue|Gemningen af filen stoppede uventet|Het opslaan van het bestand is onverwacht gestopt|A gravação do ficheiro parou inesperadamente|Il salvataggio del file si è interrotto in modo imprevisto|Zapisywanie pliku zostało nieoczekiwanie przerwane
+Wait until the file is saved|Espere hasta que se guarde el archivo|Attendez que le fichier soit enregistré|Vent, til filen er gemt|Wacht tot het bestand is opgeslagen|Aguarde até o ficheiro ser guardado|Attendi il salvataggio del file|Poczekaj, aż plik zostanie zapisany
