@@ -1,3 +1,5 @@
+_Last updated: 2026-10-30 09:27:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Optional local AI conversations (XV9)
 
 AI Chat is **session-only by default**. Opening chat or a document does not send

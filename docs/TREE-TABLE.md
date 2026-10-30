@@ -1,3 +1,5 @@
+_Last updated: 2026-10-30 08:51:46 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Task-aware Tree Table
 
 Choose **Map > Structure > Tree Table**. The existing Tree Table structure now

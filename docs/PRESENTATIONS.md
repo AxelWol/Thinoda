@@ -1,3 +1,5 @@
+_Last updated: 2026-10-30 09:44:32 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Vector presentations
 
 ## Outcome and implementation contract
