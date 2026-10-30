@@ -195,6 +195,7 @@ pub struct MapView {
     pub dark: bool,
     pub accent: Color32,
     editing: Option<EditState>,
+    title_error: Option<String>,
     drag: Drag,
     image_resize: Option<image_resize::Gesture>,
     // Some(false) keeps an unowned/canceled multitouch sequence blocked until all fingers lift.
@@ -235,6 +236,7 @@ impl Default for MapView {
             dark: false,
             accent: Color32::from_rgb(0x2E, 0x7C, 0xF6),
             editing: None,
+            title_error: None,
             drag: Drag::None,
             image_resize: None,
             touch_navigation: None,
@@ -433,6 +435,11 @@ impl MapView {
     // ----- editing -------------------------------------------------------------------------
 
     pub fn begin_edit(&mut self, sheet: &Sheet, id: TopicId, select_all: bool) {
+        if self.title_error.is_some() && self.has_title_changes() {
+            self.title_error =
+                Some("Finish or cancel the current title edit before starting another".into());
+            return;
+        }
         let Some(t) = sheet.topic(id) else { return };
         self.editing = Some(EditState {
             topic: id,
@@ -447,6 +454,9 @@ impl MapView {
 
     /// Starts editing with `text` replacing the title (type-to-edit).
     pub fn begin_edit_with(&mut self, sheet: &Sheet, id: TopicId, text: &str) {
+        if self.title_error.is_some() && self.has_title_changes() {
+            return;
+        }
         self.begin_edit(sheet, id, false);
         if let Some(e) = &mut self.editing {
             e.text = text.to_string();
@@ -475,22 +485,58 @@ impl MapView {
         }
     }
 
+    pub fn has_title_changes(&self) -> bool {
+        self.editing.as_ref().is_some_and(|e| e.text != e.original)
+    }
+
+    pub fn title_draft(&self) -> Option<(TopicId, &str, &str)> {
+        self.editing
+            .as_ref()
+            .map(|edit| (edit.topic, edit.original.as_str(), edit.text.as_str()))
+    }
+
+    pub fn take_title_error(&mut self) -> Option<String> {
+        self.title_error.take()
+    }
+
     /// Writes the edited title into the document. Returns whether a change was made.
     pub fn commit_edit(&mut self, doc: &mut Document) -> bool {
-        let Some(e) = self.editing.take() else {
-            return false;
-        };
-        // The final title can be much wider than it was when editing started.
-        self.pending_reveal = Some(e.topic);
-        if e.text == e.original || doc.sheet().topic(e.topic).is_none() {
-            return false;
+        match self.try_commit_edit(doc) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.title_error = Some(error.to_string());
+                false
+            }
         }
-        doc.edit_sheet("Edit Title", |s| s.set_title(e.topic, &e.text))
-            .is_ok()
+    }
+
+    /// Rejected edits keep their text and ownership, so validation never discards a draft.
+    pub fn try_commit_edit(&mut self, doc: &mut Document) -> thinoda_core::EditResult<bool> {
+        let Some(e) = self.editing.as_ref() else {
+            return Ok(false);
+        };
+        self.pending_reveal = Some(e.topic);
+        if e.text == e.original {
+            self.editing = None;
+            return Ok(false);
+        }
+        let current = doc.sheet().topic(e.topic).ok_or_else(|| {
+            thinoda_core::EditError::Invalid("Title source no longer exists; draft retained".into())
+        })?;
+        if current.title != e.original {
+            return Err(thinoda_core::EditError::Invalid(
+                "Title source changed while editing; draft retained".into(),
+            ));
+        }
+        doc.edit_sheet("Edit Title", |s| s.set_title(e.topic, &e.text))?;
+        self.editing = None;
+        self.title_error = None;
+        Ok(true)
     }
 
     pub fn cancel_edit(&mut self) {
         self.editing = None;
+        self.title_error = None;
     }
 
     // ----- camera --------------------------------------------------------------------------

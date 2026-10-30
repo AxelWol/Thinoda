@@ -72,6 +72,16 @@ const PAGES: &[Page] = &[
         ],
     },
     Page {
+        title: "FIM data",
+        paragraphs: &[
+            "Open an XDF2 or XDF3 document to edit FIM data.",
+            "Save drafts as .thinoda. XDF export requires valid schemas and semantics.",
+            "Only official schema archives are downloaded from XRepository. Your document stays on this device. Validation then works offline.",
+            "Validation does not certify the document.",
+            "Apply before changing selection; Cancel discards this draft.",
+        ],
+    },
+    Page {
         title: "Import and Export",
         paragraphs: &[
             "The Open and Export menus list supported formats. Native and unchanged Thinoda-exported XMind files preserve Thinoda-specific data. Other applications may not understand those extensions.",
@@ -118,7 +128,7 @@ impl ThinodaApp {
         }
         use crate::app::Cmd;
         use thinoda_canvas::Action;
-        let active_shortcuts: Vec<Vec<_>> = [
+        let active_shortcuts: [Vec<_>; PAGES.len()] = [
             vec![
                 (Cmd::New, "New"),
                 (Cmd::Canvas(Action::InsertChild), "Subtopic"),
@@ -142,13 +152,22 @@ impl ThinodaApp {
                 (Cmd::SaveAs, "Save As…"),
                 (Cmd::SaveAll, "Save All"),
             ],
+            vec![
+                (
+                    Cmd::Export(thinoda_io::Format::FimXdf2),
+                    "FIM XDatenfelder 2",
+                ),
+                (
+                    Cmd::Export(thinoda_io::Format::FimXdf3),
+                    "FIM XDatenfelder 3",
+                ),
+            ],
             vec![(Cmd::MapShot, "Map Shot"), (Cmd::Print, "Print")],
             vec![
                 (Cmd::Settings, "Settings…"),
                 (Cmd::Shortcuts, "Keyboard Shortcuts"),
             ],
         ]
-        .into_iter()
         .map(|commands| {
             commands
                 .into_iter()
@@ -160,8 +179,7 @@ impl ThinodaApp {
                     )
                 })
                 .collect()
-        })
-        .collect();
+        });
         let state = &mut self.dialogs.guide;
         let labels = crate::i18n::dialog_labels();
         let response = thinoda_ui::Dialog::new(egui::Id::unique("user_guide"), t("User Guide"))

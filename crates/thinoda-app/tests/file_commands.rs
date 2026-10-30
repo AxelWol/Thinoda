@@ -160,7 +160,14 @@ fn file_commands_require_active_documents_and_save_all_preserves_home() {
                 assert_eq!(h.state().command_available(&Cmd::Save), active);
                 assert_eq!(h.state().command_available(&Cmd::SaveAs), active);
                 for format in EXPORT_MENU {
-                    assert_eq!(h.state().command_available(&Cmd::Export(*format)), active);
+                    assert_eq!(
+                        h.state().command_available(&Cmd::Export(*format)),
+                        active
+                            && !matches!(
+                                format,
+                                thinoda_io::Format::FimXdf2 | thinoda_io::Format::FimXdf3
+                            ),
+                    );
                 }
                 let export = h.get_by_role_and_label(Role::Button, t("Export"));
                 assert_eq!(export.accesskit_node().is_disabled(), !active);

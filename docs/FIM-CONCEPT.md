@@ -1,8 +1,8 @@
 # FIM authoring workspace: concept and delivery contract
 
-Status: independently critiqued concept with the first validation/domain
-foundation implemented. The importer, canonical document store, inspector,
-structural authoring and export workflows are not implemented yet.
+Status: lossless authoring engine and native/browser application integration
+implemented, with independent final critique and regression fixes. The delivery
+ledger below distinguishes implemented workflows from remaining product scope.
 This document is not a claim that full FIM support has shipped or that a
 document has been certified.
 
@@ -699,10 +699,9 @@ Additional required regressions:
 - Each Action/command route obeys the matrix, including direct programmatic
   invocation, keyboard, batch replace and AI.
 
-Independent final implementation critique: pending. A separate interim
-critique of the validation/domain foundation is complete, with its fixes
-recorded below; it is not the requested final review of the
-still-unimplemented authoring experience.
+Independent final implementation critique is recorded in the authoring delivery
+ledger below. The earlier validation/domain review remains historical evidence;
+it was not used as a substitute for reviewing the integrated authoring feature.
 
 The second independent review confirmed resolution of B1--B6, H3 and H4.
 It requested five further readiness decisions (R1--R5), now specified above:
@@ -710,6 +709,149 @@ message-polymorphic envelopes, kind-specific identity, one dependency-closure
 service, authoritative persisted presentation bindings distinct from caches,
 and shared immutable/copy-on-write ownership under clone-based history.
 These are architectural resolutions, not claims that their tests already pass.
+
+## Authoring delivery ledger
+
+The canonical store retains the original UTF-8 bytes and an ordered,
+namespace-aware XML tree, with stable source-record/topic bindings. Untouched
+documents export their original bytes; edits retain unknown metadata,
+attributes, comments, processing instructions, CDATA and sibling order.
+Native v5 persists source, current XML and bindings; whole-sheet clipboard v4
+preserves the envelope. Older readers cannot silently discard it. Masked copies
+explicitly remove the entire FIM envelope.
+
+Implemented application workflows:
+
+- Root-aware XDF2/XDF3 XML import, including conventional `.xdf2.xml` and
+  `.xdf3.xml` files, opens Baumdiagramm and the fourth FIM sidebar.
+- Occurrence-aware S/F/G/choice projection; identities, lexical cardinalities,
+  shared-use badges and associated rules/code lists are available in Structure.
+- Inspector access to all ordered source elements and attributes, with search,
+  pagination, explicit insertion position, namespace-aware insertion/removal,
+  retained Apply/Cancel drafts and one-occurrence conflict repair.
+- Definition rename, shared reuse, duplicate, independent identity variants,
+  cardinality edits and guarded structural operations. Referenced objects and
+  unresolved/ambiguous/external dependencies have navigable source locations.
+  Published identities are never fabricated.
+- Pending title/FIM/legacy inspector edits participate in dirty state, save,
+  separate-sheet output and recovery. Rejected edits remain available for
+  correction. Further typing cannot bind an old draft to a new source revision.
+- Native/schema installation is explicitly consented, pinned, bounded and
+  cached for offline use. Browser Fetch rejects redirects before following,
+  omits credentials and has streamed size/time bounds. Local ZIP installation
+  is an alternative; documents are never uploaded.
+- Same-dialect export validates the actual serialized bytes against the
+  exchange XSD and semantic/projection checks before atomic output. Results
+  are owner/revision-scoped; stale work cannot write. The imported source path
+  is protected. Validation is not methodological certification.
+- Generic structural edits are reconciled transactionally or rolled back.
+  Unsupported subtree paste/extraction and foreign editable exports explicitly
+  refuse silent FIM loss; image/presentation projections are not FIM backups.
+
+### Final rubber-duck critique and fixes
+
+A fresh independent review traced domain transactions, shared-definition
+semantics, persistence, command routing and the exact-byte export lifecycle.
+Its initial paste concern was correctly downgraded after verifying transactional
+rollback; nevertheless, a direct FIM-targeted subtree-paste guard was added so
+foreign same-shape topics cannot be heuristically interpreted as shared reuse.
+A matching-foreign-subtree regression verifies failure without mutation.
+
+The review also identified cancelled-draft feedback and clean recovery-revision
+bookkeeping gaps. Cancel now clears obsolete error/report feedback, and successful
+clean-document recovery removal advances the FIM draft revision. Open/Import
+filters now include XML, matching the conventional export filename.
+Cancellation also advances the draft revision: a snapshotted, subsequently
+cancelled value cannot survive as stale recovery content. A regression snapshots
+a valid cardinality draft, cancels it, and verifies that the recovery copy is
+removed.
+
+Additional parent verification found and fixed an important rendering bug:
+unbounded full-path collapsing headers expanded the sidebar beyond the window,
+allowing the canvas to cover it. Compact source headers, wrapped paths/name
+buttons and a width-constrained FIM scroll viewport fix the cause. GPU
+regressions measure canvas/sidebar non-overlap and render the supplied document
+at 1280 and 720 pixels in light/dark Map and Structure views. Merely finding an
+accessible FIM tab did not establish that it was visibly usable.
+
+Selecting a library rule/code list also now selects that source record rather
+than displaying or mutating the previously selected containment topic. Structure
+provides associated-object entry points without fabricating containment edges.
+A narrow follow-up review independently identified the same source/topic
+mismatch for dependency navigation. The inspector now derives metadata,
+shared-use feedback and independent/structural command targets from the browsed
+source record, not from an unrelated canvas selection.
+
+The full workspace run exposed two application regressions beyond the focused
+FIM tests: adding a guide page left the shortcut groups one entry short, and
+command preflight committed a title merely when opening a modal or changing
+views. Shortcut groups are now compile-time-sized to the page count. Preflight
+validates a cloned draft without committing; operation-specific commits retain
+their integrity checks. All failing application targets were rerun successfully.
+
+### Verification evidence
+
+- The engine's 16 read-only corpus cases preserve exact original source through
+  native save/reopen; root-name edits retain source closure and undo-to-original
+  behavior. The corpus runner is `thinoda-io/examples/fim_roundtrip.rs`.
+- The supplied 61,360-byte XDF3 document imports as 29 containment topics:
+  schema root plus 28 occurrences. Rules and code lists are associated library
+  data, not extra cardinality-bearing containment edges.
+- A separately invoked reference regression installs the real pinned archives,
+  reloads the cache offline, validates untouched and renamed source, checks native
+  reopen and undo, writes conformant export, and verifies invalid output does
+  not create a destination. It requires local `THINODA_FIM_REFERENCE_DIR` and
+  `THINODA_FIM_SAMPLE` paths and is ignored in ordinary CI.
+- Headless application regressions exercise fourth-tab access, invalid/corrected
+  cardinality drafts, source revision ownership, title/native/separate-sheet
+  save and associated-rule navigation. GPU tests can retain images with
+  `THINODA_FIM_VISUAL_DIR`; no upstream samples are committed.
+- The native desktop app was opened with the supplied document; Structure
+  exposed F/G badges, lexical cardinalities and three shared address usages.
+  The review map was saved as a native session artifact before closing for
+  rebuild, leaving the original XDF untouched.
+- Final application checks pass: 245 unit tests (one reference test normally
+  ignored), 32 focused integration tests across eight targets, and all three
+  additional application targets that failed in the earlier full run. Native
+  workspace and shared-browser strict Clippy checks, formatting and third-party
+  notice checks pass.
+- The full workspace run is not entirely green:
+  `thinoda-platform::tests::cloud_prefix_boundaries_case_and_nested_provider`
+  fails at the nested new-file path lookup. It also fails in isolation; its
+  test and cloud-path implementation are unchanged by this feature. This
+  unrelated platform issue is recorded rather than hidden or changed here.
+- A current Windows build is available under
+  `target\x86_64-pc-windows-msvc\debug\thinoda.exe`. Final integration checks used
+  this separate native target because a reopened review app held the default
+  executable locked; the running review session was not interrupted.
+
+### Remaining scope, not hidden success
+
+This is an integrated loss-preserving authoring release, not completion of every
+experience proposed in this concept and not evidence for a comparative
+"best in the world" claim.
+
+- Cross-dialect migration is explicitly unsupported; each dialect can be edited
+  and exported in its own version. No namespace-swap conversion is offered.
+- External list fetching and XDF2 multi-file package generation are not
+  implemented. Existing references and list payloads remain intact.
+- Source authoring supports incomplete repair drafts; creating a node does not
+  invent official identity, lifecycle/publication metadata or XSD conformance.
+  Many less-common metadata properties use the structured source browser rather
+  than bespoke typed controls.
+- Methodological/derivation-quality review is not exhaustive. Rule text remains
+  inert; free-text mentions are review hints, not proven executable references.
+- Subtree clipboard/extraction requires a future closed-document identity and
+  dependency workflow; complete-sheet copy/duplicate is available.
+- Input is UTF-8 only, with explicit processing limits. Namespace rebinding is
+  rejected rather than silently reinterpreted.
+- Browser schema compilation/validation is queued locally but is not yet a
+  dedicated Web Worker. Native work is background-threaded; large-browser-input
+  responsiveness still needs dedicated performance evidence.
+- Invalid, unapplied scalar drafts remain in the editor for correction, and block
+  saving/exporting stale source. Recovery projects applicable drafts, but does
+  not yet restore rejected scalar form input separately from the canonical
+  document after a crash.
 
 ## Evidence appendix
 
@@ -765,7 +907,7 @@ that should expand Thinoda's offline schema-authoring implementation.
 
 ## Initial implementation and retained evidence
 
-Implemented infrastructure, not yet connected to app import/export:
+Historical first-phase infrastructure (subsequently connected above):
 
 - `thinoda-core::fim::Cardinality` validates exact decimal/unbounded range
   syntax, minimum <= maximum and serde input. Decimal strings avoid integer

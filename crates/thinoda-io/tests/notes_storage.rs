@@ -97,7 +97,7 @@ fn formatted_notes_cannot_masquerade_as_an_older_native_version() {
     book.active_mut()
         .set_markdown_notes(root, Some("**source**".into()))
         .unwrap();
-    for version in [2, 3, 5] {
+    for version in [2, 3, 6] {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for (name, value) in [
             (
@@ -115,7 +115,7 @@ fn formatted_notes_cannot_masquerade_as_an_older_native_version() {
         }
         let bytes = writer.finish().unwrap().into_inner();
         let error = import_bytes(Format::Thinoda, &bytes).unwrap_err();
-        if version == 5 {
+        if version == 6 {
             assert!(matches!(error, IoError::NewerVersion(_)));
         } else {
             assert!(

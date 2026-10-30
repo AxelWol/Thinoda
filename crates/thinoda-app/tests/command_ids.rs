@@ -99,7 +99,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         arrange.bottom arrange.distribute-horizontal arrange.distribute-vertical
         arrange.horizontal-center arrange.left arrange.right arrange.top arrange.vertical-center
         edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
-        export.csv export.excel export.freemind export.jpeg export.markdown export.mindmanager
+        export.csv export.excel export.fim-xdf2 export.fim-xdf3 export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
         file.quit file.save file.save-all file.save-as file.save-attachment file.show-in-folder

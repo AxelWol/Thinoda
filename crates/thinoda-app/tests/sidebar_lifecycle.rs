@@ -65,7 +65,12 @@ fn restored_sidebar_reopens_across_home_views_languages_and_appearance() {
                 }
                 assert!(!Settings::load(&paths).unwrap().show_format_panel);
 
-                for tab in [FormatTab::Style, FormatTab::Data, FormatTab::Map] {
+                for tab in [
+                    FormatTab::Style,
+                    FormatTab::Data,
+                    FormatTab::Map,
+                    FormatTab::Fim,
+                ] {
                     h.get_by_role_and_label(Role::Button, t("Format Panel"))
                         .click();
                     h.run_steps(3);
@@ -74,6 +79,7 @@ fn restored_sidebar_reopens_across_home_views_languages_and_appearance() {
                         FormatTab::Style => "Style",
                         FormatTab::Data => "Data",
                         FormatTab::Map => "Map",
+                        FormatTab::Fim => "FIM",
                     };
                     let tab_rect = h.get_by_role_and_label(Role::Tab, t(label)).rect();
                     assert!(h.ctx.content_rect().contains_rect(tab_rect), "{tab_rect:?}");

@@ -90,6 +90,7 @@ pub enum SidebarFamily {
 pub enum FormatTab {
     Map,
     Data,
+    Fim,
     #[default]
     #[serde(other)]
     Style,

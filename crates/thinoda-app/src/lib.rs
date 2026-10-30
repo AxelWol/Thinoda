@@ -9,6 +9,8 @@ mod command_ids;
 pub mod doc;
 mod equations;
 pub mod files;
+mod fim;
+mod fim_schemas;
 mod gantt;
 mod help;
 pub mod i18n;

@@ -31,6 +31,8 @@ const MAX_ENTRY_SIZE: u64 = 200 * 1024 * 1024;
 /// Supported document formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
+    FimXdf2,
+    FimXdf3,
     Thinoda,
     XMind,
     FreeMind,
@@ -51,6 +53,8 @@ pub enum Format {
 }
 impl Format {
     pub const IMPORTABLE: &'static [Format] = &[
+        Self::FimXdf2,
+        Self::FimXdf3,
         Self::Thinoda,
         Self::XMind,
         Self::FreeMind,
@@ -63,6 +67,8 @@ impl Format {
         Self::Word,
     ];
     pub const EXPORTABLE: &'static [Format] = &[
+        Self::FimXdf2,
+        Self::FimXdf3,
         Self::Thinoda,
         Self::XMind,
         Self::FreeMind,
@@ -83,6 +89,8 @@ impl Format {
     pub fn from_path(path: &Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         Some(match ext.as_str() {
+            "xdf2" => Self::FimXdf2,
+            "xdf3" => Self::FimXdf3,
             "thinoda" => Self::Thinoda,
             "xmind" => Self::XMind,
             "mm" => Self::FreeMind,
@@ -105,6 +113,8 @@ impl Format {
     }
     pub fn extensions(&self) -> &'static [&'static str] {
         match self {
+            Self::FimXdf2 => &["xdf2"],
+            Self::FimXdf3 => &["xdf3"],
             Self::Thinoda => &["thinoda"],
             Self::XMind => &["xmind"],
             Self::FreeMind => &["mm"],
@@ -126,6 +136,8 @@ impl Format {
     }
     pub fn label(&self) -> &'static str {
         match self {
+            Self::FimXdf2 => "FIM XDatenfelder 2",
+            Self::FimXdf3 => "FIM XDatenfelder 3",
             Self::Thinoda => "Thinoda",
             Self::XMind => "XMind",
             Self::FreeMind => "FreeMind / Freeplane",
@@ -185,6 +197,12 @@ impl Default for ExportOptions {
 /// Import/export error.
 #[derive(Debug, Error)]
 pub enum IoError {
+    #[error(transparent)]
+    Fim(#[from] fim::FimError),
+    #[error(
+        "FIM output requires exact-byte exchange-XSD and semantic validation; use fim::export_validated or the application's validated FIM export command"
+    )]
+    FimValidationRequired,
     #[error("{}", thinoda_core::equations::EXPORT_ERROR)]
     EquationNotesUnsupported,
     #[error("I/O error: {0}")]
@@ -275,6 +293,19 @@ pub struct ImportReport {
 
 /// Detect a format using extension first, then common file signatures/content.
 pub fn detect_format(path: &Path, bytes: &[u8]) -> Option<Format> {
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ["xml", "xdf2", "xdf3"]
+        .iter()
+        .any(|e| extension.eq_ignore_ascii_case(e))
+    {
+        let detected = fim::inspect(bytes).ok().map(|p| match p.dialect {
+            fim::Dialect::Xdf2 => Format::FimXdf2,
+            fim::Dialect::Xdf3 => Format::FimXdf3,
+        });
+        if detected.is_some() || !extension.eq_ignore_ascii_case("xml") {
+            return detected;
+        }
+    }
     if let Some(f) = Format::from_path(path) {
         return Some(f);
     }
@@ -368,6 +399,13 @@ pub fn import_bytes_with_report(format: Format, bytes: &[u8]) -> Result<ImportRe
                 Format::Opml => formats::opml_import(bytes)?,
                 Format::Markdown => formats::markdown_import(bytes)?,
                 Format::PlainText => formats::text_import(bytes)?,
+                Format::FimXdf2 | Format::FimXdf3 => {
+                    let profile = fim::inspect(bytes)?;
+                    if (format == Format::FimXdf2) != (profile.dialect == fim::Dialect::Xdf2) {
+                        return Err(fim::FimError::WrongDialect.into());
+                    }
+                    fim::import_document(bytes)?
+                }
                 _ => unreachable!(),
             };
             ImportReport {
@@ -480,6 +518,21 @@ pub fn export_bytes_with_consent(
     opts: &ExportOptions,
     allow_lossy: bool,
 ) -> Result<Vec<u8>, IoError> {
+    if book.sheets.iter().any(|s| s.fim.is_some())
+        && !matches!(
+            format,
+            Format::Thinoda
+                | Format::FimXdf2
+                | Format::FimXdf3
+                | Format::Svg
+                | Format::Png
+                | Format::Jpeg
+                | Format::Pdf
+                | Format::PowerPoint
+        )
+    {
+        return Err(IoError::Invalid("this editable format cannot preserve FIM source/provenance; save as .thinoda or explicitly create a non-FIM projection first".into()));
+    }
     book.validate().map_err(|error| {
         if format == Format::MindManager {
             IoError::MindManagerExport(error)
@@ -531,6 +584,9 @@ pub fn export_bytes_with_consent(
     }
     if note_format_loss(book, format, opts) && !opts.allow_note_format_loss {
         return Err(IoError::NoteFormatLossNeedsConfirmation);
+    }
+    if matches!(format, Format::FimXdf2 | Format::FimXdf3) {
+        return Err(IoError::FimValidationRequired);
     }
     Ok(match format {
         Format::Thinoda => formats::native_export(book)?,

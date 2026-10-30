@@ -7,12 +7,15 @@ use serde::{Deserialize, Serialize};
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
 const RESOURCE_SHEET_PREFIX: &str = "THINODA-SHEET-2\n";
 const FORMATTED_SHEET_PREFIX: &str = "THINODA-SHEET-3\n";
+const FIM_SHEET_PREFIX: &str = "THINODA-SHEET-4\n";
 const MAX_SHEET_CLIPBOARD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A versioned OS text payload retaining every persisted sheet field.
 pub fn encode_sheet(sheet: &Sheet) -> Result<String, String> {
     sheet.validate()?;
-    let prefix = if sheet.topics.values().any(|topic| {
+    let prefix = if sheet.fim.is_some() {
+        FIM_SHEET_PREFIX
+    } else if sheet.topics.values().any(|topic| {
         topic
             .notes
             .as_ref()
@@ -37,9 +40,14 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
     }
     // Windows clipboard APIs may normalize line endings.
     let (version, json) = text
-        .strip_prefix(FORMATTED_SHEET_PREFIX)
-        .or_else(|| text.strip_prefix("THINODA-SHEET-3\r\n"))
-        .map(|json| (3, json))
+        .strip_prefix(FIM_SHEET_PREFIX)
+        .or_else(|| text.strip_prefix("THINODA-SHEET-4\r\n"))
+        .map(|json| (4, json))
+        .or_else(|| {
+            text.strip_prefix(FORMATTED_SHEET_PREFIX)
+                .or_else(|| text.strip_prefix("THINODA-SHEET-3\r\n"))
+                .map(|json| (3, json))
+        })
         .or_else(|| {
             text.strip_prefix(RESOURCE_SHEET_PREFIX)
                 .or_else(|| text.strip_prefix("THINODA-SHEET-2\r\n"))
@@ -52,6 +60,9 @@ pub fn decode_sheet(text: &str) -> Result<Sheet, String> {
         })
         .ok_or("clipboard does not contain a supported Thinoda sheet")?;
     let sheet: Sheet = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if version < 4 && sheet.fim.is_some() {
+        return Err("FIM documents require sheet clipboard version 4".into());
+    }
     if version == 1 && !sheet.resources.is_empty() {
         return Err("embedded resources require sheet clipboard version 2".into());
     }
@@ -80,6 +91,9 @@ pub struct ClipboardPayload {
 
 /// Copies the given topics (descendants of other selected topics are skipped).
 pub fn copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Option<ClipboardPayload> {
+    if sheet.fim.is_some() {
+        return None;
+    }
     let roots: Vec<TopicId> = ids
         .iter()
         .copied()

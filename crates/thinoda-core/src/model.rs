@@ -578,6 +578,8 @@ impl Subtree {
 /// One canvas ("tab") of a workbook.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sheet {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fim: Option<crate::fim::FimDocument>,
     pub title: String,
     pub root: TopicId,
     pub topics: BTreeMap<TopicId, Topic>,
@@ -615,6 +617,7 @@ impl Sheet {
         let mut topics = BTreeMap::new();
         topics.insert(root, Topic::new(root, root_title));
         Self {
+            fim: None,
             title: title.into(),
             root,
             topics,
@@ -823,6 +826,12 @@ impl Sheet {
 
     /// Clones the subtree rooted at `id`.
     pub fn copy_subtree(&self, id: TopicId) -> Option<Subtree> {
+        // A generic Subtree cannot retain the FIM document's reference closure.
+        // Full-sheet clipboard is lossless; in-document duplication uses its
+        // XML-first command instead. Never silently turn source into plain topics.
+        if self.fim.is_some() {
+            return None;
+        }
         if !self.contains(id) {
             return None;
         }
@@ -1085,6 +1094,7 @@ impl Sheet {
     /// Checks structural invariants; used by tests and after imports.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_resources()?;
+        crate::fim::validate_projection(self).map_err(|e| e.to_string())?;
         if !self.contains(self.root) {
             return Err("root topic missing".into());
         }
@@ -1849,6 +1859,7 @@ impl Workbook {
         let mut copy = self.clone();
         copy.metadata = Metadata::default();
         for (sheet_index, sheet) in copy.sheets.iter_mut().enumerate() {
+            sheet.fim = None;
             sheet.resources = Default::default();
             sheet.title = format!("Sheet {}", sheet_index + 1);
             sheet.theme.font_family = None;

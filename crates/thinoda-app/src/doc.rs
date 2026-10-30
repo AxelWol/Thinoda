@@ -37,6 +37,38 @@ pub(crate) struct InspectorEdit {
     pub text: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct FimEdit {
+    pub sheet: usize,
+    pub root: TopicId,
+    pub state: u64,
+    pub change: thinoda_core::fim::FimChange,
+}
+
+impl FimEdit {
+    fn apply(&self, document: &mut Document) -> Result<(), String> {
+        if document.state_id() != self.state {
+            return Err("FIM source changed while editing; draft retained".into());
+        }
+        document
+            .edit_book("FIM data", |book| {
+                let sheet = book
+                    .sheets
+                    .get_mut(self.sheet)
+                    .filter(|sheet| sheet.root == self.root)
+                    .ok_or_else(|| {
+                        thinoda_core::EditError::Invalid(
+                            "FIM source sheet changed; draft retained".into(),
+                        )
+                    })?;
+                sheet
+                    .apply_fim_change(self.change.clone())
+                    .map_err(|error| thinoda_core::EditError::Invalid(error.to_string()))
+            })
+            .map_err(|error| error.to_string())
+    }
+}
+
 impl InspectorEdit {
     fn value(&self) -> Option<&str> {
         match self.field {
@@ -109,8 +141,12 @@ pub struct OpenDoc {
     /// Set when the user accepted that the on-disk file may be overwritten.
     pub ignore_conflict: bool,
     pub(crate) inspector_edit: Option<InspectorEdit>,
+    pub(crate) fim_edit: Option<FimEdit>,
     snapshot_inspector_edit: Option<InspectorEdit>,
     last_seen_inspector_edit: Option<InspectorEdit>,
+    snapshot_title: Option<(TopicId, String, String)>,
+    fim_draft_revision: u64,
+    snapshot_fim_revision: u64,
 }
 
 impl OpenDoc {
@@ -132,8 +168,12 @@ impl OpenDoc {
             last_seen_state: state,
             ignore_conflict: false,
             inspector_edit: None,
+            fim_edit: None,
             snapshot_inspector_edit: None,
             last_seen_inspector_edit: None,
+            snapshot_title: None,
+            fim_draft_revision: 0,
+            snapshot_fim_revision: 0,
         }
     }
 
@@ -188,7 +228,10 @@ impl OpenDoc {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.doc.is_dirty() || self.has_inspector_changes()
+        self.doc.is_dirty()
+            || self.has_inspector_changes()
+            || self.view.has_title_changes()
+            || self.fim_edit.is_some()
     }
 
     pub(crate) fn has_inspector_changes(&self) -> bool {
@@ -204,6 +247,10 @@ impl OpenDoc {
     }
 
     pub(crate) fn commit_inspector_edit(&mut self) -> Result<(), String> {
+        if let Some(edit) = self.fim_edit.clone() {
+            edit.apply(&mut self.doc)?;
+            self.clear_fim_edit();
+        }
         if let Some(edit) = self.inspector_edit.clone() {
             let label = match edit.field {
                 InspectorField::Hyperlink => "Hyperlink",
@@ -219,6 +266,28 @@ impl OpenDoc {
             self.inspector_edit = None;
         }
         Ok(())
+    }
+
+    pub(crate) fn set_fim_edit(&mut self, change: thinoda_core::fim::FimChange) {
+        if let Some(edit) = &mut self.fim_edit {
+            edit.change = change;
+        } else {
+            self.fim_edit = Some(FimEdit {
+                sheet: self.doc.active_index(),
+                root: self.doc.sheet().root,
+                state: self.doc.state_id(),
+                change,
+            });
+        }
+        self.fim_draft_revision = self.fim_draft_revision.wrapping_add(1);
+        self.last_change = Instant::now();
+    }
+
+    pub(crate) fn clear_fim_edit(&mut self) {
+        if self.fim_edit.take().is_some() {
+            self.fim_draft_revision = self.fim_draft_revision.wrapping_add(1);
+            self.last_change = Instant::now();
+        }
     }
 
     pub(crate) fn flush_inspector_edit(&mut self, ctx: &egui::Context) -> Result<(), String> {
@@ -274,6 +343,9 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
+        self.view
+            .try_commit_edit(&mut self.doc)
+            .map_err(|error| error.to_string())?;
         self.commit_inspector_edit()?;
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
@@ -303,13 +375,8 @@ impl OpenDoc {
         if self.targets_current_file(path)? {
             return Err("choose a different path to preserve the source workbook".into());
         }
-        let source = if let Some(edit) = &self.inspector_edit {
-            let mut source = self.doc.workbook().clone();
-            edit.apply(&mut source).map_err(|error| error.to_string())?;
-            std::borrow::Cow::Owned(source)
-        } else {
-            std::borrow::Cow::Borrowed(self.doc.workbook())
-        };
+        let draft = self.document_with_drafts()?;
+        let source = draft.workbook();
         let workbook = Workbook {
             metadata: source.metadata.clone(),
             ..Workbook::new(source.active().clone())
@@ -317,6 +384,41 @@ impl OpenDoc {
         let bytes = thinoda_io::export_bytes(&workbook, format, &ExportOptions::default())
             .map_err(export_error)?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn validate_pending_title(&self) -> Result<(), String> {
+        if self.view.has_title_changes() {
+            self.document_with_drafts().map(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn document_with_drafts(&self) -> Result<Document, String> {
+        let mut document = self.doc.clone();
+        if let Some(edit) = &self.fim_edit {
+            edit.apply(&mut document)?;
+        }
+        if let Some((id, original, text)) = self.view.title_draft()
+            && original != text
+        {
+            document
+                .edit_sheet("Pending title", |sheet| {
+                    if sheet.topic(id).is_none_or(|topic| topic.title != original) {
+                        return Err(thinoda_core::EditError::Invalid(
+                            "Title source changed; draft retained".into(),
+                        ));
+                    }
+                    sheet.set_title(id, text)
+                })
+                .map_err(|error| error.to_string())?;
+        }
+        if let Some(edit) = &self.inspector_edit {
+            document
+                .edit_book("Pending inspector", |book| edit.apply(book))
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(document)
     }
 
     pub fn ensure_export_destination(&self, path: &Path) -> Result<(), String> {
@@ -333,7 +435,15 @@ impl OpenDoc {
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
         let s = self.doc.state_id();
-        if s == self.snapshot_state && self.inspector_edit == self.snapshot_inspector_edit {
+        let title_draft = self
+            .view
+            .title_draft()
+            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        if s == self.snapshot_state
+            && self.inspector_edit == self.snapshot_inspector_edit
+            && title_draft == self.snapshot_title
+            && self.fim_draft_revision == self.snapshot_fim_revision
+        {
             return;
         }
         if !self.is_dirty() {
@@ -341,6 +451,8 @@ impl OpenDoc {
                 Ok(()) => {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
+                    self.snapshot_title = title_draft;
+                    self.snapshot_fim_revision = self.fim_draft_revision;
                 }
                 Err(error) => log::warn!("recovery snapshot cleanup failed: {error}"),
             }
@@ -353,21 +465,20 @@ impl OpenDoc {
             dirty: true,
             ..Default::default()
         };
-        let workbook = if let Some(edit) = &self.inspector_edit {
-            let mut workbook = self.doc.workbook().clone();
-            if let Err(error) = edit.apply(&mut workbook) {
-                log::warn!("inspector recovery snapshot failed; draft retained: {error}");
+        let snapshot = match self.document_with_drafts() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                log::warn!("recovery snapshot failed; draft retained: {error}");
                 return;
             }
-            std::borrow::Cow::Owned(workbook)
-        } else {
-            std::borrow::Cow::Borrowed(self.doc.workbook())
         };
-        match Snapshot::to_bytes(meta, &workbook) {
+        match Snapshot::to_bytes(meta, snapshot.workbook()) {
             Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
                 Ok(()) => {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
+                    self.snapshot_title = title_draft;
+                    self.snapshot_fim_revision = self.fim_draft_revision;
                 }
                 Err(error) => log::warn!("recovery snapshot queue failed: {error}"),
             },

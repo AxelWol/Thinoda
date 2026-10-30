@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod document;
+pub use document::*;
+
 /// A containment usage's multiplicity, retaining its original decimal notation.
 ///
 /// Bounds are decimal strings rather than machine integers: the exchange schema

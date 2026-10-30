@@ -266,6 +266,7 @@ pub struct ThinodaApp {
     pub(crate) gantt: crate::gantt::GanttState,
     pub(crate) zones: crate::zones::ZoneState,
     pub(crate) pitch: crate::pitch::PitchState,
+    pub(crate) fim: crate::fim::FimState,
     pub(crate) label_editor: Option<crate::labels::LabelEditor>,
     pub(crate) image_request: Option<crate::images::ImageRequest>,
     pub(crate) attachment_request: Option<crate::images::ImageRequest>,
@@ -309,12 +310,15 @@ pub const EXPORT_MENU: &[Format] = &[
     Format::XMind,
     Format::Csv,
     Format::PlainText,
+    Format::FimXdf2,
+    Format::FimXdf3,
 ];
 
 impl ThinodaApp {
     /// Creates the app with the given settings and services. Opens `files` (or nothing → home).
     pub fn new(settings: Settings, services: Services, files: &[PathBuf]) -> Self {
         i18n::set_lang(i18n::resolve(settings.language));
+        let fim = crate::fim::FimState::new(services.paths.as_ref());
         let mut app = Self {
             docs: Vec::new(),
             document_windows: HashMap::new(),
@@ -362,6 +366,7 @@ impl ThinodaApp {
             gantt: Default::default(),
             zones: Default::default(),
             pitch: Default::default(),
+            fim,
             label_editor: None,
             image_request: None,
             attachment_request: None,
@@ -540,6 +545,11 @@ impl ThinodaApp {
 
     fn install_opened_doc(&mut self, path: &Path, mut d: OpenDoc) {
         let native = is_native(d.format) && d.import_source.is_none();
+        if d.doc.sheet().fim.is_some() {
+            self.format_tab = FormatTab::Fim;
+            self.sidebar_family = SidebarFamily::Format;
+            self.settings.show_format_panel = true;
+        }
         d.view.titles = new_topic_titles();
         d.view.set_initial_zoom(self.settings.initial_canvas_zoom);
         // Replace a pristine, untouched "Untitled" tab like most editors do.
@@ -587,6 +597,12 @@ impl ThinodaApp {
                 self.toasts.error(error);
                 return;
             }
+        }
+        if let Some(doc) = self.doc()
+            && let Err(error) = doc.validate_pending_title()
+        {
+            self.toasts.error(error.to_string());
+            return;
         }
         if matches!(
             cmd,
@@ -655,6 +671,7 @@ impl ThinodaApp {
                 let exts: Vec<&str> = Format::IMPORTABLE
                     .iter()
                     .flat_map(|f| f.extensions().iter().copied())
+                    .chain(std::iter::once("xml"))
                     .collect();
                 if let Some(files) = files::pick_files(
                     files::Purpose::Open,
@@ -702,6 +719,7 @@ impl ThinodaApp {
                 let exts: Vec<&str> = Format::IMPORTABLE
                     .iter()
                     .flat_map(|f| f.extensions().iter().copied())
+                    .chain(std::iter::once("xml"))
                     .collect();
                 for f in files::pick_files(
                     files::Purpose::Import,
@@ -1074,7 +1092,10 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
-        d.view.commit_edit(&mut d.doc);
+        if let Err(error) = d.view.try_commit_edit(&mut d.doc) {
+            self.toasts.error(error.to_string());
+            return;
+        }
         if !action.available(&d.doc, &d.view) {
             self.toasts.warning(t("Not possible here"));
             return;
@@ -1088,7 +1109,8 @@ impl ThinodaApp {
             }
             Err(e) => {
                 log::debug!("action failed: {e}");
-                self.toasts.warning(t("Not possible here"));
+                self.toasts
+                    .warning(format!("{}: {e}", t("Not possible here")));
             }
         }
         if let Some(text) = d.view.clipboard_out.take() {
@@ -1105,7 +1127,10 @@ impl ThinodaApp {
         if index == d.doc.active_index() {
             return;
         }
-        d.view.commit_edit(&mut d.doc);
+        if let Err(error) = d.view.try_commit_edit(&mut d.doc) {
+            self.toasts.error(error.to_string());
+            return;
+        }
         d.doc.set_active(index);
         d.view.reset();
     }
@@ -1136,6 +1161,10 @@ impl ThinodaApp {
             Cmd::Palette => {
                 self.palette.open
                     || (!self.any_modal_open() && !self.dialogs.settings && !self.dialogs.about)
+            }
+            Cmd::Export(Format::FimXdf2 | Format::FimXdf3) => {
+                self.save_all.is_none()
+                    && self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some())
             }
             Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => {
                 self.save_all.is_none() && self.doc().is_some()
@@ -1673,6 +1702,10 @@ impl ThinodaApp {
     }
 
     pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
+        if matches!(format, Format::FimXdf2 | Format::FimXdf3) {
+            self.export_fim(format);
+            return;
+        }
         if self.doc().is_some_and(|doc| {
             thinoda_io::note_format_loss(doc.doc.workbook(), format, &ExportOptions::default())
         }) {
@@ -1855,6 +1888,13 @@ impl ThinodaApp {
     }
 
     pub fn housekeeping(&mut self, ctx: &Context) {
+        self.poll_fim(ctx);
+        for doc in &mut self.docs {
+            if let Some(error) = doc.view.take_title_error() {
+                log::warn!("title commit: {error}");
+                self.toasts.error(error);
+            }
+        }
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         self.toasts.tick(dt);
@@ -1890,6 +1930,9 @@ impl ThinodaApp {
                 }
                 files::Purpose::Merge => {
                     self.merge_files(&picked.paths);
+                }
+                files::Purpose::FimSchemas => {
+                    self.install_fim_schema_files(&picked.paths);
                 }
                 files::Purpose::Attachment(request) => {
                     self.complete_attachment_pick(request, &picked.paths);

@@ -161,6 +161,33 @@ impl Sheet {
     /// Removes topics with their subtrees. The root is skipped. Returns the topic that
     /// should be selected afterwards.
     pub fn remove_topics(&mut self, ids: &[TopicId]) -> EditResult<Option<TopicId>> {
+        if self.fim.is_some() {
+            let roots: Vec<_> = ids
+                .iter()
+                .copied()
+                .filter(|id| *id != self.root && self.contains(*id))
+                .filter(|id| {
+                    !ids.iter()
+                        .any(|other| other != id && self.is_ancestor_or_self(*other, *id))
+                })
+                .collect();
+            if roots.is_empty() {
+                return Err(EditError::RootNotAllowed);
+            }
+            let selection = self.parent(roots[0]).or(Some(self.root));
+            let mut candidate = self.clone();
+            for topic in roots {
+                if candidate.contains(topic) {
+                    candidate
+                        .apply_fim_change(crate::fim::FimChange::Remove { topic })
+                        .map_err(|e| EditError::Invalid(e.to_string()))?;
+                }
+            }
+            *self = candidate;
+            return Ok(selection
+                .filter(|id| self.contains(*id))
+                .or(Some(self.root)));
+        }
         let ids: Vec<_> = ids
             .iter()
             .copied()
@@ -190,6 +217,25 @@ impl Sheet {
 
     /// Removes a topic but keeps its children (moved to the topic's parent).
     pub fn remove_topic_keep_children(&mut self, id: TopicId) -> EditResult<()> {
+        if self.fim.is_some() {
+            let parent = self.parent(id).ok_or(EditError::RootNotAllowed)?;
+            let index = self.index_in_parent(id).ok_or(EditError::NotFound)?;
+            let mut candidate = self.clone();
+            for (offset, topic) in self.children(id).iter().copied().enumerate() {
+                candidate
+                    .apply_fim_change(crate::fim::FimChange::Move {
+                        topic,
+                        parent,
+                        index: index + offset,
+                    })
+                    .map_err(|e| EditError::Invalid(e.to_string()))?;
+            }
+            candidate
+                .apply_fim_change(crate::fim::FimChange::Remove { topic: id })
+                .map_err(|e| EditError::Invalid(e.to_string()))?;
+            *self = candidate;
+            return Ok(());
+        }
         let p = self.parent(id).ok_or(EditError::RootNotAllowed)?;
         let mut i = self.index_in_parent(id).unwrap();
         let kids = self.children(id).to_vec();
@@ -205,6 +251,19 @@ impl Sheet {
     /// Duplicates `id` (with subtree) as the next sibling.
     pub fn duplicate(&mut self, id: TopicId) -> EditResult<TopicId> {
         self.require(id)?;
+        if self.fim.is_some() {
+            let previous: std::collections::BTreeSet<_> = self.topics.keys().copied().collect();
+            self.apply_fim_change(crate::fim::FimChange::Duplicate { topic: id })
+                .map_err(|e| EditError::Invalid(e.to_string()))?;
+            return self
+                .topics
+                .keys()
+                .copied()
+                .find(|id| !previous.contains(id))
+                .ok_or_else(|| {
+                    EditError::Invalid("FIM duplicate did not create an occurrence".into())
+                });
+        }
         let mut sub = self.copy_subtree(id).unwrap();
         sub.reassign_ids(self);
         match self.parent(id) {
@@ -252,6 +311,15 @@ impl Sheet {
                 return Ok(());
             }
         }
+        if self.fim.is_some() {
+            return self
+                .apply_fim_change(crate::fim::FimChange::Move {
+                    topic: id,
+                    parent: new_parent,
+                    index,
+                })
+                .map_err(|e| EditError::Invalid(e.to_string()));
+        }
         let sub = self.detach_subtree_keep_refs(id)?;
         self.attach_child(new_parent, index, sub);
         Ok(())
@@ -279,6 +347,9 @@ impl Sheet {
     /// Copies a branch with its owned annotations; unrelated floating trees and
     /// relationships to topics outside the branch remain only in the source.
     pub fn copy_branch_as_sheet(&self, id: TopicId) -> EditResult<Sheet> {
+        if self.fim.is_some() {
+            return Err(EditError::Invalid("FIM branch extraction requires an explicit closed-document workflow; duplicate/copy the complete sheet instead".into()));
+        }
         self.require(id)?;
         let owned = self.owned_subtree_ids(id);
         let mut sheet = self.clone();
@@ -769,6 +840,11 @@ impl Sheet {
 
     /// Pastes subtrees as children of `parent` (fresh ids). Returns the new roots.
     pub fn paste(&mut self, parent: TopicId, subtrees: &[Subtree]) -> EditResult<Vec<TopicId>> {
+        if self.fim.is_some() && !subtrees.is_empty() {
+            return Err(EditError::Invalid(
+                "FIM subtree paste requires an explicit identity and dependency decision; use Duplicate or Shared definition".into(),
+            ));
+        }
         self.require(parent)?;
         let resources = self
             .resources

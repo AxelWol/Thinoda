@@ -180,6 +180,9 @@ pub fn apply_action(
     view: &mut MapView,
     action: Action,
 ) -> Result<bool, EditError> {
+    if !matches!(action, Action::Undo | Action::Redo) && view.has_title_changes() {
+        view.try_commit_edit(doc)?;
+    }
     view.prune_selection(doc.sheet());
     if action.needs_selection()
         && view.selection.is_empty()

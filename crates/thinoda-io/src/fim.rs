@@ -32,56 +32,7 @@ const MAX_SCHEMA_ENTRY_BYTES: u64 = 512 * 1024;
 // requires reviewing this cap as well as its hash and complete schema closure.
 const MAX_SCHEMA_ARCHIVE_BYTES: usize = 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Dialect {
-    Xdf2,
-    Xdf3,
-}
-
-impl Dialect {
-    pub fn namespace(self) -> &'static str {
-        match self {
-            Self::Xdf2 => "urn:xoev-de:fim:standard:xdatenfelder_2",
-            Self::Xdf3 => "urn:xoev-de:fim:standard:xdatenfelder_3.0.0",
-        }
-    }
-
-    pub fn from_namespace(namespace: &str) -> Option<Self> {
-        [Self::Xdf2, Self::Xdf3]
-            .into_iter()
-            .find(|dialect| namespace == dialect.namespace())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageKind {
-    DocumentProfile,
-    Schema,
-    Group,
-    Field,
-    CodeList,
-    Translation,
-    BuildingBlocks,
-    FieldCatalogue,
-    SchemaLibrary,
-}
-
-impl MessageKind {
-    fn from_root(dialect: Dialect, root: &str) -> Option<Self> {
-        Some(match root {
-            "xdatenfelder.dokumentsteckbrief.0101" => Self::DocumentProfile,
-            "xdatenfelder.stammdatenschema.0102" => Self::Schema,
-            "xdatenfelder.datenfeldgruppe.0103" => Self::Group,
-            "xdatenfelder.datenfeld.0104" => Self::Field,
-            "xdatenfelder.codeliste.0105" => Self::CodeList,
-            "xdatenfelder.uebersetzung.0106" if dialect == Dialect::Xdf3 => Self::Translation,
-            "verzeichnis.datenfeldbaukasten.0201" => Self::BuildingBlocks,
-            "verzeichnis.datenfeldkatalog.0202" => Self::FieldCatalogue,
-            "verzeichnis.stammdatenschemabibliothek.0203" => Self::SchemaLibrary,
-            _ => return None,
-        })
-    }
-}
+pub use thinoda_core::fim::{Dialect, MessageKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageProfile {
@@ -91,6 +42,16 @@ pub struct MessageProfile {
 
 #[derive(Debug, Error)]
 pub enum FimError {
+    #[error(transparent)]
+    Domain(#[from] thinoda_core::fim::FimModelError),
+    #[error("sheet is not a FIM exchange document")]
+    NotFim,
+    #[error("FIM export blocked by semantic errors: {0}")]
+    Semantic(String),
+    #[error("the exact serialized output failed official exchange-XSD validation")]
+    NotConformant,
+    #[error("cross-dialect conversion requires an explicit property-level migration; {0}")]
+    Conversion(String),
     #[error("FIM XML error: {0}")]
     Xml(String),
     #[error("FIM XML encoding is not supported by this validator: {0}")]
@@ -115,6 +76,97 @@ pub enum FimError {
     Archive(String),
     #[error("FIM schema compilation failed: {0}")]
     Schema(String),
+}
+
+/// Lossless message-polymorphic import. Parsing is not a validity certification:
+/// incomplete source remains available for native repair/draft save.
+pub fn import_document(bytes: &[u8]) -> Result<thinoda_core::Workbook, FimError> {
+    inspect(bytes)?;
+    Ok(thinoda_core::Workbook::new(
+        thinoda_core::fim::FimDocument::parse(bytes)?.into_sheet()?,
+    ))
+}
+
+/// RAW exact serialization, deliberately not an export validity gate.
+/// The application must validate these exact bytes before writing a destination.
+pub fn export_document(sheet: &thinoda_core::Sheet) -> Result<Vec<u8>, FimError> {
+    thinoda_core::fim::validate_projection(sheet)?;
+    Ok(sheet.fim.as_ref().ok_or(FimError::NotFim)?.serialize())
+}
+
+/// Safe same-dialect export for non-UI consumers as well as application orchestration.
+pub fn export_validated(
+    sheet: &thinoda_core::Sheet,
+    validator: &ExchangeValidator,
+) -> Result<Vec<u8>, FimError> {
+    let bytes = export_document(sheet)?;
+    let fim = sheet.fim.as_ref().ok_or(FimError::NotFim)?;
+    let errors: Vec<_> = fim
+        .diagnostics()
+        .into_iter()
+        .filter(|d| d.severity == thinoda_core::fim::DiagnosticSeverity::Error)
+        .map(|d| d.message)
+        .collect();
+    if !errors.is_empty() {
+        return Err(FimError::Semantic(errors.join("; ")));
+    }
+    let report = validator.validate(&bytes)?;
+    if !report.is_exchange_conformant() {
+        return Err(FimError::NotConformant);
+    }
+    Ok(bytes)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversionAssessment {
+    pub source: Dialect,
+    pub target: Dialect,
+    pub supported: bool,
+    pub reasons: Vec<String>,
+}
+/// No namespace-swapping conversion. The official transformations can alter
+/// identities, cardinalities, code-list packaging and executable rule semantics.
+pub fn assess_conversion(
+    sheet: &thinoda_core::Sheet,
+    target: Dialect,
+) -> Result<ConversionAssessment, FimError> {
+    let fim = sheet.fim.as_ref().ok_or(FimError::NotFim)?;
+    let mut reasons = Vec::new();
+    if fim.dialect != target {
+        reasons.push("XDF2 and XDF3 use different identity, version and lifecycle grammars; a reviewed property-level migration is not implemented".into());
+        if fim
+            .records()
+            .iter()
+            .any(|r| r.kind == thinoda_core::fim::FimKind::Rule)
+        {
+            reasons.push(
+                "Rule script/skript and parameter/target semantics cannot be translated safely"
+                    .into(),
+            );
+        }
+        if fim
+            .records()
+            .iter()
+            .any(|r| r.kind == thinoda_core::fim::FimKind::CodeList)
+        {
+            reasons.push("Codelist identity/column mappings and separate XDF2 Genericode package files require explicit resolution".into());
+        }
+        if fim
+            .records()
+            .iter()
+            .any(|r| r.kind == thinoda_core::fim::FimKind::Choice)
+        {
+            reasons.push(
+                "Choice group selection semantics are not equivalent in the target dialect".into(),
+            );
+        }
+    }
+    Ok(ConversionAssessment {
+        source: fim.dialect,
+        target,
+        supported: reasons.is_empty(),
+        reasons,
+    })
 }
 
 /// Bounded message inspection, not proof of XML or XDF conformance.
@@ -485,6 +537,35 @@ impl ExchangeValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validated_export_checks_exact_bytes_and_semantics() {
+        let valid = message("1");
+        let book = import_document(valid.as_bytes()).unwrap();
+        assert_eq!(
+            export_validated(book.active(), &validator()).unwrap(),
+            valid.as_bytes()
+        );
+        let invalid = import_document(message("not-an-integer").as_bytes()).unwrap();
+        assert!(matches!(
+            export_validated(invalid.active(), &validator()),
+            Err(FimError::NotConformant)
+        ));
+        let reversed = import_document(
+            message("<x:anzahl>2:1</x:anzahl>")
+                .replace(
+                    "<x:anzahl>",
+                    "<anzahl xmlns='urn:xoev-de:fim:standard:xdatenfelder_3.0.0'>",
+                )
+                .replace("</x:anzahl>", "</anzahl>")
+                .as_bytes(),
+        )
+        .unwrap();
+        assert!(matches!(
+            export_validated(reversed.active(), &validator()),
+            Err(FimError::Semantic(_))
+        ));
+    }
 
     fn validator() -> ExchangeValidator {
         let source = format!(

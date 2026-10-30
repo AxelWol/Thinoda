@@ -28,6 +28,7 @@ pub enum Purpose {
     Dropped,
     Image(u64),
     Attachment(u64),
+    FimSchemas,
 }
 
 /// Files that finished uploading into the browser VFS.

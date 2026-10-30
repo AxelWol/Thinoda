@@ -119,6 +119,11 @@ impl Document {
         let before = self.workbook.sheets[index].clone();
         match f(&mut self.workbook.sheets[index]) {
             Ok(v) => {
+                if let Err(error) = crate::fim::reconcile(&before, &mut self.workbook.sheets[index])
+                {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error.to_string()));
+                }
                 let resources = if self.workbook.sheets[index].resources != before.resources {
                     self.workbook.validate_resources()
                 } else {
@@ -167,6 +172,36 @@ impl Document {
                     .workbook
                     .active_sheet
                     .min(self.workbook.sheets.len() - 1);
+                for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
+                    let original = sheets
+                        .iter()
+                        .find(|old| old.fim.is_some() && old.fim == sheet.fim)
+                        .or_else(|| {
+                            sheets.iter().find(|old| {
+                                old.fim
+                                    .as_ref()
+                                    .zip(sheet.fim.as_ref())
+                                    .is_some_and(|(a, b)| a.original_bytes() == b.original_bytes())
+                            })
+                        })
+                        .or_else(|| {
+                            sheets.get(index).filter(|old| {
+                                old.fim.is_some()
+                                    && sheet.fim.is_none()
+                                    && !sheets.iter().any(|s| s.fim.is_none() && s == sheet)
+                            })
+                        });
+                    let result = if let Some(original) = original {
+                        crate::fim::reconcile(original, sheet)
+                    } else {
+                        crate::fim::validate_projection(sheet)
+                    };
+                    if let Err(error) = result {
+                        self.workbook.sheets = sheets;
+                        self.workbook.active_sheet = active;
+                        return Err(EditError::Invalid(error.to_string()));
+                    }
+                }
                 if let Err(error) = self.workbook.validate_resources() {
                     self.workbook.sheets = sheets;
                     self.workbook.active_sheet = active;

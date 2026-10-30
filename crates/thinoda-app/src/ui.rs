@@ -974,6 +974,7 @@ impl ThinodaApp {
 
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
+            || self.fim.consent.is_some()
             || self.planning.editing()
             || self.zones.editing()
             || self.pitch.blocks_map()
@@ -1924,6 +1925,7 @@ impl ThinodaApp {
 
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let mut fim_record = None;
         let shortcuts = self.active_canvas_bindings(ctx.os());
         let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
@@ -2213,6 +2215,33 @@ impl ThinodaApp {
                                 if let Some(number) = numbers.get(&id) {
                                     ui.label(number);
                                 }
+                                if let Some(metadata) =
+                                    sheet.fim.as_ref().and_then(|fim| fim.topic_metadata(id))
+                                {
+                                    let kind = match metadata.kind {
+                                        thinoda_core::fim::FimKind::Field => "F",
+                                        thinoda_core::fim::FimKind::Group => "G",
+                                        thinoda_core::fim::FimKind::Choice => "G · X",
+                                        thinoda_core::fim::FimKind::Rule => "R",
+                                        thinoda_core::fim::FimKind::CodeList => "C",
+                                        thinoda_core::fim::FimKind::Schema => "S",
+                                        _ => "FIM",
+                                    };
+                                    ui.label(egui::RichText::new(kind).strong()).on_hover_text(
+                                        format!(
+                                            "{} · {}",
+                                            metadata.identity.as_deref().unwrap_or_default(),
+                                            metadata.version.as_deref().unwrap_or_default()
+                                        ),
+                                    );
+                                    if let Some(cardinality) = &metadata.cardinality {
+                                        ui.label(cardinality).on_hover_text(t("Cardinality"));
+                                    }
+                                    if metadata.usages > 1 {
+                                        ui.label(format!("×{}", metadata.usages))
+                                            .on_hover_text(t("Shared definition"));
+                                    }
+                                }
                                 if let Some(todo) = topic.todo {
                                     let progress = todo_progress.get(&id);
                                     let done = progress.map_or(todo, |p| p.complete());
@@ -2353,6 +2382,38 @@ impl ThinodaApp {
                                 }
                             });
                         }
+                        if let Some(source) = &sheet.fim {
+                            let associated: Vec<_> = source
+                                .records()
+                                .into_iter()
+                                .filter(|record| {
+                                    matches!(
+                                        record.kind,
+                                        thinoda_core::fim::FimKind::Rule
+                                            | thinoda_core::fim::FimKind::CodeList
+                                    ) && source.topic_for_record(record.record).is_none()
+                                })
+                                .collect();
+                            if !associated.is_empty() {
+                                ui.separator();
+                                ui.strong(t("FIM data"));
+                                for record in associated {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            if record.kind == thinoda_core::fim::FimKind::Rule {
+                                                "R"
+                                            } else {
+                                                "C"
+                                            },
+                                        );
+                                        if ui.add(egui::Button::new(&record.name).wrap()).clicked()
+                                        {
+                                            fim_record = Some(record.record);
+                                        }
+                                    });
+                                }
+                            }
+                        }
                     });
             });
         // Keyboard in outliner when not editing.
@@ -2418,6 +2479,9 @@ impl ThinodaApp {
             if let Some(text) = d.view.clipboard_out.take() {
                 ctx.copy_text(text);
             }
+        }
+        if let Some(record) = fim_record {
+            self.select_fim_record(&ctx, record);
         }
     }
 
@@ -2825,6 +2889,7 @@ impl ThinodaApp {
                 (FormatTab::Style, t("Style")),
                 (FormatTab::Data, t("Data")),
                 (FormatTab::Map, t("Map")),
+                (FormatTab::Fim, "FIM"),
             ],
         );
         if self.format_tab != tab {
@@ -2844,10 +2909,12 @@ impl ThinodaApp {
         }
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
+            .auto_shrink([tab != FormatTab::Fim, true])
             .id_salt(match tab {
                 FormatTab::Style => "style_scroll",
                 FormatTab::Data => "data_scroll",
                 FormatTab::Map => "map_scroll",
+                FormatTab::Fim => "fim_scroll",
             })
             .show(ui, |ui| {
                 ui.push_id(
@@ -2855,11 +2922,13 @@ impl ThinodaApp {
                         FormatTab::Style => "style_content",
                         FormatTab::Data => "data_content",
                         FormatTab::Map => "map_content",
+                        FormatTab::Fim => "fim_content",
                     },
                     |ui| match tab {
                         FormatTab::Style => self.style_tab(ui),
                         FormatTab::Data => self.data_tab(ui),
                         FormatTab::Map => self.map_tab(ui),
+                        FormatTab::Fim => self.fim_tab(ui),
                     },
                 );
                 reveal_changed_focus(ui);
@@ -4107,6 +4176,9 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
+        if self.fim_dialogs(ctx) {
+            return;
+        }
         if self.dialogs.symbol_export.is_some()
             || self.dialogs.note_export.is_some()
             || self.dialogs.mindmanager_export
