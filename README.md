@@ -654,7 +654,21 @@ those system-owned controls. WinGet publishing remains paused.
   In short windows, Outline actions scroll separately from topics and the selected
   summary is shortened visually with full text on hover, keeping the list reachable.
 - Import: XMind, FreeMind/Freeplane, OPML, Markdown, text, TextBundle, Word
-  (`.docx`), MindManager `.mmap` and standalone `.xmmap`
+  (`.docx`), MindManager `.mmap`, standalone `.xmmap`, and FIM XDF2/XDF3 XML
+- FIM documents open in the right-facing tree layout. The fourth **FIM** tab
+  exposes identities, occurrence cardinalities, shared definitions, rules,
+  code lists and ordered source metadata. Structure shows F/G/C/R badges and
+  cardinalities. Map selection highlights the corresponding FIM entry with an
+  accent-color outline in light and dark mode. XML source data stays separate
+  from visual annotations;
+  save `.thinoda` to retain the complete source and presentation bindings.
+  Validated same-dialect XDF export requires both semantic checks and the
+  official exchange schemas. Installation asks before downloading the pinned
+  schema archives from XRepository; documents are never uploaded, and installed
+  bundles work offline. Local ZIP installation is available as well.
+  Invalid inputs can be retained as repair drafts, but cannot be exported as
+  valid XDF. Cross-dialect conversion is explicitly refused rather than
+  silently discarding data. See [FIM architecture and verification](docs/FIM-CONCEPT.md).
 - DOCX import builds a topic hierarchy from paragraphs, heading styles and
   numbered-list depth; TextBundle imports its Markdown document. Both show a
   conversion confirmation when detected content is omitted; DOCX also warns

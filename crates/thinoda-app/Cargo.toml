@@ -53,6 +53,9 @@ ureq.workspace = true
 rfd = { workspace = true, features = ["file-handle-inner"] }
 uuid = { workspace = true, features = ["js"] }
 wasm-bindgen-futures.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Request", "RequestInit", "RequestRedirect", "RequestCredentials", "RequestMode", "Response", "Headers", "AbortController", "AbortSignal", "ReadableStream", "ReadableStreamDefaultReader"] }
 
 [dev-dependencies]
 egui_kittest.workspace = true

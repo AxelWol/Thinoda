@@ -21,8 +21,12 @@ pdf-writer = "0.12"
 image.workspace = true
 log.workspace = true
 sha2 = "0.10"
+xsd-schema = { version = "=0.3.0", features = ["xsd11"] }
 # Embedded fallback fonts for raster export/printing where no system fonts exist (web).
 epaint_default_fonts = "0.37"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 tempfile.workspace = true

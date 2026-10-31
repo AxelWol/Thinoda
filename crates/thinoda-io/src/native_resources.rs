@@ -76,7 +76,9 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     }
     let manifest = serde_json::to_vec(&Manifest {
         format: "thinoda".into(),
-        version: if thinoda_core::notes::has_formatted_notes(book) {
+        version: if book.sheets.iter().any(|sheet| sheet.fim.is_some()) {
+            5
+        } else if thinoda_core::notes::has_formatted_notes(book) {
             4
         } else {
             3
@@ -100,7 +102,7 @@ pub(crate) fn hydrate(
     book: &mut Workbook,
 ) -> Result<(), IoError> {
     let manifest: Manifest = serde_json::from_slice(manifest)?;
-    if manifest.format != "thinoda" || !matches!(manifest.version, 3 | 4) {
+    if manifest.format != "thinoda" || !matches!(manifest.version, 3..=5) {
         return Err(IoError::Invalid("invalid native resource manifest".into()));
     }
     if archive.len() > thinoda_core::resources::MAX_RESOURCES + 2 {

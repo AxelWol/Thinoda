@@ -28,10 +28,12 @@ fn draft(app: &mut ThinodaApp, index: usize, text: &str) {
     let root = doc.doc.sheet().root;
     doc.view.begin_edit(doc.doc.sheet(), root, false);
     doc.view.set_editing_text(text);
-    assert!(
-        !doc.is_dirty(),
-        "a draft has not entered document history yet"
-    );
+    if doc.doc.sheet().topic(root).unwrap().title != text {
+        assert!(
+            doc.is_dirty(),
+            "uncommitted title drafts must participate in close protection"
+        );
+    }
 }
 
 fn title(doc: &OpenDoc) -> &str {
@@ -41,6 +43,37 @@ fn title(doc: &OpenDoc) -> &str {
         .unwrap()
         .title
         .as_str()
+}
+
+#[test]
+fn rejected_title_commit_retains_draft_and_blocks_saving() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = saved_app(dir.path(), CenterMode::Map);
+    draft(&mut app, 0, "My pending title");
+    let doc = &mut app.docs[0];
+    let root = doc.doc.sheet().root;
+    doc.doc
+        .edit_sheet("Concurrent edit", |sheet| {
+            sheet.set_title(root, "Updated elsewhere")
+        })
+        .unwrap();
+    assert!(!doc.view.commit_edit(&mut doc.doc));
+    assert_eq!(doc.view.editing_text(), Some("My pending title"));
+    assert!(
+        doc.view
+            .take_title_error()
+            .unwrap()
+            .contains("draft retained")
+    );
+    assert!(
+        doc.save_to(&dir.path().join("blocked.thinoda"), false)
+            .is_err()
+    );
+    assert!(!dir.path().join("blocked.thinoda").exists());
+    assert_eq!(title(doc), "Updated elsewhere");
+    doc.view.cancel_edit();
+    doc.save_to(&dir.path().join("resolved.thinoda"), false)
+        .unwrap();
 }
 
 fn close_request(app: &mut ThinodaApp, close: bool) -> egui::FullOutput {
@@ -359,7 +392,7 @@ fn closing_a_background_tab_commits_only_its_title_and_honors_each_choice() {
                 app.docs[1].view.editing_text(),
                 Some("Keep the other draft")
             );
-            assert!(!app.docs[1].is_dirty());
+            assert!(app.docs[1].is_dirty());
             let mut h = harness(app);
             choose(&mut h, choice);
             assert!(h.state().dialogs.close.is_none());
@@ -388,7 +421,7 @@ fn closing_a_background_tab_commits_only_its_title_and_honors_each_choice() {
                 .find(|doc| doc.path.as_ref() == Some(&other))
                 .unwrap();
             assert_eq!(other.view.editing_text(), Some("Keep the other draft"));
-            assert!(!other.is_dirty());
+            assert!(other.is_dirty());
         }
     }
 }
@@ -407,7 +440,7 @@ fn native_close_commits_all_titles_but_non_close_frames_do_not() {
             assert!(app.dialogs.close.is_none());
             let output = close_request(&mut app, false);
             assert!(!cancels_close(&output));
-            assert!(!app.any_dirty());
+            assert!(app.any_dirty());
             assert_eq!(
                 app.docs[0].view.editing_text(),
                 Some("First window-close title")

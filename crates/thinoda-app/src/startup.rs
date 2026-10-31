@@ -127,7 +127,7 @@ fn spawn_loader(paths: &VecDeque<PathBuf>) -> Option<Receiver<(PathBuf, Imported
     }
 }
 
-fn display_name(path: &Path) -> String {
+pub(crate) fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -140,6 +140,8 @@ impl ThinodaApp {
     pub fn launch(startup: Startup, files: &[PathBuf]) -> Self {
         let mut app = Self::new(startup.settings, startup.services, &[]);
         app.launch = Some(Launch::new(files, startup.orphans, startup.warning));
+        // Later opens and saves keep painting, with a busy indicator, like the launch files.
+        app.set_file_work_mode(crate::file_ops::FileWorkMode::Background);
         app
     }
 

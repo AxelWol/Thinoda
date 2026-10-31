@@ -277,7 +277,7 @@ fn native_archive_roundtrips_every_model_field() {
 }
 #[test]
 fn native_rejects_newer_major_version() {
-    let manifest = br#"{"format":"thinoda","version":5}"#;
+    let manifest = br#"{"format":"thinoda","version":6}"#;
     let bytes = zip_with(&[("manifest.json", manifest)]);
     assert!(matches!(
         import_bytes(Format::Thinoda, &bytes),

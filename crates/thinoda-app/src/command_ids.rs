@@ -112,6 +112,8 @@ impl Cmd {
                 Format::PowerPoint => "export.powerpoint",
                 Format::Excel => "export.excel",
                 Format::Csv => "export.csv",
+                Format::FimXdf2 => "export.fim-xdf2",
+                Format::FimXdf3 => "export.fim-xdf3",
             },
             Self::Canvas(action) => match action {
                 Action::InsertChild => "topic.insert-child",

@@ -23,6 +23,7 @@ pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
 }
 pub(crate) fn native_export(w: &Workbook) -> Result<Vec<u8>, IoError> {
     if w.sheets.iter().any(|sheet| !sheet.resources.is_empty())
+        || w.sheets.iter().any(|sheet| sheet.fim.is_some())
         || thinoda_core::notes::has_formatted_notes(w)
     {
         return crate::native_resources::export(w);
@@ -40,7 +41,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        if version > 4 {
+        if version > 5 {
             return Err(IoError::NewerVersion(format!("{version}")));
         }
         if manifest
@@ -64,6 +65,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         if version < 4 && thinoda_core::notes::has_formatted_notes(&book) {
             return Err(IoError::Invalid(
                 "formatted notes require native format version 4".into(),
+            ));
+        }
+        if version < 5 && book.sheets.iter().any(|sheet| sheet.fim.is_some()) {
+            return Err(IoError::Invalid(
+                "FIM documents require native format version 5".into(),
             ));
         }
         Ok(book)
