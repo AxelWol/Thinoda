@@ -219,7 +219,12 @@ impl ThinodaApp {
             .min_size(egui::vec2(280.0, 240.0))
             .scroll(false)
             .show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).max(40.0)).show(ui, |ui| {
+            let body_height = ui
+                .available_height()
+                .min((ctx.content_rect().height() - 150.0).max(40.0))
+                .max(40.0);
+            egui::ScrollArea::vertical().max_height(body_height).show(ui, |ui| {
+                ui.set_max_height(body_height);
                 ui.label(&editor.sheet.title);
                 ui.label(t("Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation."));
                 ui.horizontal_wrapped(|ui| {

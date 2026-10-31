@@ -73,8 +73,10 @@ impl PitchEditor {
         let before = self.sheet.presentation.clone();
         if ui.available_width() >= 720.0 {
             let width = ui.available_width();
-            let filmstrip_height =
-                430.0 + ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y;
+            let filmstrip_height = ui
+                .available_height()
+                .min(ui.ctx().content_rect().height())
+                .max(0.0);
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2((width * 0.22).min(210.0), filmstrip_height),
@@ -151,7 +153,12 @@ impl PitchEditor {
         } else {
             egui::ScrollArea::vertical()
                 .id_salt("pitch-filmstrip-column")
-                .max_height(430.0)
+                .max_height(
+                    ui.available_height()
+                        .min(ui.ctx().content_rect().height())
+                        .max(0.0),
+                )
+                .min_scrolled_height(0.0)
                 .show(ui, |ui| render(ui, self));
         }
     }

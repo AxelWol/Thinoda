@@ -186,6 +186,52 @@ fn wide_workspace_does_not_clip_the_first_slide_card() {
 }
 
 #[test]
+fn filmstrip_viewport_tracks_available_dialog_height() {
+    let viewport_height = |height| {
+        let ctx = Context::default();
+        let mut editor = editor();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 1000.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_max_height(height);
+                editor.workspace(ui, true);
+            },
+        );
+        let viewport = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Rect(rect)
+                    if rect.stroke.width == 2.0
+                        && rect.rect.width() > 140.0
+                        && rect.rect.height() > 90.0 =>
+                {
+                    Some(clipped.clip_rect)
+                }
+                _ => None,
+            })
+            .expect("selected slide card is painted");
+        output.textures_delta.clear();
+        viewport.height()
+    };
+
+    let compact = viewport_height(480.0);
+    let tall = viewport_height(900.0);
+    assert!(compact > 300.0, "compact dialog viewport was {compact}");
+    assert!(
+        tall > compact + 350.0,
+        "filmstrip did not grow with dialog height: {compact} → {tall}"
+    );
+    assert!(tall <= 900.0);
+}
+
+#[test]
 fn near_limit_filmstrip_resolves_only_viewport_thumbnails_not_every_slide_on_redraw() {
     use super::super::pitch_preview::THUMBNAIL_RESOLVES;
     // Both map size and deck size are deliberately nontrivial. Cloning the full map
