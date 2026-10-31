@@ -24,6 +24,13 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.20.0](https://github.com/AxelWol/Thinoda/compare/v0.19.1...v0.20.0) (2026-10-31)
+
+
+### Features
+
+* **fim:** integrate lossless XDF2/XDF3 authoring ([1fc6037](https://github.com/AxelWol/Thinoda/commit/1fc6037ff0570531cd8d35ca733dd61094ddd0fe))
+
 ## [0.19.1](https://github.com/AxelWol/Thinoda/compare/v0.19.0...v0.19.1) (2026-10-30)
 
 
