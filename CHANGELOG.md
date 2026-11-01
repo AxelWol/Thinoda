@@ -1,4 +1,4 @@
-_Last updated: 2026-11-01 11:56:40 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-01 18:13:24 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Changelog
 
@@ -23,6 +23,14 @@ while the version is `0.x`, breaking changes bump the minor version). See
   notes/changelog and download links (no automatic native installation).
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
+
+## [0.21.0](https://github.com/AxelWol/Thinoda/compare/v0.20.1...v0.21.0) (2026-11-01)
+
+
+### Features
+
+* **fim:** add validated expert node wizard ([17f87a7](https://github.com/AxelWol/Thinoda/commit/17f87a75bbac373d9824f0985d0960bc38bedd99))
+* **fim:** deploy validated expert node wizard ([fbe208b](https://github.com/AxelWol/Thinoda/commit/fbe208b8dd622fae83415416a1f6dc97ad7b9dc2))
 
 ## [0.20.1](https://github.com/AxelWol/Thinoda/compare/v0.20.0...v0.20.1) (2026-11-01)
 
