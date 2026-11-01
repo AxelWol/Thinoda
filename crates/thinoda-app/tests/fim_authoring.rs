@@ -1,5 +1,8 @@
 use egui::accesskit::Role;
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use thinoda_app::{
     ThinodaApp,
     app::{Cmd, FormatTab},
@@ -33,6 +36,7 @@ fn app() -> ThinodaApp {
 fn harness(app: ThinodaApp) -> Harness<'static, ThinodaApp> {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1280.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
         .with_context_setup(|ctx| {
             ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu)
         })
@@ -47,6 +51,8 @@ fn fourth_tab_shows_fim_identity_without_installing_or_validating() {
     h.get_by_role_and_label(Role::Tab, "FIM");
     h.get_by_label("FIM · XDF3");
     h.get_by_role_and_label(Role::Label, "S00000000001");
+    assert!(h.query_by_label("All source data").is_none());
+    h.get_by_role_and_label(Role::Button, "Edit FIM node");
     let header = h.get_by_role_and_label(Role::Label, "FIM · XDF3").rect();
     assert!(h.state().docs[0].view.canvas_rect().right() <= header.left());
     assert_eq!(
@@ -58,6 +64,236 @@ fn fourth_tab_shows_fim_identity_without_installing_or_validating() {
     h.run_steps(3);
     h.get_by_role_and_label(Role::Label, "0:*");
     assert!(h.state().command_available(&Cmd::Export(Format::FimXdf3)));
+}
+
+#[test]
+fn node_wizard_keeps_its_target_while_the_map_selection_changes() {
+    let mut app = app();
+    let root = app.docs[0].doc.sheet().root;
+    let field = app.docs[0].doc.sheet().topics[&root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::EditFimNode);
+    h.run_steps(5);
+    h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID");
+    h.get_by_role_and_label(Role::TextInput, "Name").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::TextInput, "Name")
+        .type_text("Postal code draft");
+    h.run_steps(3);
+    assert!(h.state().any_dirty());
+    h.state_mut().docs[0].view.select_only(root);
+    h.run_steps(4);
+    let name = h.get_by_role_and_label(Role::TextInput, "Name");
+    assert_eq!(
+        name.accesskit_node().value().as_deref(),
+        Some("Postal code draft")
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("F00000000001"),
+    );
+    assert!(h.state().command_available(&Cmd::EditFimNode));
+    h.state_mut().exec(&ctx, Cmd::EditFimNode);
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("F00000000001"),
+    );
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Window, "Discard FIM draft?");
+    h.get_by_role_and_label(Role::Button, "Keep editing")
+        .click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::TextInput, "Name");
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Discard draft")
+        .click();
+    h.run_steps(4);
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Assigned FIM ID")
+            .is_none()
+    );
+    assert!(!h.state().any_dirty());
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+}
+
+#[test]
+fn map_typing_opens_a_pinned_draft_without_changing_source_or_history() {
+    let mut app = app();
+    let field = app.docs[0].doc.sheet().topics[&app.docs[0].doc.sheet().root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    let state = h.state().docs[0].doc.state_id();
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+    h.event(egui::Event::Text("Typed draft".into()));
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Name")
+            .value()
+            .as_deref(),
+        Some("Typed draft")
+    );
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+    h.event(egui::Event::Text("Must not replace the draft".into()));
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Name")
+            .value()
+            .as_deref(),
+        Some("Typed draft")
+    );
+    assert_eq!(h.state().docs[0].doc.state_id(), state);
+    assert!(!h.state().docs[0].doc.can_undo());
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+}
+
+#[test]
+fn map_add_handle_opens_creation_without_inserting_an_unvalidated_node() {
+    let mut app = app();
+    app.settings.show_topic_add_buttons = true;
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Button, "Add child topic")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Window, "Create FIM node");
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID")
+            .value()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    assert!(!h.state().docs[0].doc.can_undo());
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+}
+
+#[test]
+fn releasing_a_fim_drag_outside_the_canvas_keeps_source_and_history() {
+    let mut app = app();
+    app.settings.show_topic_toolbar = false;
+    let field = app.docs[0].doc.sheet().topics[&app.docs[0].doc.sheet().root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    let doc = &h.state().docs[0];
+    let center = doc.view.selected_topic_rect(&doc.doc).unwrap().center();
+    let state = doc.doc.state_id();
+    h.hover_at(center);
+    h.drag_at(center);
+    h.run_steps(1);
+    let outside = egui::pos2(1.0, 1.0);
+    h.hover_at(outside);
+    h.run_steps(2);
+    h.event(egui::Event::PointerButton {
+        pos: outside,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert_eq!(h.state().docs[0].doc.state_id(), state);
+    assert!(!h.state().docs[0].doc.can_undo());
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+}
+
+#[test]
+fn map_double_click_opens_the_schema_editor_instead_of_inline_title_editing() {
+    let mut app = app();
+    let field = app.docs[0].doc.sheet().topics[&app.docs[0].doc.sheet().root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    let doc = &h.state().docs[0];
+    let center = doc.view.selected_topic_rect(&doc.doc).unwrap().center();
+    assert!(doc.view.canvas_rect().contains(center));
+    h.hover_at(center);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run_steps(1);
+        }
+    }
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID")
+            .value()
+            .as_deref(),
+        Some("F00000000001")
+    );
+    assert!(h.state().docs[0].view.editing_topic().is_none());
+    assert!(!h.state().docs[0].doc.can_undo());
+}
+
+#[test]
+fn node_wizard_cannot_apply_without_official_schemas() {
+    let mut app = app();
+    let root = app.docs[0].doc.sheet().root;
+    let field = app.docs[0].doc.sheet().topics[&root].children[0];
+    app.docs[0].view.select_only(field);
+    let mut h = harness(app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::EditFimNode);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "Apply").click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Window, "Download official schemas?");
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
+    // No download was authorized by opening or applying the form.
+    assert!(h.query_by_label("Validation passed").is_none());
+}
+
+#[test]
+fn structure_opens_the_same_node_wizard_without_the_fim_sidebar() {
+    let mut app = app();
+    app.settings.show_format_panel = false;
+    app.mode = thinoda_app::app::CenterMode::Outliner;
+    let mut h = harness(app);
+    h.get_by_role_and_label(Role::Button, "Edit FIM node")
+        .click();
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::TextInput, "Assigned FIM ID");
+    h.get_by_role_and_label(Role::Button, "More schema properties…")
+        .click();
+    h.run_steps(4);
+    h.get_by_label(
+        "Advanced source editing. Changes are staged with the node and validated before Apply.",
+    );
+    assert!(h.query_by_label("All source data").is_none());
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
 }
 
 fn accent_entry_rect(h: &Harness<'_, ThinodaApp>, identity: &str) -> Option<egui::Rect> {
@@ -157,18 +393,23 @@ fn selection_highlight_does_not_rebind_a_pending_fim_draft() {
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "0:*").click();
     h.run_steps(3);
-    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+    h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
         .focus();
     h.run_steps(2);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.run_steps(2);
-    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+    h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
         .type_text("1:3");
     h.run_steps(3);
     h.state_mut().docs[0].view.select_only(root);
     h.run_steps(5);
     assert!(accent_entry_rect(&h, "S00000000001").is_some());
-    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data");
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
+            .value()
+            .as_deref(),
+        Some("1:3")
+    );
     assert_eq!(
         thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
         source()
@@ -176,9 +417,10 @@ fn selection_highlight_does_not_rebind_a_pending_fim_draft() {
     h.get_by_role_and_label(Role::Button, "Apply").click();
     h.run_steps(4);
     let fim = h.state().docs[0].doc.sheet().fim.as_ref().unwrap();
+    h.get_by_role_and_label(Role::Window, "Download official schemas?");
     assert_eq!(
         fim.topic_metadata(field).unwrap().cardinality.as_deref(),
-        Some("1:3")
+        Some("0:*")
     );
     assert!(fim.topic_metadata(root).unwrap().cardinality.is_none());
 }
@@ -304,7 +546,7 @@ fn validated_xdf_export_is_disabled_for_ordinary_maps() {
 }
 
 #[test]
-fn rejected_cardinality_draft_is_retained_and_can_be_corrected_in_one_transaction() {
+fn cardinality_draft_can_be_corrected_without_committing_unvalidated_changes() {
     let mut app = app();
     let field = app.docs[0]
         .doc
@@ -318,18 +560,16 @@ fn rejected_cardinality_draft_is_retained_and_can_be_corrected_in_one_transactio
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "0:*").click();
     h.run_steps(3);
-    for (value, succeeds) in [("3:1", false), ("1:3", true)] {
-        h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+    for value in ["3:1", "1:3"] {
+        h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
             .focus();
         h.run_steps(2);
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         h.run_steps(2);
-        h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+        h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
             .type_text(value);
         h.run_steps(3);
-        assert!(h.state().docs[0].is_dirty());
-        h.get_by_role_and_label(Role::Button, "Apply").click();
-        h.run_steps(3);
+        assert!(h.state().any_dirty());
         assert_eq!(
             h.state().docs[0]
                 .doc
@@ -341,13 +581,21 @@ fn rejected_cardinality_draft_is_retained_and_can_be_corrected_in_one_transactio
                 .unwrap()
                 .cardinality
                 .as_deref(),
-            Some(if succeeds { "1:3" } else { "0:*" }),
+            Some("0:*"),
         );
-        if !succeeds {
-            h.get_by_role_and_label(Role::MultilineTextInput, "FIM data");
-        }
+        assert_eq!(
+            h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
+                .value()
+                .as_deref(),
+            Some(value)
+        );
     }
-    assert!(h.state_mut().docs[0].doc.undo());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Discard draft")
+        .click();
+    h.run_steps(3);
+    assert!(!h.state_mut().docs[0].doc.undo());
     assert_eq!(
         thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
         source(),
@@ -400,7 +648,7 @@ fn associated_rule_is_reachable_from_structure_without_selecting_an_unrelated_to
 }
 
 #[test]
-fn cancelling_a_snapshotted_fim_draft_removes_its_recovery_copy() {
+fn recovery_never_commits_unvalidated_node_drafts() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app();
     let field = app.docs[0]
@@ -414,16 +662,24 @@ fn cancelling_a_snapshotted_fim_draft_removes_its_recovery_copy() {
     app.docs[0]
         .save_to(&dir.path().join("working.thinoda"), false)
         .unwrap();
+    app.docs[0]
+        .doc
+        .edit_sheet("Cosmetic recovery change", |sheet| {
+            let root = sheet.root;
+            sheet.topics.get_mut(&root).unwrap().style.bold = Some(true);
+            Ok(())
+        })
+        .unwrap();
     app.docs[0].view.select_only(field);
     let mut h = harness(app);
     h.get_by_role_and_label(Role::Button, "0:*").click();
     h.run_steps(3);
-    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+    h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
         .focus();
     h.run_steps(2);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.run_steps(2);
-    h.get_by_role_and_label(Role::MultilineTextInput, "FIM data")
+    h.get_by_role_and_label(Role::TextInput, "Multiplicity (Min:Max)")
         .type_text("1:3");
     h.run_steps(3);
     let paths = thinoda_platform::Paths::from_root(dir.path().join("recovery"));
@@ -443,21 +699,86 @@ fn cancelling_a_snapshotted_fim_draft_removes_its_recovery_copy() {
             .unwrap()
             .cardinality
             .as_deref(),
-        Some("1:3")
+        Some("0:*")
+    );
+    assert!(
+        h.state().any_dirty(),
+        "live drafts still block accidental close"
     );
     drop(orphans);
     recovery.resume().unwrap();
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Discard draft")
+        .click();
+    h.run_steps(3);
+    h.state_mut().docs[0]
+        .save_to(&dir.path().join("working.thinoda"), false)
+        .unwrap();
     h.state_mut().docs[0].snapshot(&recovery);
     recovery.flush().unwrap();
     recovery.suspend().unwrap();
-    assert!(
-        thinoda_platform::recovery::RecoveryManager::find_orphans(&paths)
-            .iter()
-            .all(|orphan| orphan.docs.is_empty())
-    );
+    for orphan in thinoda_platform::recovery::RecoveryManager::find_orphans(&paths) {
+        for saved in orphan.docs {
+            assert_eq!(
+                saved
+                    .load()
+                    .unwrap()
+                    .active()
+                    .fim
+                    .as_ref()
+                    .unwrap()
+                    .topic_metadata(field)
+                    .unwrap()
+                    .cardinality
+                    .as_deref(),
+                Some("0:*")
+            );
+        }
+    }
     assert!(!h.state().docs[0].is_dirty());
+}
+
+#[test]
+fn unfinished_advanced_inputs_survive_reopening_and_block_apply() {
+    let mut h = harness(app());
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::EditFimNode);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "More schema properties…")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "XML element name")
+        .focus();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::TextInput, "XML element name")
+        .type_text("unfinished");
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(3);
+    assert!(h.state().any_dirty());
+    h.get_by_role_and_label(Role::Button, "More schema properties…")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "XML element name")
+            .value()
+            .as_deref(),
+        Some("unfinished")
+    );
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Apply").click();
+    h.run_steps(3);
+    h.get_by_label("Stage or clear unfinished schema properties before applying.");
+    assert!(
+        h.query_by_role_and_label(Role::Window, "Download official schemas?")
+            .is_none()
+    );
+    assert_eq!(
+        thinoda_io::fim::export_document(h.state().docs[0].doc.sheet()).unwrap(),
+        source()
+    );
 }
 
 #[cfg(feature = "gpu-tests")]
@@ -467,10 +788,11 @@ fn fim_sidebar_and_tree_render_with_realistic_source() {
     if let Some(directory) = &output {
         std::fs::create_dir_all(directory).unwrap();
     }
-    for (name, width, outline, dark) in [
-        ("fim-map-light", 1280.0, false, false),
-        ("fim-outline-dark", 1280.0, true, true),
-        ("fim-narrow-dark", 720.0, false, true),
+    for (name, width, height, outline, dark) in [
+        ("fim-map-light", 1280.0, 900.0, false, false),
+        ("fim-outline-dark", 1280.0, 900.0, true, true),
+        ("fim-narrow-dark", 720.0, 900.0, false, true),
+        ("fim-small-light", 360.0, 560.0, false, false),
     ] {
         let mut app = app();
         if let Some(sample) = std::env::var_os("THINODA_FIM_SAMPLE") {
@@ -488,7 +810,7 @@ fn fim_sidebar_and_tree_render_with_realistic_source() {
             app.mode = thinoda_app::app::CenterMode::Outliner;
         }
         let mut h = Harness::builder()
-            .with_size(egui::vec2(width, 900.0))
+            .with_size(egui::vec2(width, height))
             .with_context_setup(|ctx| {
                 ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
             })
@@ -527,6 +849,57 @@ fn fim_sidebar_and_tree_render_with_realistic_source() {
         let image = h.render().expect("FIM workspace GPU rendering");
         if let Some(directory) = &output {
             image.save(directory.join(format!("{name}.png"))).unwrap();
+        }
+        let field = h.state().docs[0]
+            .doc
+            .sheet()
+            .topics
+            .values()
+            .find(|topic| {
+                h.state().docs[0]
+                    .doc
+                    .sheet()
+                    .fim
+                    .as_ref()
+                    .unwrap()
+                    .topic_metadata(topic.id)
+                    .is_some_and(|metadata| metadata.kind == FimKind::Field)
+            })
+            .unwrap()
+            .id;
+        h.state_mut().docs[0].view.select_only(field);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::EditFimNode);
+        h.run_steps(5);
+        for label in ["Assigned FIM ID", "Name"] {
+            h.get_by_role_and_label(Role::TextInput, label)
+                .scroll_to_me();
+            h.run();
+            let rect = h.get_by_role_and_label(Role::TextInput, label).rect();
+            assert!(
+                rect.left() >= 0.0 && rect.right() <= width && rect.bottom() <= height,
+                "{name}: {label}: {rect:?}"
+            );
+            assert!(
+                h.output().shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text)
+                    if rect.contains(text.pos) && shape.clip_rect.contains(text.pos)
+                        && shape.clip_rect.top() <= rect.top() + 6.0
+                        && shape.clip_rect.bottom() >= rect.bottom() - 6.0)
+                }),
+                "{name}: {label} {rect:?} must be reachable inside the painted form viewport"
+            );
+        }
+        let rect = h.get_by_role_and_label(Role::Button, "Apply").rect();
+        assert!(
+            rect.left() >= 0.0 && rect.right() <= width && rect.bottom() <= height,
+            "{name}: Apply: {rect:?}"
+        );
+        let image = h.render().expect("FIM wizard GPU rendering");
+        if let Some(directory) = &output {
+            image
+                .save(directory.join(format!("{name}-wizard.png")))
+                .unwrap();
         }
     }
 }
