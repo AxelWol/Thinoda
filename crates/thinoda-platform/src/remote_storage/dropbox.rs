@@ -16,6 +16,11 @@ pub struct DropboxProvider {
 }
 
 impl DropboxProvider {
+    /// Root of the token's namespace (app folder for app-folder scoped tokens).
+    pub fn default_root(&self) -> StorageId {
+        StorageId(String::new())
+    }
+
     pub fn new(config: DropboxConfig) -> Result<Self> {
         Ok(Self {
             api: endpoint(&config.api_url, &["api.dropboxapi.com"])?,

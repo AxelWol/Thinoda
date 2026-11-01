@@ -20,7 +20,10 @@ mod webdav;
 pub use box_api::{BoxConfig, BoxProvider, BoxShareAccess};
 pub use drive::{GoogleDriveConfig, GoogleDriveProvider};
 pub use dropbox::{DropboxConfig, DropboxProvider};
-pub use graph::{GraphConfig, GraphProvider, GraphShareScope};
+pub use graph::{
+    GraphConfig, GraphDiscovery, GraphDiscoveryConfig, GraphProvider, GraphShareScope,
+    GraphStartLocation,
+};
 pub use webdav::{WebDavConfig, WebDavProvider};
 
 use crate::storage::{

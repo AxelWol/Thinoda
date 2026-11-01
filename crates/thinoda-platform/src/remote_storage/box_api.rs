@@ -23,6 +23,11 @@ pub enum BoxShareAccess {
 }
 
 impl BoxProvider {
+    /// Authenticated account root; folder IDs need not be entered by users.
+    pub fn default_root(&self) -> StorageId {
+        StorageId("0".into())
+    }
+
     pub fn new(config: BoxConfig) -> Result<Self> {
         Ok(Self {
             api: endpoint(&config.api_url, &["api.box.com"])?,

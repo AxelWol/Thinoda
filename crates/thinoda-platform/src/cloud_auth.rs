@@ -5,9 +5,10 @@
 //! (`rt`, `time`, `net`, `io-util`) dependencies. Web needs
 //! wasm-bindgen-futures and web-sys `History`, `AbortController`, `AbortSignal`.
 //! No client secret is accepted.
-//! Register a public/SPA client and its redirect URI with each provider.
-//! Provider registrations may reject secret-free grants (notably Box and some
-//! Google desktop registrations); do not work around this by shipping a secret.
+//! Normal sign-in uses [`effective_oauth_config`], not user-entered client IDs.
+//! Register supported public/native or SPA clients at build/deployment time;
+//! see `docs/CLOUD-AUTH-SETUP.md`. Box and Google SPA code exchange are gated
+//! unsupported because this implementation has no confidential backend/GIS flow.
 //! OneDrive currently targets personal accounts (`consumers`), not SharePoint.
 //! Dropbox app-folder access and Box permissions are registration settings.
 //! Web deployment requires HTTPS, endpoint CORS and CSP allowances for Fetch
@@ -35,6 +36,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Errors deliberately omit response bodies, codes, tokens and request URLs.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AuthError {
+    #[error("cloud sign-in is unavailable in this build; publisher configuration is required")]
+    BuildConfiguration,
     #[error("invalid cloud authentication configuration")]
     Configuration,
     #[error("invalid authentication callback")]
@@ -73,6 +76,183 @@ impl CloudAccountType {
             Self::WebDav => "cloud-webdav-v1",
         }
     }
+}
+
+/// Execution target, supplied by the app, never an ordinary user form field.
+#[derive(Clone, Copy, Debug)]
+pub enum OAuthTarget<'a> {
+    Native,
+    Web { deployment_url: &'a str },
+}
+
+/// Public build inputs. Empty by default; no credentials or placeholder IDs.
+/// Separate clients avoid mixing native and browser platform registrations.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PublicOAuthRegistration<'a> {
+    pub native_client_id: Option<&'a str>,
+    pub spa_client_id: Option<&'a str>,
+    /// Exact publisher-registered `http://127.0.0.1:PORT/callback`.
+    /// Required for OneDrive/Dropbox; Google Desktop uses an ephemeral port.
+    pub native_redirect_uri: Option<&'a str>,
+}
+
+/// Injectable public registrations for deterministic tests and publisher builds.
+/// Self-hosting overrides are a different build, not saved ordinary-user IDs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PublisherOAuthRegistrations<'a> {
+    pub onedrive: PublicOAuthRegistration<'a>,
+    pub dropbox: PublicOAuthRegistration<'a>,
+    pub box_: PublicOAuthRegistration<'a>,
+    pub google_drive: PublicOAuthRegistration<'a>,
+}
+impl PublisherOAuthRegistrations<'static> {
+    /// Read *compile-time* public variables only. Runtime environment/settings
+    /// cannot silently replace the publisher registration or enable a protocol.
+    pub const fn from_build() -> Self {
+        Self {
+            onedrive: PublicOAuthRegistration {
+                native_client_id: option_env!("THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID"),
+                spa_client_id: option_env!("THINODA_OAUTH_ONEDRIVE_SPA_CLIENT_ID"),
+                native_redirect_uri: option_env!("THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI"),
+            },
+            dropbox: PublicOAuthRegistration {
+                native_client_id: option_env!("THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID"),
+                spa_client_id: option_env!("THINODA_OAUTH_DROPBOX_SPA_CLIENT_ID"),
+                native_redirect_uri: option_env!("THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI"),
+            },
+            box_: PublicOAuthRegistration {
+                native_client_id: option_env!("THINODA_OAUTH_BOX_NATIVE_CLIENT_ID"),
+                spa_client_id: option_env!("THINODA_OAUTH_BOX_SPA_CLIENT_ID"),
+                native_redirect_uri: None,
+            },
+            google_drive: PublicOAuthRegistration {
+                native_client_id: option_env!("THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID"),
+                spa_client_id: option_env!("THINODA_OAUTH_GOOGLE_DRIVE_SPA_CLIENT_ID"),
+                native_redirect_uri: None,
+            },
+        }
+    }
+}
+
+/// Ready for the existing explicit PKCE flows; not a live registration check.
+pub struct EffectiveOAuthConfig {
+    pub oauth: OAuthConfig,
+    pub web_redirect_uri: Option<String>,
+}
+impl PublisherOAuthRegistrations<'_> {
+    /// Pure and deterministic: no browser launch, socket, storage or network.
+    /// Missing/malformed build inputs and unsupported provider/target protocols
+    /// return BuildConfiguration. IDs alone do not bypass capability gates.
+    pub fn effective(
+        &self,
+        provider: CloudAccountType,
+        target: OAuthTarget<'_>,
+    ) -> Result<EffectiveOAuthConfig> {
+        if provider == CloudAccountType::Box
+            || (provider == CloudAccountType::GoogleDrive
+                && matches!(target, OAuthTarget::Web { .. }))
+            || provider == CloudAccountType::WebDav
+        {
+            return Err(AuthError::BuildConfiguration);
+        }
+        let registration = match provider {
+            CloudAccountType::OneDrive => self.onedrive,
+            CloudAccountType::Dropbox => self.dropbox,
+            CloudAccountType::Box => self.box_,
+            CloudAccountType::GoogleDrive => self.google_drive,
+            CloudAccountType::WebDav => return Err(AuthError::BuildConfiguration),
+        };
+        let client_id = match target {
+            OAuthTarget::Native => registration.native_client_id,
+            OAuthTarget::Web { .. } => registration.spa_client_id,
+        }
+        .filter(|id| valid_public_client_id(id))
+        .ok_or(AuthError::BuildConfiguration)?;
+        let mut oauth =
+            OAuthConfig::new(provider, client_id).map_err(|_| AuthError::BuildConfiguration)?;
+        let web_redirect_uri = match target {
+            OAuthTarget::Native => {
+                if matches!(
+                    provider,
+                    CloudAccountType::OneDrive | CloudAccountType::Dropbox
+                ) {
+                    let raw = registration
+                        .native_redirect_uri
+                        .ok_or(AuthError::BuildConfiguration)?;
+                    oauth.native_redirect = Some(publisher_loopback(raw)?);
+                }
+                None
+            }
+            OAuthTarget::Web { deployment_url } => {
+                oauth.browser = true;
+                let redirect = web_callback_from_deployment(deployment_url)?;
+                oauth.web_redirect =
+                    Some(Url::parse(&redirect).map_err(|_| AuthError::BuildConfiguration)?);
+                Some(redirect)
+            }
+        };
+        Ok(EffectiveOAuthConfig {
+            oauth,
+            web_redirect_uri,
+        })
+    }
+}
+
+/// Normal UI entry point. Builds without registration remain explicitly disabled.
+pub fn effective_oauth_config(
+    provider: CloudAccountType,
+    target: OAuthTarget<'_>,
+) -> Result<EffectiveOAuthConfig> {
+    PublisherOAuthRegistrations::from_build().effective(provider, target)
+}
+
+fn valid_public_client_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 512
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+}
+fn publisher_loopback(raw: &str) -> Result<Url> {
+    let url = redirect_url(raw).map_err(|_| AuthError::BuildConfiguration)?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.path() != "/callback"
+        || url.port().is_none_or(|p| p < 1024)
+    {
+        return Err(AuthError::BuildConfiguration);
+    }
+    Ok(url)
+}
+
+/// Canonical static entrypoint callback: `https://host/subpath/`.
+/// `index.html`, query and fragment are removed; origin, port, case and
+/// deployment directory are retained. Deep routes/file entrypoints fail closed.
+/// The maintainer registers this exact URI once per deployment, not each user.
+pub fn web_callback_from_deployment(deployment_url: &str) -> Result<String> {
+    if deployment_url.len() > MAX_CALLBACK || deployment_url.chars().any(char::is_control) {
+        return Err(AuthError::BuildConfiguration);
+    }
+    let mut url = Url::parse(deployment_url).map_err(|_| AuthError::BuildConfiguration)?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(AuthError::BuildConfiguration);
+    }
+    let path = url.path().to_owned();
+    if let Some(directory) = path.strip_suffix("index.html") {
+        if !directory.ends_with('/') {
+            return Err(AuthError::BuildConfiguration);
+        }
+        url.set_path(directory);
+    } else if !path.ends_with('/') {
+        return Err(AuthError::BuildConfiguration);
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
 }
 
 /// Never derives Debug: serialization is only for the secure store.
@@ -318,10 +498,22 @@ pub struct OAuthConfig {
     authorization: Url,
     token: Url,
     revoke: Option<Url>,
+    native_redirect: Option<Url>,
+    web_redirect: Option<Url>,
+    browser: bool,
 }
 impl OAuthConfig {
+    /// Low-level explicit configuration for protocol tests/integrations.
+    /// Ordinary sign-in must use `effective_oauth_config` instead. Unsupported
+    /// public protocols cannot be enabled by passing a public client ID.
     pub fn new(provider: CloudAccountType, client_id: &str) -> Result<Self> {
-        if client_id.trim().is_empty() || client_id.len() > 512 {
+        if !cfg!(test)
+            && (provider == CloudAccountType::Box
+                || (cfg!(target_arch = "wasm32") && provider == CloudAccountType::GoogleDrive))
+        {
+            return Err(AuthError::Unsupported);
+        }
+        if !valid_public_client_id(client_id) {
             return Err(AuthError::Configuration);
         }
         let (authorization, token, revoke) = match provider {
@@ -353,6 +545,9 @@ impl OAuthConfig {
             authorization: secure_url(authorization)?,
             token: secure_url(token)?,
             revoke: revoke.map(secure_url).transpose()?,
+            native_redirect: None,
+            web_redirect: None,
+            browser: false,
         })
     }
     pub fn provider(&self) -> CloudAccountType {
@@ -387,10 +582,19 @@ pub struct PkceFlow {
 }
 impl PkceFlow {
     pub fn new(config: &OAuthConfig, redirect: &str) -> Result<Self> {
+        let redirect = redirect_url(redirect)?;
+        if config
+            .native_redirect
+            .as_ref()
+            .or(config.web_redirect.as_ref())
+            .is_some_and(|registered| registered != &redirect)
+        {
+            return Err(AuthError::Configuration);
+        }
         Ok(Self {
             provider: config.provider,
             client_id: config.client_id.clone(),
-            redirect: redirect_url(redirect)?.to_string(),
+            redirect: redirect.to_string(),
             verifier: random_secret(),
             state: random_secret(),
             created_at: now(),
@@ -411,7 +615,10 @@ impl PkceFlow {
                 query.append_pair("scope", config.scope());
             }
             if config.provider == CloudAccountType::Dropbox {
-                query.append_pair("token_access_type", "offline");
+                query.append_pair(
+                    "token_access_type",
+                    if config.browser { "online" } else { "offline" },
+                );
             }
             if config.provider == CloudAccountType::GoogleDrive {
                 query.append_pair("access_type", "offline");
@@ -435,7 +642,15 @@ impl PkceFlow {
         {
             return Err(AuthError::Configuration);
         }
-        redirect_url(&self.redirect)?;
+        let redirect = redirect_url(&self.redirect)?;
+        if config
+            .native_redirect
+            .as_ref()
+            .or(config.web_redirect.as_ref())
+            .is_some_and(|registered| registered != &redirect)
+        {
+            return Err(AuthError::Configuration);
+        }
         Ok(())
     }
     /// Consumes the flow even on an invalid/error callback. Retries start anew.
@@ -685,7 +900,15 @@ pub struct NativeLogin {
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeLogin {
     pub async fn bind(config: &OAuthConfig) -> Result<Self> {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        if config.browser {
+            return Err(AuthError::Configuration);
+        }
+        let port = config
+            .native_redirect
+            .as_ref()
+            .and_then(Url::port)
+            .unwrap_or(0);
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
             .map_err(|_| AuthError::Transport)?;
         let port = listener

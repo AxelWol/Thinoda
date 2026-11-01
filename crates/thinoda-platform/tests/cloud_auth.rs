@@ -1,10 +1,146 @@
 // Expanded inside cloud_auth so private mock endpoint overrides are available
 // only to unit tests. Cargo also discovers this file as an empty integration
-// target; it intentionally has no dependency on a not-yet-exported module.
+// target; the definitions run as platform module unit tests.
 #[allow(unused_macros)]
 macro_rules! cloud_auth_tests {
 () => {
 use super::*;
+
+fn publisher_fixture() -> PublisherOAuthRegistrations<'static> {
+    PublisherOAuthRegistrations {
+        onedrive: PublicOAuthRegistration {
+            native_client_id: Some("fixture-onedrive-native"),
+            spa_client_id: Some("fixture-onedrive-spa"),
+            native_redirect_uri: Some("http://127.0.0.1:53682/callback"),
+        },
+        dropbox: PublicOAuthRegistration {
+            native_client_id: Some("fixture-dropbox-native"),
+            spa_client_id: Some("fixture-dropbox-spa"),
+            native_redirect_uri: Some("http://127.0.0.1:53683/callback"),
+        },
+        box_: PublicOAuthRegistration {
+            native_client_id: Some("fixture-box-native"),
+            spa_client_id: Some("fixture-box-spa"),
+            native_redirect_uri: None,
+        },
+        google_drive: PublicOAuthRegistration {
+            native_client_id: Some("fixture-google-native"),
+            spa_client_id: Some("fixture-google-spa"),
+            native_redirect_uri: None,
+        },
+    }
+}
+#[test]
+fn missing_registration_and_protocol_gates_fail_before_a_flow_exists() {
+    for provider in [CloudAccountType::OneDrive, CloudAccountType::Dropbox, CloudAccountType::Box, CloudAccountType::GoogleDrive] {
+        for target in [OAuthTarget::Native, OAuthTarget::Web { deployment_url: "https://example.invalid/Thinoda/" }] {
+            assert!(matches!(PublisherOAuthRegistrations::default().effective(provider, target), Err(AuthError::BuildConfiguration)));
+        }
+    }
+    for (provider, target) in [
+        (CloudAccountType::Box, OAuthTarget::Native),
+        (CloudAccountType::Box, OAuthTarget::Web { deployment_url: "https://example.invalid/" }),
+        (CloudAccountType::GoogleDrive, OAuthTarget::Web { deployment_url: "https://example.invalid/" }),
+        (CloudAccountType::WebDav, OAuthTarget::Native),
+    ] {
+        assert!(matches!(publisher_fixture().effective(provider, target), Err(AuthError::BuildConfiguration)));
+    }
+}
+#[test]
+fn effective_configs_separate_native_and_spa_and_keep_exact_redirects() {
+    let publisher = publisher_fixture();
+    for (provider, native_id, spa_id, native_uri) in [
+        (CloudAccountType::OneDrive, "fixture-onedrive-native", "fixture-onedrive-spa", "http://127.0.0.1:53682/callback"),
+        (CloudAccountType::Dropbox, "fixture-dropbox-native", "fixture-dropbox-spa", "http://127.0.0.1:53683/callback"),
+    ] {
+        let native = publisher.effective(provider, OAuthTarget::Native).unwrap();
+        assert_eq!(native.oauth.client_id(), native_id);
+        assert_eq!(native.oauth.native_redirect.as_ref().unwrap().as_str(), native_uri);
+        assert!(native.web_redirect_uri.is_none());
+        assert!(matches!(PkceFlow::new(&native.oauth, "http://127.0.0.1:12345/callback"), Err(AuthError::Configuration)));
+        let web = publisher.effective(provider, OAuthTarget::Web { deployment_url: "https://example.invalid/Thinoda/index.html?code=discard#route" }).unwrap();
+        assert_eq!(web.oauth.client_id(), spa_id);
+        assert_eq!(web.web_redirect_uri.as_deref(), Some("https://example.invalid/Thinoda/"));
+        assert!(web.oauth.native_redirect.is_none());
+        assert!(matches!(PkceFlow::new(&web.oauth, "https://example.invalid/other/"), Err(AuthError::Configuration)));
+        let flow = PkceFlow::new(&web.oauth, web.web_redirect_uri.as_deref().unwrap()).unwrap();
+        let authorization = flow.authorization_url(&web.oauth).unwrap();
+        let pairs: std::collections::HashMap<_, _> = authorization.query_pairs().collect();
+        assert_eq!(pairs.get("redirect_uri").unwrap(), "https://example.invalid/Thinoda/");
+        if provider == CloudAccountType::Dropbox {
+            assert_eq!(pairs.get("token_access_type").unwrap(), "online");
+        }
+        let wrong = format!("https://example.invalid/other/?state={}&code=fixture", flow.state);
+        assert!(matches!(flow.consume(&wrong, &web.oauth), Err(AuthError::Callback)));
+    }
+    let google = publisher.effective(CloudAccountType::GoogleDrive, OAuthTarget::Native).unwrap();
+    assert_eq!(google.oauth.client_id(), "fixture-google-native");
+    assert!(google.oauth.native_redirect.is_none());
+}
+#[test]
+fn web_callback_is_clean_https_static_deployment_entrypoint() {
+    for (input, expected) in [
+        ("https://example.invalid", "https://example.invalid/"),
+        ("https://example.invalid/index.html?a=b#fragment", "https://example.invalid/"),
+        ("https://example.invalid/Thinoda/?code=fixture&state=fixture", "https://example.invalid/Thinoda/"),
+        ("https://example.invalid:8443/a/b/index.html#route", "https://example.invalid:8443/a/b/"),
+    ] {
+        assert_eq!(web_callback_from_deployment(input).unwrap(), expected);
+    }
+    for input in [
+        "http://127.0.0.1:8080/", "http://example.invalid/", "javascript:alert(1)",
+        "https://name@example.invalid/", "https://example.invalid/Thinoda",
+        "https://example.invalid/map.html", "https://example.invalid/route/document",
+        "https://example.invalid/\n",
+    ] {
+        assert!(matches!(web_callback_from_deployment(input), Err(AuthError::BuildConfiguration)));
+    }
+}
+#[test]
+fn publisher_invalid_inputs_never_fall_back_to_another_target() {
+    for client_id in ["", " fixture ", "https://example.invalid/", "fixture\n", "secret=value"] {
+        let mut publisher = publisher_fixture();
+        publisher.onedrive.native_client_id = Some(client_id);
+        assert!(matches!(publisher.effective(CloudAccountType::OneDrive, OAuthTarget::Native), Err(AuthError::BuildConfiguration)));
+    }
+    for redirect in [
+        None, Some("http://localhost:53682/callback"), Some("https://127.0.0.1:53682/callback"),
+        Some("http://127.0.0.1:0/callback"), Some("http://127.0.0.1:80/callback"),
+        Some("http://127.0.0.1:53682/other"), Some("http://127.0.0.1:53682/callback?x=1"),
+    ] {
+        let mut publisher = publisher_fixture();
+        publisher.dropbox.native_redirect_uri = redirect;
+        assert!(matches!(publisher.effective(CloudAccountType::Dropbox, OAuthTarget::Native), Err(AuthError::BuildConfiguration)));
+    }
+    let mut publisher = publisher_fixture();
+    publisher.dropbox.spa_client_id = None;
+    assert!(matches!(publisher.effective(CloudAccountType::Dropbox, OAuthTarget::Web { deployment_url: "https://example.invalid/" }), Err(AuthError::BuildConfiguration)));
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn publisher_native_listener_binds_registered_port_and_never_falls_back() {
+    run(async {
+        // Dynamically allocate a fixture port, then configure it as publisher-owned.
+        let occupied = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let uri = format!("http://127.0.0.1:{port}/callback");
+        let publisher = PublisherOAuthRegistrations {
+            dropbox: PublicOAuthRegistration {
+                native_redirect_uri: Some(&uri),
+                ..publisher_fixture().dropbox
+            },
+            ..publisher_fixture()
+        };
+        let effective = publisher.effective(CloudAccountType::Dropbox, OAuthTarget::Native).unwrap();
+        assert!(matches!(NativeLogin::bind(&effective.oauth).await, Err(AuthError::Transport)));
+        drop(occupied);
+        let login = NativeLogin::bind(&effective.oauth).await.unwrap();
+        assert_eq!(login.listener.local_addr().unwrap().port(), port);
+        assert_eq!(login.flow.redirect, uri);
+        let url = login.authorization_url(&effective.oauth).unwrap();
+        assert!(url.query_pairs().any(|(key, value)| key == "redirect_uri" && value == uri));
+    });
+}
 
 fn config() -> OAuthConfig {
     OAuthConfig::new(CloudAccountType::Dropbox, "test-public-client").unwrap()

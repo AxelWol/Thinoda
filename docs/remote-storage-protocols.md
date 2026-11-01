@@ -11,6 +11,12 @@ Native mock tests: `crates/thinoda-platform/tests/remote_storage.rs`.
 This implements bounded parts of [CLOUD-STORAGE.md](CLOUD-STORAGE.md), not its
 live-service, OAuth, browser, or independent security-review acceptance criteria.
 
+For publisher-owned public OAuth registrations, build variables, exact native/
+SPA redirects and unsupported Box/Google-browser protocol boundaries, follow
+[Cloud sign-in publisher setup](CLOUD-AUTH-SETUP.md). Ordinary users do not
+register provider apps or enter client IDs; unconfigured builds fail before
+provider browser launch.
+
 ## Integration requirements (owned by the manifest/module integrator)
 
 No Cargo manifest, lockfile, app code, or `lib.rs` is changed by this adapter work.
@@ -115,6 +121,73 @@ The integrator also owns dependency notices/lockfile updates and full workspace 
   success requiring reread, not retried.
 
 ## Provider wire contracts
+
+### Normal connection discovery and starting folders
+
+No user-entered drive ID or starting-folder ID is needed for a normal OneDrive
+connection. After browser consent has produced an explicit delegated token,
+the connection layer calls:
+
+```rust
+GraphProvider::discover(
+    GraphDiscoveryConfig {
+        api_url,       // global Graph root or explicit literal-loopback mock
+        access_token,  // supplied by the account/auth layer; never Debug/logged
+        location: GraphStartLocation::AppFolder,
+    },
+    cancel,
+) -> StorageFuture<'static, GraphDiscovery>
+```
+
+`GraphDiscovery` has public `provider: GraphProvider`, `drive_id: String`,
+and `root: StorageId` fields. Use the ready provider and returned root directly;
+do not ask users to copy IDs. The result and config intentionally have no Debug.
+The future starts no requests until polled; invoke it only as part of explicit
+Connect after authentication, not on startup or before consent.
+
+For **AppFolder**, only GET `/me/drive/special/approot` is requested, selecting
+`id,folder,specialFolder,parentReference`. The result must be a folder with
+`specialFolder.name == "approot"` and a nonempty `parentReference.driveId`.
+The returned parent drive ID configures the provider; no broader `/me/drive`
+metadata call is needed under the narrow scope. Missing/invalid metadata,
+403/404, CORS or redirects fail rather than falling back to the full drive.
+
+For an explicitly broader-consented **DriveRoot** connection, discovery GETs
+`/me/drive?$select=id`, then `/drives/{id}/root` selecting only folder/identity
+metadata, checks that the root's parent drive matches, and returns its actual ID.
+No children lists, file content, previews, owner names, or document uploads are
+requested in either discovery mode. The same endpoint trust, error redaction,
+bounded metadata and cancellation rules apply on native and wasm.
+
+Official documentation scope/account considerations:
+
+- The app-folder guide documents delegated `Files.ReadWrite.AppFolder` for
+  personal and work/school OneDrive, with access confined by the service to the
+  registered app's folder. The specific special-folder API permission table
+  lists AppFolder for personal accounts but broader Files.Read for work/school;
+  tenant/service differences must be live-tested. Never broaden consent or
+  silently retry a failed app-folder request against the root.
+- `/me/drive` metadata lists delegated Files.Read as least privilege;
+  a writable ordinary-drive experience needs explicit `Files.ReadWrite`
+  consent rather than assuming an app-folder token grants full-drive access.
+  The adapter does not inspect tokens or mint/refresh/request OAuth scopes.
+- `/me` requires delegated user authentication, not app-only tokens. App-only
+  access, SharePoint library selection, national clouds and enterprise
+  registration/approval are outside normal automatic discovery here.
+- Official docs say first app-folder access can create `Apps/<Entra app name>`,
+  and `/me/drive` may provision a licensed user's OneDrive. These server-side
+  setup effects are part of explicit Connect, **not** document transfers.
+- The app-folder guide contains one shorthand `/me/special/approot` example;
+  this implementation uses the documented API route
+  **`/me/drive/special/approot`**.
+
+Other adapters expose `default_root(&self) -> StorageId`, without I/O:
+DAV uses its explicitly configured collection, Dropbox uses the empty namespace
+root (already app-folder restricted for app-folder tokens), Box uses `0`,
+and Drive uses the supported `root` alias. OAuth scope and account policies
+still determine visible content; Drive's `drive.file` scope does not imply
+access to every existing document. Self-hosted DAV still needs an explicitly
+configured collection/server and credentials, not a provider-specific folder ID.
 
 ### Explicit new-file API
 
@@ -341,9 +414,14 @@ existing bytes, metadata/content ordering and escaping, response ETag identity,
 subsequent conditional stable-ID PATCH, sanitized errors, redirect rejection,
 missing-ETag ambiguous success and cancellation while awaiting a response.
 Invalid names, parent/payload guards and pre-cancellation make no requests.
+Discovery mocks verify the minimal-scope app-folder-only metadata path, explicit
+broader drive/root path, returned provider/IDs, folder/drive validation,
+no fallback/escalation on errors, rejected redirects/untrusted endpoints,
+pending-request cancellation, no unpolled/pre-cancel network, and valid network-free
+default roots for other providers.
 
 After the owner supplied module/dependency hooks, the integrated Windows x64
-`cargo test -p thinoda-platform --test remote_storage` passed all 32 mock tests
+`cargo test -p thinoda-platform --test remote_storage` passed all 38 mock tests
 with the actual workspace quick-xml 0.42. Platform `cargo clippy --all-targets
 -- -D warnings` also passed. The repository's combined wasm clippy command
 (`-p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io
@@ -362,6 +440,9 @@ rustc/artifact check was superseded by the integrated Cargo tests.
 
 ## Protocol references
 
+- [Graph drive metadata](https://learn.microsoft.com/en-us/graph/api/drive-get?view=graph-rest-1.0)
+- [Graph special folders](https://learn.microsoft.com/en-us/graph/api/drive-get-specialfolder?view=graph-rest-1.0)
+- [App-folder access and scope/account guidance](https://learn.microsoft.com/en-us/graph/onedrive-sharepoint-appfolder)
 - [Graph upload sessions](https://learn.microsoft.com/en-us/graph/api/driveitem-createuploadsession?view=graph-rest-1.0)
 - [Graph browser downloads](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0)
 - [Dropbox HTTP API](https://www.dropbox.com/developers/documentation/http/documentation)

@@ -12,6 +12,29 @@ pub struct GraphConfig {
     pub access_token: String,
 }
 
+/// Explicit delegated account discovery; never infer/broaden OAuth permissions.
+pub struct GraphDiscoveryConfig {
+    pub api_url: String,
+    pub access_token: String,
+    pub location: GraphStartLocation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphStartLocation {
+    /// Ordinary least-privilege connection: Files.ReadWrite.AppFolder.
+    AppFolder,
+    /// Only after explicit broader Files.ReadWrite consent.
+    DriveRoot,
+}
+
+/// IDs are obtained from authenticated metadata, not entered by the user.
+/// No Debug: avoid logging account-identifying drive/folder IDs accidentally.
+pub struct GraphDiscovery {
+    pub provider: GraphProvider,
+    pub drive_id: String,
+    pub root: StorageId,
+}
+
 pub struct GraphProvider {
     api: Url,
     drive_id: String,
@@ -32,6 +55,72 @@ impl GraphProvider {
             api: endpoint(&config.api_url, &["graph.microsoft.com"])?,
             drive_id: config.drive_id,
             http: Http::new(Authentication::Bearer(config.access_token))?,
+        })
+    }
+
+    /// Resolve an authenticated user's drive/app folder on explicit Connect.
+    /// Only metadata GETs; no children enumeration or document transfer.
+    /// App-folder resolution can create the registered app's folder server-side.
+    pub fn discover(
+        config: GraphDiscoveryConfig,
+        cancel: CancelToken,
+    ) -> StorageFuture<'static, GraphDiscovery> {
+        Box::pin(async move {
+            cancel.check()?;
+            let api = endpoint(&config.api_url, &["graph.microsoft.com"])?;
+            let http = Http::new(Authentication::Bearer(config.access_token))?;
+            let (drive_id, folder) = match config.location {
+                GraphStartLocation::AppFolder => {
+                    let mut url = route(&api, &["me", "drive", "special", "approot"])?;
+                    url.query_pairs_mut()
+                        .append_pair("$select", "id,folder,specialFolder,parentReference");
+                    let folder = discovery_json(&http, url, &cancel).await?;
+                    if folder
+                        .get("specialFolder")
+                        .and_then(|v| v.get("name"))
+                        .and_then(Value::as_str)
+                        != Some("approot")
+                    {
+                        return Err(remote("discovery did not return the app folder"));
+                    }
+                    let drive_id = discovery_drive_id(&folder)?.to_owned();
+                    (drive_id, folder)
+                }
+                GraphStartLocation::DriveRoot => {
+                    let mut url = route(&api, &["me", "drive"])?;
+                    url.query_pairs_mut().append_pair("$select", "id");
+                    let drive = discovery_json(&http, url, &cancel).await?;
+                    let drive_id = string(&drive, "id")?.to_owned();
+                    if drive_id.is_empty() {
+                        return Err(remote("discovery returned no drive ID"));
+                    }
+                    let mut url = route(&api, &["drives", &drive_id, "root"])?;
+                    url.query_pairs_mut()
+                        .append_pair("$select", "id,folder,parentReference");
+                    let folder = discovery_json(&http, url, &cancel).await?;
+                    if discovery_drive_id(&folder)? != drive_id {
+                        return Err(remote("discovery returned a folder in a different drive"));
+                    }
+                    (drive_id, folder)
+                }
+            };
+            if !folder.get("folder").is_some_and(Value::is_object) {
+                return Err(remote("discovery did not return a folder"));
+            }
+            let id = string(&folder, "id")?;
+            if id.is_empty() || matches!(id, "." | "..") || id.chars().any(char::is_control) {
+                return Err(remote("discovery returned an invalid folder ID"));
+            }
+            cancel.check()?;
+            Ok(GraphDiscovery {
+                root: StorageId(id.into()),
+                provider: Self {
+                    api,
+                    http,
+                    drive_id: drive_id.clone(),
+                },
+                drive_id,
+            })
         })
     }
 
@@ -360,6 +449,36 @@ impl GraphProvider {
         }
         Err(remote("Graph upload had no fragments"))
     }
+}
+
+async fn discovery_json(http: &Http, url: Url, cancel: &CancelToken) -> Result<Value> {
+    let response = http
+        .send(
+            Method::GET,
+            url,
+            authenticated(),
+            Vec::new(),
+            cancel,
+            METADATA_LIMIT,
+        )
+        .await?
+        .success()?;
+    if response.status != 200 {
+        return Err(remote("discovery did not return complete metadata"));
+    }
+    response.json()
+}
+
+fn discovery_drive_id(folder: &Value) -> Result<&str> {
+    let id = folder
+        .get("parentReference")
+        .and_then(|value| value.get("driveId"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| remote("discovery returned no parent drive ID"))?;
+    if id.is_empty() || matches!(id, "." | "..") || id.chars().any(char::is_control) {
+        return Err(remote("discovery returned an invalid drive ID"));
+    }
+    Ok(id)
 }
 
 impl StorageProvider for GraphProvider {

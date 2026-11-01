@@ -15,6 +15,11 @@ pub struct GoogleDriveProvider {
 }
 
 impl GoogleDriveProvider {
+    /// Drive's supported root alias; visibility still depends on consented scope.
+    pub fn default_root(&self) -> StorageId {
+        StorageId("root".into())
+    }
+
     pub fn new(config: GoogleDriveConfig) -> Result<Self> {
         Ok(Self {
             api: endpoint(&config.api_url, &["www.googleapis.com"])?,

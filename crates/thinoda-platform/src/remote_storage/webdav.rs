@@ -13,6 +13,11 @@ pub struct WebDavProvider {
 }
 
 impl WebDavProvider {
+    /// Configured collection, without discovery or document I/O.
+    pub fn default_root(&self) -> StorageId {
+        StorageId(self.base.to_string())
+    }
+
     pub fn new(config: WebDavConfig) -> Result<Self> {
         Ok(Self {
             base: endpoint(&config.collection_url, &[])?,

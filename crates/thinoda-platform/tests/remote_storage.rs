@@ -2003,3 +2003,220 @@ fn drive_creation_cancellation_interrupts_pending_response() {
     trigger.join().unwrap();
     worker.join().unwrap();
 }
+
+fn discovery(url: &str, location: GraphStartLocation) -> GraphDiscoveryConfig {
+    GraphDiscoveryConfig {
+        api_url: format!("{url}v1.0/"),
+        access_token: "mock-token".into(),
+        location,
+    }
+}
+
+#[test]
+fn graph_appfolder_discovery_is_one_metadata_request_with_no_broader_drive_lookup() {
+    let (url, worker) = server(2, |index, request, stream| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.headers["authorization"], "Bearer mock-token");
+        assert!(request.body.is_empty());
+        if index == 0 {
+            assert_eq!(
+                request.path,
+                "/v1.0/me/drive/special/approot?%24select=id%2Cfolder%2CspecialFolder%2CparentReference"
+            );
+            respond(stream, 200, &[], br#"{"id":"app-folder-id","folder":{},"specialFolder":{"name":"approot"},"parentReference":{"driveId":"discovered-drive"}}"#);
+        } else {
+            // Only the test's explicit post-discovery list enumerates children.
+            assert!(
+                request
+                    .path
+                    .starts_with("/v1.0/drives/discovered-drive/items/app-folder-id/children?")
+            );
+            respond(stream, 200, &[], br#"{"value":[]}"#);
+        }
+    });
+    run(async {
+        let discovered = GraphProvider::discover(
+            discovery(&url, GraphStartLocation::AppFolder),
+            CancelToken::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(discovered.drive_id, "discovered-drive");
+        assert_eq!(discovered.root, StorageId("app-folder-id".into()));
+        assert!(
+            discovered
+                .provider
+                .list(&discovered.root, CancelToken::default())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    });
+    worker.join().unwrap();
+}
+
+#[test]
+fn graph_broader_root_discovery_gets_me_drive_then_root_metadata() {
+    let (url, worker) = server(2, |index, request, stream| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.headers["authorization"], "Bearer mock-token");
+        assert!(request.body.is_empty());
+        if index == 0 {
+            assert_eq!(request.path, "/v1.0/me/drive?%24select=id");
+            respond(stream, 200, &[], br#"{"id":"drive-discovered"}"#);
+        } else {
+            assert_eq!(
+                request.path,
+                "/v1.0/drives/drive-discovered/root?%24select=id%2Cfolder%2CparentReference"
+            );
+            respond(stream, 200, &[], br#"{"id":"root-discovered","folder":{},"parentReference":{"driveId":"drive-discovered"}}"#);
+        }
+    });
+    run(async {
+        let discovered = GraphProvider::discover(
+            discovery(&url, GraphStartLocation::DriveRoot),
+            CancelToken::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(discovered.drive_id, "drive-discovered");
+        assert_eq!(discovered.root, StorageId("root-discovered".into()));
+    });
+    worker.join().unwrap();
+}
+
+#[test]
+fn graph_appfolder_discovery_errors_do_not_fallback_escalate_or_accept_invalid_metadata() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let other = listener.try_clone().unwrap();
+    let worker = thread::spawn(move || {
+        for index in 0..5 {
+            let (mut stream, _) = other.accept().unwrap();
+            let request = request(&mut stream);
+            assert_eq!(
+                request.path,
+                "/v1.0/me/drive/special/approot?%24select=id%2Cfolder%2CspecialFolder%2CparentReference"
+            );
+            match index {
+                0 => respond(&mut stream, 403, &[], b"PRIVATE permissions details"),
+                1 => respond(&mut stream, 302, &[("Location", "https://untrusted.invalid/metadata")], b""),
+                2 => respond(&mut stream, 200, &[], br#"{"id":"file-not-folder","specialFolder":{"name":"approot"},"parentReference":{"driveId":"d"}}"#),
+                3 => respond(&mut stream, 200, &[], br#"{"id":"folder","folder":{},"specialFolder":{"name":"approot"}}"#),
+                _ => respond(&mut stream, 200, &[], br#"{"id":"folder","folder":{},"specialFolder":{"name":"documents"},"parentReference":{"driveId":"d"}}"#),
+            }
+        }
+    });
+    run(async {
+        for index in 0..5 {
+            let result = GraphProvider::discover(
+                discovery(&url, GraphStartLocation::AppFolder),
+                CancelToken::default(),
+            )
+            .await;
+            match index {
+                0 => assert!(matches!(result, Err(StorageError::Remote(ref m)) if m == "HTTP 403")),
+                1 => assert!(matches!(result, Err(StorageError::Remote(ref m)) if m == "HTTP 302")),
+                _ => assert!(matches!(result, Err(StorageError::Remote(_)))),
+            }
+        }
+    });
+    worker.join().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    assert!(listener.accept().is_err()); // No automatic broader root/metadata retry.
+}
+
+#[test]
+fn graph_root_discovery_rejects_folder_from_different_drive() {
+    let (url, worker) = server(2, |index, _, stream| {
+        if index == 0 {
+            respond(stream, 200, &[], br#"{"id":"expected"}"#);
+        } else {
+            respond(
+                stream,
+                200,
+                &[],
+                br#"{"id":"root","folder":{},"parentReference":{"driveId":"other"}}"#,
+            );
+        }
+    });
+    run(async {
+        assert!(
+            matches!(GraphProvider::discover(discovery(&url, GraphStartLocation::DriveRoot), CancelToken::default()).await,
+            Err(StorageError::Remote(ref m)) if m == "discovery returned a folder in a different drive")
+        );
+    });
+    worker.join().unwrap();
+}
+
+#[test]
+fn discovery_unpolled_precancel_and_other_provider_default_roots_make_no_requests() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    drop(GraphProvider::discover(
+        discovery(&url, GraphStartLocation::AppFolder),
+        CancelToken::default(),
+    ));
+    let webdav = dav(url.clone());
+    assert_eq!(webdav.default_root(), webdav.id("").unwrap());
+    let dropbox = DropboxProvider::new(DropboxConfig {
+        api_url: format!("{url}api/"),
+        content_url: format!("{url}content/"),
+        access_token: "mock-token".into(),
+    })
+    .unwrap();
+    assert_eq!(dropbox.default_root(), StorageId("".into()));
+    let box_api = BoxProvider::new(BoxConfig {
+        api_url: format!("{url}api/"),
+        upload_url: format!("{url}upload/"),
+        access_token: "mock-token".into(),
+    })
+    .unwrap();
+    assert_eq!(box_api.default_root(), StorageId("0".into()));
+    assert_eq!(drive(&url).default_root(), StorageId("root".into()));
+    run(async {
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        assert!(matches!(
+            GraphProvider::discover(discovery(&url, GraphStartLocation::AppFolder), cancel).await,
+            Err(StorageError::Cancelled)
+        ));
+        let config = GraphDiscoveryConfig {
+            api_url: "https://untrusted.invalid/v1.0/".into(),
+            access_token: "mock-token".into(),
+            location: GraphStartLocation::AppFolder,
+        };
+        assert!(
+            GraphProvider::discover(config, CancelToken::default())
+                .await
+                .is_err()
+        );
+    });
+    assert!(listener.accept().is_err());
+}
+
+#[test]
+fn graph_discovery_cancellation_interrupts_pending_metadata() {
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    let (url, worker) = server(1, move |_, request, _| {
+        assert_eq!(request.method, "GET");
+        assert!(request.path.contains("/special/approot?"));
+        seen_tx.send(()).unwrap();
+        thread::sleep(Duration::from_millis(300));
+    });
+    let cancel = CancelToken::default();
+    let token = cancel.clone();
+    let trigger = thread::spawn(move || {
+        seen_rx.recv().unwrap();
+        token.cancel();
+    });
+    run(async {
+        assert!(matches!(
+            GraphProvider::discover(discovery(&url, GraphStartLocation::AppFolder), cancel).await,
+            Err(StorageError::Cancelled)
+        ));
+    });
+    trigger.join().unwrap();
+    worker.join().unwrap();
+}

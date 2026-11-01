@@ -65,6 +65,12 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    env:
+      THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID }}
+      THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI }}
+      THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID }}
+      THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI }}
+      THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +143,9 @@ jobs:
 
   web:
     name: web app (wasm32)
+    env:
+      THINODA_OAUTH_ONEDRIVE_SPA_CLIENT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.THINODA_OAUTH_ONEDRIVE_SPA_CLIENT_ID || '' }}
+      THINODA_OAUTH_DROPBOX_SPA_CLIENT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.THINODA_OAUTH_DROPBOX_SPA_CLIENT_ID || '' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
