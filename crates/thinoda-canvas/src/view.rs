@@ -710,6 +710,9 @@ pub struct CanvasOutput {
     pub selection_changed: bool,
     /// Last edit error (e.g. trying to delete the central topic).
     pub error: Option<thinoda_core::EditError>,
+    /// FIM edits that need the host's schema-aware authoring flow.
+    pub authoring_action: Option<Action>,
+    pub authoring_text: Option<String>,
 }
 
 impl CanvasOutput {
@@ -861,6 +864,8 @@ impl MapCanvas {
             context_topic: None,
             selection_changed: false,
             error: None,
+            authoring_action: None,
+            authoring_text: None,
         };
 
         if response.clicked() || response.drag_started() || response.secondary_clicked() {
@@ -1218,7 +1223,11 @@ impl MapCanvas {
             let sp = view.xf().sheet(p);
             if let Some(t) = layout.hit_test(sp) {
                 view.select_only(t);
-                view.begin_edit(doc.sheet(), t, true);
+                if doc.sheet().fim.is_some() {
+                    out.authoring_action = Some(Action::StartEdit);
+                } else {
+                    view.begin_edit(doc.sheet(), t, true);
+                }
             } else if layout.hit_badge(sp).is_none()
                 && hit_object(&layout, sp, 6.0 / view.zoom).is_none()
                 && hit_zone(doc.sheet(), sp, 6.0 / view.zoom).is_none()
@@ -1550,6 +1559,24 @@ impl MapCanvas {
 }
 
 fn run(doc: &mut Document, view: &mut MapView, action: Action, out: &mut CanvasOutput) {
+    if doc.sheet().fim.is_some()
+        && matches!(
+            action,
+            Action::InsertChild
+                | Action::InsertSibling
+                | Action::InsertSiblingBefore
+                | Action::InsertParent
+                | Action::InsertFloating(_)
+                | Action::Delete
+                | Action::DeleteKeepChildren
+                | Action::Duplicate
+                | Action::StartEdit
+                | Action::Paste(_)
+        )
+    {
+        out.authoring_action = Some(action);
+        return;
+    }
     if let Err(e) = apply_action(doc, view, action) {
         out.error = Some(e);
     }
@@ -1670,7 +1697,12 @@ fn handle_keys(
                     && view.selection.len() == 1
                     && let Some(t) = view.primary()
                 {
-                    view.begin_edit_with(doc.sheet(), t, &text);
+                    if doc.sheet().fim.is_some() {
+                        out.authoring_action = Some(Action::StartEdit);
+                        out.authoring_text = Some(text);
+                    } else {
+                        view.begin_edit_with(doc.sheet(), t, &text);
+                    }
                     break;
                 }
             }

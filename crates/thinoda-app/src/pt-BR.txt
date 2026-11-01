@@ -539,3 +539,26 @@ Save your work, then close all app windows and reopen to apply the update.|Salve
 Saving file:|Salvando arquivo:
 The file writer stopped unexpectedly|O salvamento do arquivo parou inesperadamente
 Wait until the file is saved|Aguarde até o arquivo ser salvo
+# FIM node wizard: regional wording; other labels share the Portuguese catalog.
+Legal basis|Baseado em uma norma jurídica
+String.Latin+|Cadeia de caracteres (String.Latin+)
+Validating FIM changes…|Validando alterações FIM…
+Delete FIM node…|Excluir nó FIM…
+Delete FIM node?|Excluir o nó FIM?
+Delete FIM node|Excluir nó FIM
+Keep editing|Continuar editando
+Delete this occurrence and its contained nodes? Shared parent usages are affected. Dangling references and invalid schemas block deletion.|Excluir esta ocorrência e os nós que contém? Os usos compartilhados dos nós superiores são afetados. Referências sem destino e esquemas inválidos impedem a exclusão.
+Confirm the shared-definition impact or make this occurrence independent.|Confirme o impacto na definição compartilhada ou torne esta ocorrência independente.
+XDF3 code lists use canonical references, not FIM registry IDs.|As listas de códigos XDF3 usam referências canônicas, não identificadores do registro FIM.
+Reuse evidence comes from IDs and preserved relations; it does not prove registry provenance.|Os indícios de reutilização vêm dos identificadores e das relações preservadas; não comprovam a origem em um registro.
+Update all shared usages|Atualizar todos os usos compartilhados
+Usage justification|Justificativa de uso
+Multiplicity and usage justification belong to the incoming structure, not the definition.|A multiplicidade e a justificativa de uso pertencem à estrutura de entrada, não à definição.
+Canonical identification|Identificação canônica
+Canonical version URI|URI de versão canônica
+External code lists are referenced, never downloaded automatically.|As listas de códigos externas são referenciadas e nunca baixadas automaticamente.
+Edit the canonical reference on the Rules and code lists page.|Edite a referência canônica na página “Regras e listas de códigos”.
+Default value|Valor padrão
+Maximum file size (bytes)|Tamanho máximo do arquivo (bytes)
+Allowed media types|Tipos de mídia permitidos
+Review hierarchy changes|Revisar alterações da hierarquia

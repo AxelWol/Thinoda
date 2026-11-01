@@ -208,6 +208,9 @@ impl ThinodaApp {
                 ("Local Image", Cmd::LocalImage),
                 ("Attachment", Cmd::Attachment),
                 ("Save/Download attachment", Cmd::SaveAttachment),
+                ("Add FIM child", Cmd::AddFimChild),
+                ("Insert FIM node before", Cmd::InsertFimBefore),
+                ("Insert FIM node after", Cmd::InsertFimAfter),
             ])),
             submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
                 .chain(std::iter::once(MenuEntry::Separator))
@@ -224,6 +227,7 @@ impl ThinodaApp {
                 MenuEntry::Separator,
                 item("Work Calendar", Cmd::WorkCalendar),
                 item("Zones", Cmd::Zones),
+                item("Edit FIM node", Cmd::EditFimNode),
             ]),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),
