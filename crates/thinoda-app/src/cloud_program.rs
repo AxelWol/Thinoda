@@ -209,9 +209,9 @@ enum Connection {
     Dropbox(DropboxProvider),
     Box(BoxProvider),
     Drive(GoogleDriveProvider),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "integrated-cloud-services"))]
     Mock(Box<dyn StorageProvider>),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "integrated-cloud-services"))]
     MockCreator(Box<dyn StorageProvider>, StorageId),
 }
 impl Connection {
@@ -222,9 +222,9 @@ impl Connection {
             Self::Dropbox(p) => p,
             Self::Box(p) => p,
             Self::Drive(p) => p,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "integrated-cloud-services"))]
             Self::Mock(p) => p.as_ref(),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "integrated-cloud-services"))]
             Self::MockCreator(p, _) => p.as_ref(),
         }
     }
@@ -259,7 +259,7 @@ impl Connection {
                         .map(|path| StorageId(path.clone()))
                 }
             }
-            #[cfg(test)]
+            #[cfg(all(test, feature = "integrated-cloud-services"))]
             Self::MockCreator(_, _) => Some(folder.id.clone()),
             _ => None,
         }
@@ -278,7 +278,7 @@ impl Connection {
             Self::Dropbox(p) => p.create_file(parent, name, bytes, cancel).await,
             Self::Box(p) => p.create_file(parent, name, bytes, cancel).await,
             Self::Drive(p) => p.create_file(parent, name, bytes, cancel).await,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "integrated-cloud-services"))]
             Self::MockCreator(p, result_id) => {
                 let revision = p
                     .write(parent, bytes, ExpectedRevision::Missing, cancel)
@@ -292,7 +292,7 @@ impl Connection {
                     availability: thinoda_platform::storage::Availability::OnlineOnly,
                 })
             }
-            #[cfg(test)]
+            #[cfg(all(test, feature = "integrated-cloud-services"))]
             Self::Mock(_) => Err(StorageError::Unsupported),
         }
     }
@@ -918,9 +918,61 @@ async fn sign_in(
     finish_connect(settings, credential, cancel, storage_cancel).await
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CallbackAction {
+    Ignore,
+    ScrubOnly,
+    Consume,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn callback_action(query: &str, enabled: bool, inline: bool) -> CallbackAction {
+    if !query
+        .trim_start_matches('?')
+        .split('&')
+        .any(|s| s.starts_with("code=") || s.starts_with("error="))
+    {
+        CallbackAction::Ignore
+    } else if enabled && !inline {
+        CallbackAction::Consume
+    } else {
+        CallbackAction::ScrubOnly
+    }
+}
+
+#[cfg(test)]
+mod callback_tests {
+    use super::*;
+
+    #[test]
+    fn callback_scrubbing_is_independent_of_integration_and_execution_mode() {
+        for query in ["?code=stale&state=old", "?error=access_denied&state=old"] {
+            assert_eq!(
+                callback_action(query, false, false),
+                CallbackAction::ScrubOnly
+            );
+            assert_eq!(
+                callback_action(query, false, true),
+                CallbackAction::ScrubOnly
+            );
+            assert_eq!(
+                callback_action(query, true, true),
+                CallbackAction::ScrubOnly
+            );
+            assert_eq!(callback_action(query, true, false), CallbackAction::Consume);
+        }
+        for query in ["", "?view=map", "?state=old", "?postcode=123"] {
+            assert_eq!(callback_action(query, false, false), CallbackAction::Ignore);
+            assert_eq!(callback_action(query, true, false), CallbackAction::Ignore);
+        }
+    }
+}
+
 impl ThinodaApp {
     fn cloud_upload_available(&self) -> bool {
-        !self.file_ops.inline()
+        cfg!(feature = "integrated-cloud-services")
+            && !self.file_ops.inline()
             && !self.file_ops.saving()
             && !self.cloud_program.busy()
             && !self.cloud_program.saving()
@@ -1047,6 +1099,9 @@ impl ThinodaApp {
             }
         });
         let locked = self.cloud_program.busy() || self.cloud_program.connection.is_some();
+        if !cfg!(feature = "integrated-cloud-services") {
+            return false;
+        }
         widgets::page_section(ui, t("Cloud accounts"), |ui| {
             widgets::caption(
                 ui,
@@ -1151,6 +1206,9 @@ impl ThinodaApp {
     /// Successful completion invokes resolve_save_close_tab with the actual
     /// same-state result. Save As must bypass this method.
     pub(crate) fn cloud_save_active(&mut self) -> Option<bool> {
+        if !cfg!(feature = "integrated-cloud-services") {
+            return None;
+        }
         let doc = self.docs.get(self.active)?;
         if doc.path.is_some() {
             self.cloud_program.forget_document(&doc.key);
@@ -1179,6 +1237,9 @@ impl ThinodaApp {
     }
 
     fn queue_cloud_save(&mut self, source: Source, creating_in: Option<Folder>) {
+        if !cfg!(feature = "integrated-cloud-services") {
+            return;
+        }
         let Some(connection) = self.cloud_program.connection.clone() else {
             return;
         };
@@ -1239,6 +1300,9 @@ impl ThinodaApp {
     }
 
     fn cloud_list(&mut self, folder: Folder) {
+        if !cfg!(feature = "integrated-cloud-services") {
+            return;
+        }
         if self.cloud_program.busy() || self.file_ops.inline() {
             return;
         }
@@ -1258,6 +1322,9 @@ impl ThinodaApp {
     }
 
     fn cloud_open_selected(&mut self) {
+        if !cfg!(feature = "integrated-cloud-services") {
+            return;
+        }
         if self.cloud_program.busy() || self.file_ops.inline() {
             return;
         }
@@ -1306,6 +1373,9 @@ impl ThinodaApp {
     }
 
     fn cloud_upload_new(&mut self) {
+        if !cfg!(feature = "integrated-cloud-services") {
+            return;
+        }
         if !self.cloud_upload_available() {
             return;
         }
@@ -1356,7 +1426,10 @@ impl ThinodaApp {
     }
 
     fn cloud_accept_consent(&mut self, consent: Consent) {
-        if self.file_ops.inline() || self.cloud_program.busy() {
+        if !cfg!(feature = "integrated-cloud-services")
+            || self.file_ops.inline()
+            || self.cloud_program.busy()
+        {
             return;
         }
         match consent {
@@ -1468,7 +1541,10 @@ impl ThinodaApp {
 
     #[cfg(target_arch = "wasm32")]
     fn cloud_resume_sign_in(&mut self, grant: cloud_auth::AuthorizationGrant) {
-        if self.file_ops.inline() || self.cloud_program.busy() {
+        if !cfg!(feature = "integrated-cloud-services")
+            || self.file_ops.inline()
+            || self.cloud_program.busy()
+        {
             return;
         }
         let config = match consumer_oauth_config(self.settings.cloud.provider) {
@@ -1504,21 +1580,23 @@ impl ThinodaApp {
     pub(crate) fn cloud_consume_redirect(&mut self) {
         #[cfg(target_arch = "wasm32")]
         {
-            if self.file_ops.inline() {
-                return;
-            }
             let callback = web_sys::window()
                 .and_then(|w| w.location().search().ok())
                 .unwrap_or_default();
-            if !callback
-                .trim_start_matches('?')
-                .split('&')
-                .any(|s| s.starts_with("code=") || s.starts_with("error="))
-            {
+            let action = callback_action(
+                &callback,
+                cfg!(feature = "integrated-cloud-services"),
+                self.file_ops.inline(),
+            );
+            if action == CallbackAction::Ignore {
                 return;
             }
-            let result = consumer_oauth_config(self.settings.cloud.provider).and_then(|config| {
-                cloud_auth::web::consume_redirect(&config.oauth).map_err(auth_failure)
+            // Consumption needs the original URL, so validate before scrubbing.
+            // Disabled/headless builds must not touch PKCE storage or account APIs.
+            let result = (action == CallbackAction::Consume).then(|| {
+                consumer_oauth_config(self.settings.cloud.provider).and_then(|config| {
+                    cloud_auth::web::consume_redirect(&config.oauth).map_err(auth_failure)
+                })
             });
             // Even a missing/invalid public registration must not leave an
             // authorization code visible in the address bar.
@@ -1534,10 +1612,11 @@ impl ThinodaApp {
                 );
             }
             match result {
-                Ok(grant) => {
+                Some(Ok(grant)) => {
                     self.cloud_resume_sign_in(grant);
                 }
-                Err(message) => self.cloud_program.status = Some(message),
+                Some(Err(message)) => self.cloud_program.status = Some(message),
+                None => {}
             }
         }
     }
@@ -2101,7 +2180,69 @@ fn warning_label(warning: ImportWarning) -> &'static str {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "integrated-cloud-services")))]
+mod disabled_tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn default_build_hides_accounts_but_preserves_local_storage_controls() {
+        let mut app = ThinodaApp::headless();
+        app.settings.cloud.provider = CloudProvider::OneDrive;
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, app: &mut ThinodaApp| {
+                app.cloud_settings_section(ui, true);
+            },
+            app,
+        );
+        harness.run_steps(2);
+        assert!(harness.query_by_label(t("Cloud accounts")).is_none());
+        assert!(harness.query_by_label(t("Connect")).is_none());
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(harness.query_by_label(t("Choose backup folder…")).is_some());
+    }
+
+    #[test]
+    fn disabled_integration_cannot_start_jobs_from_saved_provider_or_consent() {
+        let mut app = ThinodaApp::headless();
+        for provider in [
+            CloudProvider::WebDav,
+            CloudProvider::OneDrive,
+            CloudProvider::Dropbox,
+            CloudProvider::Box,
+            CloudProvider::GoogleDrive,
+        ] {
+            app.settings.cloud.provider = provider;
+            app.settings.cloud.webdav_server = "https://example.invalid/".into();
+            app.cloud_program.use_stored = true;
+            for consent in [
+                Consent::Connect,
+                Consent::Disconnect,
+                Consent::Upload,
+                Consent::Share,
+            ] {
+                app.cloud_accept_consent(consent);
+                assert!(app.cloud_program.pending.is_none());
+                assert!(app.cloud_program.running.is_none());
+                assert!(app.cloud_program.connection.is_none());
+            }
+            app.cloud_consume_redirect();
+            app.cloud_list(Folder {
+                id: StorageId("root".into()),
+                name: "root".into(),
+                dropbox_path: None,
+            });
+            app.cloud_open_selected();
+            app.cloud_upload_new();
+            assert!(!app.cloud_upload_available());
+            assert!(app.cloud_save_active().is_none());
+            assert!(app.cloud_program.pending.is_none());
+            assert!(app.cloud_program.status.is_none());
+        }
+    }
+}
+
+#[cfg(all(test, feature = "integrated-cloud-services"))]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2582,7 +2723,7 @@ mod tests {
         let unique: std::collections::HashSet<_> = CLOUD_UI_KEYS.iter().copied().collect();
         assert_eq!(unique.len(), CLOUD_UI_KEYS.len());
         let source = include_str!("cloud_program.rs")
-            .split("#[cfg(test)]\nmod tests")
+            .split("#[cfg(all(test, feature = \"integrated-cloud-services\"))]\nmod tests")
             .next()
             .unwrap();
         for literal in source.split('"').skip(1).step_by(2) {

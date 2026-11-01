@@ -10,6 +10,10 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
+[features]
+default = []
+integrated-cloud-services = ["thinoda-app/integrated-cloud-services"]
+
 # Built with `trunk build --release` from this directory (see docs/WEB.md).
 [[bin]]
 name = "thinoda-web"

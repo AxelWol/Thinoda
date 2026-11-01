@@ -553,6 +553,7 @@ Save your work, then close all app windows and reopen to apply the update.|Salve
 Saving file:|Salvando arquivo:
 The file writer stopped unexpectedly|O salvamento do arquivo parou inesperadamente
 Cloud settings connect explicitly configured providers. Open and save are revision-checked; uploads and sharing require user actions. Live provider and sync-client compatibility remain unverified; real-time collaboration is not implemented.|As configurações de nuvem se conectam a provedores configurados explicitamente. A abertura e o salvamento verificam a revisão; envios e compartilhamentos exigem ações do usuário. A compatibilidade com provedores ativos e clientes de sincronização não foi verificada; a colaboração em tempo real não está implementada.
+Integrated cloud accounts are disabled by default while publisher registrations are pending. Local sync folders, backups and browser document storage remain available.|As contas de nuvem integradas ficam desativadas por padrão enquanto os registros do editor estão pendentes. As pastas de sincronização locais, os backups e o armazenamento de documentos do navegador continuam disponíveis.
 Box|Box
 Browse cloud files…|Procurar arquivos na nuvem…
 Browser document storage|Armazenamento de documentos do navegador

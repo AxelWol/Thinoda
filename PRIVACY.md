@@ -94,6 +94,13 @@ provider-side copies. See [local history behavior](docs/AI-HISTORY.md).
 ## Optional cloud accounts
 
 Cloud accounts are optional and distinct from local synchronized folders.
+Integrated remote accounts are currently disabled by default behind the opt-in
+`integrated-cloud-services` build feature while publisher registrations are
+pending. Disabled native/web artifacts expose no account connection controls
+and do not consume OAuth callbacks or initiate remote cloud jobs, regardless
+of saved provider settings. Local sync-folder access and browser document
+storage remain available. Populating publisher registration Variables alone
+does not enable the feature.
 Opening Settings, selecting a provider, or opening the cloud browser does not
 look up stored account credentials or contact a provider. Connecting requires
 explicit consent and can contact the configured WebDAV server or OAuth provider

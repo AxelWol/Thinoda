@@ -30,6 +30,13 @@ Trunk downloads `wasm-bindgen` and `wasm-opt` on first use. The build uses
 relative URLs (`public_url = "./"` in `Trunk.toml`), so `dist` works from any
 sub path. WebGL 2 is required; Thinoda renders through wgpu's WebGL backend.
 
+Integrated remote cloud accounts are disabled in the default build while
+publisher registrations are pending. OPFS/IndexedDB document storage, quota
+and persistence controls, local file pickers and downloads remain available.
+Only an intentional `trunk build --release --features integrated-cloud-services`
+enables account integration, and it still requires publisher registrations;
+see [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md). Pages builds do not pass that flag.
+
 ## Publishing on GitHub Pages
 The web app is built and deployed by the `CI` workflow
 ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)):

@@ -12,6 +12,8 @@ publish = false
 default-run = "thinoda"
 
 [features]
+default = []
+integrated-cloud-services = []
 gpu-tests = ["egui_kittest/wgpu"]
 
 [lib]

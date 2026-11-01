@@ -701,7 +701,13 @@ those system-owned controls. WinGet publishing remains paused.
   Google Drive, Box and Nextcloud sync folders. A separate backup folder can be
   selected outside detected sync roots; this is not a claim that provider rename,
   in-place save or version-history behavior has been live-tested.
-- Optional cloud accounts in Settings: select a provider and **Connect**, then
+- Integrated cloud accounts are **disabled by default** while publisher
+  registrations are pending. Native packages and the web site do not enable the
+  opt-in `integrated-cloud-services` Cargo feature. Local sync folders, backups
+  and durable browser storage remain available. See
+  [publisher setup and feature gate](docs/CLOUD-AUTH-SETUP.md).
+- With that feature deliberately enabled, optional cloud accounts in Settings:
+  select a provider and **Connect**, then
   authorize Thinoda in the provider's browser sign-in. OAuth registration belongs
   to the publisher build, not ordinary users: there are no client, drive, folder
   or redirect ID fields in the normal OAuth screen. **No Thinoda publisher OAuth

@@ -2,6 +2,16 @@
 
 Status: **C0-C5 implementation; live acceptance remains open** (user-directed,
 2026-11-01). C6 is not included.
+Integrated remote accounts are **disabled by default** at the user's request
+while publisher registrations are pending. The opt-in
+`integrated-cloud-services` Cargo feature is not enabled in normal native
+packages or Pages builds. Local sync-folder hardening and durable browser
+storage remain active; see [feature/build setup](CLOUD-AUTH-SETUP.md).
+The disabled build was checked in isolated Chromium: account controls were
+absent, browser-storage controls remained visible, and a stale OAuth callback
+was scrubbed without PKCE state or external requests. Disabled/enabled cloud
+tests and native/wasm lint both pass; CI retains opt-in test coverage without
+enabling the feature in release artifacts.
 Sections 1–3 retain the pre-implementation inventory. Delivery and verification
 are recorded below; mock tests are not evidence of live provider acceptance.
 Extends [PLAN.md R10](PLAN.md#r10---protected-files-cloud-synchronization-and-sharing)

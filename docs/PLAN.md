@@ -2894,6 +2894,11 @@ fields. [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md) prepares the registrations an
 CI/release/Pages build mappings; no publisher apps exist yet. Box public sign-in
 and Google Drive web code exchange remain explicitly unavailable without a
 separately reviewed architecture.
+At the user's request, integrated remote accounts are now disabled by default
+behind the opt-in `integrated-cloud-services` build feature while registrations
+are pending. Release/Pages builds stay disabled; setting public registration
+Variables does not automatically re-enable them. Local folders and browser
+storage remain available.
 R10 as a whole is not complete: protected-file formats, its remaining consent
 decisions and native/live acceptance are outside this cloud-storage slice.
 C6 real-time collaboration is not included.

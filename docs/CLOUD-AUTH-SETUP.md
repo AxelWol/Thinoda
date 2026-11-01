@@ -41,6 +41,32 @@ before advertising the corresponding build as accepted.
 
 ## Public build inputs
 
+### Feature gate: disabled by default
+
+Integrated remote cloud accounts are paused until publisher registration is
+complete. `integrated-cloud-services` is an **opt-in Cargo feature**, absent
+from the default features of `thinoda-app` and `thinoda-web`. Normal native
+packages and the Pages site remain disabled even if public registration
+Variables are populated. Disabled builds hide cloud-account settings and
+cannot connect, resume OAuth callbacks, browse, upload, share or intercept Save
+for a remote account. Saved provider preferences do not enable the feature.
+Local sync folders, local backups, external-change handling and durable browser
+storage/quota/persistence controls remain available.
+
+After registrations and acceptance checks are complete, intentionally build:
+
+```sh
+cargo build --release -p thinoda-app --features integrated-cloud-services
+cd crates/thinoda-web
+trunk build --release --features integrated-cloud-services
+```
+
+Public IDs must still be present at compilation. Enabling the feature alone
+does not create registrations or enable the unsupported Box/Google SPA flows.
+CI checks both feature states with offline tests and lint; its packaging and
+Pages build commands do **not** opt in. Re-enabling distributed artifacts is a
+separate publisher decision, not automatic when Variables are set.
+
 `PublisherOAuthRegistrations::from_build()` reads these variables using Rust
 `option_env!`. They must be set **when thinoda-platform is compiled**, before
 `cargo build`, release packaging, or `trunk build`. Changing a user's runtime

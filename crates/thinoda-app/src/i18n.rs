@@ -1104,6 +1104,10 @@ const DE: &[(&str, &str)] = &[
         "Cloud-Einstellungen verbinden ausdrücklich konfigurierte Anbieter. Öffnen und Speichern werden anhand der Revision geprüft; Uploads und Freigaben erfordern eine Nutzeraktion. Die Kompatibilität mit Live-Anbietern und Synchronisierungsclients ist nicht verifiziert; Zusammenarbeit in Echtzeit ist nicht implementiert.",
     ),
     (
+        "Integrated cloud accounts are disabled by default while publisher registrations are pending. Local sync folders, backups and browser document storage remain available.",
+        "Integrierte Cloud-Konten sind standardmäßig deaktiviert, solange die Registrierungen des Herausgebers noch ausstehen. Lokale Synchronisierungsordner, Sicherungen und der Dokumentspeicher des Browsers bleiben verfügbar.",
+    ),
+    (
         "Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.",
         "Map-Dateien zusammenführen hängt Blätter erst nach erfolgreichem Laden aller Eingaben an. Maskierte Kopie erstellen öffnet eine ungespeicherte Vorschau ohne identifizierende Texte; vor dem Teilen jedes Blatt prüfen, da die Struktur weiterhin Informationen verraten kann.",
     ),

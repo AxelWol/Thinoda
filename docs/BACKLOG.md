@@ -1871,6 +1871,9 @@ requirements to add XMind's cloud account, billing or hosted AI service.
   Box public sign-in and Google Drive web code exchange are unavailable in this
   architecture. Supported-target setup and build mappings are documented in
   [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md).
+  User-directed pause: remote accounts are disabled by default behind the
+  opt-in `integrated-cloud-services` build feature until registrations are
+  completed. Local sync folders and browser storage remain available.
   Gap analysis and phases C0-C6 (async storage contract, OPFS/File System Access
   on web, placeholder/online-only awareness, file watching, conflict-copy
   detection, WebDAV for Nextcloud, OAuth adapters; iCloud native-only) are in
