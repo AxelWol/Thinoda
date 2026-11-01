@@ -1,3 +1,5 @@
+_Last updated: 2026-10-30 22:14:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # FIM authoring workspace: concept and delivery contract
 
 Status: lossless authoring engine and native/browser application integration
