@@ -1990,6 +1990,105 @@ impl Sheet {
         Ok(())
     }
 
+    /// Rotates complete groups and ungrouped members about a shared sheet-space
+    /// pivot. A locked member or invalid destination rejects the entire edit.
+    ///
+    /// Connector references stay attached to their targets; only free ends are
+    /// transformed. External anchors can therefore stretch a path, and elbow
+    /// and curve routes are recomputed in sheet axes rather than rotated rigidly.
+    pub fn rotate_board_members(
+        &mut self,
+        members: &[BoardMember],
+        pivot: Vec2,
+        degrees: f32,
+    ) -> Result<(), String> {
+        if !valid_position(pivot) {
+            return Err("rotation pivot is out of range".into());
+        }
+        if !degrees.is_finite() {
+            return Err("rotation must be finite".into());
+        }
+        let members = self.expand_board_selection(members)?;
+        self.require_board_members_unlocked(&members)?;
+        let degrees = normalize_rotation(degrees);
+        if degrees == 0.0 {
+            return Ok(());
+        }
+
+        let objects: HashSet<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => Some(*id),
+                BoardMember::Card(_) => None,
+            })
+            .collect();
+        let mut cards = Vec::new();
+        for member in &members {
+            if let BoardMember::Card(id) = member {
+                let topic = self.topic(*id).expect("selection validated");
+                let position = rotate_around(topic.position.unwrap_or_default(), pivot, degrees);
+                if !valid_position(position) {
+                    return Err(format!("card {id} position is out of range"));
+                }
+                let mut card = topic.card.expect("selection validated");
+                card.rotation = normalize_rotation(card.rotation + degrees);
+                validate_card(&card)?;
+                cards.push((*id, position, card));
+            }
+        }
+
+        let mut canvas = self.canvas.clone();
+        for object in canvas
+            .objects
+            .iter_mut()
+            .filter(|object| objects.contains(&object.id))
+        {
+            if let CanvasObjectKind::Connector(connector) = &mut object.kind {
+                for end in [&mut connector.from, &mut connector.to] {
+                    if let Endpoint::Point(point) = end {
+                        *point = rotate_around(*point, pivot, degrees);
+                    }
+                }
+                // The stored connector frame is only a fallback; the scene uses
+                // resolved paths. Keep it consistent with its free endpoints.
+                object.rect = match (connector.from, connector.to) {
+                    (Endpoint::Point(a), Endpoint::Point(b)) => {
+                        points_bounds(&[a, b]).expect("two points")
+                    }
+                    (Endpoint::Point(point), _) | (_, Endpoint::Point(point)) => {
+                        Rect::from_min_size(point, Vec2::ZERO)
+                    }
+                    _ => object.rect,
+                };
+            } else {
+                let center = object.rect.center();
+                let translation = rotate_around(center, pivot, degrees) - center;
+                object.rect = object.rect.translate(translation);
+                object.rotation = normalize_rotation(object.rotation + degrees);
+                if let CanvasObjectKind::Ink(ink) = &mut object.kind
+                    && translation != Vec2::ZERO
+                {
+                    // Ink points are stored unrotated in absolute coordinates;
+                    // moving them with the frame avoids rotating them twice.
+                    ink.points = ink
+                        .points
+                        .iter()
+                        .map(|point| *point + translation)
+                        .collect();
+                }
+            }
+            validate_object(object)?;
+        }
+
+        self.canvas = canvas;
+        for (id, position, card) in cards {
+            let topic = self.topic_mut(id).expect("selection validated");
+            topic.position = Some(position);
+            topic.card = Some(card);
+        }
+        Ok(())
+    }
+
     /// Deletes complete selected groups and ungrouped members atomically.
     pub fn remove_board_members(&mut self, members: &[BoardMember]) -> Result<(), String> {
         let members = self.expand_board_selection(members)?;
