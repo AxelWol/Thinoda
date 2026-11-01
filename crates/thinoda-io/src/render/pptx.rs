@@ -6,6 +6,7 @@ use crate::{ExportOptions, IoError};
 use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, ResolvedPresentationSlide, Sheet, TopicId, TopicShape, Vec2,
+    board::CardKind,
     layout::{ConnectorKind, Icon},
     theme::Theme,
 };
@@ -170,6 +171,105 @@ impl Drawing {
             "Label", rect, value, size, "Segoe UI", color, false, false, false, false,
         );
     }
+
+    /// Freeform polyline/polygon with optional fill, as an editable custom shape.
+    fn poly(
+        &mut self,
+        name: &str,
+        points: &[Vec2],
+        closed: bool,
+        color: Option<Color>,
+        stroke: Option<(Color, f32)>,
+    ) {
+        let Some(first) = points.first() else {
+            return;
+        };
+        let id = self.id();
+        let mut path = format!("<a:moveTo>{}</a:moveTo>", self.point(*first));
+        for point in &points[1..] {
+            path.push_str(&format!("<a:lnTo>{}</a:lnTo>", self.point(*point)));
+        }
+        if closed {
+            path.push_str("<a:close/>");
+        }
+        let line = stroke.map_or_else(
+            || "<a:ln><a:noFill/></a:ln>".to_owned(),
+            |(color, width)| {
+                format!(
+                    r#"<a:ln w="{}" cap="rnd">{}<a:round/></a:ln>"#,
+                    self.emu(width).clamp(0, 20_116_800),
+                    fill(Some(color))
+                )
+            },
+        );
+        self.xml.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{}" h="{}"{}>{path}</a:path></a:pathLst></a:custGeom>{}{line}</p:spPr></p:sp>"#,
+            esc(name), self.width, self.height, self.width, self.height,
+            if color.is_some() { "" } else { r#" fill="none""# },
+            fill(color)));
+    }
+
+    fn board_object(
+        &mut self,
+        item: &thinoda_core::SceneItem,
+        object: &thinoda_core::board::CanvasObject,
+        background: Color,
+        dark: bool,
+    ) {
+        for prim in super::board::object_prims(item, object, background, dark) {
+            match prim {
+                super::board::Prim::Path {
+                    points,
+                    closed,
+                    fill,
+                    stroke,
+                    ..
+                } => self.poly(
+                    &format!("Canvas object {}", object.id),
+                    &points,
+                    closed,
+                    fill,
+                    stroke,
+                ),
+                // Rotated shape labels are exported upright; geometry keeps the rotation.
+                super::board::Prim::Text {
+                    rect,
+                    lines,
+                    size,
+                    color,
+                    backdrop,
+                    ..
+                } => {
+                    if let Some(backdrop) = backdrop {
+                        let id = self.id();
+                        self.shape(
+                            id,
+                            "Connector label background",
+                            rect,
+                            "roundRect",
+                            Some(backdrop),
+                            Color::TRANSPARENT,
+                            0.0,
+                            false,
+                        );
+                    }
+                    let line_height = size * 1.25;
+                    let top = rect.center().y - line_height * lines.len() as f32 / 2.0;
+                    for (index, line) in lines.iter().enumerate() {
+                        self.label(
+                            Rect::from_min_size(
+                                Vec2::new(rect.min.x, top + line_height * index as f32),
+                                Vec2::new(rect.size.x, line_height),
+                            ),
+                            line,
+                            size,
+                            color,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn editable_slide(
@@ -194,9 +294,11 @@ pub(crate) fn editable_slide(
     };
     let topic_ids: HashMap<TopicId, u32> = layout.order.iter().map(|id| (*id, draw.id())).collect();
     let grey = Color::rgb(0x77, 0x77, 0x77);
+    let page = Theme::for_settings(&sheet.theme).background(&sheet.theme, options.dark);
+    let scene = thinoda_core::build_scene(sheet, layout);
     for zone in &resolved.zones {
         let id = draw.id();
-        let color = Color::rgb(0x5D, 0x7A, 0x91);
+        let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
         draw.shape(
             id,
             &zone.name,
@@ -216,6 +318,10 @@ pub(crate) fn editable_slide(
             12.0,
             color,
         );
+    }
+    for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
+    {
+        draw.board_object(item, object, page, options.dark);
     }
     for boundary in &layout.boundaries {
         let source = sheet
@@ -347,13 +453,18 @@ pub(crate) fn editable_slide(
             .topic(*id)
             .ok_or_else(|| IoError::Invalid("missing native topic".into()))?;
         let s = &tl.style;
-        let stroke = s.border_color.unwrap_or(s.line_color);
+        let card = topic
+            .card
+            .as_ref()
+            .filter(|card| topic.parent.is_none() && card.kind != CardKind::Image);
+        let card_fill = card.and_then(super::board::card_fill);
+        let mut stroke = s.border_color.unwrap_or(s.line_color);
         let stroke_width = if s.border_width > 0.0 {
             s.border_width
         } else {
             s.line_width
         };
-        let geometry = match s.shape {
+        let mut geometry = match s.shape {
             TopicShape::RoundedRect => "roundRect",
             TopicShape::Rect => "rect",
             TopicShape::Ellipse => "ellipse",
@@ -361,15 +472,30 @@ pub(crate) fn editable_slide(
             TopicShape::Diamond => "diamond",
             TopicShape::None | TopicShape::Underline => "rect",
         };
-        let simple = matches!(s.shape, TopicShape::None | TopicShape::Underline);
+        let mut simple = matches!(s.shape, TopicShape::None | TopicShape::Underline);
+        let mut topic_fill = s.fill;
+        let mut text_color = s.text_color;
+        if let Some(card) = card {
+            // Card rotation is not exported to editable slides.
+            geometry = "rect";
+            simple = false;
+            topic_fill = card_fill;
+            stroke = match (card.kind, card_fill) {
+                (CardKind::Sticky, Some(fill)) => super::board::card_edge(fill),
+                _ => Color::TRANSPARENT,
+            };
+            if let Some(fill) = card_fill {
+                text_color = Color::highest_contrast_on(fill.over(page));
+            }
+        }
         draw.shape(
             topic_ids[id],
             &format!("Topic {id}"),
             tl.rect,
             geometry,
-            s.fill,
+            topic_fill,
             if simple { Color::TRANSPARENT } else { stroke },
-            stroke_width,
+            if card.is_some() { 1.0 } else { stroke_width },
             false,
         );
         if simple {
@@ -425,7 +551,7 @@ pub(crate) fn editable_slide(
                 &line.text,
                 s.font_size,
                 family,
-                s.text_color,
+                text_color,
                 s.bold,
                 s.italic,
                 s.underline,
@@ -530,6 +656,10 @@ pub(crate) fn editable_slide(
                 false,
             );
         }
+    }
+    for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
+    {
+        draw.board_object(item, object, page, options.dark);
     }
     if let Some(appendix) = crate::render::equation_appendix(sheet, layout)? {
         let start_y = resolved.frame.max().y - appendix.height;

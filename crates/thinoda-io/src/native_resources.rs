@@ -58,7 +58,7 @@ pub(crate) fn validate_directory(
     Ok(())
 }
 
-pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
+pub(crate) fn export(book: &Workbook, version: u64) -> Result<Vec<u8>, IoError> {
     let mut content = book.clone();
     let mut entries = Vec::new();
     let mut blobs = BTreeMap::new();
@@ -76,13 +76,8 @@ pub(crate) fn export(book: &Workbook) -> Result<Vec<u8>, IoError> {
     }
     let manifest = serde_json::to_vec(&Manifest {
         format: "thinoda".into(),
-        version: if book.sheets.iter().any(|sheet| sheet.fim.is_some()) {
-            5
-        } else if thinoda_core::notes::has_formatted_notes(book) {
-            4
-        } else {
-            3
-        },
+        version,
+
         resources: entries,
     })?;
     let content = serde_json::to_vec(&content)?;
@@ -102,7 +97,8 @@ pub(crate) fn hydrate(
     book: &mut Workbook,
 ) -> Result<(), IoError> {
     let manifest: Manifest = serde_json::from_slice(manifest)?;
-    if manifest.format != "thinoda" || !matches!(manifest.version, 3..=5) {
+    if manifest.format != "thinoda" || !matches!(manifest.version, 3..=crate::NATIVE_FORMAT_VERSION)
+    {
         return Err(IoError::Invalid("invalid native resource manifest".into()));
     }
     if archive.len() > thinoda_core::resources::MAX_RESOURCES + 2 {

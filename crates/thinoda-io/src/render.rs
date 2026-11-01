@@ -9,6 +9,7 @@ use thinoda_core::{
     theme::Theme,
 };
 
+mod board;
 mod pptx;
 mod text;
 pub(crate) use pptx::editable_slide;
@@ -258,7 +259,14 @@ fn svg_layout_with_fonts(
     });
     let text = text::ExportText::new(s, o.dark, fontdb)?;
     let pad = o.padding.max(0.0);
-    let base_frame = frame.unwrap_or_else(|| layout.bounds.expand(pad));
+    let scene = thinoda_core::build_scene(s, layout);
+    // Canvas objects and rotated cards extend the export; the grid never does.
+    let content = match board::extra_bounds(s, &scene) {
+        Some(extra) if layout.order.is_empty() => extra,
+        Some(extra) => layout.bounds.union(&extra),
+        None => layout.bounds,
+    };
+    let base_frame = frame.unwrap_or_else(|| content.expand(pad));
     let appendix = equation_appendix(s, layout)?;
     let b = if frame.is_none() {
         appendix.as_ref().map_or(base_frame, |appendix| {
@@ -304,7 +312,7 @@ fn svg_layout_with_fonts(
     }
     for zone in zones {
         let r = zone.frame;
-        let color = Color::rgb(0x5D, 0x7A, 0x91);
+        let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
         let fill = Color::rgba(color.r, color.g, color.b, 20);
         out.push_str(&format!(
             "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/>",
@@ -322,6 +330,9 @@ fn svg_layout_with_fonts(
             col(color),
             esc(&zone.name)
         ));
+    }
+    for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::BelowMap) {
+        out.push_str(&board_object_svg(item, object, bg, o.dark));
     }
     for boundary in &layout.boundaries {
         let r = boundary.rect;
@@ -435,6 +446,22 @@ fn svg_layout_with_fonts(
         };
         let r = tl.rect;
         let style = &tl.style;
+        let card = s
+            .topic(*id)
+            .filter(|topic| topic.parent.is_none())
+            .and_then(|topic| topic.card.as_ref());
+        let card_fill = card.and_then(board::card_fill);
+        let text_color = card_fill.map_or(style.text_color, |fill| {
+            Color::highest_contrast_on(fill.over(bg))
+        });
+        if let Some(card) = card.filter(|card| card.rotation != 0.0) {
+            out.push_str(&format!(
+                "<g transform=\"rotate({:.2} {:.2} {:.2})\">",
+                card.rotation,
+                r.center().x,
+                r.center().y
+            ));
+        }
         let fill = style.fill.map(col).unwrap_or_else(|| "none".into());
         let stroke = style
             .border_color
@@ -495,7 +522,19 @@ fn svg_layout_with_fonts(
                 }
             ),
         };
-        if style.shape == TopicShape::None || style.shape == TopicShape::Underline {
+        if let Some(card) = card.filter(|card| card.kind != thinoda_core::board::CardKind::Image) {
+            let (fill, stroke) = match (card.kind, card_fill) {
+                (thinoda_core::board::CardKind::Sticky, Some(fill)) => {
+                    (col(fill), col(board::card_edge(fill)))
+                }
+                (_, Some(fill)) => (col(fill), "none".into()),
+                (_, None) => ("none".into(), "none".into()),
+            };
+            out.push_str(&format!(
+                "<rect class=\"card\" x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"3\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1\"/>",
+                r.min.x, r.min.y, r.size.x, r.size.y
+            ));
+        } else if style.shape == TopicShape::None || style.shape == TopicShape::Underline {
             if style.fill.is_some() {
                 out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{fill}\"/>",
                     r.min.x, r.min.y, r.size.x, r.size.y));
@@ -543,7 +582,7 @@ fn svg_layout_with_fonts(
                     line.bounds.size.x
                 )
             };
-            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(style.text_color),esc(&line.text)));
+            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(text_color),esc(&line.text)));
             y += block.line_height;
         }
         if let Some((label, nr)) = &tl.number {
@@ -565,6 +604,12 @@ fn svg_layout_with_fonts(
         for (label, lr) in &tl.labels {
             out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"5\" fill=\"#EEEEEE\"/><text x=\"{:.2}\" y=\"{:.2}\" font-size=\"10\" text-anchor=\"middle\" fill=\"#333333\">{}</text>",lr.min.x,lr.min.y,lr.size.x,lr.size.y,lr.center().x,lr.center().y,esc(label)));
         }
+        if card.is_some_and(|card| card.rotation != 0.0) {
+            out.push_str("</g>");
+        }
+    }
+    for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::AboveMap) {
+        out.push_str(&board_object_svg(item, object, bg, o.dark));
     }
     if let Some(appendix) = &appendix {
         let start_y = b.max().y - appendix.height;
@@ -627,6 +672,92 @@ fn svg_layout_with_fonts(
     }
     out.push_str("</svg>");
     Ok(out)
+}
+
+fn board_object_svg(
+    item: &thinoda_core::SceneItem,
+    object: &thinoda_core::board::CanvasObject,
+    background: Color,
+    dark: bool,
+) -> String {
+    let mut out = format!("<g class=\"canvas-object\" id=\"object-{}\">", object.id.0);
+    for prim in board::object_prims(item, object, background, dark) {
+        match prim {
+            board::Prim::Path {
+                points,
+                closed,
+                fill,
+                stroke,
+                round,
+            } => {
+                let Some(first) = points.first() else {
+                    continue;
+                };
+                let mut d = format!("M {}", xy(*first));
+                for point in &points[1..] {
+                    d.push_str(&format!(" L {}", xy(*point)));
+                }
+                if closed {
+                    d.push_str(" Z");
+                }
+                let fill = fill.map_or_else(|| "none".into(), col);
+                let stroke = stroke.map_or_else(
+                    || "stroke=\"none\"".to_owned(),
+                    |(color, width)| {
+                        format!("stroke=\"{}\" stroke-width=\"{width:.2}\"", col(color))
+                    },
+                );
+                let caps = if round {
+                    " stroke-linecap=\"round\" stroke-linejoin=\"round\""
+                } else {
+                    " stroke-linejoin=\"round\""
+                };
+                out.push_str(&format!("<path d=\"{d}\" fill=\"{fill}\" {stroke}{caps}/>"));
+            }
+            board::Prim::Text {
+                rect,
+                rotation,
+                lines,
+                size,
+                color,
+                backdrop,
+            } => {
+                let c = rect.center();
+                if rotation != 0.0 {
+                    out.push_str(&format!(
+                        "<g transform=\"rotate({rotation:.2} {:.2} {:.2})\">",
+                        c.x, c.y
+                    ));
+                }
+                if let Some(backdrop) = backdrop {
+                    out.push_str(&format!(
+                        "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"3\" fill=\"{}\"/>",
+                        rect.min.x,
+                        rect.min.y,
+                        rect.size.x,
+                        rect.size.y,
+                        col(backdrop)
+                    ));
+                }
+                let line_height = size * 1.25;
+                let top = c.y - line_height * lines.len() as f32 / 2.0;
+                for (index, line) in lines.iter().enumerate() {
+                    out.push_str(&format!(
+                        "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-family=\"Segoe UI, Helvetica, Arial, sans-serif\" font-size=\"{size:.2}\" fill=\"{}\">{}</text>",
+                        c.x,
+                        top + line_height * (index as f32 + 0.5),
+                        col(color),
+                        esc(line)
+                    ));
+                }
+                if rotation != 0.0 {
+                    out.push_str("</g>");
+                }
+            }
+        }
+    }
+    out.push_str("</g>");
+    out
 }
 
 fn colored_marker_svg(id: &str, r: thinoda_core::Rect, color: Color) -> String {

@@ -3,6 +3,7 @@
 //! Markdown export uses the selected sheet, or the active sheet when no sheet is selected.
 //! Graphical output shares font-measured title layout. PDF keeps vector paths
 //! (including outlined text); JPEG always uses an opaque background.
+mod board_export;
 pub mod fim;
 pub mod fonts;
 mod formats;
@@ -258,6 +259,10 @@ pub enum IoError {
     },
 }
 
+pub use board_export::{
+    ExportLoss, NATIVE_FORMAT_VERSION, export_losses, outline_sheet, required_native_version,
+    synthesized_root_title, uses_board_semantics,
+};
 pub use gantt::{
     GanttBounds, GanttDocument, GanttRow, MAX_GANTT_CSV_BYTES, MAX_GANTT_IMAGE_PIXELS,
     MAX_GANTT_IMAGE_SIDE, MAX_GANTT_LABEL_BYTES, MAX_GANTT_ROWS, MAX_GANTT_SVG_BYTES,
@@ -543,6 +548,38 @@ pub fn export_bytes_with_consent(
     if !format.can_export() {
         return Err(IoError::UnsupportedFormat(format.label().into()));
     }
+    if format == Format::MindManager
+        && !allow_lossy
+        && book
+            .sheets
+            .get(
+                opts.sheet
+                    .unwrap_or(book.active_sheet)
+                    .min(book.sheets.len().saturating_sub(1)),
+            )
+            .is_some_and(uses_board_semantics)
+    {
+        // Freeform board content is flattened to one outline (see `export_losses`).
+        return Err(IoError::MindManagerExportNeedsConfirmation);
+    }
+    // Single-outline formats see Hidden-root sheets through the synthesized-root projection.
+    let projected = if matches!(
+        format,
+        Format::FreeMind
+            | Format::Opml
+            | Format::Markdown
+            | Format::PlainText
+            | Format::MindManager
+            | Format::TextBundle
+            | Format::Word
+            | Format::Excel
+            | Format::Csv
+    ) {
+        board_export::outline_workbook(book, opts)
+    } else {
+        std::borrow::Cow::Borrowed(book)
+    };
+    let book: &Workbook = &projected;
     if format != Format::Thinoda {
         let equation_support = matches!(
             format,
@@ -670,10 +707,12 @@ pub fn note_format_loss(book: &Workbook, format: Format, opts: &ExportOptions) -
     if !matches!(format, Format::Csv | Format::Opml) || book.sheets.is_empty() {
         return false;
     }
-    let sheet = &book.sheets[opts
-        .sheet
-        .unwrap_or(book.active_sheet)
-        .min(book.sheets.len() - 1)];
+    let sheet = board_export::outline_sheet(
+        &book.sheets[opts
+            .sheet
+            .unwrap_or(book.active_sheet)
+            .min(book.sheets.len() - 1)],
+    );
     let mut stack = vec![(sheet.root, 0usize)];
     let mut visited = HashSet::new();
     while let Some((id, depth)) = stack.pop() {

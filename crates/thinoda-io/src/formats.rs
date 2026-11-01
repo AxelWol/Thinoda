@@ -22,11 +22,9 @@ pub(crate) fn archive(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     Ok(out.into_inner())
 }
 pub(crate) fn native_export(w: &Workbook) -> Result<Vec<u8>, IoError> {
-    if w.sheets.iter().any(|sheet| !sheet.resources.is_empty())
-        || w.sheets.iter().any(|sheet| sheet.fim.is_some())
-        || thinoda_core::notes::has_formatted_notes(w)
-    {
-        return crate::native_resources::export(w);
+    let version = crate::required_native_version(w);
+    if version >= 3 {
+        return crate::native_resources::export(w, version);
     }
     let content = serde_json::to_vec(w)?;
     let manifest = serde_json::to_vec(&json!({"format":"thinoda","version":2,"resources":[]}))?;
@@ -41,7 +39,7 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        if version > 5 {
+        if version > crate::NATIVE_FORMAT_VERSION {
             return Err(IoError::NewerVersion(format!("{version}")));
         }
         if manifest
@@ -70,6 +68,11 @@ pub(crate) fn native_import(bytes: &[u8]) -> Result<Workbook, IoError> {
         if version < 5 && book.sheets.iter().any(|sheet| sheet.fim.is_some()) {
             return Err(IoError::Invalid(
                 "FIM documents require native format version 5".into(),
+            ));
+        }
+        if version < 6 && book.sheets.iter().any(crate::uses_board_semantics) {
+            return Err(IoError::Invalid(
+                "freeform board content requires native format version 6".into(),
             ));
         }
         Ok(book)

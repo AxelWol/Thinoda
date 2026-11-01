@@ -499,6 +499,16 @@ fn parse_line_class(class: &str) -> Option<LineShape> {
     }
 }
 
+/// XMind has no hidden root: a Hidden-mode anchor is exported as a central topic named
+/// after the sheet, and every floating root stays a detached topic.
+fn export_title<'a>(sheet: &Sheet, id: TopicId, title: &'a str) -> std::borrow::Cow<'a, str> {
+    if id == sheet.root && sheet.root_mode == thinoda_core::board::SheetRootMode::Hidden {
+        crate::synthesized_root_title(sheet).into()
+    } else {
+        title.into()
+    }
+}
+
 fn public_content(book: &Workbook) -> Result<Value, IoError> {
     fn topic(sheet: &Sheet, id: TopicId, ids: &HashMap<TopicId, String>) -> Result<Value, IoError> {
         let model = &sheet.topics[&id];
@@ -599,7 +609,7 @@ fn public_content(book: &Workbook) -> Result<Value, IoError> {
             properties.insert("fo:text-decoration".into(), json!("none"));
         }
         let mut value = json!({
-            "id": ids[&id], "class": "topic", "title": model.title, "children": children,
+            "id": ids[&id], "class": "topic", "title": export_title(sheet, id, &model.title), "children": children,
             "markers": model.markers.iter().map(|marker| json!({"markerId": marker})).collect::<Vec<_>>(),
             "labels": model.labels, "branch": if model.collapsed { "folded" } else { "" },
             "style": {"properties": properties}
@@ -834,7 +844,7 @@ fn legacy_compatibility(book: &Workbook) -> String {
             out.push_str("/></style>");
         }
         out.push_str("<title>");
-        out.push_str(&xml_escape(&t.title));
+        out.push_str(&xml_escape(&export_title(sheet, id, &t.title)));
         out.push_str("</title>");
         if let Some(note) = &t.notes {
             out.push_str("<notes><plain>");
