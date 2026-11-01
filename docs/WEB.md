@@ -77,7 +77,7 @@ features work differently:
 | AI server | Requests use `fetch`. The server must allow cross-origin requests (CORS) from the site's origin; LM Studio has a CORS option in its server settings. An `https` site can only call `https` servers or `http://localhost`. |
 | Open link | Opens a new browser tab. |
 | Fonts | System font enumeration is unavailable; the bundled Ubuntu and Hack fonts are used for rendering and export. |
-| Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. |
+| Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. Planned browser storage and cloud options are in [CLOUD-STORAGE.md](CLOUD-STORAGE.md). |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |

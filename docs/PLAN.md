@@ -2876,6 +2876,10 @@ files/logs; cloud offline/concurrent-edit/token-revocation tests preserve both v
 sharing shows destination/content before transmission. Dedicated security review and
 native QA are required for this package.
 
+Cloud gap analysis (2026-10-28): [CLOUD-STORAGE.md](CLOUD-STORAGE.md) refines step 2
+into phases C0-C6 (async revision-aware storage contract first, then web OPFS/File
+System Access, native sync-folder hardening, WebDAV, one REST provider, then others).
+
 ### R11 - Distribution, signing and updates
 
 1. Prepare signing credentials outside source control, Apple notarization and
@@ -2919,6 +2923,29 @@ are retained. Requires accounts/certificates and permitted native hardware/runne
 **Exit:** deterministic multi-client convergence and offline-rejoin tests, isolated
 plugin fault/limit tests, and native localization checks. A web/mobile companion
 application itself is separate scope; these interfaces enable it.
+
+### R14 - Freeform boards and flexible map roots
+
+User-directed concept, 2026-10-28. Full research, verdicts, concept, template
+list and rubber-duck critique: [FREEFORM.md](FREEFORM.md). Extends existing
+floating topics, zones, relationships, presentation and templates instead of a
+parallel document model.
+
+1. F0 groundwork: `semantic_roots`/`visible_topic_ids`/`project_to_outline`
+   queries and migration of all root callers; derived scene with layer bands for
+   paint, hit-test, selection, a11y and visual export; ID allocator coverage;
+   limits; single `required_native_version`; central export capability analysis;
+   ink/undo benchmark.
+2. F1 Hidden root mode and multi-root sheets; native v6 only when used.
+3. F2 cards (sticky/text/image as floating topics) and zone frames, grid, snapping.
+4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation.
+5. F4 data-driven "Boards" templates (MVP of four).
+6. F5 ink; F6 viewport scenes, mini-map, optional pen pressure.
+
+**Exit:** existing maps and golden exports unchanged; anchor-root contract tests;
+v5 readers refuse v6; every export itemises board losses; benchmark gates met on
+native and web; all locales, Light/Dark, keyboard and screen-reader acceptance.
+Per-phase rubber-duck reviews as for P4.
 
 ### Phase P4 - OS-integrated menus and windows (R12 and above)
 

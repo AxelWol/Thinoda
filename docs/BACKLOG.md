@@ -1858,9 +1858,31 @@ requirements to add XMind's cloud account, billing or hosted AI service.
   painted frame, so native window/GPU initialization before that frame (about
   0.3–0.4 s warm on Windows x64, longer cold) cannot be covered without a second
   native window and renderer.
-- P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI
+- P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI.
+  Gap analysis and phases C0-C6 (async storage contract, OPFS/File System Access
+  on web, placeholder/online-only awareness, file watching, conflict-copy
+  detection, WebDAV for Nextcloud, OAuth adapters; iCloud native-only) are in
+  [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
 - P3 Real-time co-editing (CRDT, e.g. `yrs`) — basis for a companion web/mobile app
 - P3 Plugin API (WASM) for importers/exporters
+
+## Freeform boards and flexible map roots
+User-directed concept (2026-10-28), planned as **R14** in
+[PLAN.md](PLAN.md#r14---freeform-boards-and-flexible-map-roots); research,
+feature verdicts, concept and rubber-duck critique in [FREEFORM.md](FREEFORM.md).
+- P2 F0 groundwork: root query APIs and migration of all `sheet.root` callers,
+  derived scene with layer bands, `required_native_version`, central export
+  capability analysis, ink/undo benchmark. No visible change; gate for all below.
+- P2 F1 maps without a central topic and maps with several root topics
+  (hidden anchor root, floating trees/zones), with per-format export projection.
+- P2 F2 sticky notes, text and image cards (floating topics), frames (zones),
+  grid, snapping, guides, align/distribute.
+- P3 F3 shape library, connectors between topics and objects, z-order, groups,
+  lock, rotation.
+- P3 F4 "Boards" template category: Blank canvas, Brainstorm sticky wall,
+  Retrospective, Business Model Canvas (more templates listed with prerequisites).
+- P3 F5 freehand ink (pen, highlighter, object eraser, lasso); pressure optional.
+- P3 F6 viewport scenes in Pitch/PDF, mini-map, pen pressure after a spike.
 
 ## Quality
 - P1 Visual regression tests (kittest snapshot images) per theme
