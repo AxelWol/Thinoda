@@ -1,5 +1,5 @@
 use super::*;
-use crate::board::{CanvasObjectId, InkStroke, InkTool, ShapeKind, SheetRootMode};
+use crate::board::{CanvasObjectId, Card, CardKind, InkStroke, InkTool, ShapeKind, SheetRootMode};
 use crate::geometry::Color;
 use crate::layout::{ApproxMeasure, layout_sheet};
 use crate::model::Sheet;
@@ -59,6 +59,73 @@ fn bands_paint_in_order() {
     assert_eq!(sc.hit_test(Vec2::ZERO), Some(SceneHit::Topic(s.root)));
     // Zones never hit; an empty spot inside the frame is a miss.
     assert_eq!(sc.hit_test(Vec2::new(-190.0, 310.0)), None);
+}
+
+#[test]
+fn clipping_frames_constrain_hits_selection_and_visible_bounds() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let root = sheet.add_floating("Card", Vec2::new(50.0, 50.0));
+    sheet
+        .set_topic_card(
+            root,
+            Some(Card::new(CardKind::Sticky, Vec2::new(140.0, 80.0))),
+        )
+        .unwrap();
+    let zone = sheet
+        .create_zone("Frame", vec![root], rect(0.0, 0.0, 100.0, 100.0))
+        .unwrap();
+    sheet
+        .zones
+        .iter_mut()
+        .find(|frame| frame.id == zone)
+        .unwrap()
+        .clip = true;
+    let object = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(-30.0, 20.0, 80.0, 40.0),
+        Band::Above,
+    );
+    let (_, scene) = scene(&sheet);
+    let clip = rect(0.0, 0.0, 100.0, 100.0);
+    assert_eq!(scene.item(SceneId::Topic(root)).unwrap().clip, Some(clip));
+    assert_eq!(
+        scene.item(SceneId::Object(object)).unwrap().clip,
+        Some(clip)
+    );
+    assert_eq!(
+        scene.hit_test(Vec2::new(20.0, 40.0)),
+        Some(SceneHit::Object(object))
+    );
+    assert_eq!(scene.hit_test(Vec2::new(-10.0, 40.0)), None);
+    assert!(
+        !scene
+            .objects_in(rect(-25.0, 25.0, 10.0, 10.0))
+            .contains(&SceneHit::Object(object))
+    );
+    assert_eq!(scene.bounds(), Some(clip));
+}
+
+#[test]
+fn summary_topics_inherit_their_owner_frame_clip() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let root = sheet.add_floating("Root", Vec2::new(50.0, 50.0));
+    let first = sheet.add_child(root, None, "First");
+    let second = sheet.add_child(root, None, "Second");
+    let summary = sheet.add_summary(&[first, second], "Summary").unwrap();
+    let nested = sheet.add_child(summary, None, "Detail");
+    let clip = rect(0.0, 0.0, 100.0, 100.0);
+    let zone = sheet.create_zone("Frame", vec![root], clip).unwrap();
+    sheet
+        .zones
+        .iter_mut()
+        .find(|frame| frame.id == zone)
+        .unwrap()
+        .clip = true;
+    assert_eq!(topic_clip_rect(&sheet, summary), Some(clip));
+    assert_eq!(topic_clip_rect(&sheet, nested), Some(clip));
 }
 
 #[test]
@@ -204,7 +271,7 @@ fn connectors_resolve_endpoints_and_hit() {
 
 #[test]
 fn hidden_root_is_excluded_everywhere() {
-    let mut s = Sheet::new("Hidden", "Anchor");
+    let mut s = Sheet::new("Hidden", "");
     s.root_mode = SheetRootMode::Hidden;
     let f = s.add_floating("F", Vec2::new(400.0, 400.0));
     let (layout, sc) = scene(&s);
@@ -221,7 +288,7 @@ fn hidden_root_is_excluded_everywhere() {
     assert_eq!(topic_anchor_rect(&s, &layout, s.root), None);
 
     // Empty hidden board: no items, no bounds, no panic.
-    let mut empty = Sheet::new("Empty", "Anchor");
+    let mut empty = Sheet::new("Empty", "");
     empty.root_mode = SheetRootMode::Hidden;
     let (_, sc) = scene(&empty);
     assert!(sc.items.is_empty());

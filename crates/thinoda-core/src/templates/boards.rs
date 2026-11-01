@@ -476,10 +476,9 @@ fn add_card(sheet: &mut Sheet, def: &CardDef, tr: &dyn Fn(&'static str) -> Strin
     id
 }
 
-/// Builds the sheet of a board template. `anchor` titles the hidden central topic so
-/// "Show central topic" reveals a meaningful title.
-pub(crate) fn build(def: &BoardDef, anchor: &str, tr: &dyn Fn(&'static str) -> String) -> Workbook {
-    let mut sheet = Sheet::new("Map 1", anchor);
+/// Builds the sheet of a board template with an empty hidden anchor.
+pub(crate) fn build(def: &BoardDef, title: &str, tr: &dyn Fn(&'static str) -> String) -> Workbook {
+    let mut sheet = Sheet::new(title, "");
     sheet.root_mode = SheetRootMode::Hidden;
     sheet.board.grid = def.grid;
     for card in def.cards {

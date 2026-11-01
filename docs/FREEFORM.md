@@ -1,6 +1,8 @@
 # Freeform boards: research, concept and plan
 
-Status: **concept and plan only, no code yet** (user-directed, 2026-10-28).
+Status: **implementation in progress**. Board data, native format support,
+export analysis, templates, and layered canvas rendering are implemented;
+editing, accessibility, presentation, and export parity are still being integrated.
 Companion document: [CLOUD-STORAGE.md](CLOUD-STORAGE.md) (cloud folder and
 storage-provider gap analysis). Roadmap entries live in
 [BACKLOG.md](BACKLOG.md#freeform-boards-and-flexible-map-roots) and
@@ -22,7 +24,7 @@ Hard constraints (repository conventions, see [PLAN.md](PLAN.md)):
 - Don't break existing maps, file compatibility or exports. Every export either
   keeps the content or lists exactly what it loses, or refuses.
 - Extend existing packages and models, don't build parallel systems.
-- Native (Windows, macOS, Linux) and web (wasm) parity, all 13 locales,
+- Native (Windows, macOS, Linux) and web (wasm) parity, all 10 UI languages,
   Light/Dark/Auto, keyboard and screen-reader access.
 
 ## 2. Sources
@@ -160,9 +162,11 @@ would touch most crates at once. Instead:
 
 - Add `SheetRootMode { Central, Hidden }` (default `Central`, current behaviour).
 - In `Hidden` mode the existing root becomes an **anchor**: it stays in the model
-  so the type invariant holds, but it carries no content. Validation forbids
-  title, notes, tasks, labels, images, relationships, summaries, boundaries,
-  numbering and presentation sources on the anchor.
+  so the type invariant holds, but it carries no visible content. New anchors
+  have an empty title; notes, tasks, labels, images, relationships, summaries,
+  boundaries, numbering and presentation sources are forbidden. For compatibility
+  with earlier v6 boards, an existing anchor title remains hidden and is preserved
+  on save; showing the central topic reveals it. Hidden anchors cannot be edited.
 - **Several roots** = several floating trees (existing `floating`), optionally
   grouped in zones. No new tree model.
 - Before `Hidden` can be enabled, root-dependent code moves to central queries:
@@ -197,7 +201,7 @@ semantics. Therefore:
 | Object | Model | Why |
 |---|---|---|
 | Sticky note, text card, image card, link card | **Floating topic** with `TopicPresentation::Card { kind }` (colour, fixed size, optional rotation) | Reuses text editing, rich notes, resources, search, export, AI, a11y |
-| Frame / area | **Zone** extended with `show_frame`, `clip`, title style | Zones already own floating trees and are Pitch sources |
+| Frame / area | **Zone** extended with persistent empty frames, `clip` and frame colour | Zones already own floating trees and are Pitch sources; freeform frames can also start empty |
 | Shape | New `CanvasObject::Shape` | No text tree semantics; may carry a short label |
 | Ink stroke | New `CanvasObject::Ink` | Point data, not text |
 | Free connector | New `CanvasObject::Connector` with `Endpoint::{Topic(id), Object(id), Point(pos)}` | Generalises relationships without changing existing ones |
@@ -365,6 +369,19 @@ locales, Light/Dark, accessibility checks and updated user docs.
 | **F5 Ink** | Pen, highlighter, object eraser, lasso, simplification, caches | Benchmark gate from F0 met on native and web; no pressure dependency |
 | **F6 Scenes and polish** | Viewport scenes in Pitch and PDF, mini-map, pressure (if the spike succeeds), pixel eraser, more templates | Scenes play and export; pressure optional |
 
+### F1/F2 core checkpoint: critique
+
+- Hiding a central topic must preserve even an untitled connector endpoint and
+  retain legacy hidden-anchor titles without exposing them as board content.
+  Selection, search, outline, and masking use content-aware traversal.
+- New empty frames survive edits and undo; older empty zones retain their
+  original deletion semantics. Scene clipping is shared by hit testing and
+  visible bounds, including detached summary trees.
+- Locked canvas objects must reject edits and arrangement as well as movement
+  and deletion; otherwise a locked group could still be modified indirectly.
+- This is not phase acceptance: application controls, frame clipping in visual
+  export, keyboard/screen-reader parity, and integration tests remain open.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.
@@ -398,10 +415,10 @@ catalog coverage.
 | Flowchart | Start/End terminators, process steps, a decision, labelled connectors (Yes/No) on a line grid |
 | SWOT board | Four tinted frames with one prompt sticky each |
 
-Known gaps after F4: the editor canvas does not yet paint canvas shapes,
-connectors or frame tints (the gallery thumbnails do; SVG/PDF scene painting is
-added separately in `thinoda-io`), and card colours are additionally written to
-the topic fill so cards look coloured in the current topic renderer.
+Canvas shapes, connectors and frame tints are now painted by the editor and
+the SVG/PDF scene renderer. Interactive authoring and complete export parity
+remain in progress; card colours are also written to the topic fill for
+compatibility with the topic renderer.
 
 **Later, each with the capability it waits for:**
 

@@ -468,7 +468,7 @@ pub struct Boundary {
     pub color: Option<Color>,
 }
 
-/// A named frame containing one or more independent floating topic trees.
+/// A named frame containing independent floating topic trees.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
     pub id: ZoneId,
@@ -476,6 +476,9 @@ pub struct Zone {
     pub frame: Rect,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<TopicId>,
+    /// Keep a freeform frame even when it contains no floating topics.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_empty: bool,
     /// Frame fill colour; `None` uses the theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
@@ -756,7 +759,9 @@ impl Sheet {
     }
 
     pub fn topic_count(&self) -> usize {
-        self.topics.len()
+        self.topics.len().saturating_sub(usize::from(
+            self.is_anchor(self.root) && self.contains(self.root),
+        ))
     }
 
     pub fn index_in_parent(&self, id: TopicId) -> Option<usize> {
@@ -966,7 +971,8 @@ impl Sheet {
         for zone in &mut self.zones {
             zone.roots.retain(|root| !removed.contains(root));
         }
-        self.zones.retain(|zone| !zone.roots.is_empty());
+        self.zones
+            .retain(|zone| zone.keep_empty || !zone.roots.is_empty());
         self.presentation.slides.retain(|slide| match slide.source {
             PresentationSource::Branch(root) => !removed.contains(&root),
             PresentationSource::Zone(zone) => self.zones.iter().any(|item| item.id == zone),
@@ -1241,7 +1247,7 @@ impl Sheet {
             if !zone_ids.insert(zone.id) {
                 return Err(format!("duplicate zone id {}", zone.id));
             }
-            if zone.roots.is_empty() {
+            if zone.roots.is_empty() && !zone.keep_empty {
                 return Err(format!("zone {} has no floating topics", zone.id));
             }
             validate_presentation_name(&zone.name, "zone")?;
@@ -1303,8 +1309,7 @@ impl Presentation {
             validate_presentation_name(&slide.title, "slide")?;
             validate_frame(slide.frame, false)?;
             match slide.source {
-                PresentationSource::Branch(root)
-                    if sheet.contains(root) && sheet.main_branch_of(root).is_some() => {}
+                PresentationSource::Branch(root) if sheet.is_presentation_branch(root) => {}
                 PresentationSource::Branch(root) => {
                     return Err(format!(
                         "presentation slide {} has invalid branch source {root}",
@@ -1373,12 +1378,27 @@ impl Sheet {
         roots: Vec<TopicId>,
         frame: Rect,
     ) -> Result<ZoneId, String> {
+        self.create_zone_inner(name, roots, frame, false)
+    }
+
+    /// Creates a freeform frame that can exist without member topics.
+    pub fn create_board_frame(&mut self, name: &str, frame: Rect) -> Result<ZoneId, String> {
+        self.create_zone_inner(name, Vec::new(), frame, true)
+    }
+
+    fn create_zone_inner(
+        &mut self,
+        name: &str,
+        roots: Vec<TopicId>,
+        frame: Rect,
+        keep_empty: bool,
+    ) -> Result<ZoneId, String> {
         validate_presentation_name(name, "zone")?;
         validate_frame(frame, true)?;
         if self.zones.len() >= MAX_ZONES {
             return Err(format!("zone count exceeds {MAX_ZONES}"));
         }
-        if roots.is_empty() {
+        if roots.is_empty() && !keep_empty {
             return Err("a zone needs at least one floating topic".into());
         }
         if roots.len() > MAX_ZONE_MEMBERSHIPS
@@ -1420,6 +1440,7 @@ impl Sheet {
             name: name.trim().to_string(),
             frame,
             roots,
+            keep_empty,
             color: None,
             clip: false,
         });
@@ -1439,9 +1460,6 @@ impl Sheet {
 
     /// Replaces a Zone's floating roots and transfers roots from other Zones if needed.
     pub fn set_zone_roots(&mut self, id: ZoneId, roots: Vec<TopicId>) -> Result<(), String> {
-        if roots.is_empty() {
-            return Err("a zone needs at least one floating topic".into());
-        }
         if roots.len() > MAX_ZONE_MEMBERSHIPS {
             return Err(format!(
                 "zone membership count exceeds {MAX_ZONE_MEMBERSHIPS}"
@@ -1452,6 +1470,9 @@ impl Sheet {
             .iter()
             .position(|zone| zone.id == id)
             .ok_or_else(|| format!("zone {id} not found"))?;
+        if roots.is_empty() && !self.zones[index].keep_empty {
+            return Err("a zone needs at least one floating topic".into());
+        }
         let mut unique = HashSet::new();
         for root in &roots {
             if *root == self.root
@@ -1493,10 +1514,10 @@ impl Sheet {
         }
         let removed: HashSet<_> = zones
             .iter()
-            .filter(|zone| zone.roots.is_empty())
+            .filter(|zone| zone.roots.is_empty() && !zone.keep_empty)
             .map(|zone| zone.id)
             .collect();
-        zones.retain(|zone| !zone.roots.is_empty());
+        zones.retain(|zone| zone.keep_empty || !zone.roots.is_empty());
         self.zones = zones;
         self.presentation.slides.retain(|slide| {
             !matches!(slide.source, PresentationSource::Zone(zone) if removed.contains(&zone))
@@ -1726,6 +1747,76 @@ mod zone_presentation_tests {
     }
 
     #[test]
+    fn empty_board_frames_survive_membership_changes_and_undo() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let first = sheet.add_floating("First", Vec2::new(40.0, 40.0));
+        let second = sheet.add_floating("Second", Vec2::new(140.0, 40.0));
+        let board_frame = sheet
+            .create_board_frame("Frame", frame(0.0, 0.0, 200.0, 200.0))
+            .unwrap();
+        let slide = sheet
+            .add_presentation_slide(
+                "Frame",
+                PresentationSource::Zone(board_frame),
+                frame(0.0, 0.0, 200.0, 200.0),
+            )
+            .unwrap();
+        sheet.validate().unwrap();
+        sheet.set_zone_roots(board_frame, vec![first]).unwrap();
+        let legacy_zone = sheet
+            .create_zone("Legacy", vec![second], frame(0.0, 0.0, 200.0, 200.0))
+            .unwrap();
+        sheet
+            .set_zone_roots(legacy_zone, vec![first, second])
+            .unwrap();
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .any(|zone| { zone.id == board_frame && zone.keep_empty && zone.roots.is_empty() })
+        );
+        assert!(sheet.presentation.slides.iter().any(|s| s.id == slide));
+        sheet.set_zone_roots(board_frame, vec![second]).unwrap();
+        sheet.set_zone_roots(board_frame, Vec::new()).unwrap();
+        sheet.set_zone_roots(board_frame, vec![second]).unwrap();
+        sheet.validate().unwrap();
+
+        let mut doc = crate::Document::new(Workbook::new(sheet));
+        doc.edit_sheet("Remove", |sheet| sheet.remove_topics(&[second]))
+            .unwrap();
+        assert!(
+            doc.sheet()
+                .zones
+                .iter()
+                .any(|zone| zone.id == board_frame && zone.roots.is_empty())
+        );
+        assert!(
+            doc.sheet()
+                .presentation
+                .slides
+                .iter()
+                .any(|s| s.id == slide)
+        );
+        assert!(doc.undo());
+        assert!(
+            doc.sheet()
+                .zones
+                .iter()
+                .any(|zone| zone.id == board_frame && zone.roots == vec![second])
+        );
+        assert!(doc.redo());
+        doc.sheet().validate().unwrap();
+        let new_frame = doc
+            .create_board_frame("New frame", frame(250.0, 0.0, 200.0, 200.0))
+            .unwrap();
+        assert!(doc.sheet().zones.iter().any(|zone| zone.id == new_frame));
+        assert!(doc.undo());
+        assert!(doc.sheet().zones.iter().all(|zone| zone.id != new_frame));
+        assert!(doc.redo());
+        assert!(doc.sheet().zones.iter().any(|zone| zone.id == new_frame));
+    }
+
+    #[test]
     fn moving_resizing_and_removing_zone_preserve_content() {
         let mut sheet = Sheet::new("Map", "Central");
         let floating = sheet.add_floating("Floating", Vec2::new(125.0, 130.0));
@@ -1940,8 +2031,15 @@ impl Workbook {
             if !crate::theme::Theme::IDS.contains(&sheet.theme.theme_id.as_str()) {
                 sheet.theme.theme_id = crate::theme::ThemeSettings::default().theme_id;
             }
-            for (index, topic) in sheet.topics.values_mut().enumerate() {
-                topic.title = format!("Topic {}", index + 1);
+            let hidden_anchor = sheet.is_anchor(sheet.root).then_some(sheet.root);
+            let mut topic_index = 0;
+            for topic in sheet.topics.values_mut() {
+                if Some(topic.id) == hidden_anchor {
+                    topic.title.clear();
+                } else {
+                    topic_index += 1;
+                    topic.title = format!("Topic {topic_index}");
+                }
                 topic.notes = None;
                 topic.labels.clear();
                 topic.hyperlink = None;
@@ -1958,6 +2056,12 @@ impl Workbook {
             }
             for boundary in &mut sheet.boundaries {
                 boundary.title = None;
+            }
+            for (index, zone) in sheet.zones.iter_mut().enumerate() {
+                zone.name = format!("Frame {}", index + 1);
+            }
+            for (index, slide) in sheet.presentation.slides.iter_mut().enumerate() {
+                slide.title = format!("Slide {}", index + 1);
             }
             crate::board::mask_canvas(sheet);
         }
@@ -2067,6 +2171,43 @@ mod tests {
         }
         assert_eq!(book, original);
         assert_eq!(copy.masked_copy(), copy);
+    }
+
+    #[test]
+    fn masked_board_removes_legacy_anchor_frame_and_scene_text() {
+        let mut sheet = Sheet::new("SECRET board", "SECRET old anchor");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let card = sheet.add_floating("SECRET card", Vec2::new(50.0, 50.0));
+        let frame = sheet
+            .create_board_frame(
+                "SECRET frame",
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0)),
+            )
+            .unwrap();
+        sheet.set_zone_roots(frame, vec![card]).unwrap();
+        sheet
+            .add_presentation_slide(
+                "SECRET scene",
+                PresentationSource::Zone(frame),
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(200.0, 200.0)),
+            )
+            .unwrap();
+        let mut shape = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(50.0, 50.0)),
+        );
+        if let crate::CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "SECRET shape".into();
+        }
+        shape.alt_text = "SECRET alt".into();
+        sheet.add_canvas_object(shape).unwrap();
+        let masked = Workbook::new(sheet).masked_copy();
+        masked.validate().unwrap();
+        assert!(!serde_json::to_string(&masked).unwrap().contains("SECRET"));
+        assert!(masked.active().root_topic().title.is_empty());
+        assert_eq!(masked.active().zones[0].name, "Frame 1");
+        assert_eq!(masked.active().presentation.slides[0].title, "Slide 1");
+        assert_eq!(masked.masked_copy(), masked);
     }
 
     #[test]

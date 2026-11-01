@@ -1507,7 +1507,9 @@ impl FimDocument {
         for zone in &mut sheet.zones {
             zone.roots.retain(|id| retained.contains(id));
         }
-        sheet.zones.retain(|zone| !zone.roots.is_empty());
+        sheet
+            .zones
+            .retain(|zone| zone.keep_empty || !zone.roots.is_empty());
         sheet
             .presentation
             .slides

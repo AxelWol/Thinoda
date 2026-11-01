@@ -17,7 +17,7 @@ fn stroke(points: &[(f32, f32)]) -> InkStroke {
 
 /// Hidden-mode sheet with two floating roots and one card.
 fn board() -> (Sheet, TopicId, TopicId, TopicId) {
-    let mut s = Sheet::new("Board", "Anchor");
+    let mut s = Sheet::new("Board", "");
     s.root_mode = SheetRootMode::Hidden;
     let a = s.add_floating("A", Vec2::new(300.0, 200.0));
     let b = s.add_floating("B", Vec2::new(-200.0, 50.0));
@@ -223,6 +223,7 @@ fn root_queries_follow_root_mode() {
     assert!(s.visible_topic_ids().contains(&s.root));
 
     s.detach_subtree(a).unwrap();
+    s.topic_mut(s.root).unwrap().title.clear();
     s.root_mode = SheetRootMode::Hidden;
     s.validate().unwrap();
     let late = s.add_floating("Top", Vec2::new(500.0, -100.0));
@@ -232,12 +233,13 @@ fn root_queries_follow_root_mode() {
     assert!(s.is_anchor(s.root));
     // Zone members first, then the rest by y then x.
     assert_eq!(s.semantic_roots(), vec![zoned, late, f]);
+    assert_eq!(s.content_top_level_ids(), vec![zoned, late, f]);
     assert_eq!(s.primary_content_root(), Some(zoned));
     assert!(!s.all_content_roots().contains(&s.root));
     assert!(!s.visible_topic_ids().contains(&s.root));
 
     let empty = {
-        let mut e = Sheet::new("E", "Anchor");
+        let mut e = Sheet::new("E", "");
         e.root_mode = SheetRootMode::Hidden;
         e
     };
@@ -246,18 +248,18 @@ fn root_queries_follow_root_mode() {
 }
 
 #[test]
-fn hidden_anchor_must_be_empty() {
+fn hidden_anchor_cannot_carry_non_title_content() {
     let make = || {
-        let mut s = Sheet::new("V", "Anchor");
+        let mut s = Sheet::new("V", "");
         s.root_mode = SheetRootMode::Hidden;
         s
     };
     let mut s = make();
-    s.validate().unwrap();
     s.add_child(s.root, None, "Child");
     assert!(s.validate().unwrap_err().contains("children"));
 
     let mut s = make();
+    s.topic_mut(s.root).unwrap().title = "Legacy title".into();
     s.topic_mut(s.root).unwrap().labels.push("x".into());
     assert!(s.validate().unwrap_err().contains("labels"));
 
@@ -300,7 +302,32 @@ fn hidden_anchor_must_be_empty() {
             Endpoint::Point(Vec2::ZERO),
         ))
     });
-    assert!(s.validate().unwrap_err().contains("missing topic"));
+    assert!(s.validate().unwrap_err().contains("connectors"));
+}
+
+#[test]
+fn legacy_hidden_anchor_title_is_preserved_but_not_editable_or_content() {
+    let mut sheet = Sheet::new("Legacy board", "Legacy title");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let anchor = sheet.root;
+    let content = sheet.add_floating("Visible", Vec2::ZERO);
+    sheet.validate().unwrap();
+    assert_eq!(sheet.content_ids_ordered(), vec![content]);
+    assert!(crate::clipboard::copy_topics(&sheet, &[anchor]).is_none());
+    assert_eq!(
+        sheet.set_title(anchor, "Changed"),
+        Err(crate::EditError::RootNotAllowed)
+    );
+    assert_eq!(
+        sheet.insert_child(anchor, "Child"),
+        Err(crate::EditError::RootNotAllowed)
+    );
+    let json = serde_json::to_string(&sheet).unwrap();
+    let mut restored: Sheet = serde_json::from_str(&json).unwrap();
+    restored.validate().unwrap();
+    assert_eq!(restored.root_topic().title, "Legacy title");
+    restored.show_central_topic();
+    assert_eq!(restored.root_topic().title, "Legacy title");
 }
 
 #[test]
@@ -332,7 +359,7 @@ fn hide_central_topic_moves_content_in_one_undo_step() {
     let s = doc.sheet();
     assert_eq!(s.root_mode, SheetRootMode::Hidden);
     assert!(s.root_topic().children.is_empty());
-    assert_eq!(s.root_topic().title, "Central");
+    assert!(s.root_topic().title.is_empty());
     assert_eq!(s.topic(moved).unwrap().title, "Central");
     assert_eq!(s.children(moved), &[a, b]);
     assert_eq!(s.topic(moved).unwrap().labels, vec!["tag".to_string()]);
@@ -341,8 +368,19 @@ fn hide_central_topic_moves_content_in_one_undo_step() {
     assert_eq!(s.semantic_roots(), vec![moved]);
     assert_eq!(
         s.presentation.slides[0].source,
-        PresentationSource::Viewport
+        PresentationSource::Branch(a)
     );
+    assert!(s.is_presentation_branch(moved));
+    let mut shown = s.clone();
+    shown.show_central_topic();
+    shown.validate().unwrap();
+    shown
+        .add_presentation_slide(
+            "Moved root",
+            PresentationSource::Branch(moved),
+            rect(0.0, 0.0, 100.0, 80.0),
+        )
+        .unwrap();
     match &s.canvas.object(conn).unwrap().kind {
         CanvasObjectKind::Connector(c) => assert_eq!(c.from, Endpoint::Topic(moved)),
         _ => unreachable!(),
@@ -365,13 +403,43 @@ fn hide_central_topic_moves_content_in_one_undo_step() {
 
 #[test]
 fn hide_empty_central_topic_only_switches_mode() {
-    let mut s = Sheet::new("Empty", "Central");
+    let mut s = Sheet::new("Empty", "");
     let f = s.add_floating("F", Vec2::ZERO);
     assert_eq!(s.central_topic_content(), None);
     assert_eq!(s.hide_central_topic().unwrap(), None);
     assert_eq!(s.root_mode, SheetRootMode::Hidden);
     assert_eq!(s.semantic_roots(), vec![f]);
     assert_eq!(s.hide_central_topic().unwrap(), None);
+    s.validate().unwrap();
+}
+
+#[test]
+fn hiding_an_untitled_central_topic_preserves_attached_connectors() {
+    let mut sheet = Sheet::new("Board", "");
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(sheet.root),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        )))
+        .unwrap();
+    assert_eq!(sheet.central_topic_content(), Some("connectors"));
+    let moved = sheet.hide_central_topic().unwrap().unwrap();
+    match &sheet.canvas.object(connector).unwrap().kind {
+        CanvasObjectKind::Connector(connector) => {
+            assert_eq!(connector.from, Endpoint::Topic(moved));
+        }
+        _ => unreachable!(),
+    }
+    sheet.validate().unwrap();
+}
+
+#[test]
+fn hiding_a_title_only_central_topic_preserves_it_as_a_floating_root() {
+    let mut s = Sheet::new("Board", "Important");
+    let moved = s.hide_central_topic().unwrap().expect("title preserved");
+    assert_eq!(s.topic(moved).unwrap().title, "Important");
+    assert!(s.root_topic().title.is_empty());
+    assert_eq!(s.semantic_roots(), vec![moved]);
     s.validate().unwrap();
 }
 
@@ -686,6 +754,16 @@ fn group_ungroup_and_lock() {
     assert!(s.remove_canvas_objects(&[c]).is_err());
     assert!(s.rotate_canvas_object(c, 10.0).is_err());
     assert!(s.resize_canvas_object(c, rect(0.0, 0.0, 5.0, 5.0)).is_err());
+    let locked = s.clone();
+    assert!(
+        s.update_canvas_object(b, |o| o.alt_text = "edit".into())
+            .is_err()
+    );
+    assert!(s.reorder_canvas_objects(&[b], ZOrder::Front).is_err());
+    assert!(s.set_canvas_band(&[b], Band::Below).is_err());
+    assert!(s.group_canvas_objects(&[a, b]).is_err());
+    assert!(s.ungroup_canvas_objects(g2).is_err());
+    assert_eq!(s, locked);
     s.set_canvas_group_locked(g2, false).unwrap();
     s.set_canvas_objects_locked(&[a], true).unwrap();
     assert!(s.move_canvas_objects(&[a], Vec2::new(5.0, 0.0)).is_err());

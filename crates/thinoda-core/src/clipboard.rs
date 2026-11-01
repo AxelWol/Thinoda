@@ -97,7 +97,7 @@ pub fn copy_topics(sheet: &Sheet, ids: &[TopicId]) -> Option<ClipboardPayload> {
     let roots: Vec<TopicId> = ids
         .iter()
         .copied()
-        .filter(|id| sheet.contains(*id))
+        .filter(|id| sheet.contains(*id) && !sheet.is_anchor(*id))
         .filter(|id| {
             !ids.iter()
                 .any(|o| o != id && sheet.ancestors(*id).contains(o))
@@ -223,6 +223,17 @@ mod tests {
         let p = copy_topics(&s, &[a, a1]).unwrap();
         assert_eq!(p.subtrees.len(), 1);
         assert_eq!(p.text, "A\n\tA1\n");
+    }
+
+    #[test]
+    fn copy_excludes_hidden_anchor() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let topic = sheet.add_floating("Idea", crate::Vec2::ZERO);
+        assert!(copy_topics(&sheet, &[sheet.root]).is_none());
+        let copied = copy_topics(&sheet, &[sheet.root, topic]).unwrap();
+        assert_eq!(copied.subtrees.len(), 1);
+        assert_eq!(copied.text, "Idea\n");
     }
 
     #[test]

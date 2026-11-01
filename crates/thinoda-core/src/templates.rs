@@ -306,8 +306,7 @@ pub fn instantiate(id: &str) -> Workbook {
     instantiate_localized(id, &|s| s.to_owned())
 }
 
-/// Like [`instantiate`], but passes the content text of board templates (and their
-/// hidden central topic, titled with the template name) through `tr`.
+/// Like [`instantiate`], but passes board sheet titles and content through `tr`.
 pub fn instantiate_localized(id: &str, tr: &dyn Fn(&'static str) -> String) -> Workbook {
     let info = TEMPLATES
         .iter()
@@ -789,6 +788,7 @@ mod tests {
             let sheet = wb.active();
             assert_eq!(sheet.root_mode, SheetRootMode::Hidden, "{id}");
             assert_eq!(sheet.central_topic_content(), None, "{id}");
+            assert!(sheet.root_topic().title.is_empty(), "{id}");
             assert!(sheet.children(sheet.root).is_empty(), "{id}");
             assert!(sheet.board.grid != crate::board::GridKind::None, "{id}");
             let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
@@ -861,15 +861,11 @@ mod tests {
         assert!(strings.contains(&"Key Partners"));
         assert!(strings.contains(&"Yes"));
         for id in board_ids() {
-            let info = TEMPLATES.iter().find(|t| t.id == id).unwrap();
             let wb = instantiate_localized(id, &|s| format!("<{s}>"));
             wb.validate().unwrap();
             let sheet = wb.active();
-            assert_eq!(
-                sheet.topic(sheet.root).unwrap().title,
-                format!("<{}>", info.name)
-            );
-            for topic in sheet.topics.values() {
+            assert!(sheet.root_topic().title.is_empty());
+            for topic in sheet.content_topics() {
                 assert!(topic.title.starts_with('<'), "{id}: {}", topic.title);
             }
             for zone in &sheet.zones {

@@ -1139,19 +1139,20 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     Ok(())
 }
 
-/// In Hidden mode the root must not carry any content.
+/// A legacy title may remain on a hidden anchor, but is never exposed as board content.
 fn validate_anchor(sheet: &Sheet) -> Result<(), String> {
-    if let Some(reason) = anchor_content(sheet) {
+    if let Some(reason) = anchor_content(sheet, false) {
         return Err(format!("hidden central topic must be empty ({reason})"));
     }
     Ok(())
 }
 
 /// First kind of content that prevents the root from being an anchor.
-fn anchor_content(sheet: &Sheet) -> Option<&'static str> {
+fn anchor_content(sheet: &Sheet, include_title: bool) -> Option<&'static str> {
     let root = sheet.root;
     let t = sheet.topic(root)?;
-    let checks: [(bool, &'static str); 15] = [
+    let checks: [(bool, &'static str); 17] = [
+        (include_title && !t.title.is_empty(), "title"),
         (!t.children.is_empty(), "children"),
         (t.notes.is_some(), "notes"),
         (!t.labels.is_empty(), "labels"),
@@ -1194,6 +1195,16 @@ fn anchor_content(sheet: &Sheet) -> Option<&'static str> {
                 .any(|s| s.source == PresentationSource::Branch(root)),
             "slides",
         ),
+        (
+            sheet.canvas.objects.iter().any(|object| {
+                if let CanvasObjectKind::Connector(connector) = &object.kind {
+                    connector.from == Endpoint::Topic(root) || connector.to == Endpoint::Topic(root)
+                } else {
+                    false
+                }
+            }),
+            "connectors",
+        ),
     ];
     checks
         .into_iter()
@@ -1224,6 +1235,13 @@ impl Sheet {
     /// `true` for the invisible root of a Hidden-mode sheet.
     pub fn is_anchor(&self, id: TopicId) -> bool {
         self.root_mode == SheetRootMode::Hidden && id == self.root
+    }
+
+    /// Presentation branches can originate in the central tree or a floating tree.
+    pub fn is_presentation_branch(&self, id: TopicId) -> bool {
+        self.contains(id)
+            && !self.is_anchor(id)
+            && (self.main_branch_of(id).is_some() || self.floating.contains(&self.top_of(id)))
     }
 
     /// Content roots in reading order: `[root]` in Central mode; in Hidden mode the
@@ -1280,12 +1298,37 @@ impl Sheet {
         v
     }
 
+    /// Roots shown in topic-oriented views, including detached summary trees.
+    pub fn content_top_level_ids(&self) -> Vec<TopicId> {
+        if self.root_mode == SheetRootMode::Central {
+            return self.top_level_ids();
+        }
+        let mut roots = self.semantic_roots();
+        roots.extend(self.summaries.iter().map(|summary| summary.topic));
+        roots
+    }
+
+    /// Content topics in document order, including collapsed descendants.
+    pub fn content_ids_ordered(&self) -> Vec<TopicId> {
+        self.content_top_level_ids()
+            .into_iter()
+            .flat_map(|id| self.subtree_ids(id))
+            .collect()
+    }
+
+    /// All content topics, excluding the invisible anchor.
+    pub fn content_topics(&self) -> impl Iterator<Item = &Topic> {
+        self.topics
+            .values()
+            .filter(|topic| !self.is_anchor(topic.id))
+    }
+
     /// Topics in document order that are not the anchor and not hidden by a collapsed
     /// ancestor.
     pub fn visible_topic_ids(&self) -> Vec<TopicId> {
-        self.all_ids_ordered()
+        self.content_ids_ordered()
             .into_iter()
-            .filter(|id| !self.is_anchor(*id) && self.is_visible(*id))
+            .filter(|id| self.is_visible(*id))
             .collect()
     }
 
@@ -1299,13 +1342,13 @@ impl Sheet {
 
     /// Why the central topic cannot be hidden directly (`None` = it can).
     pub fn central_topic_content(&self) -> Option<&'static str> {
-        anchor_content(self)
+        anchor_content(self, true)
     }
 
     /// Switches to Hidden mode. If the root carries content, it is first moved into a new
     /// floating topic at the root position (children, notes, links, relationships,
-    /// boundaries, summaries, tasks and connectors are retargeted; branch slides become
-    /// viewport slides). Returns that new topic. Callers wrap this in one edit.
+    /// boundaries, summaries, tasks, connectors and root branch slides are retargeted).
+    /// Returns that new topic. Callers wrap this in one edit.
     pub fn hide_central_topic(&mut self) -> Result<Option<TopicId>, String> {
         if self.root_mode == SheetRootMode::Hidden {
             return Ok(None);
@@ -1313,14 +1356,14 @@ impl Sheet {
         if self.fim.is_some() {
             return Err("FIM documents always show their central topic".into());
         }
-        if anchor_content(self).is_none() {
+        if anchor_content(self, true).is_none() {
             self.root_mode = SheetRootMode::Hidden;
             return Ok(None);
         }
         let root = self.root;
         let id = self.alloc_topic_id();
         let old = self.topics.get_mut(&root).expect("root exists");
-        let mut moved = Topic::new(id, old.title.clone());
+        let mut moved = Topic::new(id, std::mem::take(&mut old.title));
         moved.children = std::mem::take(&mut old.children);
         moved.collapsed = std::mem::take(&mut old.collapsed);
         moved.notes = old.notes.take();
@@ -1376,8 +1419,8 @@ impl Sheet {
             }
         }
         for slide in &mut self.presentation.slides {
-            if matches!(slide.source, PresentationSource::Branch(_)) {
-                slide.source = PresentationSource::Viewport;
+            if slide.source == PresentationSource::Branch(root) {
+                slide.source = PresentationSource::Branch(id);
             }
         }
         for o in &mut self.canvas.objects {
@@ -1393,7 +1436,7 @@ impl Sheet {
         Ok(Some(id))
     }
 
-    /// Restores Central mode (the anchor becomes a visible, empty central topic).
+    /// Restores Central mode; a legacy anchor title is preserved and becomes visible.
     pub fn show_central_topic(&mut self) {
         self.root_mode = SheetRootMode::Central;
     }
@@ -1613,6 +1656,7 @@ impl Sheet {
         id: CanvasObjectId,
         f: impl FnOnce(&mut CanvasObject),
     ) -> Result<(), String> {
+        self.require_unlocked(&[id])?;
         let mut object = self
             .canvas
             .object(id)
@@ -1653,9 +1697,10 @@ impl Sheet {
         order: ZOrder,
     ) -> Result<(), String> {
         let set: HashSet<_> = ids.iter().copied().collect();
-        if set.is_empty() || set.iter().any(|id| self.canvas.object(*id).is_none()) {
+        if set.is_empty() {
             return Err("canvas object not found".into());
         }
+        self.require_unlocked(ids)?;
         let objects = &mut self.canvas.objects;
         match order {
             ZOrder::Front | ZOrder::Back => {
@@ -1707,9 +1752,10 @@ impl Sheet {
     /// bottom of `Above`.
     pub fn set_canvas_band(&mut self, ids: &[CanvasObjectId], band: Band) -> Result<(), String> {
         let set: HashSet<_> = ids.iter().copied().collect();
-        if set.is_empty() || set.iter().any(|id| self.canvas.object(*id).is_none()) {
+        if set.is_empty() {
             return Err("canvas object not found".into());
         }
+        self.require_unlocked(ids)?;
         let (mut picked, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.canvas.objects)
             .into_iter()
             .partition(|o| set.contains(&o.id) && o.band != band);
@@ -1732,9 +1778,7 @@ impl Sheet {
         if set.len() < 2 {
             return Err("select at least two objects to group".into());
         }
-        if set.iter().any(|id| self.canvas.object(*id).is_none()) {
-            return Err("canvas object not found".into());
-        }
+        self.require_unlocked(ids)?;
         let id = self.alloc_canvas_group_id();
         self.canvas.groups.push(CanvasGroup { id, locked: false });
         for o in self
@@ -1757,6 +1801,7 @@ impl Sheet {
         if self.canvas.group(group).is_none() {
             return Err(format!("canvas group {group} not found"));
         }
+        self.require_unlocked(&self.canvas.group_members(group))?;
         for o in &mut self.canvas.objects {
             if o.group == Some(group) {
                 o.group = None;

@@ -10,7 +10,7 @@ use crate::board::{
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rect, cubic};
 use crate::model::{Sheet, TopicId, ZoneId};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 /// Default hit tolerance in sheet units.
 pub const HIT_TOLERANCE: f32 = 3.0;
@@ -98,7 +98,29 @@ pub struct SceneItem {
     pub band: SceneBand,
     /// Axis-aligned bounds of the painted geometry.
     pub bounds: Rect,
+    /// Optional frame clipping in sheet coordinates.
+    pub clip: Option<Rect>,
     pub geometry: SceneGeometry,
+}
+
+impl SceneItem {
+    /// Bounds remaining after frame clipping.
+    pub fn visible_bounds(&self) -> Option<Rect> {
+        let Some(clip) = self.clip else {
+            return Some(self.bounds);
+        };
+        if !self.bounds.intersects(&clip) {
+            return None;
+        }
+        let max = self.bounds.max();
+        let clip_max = clip.max();
+        let min = Vec2::new(
+            self.bounds.min.x.max(clip.min.x),
+            self.bounds.min.y.max(clip.min.y),
+        );
+        let max = Vec2::new(max.x.min(clip_max.x), max.y.min(clip_max.y));
+        Some(Rect::from_min_size(min, max - min))
+    }
 }
 
 /// Items in paint order (bottom first).
@@ -118,6 +140,7 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
             id: SceneId::Zone(zone.id),
             band: SceneBand::Frames,
             bounds: zone.frame,
+            clip: None,
             geometry: SceneGeometry::Rect {
                 rect: zone.frame,
                 rotation: 0.0,
@@ -144,6 +167,7 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
             id: SceneId::Topic(*id),
             band: SceneBand::Map,
             bounds: rotated_bounds(t.rect, rotation),
+            clip: topic_clip_rect(sheet, *id),
             geometry: SceneGeometry::Rect {
                 rect: t.rect,
                 rotation,
@@ -191,8 +215,44 @@ fn object_item(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<
         id: SceneId::Object(object.id),
         band,
         bounds,
+        clip: object_clip_rect(sheet, object),
         geometry,
     })
+}
+
+/// Clipping inherited from the frame containing a floating topic tree.
+pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
+    if !sheet.zones.iter().any(|zone| zone.clip) {
+        return None;
+    }
+    let mut current = Some(topic);
+    let mut seen = HashSet::new();
+    while let Some(id) = current {
+        if !seen.insert(id) {
+            return None;
+        }
+        if let Some(zone) = sheet
+            .zones
+            .iter()
+            .find(|zone| zone.clip && zone.roots.contains(&id))
+        {
+            return Some(zone.frame);
+        }
+        current = sheet
+            .topic(id)
+            .and_then(|topic| topic.parent)
+            .or_else(|| sheet.summary_for_topic(id).map(|summary| summary.parent));
+    }
+    None
+}
+
+/// Clipping from the first clipping frame containing the object's center.
+pub fn object_clip_rect(sheet: &Sheet, object: &CanvasObject) -> Option<Rect> {
+    sheet
+        .zones
+        .iter()
+        .find(|zone| zone.clip && zone.frame.contains(object.rect.center()))
+        .map(|zone| zone.frame)
 }
 
 fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
@@ -226,7 +286,7 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
 
 /// Painted bounds of a canvas object (`None` for an unresolvable connector).
 pub fn object_bounds(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<Rect> {
-    object_item(sheet, layout, object).map(|item| item.bounds)
+    object_item(sheet, layout, object).and_then(|item| item.visible_bounds())
 }
 
 impl Scene {
@@ -243,8 +303,10 @@ impl Scene {
                 SceneId::Topic(id) => SceneHit::Topic(id),
                 SceneId::Object(id) => SceneHit::Object(id),
             };
-            (item.bounds.expand(tolerance).contains(p) && item.geometry.hit(p, tolerance))
-                .then_some(hit)
+            (item.clip.is_none_or(|clip| clip.contains(p))
+                && item.bounds.expand(tolerance).contains(p)
+                && item.geometry.hit(p, tolerance))
+            .then_some(hit)
         })
     }
 
@@ -252,7 +314,10 @@ impl Scene {
     pub fn objects_in(&self, area: Rect) -> Vec<SceneHit> {
         self.items
             .iter()
-            .filter(|item| item.bounds.intersects(&area))
+            .filter(|item| {
+                item.visible_bounds()
+                    .is_some_and(|bounds| bounds.intersects(&area))
+            })
             .filter_map(|item| match item.id {
                 SceneId::Zone(_) => None,
                 SceneId::Topic(id) => Some(SceneHit::Topic(id)),
@@ -265,7 +330,7 @@ impl Scene {
     pub fn bounds(&self) -> Option<Rect> {
         self.items
             .iter()
-            .map(|item| item.bounds)
+            .filter_map(SceneItem::visible_bounds)
             .reduce(|a, b| a.union(&b))
     }
 

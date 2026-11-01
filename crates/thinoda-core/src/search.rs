@@ -68,6 +68,9 @@ impl Facets {
         id: TopicId,
         progress: &std::collections::HashMap<TopicId, crate::todo::TodoProgress>,
     ) -> bool {
+        if sheet.is_anchor(id) {
+            return false;
+        }
         let Some(topic) = sheet.topic(id) else {
             return false;
         };
@@ -121,7 +124,7 @@ pub fn search_faceted(
             return Vec::new();
         }
         return sheet
-            .all_ids_ordered()
+            .content_ids_ordered()
             .into_iter()
             .filter(|id| matches_facets(*id))
             .map(|topic| SearchHit {
@@ -137,7 +140,7 @@ pub fn search_faceted(
     }
     if facets.notes_only {
         return sheet
-            .all_ids_ordered()
+            .content_ids_ordered()
             .into_iter()
             .filter(|id| {
                 matches_facets(*id)
@@ -207,7 +210,7 @@ pub fn search_sheet(
     opts: &SearchOptions,
 ) -> Vec<SearchHit> {
     let mut hits = Vec::new();
-    for id in sheet.all_ids_ordered() {
+    for id in sheet.content_ids_ordered() {
         let t = &sheet.topics[&id];
         if matches(&t.title, needle, opts) {
             hits.push(SearchHit {
@@ -254,6 +257,9 @@ pub fn replace_in_titles(
 ) -> usize {
     let mut count = 0;
     for id in ids {
+        if sheet.is_anchor(*id) {
+            continue;
+        }
         let Some(t) = sheet.topic_mut(*id) else {
             continue;
         };
@@ -285,7 +291,7 @@ pub fn replace_in_titles(
 /// tree stays connected). Used by the "Filter" feature.
 pub fn filter_topics(sheet: &Sheet, markers: &[String], labels: &[String]) -> Vec<TopicId> {
     let mut keep = Vec::new();
-    for id in sheet.all_ids_ordered() {
+    for id in sheet.content_ids_ordered() {
         let t = &sheet.topics[&id];
         let hit = t.markers.iter().any(|m| markers.contains(m))
             || t.labels.iter().any(|l| labels.contains(l));
@@ -303,8 +309,7 @@ pub fn filter_topics(sheet: &Sheet, markers: &[String], labels: &[String]) -> Ve
 /// Topic statistics shown in the status bar ("Topics: n" / word count).
 pub fn word_count(sheet: &Sheet) -> usize {
     sheet
-        .topics
-        .values()
+        .content_topics()
         .map(|t| t.title.split_whitespace().count())
         .sum()
 }
@@ -444,6 +449,48 @@ mod tests {
         let f = filter_topics(&s, &["priority-1".into()], &[]);
         assert_eq!(f.len(), 2);
         assert_eq!(word_count(&s), 5);
+    }
+
+    #[test]
+    fn hidden_anchor_is_excluded_from_search_filters_and_statistics() {
+        let mut sheet = Sheet::new("Board", "Secret anchor");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let anchor = sheet.root;
+        sheet
+            .topic_mut(anchor)
+            .unwrap()
+            .markers
+            .push("flag-red".into());
+        let later = sheet.add_floating("Later", crate::Vec2::new(0.0, 100.0));
+        let first = sheet.add_floating("First idea", crate::Vec2::new(0.0, 0.0));
+        let child = sheet.add_child(first, None, "Detail");
+        sheet
+            .topic_mut(first)
+            .unwrap()
+            .markers
+            .push("flag-red".into());
+        let options = SearchOptions::default();
+        let facets = Facets {
+            markers: vec!["flag-red".into()],
+            ..Default::default()
+        };
+        assert!(search_sheet(&sheet, 0, "Secret", &options).is_empty());
+        assert_eq!(
+            search_faceted(&sheet, 0, "", &options, &facets)
+                .iter()
+                .map(|hit| hit.topic)
+                .collect::<Vec<_>>(),
+            vec![first]
+        );
+        assert!(!facets.matches(&sheet, anchor));
+        assert_eq!(sheet.content_ids_ordered(), vec![first, child, later]);
+        assert_eq!(sheet.topic_count(), 3);
+        assert_eq!(word_count(&sheet), 4);
+        assert_eq!(
+            replace_in_titles(&mut sheet, &[anchor], "Secret", "Changed", &options),
+            0
+        );
+        assert_eq!(sheet.topic(anchor).unwrap().title, "Secret anchor");
     }
 
     #[test]

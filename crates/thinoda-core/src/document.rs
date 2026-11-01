@@ -556,6 +556,14 @@ impl Document {
         })
     }
 
+    pub fn create_board_frame(&mut self, name: &str, frame: Rect) -> EditResult<ZoneId> {
+        self.edit_sheet("Create frame", |sheet| {
+            sheet
+                .create_board_frame(name, frame)
+                .map_err(EditError::Invalid)
+        })
+    }
+
     pub fn rename_zone(&mut self, id: ZoneId, name: &str) -> EditResult<()> {
         self.edit_sheet("Rename zone", |sheet| {
             sheet.rename_zone(id, name).map_err(EditError::Invalid)

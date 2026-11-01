@@ -77,7 +77,7 @@ fn distribution(mut samples: Vec<f64>) -> Distribution {
 }
 
 fn fixture(strokes: usize) -> Workbook {
-    let mut sheet = Sheet::new("Board benchmark", "Anchor");
+    let mut sheet = Sheet::new("Board benchmark", "");
     sheet.root_mode = SheetRootMode::Hidden;
     let columns = 100;
     for i in 0..strokes {

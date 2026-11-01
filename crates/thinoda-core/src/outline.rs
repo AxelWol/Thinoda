@@ -206,6 +206,7 @@ mod tests {
         assert_eq!(central, to_outline(&s, s.root));
 
         s.detach_subtree(a).unwrap();
+        s.topic_mut(s.root).unwrap().title.clear();
         s.root_mode = SheetRootMode::Hidden;
         let low = s.add_floating("Low", Vec2::new(0.0, 500.0));
         s.add_child(low, None, "Low child");

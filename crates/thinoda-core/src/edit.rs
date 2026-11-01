@@ -39,11 +39,13 @@ pub fn normalize_labels(labels: impl IntoIterator<Item = String>) -> Vec<String>
 
 impl Sheet {
     fn require(&self, id: TopicId) -> EditResult<()> {
-        if self.contains(id) {
-            Ok(())
-        } else {
-            Err(EditError::NoSuchTopic(id))
+        if !self.contains(id) {
+            return Err(EditError::NoSuchTopic(id));
         }
+        if self.is_anchor(id) {
+            return Err(EditError::RootNotAllowed);
+        }
+        Ok(())
     }
 
     /// Adds a new last child (Tab).
