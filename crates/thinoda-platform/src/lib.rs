@@ -62,6 +62,7 @@ pub mod paths;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod printing;
 pub mod recovery;
+pub mod remote_storage;
 pub mod settings;
 pub mod single_instance;
 pub mod storage;
