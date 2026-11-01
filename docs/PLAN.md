@@ -2879,6 +2879,24 @@ native QA are required for this package.
 Cloud gap analysis (2026-10-28): [CLOUD-STORAGE.md](CLOUD-STORAGE.md) refines step 2
 into phases C0-C6 (async revision-aware storage contract first, then web OPFS/File
 System Access, native sync-folder hardening, WebDAV, one REST provider, then others).
+User-directed C0-C5 implementation (2026-11-01) adds revision-aware background
+open/save/cancel, durable browser migration, placeholder-safe local access,
+external-change reload/keep/compare, and explicitly connected WebDAV, Graph,
+Dropbox and Drive workflows plus Box transport. Credentials, versions and sharing remain
+explicit actions, not automatic synchronization. Offline protocol mocks and
+native/wasm gates cover implementation; live OAuth, deployed CORS/callbacks,
+real browser pickers and the sync-client/OS matrix remain acceptance work.
+Google Drive new uploads explicitly create distinct IDs and can duplicate names,
+as approved by the user; existing-file saves remain revision-conditional.
+Normal OAuth now uses publisher-owned compile-time registrations and browser
+consent with automatic app-folder discovery, not end-user client/drive/redirect
+fields. [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md) prepares the registrations and
+CI/release/Pages build mappings; no publisher apps exist yet. Box public sign-in
+and Google Drive web code exchange remain explicitly unavailable without a
+separately reviewed architecture.
+R10 as a whole is not complete: protected-file formats, its remaining consent
+decisions and native/live acceptance are outside this cloud-storage slice.
+C6 real-time collaboration is not included.
 
 ### R11 - Distribution, signing and updates
 

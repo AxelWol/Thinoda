@@ -20,7 +20,7 @@ use thinoda_ui::tokens::Palette;
 
 use crate::{Startup, ThinodaApp, doc::OpenDoc, i18n::t};
 
-type Imported = Result<thinoda_io::ImportReport, String>;
+type Imported = Result<crate::doc::LoadedWorkbook, String>;
 
 /// What the splash currently waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,16 +91,11 @@ impl Launch {
                     Err(t("The file loader stopped unexpectedly").to_string())
                 }
             },
-            // No loader thread could be started: import here, one file per frame.
-            None => import(&expected),
+            None => Err(t("The file loader stopped unexpectedly").into()),
         };
         self.pending.pop_front();
         Some((expected, result))
     }
-}
-
-fn import(path: &Path) -> Imported {
-    crate::doc::import_report(path)
 }
 
 fn spawn_loader(paths: &VecDeque<PathBuf>) -> Option<Receiver<(PathBuf, Imported)>> {
@@ -109,20 +104,41 @@ fn spawn_loader(paths: &VecDeque<PathBuf>) -> Option<Receiver<(PathBuf, Imported
     }
     let (tx, rx) = mpsc::channel();
     let paths: Vec<PathBuf> = paths.iter().cloned().collect();
-    match std::thread::Builder::new()
-        .name("thinoda-open".into())
-        .spawn(move || {
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm_bindgen_futures::spawn_local(async move {
             for path in paths {
-                let result = import(&path);
+                let result = crate::doc::load_workbook_async(&path, Default::default())
+                    .await
+                    .map_err(|error| error.to_string());
                 if tx.send((path, result)).is_err() {
                     break;
                 }
             }
-        }) {
-        Ok(_) => Some(rx),
-        Err(e) => {
-            log::warn!("could not start the file loader thread, opening on the UI thread: {e}");
-            None
+        });
+        Some(rx)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::thread::Builder::new()
+            .name("thinoda-open".into())
+            .spawn(move || {
+                for path in paths {
+                    let result = crate::doc::run_storage(crate::doc::load_workbook_async(
+                        &path,
+                        Default::default(),
+                    ))
+                    .map_err(|error| error.to_string());
+                    if tx.send((path, result)).is_err() {
+                        break;
+                    }
+                }
+            }) {
+            Ok(_) => Some(rx),
+            Err(e) => {
+                log::error!("could not start the file loader thread: {e}");
+                None
+            }
         }
     }
 }
@@ -142,6 +158,7 @@ impl ThinodaApp {
         app.launch = Some(Launch::new(files, startup.orphans, startup.warning));
         // Later opens and saves keep painting, with a busy indicator, like the launch files.
         app.set_file_work_mode(crate::file_ops::FileWorkMode::Background);
+        app.cloud_consume_redirect();
         app
     }
 
@@ -162,7 +179,7 @@ impl ThinodaApp {
         {
             self.add_opened(
                 &path,
-                result.and_then(|report| OpenDoc::from_import_report(&path, report)),
+                result.and_then(|report| OpenDoc::from_storage_report(&path, report)),
             );
         }
         let Some(launch) = self.launch.as_mut() else {

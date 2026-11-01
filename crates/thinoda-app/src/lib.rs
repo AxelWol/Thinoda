@@ -4,6 +4,8 @@ pub mod ai;
 pub mod app;
 mod attachments;
 pub mod brand;
+mod cloud_changes;
+mod cloud_program;
 mod command_icons;
 mod command_ids;
 pub mod doc;

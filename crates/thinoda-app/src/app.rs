@@ -218,6 +218,7 @@ pub struct Dialogs {
     pub(crate) masked_copy_owner: Option<(String, usize, u64)>,
     pub close: Option<CloseIntent>,
     pub conflict: Option<String>,
+    pub(crate) conflict_save_target: Option<(String, PathBuf)>,
     pub rename_sheet: Option<RenameSheetDraft>,
     pub recovery: Vec<OrphanSession>,
 }
@@ -227,6 +228,8 @@ pub struct ThinodaApp {
     pub active: usize,
     pub(crate) document_windows: HashMap<String, egui::ViewportId>,
     pub(crate) file_ops: crate::file_ops::FileOps,
+    pub(crate) cloud_changes: crate::cloud_changes::CloudChanges,
+    pub(crate) cloud_program: crate::cloud_program::CloudProgram,
     pub(crate) window_active_documents: HashMap<egui::ViewportId, String>,
     pub(crate) current_viewport: egui::ViewportId,
     pub(crate) drawing_document_window: bool,
@@ -350,6 +353,8 @@ impl ThinodaApp {
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
             updates: Default::default(),
+            cloud_changes: Default::default(),
+            cloud_program: Default::default(),
             palette: CommandPalette::default(),
             search: SearchState::default(),
             dialogs: Dialogs::default(),
@@ -1176,27 +1181,27 @@ impl ThinodaApp {
             }
             Cmd::Export(Format::FimXdf2 | Format::FimXdf3) => {
                 self.save_all.is_none()
-                    && !self.file_ops.saving()
+                    && !self.saving_document()
                     && self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some())
             }
             Cmd::Save | Cmd::SaveAs | Cmd::Export(_) => {
-                self.save_all.is_none() && !self.file_ops.saving() && self.doc().is_some()
+                self.save_all.is_none() && !self.saving_document() && self.doc().is_some()
             }
             Cmd::SaveAll => {
-                self.save_all.is_none() && !self.file_ops.saving() && !self.docs.is_empty()
+                self.save_all.is_none() && !self.saving_document() && !self.docs.is_empty()
             }
-            Cmd::Quit => self.save_all.is_none() && !self.file_ops.saving(),
+            Cmd::Quit => self.save_all.is_none() && !self.saving_document(),
             Cmd::CloseWindow => {
-                !files::is_web() && self.save_all.is_none() && !self.file_ops.saving()
+                !files::is_web() && self.save_all.is_none() && !self.saving_document()
             }
             Cmd::CloseTab(index) => {
-                self.save_all.is_none() && !self.file_ops.saving() && *index < self.docs.len()
+                self.save_all.is_none() && !self.saving_document() && *index < self.docs.len()
             }
             Cmd::MoveToNewWindow => {
                 !cfg!(target_arch = "wasm32")
                     && self.current_viewport == egui::ViewportId::ROOT
                     && self.save_all.is_none()
-                    && !self.file_ops.saving()
+                    && !self.saving_document()
                     && !self.any_modal_open()
                     && self
                         .doc()
@@ -1626,7 +1631,14 @@ impl ThinodaApp {
 
     /// Saves the active document. Returns `false` if the user cancelled or saving failed.
     pub fn save_active(&mut self, save_as: bool) -> bool {
-        if self.file_ops.saving() {
+        if self.saving_document() {
+            self.toasts.warning(t("Not possible here"));
+            return false;
+        }
+        if !save_as && let Some(saved) = self.cloud_save_active() {
+            return saved;
+        }
+        if self.saving_document() {
             self.toasts.warning(t("Not possible here"));
             return false;
         }
@@ -1646,7 +1658,9 @@ impl ThinodaApp {
         d.view.commit_edit(&mut d.doc);
         let (target, chosen) = match (&d.path, save_as) {
             (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
-                if d.changed_on_disk() && !d.ignore_conflict {
+                if (d.externally_changed || (self.file_ops.inline() && d.changed_on_disk()))
+                    && !d.ignore_conflict
+                {
                     self.dialogs.conflict = Some(d.key.clone());
                     return false;
                 }
@@ -1694,10 +1708,18 @@ impl ThinodaApp {
     }
 
     fn save_active_file(&mut self, target: &Path, backup: bool, deliver: bool) -> bool {
-        if self.file_ops.saving() {
+        if self.saving_document() {
             self.toasts.warning(t("Not possible here"));
             return false;
         }
+        let backup_directory = match self.configured_backup_directory(backup) {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.toasts
+                    .error(format!("{}: {error}", t("Could not save")));
+                return false;
+            }
+        };
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
@@ -1710,7 +1732,10 @@ impl ThinodaApp {
                 return false;
             }
         };
-        if same_file && d.changed_on_disk() && !d.ignore_conflict {
+        if same_file
+            && (d.externally_changed || (self.file_ops.inline() && d.changed_on_disk()))
+            && !d.ignore_conflict
+        {
             self.dialogs.conflict = Some(d.key.clone());
             return false;
         }
@@ -1722,8 +1747,9 @@ impl ThinodaApp {
             return false;
         }
         let d = &mut self.docs[self.active];
-        match d.save_to(target, backup) {
+        match d.save_to_with_backup_directory(target, backup, backup_directory) {
             Ok(()) => {
+                self.cloud_program.forget_document(&d.key);
                 if let Some(r) = &self.services.recovery {
                     let _ = r.remove(&d.key);
                 }
@@ -1843,7 +1869,7 @@ impl ThinodaApp {
     }
 
     pub fn request_close_tab(&mut self, i: usize) {
-        if self.save_all.is_some() || self.file_ops.saving() {
+        if self.save_all.is_some() || self.saving_document() {
             self.toasts.warning(t("Not possible here"));
             return;
         }
@@ -1866,6 +1892,11 @@ impl ThinodaApp {
         }
         let home = self.active >= self.docs.len();
         let d = self.docs.remove(i);
+        self.cloud_program.forget_document(&d.key);
+        #[cfg(target_arch = "wasm32")]
+        if let Some(path) = &d.path {
+            files::forget_picked(path);
+        }
         let owner = self.document_windows.remove(&d.key);
         if let Some(owner) = owner {
             self.prune_empty_document_window(owner);
@@ -1883,11 +1914,12 @@ impl ThinodaApp {
     }
 
     pub(crate) fn resolve_save_close_tab(&mut self, key: &str, saved: bool) {
-        if self.dialogs.save_close_tab.as_deref() != Some(key) || self.file_ops.saving_key(key) {
+        if self.dialogs.save_close_tab.as_deref() != Some(key) || self.document_save_pending(key) {
             return;
         }
         if !saved
-            && (self.dialogs.conflict.as_deref() == Some(key)
+            && (self.cloud_program.conflict_for(key)
+                || self.dialogs.conflict.as_deref() == Some(key)
                 || self
                     .dialogs
                     .mindmanager_save
@@ -1933,6 +1965,25 @@ impl ThinodaApp {
     pub fn housekeeping(&mut self, ctx: &Context) {
         self.poll_fim(ctx);
         self.poll_file_ops(ctx);
+        self.poll_cloud_changes(ctx);
+        self.poll_cloud_program(ctx);
+        #[cfg(target_arch = "wasm32")]
+        {
+            for error in files::take_delivery_errors() {
+                self.toasts
+                    .error(format!("{}: {error}", t("Download failed")));
+            }
+            if let Some(report) = files::take_browser_migration() {
+                for conflict in report.conflicts {
+                    self.toasts.warning(format!(
+                        "{}: {} -> {}",
+                        t("Browser storage migration conflict"),
+                        conflict.original,
+                        conflict.preserved
+                    ));
+                }
+            }
+        }
         for doc in &mut self.docs {
             if let Some(error) = doc.view.take_title_error() {
                 log::warn!("title commit: {error}");
@@ -2018,7 +2069,7 @@ impl ThinodaApp {
             }
         }
         // Autosave of documents that already have a native file.
-        if self.settings.autosave && self.save_all.is_none() && !self.file_ops.saving() {
+        if self.settings.autosave && self.save_all.is_none() && !self.saving_document() {
             let interval = self.settings.autosave_interval_secs.max(5) as f32;
             let backup = self.settings.backup_on_save;
             let background = !self.file_ops.inline();
@@ -2030,7 +2081,8 @@ impl ThinodaApp {
                     && d.view.editing_topic().is_none()
                     && d.idle_secs() >= interval
                     && d.autosave_due()
-                    && !d.changed_on_disk()
+                    && !d.externally_changed
+                    && (background || !d.changed_on_disk())
                 {
                     let p = d.path.clone().unwrap();
                     if background {
@@ -2156,7 +2208,7 @@ impl ThinodaApp {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                 return;
             }
-            if self.file_ops.saving() {
+            if self.saving_document() {
                 // Quitting would abandon a partly applied save; the file stays intact.
                 self.toasts.warning(t("Wait until the file is saved"));
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -2222,11 +2274,26 @@ impl ThinodaApp {
                             .meta
                             .original_path
                             .clone()
-                            .filter(|p| thinoda_platform::fs::exists(p));
+                            .filter(|p| files::document_exists(p));
                         d.import_source = doc.meta.import_source.clone();
                         if let Some(p) = &d.path {
                             d.format = Format::from_path(p).unwrap_or(Format::Thinoda);
-                            d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                d.storage_revision = d
+                                    .fingerprint
+                                    .as_ref()
+                                    .map(thinoda_platform::storage::revision_from_fingerprint);
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            if !files::is_durable_document(p) {
+                                d.fingerprint = thinoda_platform::fs::fingerprint(p).ok();
+                                d.storage_revision = d
+                                    .fingerprint
+                                    .as_ref()
+                                    .map(thinoda_platform::storage::revision_from_fingerprint);
+                            }
                         }
                         d.doc.mark_dirty();
                         restored.push(d);
@@ -2260,6 +2327,12 @@ impl ThinodaApp {
                         ));
                     }
                     for (doc, source) in restored.into_iter().zip(&s.docs) {
+                        #[cfg(target_arch = "wasm32")]
+                        if let Some(path) = &doc.path
+                            && files::is_durable_document(path)
+                        {
+                            self.refresh_recovered_revision(&doc.key, path);
+                        }
                         self.docs.push(doc);
                         self.active = self.docs.len() - 1;
                         self.toasts

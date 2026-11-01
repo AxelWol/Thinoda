@@ -988,6 +988,8 @@ impl ThinodaApp {
 
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
+            || self.cloud_program.modal_open()
+            || self.cloud_changes.modal_open()
             || self.fim.consent.is_some()
             || self.planning.editing()
             || self.zones.editing()
@@ -2818,6 +2820,17 @@ impl ThinodaApp {
                         thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
                     }) {
                         widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if self.settings.cloud.show_cloud_badges
+                            && let Some(path) = &d.path
+                        {
+                            let state = match thinoda_platform::fs::online_only(path) {
+                                Ok(true) => t("Online-only"),
+                                Ok(false) => t("Local copy; sync status unavailable"),
+                                Err(_) => t("Sync status unavailable"),
+                            };
+                            widgets::caption(ui, state);
+                        }
                     }
                     widgets::caption(
                         ui,
@@ -4195,6 +4208,8 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
+        self.cloud_change_dialogs(ctx);
+        self.show_cloud_dialogs(ctx);
         if self.fim_dialogs(ctx) {
             return;
         }
@@ -4598,10 +4613,13 @@ impl ThinodaApp {
         }
 
         // External modification conflict.
-        if let Some(key) = self.dialogs.conflict.clone() {
+        if !self.cloud_changes.comparing()
+            && let Some(key) = self.dialogs.conflict.clone()
+        {
             let buttons = [
                 (t("Overwrite"), DialogButton::Danger),
                 (t("Save As Copy"), DialogButton::Primary),
+                (t("Compare"), DialogButton::Secondary),
                 (t("Cancel"), DialogButton::Secondary),
             ];
             if let Some(b) = confirm_dialog(
@@ -4613,14 +4631,35 @@ impl ThinodaApp {
                 &i18n::dialog_labels(),
             ) {
                 self.dialogs.conflict = None;
+                let conflict_target = self
+                    .dialogs
+                    .conflict_save_target
+                    .take()
+                    .filter(|(owner, _)| *owner == key);
                 let saved = if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
                     self.active = index;
                     match b {
                         0 => {
                             self.docs[index].ignore_conflict = true;
-                            self.save_active(false)
+                            if let Some((_, target)) = conflict_target {
+                                self.save_active_to(&target, self.settings.backup_on_save)
+                            } else {
+                                self.save_active(false)
+                            }
                         }
                         1 => self.save_active(true),
+                        2 => {
+                            if let Some(path) = conflict_target
+                                .as_ref()
+                                .map(|(_, path)| path.clone())
+                                .or_else(|| self.docs[index].path.clone())
+                            {
+                                self.compare_file(&key, &path);
+                                self.dialogs.conflict = Some(key.clone());
+                                self.dialogs.conflict_save_target = conflict_target;
+                            }
+                            false
+                        }
                         _ => false,
                     }
                 } else {
@@ -5116,6 +5155,7 @@ impl ThinodaApp {
                         self.ai_settings_section(ui, activation_allowed && !pointer_down);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Cloud {
+                    self.cloud_settings_section(ui, activation_allowed && !pointer_down);
                     widgets::section(ui, t("Cloud"), true, |ui| {
                         ui.label(RichText::new(t("Detected cloud folders")).strong());
                         if self.services.cloud.is_empty() {

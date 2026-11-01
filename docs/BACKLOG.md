@@ -1858,7 +1858,19 @@ requirements to add XMind's cloud account, billing or hosted AI service.
   painted frame, so native window/GPU initialization before that frame (about
   0.3–0.4 s warm on Windows x64, longer cold) cannot be covered without a second
   native window and renderer.
-- P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI.
+- P2 / R10 Cloud APIs beyond synced folders: C0-C5 implementation adds WebDAV,
+  OneDrive/Graph, Dropbox and Google Drive connections plus Box transport, conditional saves,
+  explicit uploads/versions/share links, durable browser documents and
+  external-change/conflict-copy comparison. Native and wasm automated gates and
+  local HTTP mocks cover implementation, not live account/provider acceptance.
+  OAuth registrations, deployed CORS/callbacks, real browser picker permissions
+  and sync-client/OS history/offline/two-machine checks remain open. Drive
+  creation uses distinct IDs with an explicit duplicate-name warning.
+  Normal OAuth uses publisher-owned build registrations and browser consent,
+  not end-user client/drive/redirect fields; no publisher registrations exist yet.
+  Box public sign-in and Google Drive web code exchange are unavailable in this
+  architecture. Supported-target setup and build mappings are documented in
+  [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md).
   Gap analysis and phases C0-C6 (async storage contract, OPFS/File System Access
   on web, placeholder/online-only awareness, file watching, conflict-copy
   detection, WebDAV for Nextcloud, OAuth adapters; iCloud native-only) are in

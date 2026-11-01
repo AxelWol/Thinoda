@@ -3,8 +3,7 @@
 //! Importing or writing a large document (for example a FIM model) can take a while. The
 //! interactive app runs that work on a worker thread and paints a busy indicator with the
 //! file name until the result is applied on the UI thread, like the startup loader does.
-//! Without worker threads (browser build) the work runs on the UI thread, but only after
-//! the indicator was presented, so it stays visible while the page waits.
+//! Browser storage is awaited asynchronously; native I/O runs on a worker.
 //!
 //! Progress inside one file cannot be measured, so the indicator is indeterminate; only the
 //! position within several queued files is shown. A save writes a snapshot of the committed
@@ -16,12 +15,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
 };
 
 use egui::{Context, ViewportId};
 use thinoda_io::Format;
+use thinoda_platform::storage::{CancelToken, StorageError, StorageFuture};
 use thinoda_ui::tokens::Palette;
 
 use crate::{ThinodaApp, doc::OpenDoc, i18n::t, startup::display_name};
@@ -49,14 +50,16 @@ pub enum FileBusy {
     },
     /// The document is being written to the named file.
     Saving { name: String },
+    /// A user-requested read of an online-only sync placeholder.
+    Downloading { name: String },
 }
 
-type Job<R> = Box<dyn FnOnce() -> Result<R, String> + Send>;
+type Job<R> = Box<dyn FnOnce() -> StorageFuture<'static, R> + Send>;
 
 enum Work<R> {
     /// Requested but not started yet (starting needs the frame context).
     Pending(Option<Job<R>>),
-    Thread(Receiver<Result<R, String>>),
+    Thread(Receiver<Result<R, StorageError>>),
     Deferred(Option<Job<R>>),
 }
 
@@ -73,33 +76,48 @@ impl<R: Send + 'static> Work<R> {
             *self = Self::Deferred(None);
             return;
         };
-        if mode != FileWorkMode::Background || cfg!(target_arch = "wasm32") {
-            *self = Self::Deferred(Some(job));
-            return;
-        }
-        let slot = Arc::new(Mutex::new(Some(job)));
-        let (tx, rx) = mpsc::channel();
-        let (worker_slot, gate, ctx) = (slot.clone(), gate.clone(), ctx.clone());
-        let spawned = std::thread::Builder::new()
-            .name("thinoda-file".into())
-            .spawn(move || {
-                let job = worker_slot
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .take();
-                if let Some(job) = job {
-                    gate.wait();
-                    let _ = tx.send(job());
-                    ctx.request_repaint_of(ViewportId::ROOT);
-                }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (mode, gate);
+            let (tx, rx) = mpsc::channel();
+            let ctx = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = tx.send(job().await);
+                ctx.request_repaint_of(ViewportId::ROOT);
             });
-        *self = match spawned {
-            Ok(_) => Self::Thread(rx),
-            Err(error) => {
-                log::warn!("could not start the file worker thread, using the UI thread: {error}");
-                Self::Deferred(slot.lock().unwrap_or_else(PoisonError::into_inner).take())
+            *self = Self::Thread(rx);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if mode != FileWorkMode::Background {
+                *self = Self::Deferred(Some(job));
+                return;
             }
-        };
+            let slot = Arc::new(Mutex::new(Some(job)));
+            let (tx, rx) = mpsc::channel();
+            let (worker_slot, gate, ctx) = (slot.clone(), gate.clone(), ctx.clone());
+            let spawned = std::thread::Builder::new()
+                .name("thinoda-file".into())
+                .spawn(move || {
+                    let job = worker_slot
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                    if let Some(job) = job {
+                        gate.wait();
+                        let _ = tx.send(crate::doc::run_storage(job()));
+                        ctx.request_repaint_of(ViewportId::ROOT);
+                    }
+                });
+            *self = match spawned {
+                Ok(_) => Self::Thread(rx),
+                Err(error) => {
+                    let (tx, rx) = mpsc::channel();
+                    let _ = tx.send(Err(StorageError::Io(error)));
+                    Self::Thread(rx)
+                }
+            };
+        }
     }
 
     fn deferred(&self) -> bool {
@@ -107,17 +125,29 @@ impl<R: Send + 'static> Work<R> {
     }
 
     /// The finished result. Deferred work only runs when blocking the UI is acceptable.
-    fn poll(&mut self, may_block: bool, stopped: &str) -> Option<Result<R, String>> {
+    fn poll(&mut self, may_block: bool, stopped: &str) -> Option<Result<R, StorageError>> {
         match self {
             Self::Pending(_) => None,
             Self::Thread(rx) => match rx.try_recv() {
                 Ok(result) => Some(result),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Err(stopped.to_owned())),
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err(StorageError::Remote(stopped.to_owned())))
+                }
             },
             Self::Deferred(job) => may_block.then(|| {
-                job.take()
-                    .map_or_else(|| Err(stopped.to_owned()), |job| job())
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    job.take().map_or_else(
+                        || Err(StorageError::Remote(stopped.to_owned())),
+                        |job| crate::doc::run_storage(job()),
+                    )
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = job;
+                    Err(StorageError::Remote(stopped.to_owned()))
+                }
             }),
         }
     }
@@ -136,6 +166,7 @@ impl Gate {
         self.resume.notify_all();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn wait(&self) {
         let mut paused = self.paused.lock().unwrap_or_else(PoisonError::into_inner);
         while *paused {
@@ -150,7 +181,9 @@ impl Gate {
 struct Opening {
     path: PathBuf,
     viewport: ViewportId,
-    work: Work<thinoda_io::ImportReport>,
+    work: Work<crate::doc::LoadedWorkbook>,
+    cancel: CancelToken,
+    downloading: Arc<AtomicBool>,
 }
 
 struct Saving {
@@ -163,6 +196,7 @@ struct Saving {
     deliver: bool,
     autosave: bool,
     work: Work<crate::doc::WrittenWorkbook>,
+    cancel: CancelToken,
 }
 
 #[derive(Default)]
@@ -209,11 +243,21 @@ impl FileOps {
             .map(|o| &o.path)
             .or_else(|| self.queued.front().map(|(path, _)| path));
         if let Some(path) = current {
-            busy.push(FileBusy::Opening {
-                index: self.opened + 1,
-                total: self.opened + usize::from(self.opening.is_some()) + self.queued.len(),
-                name: display_name(path),
-            });
+            if self
+                .opening
+                .as_ref()
+                .is_some_and(|opening| opening.downloading.load(Ordering::Relaxed))
+            {
+                busy.push(FileBusy::Downloading {
+                    name: display_name(path),
+                });
+            } else {
+                busy.push(FileBusy::Opening {
+                    index: self.opened + 1,
+                    total: self.opened + usize::from(self.opening.is_some()) + self.queued.len(),
+                    name: display_name(path),
+                });
+            }
         }
         busy
     }
@@ -228,6 +272,29 @@ impl FileOps {
 }
 
 impl ThinodaApp {
+    pub(crate) fn saving_document(&self) -> bool {
+        self.file_ops.saving() || self.cloud_program.saving()
+    }
+
+    pub(crate) fn document_save_pending(&self, key: &str) -> bool {
+        self.file_ops.saving_key(key) || self.cloud_program.saving_key(key)
+    }
+
+    pub(crate) fn configured_backup_directory(
+        &self,
+        backup: bool,
+    ) -> Result<Option<PathBuf>, String> {
+        if !backup {
+            return Ok(None);
+        }
+        if let Some(path) = &self.settings.cloud.backup_folder
+            && !crate::cloud_program::backup_folder_allowed(path, &self.services.cloud)
+        {
+            return Err(t("Choose a backup folder outside every detected cloud folder.").into());
+        }
+        Ok(self.settings.cloud.backup_folder.clone())
+    }
+
     /// Selects how UI-requested opens and saves run. The interactive app uses
     /// [`FileWorkMode::Background`]; the default completes work inside each call.
     pub fn set_file_work_mode(&mut self, mode: FileWorkMode) {
@@ -273,12 +340,28 @@ impl ThinodaApp {
         autosave: bool,
     ) -> Result<(), String> {
         debug_assert!(self.file_ops.save.is_none());
+        let backup_directory = self.configured_backup_directory(backup)?;
         let doc = &mut self.docs[index];
+        let expected = doc.expected_revision(target)?;
         let format = doc.prepare_save(target)?;
         let workbook = doc.doc.workbook().clone();
         let path = target.to_path_buf();
-        let job: Job<crate::doc::WrittenWorkbook> =
-            Box::new(move || crate::doc::write_workbook(&workbook, format, &path, backup));
+        let cancel = CancelToken::default();
+        let worker_cancel = cancel.clone();
+        let job: Job<crate::doc::WrittenWorkbook> = Box::new(move || {
+            Box::pin(async move {
+                crate::doc::write_workbook_async(
+                    &workbook,
+                    format,
+                    &path,
+                    backup,
+                    expected,
+                    worker_cancel,
+                    backup_directory,
+                )
+                .await
+            })
+        });
         self.file_ops.save = Some(Saving {
             key: doc.key.clone(),
             target: target.to_path_buf(),
@@ -287,6 +370,7 @@ impl ThinodaApp {
             deliver,
             autosave,
             work: Work::new(job),
+            cancel,
         });
         Ok(())
     }
@@ -337,10 +421,14 @@ impl ThinodaApp {
                     .expect("open state checked above")
                     .path;
                 self.file_ops.opened += 1;
-                self.add_opened(
-                    &path,
-                    result.and_then(|report| OpenDoc::from_import_report(&path, report)),
-                );
+                if !matches!(result, Err(StorageError::Cancelled)) {
+                    self.add_opened(
+                        &path,
+                        result
+                            .map_err(|error| error.to_string())
+                            .and_then(|report| OpenDoc::from_storage_report(&path, report)),
+                    );
+                }
                 self.next_open();
                 if let Some(opening) = &mut self.file_ops.opening
                     && opening.viewport == self.current_viewport
@@ -375,12 +463,23 @@ impl ThinodaApp {
                 continue;
             }
             let source = path.clone();
-            let job: Job<thinoda_io::ImportReport> =
-                Box::new(move || crate::doc::import_report(&source));
+            let cancel = CancelToken::default();
+            let worker_cancel = cancel.clone();
+            let downloading = Arc::new(AtomicBool::new(false));
+            let worker_downloading = downloading.clone();
+            let job: Job<crate::doc::LoadedWorkbook> = Box::new(move || {
+                Box::pin(async move {
+                    let online_only = thinoda_platform::fs::online_only(&source)?;
+                    worker_downloading.store(online_only, Ordering::Relaxed);
+                    crate::doc::load_workbook_async(&source, worker_cancel).await
+                })
+            });
             self.file_ops.opening = Some(Opening {
                 path,
                 viewport,
                 work: Work::new(job),
+                cancel,
+                downloading,
             });
             return;
         }
@@ -390,7 +489,7 @@ impl ThinodaApp {
         &mut self,
         ctx: &Context,
         save: Saving,
-        result: Result<crate::doc::WrittenWorkbook, String>,
+        result: Result<crate::doc::WrittenWorkbook, StorageError>,
     ) {
         let index = self.docs.iter().position(|doc| doc.key == save.key);
         let saved = match result {
@@ -406,6 +505,7 @@ impl ThinodaApp {
                     }
                 }
                 if !save.autosave {
+                    self.cloud_program.forget_document(&save.key);
                     self.settings.add_recent(&save.target);
                     self.save_settings();
                     self.toasts
@@ -424,13 +524,34 @@ impl ThinodaApp {
                         doc.autosave_failed(self.settings.autosave_interval_secs.max(5) as f32);
                     }
                 }
-                self.toasts
-                    .error(format!("{}: {error}", t("Could not save")));
+                match error {
+                    StorageError::Conflict { .. } => {
+                        self.dialogs.conflict = Some(save.key.clone());
+                        self.dialogs.conflict_save_target =
+                            Some((save.key.clone(), save.target.clone()));
+                    }
+                    StorageError::Cancelled => {}
+                    error => {
+                        self.toasts
+                            .error(format!("{}: {error}", t("Could not save")));
+                    }
+                }
                 false
             }
         };
         if !save.autosave && !self.resolve_save_all(ctx, &save.key, saved) {
             self.resolve_save_close_tab(&save.key, saved);
+        }
+    }
+
+    /// Cancels pending I/O without closing documents or discarding edits.
+    pub fn cancel_file_work(&mut self) {
+        self.file_ops.queued.clear();
+        if let Some(opening) = &self.file_ops.opening {
+            opening.cancel.cancel();
+        }
+        if let Some(save) = &self.file_ops.save {
+            save.cancel.cancel();
         }
     }
 
@@ -447,7 +568,7 @@ impl ThinodaApp {
         egui::Area::new(egui::Id::unique("thinoda_file_busy"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -48.0))
-            .interactable(false)
+            .interactable(true)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(palette.surface)
@@ -456,13 +577,17 @@ impl ThinodaApp {
                         ui.set_max_width(360.0);
                         for item in &busy {
                             match item {
-                                FileBusy::Saving { name } => {
+                                FileBusy::Saving { name } | FileBusy::Downloading { name } => {
                                     ui.horizontal(|ui| {
                                         ui.add(egui::Spinner::new());
                                         ui.add(
                                             egui::Label::new(format!(
                                                 "{} {name}",
-                                                t("Saving file:")
+                                                if matches!(item, FileBusy::Downloading { .. }) {
+                                                    t("Downloading file:")
+                                                } else {
+                                                    t("Saving file:")
+                                                }
                                             ))
                                             .truncate(),
                                         );
@@ -492,6 +617,9 @@ impl ThinodaApp {
                                 }
                             }
                         }
+                        if ui.button(t("Cancel")).clicked() {
+                            self.cancel_file_work();
+                        }
                     });
             });
         ctx.request_repaint();
@@ -510,6 +638,82 @@ mod tests {
             .texts()
             .filter(|text| text.starts_with("Could not save"))
             .count()
+    }
+
+    fn finish(app: &mut ThinodaApp, ctx: &egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !app.file_activity().is_empty() {
+            assert!(Instant::now() < deadline, "file work never completed");
+            app.poll_file_ops(ctx);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn cancelled_open_does_not_install_a_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cancel.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        app.docs.clear();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.request_open(&path);
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        app.cancel_file_work();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.toasts.texts().count(), 0);
+    }
+
+    #[test]
+    fn cancelled_save_keeps_original_bytes_and_unsaved_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cancel.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let doc = &mut app.docs[0];
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(root, "Unsaved"))
+            .unwrap();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.queue_save(0, &path, true, false, false).unwrap();
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        app.cancel_file_work();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(app.docs[0].is_dirty());
+        assert!(!thinoda_platform::fs::backup_path(&path).exists());
+        assert_eq!(failures(&app), 0);
+    }
+
+    #[test]
+    fn queued_save_rechecks_revision_after_an_external_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stale.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.queue_save(0, &path, true, false, false).unwrap();
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        std::fs::write(&path, b"external edit").unwrap();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert_eq!(std::fs::read(&path).unwrap(), b"external edit");
+        assert_eq!(
+            app.dialogs.conflict.as_deref(),
+            Some(app.docs[0].key.as_str())
+        );
+        assert!(!thinoda_platform::fs::backup_path(&path).exists());
     }
 
     #[test]

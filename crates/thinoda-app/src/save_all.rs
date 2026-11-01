@@ -14,7 +14,7 @@ pub(crate) struct SaveAll {
 impl ThinodaApp {
     pub(crate) fn begin_save_all(&mut self, ctx: &egui::Context, close_after: Option<CloseIntent>) {
         if self.save_all.is_some()
-            || self.file_ops.saving()
+            || self.saving_document()
             || self.any_modal_open()
             || self.dialogs.settings
             || self.dialogs.about
@@ -60,7 +60,8 @@ impl ThinodaApp {
     }
 
     fn save_dialog_for(&self, key: &str) -> bool {
-        self.dialogs.conflict.as_deref() == Some(key)
+        self.cloud_program.conflict_for(key)
+            || self.dialogs.conflict.as_deref() == Some(key)
             || self
                 .dialogs
                 .mindmanager_save
@@ -85,7 +86,7 @@ impl ThinodaApp {
                 self.save_all.as_mut().unwrap().remaining.pop_front();
                 continue;
             }
-            if self.save_dialog_for(&key) || self.file_ops.saving_key(&key) {
+            if self.save_dialog_for(&key) || self.document_save_pending(&key) {
                 // Resumed by the dialog or by the completed background write.
                 self.restore_save_origin();
             } else {
@@ -118,7 +119,7 @@ impl ThinodaApp {
         {
             return false;
         }
-        if self.file_ops.saving_key(key) {
+        if self.document_save_pending(key) {
             // Still writing; the completed write resolves the batch.
             return true;
         }

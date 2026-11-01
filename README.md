@@ -19,8 +19,9 @@ published on [Thinoda app for GitHub Pages](https://axelwol.github.io/Thinoda/) 
 Thinoda's maintainers do not collect or process your personal data or mind map
 content through the app. Editing and storage happen locally on your device.
 Automatic update checks contact GitHub (native) or the app's web host (web),
-without sending documents or credentials. Optional AI connections, cloud-synced
-folders and web hosting involve external services. See the
+without sending documents or credentials. Optional AI connections, explicitly
+connected cloud accounts, cloud-synced folders and web hosting involve external
+services. See the
 [Privacy Policy](PRIVACY.md) for details.
 
 ## Download
@@ -696,7 +697,65 @@ those system-owned controls. WinGet publishing remains paused.
   This works on Windows, macOS, Linux and the web; raster scale only affects
   PNG/JPEG. The separate **Save print PDF...** path remains paper-sized raster output.
 - Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
-- Cloud: opens/saves directly in OneDrive, iCloud Drive, Dropbox, Google Drive, Box, Nextcloud folders
+- Cloud folders: opens/saves local files in OneDrive, iCloud Drive, Dropbox,
+  Google Drive, Box and Nextcloud sync folders. A separate backup folder can be
+  selected outside detected sync roots; this is not a claim that provider rename,
+  in-place save or version-history behavior has been live-tested.
+- Optional cloud accounts in Settings: select a provider and **Connect**, then
+  authorize Thinoda in the provider's browser sign-in. OAuth registration belongs
+  to the publisher build, not ordinary users: there are no client, drive, folder
+  or redirect ID fields in the normal OAuth screen. **No Thinoda publisher OAuth
+  apps are registered yet.** Unconfigured builds explain that provider sign-in
+  is not enabled before launching anything or looking up account credentials.
+  [Publisher/self-hosted build setup](docs/CLOUD-AUTH-SETUP.md) prepares native
+  OneDrive, Dropbox and Google Drive, and web OneDrive/Dropbox. Box sign-in and
+  Google Drive web sign-in remain unavailable with the current public-client
+  architecture, even if IDs are supplied; no client secret is embedded.
+  Native sign-in uses the system browser and a loopback callback. Web OAuth
+  redirects the current tab and requires local work to be saved first; a valid,
+  unexpired callback bound to the requested one-time PKCE transaction automatically
+  completes that sign-in. Unsolicited or mismatched callbacks never exchange tokens.
+  Account folders are selected automatically. OneDrive uses only the app folder
+  and does not broaden access if discovery fails; lookup may create that folder
+  but transfers no document content. Other providers use their default roots.
+  WebDAV still needs a server address and defaults to Nextcloud browser Login
+  Flow v2; an explicit app-password option supports other WebDAV servers.
+  Connect and Disconnect require explicit consent. Credentials are kept in the
+  OS keychain or per-tab session storage, never the settings file.
+  Merely opening Settings or the cloud browser does not contact an account.
+  **List folder**, **Open**, **Save**, **Upload**, versions and sharing are
+  explicit actions, with indeterminate progress and cooperative cancellation.
+  Remote Open imports named bytes into a new document without a local file path.
+  Save conditionally replaces the downloaded revision; conflicts never trigger
+  an automatic overwrite. A separate cloud-conflict dialog lets you cancel the
+  save or explicitly open the remote version as a separate document without
+  replacing your edits; a canceled save also cancels its Save All/close attempt.
+  Newer edits made during upload stay dirty. Successful local Save As removes
+  that document's cloud Save destination.
+  Where account access is available, Upload creates a new `.thinoda` file in the chosen folder on WebDAV, Dropbox,
+  OneDrive and Box, using the adapter's create-only operation rather than an
+  existing-file replacement. An occupied name is rejected without automatic
+  overwrite, rename or retry. Successful creation records the returned file ID
+  and revision for subsequent conditional Saves. Google Drive Upload creates a
+  distinct new file ID and may create another file with the same name. Its
+  existing upload confirmation shows the filename, destination and an explicit
+  duplicate-name warning before transmission; it does not claim name-missing
+  semantics or replace a sibling. Subsequent Save conditionally updates only
+  the returned file ID. Google Drive creation is bounded to 5,000,000 bytes.
+  Uploading a local document is a copy and does not mark
+  that local file saved. There is no cloud autosave or automatic reconnect.
+  Disconnect preserves open edits and does not delete remote files or revoke
+  provider-side grants; reconnecting does not retarget old cloud documents.
+  Versions are metadata-only on Graph/Box. Share-link creation is separately
+  consented, organization-only on OneDrive or existing-collaborator access on
+  Box; no link is opened or copied automatically. Other adapters clearly mark
+  those capabilities unavailable. iCloud Drive remains local-folder-only.
+  Live accounts, keychain behavior and browser sign-in have **not** been verified
+  end to end; registrations, provider permissions and file-size limits can
+  prevent operations. See [cloud storage plan](docs/CLOUD-STORAGE.md).
+- Browser document storage: Settings offers explicit usage/quota checks and a
+  persistent-storage request. A browser may decline persistence; clearing site
+  data still removes its documents. These actions do not connect a cloud account.
 - AI assistant (optional): brainstorm subtopics, break down into to-dos, explain, summarize,
   generate a whole map — with any OpenAI-compatible server
   Replies use the selected UI language (Auto follows the OS locale) and fall back to

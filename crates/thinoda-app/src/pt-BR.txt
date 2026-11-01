@@ -1,4 +1,19 @@
 Slides|Slides
+Compare|Comparar
+Browser storage migration conflict|Conflito na migração do armazenamento do navegador
+Downloading file:|Baixando arquivo:
+Reload file|Recarregar arquivo
+Keep my edits|Manter minhas alterações
+Reload the changed file? Your current content remains available through Undo.|Recarregar o arquivo alterado? O conteúdo atual continua disponível por meio de Desfazer.
+Sync conflict copies|Cópias de conflito de sincronização
+These files are kept by your sync client. Thinoda never deletes them.|Estes arquivos são mantidos pelo cliente de sincronização. O Thinoda nunca os exclui.
+Sheets added|Folhas adicionadas
+Sheets removed|Folhas removidas
+Sheets changed|Folhas alteradas
+Topics added|Tópicos adicionados
+Topics removed|Tópicos removidos
+Topics changed|Tópicos alterados
+Sheet positions and topic IDs are compared; this summary does not merge content.|São comparadas as posições das folhas e os identificadores dos tópicos; este resumo não mescla conteúdo.
 Local chat history|Histórico local do chat
 Disable and forget this file|Desativar e esquecer este arquivo
 Save the document first. Save As, moved files and recovery do not inherit history.|Salve primeiro o documento. Salvar como, arquivos movidos e recuperação não herdam o histórico.
@@ -423,7 +438,6 @@ Custom themes provide palette, light/dark backgrounds, fonts and role defaults. 
 Select a built-in theme to remove custom defaults. Optional recent-theme reuse affects new blank maps, not named templates. Missing local fonts keep their names and show a warning.|Selecione um tema integrado para remover padrões personalizados. A reutilização opcional do último tema afeta mapas novos vazios, não modelos com nome. As fontes locais ausentes mantêm os nomes e mostram um aviso.
 Use .thinoda for full-fidelity native storage. Crash-recovery snapshots are stored locally; available recovery copies are offered at startup. Recovery is not a substitute for saving or backups.|Use .thinoda para salvar todos os dados nativos. As cópias de recuperação são locais e oferecidas na inicialização. A recuperação não substitui o salvamento nem os backups.
 When an open file changes externally, Thinoda offers conflict handling rather than silently replacing your edits. Inspect both versions before deciding which to keep.|Quando um arquivo aberto é alterado externamente, o Thinoda permite resolver o conflito em vez de substituir as alterações silenciosamente. Inspecione ambas as versões antes de escolher.
-Cloud-folder support uses locally synchronized folders supplied by your cloud client. OAuth sharing and live collaboration are not implemented.|O suporte de pastas na nuvem usa pastas sincronizadas localmente pelo seu cliente. O compartilhamento OAuth e a colaboração em tempo real não estão implementados.
 Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.|Mesclar arquivos de mapas só acrescenta folhas após carregar todos os arquivos com sucesso. Criar cópia mascarada cria uma pré-visualização não salva sem texto identificador; inspecione todas as folhas antes de compartilhar, pois a estrutura pode revelar informações.
 The Open and Export menus list supported formats. Native and unchanged Thinoda-exported XMind files preserve Thinoda-specific data. Other applications may not understand those extensions.|Os menus Abrir e Exportar listam os formatos suportados. Arquivos nativos e XMind exportados pelo Thinoda sem alterações preservam dados específicos do Thinoda. Outros aplicativos podem não compreender essas extensões.
 Map Shot (F7) captures the visible GPU-rendered canvas, with a crop preview and PNG or clipboard output. Export renders the complete sheet, including offscreen topics.|Map Shot (F7) captura a tela visível renderizada pela GPU, com pré-visualização de recorte e saída PNG ou para a área de transferência. Exportar renderiza a folha completa, incluindo tópicos fora da tela.
@@ -538,4 +552,139 @@ Download new version|Baixar nova versão
 Save your work, then close all app windows and reopen to apply the update.|Salve seu trabalho, feche todas as janelas do aplicativo e abra-o novamente para aplicar a atualização.
 Saving file:|Salvando arquivo:
 The file writer stopped unexpectedly|O salvamento do arquivo parou inesperadamente
+Cloud settings connect explicitly configured providers. Open and save are revision-checked; uploads and sharing require user actions. Live provider and sync-client compatibility remain unverified; real-time collaboration is not implemented.|As configurações de nuvem se conectam a provedores configurados explicitamente. A abertura e o salvamento verificam a revisão; envios e compartilhamentos exigem ações do usuário. A compatibilidade com provedores ativos e clientes de sincronização não foi verificada; a colaboração em tempo real não está implementada.
+Box|Box
+Browse cloud files…|Procurar arquivos na nuvem…
+Browser document storage|Armazenamento de documentos do navegador
+Browser storage information is unavailable.|As informações do armazenamento do navegador estão indisponíveis.
+Browser storage is private to this site. Check quota or request persistence explicitly; the browser may decline.|O armazenamento do navegador é privado deste site. Verifique a cota ou solicite explicitamente a persistência; o navegador pode recusar.
+Browser storage persistence is granted.|A persistência do armazenamento do navegador foi concedida.
+Browser storage persistence is not granted.|A persistência do armazenamento do navegador não foi concedida.
+Browser storage persistence request failed.|Falha ao solicitar persistência do armazenamento do navegador.
+Browser storage persistence status is unavailable.|O status da persistência do armazenamento do navegador está indisponível.
+Check storage usage|Verificar o uso do armazenamento
+Cloud sign-in configuration is invalid. Check the server address or contact the publisher.|A configuração de entrada na nuvem é inválida. Verifique o endereço do servidor ou entre em contato com o editor.
+Checking browser storage…|Verificando o armazenamento do navegador…
+Choose a backup folder outside detected cloud sync folders. This does not change the provider's synchronization or version history.|Escolha uma pasta de backup fora das pastas de sincronização em nuvem detectadas. Isso não altera a sincronização nem o histórico de versões do provedor.
+Choose a single file name ending in .thinoda.|Escolha um único nome de arquivo terminado em .thinoda.
+Choose an existing folder outside every detected cloud sync folder.|Escolha uma pasta existente fora de todas as pastas de sincronização em nuvem detectadas.
+Choose backup folder…|Escolher pasta de backup…
+Cloud accounts|Contas na nuvem
+Cloud accounts are optional. Selecting a provider or opening Settings never connects.|As contas na nuvem são opcionais. Selecionar um provedor ou abrir as Configurações nunca estabelece uma conexão.
+Cloud connection changed. Downloaded content was not installed.|A conexão com a nuvem foi alterada. O conteúdo baixado não foi instalado.
+Cloud document|Documento na nuvem
+Cloud document saved.|Documento na nuvem salvo.
+Cloud file changed. No overwrite was attempted; open the remote file separately or upload a new copy.|O arquivo na nuvem foi alterado. Não foi feita nenhuma tentativa de sobrescrevê-lo; abra o arquivo remoto separadamente ou envie uma nova cópia.
+Cloud file name|Nome do arquivo na nuvem
+Cloud files|Arquivos na nuvem
+Cloud folder listed.|Pasta na nuvem listada.
+Cloud creation returned no stable identity or revision. The upload may have reached the server; reopen before saving again.|A criação na nuvem não retornou uma identidade estável nem uma revisão. O envio talvez já tenha chegado ao servidor; abra novamente antes de salvar.
+Cloud operation|Operação na nuvem
+Cancel|Cancelar
+Clear|Limpar
+Close|Fechar
+Formatting and styles|Formatação e estilos
+Images and attachments|Imagens e anexos
+Import requires confirmation|A importação exige confirmação
+Markers and task data|Marcadores e dados de tarefas
+None|Nenhum
+Not possible here|Não é possível aqui
+Other unsupported map data|Outros dados de mapa não compatíveis
+Rich notes|Notas formatadas
+Version|Versão
+Cloud operation cancelled. An upload may already have reached the server; reopen before saving again.|Operação na nuvem cancelada. O envio talvez já tenha chegado ao servidor; abra novamente antes de salvar outra vez.
+Cloud provider|Provedor de nuvem
+Cloud request failed. Your local edits are unchanged.|Falha na solicitação à nuvem. Suas alterações locais permanecem inalteradas.
+Cloud sign-in cancelled.|Entrada na nuvem cancelada.
+Cloud sign-in failed. Live provider authentication has not been verified for this build.|Falha na entrada na nuvem. A autenticação com provedores ativos não foi verificada nesta compilação.
+Cloud snapshot uploaded. Newer edits or the local source still need saving.|Instantâneo enviado à nuvem. As alterações mais recentes ou o arquivo de origem local ainda precisam ser salvos.
+Cloud worker could not start. No request was made.|Não foi possível iniciar o processo da nuvem. Nenhuma solicitação foi feita.
+Cloud worker stopped. Your local edits are unchanged.|O processo da nuvem parou. Suas alterações locais permanecem inalteradas.
+Connect|Conectar
+Connect cloud account|Conectar conta na nuvem
+Connect contacts your configured provider and may open its sign-in page. Browsing sends folder identifiers; Open downloads content. Save and Upload send document content only when you request them.|Conectar entra em contato com o provedor configurado e pode abrir a página de entrada dele. Navegar envia identificadores de pastas; Abrir baixa conteúdo. Salvar e Enviar transmitem o conteúdo do documento somente quando você solicita.
+Connected. Choose List folder to browse; no files are downloaded automatically.|Conectado. Escolha Listar pasta para navegar; nenhum arquivo é baixado automaticamente.
+Connecting cloud account…|Conectando à conta na nuvem…
+Copy link|Copiar link
+Could not commit document drafts. Your edits are unchanged.|Não foi possível confirmar os rascunhos do documento. Suas alterações permanecem inalteradas.
+Could not encode the cloud document. Your local edits are unchanged.|Não foi possível codificar o documento na nuvem. Suas alterações locais permanecem inalteradas.
+Could not import the cloud document. No existing document was changed.|Não foi possível importar o documento na nuvem. Nenhum documento existente foi alterado.
+Could not open the cloud sign-in page.|Não foi possível abrir a página de entrada na nuvem.
+Create restricted share link|Criar link de compartilhamento restrito
+Create share link|Criar link de compartilhamento
+Creating restricted share link…|Criando link de compartilhamento restrito…
+Credentials use the OS keychain on desktop and this tab's session storage on web. No cloud autosave or background reconnection.|As credenciais usam o chaveiro do sistema operacional no desktop e o armazenamento de sessão desta aba na Web. Não há salvamento automático na nuvem nem reconexão em segundo plano.
+Disconnect|Desconectar
+Disconnect cloud account|Desconectar conta na nuvem
+Disconnected locally. Provider grants and remote files were not deleted; revoke access in the provider's account settings.|Desconectado localmente. As permissões do provedor e os arquivos remotos não foram excluídos; revogue o acesso nas configurações da conta do provedor.
+Disconnecting cloud account…|Desconectando da conta na nuvem…
+Downloading cloud document…|Baixando documento da nuvem…
+Dropbox|Dropbox
+Dropbox's starting folder must be an absolute path or empty for the app root.|A pasta inicial do Dropbox deve ser um caminho absoluto ou ficar vazia para usar a pasta raiz do aplicativo.
+File ID|ID do arquivo
+Folder|Pasta
+Google Drive|Google Drive
+Google Drive allows duplicate file names. This upload creates a distinct new file in the selected folder, even if the same name already exists. Existing files are not replaced. Later Save targets only the returned file ID.|O Google Drive permite nomes de arquivo duplicados. Este envio cria um novo arquivo distinto na pasta selecionada, mesmo que já exista um arquivo com o mesmo nome. Os arquivos existentes não são substituídos. Os salvamentos posteriores são direcionados somente ao ID do arquivo retornado.
+I agree to this action|Concordo com esta ação
+I authorize Thinoda to contact this provider, open sign-in if needed, and store credentials securely. This does not browse, upload or share any document.|Autorizo o Thinoda a entrar em contato com este provedor, abrir a página de entrada se necessário e armazenar as credenciais com segurança. Isso não navega, envia nem compartilha nenhum documento.
+List folder|Listar pasta
+Listing cloud folder…|Listando pasta na nuvem…
+Loading version metadata…|Carregando metadados da versão…
+Local backups|Backups locais
+Nextcloud / ownCloud / WebDAV|Nextcloud / ownCloud / WebDAV
+Nextcloud default: remote.php/dav/files. Leave empty if the server URL is the complete DAV collection.|Padrão do Nextcloud: remote.php/dav/files. Deixe vazio se a URL do servidor corresponder à coleção DAV completa.
+No stored credentials. Start a new sign-in.|Nenhuma credencial armazenada. Inicie uma nova entrada.
+OneDrive|OneDrive
+Open|Abrir
+Parent folder|Pasta pai
+Progress is indeterminate. Cancel cannot undo an upload already accepted by the provider.|O progresso é indeterminado. Cancelar não pode desfazer um envio já aceito pelo provedor.
+Remove this connection and its stored credentials on this device/tab. Documents and unsaved edits remain open. Remote files and provider grants are not deleted.|Remova esta conexão e as credenciais armazenadas neste dispositivo/aba. Os documentos e as alterações não salvas continuarão abertos. Os arquivos remotos e as permissões do provedor não serão excluídos.
+Request persistent storage|Solicitar armazenamento persistente
+Requesting persistent storage…|Solicitando armazenamento persistente…
+Restricted share link|Link de compartilhamento restrito
+Restricted share link created. It was not opened or copied automatically.|Link de compartilhamento restrito criado. Ele não foi aberto nem copiado automaticamente.
+Revision|Revisão
+Root folder|Pasta raiz
+Save local work before redirecting this tab to sign in.|Salve o trabalho local antes de redirecionar esta aba para a entrada.
+Secure credential storage is unavailable. No connection was retained.|O armazenamento seguro de credenciais está indisponível. Nenhuma conexão foi mantida.
+Select and configure a cloud provider first.|Primeiro, selecione e configure um provedor de nuvem.
+Storage quota (bytes)|Cota de armazenamento (bytes)
+Storage used (bytes)|Armazenamento usado (bytes)
+Stored credentials do not match this configuration. Start a new sign-in.|As credenciais armazenadas não correspondem a esta configuração. Inicie uma nova entrada.
+This changes sharing on the selected remote file. Box uses existing collaborators; OneDrive uses organization-only view access. No anonymous/public link is requested. The provider may reject this permission.|Isso altera o compartilhamento do arquivo remoto selecionado. O Box usa os colaboradores existentes; o OneDrive permite visualização somente pela organização. Nenhum link anônimo/público é solicitado. O provedor pode rejeitar essa permissão.
+This document's cloud connection was disconnected. Save As locally or upload a new copy; reconnecting does not retarget it.|A conexão deste documento com a nuvem foi desconectada. Use Salvar como para salvá-lo localmente ou envie uma nova cópia; reconectar não altera o destino do documento.
+This folder has no safe new-file upload path. Choose another folder.|Esta pasta não tem uma forma segura de enviar novos arquivos. Escolha outra pasta.
+This operation is unavailable for this provider or file size.|Esta operação não está disponível para este provedor ou tamanho de arquivo.
+Unavailable|Indisponível
+Unsupported source content may be omitted. The cloud original is not changed.|O conteúdo de origem não compatível pode ser omitido. O original na nuvem não será alterado.
+Upload|Enviar
+Upload a snapshot of the current document to the chosen folder as a new .thinoda file. Existing files are never overwritten. Local documents remain local; unsaved documents gain an explicit cloud Save destination.|Envie um instantâneo do documento atual para a pasta escolhida como um novo arquivo .thinoda. Arquivos existentes nunca são sobrescritos. Documentos locais permanecem locais; documentos não salvos recebem um destino explícito para Salvar na nuvem.
+Upload current document|Enviar documento atual
+Upload current document…|Enviar documento atual…
+Uploading…|Enviando…
+Use HTTPS without credentials, a query or a fragment.|Use HTTPS sem credenciais, consulta ou fragmento.
+Use an app password instead of browser sign-in|Use uma senha de aplicativo em vez da entrada pelo navegador
+Use a public native/SPA registration with PKCE, never a client secret. Permissions may restrict which files appear.|Use uma inscrição pública para aplicativo nativo/SPA com PKCE, nunca um segredo de cliente. As permissões podem limitar os arquivos exibidos.
+Use previously stored credentials|Usar credenciais armazenadas anteriormente
+Version metadata loaded. No version content was downloaded.|Metadados da versão carregados. Nenhum conteúdo de versão foi baixado.
+Versions|Versões
+Versions and sharing are unavailable where the adapter does not implement them.|Versões e compartilhamento ficam indisponíveis quando o adaptador não os implementa.
+Provider sign-in is not enabled in this build. The publisher must configure a registered OAuth application before you can connect.|A entrada com provedores não está ativada nesta compilação. O editor precisa configurar um aplicativo OAuth registrado antes que você possa se conectar.
+Connect opens the selected provider’s sign-in page so you can authorize Thinoda. Account folders are chosen automatically; no registration IDs are needed.|Conectar abre a página de entrada do provedor selecionado para você autorizar o Thinoda. As pastas da conta são escolhidas automaticamente; não são necessários IDs de registro.
+Web sign-in redirects this tab. Save local work before connecting.|A entrada pela Web redireciona esta aba. Salve seu trabalho local antes de se conectar.
+Complete sign-in after the browser redirect.|Conclua a entrada após o redirecionamento do navegador.
+OneDrive connection locates the app folder and may create it. No document is transferred, and access is not broadened if discovery fails.|A conexão com o OneDrive localiza a pasta do aplicativo e pode criá-la. Nenhum documento é transferido e o acesso não é ampliado se a localização falhar.
+OneDrive requires the drive ID and app-folder item ID for your registration.|O OneDrive exige o ID da unidade e o ID do item da pasta do aplicativo para o seu registro.
+WebDAV app password|Senha de aplicativo WebDAV
+WebDAV collection prefix|Prefixo da coleção WebDAV
+WebDAV server URL|URL do servidor WebDAV
+WebDAV username|Nome de usuário do WebDAV
+Cloud save conflict|Conflito ao salvar na nuvem
+The cloud revision changed or the new file name already exists. Your edits remain open. No overwrite or retry will be attempted. Cancel this save, then use Save As locally or upload a new copy with a different name.|A revisão na nuvem mudou ou o novo nome de arquivo já existe. Suas alterações continuam abertas. Não será feita nova tentativa nem sobrescrita. Cancele este salvamento e use Salvar como localmente ou envie uma nova cópia com outro nome.
+Open remote copy|Abrir cópia remota
+Online-only|Apenas online
+Local copy; sync status unavailable|Cópia local; status de sincronização indisponível
+Sync status unavailable|Status de sincronização indisponível
+Choose a backup folder outside every detected cloud folder.|Escolha uma pasta de backup fora de todas as pastas de nuvem detectadas.
+Use the asynchronous file workflow for browser documents.|Use o fluxo assíncrono de arquivos para documentos do navegador.
 Wait until the file is saved|Aguarde até o arquivo ser salvo
