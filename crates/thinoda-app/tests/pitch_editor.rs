@@ -49,7 +49,7 @@ fn localized_editor_interactions_fit_narrow_and_wide_in_all_ten_languages_and_th
                     .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
                 let ctx = h.ctx.clone();
                 h.state_mut().exec(&ctx, Cmd::EditPresentation);
-                h.run_steps(20);
+                h.run();
                 let click = |h: &mut Harness<'_, ThinodaApp>, label: &'static str| {
                     h.query_all_by_label(t(label))
                         .find(|node| !node.accesskit_node().is_disabled())
@@ -65,8 +65,29 @@ fn localized_editor_interactions_fit_narrow_and_wide_in_all_ten_languages_and_th
                         "{language:?} {theme:?} {size:?} {label}: {:?}",
                         node.rect()
                     );
-                    node.click();
-                    h.run_steps(3);
+                    let clips: Vec<_> = h
+                        .output()
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.text().ends_with(t(label)) => {
+                                Some(shape.clip_rect)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert!(
+                        clips.iter().any(|clip| clip.contains_rect(node.rect())),
+                        "{language:?} {theme:?} {size:?} {label}: target {:?}, paint clips {clips:?}",
+                        node.rect()
+                    );
+                    node.hover();
+                    h.run();
+                    h.query_all_by_label(t(label))
+                        .find(|node| !node.accesskit_node().is_disabled())
+                        .expect(label)
+                        .click();
+                    h.run();
                 };
                 click(&mut h, "Generate Slides");
                 click(&mut h, "Duplicate Slide");
@@ -75,10 +96,13 @@ fn localized_editor_interactions_fit_narrow_and_wide_in_all_ten_languages_and_th
                 click(&mut h, "Topic visibility");
                 h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Center")
                     .scroll_to_me();
-                h.run_steps(20);
+                h.run();
+                h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Center")
+                    .hover();
+                h.run();
                 h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Center")
                     .click();
-                h.run_steps(3);
+                h.run();
                 h.get_by_label(t("Hidden topics"));
                 click(&mut h, "Restore topic");
                 assert!(h.query_all_by_label(t("Restore topic")).next().is_none());
