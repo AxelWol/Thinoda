@@ -1,6 +1,8 @@
 # Cloud storage: current state, gap analysis and plan
 
-Status: **analysis and plan only, no code yet** (user-directed, 2026-10-28).
+Status: **implementation in progress** (user-directed, 2026-11-01).
+Sections 1–3 retain the pre-implementation inventory. Delivery and verification
+are recorded below; mock tests are not evidence of live provider acceptance.
 Extends [PLAN.md R10](PLAN.md#r10---protected-files-cloud-synchronization-and-sharing)
 and the Platform & collaboration items in [BACKLOG.md](BACKLOG.md#platform--collaboration).
 Freeform boards are planned separately in [FREEFORM.md](FREEFORM.md); nothing here
@@ -161,6 +163,22 @@ Rules:
 | **C6 (optional) Real-time collaboration** | Only after C0–C4, via PLAN R12 (CRDT) | Out of scope here |
 
 iCloud Drive is covered by C2 (native local folder) only.
+
+### Implementation checkpoints
+
+| Phase | Implementation | Verification / remaining acceptance |
+|---|---|---|
+| C0 | Revision-aware async contract, cancellable local/VFS providers and conditional writes. Native app and startup loaders retain the exact read revision; background saves recheck it. | 25 platform tests, 5 app file-job tests and 6 progress workflows pass. Native and combined wasm Clippy pass. Review found a chat-binding/revision coupling in the legacy loader; corrected by keeping chat optional and carrying read identity through startup. App wiring is committed after its browser dependencies. |
+| C1 | OPFS with IndexedDB fallback, schema migration, metadata-only listing, conflict preservation, persistence/quota helpers and session FSA handles. | Isolated Chromium checks include a 6 MiB document, migration, conditional writes and bounded storage after repeated saves. Review-driven blob reclamation and metadata separation are implemented. Full app/browser acceptance remains pending. |
+| C2 | Windows recall/offline and macOS dataless detection; bounded identity hashes; debounced poll-watcher primitives; external-change reload/keep/compare and sibling conflicts. | Native primitives and comparison/reload tests pass; review found no remaining blocking C2 defects. Real sync-client/OS history, hydration, offline and two-machine cases are not verified. Cancellation is cooperative and cannot abort a blocked OS hydration syscall. Atomic rename remains the default, not an unverified in-place strategy. |
+| C3 | Conditional WebDAV adapter and Nextcloud Login Flow v2 primitives. | Local HTTP mocks exercise request/ETag/conflict handling. Connected app workflow and live server/CORS checks remain pending. |
+| C4 | Graph adapter, upload-session primitives, explicit versions/share methods and PKCE credentials. | OAuth tests and HTTP mocks are offline. App workflow, security review and live registered-client acceptance remain pending. |
+| C5 | Dropbox revision updates, Box conditional writes and Google Drive v3 adapter primitives. | Local HTTP mocks cover conditional requests. Per-provider live account, registration and browser redirect-download acceptance remain pending. |
+
+The local revision is an identity plus a bounded 192-KiB content sample, not a
+full-file integrity digest. Conditional local saves serialize Thinoda writers
+and recheck before replacement; external programs do not participate in that
+lock, so filesystem replacement is not a provider-grade compare-and-swap.
 
 ## 6. Risks and open questions
 

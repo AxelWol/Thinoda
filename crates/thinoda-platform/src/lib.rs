@@ -63,6 +63,7 @@ pub mod printing;
 pub mod recovery;
 pub mod settings;
 pub mod single_instance;
+pub mod storage;
 pub mod system;
 pub mod vfs;
 pub mod web;
