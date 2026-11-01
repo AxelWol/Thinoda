@@ -189,8 +189,11 @@ pub fn apply_action(
         && !(action == Action::Delete && view.selected_object.is_some())
     {
         if matches!(action, Action::Navigate(_)) {
-            view.select_only(doc.sheet().root);
-            return Ok(true);
+            if let Some(root) = doc.sheet().primary_content_root() {
+                view.select_only(root);
+                return Ok(true);
+            }
+            return Ok(false);
         }
         return Ok(false);
     }
@@ -398,13 +401,18 @@ pub fn apply_action(
             view.selection = sheet
                 .all_ids_ordered()
                 .into_iter()
-                .filter(|id| sheet.is_visible(*id))
+                .filter(|id| !sheet.is_anchor(*id) && sheet.is_visible(*id))
                 .collect();
         }
         Action::SelectRoot => {
-            let r = doc.sheet().root;
-            view.select_only(r);
-            view.reveal(r);
+            if let Some(root) = doc.sheet().primary_content_root() {
+                view.select_only(root);
+                view.reveal(root);
+            } else {
+                view.selection.clear();
+                view.selected_object = None;
+                return Ok(false);
+            }
         }
         Action::SelectNone => {
             view.selection.clear();
@@ -427,7 +435,7 @@ pub fn apply_action(
                 _ => sheet
                     .all_ids_ordered()
                     .into_iter()
-                    .filter(|id| !sel.contains(id))
+                    .filter(|id| !sheet.is_anchor(*id) && !sel.contains(id))
                     .collect(),
             };
             let mut seen = std::collections::HashSet::new();
@@ -674,6 +682,48 @@ mod tests {
         assert!(!Action::SelectDescendants.available(&doc, &view));
         assert_eq!(doc.workbook(), &before);
         assert_eq!(doc.state_id(), state);
+    }
+
+    #[test]
+    fn hidden_empty_sheet_selection_fallbacks_never_choose_the_anchor() {
+        let mut sheet = thinoda_core::Sheet::new("Blank board", "");
+        let anchor = sheet.root;
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.select_only(anchor);
+
+        assert!(!apply_action(&mut doc, &mut view, Action::SelectRoot).unwrap());
+        assert!(view.selection.is_empty());
+        assert!(!apply_action(&mut doc, &mut view, Action::Navigate(Direction::Right)).unwrap());
+        assert!(view.selection.is_empty());
+        apply_action(&mut doc, &mut view, Action::SelectAll).unwrap();
+        assert!(view.selection.is_empty());
+    }
+
+    #[test]
+    fn hidden_sheet_root_fallback_selects_first_content_root() {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let anchor = sheet.root;
+        let first = sheet.add_floating("First", Vec2::new(200.0, 100.0));
+        let second = sheet.add_floating("Second", Vec2::new(400.0, 100.0));
+        let mut doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+
+        apply_action(&mut doc, &mut view, Action::SelectRoot).unwrap();
+        assert_eq!(view.selection, vec![first]);
+        assert!(!view.selection.contains(&anchor));
+        view.selection.clear();
+        apply_action(&mut doc, &mut view, Action::Navigate(Direction::Right)).unwrap();
+        assert_eq!(view.selection, vec![first]);
+        apply_action(&mut doc, &mut view, Action::SelectAll).unwrap();
+        assert!(view.selection.contains(&first));
+        assert!(!view.selection.contains(&anchor));
+        view.select_only(first);
+        apply_action(&mut doc, &mut view, Action::InvertSelection).unwrap();
+        assert_eq!(view.selection, vec![second]);
+        assert!(!view.selection.contains(&anchor));
     }
 
     #[test]

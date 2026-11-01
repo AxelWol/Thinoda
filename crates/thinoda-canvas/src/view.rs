@@ -13,6 +13,7 @@ use thinoda_core::{
     layout::{Dir, Icon, cubic as bezier},
     layout_sheet,
     navigation::Direction,
+    scene::{SceneHit, build_scene},
 };
 
 use crate::{
@@ -401,16 +402,23 @@ impl MapView {
 
     /// Removes deleted/hidden topics from the selection.
     pub fn prune_selection(&mut self, sheet: &Sheet) {
-        self.selection
-            .retain(|id| sheet.topic(*id).is_some() && sheet.is_visible(*id));
+        self.selection.retain(|id| {
+            !sheet.is_anchor(*id) && sheet.topic(*id).is_some() && sheet.is_visible(*id)
+        });
         if self
             .selected_object
             .is_some_and(|object| !object.exists(sheet))
         {
             self.selected_object = None;
         }
+        if self.pending_reveal.is_some_and(|id| sheet.is_anchor(id)) {
+            self.pending_reveal = None;
+        }
+        if self.relationship_from.is_some_and(|id| sheet.is_anchor(id)) {
+            self.relationship_from = None;
+        }
         if let Some(e) = &self.editing
-            && sheet.topic(e.topic).is_none()
+            && (sheet.is_anchor(e.topic) || sheet.topic(e.topic).is_none())
         {
             self.editing = None;
         }
@@ -435,6 +443,9 @@ impl MapView {
     // ----- editing -------------------------------------------------------------------------
 
     pub fn begin_edit(&mut self, sheet: &Sheet, id: TopicId, select_all: bool) {
+        if sheet.is_anchor(id) {
+            return;
+        }
         if self.title_error.is_some() && self.has_title_changes() {
             self.title_error =
                 Some("Finish or cancel the current title edit before starting another".into());
@@ -826,6 +837,7 @@ impl MapCanvas {
             view.xf(),
             &PaintOptions {
                 dark: view.dark,
+                show_grid: true,
                 ..Default::default()
             },
         );
@@ -902,12 +914,17 @@ impl MapCanvas {
         if let Some(r) = view.pending_reveal.take() {
             view.do_reveal(doc.sheet(), &layout, r);
         }
+        let scene = build_scene(doc.sheet(), &layout);
 
         // ---- pointer -------------------------------------------------------------------
         let pointer = response.hover_pos().or_else(|| ctx.pointer_latest_pos());
         let hovered = pointer
             .filter(|p| rect.contains(*p))
-            .and_then(|p| layout.hit_test(view.xf().sheet(p)));
+            .and_then(|p| scene.hit_test(view.xf().sheet(p)))
+            .and_then(|hit| match hit {
+                SceneHit::Topic(id) => Some(id),
+                SceneHit::Object(_) => None,
+            });
 
         let (multi_touch, any_touches, touch_canceled) = ctx.input(|input| {
             (
@@ -1043,7 +1060,7 @@ impl MapCanvas {
                 || space
             {
                 view.drag = Drag::Pan;
-            } else if let Some(t) = layout.hit_test(sp) {
+            } else if let Some(t) = scene_topic_hit(&scene, sp) {
                 if !view.selection.contains(&t) {
                     view.select_only(t);
                 }
@@ -1063,6 +1080,8 @@ impl MapCanvas {
                         sheet: doc.active_index(),
                     };
                 }
+            } else if matches!(scene.hit_test(sp), Some(SceneHit::Object(_))) {
+                view.drag = Drag::None;
             } else if let Some(ObjectSelection::Zone(id)) =
                 hit_zone(doc.sheet(), sp, 6.0 / view.zoom)
                     .filter(|_| hit_object(&layout, sp, 6.0 / view.zoom).is_none())
@@ -1150,7 +1169,7 @@ impl MapCanvas {
             if let Some(b) = layout.hit_badge(sp) {
                 view.select_only(b);
                 run(doc, view, Action::ToggleCollapse, &mut out);
-            } else if let Some(t) = layout.hit_test(sp) {
+            } else if let Some(t) = scene_topic_hit(&scene, sp) {
                 let tl = &layout.topics[&t];
                 if let Some(from) = view.relationship_from.take() {
                     match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
@@ -1182,6 +1201,9 @@ impl MapCanvas {
                         view.select_only(t);
                     }
                 }
+            } else if matches!(scene.hit_test(sp), Some(SceneHit::Object(_))) {
+                // Board objects are rendered and occlude the map; object editing is a
+                // later interaction slice and must not fall through to a topic below.
             } else if let Some(object) = hit_object(&layout, sp, 6.0 / view.zoom)
                 .or_else(|| hit_zone(doc.sheet(), sp, 6.0 / view.zoom))
             {
@@ -1216,10 +1238,11 @@ impl MapCanvas {
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
-            if let Some(t) = layout.hit_test(sp) {
+            if let Some(t) = scene_topic_hit(&scene, sp) {
                 view.select_only(t);
                 view.begin_edit(doc.sheet(), t, true);
-            } else if layout.hit_badge(sp).is_none()
+            } else if scene.hit_test(sp).is_none()
+                && layout.hit_badge(sp).is_none()
                 && hit_object(&layout, sp, 6.0 / view.zoom).is_none()
                 && hit_zone(doc.sheet(), sp, 6.0 / view.zoom).is_none()
             {
@@ -1233,8 +1256,8 @@ impl MapCanvas {
         {
             view.context_marker = None;
             view.commit_edit(doc);
-            if let Some(t) = layout.hit_test(view.xf().sheet(p)) {
-                let point = view.xf().sheet(p);
+            let point = view.xf().sheet(p);
+            if let Some(t) = scene_topic_hit(&scene, point) {
                 view.context_marker = layout.topics.get(&t).and_then(|topic| {
                     topic
                         .markers
@@ -1246,8 +1269,10 @@ impl MapCanvas {
                     view.select_only(t);
                 }
                 out.context_topic = Some(t);
-            } else if let Some(object) = hit_object(&layout, view.xf().sheet(p), 6.0 / view.zoom)
-                .or_else(|| hit_zone(doc.sheet(), view.xf().sheet(p), 6.0 / view.zoom))
+            } else if matches!(scene.hit_test(point), Some(SceneHit::Object(_))) {
+                // Keep board-object clicks from activating a topic obscured beneath them.
+            } else if let Some(object) = hit_object(&layout, point, 6.0 / view.zoom)
+                .or_else(|| hit_zone(doc.sheet(), point, 6.0 / view.zoom))
             {
                 view.select_object(object);
             } else {
@@ -1385,6 +1410,7 @@ impl MapCanvas {
             dimmed,
             selected_object: view.selected_object,
             omit_zones: false,
+            show_grid: true,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
@@ -1849,6 +1875,13 @@ fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId
     })
 }
 
+fn scene_topic_hit(scene: &thinoda_core::Scene, point: Vec2) -> Option<TopicId> {
+    match scene.hit_test(point) {
+        Some(SceneHit::Topic(id)) => Some(id),
+        Some(SceneHit::Object(_)) | None => None,
+    }
+}
+
 fn hit_object(layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
     if let Some(id) = hit_relationship(layout, p, tol) {
         return Some(ObjectSelection::Relationship(id));
@@ -1950,6 +1983,10 @@ mod zone_tests;
 mod relationship_creation_tests;
 
 #[cfg(test)]
+#[path = "scene_hit_tests.rs"]
+mod scene_hit_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
@@ -1972,6 +2009,52 @@ mod tests {
                 },
                 State { doc, view },
             )
+    }
+
+    fn empty_hidden_harness() -> Harness<'static, State> {
+        let mut sheet = Sheet::new("Blank board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let root = sheet.root;
+        let doc = Document::new(Workbook::new(sheet));
+        let mut view = MapView::default();
+        view.selection.push(root);
+        view.pending_reveal = Some(root);
+        view.relationship_from = Some(root);
+        view.editing = Some(EditState {
+            topic: root,
+            text: String::new(),
+            original: String::new(),
+            select_all: false,
+            focus_requested: false,
+            ime_composing: false,
+        });
+        Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, s: &mut State| {
+                    MapCanvas::show(ui, &mut s.doc, &mut s.view);
+                },
+                State { doc, view },
+            )
+    }
+
+    #[test]
+    fn empty_hidden_board_clears_anchor_selection_editor_and_accessibility_input() {
+        let mut h = empty_hidden_harness();
+        h.run_steps(2);
+        assert!(h.state().view.selection.is_empty());
+        assert_eq!(h.state().view.editing_topic(), None);
+        assert_eq!(h.state().view.pending_reveal, None);
+        assert_eq!(h.state().view.relationship_from, None);
+        assert!(h.query_by_label("Topic title").is_none());
+        assert!(h.query_by_label("Add child topic").is_none());
+        assert!(h.query_by_label("Mind map canvas").is_some());
+
+        h.key_press(Key::Home);
+        h.run_steps(2);
+        assert!(h.state().view.selection.is_empty());
+        assert_eq!(h.state().view.editing_topic(), None);
+        assert!(h.query_by_label("Topic title").is_none());
     }
 
     fn touch(h: &mut Harness<'_, State>, id: u64, phase: egui::TouchPhase, pos: Pos2) {

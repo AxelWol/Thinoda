@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 egui = { workspace = true }
+earcutr = { workspace = true }
 thinoda-core = { path = "../thinoda-core" }
 
 [dev-dependencies]
