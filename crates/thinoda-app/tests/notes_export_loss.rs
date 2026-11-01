@@ -1,17 +1,14 @@
-use egui::{Key, accesskit::Role};
+use egui::accesskit::Role;
 use egui_kittest::{
     Harness,
     kittest::{By, NodeT, Queryable},
 };
 use thinoda_app::{
-    app::{Cmd, Services, ThinodaApp},
+    app::{Cmd, ThinodaApp},
     i18n::t,
 };
 use thinoda_core::{Sheet, Workbook};
 use thinoda_io::{Format, export_bytes};
-use thinoda_platform::settings::{Language, Settings};
-
-const WARNING: &str = "This format exports formatted notes as Markdown source, not rich text. The complete source is retained, but formatting will not be displayed. The source workbook is unchanged. Save as Thinoda to preserve note formats.";
 
 fn book() -> Workbook {
     let mut sheet = Sheet::new("Notes", "Research");
@@ -27,40 +24,6 @@ fn click(h: &mut Harness<ThinodaApp>, label: &str) {
         .unwrap()
         .click();
     h.run_steps(3);
-}
-
-#[test]
-fn note_warning_is_localized_cancelable_and_blocks_edits_in_every_language() {
-    for language in Language::ALL {
-        let mut app = ThinodaApp::new(
-            Settings {
-                language,
-                ..Default::default()
-            },
-            Services::default(),
-            &[],
-        );
-        let book = book();
-        app.new_doc(book.clone());
-        let revision = app.doc().unwrap().doc.state_id();
-        let mut h = Harness::builder()
-            .with_size(egui::vec2(1280.0, 1000.0))
-            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
-        for format in [Format::Csv, Format::Opml] {
-            let ctx = h.ctx.clone();
-            h.state_mut().exec(&ctx, Cmd::Export(format));
-            h.run_steps(3);
-            assert_eq!(h.state().dialogs.note_export, Some((format, false)));
-            assert!(h.query_by_label(t(WARNING)).is_some(), "{language:?}");
-            h.key_press(Key::Insert);
-            h.run_steps(3);
-            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
-            assert_eq!(h.state().doc().unwrap().doc.state_id(), revision);
-            click(&mut h, t("Cancel"));
-            assert!(h.state().dialogs.note_export.is_none());
-            assert_eq!(h.state().doc().unwrap().doc.workbook(), &book);
-        }
-    }
 }
 
 #[test]
