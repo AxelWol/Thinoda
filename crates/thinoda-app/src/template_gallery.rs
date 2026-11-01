@@ -1,10 +1,14 @@
 //! Built-in template previews, generated from the actual documents that Create opens.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
-use egui::Ui;
+use egui::{Color32, Painter, Pos2, Stroke, StrokeKind, Ui, vec2};
+use thinoda_canvas::{PaintOptions, Xf, color32};
 use thinoda_core::{
-    Layout, Sheet,
+    CanvasObjectKind, GridKind, Layout, Sheet, SheetRootMode,
+    board::{Band, shape_geometry},
+    connector_path,
     layout::{ApproxMeasure, layout_sheet},
     templates::{self, TemplateCategory, TemplateInfo},
 };
@@ -16,20 +20,138 @@ pub(crate) enum GalleryAction {
     Create(&'static str),
 }
 
-fn samples(dark: bool) -> &'static [(Sheet, Layout)] {
-    static LIGHT: OnceLock<Vec<(Sheet, Layout)>> = OnceLock::new();
-    static DARK: OnceLock<Vec<(Sheet, Layout)>> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    cache.get_or_init(|| {
-        templates::TEMPLATES
+type Samples = &'static [(Sheet, Layout)];
+
+/// Samples per appearance and UI language (board template content is localized).
+fn samples(dark: bool) -> Samples {
+    static CACHE: OnceLock<Mutex<HashMap<(bool, u8), Samples>>> = OnceLock::new();
+    let key = (dark, crate::i18n::lang() as u8);
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    cache.entry(key).or_insert_with(|| {
+        let built: Vec<_> = templates::TEMPLATES
             .iter()
             .map(|info| {
-                let sheet = templates::instantiate(info.id).sheets.remove(0);
+                let sheet = templates::instantiate_localized(info.id, &|s| t(s).to_owned())
+                    .sheets
+                    .remove(0);
                 let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
                 (sheet, layout)
             })
-            .collect()
+            .collect();
+        Box::leak(built.into_boxed_slice())
     })
+}
+
+fn is_board(sheet: &Sheet) -> bool {
+    sheet.root_mode == SheetRootMode::Hidden
+        || !sheet.canvas.objects.is_empty()
+        || sheet.zones.iter().any(|zone| zone.color.is_some())
+}
+
+/// Thumbnail of a board: tinted frames, shapes and connectors around the topic layer.
+fn paint_board_thumbnail(
+    painter: &Painter,
+    sheet: &Sheet,
+    layout: &Layout,
+    rect: egui::Rect,
+    dark: bool,
+) {
+    let background =
+        thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+    painter.rect_filled(rect, 4, color32(background));
+    let rect = rect.shrink(5.0);
+    let mut bounds = layout.bounds;
+    if bounds.size.x <= 0.0 || bounds.size.y <= 0.0 {
+        bounds = thinoda_core::Rect {
+            min: thinoda_core::Vec2::new(-200.0, -150.0),
+            size: thinoda_core::Vec2::new(400.0, 300.0),
+        };
+    }
+    let zoom = (rect.width() / bounds.size.x).min(rect.height() / bounds.size.y);
+    let center = bounds.center();
+    let xf = Xf {
+        origin: rect.center() - vec2(center.x, center.y) * zoom,
+        zoom,
+    };
+    let painter = painter.with_clip_rect(rect);
+    let ink = if dark {
+        Color32::from_gray(170)
+    } else {
+        Color32::from_gray(85)
+    };
+    if sheet.board.grid != GridKind::None {
+        let step = (sheet.board.grid_size * 2.0 * zoom).max(6.0);
+        let dot = ink.gamma_multiply(0.35);
+        let mut y = rect.top() + step / 2.0;
+        while y < rect.bottom() {
+            let mut x = rect.left() + step / 2.0;
+            while x < rect.right() {
+                painter.circle_filled(Pos2::new(x, y), 0.6, dot);
+                x += step;
+            }
+            y += step;
+        }
+    }
+    for zone in &sheet.zones {
+        let r = xf.rect(zone.frame);
+        let fill = zone.color.map_or(ink.gamma_multiply(0.04), color32);
+        painter.rect(r, 2.0, fill, Stroke::new(0.5, ink), StrokeKind::Inside);
+        painter.with_clip_rect(r.shrink(1.0)).text(
+            r.left_top() + vec2(3.0, 2.0),
+            egui::Align2::LEFT_TOP,
+            &zone.name,
+            egui::FontId::proportional((14.0 * zoom).clamp(5.0, 9.0)),
+            ink,
+        );
+    }
+    let objects = |band: Band| {
+        for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
+            match &object.kind {
+                CanvasObjectKind::Shape { shape, .. } => {
+                    let outline = shape_geometry(*shape, object.rect, object.rotation).outline;
+                    let points = outline.into_iter().map(|p| xf.pos(p)).collect();
+                    let stroke = object.style.stroke.map_or(ink, color32);
+                    let fill = object.style.fill.map_or(Color32::TRANSPARENT, color32);
+                    painter.add(egui::Shape::convex_polygon(
+                        points,
+                        fill,
+                        Stroke::new(0.8, stroke),
+                    ));
+                }
+                CanvasObjectKind::Connector(connector) => {
+                    let points: Vec<_> = connector_path(sheet, layout, connector)
+                        .into_iter()
+                        .map(|p| xf.pos(p))
+                        .collect();
+                    let color = connector.color.map_or(ink, color32);
+                    painter.add(egui::Shape::line(points, Stroke::new(0.8, color)));
+                }
+                CanvasObjectKind::Ink(stroke) => {
+                    let points = stroke.points.iter().map(|p| xf.pos(*p)).collect();
+                    painter.add(egui::Shape::line(
+                        points,
+                        Stroke::new((stroke.width * zoom).max(0.5), color32(stroke.color)),
+                    ));
+                }
+            }
+        }
+    };
+    objects(Band::Below);
+    thinoda_canvas::paint_map(
+        &painter,
+        sheet,
+        layout,
+        xf,
+        &PaintOptions {
+            dark,
+            omit_zones: true,
+            ..Default::default()
+        },
+    );
+    objects(Band::Above);
 }
 
 fn cards(
@@ -61,7 +183,17 @@ fn cards(
                         card_width,
                         94.0,
                         |ui, rect| {
-                            thinoda_canvas::paint_thumbnail(ui.painter(), sheet, layout, rect, dark)
+                            if is_board(sheet) {
+                                paint_board_thumbnail(ui.painter(), sheet, layout, rect, dark)
+                            } else {
+                                thinoda_canvas::paint_thumbnail(
+                                    ui.painter(),
+                                    sheet,
+                                    layout,
+                                    rect,
+                                    dark,
+                                )
+                            }
                         },
                     );
                     if recent {
@@ -154,13 +286,48 @@ mod tests {
         for dark in [false, true] {
             assert_eq!(samples(dark).len(), templates::TEMPLATES.len());
             for (info, (sheet, layout)) in templates::TEMPLATES.iter().zip(samples(dark)) {
-                assert_eq!(sheet, templates::instantiate(info.id).active());
-                assert_eq!(layout.topics.len(), sheet.topics.len());
+                assert_eq!(
+                    sheet,
+                    templates::instantiate_localized(info.id, &|s| t(s).to_owned()).active()
+                );
+                let board = info.category == TemplateCategory::Boards;
+                assert_eq!(is_board(sheet), board, "{}", info.id);
+                let hidden = usize::from(sheet.root_mode == SheetRootMode::Hidden);
+                assert_eq!(layout.topics.len(), sheet.topics.len() - hidden);
+                if info.id == "blank-canvas" {
+                    continue;
+                }
                 assert!(layout.bounds.size.x.is_finite() && layout.bounds.size.x > 0.0);
                 assert!(layout.bounds.size.y.is_finite() && layout.bounds.size.y > 0.0);
             }
         }
         assert!(std::ptr::eq(samples(false), samples(false)));
         assert!(!std::ptr::eq(samples(false), samples(true)));
+    }
+
+    #[test]
+    fn board_thumbnails_paint_frames_shapes_and_connectors() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
+        let mut counts = HashMap::new();
+        for (info, (sheet, layout)) in templates::TEMPLATES.iter().zip(samples(false)) {
+            if info.category != TemplateCategory::Boards {
+                continue;
+            }
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                paint_board_thumbnail(ui.painter(), sheet, layout, rect, false);
+            });
+            output.textures_delta.clear();
+            counts.insert(info.id, output.shapes.len());
+        }
+        // Frames, shapes and connectors add primitives beyond the background and grid.
+        for id in [
+            "flowchart",
+            "kanban-board",
+            "business-model-canvas",
+            "swot-board",
+        ] {
+            assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
+        }
     }
 }

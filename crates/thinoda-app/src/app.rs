@@ -653,7 +653,7 @@ impl ThinodaApp {
                     self.toasts.error(t("Unknown template"));
                     return;
                 }
-                self.new_doc(templates::instantiate(id));
+                self.new_doc(templates::instantiate_localized(id, &|s| t(s).to_owned()));
                 self.settings.add_recent_template(id);
                 self.save_settings();
                 self.template_choice = None;

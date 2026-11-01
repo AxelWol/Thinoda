@@ -121,7 +121,8 @@ Menus, settings, sidebars, template/category titles, built-in theme/shape names,
 application notification text, print previews and searchable offline help use the
 same embedded catalogs on every advertised architecture. Brazilian Portuguese
 shares common Portuguese phrases and has explicit regional vocabulary overrides.
-Starter template content remains English and editable; format/product names,
+Mind-map starter template content remains English and editable; Boards template
+text follows the UI language when the board is created. Format/product names,
 user-created names, technical diagnostic details and OS/driver messages retain
 their original spelling/language.
 
@@ -324,7 +325,7 @@ those system-owned controls. WinGet publishing remains paused.
   Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
 
-- Home offers rendered previews of 35 original templates across eight categories.
+- Home offers rendered previews of 43 original templates across nine categories.
   Select a card, then Create, or double-click a card to create immediately.
   Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
@@ -332,12 +333,16 @@ those system-owned controls. WinGet publishing remains paused.
   Section chevrons open a category directly; All templates returns to the
   overview. Each view retains its own scroll position. Navigation clears the
   pending selection and never creates or changes a map.
-  The main menu's New from Template submenu uses the same eight localized
+  The main menu's New from Template submenu uses the same nine localized
   categories, with each template directly selectable in its category.
   Scenario maps include problem solving, architecture, workshops, research,
   language learning, retrospectives, everyday planning, comparisons and creative
-  production. Gallery titles are localized in every supported UI language; starter document content
+  production. Gallery titles are localized in every supported UI language; mind-map starter content
   is English and editable. These are original Thinoda maps, not XMind template copies.
+  The Boards category starts maps with a hidden central topic: Blank Canvas,
+  Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
+  Kanban Board, Business Model Canvas, Flowchart (shapes and connectors) and SWOT Board.
+  Frames, sticky/text cards and shapes are created in the current UI language.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.

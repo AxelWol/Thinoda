@@ -1219,3 +1219,78 @@ Insert before|Insertar antes de|Insérer avant|Indsæt før|Invoegen vóór|Inse
 Saving file:|Guardando archivo:|Enregistrement du fichier :|Gemmer fil:|Bestand opslaan:|A guardar ficheiro:|Salvataggio del file:|Zapisywanie pliku:
 The file writer stopped unexpectedly|El guardado del archivo se detuvo inesperadamente|L'enregistrement du fichier s'est arrêté de manière inattendue|Gemningen af filen stoppede uventet|Het opslaan van het bestand is onverwacht gestopt|A gravação do ficheiro parou inesperadamente|Il salvataggio del file si è interrotto in modo imprevisto|Zapisywanie pliku zostało nieoczekiwanie przerwane
 Wait until the file is saved|Espere hasta que se guarde el archivo|Attendez que le fichier soit enregistré|Vent, til filen er gemt|Wacht tot het bestand is opgeslagen|Aguarde até o ficheiro ser guardado|Attendi il salvataggio del file|Poczekaj, aż plik zostanie zapisany
+Boards|Tableros|Tableaux|Tavler|Borden|Quadros|Lavagne|Tablice
+Blank Canvas|Lienzo en blanco|Canevas vierge|Tomt lærred|Leeg canvas|Tela em branco|Tela bianca|Puste płótno
+Multi-root Map|Mapa con varias raíces|Carte à plusieurs racines|Kort med flere rødder|Kaart met meerdere wortels|Mapa com várias raízes|Mappa a più radici|Mapa z wieloma korzeniami
+Brainstorm Wall|Muro de lluvia de ideas|Mur de brainstorming|Brainstormvæg|Brainstormmuur|Mural de brainstorming|Parete di brainstorming|Ściana burzy mózgów
+Retrospective Board|Tablero de retrospectiva|Tableau de rétrospective|Retrospektivtavle|Retrospectivebord|Quadro de retrospetiva|Lavagna retrospettiva|Tablica retrospektywy
+Kanban Board|Tablero Kanban|Tableau Kanban|Kanban-tavle|Kanbanbord|Quadro Kanban|Lavagna Kanban|Tablica Kanban
+Business Model Canvas|Lienzo de modelo de negocio|Business Model Canvas|Business Model Canvas|Business Model Canvas|Quadro de modelo de negócio|Business Model Canvas|Business Model Canvas
+Flowchart|Diagrama de flujo|Logigramme|Rutediagram|Stroomdiagram|Fluxograma|Diagramma di flusso|Schemat blokowy
+SWOT Board|Tablero DAFO|Tableau SWOT|SWOT-tavle|SWOT-bord|Quadro SWOT|Lavagna SWOT|Tablica SWOT
+Option A|Opción A|Option A|Mulighed A|Optie A|Opção A|Opzione A|Opcja A
+Option B|Opción B|Option B|Mulighed B|Optie B|Opção B|Opzione B|Opcja B
+Benefits|Beneficios|Avantages|Fordele|Voordelen|Benefícios|Vantaggi|Korzyści
+Costs|Costes|Coûts|Omkostninger|Kosten|Custos|Costi|Koszty
+Risks|Riesgos|Risques|Risici|Risico’s|Riscos|Rischi|Ryzyka
+Decision|Decisión|Décision|Beslutning|Beslissing|Decisão|Decisione|Decyzja
+Criteria|Criterios|Critères|Kriterier|Criteria|Critérios|Criteri|Kryteria
+Next step|Siguiente paso|Prochaine étape|Næste skridt|Volgende stap|Próximo passo|Prossimo passo|Następny krok
+Brainstorm: describe the challenge here|Lluvia de ideas: describa aquí el reto|Brainstorming : décrivez le défi ici|Brainstorm: beskriv udfordringen her|Brainstorm: beschrijf hier de uitdaging|Brainstorming: descreva aqui o desafio|Brainstorming: descrivi qui la sfida|Burza mózgów: opisz tutaj wyzwanie
+Ideas|Ideas|Idées|Idéer|Ideeën|Ideias|Idee|Pomysły
+Questions|Preguntas|Questions|Spørgsmål|Vragen|Perguntas|Domande|Pytania
+Parking lot|Temas aparcados|Parking à idées|Parkeringsplads|Parkeerplaats|Temas em espera|Parcheggio idee|Parking pomysłów
+One idea per sticky|Una idea por nota|Une idée par note|Én idé pr. seddel|Eén idee per briefje|Uma ideia por nota|Un’idea per nota|Jeden pomysł na karteczkę
+Build on other ideas|Amplíe otras ideas|Rebondissez sur les autres idées|Byg videre på andres idéer|Bouw voort op andere ideeën|Desenvolva outras ideias|Sviluppa le idee altrui|Rozwijaj inne pomysły
+Go for quantity first|Primero, cantidad|D’abord la quantité|Gå efter mængde først|Eerst kwantiteit|Primeiro a quantidade|Prima la quantità|Najpierw ilość
+What do we need to learn?|¿Qué necesitamos aprender?|Que devons-nous apprendre ?|Hvad skal vi lære?|Wat moeten we leren?|O que precisamos de aprender?|Cosa dobbiamo imparare?|Czego musimy się dowiedzieć?
+Topics for later|Temas para después|Sujets pour plus tard|Emner til senere|Onderwerpen voor later|Temas para depois|Argomenti per dopo|Tematy na później
+Retrospective: team and time period|Retrospectiva: equipo y periodo|Rétrospective : équipe et période|Retrospektiv: team og periode|Retrospective: team en periode|Retrospetiva: equipa e período|Retrospettiva: team e periodo|Retrospektywa: zespół i okres
+Went well|Fue bien|Ce qui a bien marché|Gik godt|Ging goed|Correu bem|È andato bene|Co poszło dobrze
+To improve|A mejorar|À améliorer|Kan forbedres|Te verbeteren|A melhorar|Da migliorare|Do poprawy
+Actions|Acciones|Actions|Handlinger|Acties|Ações|Azioni|Działania
+What helped us?|¿Qué nos ayudó?|Qu’est-ce qui nous a aidés ?|Hvad hjalp os?|Wat hielp ons?|O que nos ajudou?|Cosa ci ha aiutato?|Co nam pomogło?
+Something to celebrate|Algo que celebrar|Quelque chose à célébrer|Noget at fejre|Iets om te vieren|Algo a celebrar|Qualcosa da festeggiare|Coś do świętowania
+What slowed us down?|¿Qué nos frenó?|Qu’est-ce qui nous a ralentis ?|Hvad bremsede os?|Wat hield ons op?|O que nos atrasou?|Cosa ci ha rallentato?|Co nas spowolniło?
+What surprised us?|¿Qué nos sorprendió?|Qu’est-ce qui nous a surpris ?|Hvad overraskede os?|Wat verraste ons?|O que nos surpreendeu?|Cosa ci ha sorpreso?|Co nas zaskoczyło?
+Action, owner and due date|Acción, responsable y fecha límite|Action, responsable et échéance|Handling, ansvarlig og frist|Actie, eigenaar en deadline|Ação, responsável e prazo|Azione, responsabile e scadenza|Działanie, osoba odpowiedzialna i termin
+To do|Por hacer|À faire|At gøre|Te doen|Por fazer|Da fare|Do zrobienia
+Doing|En curso|En cours|I gang|Bezig|Em curso|In corso|W toku
+Describe the next task|Describa la siguiente tarea|Décrivez la tâche suivante|Beskriv den næste opgave|Beschrijf de volgende taak|Descreva a próxima tarefa|Descrivi la prossima attività|Opisz następne zadanie
+Add an owner and due date|Añada responsable y fecha límite|Ajoutez un responsable et une échéance|Tilføj ansvarlig og frist|Voeg eigenaar en deadline toe|Adicione responsável e prazo|Aggiungi responsabile e scadenza|Dodaj osobę odpowiedzialną i termin
+Limit work in progress|Limite el trabajo en curso|Limitez le travail en cours|Begræns igangværende arbejde|Beperk onderhanden werk|Limite o trabalho em curso|Limita il lavoro in corso|Ogranicz pracę w toku
+Finished task|Tarea terminada|Tâche terminée|Færdig opgave|Voltooide taak|Tarefa concluída|Attività completata|Ukończone zadanie
+Key Partners|Socios clave|Partenaires clés|Nøglepartnere|Kernpartners|Parceiros-chave|Partner chiave|Kluczowi partnerzy
+Key Activities|Actividades clave|Activités clés|Nøgleaktiviteter|Kernactiviteiten|Atividades-chave|Attività chiave|Kluczowe działania
+Key Resources|Recursos clave|Ressources clés|Nøgleressourcer|Kernmiddelen|Recursos-chave|Risorse chiave|Kluczowe zasoby
+Value Propositions|Propuestas de valor|Propositions de valeur|Værditilbud|Waardeproposities|Propostas de valor|Proposte di valore|Propozycje wartości
+Customer Relationships|Relaciones con clientes|Relations clients|Kunderelationer|Klantrelaties|Relações com clientes|Relazioni con i clienti|Relacje z klientami
+Channels|Canales|Canaux|Kanaler|Kanalen|Canais|Canali|Kanały
+Customer Segments|Segmentos de clientes|Segments de clientèle|Kundesegmenter|Klantsegmenten|Segmentos de clientes|Segmenti di clientela|Segmenty klientów
+Cost Structure|Estructura de costes|Structure de coûts|Omkostningsstruktur|Kostenstructuur|Estrutura de custos|Struttura dei costi|Struktura kosztów
+Revenue Streams|Fuentes de ingresos|Sources de revenus|Indtægtsstrømme|Inkomstenstromen|Fontes de receita|Flussi di ricavi|Strumienie przychodów
+Who helps you deliver?|¿Quién le ayuda a cumplir?|Qui vous aide à livrer ?|Hvem hjælper jer med at levere?|Wie helpt je te leveren?|Quem o ajuda a entregar?|Chi ti aiuta a consegnare?|Kto pomaga ci dostarczać?
+What must you do well?|¿Qué debe hacer bien?|Que devez-vous bien faire ?|Hvad skal I gøre godt?|Wat moet je goed doen?|O que tem de fazer bem?|Cosa devi fare bene?|Co musisz robić dobrze?
+What do you need to deliver?|¿Qué necesita para cumplir?|De quoi avez-vous besoin pour livrer ?|Hvad skal I bruge for at levere?|Wat heb je nodig om te leveren?|De que precisa para entregar?|Di cosa hai bisogno per consegnare?|Czego potrzebujesz, aby dostarczać?
+Which problem do you solve?|¿Qué problema resuelve?|Quel problème résolvez-vous ?|Hvilket problem løser I?|Welk probleem los je op?|Que problema resolve?|Quale problema risolvi?|Jaki problem rozwiązujesz?
+How do you work with customers?|¿Cómo trabaja con los clientes?|Comment travaillez-vous avec les clients ?|Hvordan arbejder I med kunderne?|Hoe werk je met klanten?|Como trabalha com os clientes?|Come lavori con i clienti?|Jak współpracujesz z klientami?
+How do you reach customers?|¿Cómo llega a los clientes?|Comment atteignez-vous les clients ?|Hvordan når I kunderne?|Hoe bereik je klanten?|Como chega aos clientes?|Come raggiungi i clienti?|Jak docierasz do klientów?
+Who are you creating value for?|¿Para quién crea valor?|Pour qui créez-vous de la valeur ?|Hvem skaber I værdi for?|Voor wie creëer je waarde?|Para quem cria valor?|Per chi crei valore?|Dla kogo tworzysz wartość?
+What are the main costs?|¿Cuáles son los costes principales?|Quels sont les principaux coûts ?|Hvad er de største omkostninger?|Wat zijn de grootste kosten?|Quais são os principais custos?|Quali sono i costi principali?|Jakie są główne koszty?
+How do customers pay?|¿Cómo pagan los clientes?|Comment les clients paient-ils ?|Hvordan betaler kunderne?|Hoe betalen klanten?|Como pagam os clientes?|Come pagano i clienti?|Jak płacą klienci?
+Step|Paso|Étape|Trin|Stap|Passo|Passo|Krok
+Decision?|¿Decisión?|Décision ?|Beslutning?|Beslissing?|Decisão?|Decisione?|Decyzja?
+Action|Acción|Action|Handling|Actie|Ação|Azione|Działanie
+End|Fin|Fin|Slut|Einde|Fim|Fine|Koniec
+Rework|Rehacer|Reprise|Omarbejd|Herwerken|Refazer|Rielaborare|Poprawka
+Yes|Sí|Oui|Ja|Ja|Sim|Sì|Tak
+No|No|Non|Nej|Nee|Não|No|Nie
+Strengths|Fortalezas|Forces|Styrker|Sterktes|Forças|Punti di forza|Mocne strony
+Weaknesses|Debilidades|Faiblesses|Svagheder|Zwaktes|Fraquezas|Punti di debolezza|Słabe strony
+Opportunities|Oportunidades|Opportunités|Muligheder|Kansen|Oportunidades|Opportunità|Szanse
+Threats|Amenazas|Menaces|Trusler|Bedreigingen|Ameaças|Minacce|Zagrożenia
+Internal advantages|Ventajas internas|Atouts internes|Interne fordele|Interne voordelen|Vantagens internas|Vantaggi interni|Wewnętrzne atuty
+Internal gaps|Carencias internas|Lacunes internes|Interne mangler|Interne tekortkomingen|Lacunas internas|Carenze interne|Wewnętrzne braki
+External trends to use|Tendencias externas aprovechables|Tendances externes à exploiter|Eksterne tendenser at udnytte|Externe trends om te benutten|Tendências externas a aproveitar|Tendenze esterne da sfruttare|Zewnętrzne trendy do wykorzystania
+External risks|Riesgos externos|Risques externes|Eksterne risici|Externe risico’s|Riscos externos|Rischi esterni|Zewnętrzne ryzyka
+The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.|La categoría Tableros crea mapas de lienzo sin tema central visible: lienzo en blanco, varios mapas mentales independientes, muros de notas, retrospectivas, Kanban, lienzo de modelo de negocio, diagramas de flujo y DAFO. El texto usa el idioma de la interfaz.|La catégorie Tableaux crée des cartes canevas sans sujet central visible : canevas vierge, plusieurs cartes mentales indépendantes, murs de notes, rétrospectives, Kanban, Business Model Canvas, logigrammes et SWOT. Le texte utilise la langue de l’interface.|Kategorien Tavler opretter lærredskort uden synligt centralt emne: tomt lærred, flere uafhængige mindmaps, sedler på væggen, retrospektiver, Kanban, Business Model Canvas, rutediagrammer og SWOT. Teksten bruger brugerfladens sprog.|De categorie Borden maakt canvaskaarten zonder zichtbaar centraal onderwerp: leeg canvas, meerdere losse mindmaps, briefjesmuren, retrospectives, Kanban, Business Model Canvas, stroomdiagrammen en SWOT. De tekst gebruikt de taal van de interface.|A categoria Quadros cria mapas de tela sem tópico central visível: tela em branco, vários mapas mentais independentes, murais de notas, retrospetivas, Kanban, quadro de modelo de negócio, fluxogramas e SWOT. O texto usa o idioma da interface.|La categoria Lavagne crea mappe su tela senza argomento centrale visibile: tela bianca, più mappe mentali indipendenti, pareti di note, retrospettive, Kanban, Business Model Canvas, diagrammi di flusso e SWOT. Il testo usa la lingua dell’interfaccia.|Kategoria Tablice tworzy mapy-płótna bez widocznego tematu centralnego: puste płótno, kilka niezależnych map myśli, ściany karteczek, retrospektywy, Kanban, Business Model Canvas, schematy blokowe i SWOT. Tekst używa języka interfejsu.

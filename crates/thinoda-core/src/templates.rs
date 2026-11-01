@@ -2,9 +2,13 @@
 
 use crate::model::{Sheet, Structure, Workbook};
 
+mod boards;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateCategory {
     Basic,
+    /// Free-form boards: hidden central topic, frames, cards, shapes, several roots.
+    Boards,
     Knowledge,
     Meeting,
     Study,
@@ -15,8 +19,9 @@ pub enum TemplateCategory {
 }
 
 impl TemplateCategory {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Basic,
+        Self::Boards,
         Self::Knowledge,
         Self::Meeting,
         Self::Study,
@@ -29,6 +34,7 @@ impl TemplateCategory {
     pub fn label(self) -> &'static str {
         match self {
             Self::Basic => "Basic",
+            Self::Boards => "Boards",
             Self::Knowledge => "Knowledge management",
             Self::Meeting => "Meeting and planning",
             Self::Study => "Study and education",
@@ -260,7 +266,30 @@ pub const TEMPLATES: &[TemplateInfo] = &[
         structure: Structure::TimelineHorizontal,
         category: TemplateCategory::Creativity,
     },
+    board_info("blank-canvas", "Blank Canvas"),
+    board_info("multi-root", "Multi-root Map"),
+    board_info("brainstorm-wall", "Brainstorm Wall"),
+    board_info("retrospective-board", "Retrospective Board"),
+    board_info("kanban-board", "Kanban Board"),
+    board_info("business-model-canvas", "Business Model Canvas"),
+    board_info("flowchart", "Flowchart"),
+    board_info("swot-board", "SWOT Board"),
 ];
+
+const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
+    TemplateInfo {
+        id,
+        name,
+        structure: Structure::MapClockwise,
+        category: TemplateCategory::Boards,
+    }
+}
+
+/// Every translatable content string of the board templates (mind-map template
+/// content stays English).
+pub fn board_strings() -> Vec<&'static str> {
+    boards::board_strings()
+}
 
 /// Blank workbook: central topic plus `main_count` main topics.
 pub fn blank(sheet_title: &str, central: &str, main: &str, main_count: usize) -> Workbook {
@@ -272,12 +301,26 @@ pub fn blank(sheet_title: &str, central: &str, main: &str, main_count: usize) ->
 }
 
 /// Instantiates a template by id (unknown ids fall back to a blank mind map).
+/// Board content stays English; see [`instantiate_localized`].
 pub fn instantiate(id: &str) -> Workbook {
+    instantiate_localized(id, &|s| s.to_owned())
+}
+
+/// Like [`instantiate`], but passes the content text of board templates (and their
+/// hidden central topic, titled with the template name) through `tr`.
+pub fn instantiate_localized(id: &str, tr: &dyn Fn(&'static str) -> String) -> Workbook {
     let info = TEMPLATES
         .iter()
         .find(|t| t.id == id)
         .copied()
         .unwrap_or(TEMPLATES[0]);
+    if let Some(board) = boards::find(info.id) {
+        let mut wb = boards::build(board, &tr(info.name), tr);
+        wb.active_mut().structure = info.structure;
+        wb.active_mut().theme.theme_id = "clarity".into();
+        wb.active_mut().theme.tapered_lines = false;
+        return wb;
+    }
     let mut wb = match info.id {
         "problem-solving" => with_children(
             "Problem to Solve",
@@ -705,5 +748,147 @@ mod tests {
             );
             workbook.validate().unwrap();
         }
+    }
+
+    fn board_ids() -> Vec<&'static str> {
+        TEMPLATES
+            .iter()
+            .filter(|t| t.category == TemplateCategory::Boards)
+            .map(|t| t.id)
+            .collect()
+    }
+
+    #[test]
+    fn boards_category_lists_every_board_template() {
+        assert_eq!(
+            board_ids(),
+            [
+                "blank-canvas",
+                "multi-root",
+                "brainstorm-wall",
+                "retrospective-board",
+                "kanban-board",
+                "business-model-canvas",
+                "flowchart",
+                "swot-board",
+            ]
+        );
+        assert_eq!(boards::BOARDS.len(), board_ids().len());
+        for board in boards::BOARDS {
+            assert!(board_ids().contains(&board.id), "{}", board.id);
+        }
+    }
+
+    #[test]
+    fn board_templates_are_valid_deterministic_and_hide_an_empty_anchor() {
+        use crate::board::{CanvasObjectKind, SheetRootMode};
+        for id in board_ids() {
+            let wb = instantiate(id);
+            wb.validate().unwrap();
+            assert_eq!(wb, instantiate(id), "{id} is not deterministic");
+            let sheet = wb.active();
+            assert_eq!(sheet.root_mode, SheetRootMode::Hidden, "{id}");
+            assert_eq!(sheet.central_topic_content(), None, "{id}");
+            assert!(sheet.children(sheet.root).is_empty(), "{id}");
+            assert!(sheet.board.grid != crate::board::GridKind::None, "{id}");
+            let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+            assert!(
+                !layout.topics.contains_key(&sheet.root),
+                "{id} leaks anchor"
+            );
+            // Content does not overlap: cards/trees are disjoint, cards sit in their frame.
+            let roots: Vec<_> = sheet.floating.clone();
+            for (i, a) in roots.iter().enumerate() {
+                let ra = subtree_rect(sheet, &layout, *a);
+                for b in &roots[i + 1..] {
+                    let rb = subtree_rect(sheet, &layout, *b);
+                    assert!(!ra.intersects(&rb), "{id}: {a:?} overlaps {b:?}");
+                }
+            }
+            for zone in &sheet.zones {
+                for root in &zone.roots {
+                    let r = layout.topics[root].rect;
+                    assert!(
+                        zone.frame.contains(r.min) && zone.frame.contains(r.max()),
+                        "{id}: card outside frame {}",
+                        zone.name
+                    );
+                }
+            }
+            for (i, a) in sheet.zones.iter().enumerate() {
+                for b in &sheet.zones[i + 1..] {
+                    assert!(!a.frame.intersects(&b.frame), "{id}: frames overlap");
+                }
+            }
+            let shapes: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind, CanvasObjectKind::Shape { .. }))
+                .collect();
+            for (i, a) in shapes.iter().enumerate() {
+                for b in &shapes[i + 1..] {
+                    assert!(!a.rect.intersects(&b.rect), "{id}: shapes overlap");
+                }
+            }
+        }
+        assert_eq!(instantiate("blank-canvas").active().topics.len(), 1);
+        let multi = instantiate("multi-root");
+        assert_eq!(multi.active().floating.len(), 3);
+        let flow = instantiate("flowchart");
+        assert_eq!(flow.active().canvas.objects.len(), 12);
+    }
+
+    fn subtree_rect(
+        sheet: &crate::model::Sheet,
+        layout: &crate::Layout,
+        root: crate::TopicId,
+    ) -> crate::Rect {
+        let mut rect = layout.topics[&root].rect;
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            for child in sheet.children(id) {
+                rect = rect.union(&layout.topics[child].rect);
+                stack.push(*child);
+            }
+        }
+        rect
+    }
+
+    #[test]
+    fn board_content_is_localized_through_the_translator() {
+        let strings = board_strings();
+        assert!(strings.contains(&"Key Partners"));
+        assert!(strings.contains(&"Yes"));
+        for id in board_ids() {
+            let info = TEMPLATES.iter().find(|t| t.id == id).unwrap();
+            let wb = instantiate_localized(id, &|s| format!("<{s}>"));
+            wb.validate().unwrap();
+            let sheet = wb.active();
+            assert_eq!(
+                sheet.topic(sheet.root).unwrap().title,
+                format!("<{}>", info.name)
+            );
+            for topic in sheet.topics.values() {
+                assert!(topic.title.starts_with('<'), "{id}: {}", topic.title);
+            }
+            for zone in &sheet.zones {
+                assert!(zone.name.starts_with('<'), "{id}: {}", zone.name);
+            }
+            for object in &sheet.canvas.objects {
+                match &object.kind {
+                    crate::board::CanvasObjectKind::Shape { label, .. } => {
+                        assert!(label.starts_with('<'))
+                    }
+                    crate::board::CanvasObjectKind::Connector(c) => {
+                        assert!(c.label.is_empty() || c.label.starts_with('<'))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Mind-map templates keep their original English content.
+        let swot = instantiate_localized("swot", &|s| format!("<{s}>"));
+        assert_eq!(swot, instantiate("swot"));
     }
 }

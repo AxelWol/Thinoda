@@ -17,6 +17,9 @@ while the version is `0.x`, breaking changes bump the minor version). See
 
 ### Added
 
+- Boards template category with Blank Canvas, Multi-root Map, Brainstorm Wall,
+  Retrospective Board, Kanban Board, Business Model Canvas, Flowchart and SWOT
+  Board; board content is created in the UI language (all ten catalogs).
 - Background web-shell update checks with distinct ready and next-launch
   installed notices, immutable build identity and no forced document reload.
 - Background native stable-release checks with current/new versions, release

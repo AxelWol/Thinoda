@@ -326,6 +326,30 @@ semantics and require native v6.
 | FreeMind, OPML, Markdown, text, DOCX, XLSX, CSV, MindManager, TextBundle | Outline projection of cards and topics; drawn objects reported as lost |
 | FIM | Unchanged; board content reported as lost |
 
+#### F0-IO status (implemented in `thinoda-io`)
+
+- `board_export::required_native_version` is the single version rule
+  (2 base, 3 resources, 4 formatted notes, 5 FIM, 6 board semantics). The
+  native writer and resource packaging use it; the reader accepts up to v6 and
+  rejects board data in manifests that declare less than v6. Plain maps keep
+  their previous version and identical bytes (golden tests).
+- `export_losses(workbook, format, options)` returns itemised `ExportLoss`
+  values (shapes, ink, connectors, cards converted, rotation, viewport slides,
+  zones, floating topics, synthesized root, zone clip, board settings). It is
+  plain data for a later preflight UI; MindManager export asks for
+  confirmation only when the sheet uses board semantics.
+- Outline formats export `project_to_outline` (synthesized root, no anchor).
+- SVG/PNG/JPEG/PDF/print and editable PPTX paint the scene: coloured zones,
+  Below objects, map, Above objects, styled cards, shapes, ink (highlighter
+  alpha), connectors with arrowheads and labels. Export bounds include canvas
+  objects; the grid is not exported.
+- XMind titles a Hidden root with the sheet title; imports run board
+  validation and reject malformed or oversized data without panicking.
+- Known gaps: zone clipping is not rendered (reported as a loss); ink pressure
+  is ignored; card rotation and rotated shape labels stay upright in editable
+  PPTX; generated presentations and branch frames do not yet handle Hidden
+  boards; the XMind central topic keeps the anchor's non-title fields.
+
 ## 6. Phased plan
 
 Each phase ends with its own rubber-duck review, tests for native and web, all
@@ -337,7 +361,7 @@ locales, Light/Dark, accessibility checks and updated user docs.
 | **F1 Flexible roots** | `SheetRootMode::Hidden`, multi-root via floating trees and zones, mode switch commands, export projection policies | Rootless and multi-root sheets round-trip in native v6; every export shows the projection; v5 readers refuse v6 files |
 | **F2 Cards and frames** | Card presentation for floating topics (sticky, text, image), zone frames, grid, snapping and guides, align/distribute | Sticky wall usable by mouse, touch and keyboard; screen-reader labels; SVG/PDF show cards and frames |
 | **F3 Shapes and connectors** | Shape library (basic + flowchart), connectors with typed endpoints, z-order within bands, groups, lock, rotation | Flowchart can be built and exported to SVG/PDF; endpoint deletion behaves as specified; undo of group operations |
-| **F4 Board templates** | Data-driven template definitions and the template MVP (section 7) | Templates localised in all 13 locales, theme-aware, validated in tests |
+| **F4 Board templates** (implemented) | Data-driven template definitions and the template MVP (section 7) | Templates localised in all UI language catalogs, theme-aware, validated in tests |
 | **F5 Ink** | Pen, highlighter, object eraser, lasso, simplification, caches | Benchmark gate from F0 met on native and web; no pressure dependency |
 | **F6 Scenes and polish** | Viewport scenes in Pitch and PDF, mini-map, pressure (if the spike succeeds), pixel eraser, more templates | Scenes play and export; pressure optional |
 
@@ -353,26 +377,43 @@ hard-coded switch in `templates.rs`.
 
 **Template MVP (F4):**
 
+Status: implemented in `crates/thinoda-core/src/templates/boards.rs` (data:
+frames, cards, floating trees, shapes, connectors; one builder) and listed in
+the gallery category **Boards** (the existing categories hold the mind-map
+templates). All content strings are catalog keys translated at creation time
+(`templates::instantiate_localized`); every UI language catalog covers them.
+Sticky colours are pastel fills with dark text and frame tints are translucent
+mid-tones, so both read on Light and Dark backgrounds. Tests check validation,
+determinism, an empty hidden anchor, no overlaps, cards inside their frames and
+catalog coverage.
+
 | Template | Built from |
 |---|---|
-| Blank canvas | Hidden root, grid on, no content |
-| Brainstorm sticky wall | Hidden root, one frame, a few sample stickies |
-| Retrospective (Went well / To improve / Actions) | Three frames with headers, stickies |
-| Business Model Canvas | Nine frames with headers and hint text |
+| Blank canvas | Hidden root, dot grid, no content |
+| Multi-root map | Hidden root, three independent floating trees (two options and a decision) |
+| Brainstorm sticky wall | Heading text card; Ideas, Questions and Parking lot frames with stickies |
+| Retrospective (Went well / To improve / Actions) | Three tinted frames with stickies and a heading card |
+| Kanban board | To do / Doing / Done frames with cards (cards move between frames by dragging; no column semantics yet) |
+| Business Model Canvas | Nine frames in the canonical layout, each with a prompt text card |
+| Flowchart | Start/End terminators, process steps, a decision, labelled connectors (Yes/No) on a line grid |
+| SWOT board | Four tinted frames with one prompt sticky each |
+
+Known gaps after F4: the editor canvas does not yet paint canvas shapes,
+connectors or frame tints (the gallery thumbnails do; SVG/PDF scene painting is
+added separately in `thinoda-io`), and card colours are additionally written to
+the topic fill so cards look coloured in the current topic renderer.
 
 **Later, each with the capability it waits for:**
 
 | Template | Needs |
 |---|---|
-| Kanban board | Card movement between frames, column semantics |
 | Affinity diagram | Frames + stickies (F2); AI clustering optional |
 | Lean Canvas, Empathy map | Frames (F2), text-heavy responsive regions |
-| Eisenhower matrix, SWOT board | Frames (F2); Matrix structure exists for tree variants |
-| Flowchart, Swimlane | Shapes and connector routing (F3) |
+| Eisenhower matrix | Frames (F2); Matrix structure exists for tree variants |
+| Swimlane | Shapes and connector routing (F3) |
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |
 | Venn diagram | Shape opacity and intersections |
-| Multi-root comparison | Multi-root sheets (F1) |
 | Meeting board | Frames, stickies, optional timer |
 
 Existing tree templates stay unchanged.

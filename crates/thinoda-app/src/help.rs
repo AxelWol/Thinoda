@@ -19,6 +19,7 @@ const PAGES: &[Page] = &[
         title: "Quick Start",
         paragraphs: &[
             "Create a blank map with Ctrl+N, or open Home, select a template and choose Create. Cancel returns without creating a document.",
+            "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
             "Select a topic. Tab adds a child; Enter adds a sibling. Space or F2 edits its title. Escape cancels an edit or clears selection.",
             "Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.",
             "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes, notes equations and Task Planning in Map and Outliner.",

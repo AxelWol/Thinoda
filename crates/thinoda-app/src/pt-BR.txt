@@ -539,3 +539,22 @@ Save your work, then close all app windows and reopen to apply the update.|Salve
 Saving file:|Salvando arquivo:
 The file writer stopped unexpectedly|O salvamento do arquivo parou inesperadamente
 Wait until the file is saved|Aguarde até o arquivo ser salvo
+Retrospective Board|Quadro de retrospectiva
+What do we need to learn?|O que precisamos aprender?
+Retrospective: team and time period|Retrospectiva: equipe e período
+Went well|Deu certo
+Something to celebrate|Algo para comemorar
+To do|A fazer
+Doing|Em andamento
+Limit work in progress|Limite o trabalho em andamento
+Who helps you deliver?|Quem ajuda você a entregar?
+What must you do well?|O que você precisa fazer bem?
+What do you need to deliver?|Do que você precisa para entregar?
+Which problem do you solve?|Que problema você resolve?
+How do you work with customers?|Como você trabalha com os clientes?
+How do you reach customers?|Como você alcança os clientes?
+Who are you creating value for?|Para quem você cria valor?
+How do customers pay?|Como os clientes pagam?
+Parking lot|Temas para depois
+Topics for later|Assuntos para depois
+The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.|A categoria Quadros cria mapas de tela sem tópico central visível: tela em branco, vários mapas mentais independentes, murais de notas, retrospectivas, Kanban, quadro de modelo de negócio, fluxogramas e SWOT. O texto usa o idioma da interface.

@@ -992,6 +992,108 @@ const DE: &[(&str, &str)] = &[
     ("Social Media Plan", "Social-Media-Plan"),
     ("Recipe", "Rezept"),
     ("Film Production", "Filmproduktion"),
+    ("Boards", "Boards"),
+    ("Blank Canvas", "Leere Leinwand"),
+    ("Multi-root Map", "Karte mit mehreren Wurzeln"),
+    ("Brainstorm Wall", "Brainstorming-Wand"),
+    ("Retrospective Board", "Retrospektive-Board"),
+    ("Kanban Board", "Kanban-Board"),
+    ("Business Model Canvas", "Business Model Canvas"),
+    ("Flowchart", "Flussdiagramm"),
+    ("SWOT Board", "SWOT-Board"),
+    ("Option A", "Option A"),
+    ("Option B", "Option B"),
+    ("Benefits", "Vorteile"),
+    ("Costs", "Kosten"),
+    ("Risks", "Risiken"),
+    ("Decision", "Entscheidung"),
+    ("Criteria", "Kriterien"),
+    ("Next step", "Nächster Schritt"),
+    (
+        "Brainstorm: describe the challenge here",
+        "Brainstorming: Herausforderung hier beschreiben",
+    ),
+    ("Ideas", "Ideen"),
+    ("Questions", "Fragen"),
+    ("Parking lot", "Themenspeicher"),
+    ("One idea per sticky", "Eine Idee pro Notizzettel"),
+    ("Build on other ideas", "Auf anderen Ideen aufbauen"),
+    ("Go for quantity first", "Zuerst auf Menge setzen"),
+    ("What do we need to learn?", "Was müssen wir herausfinden?"),
+    ("Topics for later", "Themen für später"),
+    (
+        "Retrospective: team and time period",
+        "Retrospektive: Team und Zeitraum",
+    ),
+    ("Went well", "Lief gut"),
+    ("To improve", "Zu verbessern"),
+    ("Actions", "Maßnahmen"),
+    ("What helped us?", "Was hat uns geholfen?"),
+    ("Something to celebrate", "Etwas zum Feiern"),
+    ("What slowed us down?", "Was hat uns gebremst?"),
+    ("What surprised us?", "Was hat uns überrascht?"),
+    (
+        "Action, owner and due date",
+        "Maßnahme, Verantwortung und Termin",
+    ),
+    ("To do", "Zu erledigen"),
+    ("Doing", "In Arbeit"),
+    ("Describe the next task", "Nächste Aufgabe beschreiben"),
+    (
+        "Add an owner and due date",
+        "Verantwortung und Termin ergänzen",
+    ),
+    ("Limit work in progress", "Laufende Arbeit begrenzen"),
+    ("Finished task", "Erledigte Aufgabe"),
+    ("Key Partners", "Schlüsselpartner"),
+    ("Key Activities", "Schlüsselaktivitäten"),
+    ("Key Resources", "Schlüsselressourcen"),
+    ("Value Propositions", "Wertangebote"),
+    ("Customer Relationships", "Kundenbeziehungen"),
+    ("Channels", "Kanäle"),
+    ("Customer Segments", "Kundensegmente"),
+    ("Cost Structure", "Kostenstruktur"),
+    ("Revenue Streams", "Einnahmequellen"),
+    ("Who helps you deliver?", "Wer hilft bei der Umsetzung?"),
+    ("What must you do well?", "Was müssen Sie gut können?"),
+    (
+        "What do you need to deliver?",
+        "Was wird für die Umsetzung benötigt?",
+    ),
+    ("Which problem do you solve?", "Welches Problem lösen Sie?"),
+    (
+        "How do you work with customers?",
+        "Wie arbeiten Sie mit Kunden?",
+    ),
+    ("How do you reach customers?", "Wie erreichen Sie Kunden?"),
+    (
+        "Who are you creating value for?",
+        "Für wen schaffen Sie Wert?",
+    ),
+    (
+        "What are the main costs?",
+        "Was sind die wichtigsten Kosten?",
+    ),
+    ("How do customers pay?", "Wie zahlen Kunden?"),
+    ("Step", "Schritt"),
+    ("Decision?", "Entscheidung?"),
+    ("Action", "Aktion"),
+    ("End", "Ende"),
+    ("Rework", "Nacharbeit"),
+    ("Yes", "Ja"),
+    ("No", "Nein"),
+    ("Strengths", "Stärken"),
+    ("Weaknesses", "Schwächen"),
+    ("Opportunities", "Chancen"),
+    ("Threats", "Bedrohungen"),
+    ("Internal advantages", "Interne Vorteile"),
+    ("Internal gaps", "Interne Lücken"),
+    ("External trends to use", "Externe Trends nutzen"),
+    ("External risks", "Externe Risiken"),
+    (
+        "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
+        "Die Kategorie Boards erstellt Leinwand-Karten ohne sichtbares Hauptthema: leere Leinwand, mehrere unabhängige Mindmaps, Notizzettel-Wände, Retrospektiven, Kanban, Business Model Canvas, Flussdiagramme und SWOT. Board-Texte verwenden die Sprache der Oberfläche.",
+    ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
     ("Send Feedback…", "Feedback senden…"),
@@ -2566,6 +2668,14 @@ mod tests {
             keys.push(template.name);
             keys.push(template.category.label());
         }
+        keys.extend(thinoda_core::templates::board_strings());
+        let kanban = thinoda_core::templates::instantiate_localized("kanban-board", &|s| {
+            t_in(Lang::De, s).to_owned()
+        });
+        let sheet = kanban.active();
+        assert_eq!(sheet.topic(sheet.root).unwrap().title, "Kanban-Board");
+        assert_eq!(sheet.zones[0].name, "Zu erledigen");
+        kanban.validate().unwrap();
         keys.extend(
             thinoda_io::Format::IMPORTABLE
                 .iter()

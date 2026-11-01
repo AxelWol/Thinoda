@@ -8,6 +8,10 @@ use thinoda_app::{
 use thinoda_core::templates::{self, TEMPLATES};
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
+fn localized(id: &str) -> thinoda_core::model::Workbook {
+    templates::instantiate_localized(id, &|s| t(s).to_owned())
+}
+
 fn click_at(h: &mut Harness<'_, ThinodaApp>, position: egui::Pos2) {
     h.hover_at(position);
     h.run_steps(1);
@@ -89,7 +93,7 @@ fn double_click_creates_each_template_once_and_preserves_unsaved_maps_in_both_la
                 assert_eq!(h.state().docs.len(), count + 1, "{}", template.id);
                 assert_eq!(
                     h.state().doc().unwrap().doc.workbook(),
-                    &templates::instantiate(template.id)
+                    &localized(template.id)
                 );
                 assert!(h.state().template_choice.is_none());
                 assert_eq!(h.state().settings.recent_templates[0], template.id);
@@ -122,7 +126,7 @@ fn double_click_creates_each_template_once_and_preserves_unsaved_maps_in_both_la
             assert_eq!(h.state().docs.len(), count + 1);
             assert_eq!(
                 h.state().doc().unwrap().doc.workbook(),
-                &templates::instantiate(overview.id)
+                &localized(overview.id)
             );
 
             h.state_mut().exec(&ctx, Cmd::Home);
@@ -144,7 +148,7 @@ fn double_click_creates_each_template_once_and_preserves_unsaved_maps_in_both_la
             assert_eq!(h.state().docs.len(), count + 1);
             assert_eq!(
                 h.state().doc().unwrap().doc.workbook(),
-                &templates::instantiate(template.id)
+                &localized(template.id)
             );
             let original = h
                 .state()

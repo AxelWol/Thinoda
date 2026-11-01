@@ -1710,6 +1710,49 @@ fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
 }
 
 #[test]
+fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
+    use thinoda_core::templates::{TEMPLATES, TemplateCategory};
+    let mut h = harness(ThinodaApp::new(english(), Services::default(), &[]));
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, Cmd::Home);
+    h.state_mut().template_category = Some(TemplateCategory::Boards);
+    h.run_steps(3);
+    let boards: Vec<_> = TEMPLATES
+        .iter()
+        .filter(|t| t.category == TemplateCategory::Boards)
+        .collect();
+    assert_eq!(boards.len(), 8);
+    for template in &boards {
+        h.get_by_role_and_label(Role::Button, template.name);
+    }
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mind Map")
+            .is_none()
+    );
+    h.get_by_role_and_label(Role::Button, "Kanban Board")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Kanban Board")
+        .focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Create").click();
+    h.run_steps(3);
+    let sheet = h.state().doc().unwrap().doc.workbook().active().clone();
+    assert_eq!(sheet.root_mode, thinoda_core::SheetRootMode::Hidden);
+    assert!(sheet.central_topic_content().is_none());
+    let names: Vec<_> = sheet.zones.iter().map(|z| z.name.as_str()).collect();
+    assert_eq!(names, ["To do", "Doing", "Done"]);
+    assert!(
+        sheet
+            .floating
+            .iter()
+            .all(|id| sheet.topic(*id).unwrap().card.is_some())
+    );
+}
+
+#[test]
 fn home_templates_wrap_within_the_window() {
     for width in [480.0, 800.0, 1280.0, 2400.0] {
         let mut app = ThinodaApp::headless();
