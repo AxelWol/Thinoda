@@ -248,6 +248,26 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
   and web: frame time, memory, undo memory, save/load time, recovery journal
   size.
 
+#### F0 benchmark report (native, CPU only)
+
+`cargo run --release -p thinoda-core --example board_benchmark` (Windows x86_64,
+release, 20 samples, p50 / p95 in ms). Each board has a hidden root, 64 points
+per stroke and 50 image cards. The scene row covers layout plus scene build.
+Undo is 300 undoable object moves through `Document`, including the snapshot,
+validation and trimming. Hit-test is 1,000 queries.
+
+| Strokes | Scene | Hit-test ×1000 | Undo push ×300 | Serialize | Deserialize | JSON | Snapshot estimate | History after 300 |
+|---|---|---|---|---|---|---|---|---|
+| 1,000 | 0.22 / 0.27 | 0.52 / 0.60 | 59 / 62 | 2.9 / 3.9 | 3.9 / 4.1 | 2.1 MB | 0.21 MB | 63 MB |
+| 10,000 | 2.1 / 2.5 | 4.8 / 8.6 | 620 / 841 | 32 / 39 | 43 / 63 | 20.5 MB | 1.9 MB | 267 MB (budget-trimmed) |
+
+The estimate counts ink point data once, because it is shared by `Arc`. Each
+snapshot then costs about 0.2 KB per stroke. At 10,000 strokes the
+256 MiB byte budget, not the 300-step limit, decides how much history is kept
+(about 140 steps). A single edit costs about 2–3 ms; the sheet clone plus full
+validation dominate that cost. Delta undo for canvas edits stays the fallback if
+F5 shows this is too slow. Web and GPU frame-time measurements belong to F5.
+
 ### 5.5 Input devices
 
 - Mouse and touch drawing work everywhere. Pressure is **optional metadata**:

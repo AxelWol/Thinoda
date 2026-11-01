@@ -104,9 +104,7 @@ impl ExportText {
             } else {
                 &topic.title
             };
-            let width = style
-                .width
-                .unwrap_or(if id == sheet.root { 420.0 } else { 300.0 });
+            let width = thinoda_core::layout::title_wrap_width(sheet, id, &style);
             let key = Key::new(
                 title,
                 style.font_size,

@@ -11,6 +11,7 @@
 //! The crate has no GUI dependency so it can be reused by companion apps,
 //! command line tools and servers.
 
+pub mod board;
 pub mod clipboard;
 pub mod custom_theme;
 pub mod document;
@@ -29,12 +30,18 @@ pub mod outline;
 pub mod presentation;
 pub mod quick_styles;
 pub mod resources;
+pub mod scene;
 pub mod schedule;
 pub mod search;
 pub mod templates;
 pub mod theme;
 pub mod todo;
 
+pub use board::{
+    Band, BoardSettings, CanvasConnector, CanvasGroup, CanvasGroupId, CanvasLayer, CanvasObject,
+    CanvasObjectId, CanvasObjectKind, Card, CardKind, ConnectorRoute, Endpoint, GridKind,
+    InkStroke, InkTool, ObjectStyle, RootProjection, ShapeKind, SheetRootMode, ZOrder,
+};
 pub use document::Document;
 pub use edit::{EditError, EditResult};
 pub use geometry::{Color, Rect, Vec2};
@@ -48,6 +55,7 @@ pub use model::{
 };
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};
+pub use scene::{Scene, SceneBand, SceneHit, SceneId, SceneItem, build_scene, connector_path};
 pub use schedule::{
     ComputedTask, LocalDate, MAX_CALENDAR_EXCEPTIONS, MAX_SCHEDULED_TASKS, MAX_TASK_DEPENDENCIES,
     MAX_TASK_DURATION_DAYS, SCHEDULING_VERSION, ScheduleError, SchedulingData, Task,

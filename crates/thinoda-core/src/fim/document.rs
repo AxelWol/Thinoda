@@ -1514,6 +1514,7 @@ impl FimDocument {
             .retain(|slide| match slide.source {
                 crate::PresentationSource::Branch(root) => retained.contains(&root),
                 crate::PresentationSource::Zone(zone) => sheet.zones.iter().any(|z| z.id == zone),
+                crate::PresentationSource::Viewport => true,
             });
         self.bindings = bindings;
         Ok(())

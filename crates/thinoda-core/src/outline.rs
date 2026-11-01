@@ -53,6 +53,25 @@ pub fn to_outline(sheet: &Sheet, id: TopicId) -> OutlineNode {
     }
 }
 
+/// Single-rooted outline of a sheet. Central sheets yield `to_outline(root)` unchanged;
+/// sheets with a hidden central topic synthesise a root titled with the sheet title
+/// whose children are the semantic roots (floating trees and cards) in reading order.
+pub fn project_to_outline(sheet: &Sheet, policy: crate::board::RootProjection) -> OutlineNode {
+    match (sheet.root_mode, policy) {
+        (crate::board::SheetRootMode::Central, _) => to_outline(sheet, sheet.root),
+        (crate::board::SheetRootMode::Hidden, crate::board::RootProjection::Synthesize) => {
+            let title = sheet.title.trim();
+            OutlineNode::new(if title.is_empty() { "Untitled" } else { title }).with_children(
+                sheet
+                    .semantic_roots()
+                    .into_iter()
+                    .map(|id| to_outline(sheet, id))
+                    .collect(),
+            )
+        }
+    }
+}
+
 /// Builds a new sheet from an outline (root becomes the central topic).
 pub fn sheet_from_outline(title: &str, root: &OutlineNode) -> Sheet {
     let mut s = Sheet::new(title, root.title.clone());
@@ -175,6 +194,35 @@ pub fn build_tree(items: &[(usize, String)]) -> Vec<OutlineNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::{RootProjection, SheetRootMode};
+    use crate::geometry::Vec2;
+
+    #[test]
+    fn project_to_outline_follows_root_mode() {
+        let mut s = Sheet::new("  Plan  ", "Central");
+        let a = s.add_child(s.root, None, "A");
+        s.add_child(a, None, "A1");
+        let central = project_to_outline(&s, RootProjection::Synthesize);
+        assert_eq!(central, to_outline(&s, s.root));
+
+        s.detach_subtree(a).unwrap();
+        s.root_mode = SheetRootMode::Hidden;
+        let low = s.add_floating("Low", Vec2::new(0.0, 500.0));
+        s.add_child(low, None, "Low child");
+        s.add_floating("High", Vec2::new(0.0, -500.0));
+        let hidden = project_to_outline(&s, RootProjection::Synthesize);
+        assert_eq!(hidden.title, "Plan");
+        let titles: Vec<_> = hidden.children.iter().map(|n| n.title.as_str()).collect();
+        assert_eq!(titles, ["High", "Low"]);
+        assert_eq!(hidden.children[1].children[0].title, "Low child");
+        assert_eq!(hidden.count(), 4);
+
+        s.title = "   ".into();
+        assert_eq!(
+            project_to_outline(&s, RootProjection::Synthesize).title,
+            "Untitled"
+        );
+    }
 
     #[test]
     fn indented_roundtrip() {

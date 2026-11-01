@@ -157,6 +157,8 @@ impl ThinodaApp {
                 .iter()
                 .find(|zone| zone.id == id)
                 .map(|zone| zone.frame),
+            // A viewport slide is framed by hand; it has no source geometry.
+            PresentationSource::Viewport => None,
         }
         .ok_or_else(|| t("Not possible here").to_string())
     }
@@ -272,6 +274,7 @@ impl ThinodaApp {
                                 .iter()
                                 .find(|zone| zone.id == id)
                                 .map(|zone| zone.name.as_str()),
+                            PresentationSource::Viewport => Some(t("View")),
                         }
                         .ok_or_else(|| t("Not possible here").to_string())?
                         .to_string();

@@ -1,6 +1,11 @@
 //! [`Document`]: a workbook plus snapshot based undo/redo and dirty tracking.
 
+use crate::board::{
+    Band, BoardSettings, CanvasGroupId, CanvasObject, CanvasObjectId, CanvasObjectKind, Card,
+    ZOrder,
+};
 use crate::edit::{EditError, EditResult};
+use crate::model::TopicId;
 use crate::schedule::{Task, WorkCalendar};
 use crate::{
     geometry::{Rect, Vec2},
@@ -8,6 +13,9 @@ use crate::{
 };
 
 const MAX_HISTORY: usize = 300;
+/// Approximate memory budget of the undo stack. Large ink data is shared between
+/// snapshots (`Arc`) and therefore not counted per snapshot.
+pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 enum Snapshot {
@@ -20,6 +28,63 @@ struct Entry {
     label: String,
     snapshot: Snapshot,
     state: u64,
+    bytes: usize,
+}
+
+impl Snapshot {
+    fn approx_bytes(&self) -> usize {
+        match self {
+            Snapshot::Sheet { sheet, .. } => approx_sheet_bytes(sheet),
+            Snapshot::Book { sheets, .. } => sheets.iter().map(approx_sheet_bytes).sum(),
+        }
+    }
+}
+
+/// Rough heap estimate of a sheet snapshot for the undo budget. Shared (`Arc`) data such
+/// as ink points and resource bytes is excluded because snapshots share it.
+pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
+    use std::mem::size_of;
+    let topics: usize = sheet
+        .topics
+        .values()
+        .map(|t| {
+            size_of::<crate::model::Topic>()
+                + 48
+                + t.title.len()
+                + t.children.len() * size_of::<crate::model::TopicId>()
+                + t.labels.iter().map(|l| l.len() + 24).sum::<usize>()
+                + t.markers.iter().map(|m| m.len() + 24).sum::<usize>()
+                + t.notes.as_ref().map_or(0, |_| 256)
+                + t.hyperlink.as_ref().map_or(0, |h| h.len())
+        })
+        .sum();
+    let objects: usize = sheet
+        .canvas
+        .objects
+        .iter()
+        .map(|o| {
+            size_of::<crate::board::CanvasObject>()
+                + o.label().len()
+                + o.alt_text.len()
+                + match &o.kind {
+                    crate::board::CanvasObjectKind::Ink(s) => {
+                        // Point data is shared; count the pointers only.
+                        2 * size_of::<usize>() * (1 + s.pressure.is_some() as usize)
+                    }
+                    _ => 0,
+                }
+        })
+        .sum();
+    size_of::<Sheet>()
+        + sheet.title.len()
+        + topics
+        + objects
+        + sheet.canvas.groups.len() * size_of::<crate::board::CanvasGroup>()
+        + sheet.relationships.len() * (size_of::<crate::model::Relationship>() + 32)
+        + sheet.boundaries.len() * size_of::<crate::model::Boundary>()
+        + sheet.summaries.len() * size_of::<crate::model::Summary>()
+        + sheet.zones.len() * (size_of::<crate::model::Zone>() + 32)
+        + sheet.presentation.slides.len() * (size_of::<crate::model::PresentationSlide>() + 64)
 }
 
 /// Editable document with undo history.
@@ -31,6 +96,7 @@ pub struct Document {
     state: u64,
     next_state: u64,
     saved_state: u64,
+    history_budget: usize,
 }
 
 impl Default for Document {
@@ -48,6 +114,26 @@ impl Document {
             state: 0,
             next_state: 1,
             saved_state: 0,
+            history_budget: MAX_HISTORY_BYTES,
+        }
+    }
+
+    /// Approximate bytes held by the undo stack.
+    pub fn history_bytes(&self) -> usize {
+        self.undo.iter().map(|e| e.bytes).sum()
+    }
+
+    /// Overrides the undo byte budget (the newest entry is always kept).
+    pub fn set_history_byte_budget(&mut self, bytes: usize) {
+        self.history_budget = bytes;
+        self.trim_history();
+    }
+
+    fn trim_history(&mut self) {
+        let mut total = self.history_bytes();
+        while self.undo.len() > 1 && (total > self.history_budget || self.undo.len() > MAX_HISTORY)
+        {
+            total -= self.undo.remove(0).bytes;
         }
     }
 
@@ -97,14 +183,14 @@ impl Document {
     }
 
     fn push(&mut self, label: &str, snapshot: Snapshot) {
+        let bytes = snapshot.approx_bytes();
         self.undo.push(Entry {
             label: label.to_string(),
             snapshot,
             state: self.state,
+            bytes,
         });
-        if self.undo.len() > MAX_HISTORY {
-            self.undo.remove(0);
-        }
+        self.trim_history();
         self.redo.clear();
         self.state = self.bump();
     }
@@ -130,6 +216,13 @@ impl Document {
                     self.workbook.sheets[index].validate_resource_references()
                 };
                 if let Err(error) = resources {
+                    self.workbook.sheets[index] = before;
+                    return Err(EditError::Invalid(error));
+                }
+                // Deleting a connector target converts the end to a point in this edit.
+                let sheet = &mut self.workbook.sheets[index];
+                sheet.fix_dangling_endpoints(&before);
+                if let Err(error) = crate::board::validate_board(sheet) {
                     self.workbook.sheets[index] = before;
                     return Err(EditError::Invalid(error));
                 }
@@ -207,6 +300,16 @@ impl Document {
                     self.workbook.active_sheet = active;
                     return Err(EditError::Invalid(error));
                 }
+                for (index, sheet) in self.workbook.sheets.iter_mut().enumerate() {
+                    if let Some(old) = sheets.get(index) {
+                        sheet.fix_dangling_endpoints(old);
+                    }
+                    if let Err(error) = crate::board::validate_board(sheet) {
+                        self.workbook.sheets = sheets;
+                        self.workbook.active_sheet = active;
+                        return Err(EditError::Invalid(error));
+                    }
+                }
                 if self.workbook.sheets != sheets {
                     self.push(label, Snapshot::Book { sheets, active });
                 }
@@ -266,6 +369,7 @@ impl Document {
         let snap = self.swap(e.snapshot);
         self.redo.push(Entry {
             label: e.label,
+            bytes: snap.approx_bytes(),
             snapshot: snap,
             state: self.state,
         });
@@ -280,6 +384,7 @@ impl Document {
         let snap = self.swap(e.snapshot);
         self.undo.push(Entry {
             label: e.label,
+            bytes: snap.approx_bytes(),
             snapshot: snap,
             state: self.state,
         });
@@ -289,7 +394,9 @@ impl Document {
 
     /// Replaces the whole workbook (e.g. after reload) and clears history.
     pub fn replace(&mut self, workbook: Workbook) {
+        let budget = self.history_budget;
         *self = Document::new(workbook);
+        self.history_budget = budget;
     }
 
     pub fn add_sheet(&mut self, sheet: Sheet) -> EditResult<usize> {
@@ -500,6 +607,168 @@ impl Document {
                 .map_err(EditError::Invalid)
         })
     }
+
+    /// Hides the central topic, first moving any content to a floating topic (one undo
+    /// step). Returns the new floating topic, if one was created.
+    pub fn hide_central_topic(&mut self) -> EditResult<Option<TopicId>> {
+        self.edit_sheet("Hide central topic", |sheet| {
+            sheet.hide_central_topic().map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn show_central_topic(&mut self) -> EditResult<()> {
+        self.edit_sheet("Show central topic", |sheet| {
+            sheet.show_central_topic();
+            Ok(())
+        })
+    }
+
+    pub fn set_board_settings(&mut self, settings: BoardSettings) -> EditResult<()> {
+        self.edit_sheet("Board settings", |sheet| {
+            sheet
+                .set_board_settings(settings)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn add_card(&mut self, title: &str, center: Vec2, card: Card) -> EditResult<TopicId> {
+        self.edit_sheet("Add card", |sheet| {
+            sheet
+                .add_card(title, center, card)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_topic_card(&mut self, id: TopicId, card: Option<Card>) -> EditResult<()> {
+        let label = if card.is_some() {
+            "Edit card"
+        } else {
+            "Convert card to topic"
+        };
+        self.edit_sheet(label, |sheet| {
+            sheet.set_topic_card(id, card).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn add_canvas_object(&mut self, object: CanvasObject) -> EditResult<CanvasObjectId> {
+        let label = match object.kind {
+            CanvasObjectKind::Shape { .. } => "Add shape",
+            CanvasObjectKind::Ink(_) => "Draw",
+            CanvasObjectKind::Connector(_) => "Add connector",
+        };
+        self.edit_sheet(label, |sheet| {
+            sheet.add_canvas_object(object).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn remove_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> EditResult<()> {
+        self.edit_sheet("Delete objects", |sheet| {
+            sheet.remove_canvas_objects(ids).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn move_canvas_objects(&mut self, ids: &[CanvasObjectId], delta: Vec2) -> EditResult<()> {
+        self.edit_sheet("Move objects", |sheet| {
+            sheet
+                .move_canvas_objects(ids, delta)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> EditResult<()> {
+        self.edit_sheet("Resize object", |sheet| {
+            sheet
+                .resize_canvas_object(id, rect)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn rotate_canvas_object(&mut self, id: CanvasObjectId, degrees: f32) -> EditResult<()> {
+        self.edit_sheet("Rotate object", |sheet| {
+            sheet
+                .rotate_canvas_object(id, degrees)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn update_canvas_object(
+        &mut self,
+        label: &str,
+        id: CanvasObjectId,
+        f: impl FnOnce(&mut CanvasObject),
+    ) -> EditResult<()> {
+        self.edit_sheet(label, |sheet| {
+            sheet
+                .update_canvas_object(id, f)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn reorder_canvas_objects(
+        &mut self,
+        ids: &[CanvasObjectId],
+        order: ZOrder,
+    ) -> EditResult<()> {
+        let label = match order {
+            ZOrder::Forward => "Bring forward",
+            ZOrder::Backward => "Send backward",
+            ZOrder::Front => "Bring to front",
+            ZOrder::Back => "Send to back",
+        };
+        self.edit_sheet(label, |sheet| {
+            sheet
+                .reorder_canvas_objects(ids, order)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_band(&mut self, ids: &[CanvasObjectId], band: Band) -> EditResult<()> {
+        let label = match band {
+            Band::Below => "Move behind map",
+            Band::Above => "Move in front of map",
+        };
+        self.edit_sheet(label, |sheet| {
+            sheet.set_canvas_band(ids, band).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn group_canvas_objects(&mut self, ids: &[CanvasObjectId]) -> EditResult<CanvasGroupId> {
+        self.edit_sheet("Group", |sheet| {
+            sheet.group_canvas_objects(ids).map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn ungroup_canvas_objects(&mut self, group: CanvasGroupId) -> EditResult<()> {
+        self.edit_sheet("Ungroup", |sheet| {
+            sheet
+                .ungroup_canvas_objects(group)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_objects_locked(
+        &mut self,
+        ids: &[CanvasObjectId],
+        locked: bool,
+    ) -> EditResult<()> {
+        self.edit_sheet(if locked { "Lock" } else { "Unlock" }, |sheet| {
+            sheet
+                .set_canvas_objects_locked(ids, locked)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_canvas_group_locked(
+        &mut self,
+        group: CanvasGroupId,
+        locked: bool,
+    ) -> EditResult<()> {
+        self.edit_sheet(if locked { "Lock" } else { "Unlock" }, |sheet| {
+            sheet
+                .set_canvas_group_locked(group, locked)
+                .map_err(EditError::Invalid)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -635,6 +904,70 @@ mod tests {
             n += 1;
         }
         assert_eq!(n, MAX_HISTORY);
+    }
+
+    #[test]
+    fn history_respects_byte_budget() {
+        let mut d = Document::default();
+        let root = d.sheet().root;
+        d.edit_sheet("Big", |s| {
+            for i in 0..200 {
+                s.insert_child(root, &format!("topic {i}"))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        for i in 0..10 {
+            d.edit_sheet("t", |s| s.set_title(root, &i.to_string()))
+                .unwrap();
+        }
+        let per_entry = approx_sheet_bytes(d.sheet());
+        assert!(d.history_bytes() >= 10 * per_entry);
+        d.set_history_byte_budget(per_entry * 3);
+        assert!(d.history_bytes() <= per_entry * 3 + per_entry / 10);
+        let mut n = 0;
+        while d.undo() {
+            n += 1;
+        }
+        assert!((2..=3).contains(&n), "{n}");
+        // A single entry larger than the budget is still kept.
+        d.set_history_byte_budget(1);
+        d.redo();
+        d.edit_sheet("t", |s| s.set_title(root, "last")).unwrap();
+        assert!(d.undo());
+        assert!(!d.undo());
+    }
+
+    #[test]
+    fn shared_ink_is_not_counted_per_snapshot() {
+        use crate::board::{InkStroke, InkTool};
+        let mut d = Document::default();
+        let points: Vec<Vec2> = (0..20_000).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        for _ in 0..10 {
+            d.add_canvas_object(CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                crate::geometry::Color::rgb(0, 0, 0),
+                2.0,
+                points.clone(),
+            )))
+            .unwrap();
+        }
+        let ink_bytes = 10 * 20_000 * std::mem::size_of::<Vec2>();
+        let before = d.history_bytes();
+        let first = d.sheet().canvas.objects[0].id;
+        for _ in 0..50 {
+            d.move_canvas_objects(&[first], Vec2::new(1.0, 0.0))
+                .unwrap();
+            d.rotate_canvas_object(d.sheet().canvas.objects[1].id, 1.0)
+                .unwrap();
+        }
+        // 100 snapshots of a sheet with 1.6 MB of ink cost far less than one ink copy each.
+        assert!(
+            d.history_bytes() - before < ink_bytes,
+            "{}",
+            d.history_bytes()
+        );
+        assert!(approx_sheet_bytes(d.sheet()) < 64 * 1024);
     }
 
     #[test]

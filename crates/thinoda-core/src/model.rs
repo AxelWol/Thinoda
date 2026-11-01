@@ -30,6 +30,7 @@ macro_rules! id_type {
         }
     };
 }
+pub(crate) use id_type;
 
 id_type!(TopicId);
 id_type!(RelationshipId);
@@ -375,6 +376,9 @@ pub struct Topic {
     /// Structural numbering applied to this topic's children as one sibling group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_numbering: Option<crate::numbering::Numbering>,
+    /// Card presentation; only valid on floating roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<crate::board::Card>,
 }
 
 impl Topic {
@@ -400,6 +404,7 @@ impl Topic {
             image_size: None,
             image_below: false,
             child_numbering: None,
+            card: None,
         }
     }
 
@@ -471,6 +476,12 @@ pub struct Zone {
     pub frame: Rect,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<TopicId>,
+    /// Frame fill colour; `None` uses the theme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+    /// Clip content to the frame when rendering.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clip: bool,
 }
 
 /// Origin and size in sheet coordinates for a presentation slide.
@@ -481,6 +492,8 @@ pub type SlideFrame = Rect;
 pub enum PresentationSource {
     Branch(TopicId),
     Zone(ZoneId),
+    /// The slide's own frame is the viewport; shows everything inside it.
+    Viewport,
 }
 
 /// Whether a slide shows the legacy spatial context or only its source's content.
@@ -625,6 +638,18 @@ pub struct Sheet {
         skip_serializing_if = "crate::resources::ResourceStore::is_empty"
     )]
     pub resources: crate::resources::ResourceStore,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::board::SheetRootMode::is_central"
+    )]
+    pub root_mode: crate::board::SheetRootMode,
+    #[serde(default, skip_serializing_if = "crate::board::CanvasLayer::is_empty")]
+    pub canvas: crate::board::CanvasLayer,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::board::BoardSettings::is_default"
+    )]
+    pub board: crate::board::BoardSettings,
     #[serde(default)]
     next_id: u64,
 }
@@ -650,6 +675,9 @@ impl Sheet {
             theme: ThemeSettings::default(),
             scheduling: SchedulingData::default(),
             resources: Default::default(),
+            root_mode: Default::default(),
+            canvas: Default::default(),
+            board: Default::default(),
             next_id: 2,
         }
     }
@@ -663,6 +691,9 @@ impl Sheet {
             .chain(self.boundaries.iter().map(|b| b.id.0))
             .chain(self.summaries.iter().map(|s| s.id.0))
             .chain(self.zones.iter().map(|z| z.id.0))
+            .chain(self.canvas.objects.iter().map(|o| o.id.0))
+            .chain(self.canvas.groups.iter().map(|g| g.id.0))
+            .chain(self.presentation.slides.iter().map(|s| s.id.0))
             .max()
             .unwrap_or(0);
         if self.next_id <= max {
@@ -670,7 +701,7 @@ impl Sheet {
         }
     }
 
-    fn alloc(&mut self) -> u64 {
+    pub(crate) fn alloc(&mut self) -> u64 {
         self.bump_next_id();
         let id = self.next_id;
         self.next_id += 1;
@@ -939,6 +970,7 @@ impl Sheet {
         self.presentation.slides.retain(|slide| match slide.source {
             PresentationSource::Branch(root) => !removed.contains(&root),
             PresentationSource::Zone(zone) => self.zones.iter().any(|item| item.id == zone),
+            PresentationSource::Viewport => true,
         });
         // summary topics owned by removed parents are removed as well
         let orphan_summaries: Vec<TopicId> = self
@@ -988,6 +1020,7 @@ impl Sheet {
             if t.id == root {
                 t.parent = Some(parent);
                 t.position = None;
+                t.card = None;
             }
             self.topics.insert(t.id, t);
         }
@@ -1250,6 +1283,7 @@ impl Sheet {
         self.scheduling
             .validate(self)
             .map_err(|error| error.to_string())?;
+        crate::board::validate_board(self)?;
         Ok(())
     }
 }
@@ -1285,6 +1319,7 @@ impl Presentation {
                         slide.id
                     ));
                 }
+                PresentationSource::Viewport => {}
             }
         }
         Ok(())
@@ -1324,7 +1359,7 @@ fn validate_frame(frame: Rect, zone: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn valid_position(position: Vec2) -> bool {
+pub(crate) fn valid_position(position: Vec2) -> bool {
     position.x.is_finite()
         && position.y.is_finite()
         && position.x.abs() <= MAX_PRESENTATION_COORDINATE
@@ -1385,6 +1420,8 @@ impl Sheet {
             name: name.trim().to_string(),
             frame,
             roots,
+            color: None,
+            clip: false,
         });
         Ok(id)
     }
@@ -1922,6 +1959,7 @@ impl Workbook {
             for boundary in &mut sheet.boundaries {
                 boundary.title = None;
             }
+            crate::board::mask_canvas(sheet);
         }
         copy
     }

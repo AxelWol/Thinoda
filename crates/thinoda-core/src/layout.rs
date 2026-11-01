@@ -32,6 +32,44 @@ pub trait TextMeasure {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ApproxMeasure;
 
+fn topic_padding(t: &crate::model::Topic, style: &ResolvedStyle, level: Level) -> (f32, f32) {
+    let (mut px, mut py): (f32, f32) = match level {
+        Level::Central => (24.0, 16.0),
+        Level::Main => (16.0, 10.0),
+        Level::Floating | Level::Summary => (14.0, 9.0),
+        Level::Sub => (8.0, 5.0),
+    };
+    if let Some(padding) = t.style.padding {
+        px = padding.x;
+        py = padding.y;
+    }
+    let stroke_padding = style.border_width.max(style.line_width) / 2.0 + 4.0;
+    (px.max(stroke_padding), py.max(stroke_padding))
+}
+
+fn title_max_width(t: &crate::model::Topic, style: &ResolvedStyle, level: Level, px: f32) -> f32 {
+    match t.card.as_ref().filter(|_| t.parent.is_none()) {
+        // Cards have a fixed size; the title wraps inside it.
+        Some(card) => (card.size.x - 2.0 * px).max(style.font_size),
+        None => style.width.unwrap_or(if level == Level::Central {
+            420.0
+        } else {
+            300.0
+        }),
+    }
+}
+
+/// Width at which layout wraps the title of `id` (`style` is its resolved style).
+/// Text backends that pre-measure titles must use the same width.
+pub fn title_wrap_width(sheet: &Sheet, id: TopicId, style: &ResolvedStyle) -> f32 {
+    let Some(t) = sheet.topic(id) else {
+        return 300.0;
+    };
+    let level = level_of(sheet, id);
+    let (px, _) = topic_padding(t, style, level);
+    title_max_width(t, style, level, px)
+}
+
 impl ApproxMeasure {
     pub const LINE_HEIGHT: f32 = 1.25;
 
@@ -379,9 +417,12 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
     let mut items: Vec<(TopicId, Vec2)> = Vec::new();
     let mut connectors = Vec::new();
 
-    let root_block = e.node(sheet.root, sheet.structure, Dir::Right);
-    items.extend(root_block.items);
-    connectors.extend(root_block.connectors);
+    // A hidden central topic is only an anchor for floating roots: it is never laid out.
+    if !sheet.is_anchor(sheet.root) {
+        let root_block = e.node(sheet.root, sheet.structure, Dir::Right);
+        items.extend(root_block.items);
+        connectors.extend(root_block.connectors);
+    }
 
     for f in &sheet.floating {
         let st = sheet
@@ -567,6 +608,11 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
             add(Rect::from_center_size(p, Vec2::new(1.0, 1.0)));
         }
     }
+    for object in &sheet.canvas.objects {
+        if let Some(r) = crate::scene::object_bounds(sheet, &layout, object) {
+            add(r);
+        }
+    }
     layout.bounds = bounds.unwrap_or_default();
     layout
 }
@@ -646,24 +692,9 @@ impl Engine<'_> {
     ) -> (Vec2, Content, Vec2) {
         let t = self.sheet.topic(id).expect("topic exists");
         let fs = style.font_size;
-        let (mut px, mut py): (f32, f32) = match level {
-            Level::Central => (24.0, 16.0),
-            Level::Main => (16.0, 10.0),
-            Level::Floating | Level::Summary => (14.0, 9.0),
-            Level::Sub => (8.0, 5.0),
-        };
-        if let Some(padding) = t.style.padding {
-            px = padding.x;
-            py = padding.y;
-        }
-        let stroke_padding = style.border_width.max(style.line_width) / 2.0 + 4.0;
-        px = px.max(stroke_padding);
-        py = py.max(stroke_padding);
-        let max_w = style.width.unwrap_or(if level == Level::Central {
-            420.0
-        } else {
-            300.0
-        });
+        let (px, py) = topic_padding(t, style, level);
+        let card = t.card.as_ref().filter(|_| t.parent.is_none());
+        let max_w = title_max_width(t, style, level, px);
         let title = if t.title.trim().is_empty() {
             " "
         } else {
@@ -676,7 +707,7 @@ impl Engine<'_> {
             max_w,
             style.font_family.as_deref(),
         );
-        if let Some(w) = style.width {
+        if let Some(w) = style.width.filter(|_| card.is_none()) {
             ts.x = ts.x.max(w);
         }
         let ms = (fs * 1.1).round();
@@ -750,6 +781,10 @@ impl Engine<'_> {
         h *= shape_scale;
         if style.shape == TopicShape::Capsule {
             w = w.max(inner_w + h);
+        }
+        if let Some(card) = card {
+            w = card.size.x;
+            h = card.size.y;
         }
         let inner_x = (w - inner_w) / 2.0;
 

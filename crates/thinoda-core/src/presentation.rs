@@ -43,6 +43,8 @@ pub fn resolve_presentation_slide(
             .ok_or_else(|| format!("presentation source zone {id} is missing"))?
             .roots
             .clone(),
+        // Everything inside the frame; the frame crops the content.
+        PresentationSource::Viewport => sheet.all_content_roots(),
     };
     let hidden: HashSet<_> = slide
         .hidden_topics

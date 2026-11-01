@@ -207,12 +207,30 @@ impl Sheet {
                 .find(|s| !ids.contains(s))
                 .unwrap_or(p)
         });
+        // Connector ends on deleted topics become free points in the same edit.
+        let before = self
+            .canvas
+            .objects
+            .iter()
+            .any(|o| match &o.kind {
+                crate::board::CanvasObjectKind::Connector(c) => {
+                    matches!(c.from, crate::board::Endpoint::Topic(_))
+                        || matches!(c.to, crate::board::Endpoint::Topic(_))
+                }
+                _ => false,
+            })
+            .then(|| self.clone());
         for id in ids {
             if self.contains(id) {
                 self.detach_subtree(id);
             }
         }
-        Ok(next_sel.filter(|s| self.contains(*s)).or(Some(self.root)))
+        if let Some(before) = before {
+            self.fix_dangling_endpoints(&before);
+        }
+        Ok(next_sel
+            .filter(|s| self.contains(*s))
+            .or(self.primary_content_root()))
     }
 
     /// Removes a topic but keeps its children (moved to the topic's parent).

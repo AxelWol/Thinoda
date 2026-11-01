@@ -226,6 +226,7 @@ impl PitchEditor {
                 .iter()
                 .find(|zone| zone.id == id)
                 .map(|zone| zone.name.clone()),
+            PresentationSource::Viewport => Some(t("View").to_string()),
         }
         .unwrap_or_else(|| t("Slide source is unavailable.").to_string());
         ui.horizontal_wrapped(|ui| {
