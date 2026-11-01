@@ -127,18 +127,58 @@ impl Default for WindowState {
     }
 }
 
-/// Local cloud-folder preference; no credentials are stored.
+/// One explicitly selected remote provider. Selecting it never connects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudApiProvider {
+    #[default]
+    None,
+    WebDav,
+    OneDrive,
+    Dropbox,
+    Box,
+    GoogleDrive,
+}
+
+/// Local folder preferences and public remote configuration only.
+/// Account names, passwords, tokens and OAuth transactions belong in the
+/// credential store, never in this structure.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudSettings {
     pub preferred_folder: Option<PathBuf>,
     pub show_cloud_badges: bool,
+    /// Optional backup directory outside detected synchronization roots.
+    pub backup_folder: Option<PathBuf>,
+    pub provider: CloudApiProvider,
+    /// Public native/SPA application registration ID; never a client secret.
+    pub client_id: String,
+    /// HTTPS deployment root, without userinfo, query or fragment.
+    pub webdav_server: String,
+    /// Collection prefix relative to the deployment root. The username is
+    /// appended in memory, not persisted (empty for a generic DAV collection).
+    pub webdav_collection: String,
+    /// Explicit deployment-specific SPA redirect URI (same origin).
+    pub redirect_uri: String,
+    /// Graph adapter requires the drive and app-folder item IDs.
+    pub onedrive_drive_id: String,
+    /// Starting folder ID; empty uses the provider's default except Graph,
+    /// which requires an explicit app-folder item ID.
+    pub root_folder_id: String,
 }
 impl Default for CloudSettings {
     fn default() -> Self {
         Self {
             preferred_folder: None,
             show_cloud_badges: true,
+            backup_folder: None,
+            provider: CloudApiProvider::None,
+            client_id: String::new(),
+            webdav_server: String::new(),
+            webdav_collection: "remote.php/dav/files".into(),
+            redirect_uri: String::new(),
+            onedrive_drive_id: String::new(),
+            root_folder_id: String::new(),
         }
     }
 }

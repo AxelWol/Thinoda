@@ -13,6 +13,7 @@ const MAX_HISTORY: usize = 300;
 enum Snapshot {
     Sheet { index: usize, sheet: Box<Sheet> },
     Book { sheets: Vec<Sheet>, active: usize },
+    Workbook(Box<Workbook>),
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +223,9 @@ impl Document {
 
     fn swap(&mut self, snapshot: Snapshot) -> Snapshot {
         match snapshot {
+            Snapshot::Workbook(workbook) => {
+                Snapshot::Workbook(Box::new(std::mem::replace(&mut self.workbook, *workbook)))
+            }
             Snapshot::Sheet { index, sheet } => {
                 let index = index.min(self.workbook.sheets.len() - 1);
                 let cur = std::mem::replace(&mut self.workbook.sheets[index], *sheet);
@@ -290,6 +294,17 @@ impl Document {
     /// Replaces the whole workbook (e.g. after reload) and clears history.
     pub fn replace(&mut self, workbook: Workbook) {
         *self = Document::new(workbook);
+    }
+
+    /// Reloads complete content as one undoable action, including workbook metadata.
+    pub fn reload(&mut self, workbook: Workbook) -> EditResult<()> {
+        workbook.validate().map_err(EditError::Invalid)?;
+        if self.workbook != workbook {
+            let previous = std::mem::replace(&mut self.workbook, workbook);
+            self.push("Reload file", Snapshot::Workbook(Box::new(previous)));
+        }
+        self.mark_saved();
+        Ok(())
     }
 
     pub fn add_sheet(&mut self, sheet: Sheet) -> EditResult<usize> {
@@ -505,6 +520,37 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reload_is_one_undo_step_including_metadata_and_restores_dirty_edits() {
+        let mut doc = Document::default();
+        let root = doc.sheet().root;
+        doc.edit_sheet("Local edit", |sheet| sheet.set_title(root, "Unsaved"))
+            .unwrap();
+        let local = doc.workbook().clone();
+        let mut external = Workbook::default();
+        external.metadata.creator = "External".into();
+        doc.reload(external.clone()).unwrap();
+        assert_eq!(doc.workbook(), &external);
+        assert!(!doc.is_dirty());
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &local);
+        assert!(doc.is_dirty());
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &external);
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn invalid_reload_preserves_content_and_history() {
+        let mut doc = Document::default();
+        let local = doc.workbook().clone();
+        let mut invalid = Workbook::default();
+        invalid.sheets.clear();
+        assert!(doc.reload(invalid).is_err());
+        assert_eq!(doc.workbook(), &local);
+        assert!(!doc.can_undo());
+    }
 
     #[test]
     fn merge_validates_every_sheet_before_mutation_and_undoes_once() {

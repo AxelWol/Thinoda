@@ -414,6 +414,7 @@ fn settings_roundtrip_every_field() {
         cloud: CloudSettings {
             preferred_folder: Some(dir.path().join("cloud")),
             show_cloud_badges: false,
+            ..Default::default()
         },
         ..Settings::default()
     };
