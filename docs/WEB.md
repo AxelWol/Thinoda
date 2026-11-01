@@ -7,7 +7,8 @@ app are compiled to WebAssembly (`wasm32-unknown-unknown`): model, layout,
 canvas, import/export, AI client, dialogs, translations and themes. The site is
 plain files (HTML, JavaScript glue, `.wasm`), so any static host can serve it.
 There is no server-side code; your maps never leave the browser unless you
-download them or use an AI server.
+download them, use an explicitly configured AI server, or explicitly connect
+and upload to a cloud storage provider.
 
 The shared Notes inspector includes the bounded offline equation-preview editor
 (fractions, groups, superscripts/subscripts), without browser MathML, downloaded
@@ -64,10 +65,10 @@ features work differently:
 
 | Desktop feature | In the browser |
 |---|---|
-| Files on disk | Documents are kept in the browser's local storage under `/Documents` (a small virtual file system). **Open Recent** and autosave work with these copies. |
+| Files on disk | Documents under `/Documents` use OPFS with an IndexedDB fallback. **Open Recent** and autosave use these site-private copies; settings and recovery retain the synchronous virtual file system. |
 | Open / Import / Merge dialogs | The browser's file picker. The chosen file is copied into `/Documents` (`name (2).ext` if a different file has the same name). |
 | Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
-| Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. A plain Save of an already named document only updates the browser copy; use Save As to download again. |
+| Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. Plain Save updates the browser copy and, for a file explicitly picked with Chromium File System Access in this tab, saves back to the original file. Firefox/Safari retain downloads; use Save As to download again. |
 | Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
@@ -77,7 +78,7 @@ features work differently:
 | AI server | Requests use `fetch`. The server must allow cross-origin requests (CORS) from the site's origin; LM Studio has a CORS option in its server settings. An `https` site can only call `https` servers or `http://localhost`. |
 | Open link | Opens a new browser tab. |
 | Fonts | System font enumeration is unavailable; the bundled Ubuntu and Hack fonts are used for rendering and export. |
-| Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. Planned browser storage and cloud options are in [CLOUD-STORAGE.md](CLOUD-STORAGE.md). |
+| Show in folder, settings folder, cloud folder picker | Native folder actions are hidden. Settings > Cloud offers explicit API connections and browser storage usage/persistence controls; see [CLOUD-STORAGE.md](CLOUD-STORAGE.md). |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
@@ -88,9 +89,9 @@ The platform provides `browser_storage::BrowserStorageProvider::new(backup)`
 for asynchronous `/Documents` storage. **It is not a synchronous VFS
 replacement.** The web binary awaits migration before app startup, and
 `thinoda-app/src/files.rs` stores opened, imported and dropped documents in it.
-The document open/save path in `doc.rs` (`document_provider`, `expected_revision`
-and synchronous save/import helpers) must also be switched to this provider before the
-feature-parity table above fully describes durable documents. Settings, crash
+Interactive document open/save and startup in `doc.rs` use this provider and
+retain the exact read revision for conditional writes. Synchronous document
+helpers reject durable paths instead of reading a stale VFS copy. Settings, crash
 recovery, exports, images, attachments, merge/schema inputs and other scratch
 files intentionally stay on the synchronous VFS.
 
@@ -162,14 +163,13 @@ Wiring status:
    `/ImageUploads/dropped`, and image/attachment uploads stay where they were.
    Delivering a durable document reads the provider and downloads it; failures
    are queued for `files::take_delivery_errors()`.
-3. Coordinator (`doc.rs`/`app.rs`): use `BrowserStorageProvider::new(backup)`
+3. Done in `doc.rs`/`app.rs`: use `BrowserStorageProvider::new(backup)`
    for `/Documents` (`backup` writes the previous record to `<id>.bak` in the same
    transaction), and `browser_storage::document_revision(id, cancel)` for
-   `expected_revision`. Do not mix VFS fingerprints with SHA-256 revisions. Show
-   `files::take_browser_migration()` conflicts and `take_delivery_errors()` in
-   the normal translated error flow. After a successful save of a path with
-   `files::has_picked_file`, call `files::save_back_picked`; call
-   `files::forget_picked` when the document closes.
+   `expected_revision`; VFS fingerprints are not mixed with SHA-256 revisions.
+   Migration conflicts and delivery failures enter the translated error flow.
+   Successful saves call `files::save_back_picked` for retained picked handles;
+   save-back failure leaves the document dirty. Closing releases the handle.
 
 The provider lists immediate children without reading blobs, reports local
 availability, supports content revisions, and has no watch/version-history/share
@@ -178,13 +178,40 @@ the atomic commit; a successful commit is never reported as cancelled afterward.
 Dropping a Rust future is not an undo of an in-flight write: explicitly cancel
 its token and await its result when the outcome matters.
 
+### Known-document availability (recent files)
+
+Synchronous UI checks such as `Settings::existing_recent` cannot await the
+provider. `browser_storage::known_document(path) -> Option<bool>` answers from an
+in-memory, **metadata-only** index of durable `/Documents` IDs: `None` outside the
+namespace (callers keep using the VFS), `Some(true)` for a known record, and
+`Some(false)` before initialization or for unknown IDs. The index stores no bytes
+and never creates VFS content. It is filled from the IndexedDB metadata keys
+returned by initialization (after migration, before the app starts) and refreshed
+by successful writes (including `.bak`), reads, revision probes, listings, `Missing`
+conflicts and `notfound` reads. Commits are also announced to other tabs through a
+`BroadcastChannel`. `files::document_exists(path)` wraps this for app code.
+`Settings::existing_recent` uses the index for durable paths, so durable documents
+stay in Open Recent.
+
+Recovered documents retain known durable original paths and asynchronously
+refresh their revision from IndexedDB metadata, without a legacy VFS
+fingerprint. A delayed result cannot rebind a saved or retargeted document;
+missing/failed identity keeps recovery edits dirty and requires conflict
+resolution rather than permitting an unchecked overwrite.
+
+Limits: a stale entry, such as data cleared by another context or eviction, only
+fails safely when opened (the provider read returns a real error). There is no
+delete event. Without `BroadcastChannel`, a document another tab created stays
+unknown here until a list/read/revision call reconciles it. Native builds return
+`None`.
+
 ### Persistence consent and quota
 
 `storage_estimate().await` returns optional origin-wide usage/quota and persisted
 status. It does not prompt. `request_persistence().await` calls
 `navigator.storage.persist()` **only when invoked explicitly**, returns `false`
 when denied, and skips the request if storage is already persistent. Initialize
-never calls it. A settings action can request protection and show estimates;
+never calls it. Settings > Cloud can request protection and show estimates;
 do not claim that permission, a successful save, or an estimate means an
 off-device backup exists. Unsupported APIs return `StorageError::Unsupported`.
 
@@ -220,6 +247,7 @@ in this bounded slice.
 Native unit tests in `browser_storage.rs` cover strict binary migration decoding,
 malformed entries, namespace isolation, missing/equal/conflicting content and
 repeatable conflict-copy IDs. `files.rs` tests cover upload name deduplication and the migration report hook.
+Known-index tests cover namespace mapping, readiness, records and child reconciliation.
 Run:
 
 ```sh
@@ -233,7 +261,7 @@ OPFS/IndexedDB initialization, binary read/write/revision checks, two competing
 `Missing` writes (one winner), stale revision rejection, cancellation, verified
 migration retaining legacy data, stable preserved conflict copies, malformed
 migration failure, shallow listing, and a 6 MiB document. These are platform API
-checks, **not** an end-to-end app open/save acceptance or independent QA approval.
+checks, **not** independent QA approval or cross-browser acceptance.
 Forced OPFS initialization failure also exercised real IndexedDB byte fallback,
 mixed-backend reads, successful/stale conditional saves, concurrent `Missing`
 writes, path/directory collision rejection and fallback migration. Initialization
@@ -251,10 +279,20 @@ without a persistence prompt, and File System Access detection. GC checks covere
 - 20 reads during saves without failures, and 10 parallel `Any` writes;
 - a held reader lock delaying deletion until release;
 - an IndexedDB fallback with 31 saves keeping 3 content rows;
-- metadata-only listing, legacy migration conflicts and malformed-entry failure. A Trunk-built app
-open/save run was not performed.
+- metadata-only listing, legacy migration conflicts and malformed-entry failure.
+
+A Trunk-built app initialized in isolated Chromium without runtime errors and
+saved a synthetic native document through Ctrl+N / Ctrl+S. Its IndexedDB metadata
+record referenced a real OPFS blob and SHA-256 revision; the document survived
+reload. Settings > Cloud showed actual origin usage/quota and a non-persistent
+status after the explicit usage action, without a persistence prompt. After the
+known-document index was added, the same built app listed the saved document under
+File > Open Recent after reload and opened it from there. Before the fix, the legacy
+VFS filter hid it. A Chromium module check confirmed the initialization snapshot
+(including migrated documents, excluding settings), the `backup` commit flag,
+cross-instance commit broadcasts and `notfound` reads.
 Firefox/Safari, real picker permission prompts, external-application races,
-browser eviction/power loss, packaging the JS snippet with Trunk, and integrated
+browser eviction/power loss, deployed callbacks/CORS and broader integrated
 settings/recovery/app flows still require browser acceptance.
 
 ## Reviewing AI results
@@ -613,7 +651,7 @@ distribution, native file associations or native multi-window support.
 After a successful complete online load, the service worker precaches the built
 app shell, including the matching JavaScript, WASM and imported snippets. It
 caches **only build assets**, not maps, AI responses or other sites. Documents
-and recovery remain in the existing browser virtual file system. Offline
+remain in OPFS/IndexedDB; recovery stays in the synchronous VFS. Offline
 editing works while that shell and site storage remain available; online AI,
 external links and remote services still need a connection.
 
@@ -670,14 +708,17 @@ Actual installation, icon appearance and platform assistive technology still nee
 Windows/Linux/macOS/iOS/iPadOS acceptance; shared assets do not prove OS acceptance.
 
 ## Storage limits and privacy
-Local storage is per site origin and typically limited to about 5 MB. Large
-maps or many embedded images can exceed it; Thinoda then reports a save error,
-and you should download the map (Save As or Export) to keep it. Clearing site
+OPFS/IndexedDB document storage uses the browser's origin-wide quota rather than
+localStorage's roughly 5 MB limit. Settings, recovery and scratch VFS data still
+use localStorage and can exceed its separate limit, including recovery snapshots
+of large maps. Storage errors are reported; download maps and keep external
+backups rather than assuming that a browser save guarantees recovery. Clearing site
 data in the browser deletes stored documents, settings and recovery data.
 GitHub Pages serves all project sites of an account from the same
-`<owner>.github.io` origin, so they share one storage quota. Thinoda stores its
-documents, settings and recovery data under `thinoda.`-prefixed keys to avoid
-collisions with other sites on that origin.
+`<owner>.github.io` origin, so they share storage quotas. Thinoda uses its named
+OPFS directory, `thinoda.documents.v1` IndexedDB database and `thinoda.`-prefixed
+VFS keys to avoid accidental collisions; these names are not an isolation
+boundary between applications served on the same origin.
 
 ## Troubleshooting: "Thinoda could not start"
 Thinoda prefers WebGPU and falls back to WebGL 2. Browsers usually still offer

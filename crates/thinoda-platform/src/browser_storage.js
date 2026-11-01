@@ -16,6 +16,25 @@ const OPFS_DIR = "thinoda-documents-v1";
 const PREFIX = "thinoda.vfs:";
 let ready;
 const handles = new Map();
+// Other tabs learn about committed document IDs (metadata only, no bytes).
+const channel = globalThis.BroadcastChannel ? new BroadcastChannel("thinoda.documents") : null;
+
+function announce(changes) {
+    try { channel?.postMessage(changes); } catch { /* Other tabs refresh on reads. */ }
+}
+
+// `callback(id, present)` for commits made by other tabs of this origin.
+export function watchDocuments(callback) {
+    if (!channel) return;
+    channel.onmessage = event => {
+        if (!Array.isArray(event.data)) return;
+        for (const change of event.data) {
+            if (Array.isArray(change) && typeof change[0] === "string" && typeof change[1] === "boolean") {
+                callback(change[0], change[1]);
+            }
+        }
+    };
+}
 
 function failure(code, message, actual = null) {
     return Object.assign(new Error(message), { code, actual });
@@ -254,7 +273,7 @@ export async function readDocument(id, cancelled) {
     check(cancelled);
     const state = await storage();
     const current = await readCurrent(state, id);
-    if (!current) throw failure("io", "Browser document not found");
+    if (!current) throw failure("notfound", "Browser document not found");
     check(cancelled);
     return { bytes: current.bytes, revision: current.record.revision };
 }
@@ -340,7 +359,7 @@ function commit(db, record, content, expected, cancelled, backup) {
                     if (old?.blob && old.blob !== record.blob) candidates.set(old.blob, old.backend);
                 }
                 const garbage = [];
-                out.result = { revision: record.revision, garbage };
+                out.result = { revision: record.revision, backup: Boolean(keep), garbage };
                 for (const [blob, backend] of candidates) {
                     const count = documents.index(BLOB_INDEX).count(blob);
                     count.onsuccess = guard(() => {
@@ -370,6 +389,12 @@ async function reclaim(state, blob, ifAvailable = false) {
     }, ifAvailable);
 }
 
+function committed(id, result) {
+    announce(result.backup ? [[id, true], [id + ".bak", true]] : [[id, true]]);
+    return { revision: result.revision, backup: result.backup };
+}
+
+// Resolves `{revision, backup}`; `backup` reports whether `<id>.bak` was written.
 export async function writeDocument(id, input, expected, cancelled, backup = false) {
     documentId(id);
     check(cancelled);
@@ -384,7 +409,7 @@ export async function writeDocument(id, input, expected, cancelled, backup = fal
             const record = { id, size: bytes.length, revision: rev, backend: "indexeddb", blob };
             const result = await commit(state.db, record, { blob, bytes }, expected, cancelled,
                 backup === true);
-            return result.revision;
+            return committed(id, result);
         }
         const blob = `blob-${crypto.randomUUID()}`;
         // Holding the new blob's lock until commit keeps the garbage sweep away
@@ -423,7 +448,7 @@ export async function writeDocument(id, input, expected, cancelled, backup = fal
             }
         }
         // Do not return Cancelled after commit: the write has already succeeded.
-        return result.revision;
+        return committed(id, result);
     });
 }
 
@@ -586,10 +611,16 @@ export async function initializeDocuments() {
     try { await collectGarbage(); } catch (error) {
         console.warn("Thinoda could not sweep unreferenced document blobs", error);
     }
+    // Metadata-only snapshot (keys) for the app's synchronous existence index.
+    const documents = await transaction(state.db, STORE, "readonly", (tx, out) => {
+        const request = tx.objectStore(STORE).getAllKeys();
+        request.onsuccess = () => { out.result = request.result; };
+    });
     return JSON.stringify({
         backend: state.opfs ? "opfs" : "indexeddb",
         verified: decoded.length,
-        conflicts
+        conflicts,
+        documents
     });
 }
 

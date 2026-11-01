@@ -836,10 +836,16 @@ impl Settings {
     }
 
     /// Existing files in current display order; does not silently prune pinned entries.
+    ///
+    /// Durable browser documents are checked against the metadata-only
+    /// [`crate::browser_storage::known_document`] index; everything else uses the VFS.
     pub fn existing_recent(&self) -> Vec<&RecentFile> {
         self.recent_files
             .iter()
-            .filter(|r| crate::fs::is_file(&r.path))
+            .filter(|r| {
+                crate::browser_storage::known_document(&r.path)
+                    .unwrap_or_else(|| crate::fs::is_file(&r.path))
+            })
             .collect()
     }
 }

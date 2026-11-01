@@ -51,6 +51,13 @@ pub fn is_durable_document(path: &Path) -> bool {
     is_web() && path.starts_with(WEB_DOCUMENTS) && path != Path::new(WEB_DOCUMENTS)
 }
 
+/// Whether a document path currently exists, without I/O for durable browser
+/// documents: those use the metadata index filled at startup and by commits,
+/// other paths the synchronous VFS. Opening still reads the real storage.
+pub fn document_exists(path: &Path) -> bool {
+    thinoda_platform::browser_storage::known_document(path).unwrap_or_else(|| pfs::exists(path))
+}
+
 /// Durable browser document identifier for a `/Documents/...` path.
 pub fn document_id(path: &Path) -> thinoda_platform::storage::StorageId {
     thinoda_platform::storage::StorageId(path.to_string_lossy().replace('\\', "/"))
