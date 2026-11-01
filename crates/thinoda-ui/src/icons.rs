@@ -133,6 +133,18 @@ pub const QUICK_START: &str = "\u{feb9b}"; // rocket_launch
 pub const STATUS_BAR: &str = "\u{ff729}"; // bottom_panel_open
 pub const SELECT_ALL: &str = "\u{fe162}"; // select_all
 pub const SELECT_NONE: &str = "\u{febb6}"; // deselect
+pub const BOARD_SELECT: &str = "\u{ff82f}"; // arrow_selector_tool
+pub const BOARD_HAND: &str = "\u{fe925}"; // pan_tool
+pub const BOARD_TEXT: &str = "\u{fe262}"; // text_fields
+pub const BOARD_SHAPES: &str = "\u{fe72c}"; // category
+pub const BOARD_FRAME: &str = "\u{fe3c2}"; // crop_free
+pub const BOARD_PEN: &str = "\u{ff604}"; // stylus
+pub const BOARD_HIGHLIGHTER: &str = "\u{fe6d1}"; // ink_highlighter
+pub const BOARD_ERASER: &str = "\u{fe6d0}"; // ink_eraser
+pub const BOARD_LASSO: &str = "\u{fe155}"; // gesture
+pub const BOARD_MINIMAP: &str = "\u{fe55b}"; // map
+pub const STROKE_WIDTH: &str = "\u{fe91a}"; // line_weight
+pub const OPACITY: &str = "\u{fe91c}"; // opacity
 pub const INVERT: &str = "\u{fe3e8}"; // flip
 pub const ALIGN_LEFT: &str = "\u{fe00d}"; // align_horizontal_left
 pub const ALIGN_CENTER: &str = "\u{fe00f}"; // align_horizontal_center
@@ -274,6 +286,18 @@ pub const ALL: &[(&str, &str, &str)] = &[
     ("STATUS_BAR", STATUS_BAR, "bottom_panel_open"),
     ("SELECT_ALL", SELECT_ALL, "select_all"),
     ("SELECT_NONE", SELECT_NONE, "deselect"),
+    ("BOARD_SELECT", BOARD_SELECT, "arrow_selector_tool"),
+    ("BOARD_HAND", BOARD_HAND, "pan_tool"),
+    ("BOARD_TEXT", BOARD_TEXT, "text_fields"),
+    ("BOARD_SHAPES", BOARD_SHAPES, "category"),
+    ("BOARD_FRAME", BOARD_FRAME, "crop_free"),
+    ("BOARD_PEN", BOARD_PEN, "stylus"),
+    ("BOARD_HIGHLIGHTER", BOARD_HIGHLIGHTER, "ink_highlighter"),
+    ("BOARD_ERASER", BOARD_ERASER, "ink_eraser"),
+    ("BOARD_LASSO", BOARD_LASSO, "gesture"),
+    ("BOARD_MINIMAP", BOARD_MINIMAP, "map"),
+    ("STROKE_WIDTH", STROKE_WIDTH, "line_weight"),
+    ("OPACITY", OPACITY, "opacity"),
     ("INVERT", INVERT, "flip"),
     ("ALIGN_LEFT", ALIGN_LEFT, "align_horizontal_left"),
     ("ALIGN_CENTER", ALIGN_CENTER, "align_horizontal_center"),

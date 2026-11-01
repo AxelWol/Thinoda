@@ -177,7 +177,39 @@ pub fn command_button(
     selected: bool,
     tooltip: Option<&str>,
 ) -> (Response, bool) {
-    button(ui, icon.into(), label, detail, selected, tooltip, false)
+    button(
+        ui,
+        icon.into(),
+        label,
+        detail,
+        selected,
+        tooltip,
+        ButtonLayout::default(),
+    )
+}
+
+/// A command button constrained to a specific available width.
+pub fn command_button_with_width(
+    ui: &mut Ui,
+    icon: impl Into<CommandIcon>,
+    label: &str,
+    detail: Detail,
+    selected: bool,
+    tooltip: Option<&str>,
+    width: f32,
+) -> (Response, bool) {
+    button(
+        ui,
+        icon.into(),
+        label,
+        detail,
+        selected,
+        tooltip,
+        ButtonLayout {
+            width: Some(width),
+            ..Default::default()
+        },
+    )
 }
 
 pub fn menu_button(
@@ -187,7 +219,24 @@ pub fn menu_button(
     detail: Detail,
     tooltip: Option<&str>,
 ) -> (Response, bool) {
-    button(ui, icon.into(), label, detail, false, tooltip, true)
+    button(
+        ui,
+        icon.into(),
+        label,
+        detail,
+        false,
+        tooltip,
+        ButtonLayout {
+            dropdown: true,
+            ..Default::default()
+        },
+    )
+}
+
+#[derive(Default)]
+struct ButtonLayout {
+    dropdown: bool,
+    width: Option<f32>,
 }
 
 fn button(
@@ -197,11 +246,11 @@ fn button(
     detail: Detail,
     selected: bool,
     tooltip: Option<&str>,
-    dropdown: bool,
+    layout: ButtonLayout,
 ) -> (Response, bool) {
     let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
     let palette = Palette::of_ui(ui);
-    let size = match detail {
+    let mut size = match detail {
         Detail::Large => vec2(112.0, 96.0),
         Detail::Labeled => vec2(ui.available_width().clamp(112.0, 260.0), 44.0),
         Detail::Icon => vec2(44.0, 44.0),
@@ -209,6 +258,10 @@ fn button(
         Detail::CompactLabeled => vec2(ui.available_width().clamp(104.0, 240.0), 34.0),
         Detail::CompactIcon => vec2(34.0, 34.0),
     };
+    if let Some(width) = layout.width {
+        size.x = width.max(0.0);
+    }
+    let dropdown = layout.dropdown;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label)
@@ -289,7 +342,7 @@ fn button(
                 label.to_owned(),
                 FontId::proportional(12.0),
                 color,
-                text_rect.width(),
+                text_rect.width().max(0.0),
             );
             job.wrap.max_rows = if matches!(detail, Detail::Large | Detail::CompactLarge) {
                 2
