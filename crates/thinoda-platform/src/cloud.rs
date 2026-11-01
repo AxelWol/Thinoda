@@ -250,13 +250,39 @@ pub fn provider_for_path_on_os<'a>(
 }
 
 fn normalized(path: &Path, os: CloudOs) -> String {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir().unwrap_or_default().join(path)
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    // A Save As target need not exist. Resolve its deepest existing ancestor
+    // too, otherwise a junction/drive alias resolves the root but not the new
+    // file and an actual child appears to be outside its provider.
+    //
+    // Injected Linux semantics on a Windows/macOS host are lexical: using that
+    // host's case-insensitive canonicalization would erase case differences.
+    let path = if os == CloudOs::Linux && CloudOs::current() != CloudOs::Linux {
+        absolute
+    } else {
+        let mut missing = Vec::new();
+        let mut ancestor = absolute.as_path();
+        loop {
+            if let Ok(mut resolved) = std::fs::canonicalize(ancestor) {
+                for component in missing.iter().rev() {
+                    resolved.push(component);
+                }
+                break resolved;
+            }
+            let Some(parent) = ancestor.parent() else {
+                break absolute;
+            };
+            let Some(component) = ancestor.components().next_back() else {
+                break absolute;
+            };
+            missing.push(component.as_os_str().to_os_string());
+            ancestor = parent;
         }
-    });
+    };
     let text = path.to_string_lossy();
     let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
     let text = if os == CloudOs::Windows || cfg!(windows) {
