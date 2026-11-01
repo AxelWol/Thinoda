@@ -50,6 +50,7 @@
 //! at-most-once file-open queue, without acknowledgements or ordering guarantees.
 
 pub mod ai_prompts;
+pub mod browser_storage;
 pub mod chat_history;
 pub mod cloud;
 pub mod crash;
