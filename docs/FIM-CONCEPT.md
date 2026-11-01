@@ -1036,3 +1036,199 @@ location hints do not change the result. The no-download property comes from
 the architectural absence of an HTTP/file resolver in this API, not from a
 test that merely uses an unreachable-looking URL. Network consent/cache
 integration remains a separate, unimplemented acceptance gate.
+
+## Expert node wizard: replacement of the exhaustive sidebar
+
+**User-approved identity policy:** creating a definition or breaking reuse
+requires an assigned FIM identifier entered by the Methodenexperte. Thinoda
+does not allocate registry IDs. Technical defaults do not imply registry
+allocation, publication, certification or official approval.
+
+### Evidence and dialect contract
+
+The pinned official exchange XSDs take precedence over methodological prose
+and generated search summaries. XML prefixes are arbitrary; namespace URIs,
+element order and occurrences are not. The research cross-check uses
+[Datenfelder](https://docs.fitko.de/fim/docs/datenfelder/Fachkonzept/Datenfelder/),
+[identifiers](https://docs.fitko.de/fim/docs/datenfelder/Fachkonzept/Identifikatoren/),
+[BOB](https://docs.fitko.de/fim/docs/datenfelder/EA_BOB/),
+and [multiplicities](https://docs.fitko.de/fim/docs/datenfelder/EA_Multiplizitäten/).
+
+- Name is editorial, separate from input/output labels and help texts.
+- XDF2 precision is scalar text; XDF3 precision has min/max length/value and
+  pattern attributes. A file's maxSize/mediaType are separate properties.
+- F/G/R and XDF2 identified C objects are not interchangeable XML types.
+  XDF3 C associations use Genericode identification, not fabricated C registry
+  IDs. Choices are XDF3 group `art/code=X`, not `schemaelementart/code=X`.
+- Multiplicity belongs to the incoming structure edge. The UI names it
+  "Multiplizität (Min:Max)" and preserves the lexical source value.
+- XDF2 needs description, definition, legal-reference text, status, help
+  elements and field precision/content even when their values are empty.
+  XDF3 needs freigabestatus with listVersionID and letzteAenderung;
+  fields also need vorbefuellung. Defaults: input/text, RNG, keine, 1:1,
+  editable labels derived from the new name, and explicit draft status.
+- XDF3 groups require at least one structure. Their creation therefore stages
+  an explicitly chosen existing F/G child rather than inventing an anonymous
+  or unassigned field. XDF2 permits empty groups.
+- R scripts remain inert. XDF2 script and XDF3 freitextRegel/skript/typ are
+  distinct. External C lists are never silently downloaded.
+- BOB number-range and schema relations are evidence, not inferred provenance
+  from an occurrence count. Breaking reuse changes only this occurrence and
+  preserves nested reuse and derivation provenance.
+
+### Experience and implementation plan
+
+1. Replace "Alle Quelldaten" with a compact selected-node summary and a clear
+   "FIM-Knoten bearbeiten" action. Keep the exact-occurrence accent rectangle
+   in light/dark mode. Map context menu and Structure entries launch the same
+   non-modal, resizable native Dialog; both remain usable behind it.
+2. Present task pages for common metadata, field constraints, associations and
+   insertion/reuse. Explicit Apply/Cancel and a separate confirmed Delete
+   prevent incidental navigation from saving or discarding edits.
+   Existing node kind is displayed; field/datatype, structure-element type
+   and group choice can be edited without destructive F-to-G conversion.
+3. Bind the wizard to document key, sheet, revision and source record, not the
+   moving map selection. A stale owner blocks Apply and retains the draft.
+   Opening another target requires applying or explicitly discarding first.
+4. Add typed, dialect-aware node read/edit/create operations. Apply all common
+   properties, detach/reuse, associations and edge metadata in one XML-first
+   candidate transaction, one projection and one undo step. Missing optional
+   values, opaque extensions, comments and ordered children stay preserved.
+5. Render uncommon properties only in an on-demand subdialog, scoped to the
+   selected definition/edge rather than recursively expanding its descendants.
+   Preserve access to uncommon existing XML and explicit advanced insertion
+   without restoring the exhaustive sidebar. Schema-invalid source remains a
+   clearly labeled repair draft; exact official-XSD export gates are unchanged.
+6. Replace quadratic records()/topic_metadata traversal with indexed metadata.
+   Cache sidebar records/diagnostics/dependencies by immutable source revision.
+   No per-frame source-field materialization; association and advanced lists
+   are prepared only on opening/changing a wizard target.
+7. Verify both dialects with official schemas: create/edit F/G/R, C reference
+   binding, insertion before/after, shared updates and independent variants,
+   lexical multiplicity, required metadata and rollback. Verify single undo,
+   draft target ownership, Map/Structure access, light/dark, resizing/narrow
+   layouts and large-document traversal work.
+8. Obtain independent full plan and implementation rubber-duck critiques;
+   fix meaningful findings before committing explicit owned paths.
+   Wizard work is separate from the already authorized release/deployment.
+
+### Critique gates
+
+Do not declare success merely because the raw section disappears, a form
+renders, generic Add succeeds or XML reparses. New defaults must pass the
+actual dialect exchange schema. Explicitly review the XDF3 nonempty-group
+requirement, C natural keys, shared-parent edge impact, reference-safe deletion,
+optional/absent values, stale drafts and schema-order insertion. Applying an
+advanced edit must not silently bypass the same domain/export protections.
+
+### Plan rubber-duck critique and resolutions
+
+The independent review identified missing explicit prerequisites: the current
+generic Add cannot produce complete required metadata, position-aware inserts
+or an XDF3 nonempty group in one transaction; current choice detection writes
+the wrong XDF3 property; there is no typed precision/BOB surface. These are
+core-model-first changes, not deferred UI details. Implement a typed composite
+authoring command and verify its full candidate before any projection/undo
+commit. BOB exposure parses the actual ID range and preserved relations; it
+does not fabricate an additional XML "BOB" tag.
+
+The reviewer suggested hashing content for the cache. Rehashing serialized XML
+every frame would reintroduce document-size work. Instead compare immutable
+source snapshots in O(1), with a bounded derived metadata index ignored by
+persistence and content equality. Undo/redo may rebuild a cache once; correctness
+never depends on a cache hit. Advanced editing is visibly labeled source/repair
+editing and retains the same transaction and export gates.
+
+[FRED3's public documentation](https://docs.efast.digital/pubfim/datenfeldgruppen.md)
+supports separate Rules/Versions/References/Relations pages and click-through
+usage navigation. Its [value/code-list workflow](https://docs.efast.digital/pubfim/schritt-7-werte-und-codelisten-zur-datenfeldern-hi)
+distinguishes inline values from external references and exposes code/name/help
+column keys. We adopt task separation and reference navigation, not a raw dump.
+Unlike FRED3's authoritative registry integration, Thinoda intentionally
+requires assigned IDs. Public evidence did not establish other claimed vendor
+editor workflows; no invented tool comparison or live-UI claim is included.
+The pinned XDF2 schema defaults status to `inVorbereitung`; XDF3 defaults to
+`freigabestatus/code=2`, listVersionID `2022-07-12` ("in Bearbeitung"), not
+published `Entwurf` or an automatically claimed approval.
+
+### Implementation rubber-duck critique and resolutions
+
+The independent implementation review returned **REVISE**, not an unconditional
+approval. Its blocking lifecycle finding was that existing XDF3 edits could
+retain an obsolete `letzteAenderung`. Its repair-mode finding was that set
+comparison could overlook an increased number of identical schema errors.
+Both findings are resolved: automatic dates are assigned to the isolated
+candidate, and error comparison consumes a multiset of message/path signatures.
+An explicitly edited date, including its timezone, takes precedence.
+
+The final integration critique additionally identified these coupled risks:
+
+- Map drag/reorder, indent/outdent, sorting, Cut and multi-selection deletion
+  could use generic structural commands without the wizard's official-XSD
+  worker. These commands now operate on history-free document previews.
+  Canonical changes require an explicit hierarchy review and the same
+  whole-document validation. Cancel never consumes the live redo stack.
+  Pointer releases outside the map are also isolated; canceled drags do not
+  change source bytes or history.
+- Uncommon incoming-edge properties were missing from the advanced definition
+  scope. The lazy editor now includes `node_edge_fields`, without expanding
+  contained definitions. Edge-only edits date the enclosing structural
+  definition, not the contained field. Unchanged raw scalar stages do not
+  advance dates or create an undo entry.
+- Closing Advanced with unfinished input could silently discard unstaged
+  properties. Inputs now survive reopening, count as a dirty draft and block
+  Apply until staged or cleared. Staged raw operations have a visible undo
+  control. Semantic controls are disabled while reusing a definition; incoming
+  multiplicity and usage justification remain editable.
+- Opening large definition/rule lists could recreate the original rendering
+  problem. Definition, initial-child and rule selectors now search names,
+  identities and versions and virtualize visible rows. The main inspector
+  retains an immutable, indexed snapshot rather than recursively materializing
+  all XML on each frame.
+- Adding FIM commands at the start of ordinary Insert/Tools menus changed the
+  ribbon's primary actions, including replacing Map Shot with a disabled FIM
+  action. FIM entries now preserve existing primary-action ordering. Before/
+  after insertion have distinct semantic icons; the persisted command-ID
+  contract explicitly includes the four new FIM commands.
+
+The resulting wizard uses General, Field constraints, Reuse and structure,
+and Rules and code lists pages. Map double-click, type-to-edit, add handles,
+context commands and Structure actions converge on the same pinned editor.
+Creating/detaching requires an assigned identity, C3 uses canonical Genericode
+identification, and an XDF3 group requires an explicit initial child. No
+unvalidated node is inserted merely by opening the dialog.
+
+### Acceptance evidence and remaining boundaries
+
+Retained checks include 360 passing ordinary core/IO tests and all three
+separately executed pinned-official-XSD authoring oracles for both dialects.
+The application unit suite passes 297 tests (two explicitly ignored tests
+remain separate opt-in checks). The real application worker's official-XDF3
+oracle additionally verifies exact-byte no-ops, unchanged raw stages, typed
+and advanced edge dating, hierarchy staging, explicit dates, rollback and
+single-step undo using the supplied official sample.
+
+Native interaction checks cover map double-click, first typed text, dirty
+pinned-draft preservation, add handles without premature insertion, canceled
+outside-map drags, Structure navigation, advanced input retention, close/save
+guards and recovery of committed model data. Command, menu, shortcut and
+ribbon regressions preserve ordinary mindmap behavior. Strict native
+all-target Clippy and wasm compilation pass. Actual GPU rendering of the
+supplied 29-topic sample exercises light, dark, Structure and narrow layouts,
+including bounded identity/name inputs and reachable Apply controls.
+
+**Crash-recovery boundary:** unapplied wizard forms are not serialized into
+recovery files. Recovery preserves only the committed workbook; it must never
+silently apply an unvalidated draft. Live drafts block accidental close/save,
+but a process crash can lose unapplied form input. This is not represented as
+draft recovery or as an automatic save.
+
+Validation establishes exchange conformance and local integrity, not official
+registry allocation, methodological certification or publication. Scripts
+remain inert; external code lists are not downloaded automatically. Cross-
+dialect migration is not implied by same-dialect XDF2/XDF3 export.
+
+The separate packaging correction is committed as `36b4e4d` and submitted
+through the deployment follow-up, not mixed into wizard validation or a retry
+of the immutable v0.20.0 tag. Publication remains a separate gate until the
+corrected-source release has real, independently verified package assets.
