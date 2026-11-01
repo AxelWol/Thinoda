@@ -11,6 +11,7 @@ use crate::{
     geometry::{Rect, Vec2},
     model::{Presentation, PresentationSource, Sheet, SlideFrame, SlideId, Workbook, ZoneId},
 };
+use std::{collections::HashSet, sync::Arc};
 
 const MAX_HISTORY: usize = 300;
 /// Approximate memory budget of the undo stack. Large ink data is shared between
@@ -38,10 +39,47 @@ impl Snapshot {
             Snapshot::Book { sheets, .. } => sheets.iter().map(approx_sheet_bytes).sum(),
         }
     }
+
+    fn shared_ink_bytes(&self, seen: &mut HashSet<usize>) -> usize {
+        fn sheet_bytes(sheet: &Sheet, seen: &mut HashSet<usize>) -> usize {
+            sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    crate::board::CanvasObjectKind::Ink(ink) => Some(ink),
+                    _ => None,
+                })
+                .map(|ink| {
+                    let points = Arc::as_ptr(&ink.points) as *const () as usize;
+                    let mut bytes = if seen.insert(points) {
+                        ink.points.len() * std::mem::size_of::<Vec2>()
+                    } else {
+                        0
+                    };
+                    if let Some(pressure) = &ink.pressure {
+                        let pressure_ptr = Arc::as_ptr(pressure) as *const () as usize;
+                        if seen.insert(pressure_ptr) {
+                            bytes += pressure.len() * std::mem::size_of::<f32>();
+                        }
+                    }
+                    bytes
+                })
+                .sum()
+        }
+
+        match self {
+            Snapshot::Sheet { sheet, .. } => sheet_bytes(sheet, seen),
+            Snapshot::Book { sheets, .. } => {
+                sheets.iter().map(|sheet| sheet_bytes(sheet, seen)).sum()
+            }
+        }
+    }
 }
 
 /// Rough heap estimate of a sheet snapshot for the undo budget. Shared (`Arc`) data such
-/// as ink points and resource bytes is excluded because snapshots share it.
+/// as ink points and resource bytes is excluded here; unique ink buffers are accounted
+/// once across the complete undo stack.
 pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
     use std::mem::size_of;
     let topics: usize = sheet
@@ -68,7 +106,7 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                 + o.alt_text.len()
                 + match &o.kind {
                     crate::board::CanvasObjectKind::Ink(s) => {
-                        // Point data is shared; count the pointers only.
+                        // Point buffers are counted once across the undo stack.
                         2 * size_of::<usize>() * (1 + s.pressure.is_some() as usize)
                     }
                     _ => 0,
@@ -120,7 +158,13 @@ impl Document {
 
     /// Approximate bytes held by the undo stack.
     pub fn history_bytes(&self) -> usize {
-        self.undo.iter().map(|e| e.bytes).sum()
+        let mut seen = HashSet::new();
+        let unique_ink_bytes: usize = self
+            .undo
+            .iter()
+            .map(|entry| entry.snapshot.shared_ink_bytes(&mut seen))
+            .sum();
+        self.undo.iter().map(|e| e.bytes).sum::<usize>() + unique_ink_bytes
     }
 
     /// Overrides the undo byte budget (the newest entry is always kept).
@@ -133,7 +177,8 @@ impl Document {
         let mut total = self.history_bytes();
         while self.undo.len() > 1 && (total > self.history_budget || self.undo.len() > MAX_HISTORY)
         {
-            total -= self.undo.remove(0).bytes;
+            self.undo.remove(0);
+            total = self.history_bytes();
         }
     }
 
@@ -939,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_ink_is_not_counted_per_snapshot() {
+    fn shared_ink_buffers_are_counted_once_and_moved_buffers_are_counted() {
         use crate::board::{InkStroke, InkTool};
         let mut d = Document::default();
         let points: Vec<Vec2> = (0..20_000).map(|i| Vec2::new(i as f32, 0.0)).collect();
@@ -952,7 +997,7 @@ mod tests {
             )))
             .unwrap();
         }
-        let ink_bytes = 10 * 20_000 * std::mem::size_of::<Vec2>();
+        let ink_bytes = 20_000 * std::mem::size_of::<Vec2>();
         let before = d.history_bytes();
         let first = d.sheet().canvas.objects[0].id;
         for _ in 0..50 {
@@ -961,13 +1006,37 @@ mod tests {
             d.rotate_canvas_object(d.sheet().canvas.objects[1].id, 1.0)
                 .unwrap();
         }
-        // 100 snapshots of a sheet with 1.6 MB of ink cost far less than one ink copy each.
+        // Moving the stroke allocates new point buffers, which remain live in older snapshots.
+        // Rotation snapshots still share their point buffers and must not double-count them.
         assert!(
-            d.history_bytes() - before < ink_bytes,
-            "{}",
-            d.history_bytes()
+            d.history_bytes() - before >= 40 * ink_bytes,
+            "history delta {}, one stroke {}",
+            d.history_bytes() - before,
+            ink_bytes
         );
         assert!(approx_sheet_bytes(d.sheet()) < 64 * 1024);
+    }
+
+    #[test]
+    fn history_budget_trims_distinct_moved_ink_buffers() {
+        use crate::board::{InkStroke, InkTool};
+        let mut d = Document::default();
+        let points: Vec<Vec2> = (0..1_000).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        let id = d
+            .add_canvas_object(CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                crate::geometry::Color::rgb(0, 0, 0),
+                2.0,
+                points,
+            )))
+            .unwrap();
+        for _ in 0..10 {
+            d.move_canvas_objects(&[id], Vec2::new(1.0, 0.0)).unwrap();
+        }
+
+        let one_stroke = 1_000 * std::mem::size_of::<Vec2>();
+        d.set_history_byte_budget(one_stroke * 2);
+        assert!(d.history_bytes() <= one_stroke * 2);
     }
 
     #[test]
