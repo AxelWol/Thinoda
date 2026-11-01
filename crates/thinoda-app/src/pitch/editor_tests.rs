@@ -35,6 +35,76 @@ fn editor() -> PitchEditor {
 }
 
 #[test]
+fn narrow_dialog_visibility_controls_address_the_generated_composition() {
+    let mut app = ThinodaApp::headless();
+    let mut sheet = thinoda_core::Sheet::new("Presentation", "Center");
+    sheet.insert_child(sheet.root, "Opening").unwrap();
+    sheet.insert_child(sheet.root, "Closing").unwrap();
+    let floating = sheet.add_floating("Floating", thinoda_core::Vec2::new(600.0, 200.0));
+    sheet
+        .create_zone(
+            "Zone",
+            vec![floating],
+            thinoda_core::Rect::from_min_size(
+                thinoda_core::Vec2::new(450.0, 50.0),
+                thinoda_core::Vec2::new(300.0, 300.0),
+            ),
+        )
+        .unwrap();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .replace(thinoda_core::Workbook::new(sheet));
+    let root = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut().unwrap().view.select_only(root);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(360.0, 560.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let ctx = h.ctx.clone();
+    h.state_mut().exec(&ctx, crate::app::Cmd::EditPresentation);
+    h.run_steps(20);
+    for label in [
+        "Generate Slides",
+        "Duplicate Slide",
+        "Auto-fit content",
+        "Map context",
+        "Topic visibility",
+    ] {
+        h.get_by_label(t(label)).scroll_to_me();
+        h.run();
+        h.get_by_label(t(label)).hover();
+        h.run();
+        h.get_by_label(t(label)).click();
+        h.run();
+        let editor = h.state().pitch.editor.as_ref().unwrap();
+        let slide = &editor.sheet.presentation.slides[editor.selected];
+        if label == "Generate Slides" {
+            assert_eq!(editor.sheet.presentation.slides.len(), 3);
+        }
+        if label == "Duplicate Slide" {
+            assert_eq!(editor.sheet.presentation.slides.len(), 4);
+        }
+        if label == "Auto-fit content" {
+            assert!(!slide.auto_frame, "auto-fit click must reach its checkbox");
+        }
+        if label == "Map context" {
+            assert_eq!(slide.scope, thinoda_core::PresentationScope::Context);
+        }
+    }
+    let editor = h.state().pitch.editor.as_ref().unwrap();
+    let slide = &editor.sheet.presentation.slides[editor.selected];
+    let resolved =
+        thinoda_core::resolve_presentation_slide(&editor.sheet, slide, &editor.layout).unwrap();
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::CheckBox, "Center")
+            .is_some(),
+        "selected {}, slide {slide:?}, resolved order {:?}",
+        editor.selected,
+        resolved.layout.order
+    );
+}
+
+#[test]
 fn duplicate_preserves_composition_but_allocates_a_unique_identity() {
     let mut editor = editor();
     editor.sheet.presentation.slides[0].max_depth = Some(2);
@@ -183,6 +253,52 @@ fn wide_workspace_does_not_clip_the_first_slide_card() {
             }
         }
     }
+}
+
+#[test]
+fn filmstrip_viewport_tracks_available_dialog_height() {
+    let viewport_height = |height| {
+        let ctx = Context::default();
+        let mut editor = editor();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 1000.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_max_height(height);
+                editor.workspace(ui, true);
+            },
+        );
+        let viewport = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Rect(rect)
+                    if rect.stroke.width == 2.0
+                        && rect.rect.width() > 140.0
+                        && rect.rect.height() > 90.0 =>
+                {
+                    Some(clipped.clip_rect)
+                }
+                _ => None,
+            })
+            .expect("selected slide card is painted");
+        output.textures_delta.clear();
+        viewport.height()
+    };
+
+    let compact = viewport_height(480.0);
+    let tall = viewport_height(900.0);
+    assert!(compact > 300.0, "compact dialog viewport was {compact}");
+    assert!(
+        tall > compact + 350.0,
+        "filmstrip did not grow with dialog height: {compact} → {tall}"
+    );
+    assert!(tall <= 900.0);
 }
 
 #[test]
