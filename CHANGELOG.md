@@ -24,6 +24,14 @@ while the version is `0.x`, breaking changes bump the minor version). See
 - Dismissible update notices in all ten languages and light/dark mode,
   bounded networking/backoff, lifecycle tests and updated privacy documentation.
 
+## [0.20.1](https://github.com/AxelWol/Thinoda/compare/v0.20.0...v0.20.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **app:** correct presentation layout and packaging UI regressions ([bf4d4b8](https://github.com/AxelWol/Thinoda/commit/bf4d4b88268e29fe9e194149b5dc8d1b8da58b49))
+* **app:** correct presentation layout and packaging UI regressions ([e751c13](https://github.com/AxelWol/Thinoda/commit/e751c1373a694a04d13fdcc17afacc110d63c165))
+
 ## [0.20.0](https://github.com/AxelWol/Thinoda/compare/v0.19.1...v0.20.0) (2026-10-31)
 
 
