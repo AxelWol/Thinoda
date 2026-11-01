@@ -1,0 +1,811 @@
+use super::*;
+use crate::board::{
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, InkStroke, InkTool,
+    ShapeKind,
+};
+use crate::geometry::{Color, Rect};
+use crate::layout::{ApproxMeasure, layout_sheet};
+use crate::{Document, EditError, Workbook};
+
+fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
+    Rect::from_min_size(Vec2::new(x, y), Vec2::new(width, height))
+}
+
+fn hidden_sheet(title: &str, anchor_title: &str) -> Sheet {
+    let mut sheet = Sheet::new(title, anchor_title);
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet
+}
+
+fn copy(sheet: &Sheet, topics: &[TopicId], objects: &[CanvasObjectId]) -> BoardClipboardPayload {
+    let layout = layout_sheet(sheet, &ApproxMeasure, false);
+    copy_board_selection(sheet, &layout, topics, objects)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn object_only_copy_has_plain_text_and_legacy_fallback() {
+    let mut sheet = Sheet::new("source", "root");
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(10.0, 20.0, 50.0, 40.0),
+        ))
+        .unwrap();
+    let payload = copy(&sheet, &[], &[object]);
+    assert!(!payload.text.trim().is_empty());
+    assert!(matches!(
+        resolve_board_paste(
+            Some(&payload),
+            None,
+            Some(&payload.text.replace('\n', "\r\n"))
+        ),
+        ResolvedBoardPaste::Board(_)
+    ));
+    let ResolvedBoardPaste::Topics(topics) =
+        resolve_board_paste(Some(&payload), None, Some("One\n\tChild\n"))
+    else {
+        panic!("different OS text should use the legacy text parser");
+    };
+    assert_eq!(topics[0].root_topic().title, "One");
+    assert_eq!(topics[0].len(), 2);
+}
+
+#[test]
+fn mixed_copy_preserves_resources_annotations_groups_styles_and_ink() {
+    let mut source = hidden_sheet("Source", "hidden source anchor");
+    let card = source
+        .add_card(
+            "Card",
+            Vec2::new(100.0, 100.0),
+            Card {
+                kind: CardKind::Sticky,
+                size: Vec2::new(140.0, 90.0),
+                rotation: 15.0,
+                color: Some(Color::rgb(250, 220, 100)),
+            },
+        )
+        .unwrap();
+    source.topic_mut(card).unwrap().style.bold = Some(true);
+    let child = source.add_child(card, None, "Child");
+    let other = source.add_floating("Other", Vec2::new(430.0, 160.0));
+    let resource = source
+        .resources
+        .insert(
+            crate::resources::Resource::new("evidence.txt", "text/plain", b"evidence".to_vec())
+                .unwrap(),
+        )
+        .unwrap();
+    source.topic_mut(child).unwrap().attachment = Some(crate::attachments::Attachment {
+        resource: resource.clone(),
+        name: "evidence.txt".into(),
+    });
+    let unused_resource = source
+        .resources
+        .insert(
+            crate::resources::Resource::new("unused.txt", "text/plain", b"unused".to_vec())
+                .unwrap(),
+        )
+        .unwrap();
+    source.add_relationship(child, other).unwrap();
+    source.relationships[0].title = "relates".into();
+    source.add_boundary(&[child]).unwrap();
+    let summary = source.add_summary(&[child], "Summary").unwrap();
+    let summary_child = source.add_child(summary, None, "Summary child");
+    source
+        .add_summary(&[summary_child], "Nested summary")
+        .unwrap();
+    source
+        .set_task(child, Some(crate::schedule::Task::default()))
+        .unwrap();
+    source
+        .set_task(other, Some(crate::schedule::Task::default()))
+        .unwrap();
+    source.add_task_dependency(child, other).unwrap();
+
+    let mut shape = CanvasObject::shape(ShapeKind::Diamond, rect(230.0, 40.0, 60.0, 50.0));
+    shape.band = Band::Below;
+    shape.rotation = 30.0;
+    shape.style.fill = Some(Color::rgb(10, 20, 30));
+    shape.style.opacity = 0.6;
+    shape.alt_text = "A diamond".into();
+    let shape = source.add_canvas_object(shape).unwrap();
+    let mut ink = InkStroke::new(
+        InkTool::Highlighter,
+        Color::rgb(50, 60, 70),
+        6.0,
+        vec![Vec2::new(1.0, 2.0), Vec2::new(5.0, 8.0)],
+    );
+    ink.pressure = Some(vec![0.25, 0.75].into());
+    let ink = source.add_canvas_object(CanvasObject::ink(ink)).unwrap();
+    let connector = source
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(child),
+            Endpoint::Object(shape),
+        )))
+        .unwrap();
+    let group = source
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(shape)])
+        .unwrap();
+    source
+        .set_board_members_locked(&[BoardMember::Card(card)], true)
+        .unwrap();
+    source.set_canvas_group_locked(group, true).unwrap();
+    source.validate().unwrap();
+
+    // The card pulls its grouped shape into the copy; the duplicate and
+    // selected descendant must not duplicate the card subtree.
+    let payload = copy(
+        &source,
+        &[source.root, summary, card, child, other, card],
+        &[ink, connector, connector],
+    );
+    assert_eq!(payload.source_topic_roots(), &[card, other]);
+    assert_eq!(
+        payload.source_object_ids().collect::<Vec<_>>(),
+        vec![shape, ink, connector]
+    );
+    assert!(!payload.text.contains("hidden source anchor"));
+    let encoded = encode_board_payload(&payload).unwrap();
+    assert!(!encoded.contains("hidden source anchor"));
+    assert!(!encoded.contains("unused.txt"));
+    assert_eq!(decode_board_payload(&encoded).unwrap(), payload);
+    assert_eq!(
+        decode_board_payload(&encoded.replacen('\n', "\r\n", 1)).unwrap(),
+        payload
+    );
+
+    let mut destination = hidden_sheet("Destination", "hidden destination anchor");
+    let delta = Vec2::new(35.0, 45.0);
+    let pasted = paste_board_selection(&mut destination, &payload, delta).unwrap();
+    assert_eq!(pasted.topics.len(), 2);
+    assert_eq!(pasted.objects.len(), 3);
+    let new_card = pasted.topics[0];
+    let new_other = pasted.topics[1];
+    let new_child = destination.children(new_card)[0];
+    let new_shape = pasted.objects[0];
+    let new_ink = pasted.objects[1];
+    let new_connector = pasted.objects[2];
+    assert_ne!(new_card, card);
+    assert_ne!(new_child, child);
+    assert_ne!(new_other, other);
+    assert_ne!(new_shape, shape);
+    assert_ne!(new_ink, ink);
+    assert_ne!(new_connector, connector);
+    assert_eq!(destination.root_mode, SheetRootMode::Hidden);
+    assert!(destination.children(destination.root).is_empty());
+    assert_eq!(destination.floating, pasted.topics);
+    assert_eq!(
+        destination.topic(new_card).unwrap().position,
+        Some(Vec2::new(135.0, 145.0))
+    );
+    assert_eq!(
+        destination.topic(new_card).unwrap().card,
+        source.topic(card).unwrap().card
+    );
+    assert_eq!(
+        destination.topic(new_card).unwrap().style,
+        source.topic(card).unwrap().style
+    );
+    assert_eq!(
+        destination.topic(new_child).unwrap().attachment,
+        source.topic(child).unwrap().attachment
+    );
+    assert_eq!(
+        destination.resources.get(&resource).unwrap().bytes(),
+        b"evidence"
+    );
+    assert!(destination.resources.get(&unused_resource).is_err());
+    assert_eq!(destination.relationships.len(), 1);
+    assert_ne!(destination.relationships[0].id, source.relationships[0].id);
+    assert_eq!(destination.relationships[0].from, new_child);
+    assert_eq!(destination.relationships[0].to, new_other);
+    assert_eq!(destination.relationships[0].title, "relates");
+    assert_eq!(destination.boundaries.len(), 1);
+    assert_ne!(destination.boundaries[0].id, source.boundaries[0].id);
+    assert_eq!(destination.boundaries[0].parent, new_card);
+    assert_eq!(destination.summaries.len(), 2);
+    assert_ne!(destination.summaries[0].id, source.summaries[0].id);
+    assert_eq!(destination.summaries[0].parent, new_card);
+    let new_summary = destination.summaries[0].topic;
+    assert_eq!(destination.topic(new_summary).unwrap().title, "Summary");
+    assert_eq!(destination.children(new_summary).len(), 1);
+    assert!(destination.scheduling.tasks.contains_key(&new_child));
+    assert!(destination.scheduling.tasks.contains_key(&new_other));
+    assert_eq!(
+        destination.scheduling.dependencies,
+        vec![crate::schedule::TaskDependency {
+            predecessor: new_child,
+            successor: new_other,
+        }]
+    );
+
+    let old_shape = source.canvas.object(shape).unwrap();
+    let new_shape_obj = destination.canvas.object(new_shape).unwrap();
+    assert_eq!(new_shape_obj.rect, old_shape.rect.translate(delta));
+    assert_eq!(new_shape_obj.band, old_shape.band);
+    assert_eq!(new_shape_obj.rotation, old_shape.rotation);
+    assert_eq!(new_shape_obj.style, old_shape.style);
+    assert_eq!(new_shape_obj.alt_text, old_shape.alt_text);
+    let new_group = new_shape_obj.group.unwrap();
+    assert_ne!(new_group, group);
+    assert!(destination.canvas.group(new_group).unwrap().locked);
+    let new_card_state = destination.canvas.card_state(new_card).unwrap();
+    assert_eq!(new_card_state.group, Some(new_group));
+    assert!(new_card_state.locked);
+    assert!(destination.is_board_member_locked(BoardMember::Object(new_shape)));
+    assert!(destination.is_board_member_locked(BoardMember::Card(new_card)));
+    let before_locked_move = destination.clone();
+    assert!(
+        destination
+            .move_board_members(&[BoardMember::Object(new_shape)], Vec2::new(1.0, 0.0))
+            .is_err()
+    );
+    assert_eq!(destination, before_locked_move);
+
+    let CanvasObjectKind::Ink(original_ink) = &source.canvas.object(ink).unwrap().kind else {
+        panic!("expected ink");
+    };
+    let CanvasObjectKind::Ink(copied_ink) = &destination.canvas.object(new_ink).unwrap().kind
+    else {
+        panic!("expected ink");
+    };
+    assert_eq!(copied_ink.tool, original_ink.tool);
+    assert_eq!(copied_ink.color, original_ink.color);
+    assert_eq!(copied_ink.width, original_ink.width);
+    assert_eq!(copied_ink.pressure, original_ink.pressure);
+    assert_eq!(
+        copied_ink.points.as_ref(),
+        &[Vec2::new(36.0, 47.0), Vec2::new(40.0, 53.0)]
+    );
+    let CanvasObjectKind::Connector(copied_connector) =
+        &destination.canvas.object(new_connector).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(copied_connector.from, Endpoint::Topic(new_child));
+    assert_eq!(copied_connector.to, Endpoint::Object(new_shape));
+    destination.validate().unwrap();
+}
+
+#[test]
+fn connectors_keep_selected_targets_and_detach_external_targets_at_rendered_points() {
+    let mut source = Sheet::new("Source", "Root");
+    let external_topic = source.add_child(source.root, None, "External");
+    let card = source
+        .add_card(
+            "Included",
+            Vec2::new(100.0, 220.0),
+            Card::new(CardKind::Text, Vec2::new(80.0, 50.0)),
+        )
+        .unwrap();
+    let external_object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(300.0, 40.0, 90.0, 90.0),
+        ))
+        .unwrap();
+    let first = source
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(external_topic),
+            Endpoint::Object(external_object),
+        )))
+        .unwrap();
+    let second = source
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(first),
+            Endpoint::Topic(card),
+        )))
+        .unwrap();
+    let layout = layout_sheet(&source, &ApproxMeasure, false);
+    let CanvasObjectKind::Connector(first_connector) = &source.canvas.object(first).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    let first_path = crate::scene::connector_path(&source, &layout, first_connector);
+    let CanvasObjectKind::Connector(second_connector) = &source.canvas.object(second).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    let second_path = crate::scene::connector_path(&source, &layout, second_connector);
+    assert!(first_path.len() >= 2 && second_path.len() >= 2);
+
+    let payload = copy_board_selection(&source, &layout, &[card], &[first, second])
+        .unwrap()
+        .unwrap();
+    let mut target = Sheet::new("Target", "Unrelated");
+    let delta = Vec2::new(20.0, 30.0);
+    let result = paste_board_selection(&mut target, &payload, delta).unwrap();
+    let CanvasObjectKind::Connector(copied_first) =
+        &target.canvas.object(result.objects[0]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(copied_first.from, Endpoint::Point(first_path[0] + delta));
+    assert_eq!(
+        copied_first.to,
+        Endpoint::Point(*first_path.last().unwrap() + delta)
+    );
+    let CanvasObjectKind::Connector(copied_second) =
+        &target.canvas.object(result.objects[1]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(copied_second.from, Endpoint::Object(result.objects[0]));
+    assert_eq!(copied_second.to, Endpoint::Topic(result.topics[0]));
+    target.validate().unwrap();
+
+    // A reference to an unselected connector is resolved just like an
+    // unselected shape or topic, not left as a source-document ID.
+    let detached = copy_board_selection(&source, &layout, &[], &[second])
+        .unwrap()
+        .unwrap();
+    let mut target = Sheet::new("Target", "Root");
+    let result = paste_board_selection(&mut target, &detached, delta).unwrap();
+    let CanvasObjectKind::Connector(copied) =
+        &target.canvas.object(result.objects[0]).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    assert_eq!(copied.from, Endpoint::Point(second_path[0] + delta));
+    assert_eq!(
+        copied.to,
+        Endpoint::Point(*second_path.last().unwrap() + delta)
+    );
+    target.validate().unwrap();
+
+    // Never invent a fallback point if the caller's layout cannot resolve a
+    // detached target; leave the caller's sheet untouched.
+    let before = source.clone();
+    assert!(copy_board_selection(&source, &Layout::default(), &[], &[first]).is_err());
+    assert_eq!(source, before);
+}
+
+#[test]
+fn rootless_and_central_topic_copies_never_expose_or_attach_to_anchor() {
+    let mut source = hidden_sheet("Hidden", "private old anchor title");
+    let first = source.add_floating("First", Vec2::new(20.0, 40.0));
+    let second = source.add_floating("Second", Vec2::new(200.0, 60.0));
+    let layout = layout_sheet(&source, &ApproxMeasure, false);
+    assert!(
+        copy_board_selection(&source, &layout, &[source.root], &[])
+            .unwrap()
+            .is_none()
+    );
+    let payload = copy_board_selection(&source, &layout, &[source.root, first, second], &[])
+        .unwrap()
+        .unwrap();
+    assert_eq!(payload.text, "First\nSecond\n");
+    assert!(
+        !encode_board_payload(&payload)
+            .unwrap()
+            .contains("private old anchor title")
+    );
+
+    let mut central = Sheet::new("Central", "A central topic");
+    let central_root = central.root;
+    let pasted = paste_board_selection(&mut central, &payload, Vec2::ZERO).unwrap();
+    assert_eq!(central.root, central_root);
+    assert_eq!(central.root_topic().title, "A central topic");
+    assert_eq!(central.floating, pasted.topics);
+    central.validate().unwrap();
+
+    // A visible root is ordinary selected content, not a hidden anchor. Its
+    // layout position is used when it becomes a floating root.
+    let visible_layout = layout_sheet(&central, &ApproxMeasure, false);
+    let root_payload = copy_board_selection(&central, &visible_layout, &[central.root], &[])
+        .unwrap()
+        .unwrap();
+    let mut hidden_target = hidden_sheet("Target", "different private anchor");
+    let result = paste_board_selection(&mut hidden_target, &root_payload, Vec2::ZERO).unwrap();
+    assert_eq!(
+        hidden_target.topic(result.topics[0]).unwrap().title,
+        "A central topic"
+    );
+    assert_eq!(hidden_target.floating, result.topics);
+    assert!(hidden_target.children(hidden_target.root).is_empty());
+    hidden_target.validate().unwrap();
+}
+
+#[test]
+fn copying_locked_groups_is_read_only_but_cut_and_move_remain_blocked() {
+    let mut sheet = Sheet::new("Source", "Root");
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(100.0, 80.0),
+            Card::new(CardKind::Sticky, Vec2::new(80.0, 60.0)),
+        )
+        .unwrap();
+    let shape = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Ellipse,
+            rect(200.0, 60.0, 60.0, 60.0),
+        ))
+        .unwrap();
+    let group = sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(shape)])
+        .unwrap();
+    sheet.set_canvas_group_locked(group, true).unwrap();
+    let before = sheet.clone();
+    let payload = copy(&sheet, &[], &[shape]);
+    assert_eq!(sheet, before);
+    assert_eq!(payload.source_topic_roots(), &[card]);
+    assert_eq!(payload.source_object_ids().collect::<Vec<_>>(), vec![shape]);
+    assert!(
+        sheet
+            .remove_board_members(&[BoardMember::Object(shape)])
+            .is_err()
+    );
+    assert_eq!(sheet, before);
+    let mut target = Sheet::new("Target", "Root");
+    let result = paste_board_selection(&mut target, &payload, Vec2::ZERO).unwrap();
+    assert!(target.is_board_member_locked(BoardMember::Card(result.topics[0])));
+    assert!(target.is_board_member_locked(BoardMember::Object(result.objects[0])));
+}
+
+#[test]
+fn paste_is_one_undoable_edit_and_failed_paste_does_not_change_history() {
+    let mut source = hidden_sheet("Source", "");
+    let topic = source.add_floating("Idea", Vec2::new(100.0, 100.0));
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(20.0, 40.0, 50.0, 60.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[topic], &[object]);
+    let destination = hidden_sheet("Target", "");
+    let mut doc = Document::new(Workbook::new(destination));
+    let before = doc.sheet().clone();
+    assert!(
+        doc.edit_sheet("Paste", |sheet| {
+            paste_board_selection(sheet, &payload, Vec2::new(f32::NAN, 0.0))
+                .map_err(EditError::Invalid)
+        })
+        .is_err()
+    );
+    assert_eq!(doc.sheet(), &before);
+    assert!(!doc.can_undo());
+    doc.edit_sheet("Paste", |sheet| {
+        paste_board_selection(sheet, &payload, Vec2::new(20.0, 20.0)).map_err(EditError::Invalid)
+    })
+    .unwrap();
+    let after = doc.sheet().clone();
+    assert_eq!(doc.undo_label(), Some("Paste"));
+    assert!(doc.undo());
+    assert_eq!(doc.sheet(), &before);
+    assert!(!doc.can_undo());
+    assert!(doc.redo());
+    assert_eq!(doc.sheet(), &after);
+}
+
+#[test]
+fn invalid_payloads_and_out_of_range_pastes_are_rejected_atomically() {
+    let mut source = hidden_sheet("Source", "");
+    let topic = source.add_floating("Idea", Vec2::new(10.0, 20.0));
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(10.0, 20.0, 30.0, 40.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[topic], &[object]);
+    let mut destination = hidden_sheet("Target", "");
+    let before = destination.clone();
+
+    for delta in [
+        Vec2::new(f32::NAN, 0.0),
+        Vec2::new(f32::INFINITY, 0.0),
+        Vec2::new(crate::board::MAX_BOARD_COORDINATE, 0.0),
+    ] {
+        assert!(paste_board_selection(&mut destination, &payload, delta).is_err());
+        assert_eq!(destination, before);
+    }
+
+    let mut bad = payload.clone();
+    bad.fragment.topic_mut(bad.fragment.root).unwrap().title = "leak".into();
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.fragment.canvas.objects[0].kind = CanvasObjectKind::Connector(CanvasConnector::new(
+        Endpoint::Topic(bad.fragment.root),
+        Endpoint::Point(Vec2::ZERO),
+    ));
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.fragment.canvas.objects[0].style.opacity = f32::NAN;
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.fragment.floating.push(bad.fragment.floating[0]);
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.fragment.canvas.objects[0].group = Some(CanvasGroupId(999));
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.fragment.canvas.objects[0].id = CanvasObjectId(u64::MAX);
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut bad = payload.clone();
+    bad.text = "x".repeat(MAX_BOARD_CLIPBOARD_BYTES + 1);
+    assert!(paste_board_selection(&mut destination, &bad, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+    assert!(encode_board_payload(&bad).is_err());
+    assert!(decode_board_payload(&"x".repeat(MAX_BOARD_CLIPBOARD_BYTES + 1)).is_err());
+    assert!(decode_board_payload("THINODA-BOARD-CLIPBOARD-1\n{").is_err());
+    assert!(decode_board_payload("THINODA-BOARD-CLIPBOARD-2\n{}").is_err());
+}
+
+#[test]
+fn old_topic_payload_and_unrelated_plain_text_still_resolve_as_before() {
+    let mut sheet = Sheet::new("S", "Root");
+    let topic = sheet.add_child(sheet.root, None, "Legacy");
+    sheet
+        .topic_mut(topic)
+        .unwrap()
+        .markers
+        .push("flag-red".into());
+    let old = crate::clipboard::copy_topics(&sheet, &[topic]).unwrap();
+    let serialized = serde_json::to_string(&old).unwrap();
+    let old: ClipboardPayload = serde_json::from_str(&serialized).unwrap();
+    let ResolvedBoardPaste::Topics(topics) =
+        resolve_board_paste(None, Some(&old), Some("Legacy\r\n"))
+    else {
+        panic!("expected legacy topic clipboard");
+    };
+    assert_eq!(topics[0].root_topic().markers, vec!["flag-red"]);
+    let ResolvedBoardPaste::Topics(topics) =
+        resolve_board_paste(None, Some(&old), Some("External"))
+    else {
+        panic!("expected external text");
+    };
+    assert_eq!(topics[0].root_topic().title, "External");
+    assert!(topics[0].root_topic().markers.is_empty());
+}
+
+#[test]
+fn plain_text_with_reused_ids_pastes_as_separate_floating_roots() {
+    let subtrees = crate::clipboard::subtrees_from_text("One\n\tChild\nTwo");
+    // Each line root was parsed in a separate temporary Sheet.
+    assert_eq!(subtrees[0].root, subtrees[1].root);
+    let mut destination = hidden_sheet("Target", "private anchor");
+    let root = destination.root;
+    let pasted =
+        paste_floating_subtrees(&mut destination, &subtrees, Vec2::new(100.0, 200.0)).unwrap();
+    assert_eq!(pasted.len(), 2);
+    assert_ne!(pasted[0], pasted[1]);
+    assert_ne!(pasted[0], subtrees[0].root);
+    assert_ne!(pasted[1], subtrees[1].root);
+    assert_eq!(destination.topic(pasted[0]).unwrap().title, "One");
+    assert_eq!(destination.topic(pasted[1]).unwrap().title, "Two");
+    let child = destination.children(pasted[0])[0];
+    assert_eq!(destination.topic(child).unwrap().title, "Child");
+    assert_eq!(
+        destination.topic(pasted[0]).unwrap().position,
+        Some(Vec2::new(100.0, 200.0))
+    );
+    assert_eq!(
+        destination.topic(pasted[1]).unwrap().position,
+        Some(Vec2::new(100.0, 268.0))
+    );
+    assert_eq!(destination.root, root);
+    assert_eq!(destination.root_topic().title, "private anchor");
+    assert!(destination.children(root).is_empty());
+    destination.validate().unwrap();
+}
+
+#[test]
+fn floating_legacy_subtrees_preserve_cards_and_resources_and_validate_atomically() {
+    let mut source = Sheet::new("Source", "Root");
+    let card = source
+        .add_card(
+            "Legacy card",
+            Vec2::new(10.0, 20.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0)),
+        )
+        .unwrap();
+    source.topic_mut(card).unwrap().style.bold = Some(true);
+    let reference = source
+        .resources
+        .insert(
+            crate::resources::Resource::new("file.txt", "text/plain", b"legacy".to_vec()).unwrap(),
+        )
+        .unwrap();
+    source.topic_mut(card).unwrap().attachment = Some(crate::attachments::Attachment {
+        resource: reference.clone(),
+        name: "file.txt".into(),
+    });
+    let payload = crate::clipboard::copy_topics(&source, &[card]).unwrap();
+    let mut destination = hidden_sheet("Target", "");
+    let pasted =
+        paste_floating_subtrees(&mut destination, &payload.subtrees, Vec2::new(40.0, 60.0))
+            .unwrap();
+    let copied = destination.topic(pasted[0]).unwrap();
+    assert_eq!(copied.card, source.topic(card).unwrap().card);
+    assert_eq!(copied.style, source.topic(card).unwrap().style);
+    assert_eq!(copied.attachment, source.topic(card).unwrap().attachment);
+    assert_eq!(copied.position, Some(Vec2::new(40.0, 60.0)));
+    assert_eq!(
+        destination.resources.get(&reference).unwrap().bytes(),
+        b"legacy"
+    );
+    destination.validate().unwrap();
+
+    // A legacy payload may omit bytes already present in the destination.
+    let mut existing_resource = payload.subtrees.clone();
+    existing_resource[0].resources.entries.clear();
+    let additional =
+        paste_floating_subtrees(&mut destination, &existing_resource, Vec2::new(200.0, 60.0))
+            .unwrap();
+    assert_eq!(
+        destination.topic(additional[0]).unwrap().attachment,
+        source.topic(card).unwrap().attachment
+    );
+    destination.validate().unwrap();
+
+    let before = destination.clone();
+    let mut malformed = payload.subtrees.clone();
+    let duplicate = malformed[0].topics[0].clone();
+    malformed[0].topics.push(duplicate);
+    assert!(paste_floating_subtrees(&mut destination, &malformed, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+    let mut malformed = payload.subtrees.clone();
+    malformed[0].root = TopicId(u64::MAX);
+    assert!(paste_floating_subtrees(&mut destination, &malformed, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+    let mut malformed = payload.subtrees.clone();
+    malformed[0].topics.clear();
+    assert!(paste_floating_subtrees(&mut destination, &malformed, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+    assert!(
+        paste_floating_subtrees(
+            &mut destination,
+            &payload.subtrees,
+            Vec2::new(f32::NAN, 0.0)
+        )
+        .is_err()
+    );
+    assert_eq!(destination, before);
+}
+
+#[test]
+fn floating_plain_text_paste_undoes_in_one_step() {
+    let subtrees = crate::clipboard::subtrees_from_text("One\nTwo");
+    let mut doc = Document::new(Workbook::new(hidden_sheet("Target", "")));
+    let before = doc.sheet().clone();
+    doc.edit_sheet("Paste", |sheet| {
+        paste_floating_subtrees(sheet, &subtrees, Vec2::new(50.0, 50.0)).map_err(EditError::Invalid)
+    })
+    .unwrap();
+    let after = doc.sheet().clone();
+    assert!(doc.undo());
+    assert_eq!(doc.sheet(), &before);
+    assert!(!doc.can_undo());
+    assert!(doc.redo());
+    assert_eq!(doc.sheet(), &after);
+}
+
+#[test]
+fn connector_can_precede_its_selected_target_in_paint_order() {
+    let mut source = Sheet::new("Source", "Root");
+    let shape = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(40.0, 40.0, 50.0, 50.0),
+        ))
+        .unwrap();
+    let connector = source
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(shape),
+            Endpoint::Point(Vec2::new(200.0, 100.0)),
+        )))
+        .unwrap();
+    source.canvas.objects.swap(0, 1);
+    source.validate().unwrap();
+    let payload = copy(&source, &[], &[connector, shape]);
+    let mut destination = Sheet::new("Target", "Root");
+    let pasted = paste_board_selection(&mut destination, &payload, Vec2::new(1.0, 2.0)).unwrap();
+    let CanvasObjectKind::Connector(copied) =
+        &destination.canvas.object(pasted.objects[0]).unwrap().kind
+    else {
+        panic!("expected connector first in paint order");
+    };
+    assert_eq!(copied.from, Endpoint::Object(pasted.objects[1]));
+    assert_eq!(copied.to, Endpoint::Point(Vec2::new(201.0, 102.0)));
+    destination.validate().unwrap();
+}
+
+#[test]
+fn invalid_or_excessive_resources_do_not_partially_paste() {
+    let mut source = Sheet::new("Source", "Root");
+    let topic = source.add_floating("Attachment", Vec2::new(10.0, 20.0));
+    let reference = source
+        .resources
+        .insert(crate::resources::Resource::new("new.txt", "text/plain", vec![255]).unwrap())
+        .unwrap();
+    source.topic_mut(topic).unwrap().attachment = Some(crate::attachments::Attachment {
+        resource: reference,
+        name: "new.txt".into(),
+    });
+    let payload = copy(&source, &[topic], &[]);
+
+    let mut destination = Sheet::new("Target", "Root");
+    for number in 0..crate::resources::MAX_RESOURCES {
+        destination
+            .resources
+            .insert(
+                crate::resources::Resource::new(
+                    &format!("resource-{number}.txt"),
+                    "text/plain",
+                    vec![number as u8],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let before = destination.clone();
+    assert!(paste_board_selection(&mut destination, &payload, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+
+    let mut missing = payload.clone();
+    missing.fragment.resources.entries.clear();
+    assert!(paste_board_selection(&mut destination, &missing, Vec2::ZERO).is_err());
+    assert_eq!(destination, before);
+    let malformed = format!("{BOARD_PREFIX}{}", serde_json::to_string(&missing).unwrap());
+    assert!(decode_board_payload(&malformed).is_err());
+}
+
+#[test]
+fn pasting_over_the_object_limit_is_atomic() {
+    let mut source = Sheet::new("Source", "Root");
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(1.0, 2.0, 3.0, 4.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[], &[object]);
+    let mut target = Sheet::new("Target", "Root");
+    for id in 0..crate::board::MAX_CANVAS_OBJECTS {
+        let mut object = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 1.0, 1.0));
+        object.id = CanvasObjectId(id as u64 + 2);
+        target.canvas.objects.push(object);
+    }
+    target.validate().unwrap();
+    let before = target.clone();
+    assert!(paste_board_selection(&mut target, &payload, Vec2::ZERO).is_err());
+    assert_eq!(target, before);
+}
+
+#[test]
+fn destination_with_exhausted_entity_ids_is_rejected_without_allocation() {
+    let mut source = Sheet::new("Source", "Root");
+    let object = source
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            rect(1.0, 2.0, 3.0, 4.0),
+        ))
+        .unwrap();
+    let payload = copy(&source, &[], &[object]);
+    for id in [u64::MAX - 1, u64::MAX] {
+        let mut target = Sheet::new("Target", "Root");
+        let mut existing = CanvasObject::shape(ShapeKind::Rectangle, rect(0.0, 0.0, 1.0, 1.0));
+        existing.id = CanvasObjectId(id);
+        target.canvas.objects.push(existing);
+        target.validate().unwrap();
+        let before = target.clone();
+        assert!(paste_board_selection(&mut target, &payload, Vec2::ZERO).is_err());
+        assert_eq!(target, before);
+    }
+}

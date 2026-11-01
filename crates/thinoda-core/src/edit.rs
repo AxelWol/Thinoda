@@ -45,6 +45,10 @@ impl Sheet {
         if self.is_anchor(id) {
             return Err(EditError::RootNotAllowed);
         }
+        if let Some(member) = self.board_member_for_topic(id) {
+            self.require_unlocked_board_selection(&[member])
+                .map_err(EditError::Invalid)?;
+        }
         Ok(())
     }
 
@@ -163,6 +167,14 @@ impl Sheet {
     /// Removes topics with their subtrees. The root is skipped. Returns the topic that
     /// should be selected afterwards.
     pub fn remove_topics(&mut self, ids: &[TopicId]) -> EditResult<Option<TopicId>> {
+        let cards: Vec<_> = ids
+            .iter()
+            .filter_map(|id| self.board_member_for_topic(*id))
+            .collect();
+        if !cards.is_empty() {
+            self.require_unlocked_board_selection(&cards)
+                .map_err(EditError::Invalid)?;
+        }
         if self.fim.is_some() {
             let roots: Vec<_> = ids
                 .iter()
@@ -405,6 +417,15 @@ impl Sheet {
         if id == self.root {
             return Err(EditError::RootNotAllowed);
         }
+        if let Some(member) = self.board_member_for_topic(id) {
+            let current = self
+                .topic(id)
+                .and_then(|topic| topic.position)
+                .unwrap_or_default();
+            return self
+                .move_board_members(&[member], pos - current)
+                .map_err(EditError::Invalid);
+        }
         let sub = self.detach_subtree_keep_refs(id)?;
         self.attach_floating(pos, sub);
         Ok(())
@@ -415,6 +436,13 @@ impl Sheet {
         self.require(id)?;
         if !self.is_floating(id) {
             return Err(EditError::Invalid("not a floating topic".into()));
+        }
+        if let Some(member) = self.board_member_for_topic(id) {
+            self.require_unlocked_board_selection(&[member])
+                .map_err(EditError::Invalid)?;
+            if !valid_position(pos) {
+                return Err(EditError::Invalid("card position is out of range".into()));
+            }
         }
         self.topic_mut(id).unwrap().position = Some(pos);
         Ok(())

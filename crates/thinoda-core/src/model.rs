@@ -685,9 +685,8 @@ impl Sheet {
         }
     }
 
-    fn bump_next_id(&mut self) {
-        let max = self
-            .topics
+    fn allocated_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.topics
             .keys()
             .map(|t| t.0)
             .chain(self.relationships.iter().map(|r| r.id.0))
@@ -697,9 +696,18 @@ impl Sheet {
             .chain(self.canvas.objects.iter().map(|o| o.id.0))
             .chain(self.canvas.groups.iter().map(|g| g.id.0))
             .chain(self.presentation.slides.iter().map(|s| s.id.0))
-            .max()
-            .unwrap_or(0);
-        if self.next_id <= max {
+    }
+
+    fn bump_next_id(&mut self) {
+        let max = self.allocated_ids().max().unwrap_or(0);
+        if max == u64::MAX {
+            let used: HashSet<_> = self.allocated_ids().collect();
+            let mut candidate = self.next_id.max(1);
+            while used.contains(&candidate) {
+                candidate = candidate.wrapping_add(1).max(1);
+            }
+            self.next_id = candidate;
+        } else if self.next_id <= max {
             self.next_id = max + 1;
         }
     }
@@ -707,7 +715,7 @@ impl Sheet {
     pub(crate) fn alloc(&mut self) -> u64 {
         self.bump_next_id();
         let id = self.next_id;
-        self.next_id += 1;
+        self.next_id = self.next_id.wrapping_add(1).max(1);
         id
     }
 
@@ -947,6 +955,11 @@ impl Sheet {
         if id == self.root {
             return None;
         }
+        if let Some(member) = self.board_member_for_topic(id)
+            && self.require_unlocked_board_selection(&[member]).is_err()
+        {
+            return None;
+        }
         let sub = self.copy_subtree(id)?;
         let parent = self.parent(id);
         let index = self.index_in_parent(id);
@@ -965,6 +978,7 @@ impl Sheet {
             self.topics.remove(t);
             self.scheduling.tasks.remove(t);
         }
+        self.remove_card_board_states(&removed);
         self.scheduling.dependencies.retain(|dependency| {
             !removed.contains(&dependency.predecessor) && !removed.contains(&dependency.successor)
         });
@@ -1565,6 +1579,19 @@ impl Sheet {
                     .ok_or_else(|| format!("zone {id} has a floating topic without a position"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let cards: Vec<_> = zone
+            .roots
+            .iter()
+            .filter(|root| self.topic(**root).is_some_and(|topic| topic.card.is_some()))
+            .map(|root| crate::board::BoardMember::Card(*root))
+            .collect();
+        let card_roots: HashSet<_> = cards
+            .iter()
+            .filter_map(|member| match member {
+                crate::board::BoardMember::Card(root) => Some(*root),
+                crate::board::BoardMember::Object(_) => None,
+            })
+            .collect();
         if positions.iter().any(|(_, position)| {
             !position.x.is_finite()
                 || !position.y.is_finite()
@@ -1573,15 +1600,20 @@ impl Sheet {
         }) {
             return Err("zone movement would place a topic outside the coordinate limit".into());
         }
+        if !cards.is_empty() {
+            self.move_board_members(&cards, delta)?;
+        }
         self.zones
             .iter_mut()
             .find(|zone| zone.id == id)
             .expect("zone checked above")
             .frame = frame;
         for (root, position) in positions {
-            self.topic_mut(root)
-                .expect("zone root checked above")
-                .position = Some(position);
+            if !card_roots.contains(&root) {
+                self.topic_mut(root)
+                    .expect("zone root checked above")
+                    .position = Some(position);
+            }
         }
         Ok(())
     }

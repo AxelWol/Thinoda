@@ -10,7 +10,10 @@ use crate::board::{
 use crate::geometry::{Rect, Vec2};
 use crate::layout::{Layout, clip_to_rect, cubic};
 use crate::model::{Sheet, TopicId, ZoneId};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 /// Default hit tolerance in sheet units.
 pub const HIT_TOLERANCE: f32 = 3.0;
@@ -135,6 +138,7 @@ pub struct Scene {
 pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
     let mut items =
         Vec::with_capacity(sheet.zones.len() + layout.order.len() + sheet.canvas.objects.len());
+    let mut connectors = ConnectorResolver::new(sheet, layout);
     for zone in &sheet.zones {
         items.push(SceneItem {
             id: SceneId::Zone(zone.id),
@@ -147,9 +151,9 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
             },
         });
     }
-    let objects = |band: Band, items: &mut Vec<SceneItem>| {
+    let mut objects = |band: Band, items: &mut Vec<SceneItem>| {
         for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
-            if let Some(item) = object_item(sheet, layout, object) {
+            if let Some(item) = object_item(sheet, object, &mut connectors) {
                 items.push(item);
             }
         }
@@ -180,7 +184,11 @@ pub fn build_scene(sheet: &Sheet, layout: &Layout) -> Scene {
     Scene { grid, items }
 }
 
-fn object_item(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<SceneItem> {
+fn object_item(
+    sheet: &Sheet,
+    object: &CanvasObject,
+    connectors: &mut ConnectorResolver<'_>,
+) -> Option<SceneItem> {
     let band = match object.band {
         Band::Below => SceneBand::BelowMap,
         Band::Above => SceneBand::AboveMap,
@@ -200,7 +208,7 @@ fn object_item(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<
             rotation: object.rotation,
         },
         CanvasObjectKind::Connector(c) => {
-            let points = connector_path(sheet, layout, c);
+            let points = connectors.path(object.id, c)?;
             if points.len() < 2 {
                 return None;
             }
@@ -211,11 +219,15 @@ fn object_item(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<
         }
     };
     let bounds = geometry_bounds(&geometry)?;
+    let clip = match &object.kind {
+        CanvasObjectKind::Connector(_) => clip_at(sheet, bounds.center()),
+        _ => object_clip_rect(sheet, object),
+    };
     Some(SceneItem {
         id: SceneId::Object(object.id),
         band,
         bounds,
-        clip: object_clip_rect(sheet, object),
+        clip,
         geometry,
     })
 }
@@ -246,12 +258,18 @@ pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
     None
 }
 
-/// Clipping from the first clipping frame containing the object's center.
+/// Clipping from the first frame containing the stored object rectangle's center.
+/// Connector paths are resolved by [`build_scene`], which clips using their actual
+/// rendered bounds instead of their potentially stale stored rectangle.
 pub fn object_clip_rect(sheet: &Sheet, object: &CanvasObject) -> Option<Rect> {
+    clip_at(sheet, object.rect.center())
+}
+
+fn clip_at(sheet: &Sheet, center: Vec2) -> Option<Rect> {
     sheet
         .zones
         .iter()
-        .find(|zone| zone.clip && zone.frame.contains(object.rect.center()))
+        .find(|zone| zone.clip && zone.frame.contains(center))
         .map(|zone| zone.frame)
 }
 
@@ -286,7 +304,42 @@ fn geometry_bounds(geometry: &SceneGeometry) -> Option<Rect> {
 
 /// Painted bounds of a canvas object (`None` for an unresolvable connector).
 pub fn object_bounds(sheet: &Sheet, layout: &Layout, object: &CanvasObject) -> Option<Rect> {
-    object_item(sheet, layout, object).and_then(|item| item.visible_bounds())
+    object_item(sheet, object, &mut ConnectorResolver::new(sheet, layout))
+        .and_then(|item| item.visible_bounds())
+}
+
+/// Visible bounds of the whole canvas layer, resolving shared connector dependencies once.
+pub fn canvas_bounds(sheet: &Sheet, layout: &Layout) -> Option<Rect> {
+    let mut connectors = ConnectorResolver::new(sheet, layout);
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| object_item(sheet, object, &mut connectors)?.visible_bounds())
+        .reduce(|a, b| a.union(&b))
+}
+
+pub(crate) fn resolved_object_centers(
+    sheet: &Sheet,
+    layout: &Layout,
+    ids: &HashSet<CanvasObjectId>,
+) -> HashMap<CanvasObjectId, Vec2> {
+    let mut connectors = ConnectorResolver::new(sheet, layout);
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| ids.contains(&object.id))
+        .filter_map(|object| {
+            let center = match &object.kind {
+                CanvasObjectKind::Connector(connector) => {
+                    points_bounds(&connectors.path(object.id, connector)?)?.center()
+                }
+                _ => object.rect.center(),
+            };
+            Some((object.id, center))
+        })
+        .collect()
 }
 
 impl Scene {
@@ -355,33 +408,6 @@ pub fn topic_anchor_rect(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<
     None
 }
 
-/// Resolved endpoint: rect (zero-size for points) and rotation.
-fn resolve_endpoint(sheet: &Sheet, layout: &Layout, end: Endpoint) -> Option<(Rect, f32)> {
-    match end {
-        Endpoint::Point(p) => Some((Rect::from_center_size(p, Vec2::ZERO), 0.0)),
-        Endpoint::Topic(t) => {
-            let rect = topic_anchor_rect(sheet, layout, t)?;
-            let rotation = if layout.rect(t).is_some() {
-                sheet
-                    .topic(t)
-                    .and_then(|t| t.card.as_ref())
-                    .map_or(0.0, |c| c.rotation)
-            } else {
-                0.0
-            };
-            Some((rect, rotation))
-        }
-        Endpoint::Object(x) => {
-            let o = sheet.canvas.object(x)?;
-            if o.is_connector() {
-                Some((Rect::from_center_size(o.rect.center(), Vec2::ZERO), 0.0))
-            } else {
-                Some((o.rect, o.rotation))
-            }
-        }
-    }
-}
-
 /// Border point of a (rotated) rect toward `toward`.
 fn clip_rotated(rect: Rect, rotation: f32, toward: Vec2) -> Vec2 {
     if rect.size.x <= 0.0 && rect.size.y <= 0.0 {
@@ -392,15 +418,8 @@ fn clip_rotated(rect: Rect, rotation: f32, toward: Vec2) -> Vec2 {
     rotate_around(clip_to_rect(rect, local), c, rotation)
 }
 
-/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
-/// cannot be resolved (dangling reference or the hidden anchor).
-pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
-    let (Some((ra, rot_a)), Some((rb, rot_b))) = (
-        resolve_endpoint(sheet, layout, connector.from),
-        resolve_endpoint(sheet, layout, connector.to),
-    ) else {
-        return Vec::new();
-    };
+fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> Vec<Vec2> {
+    let ((ra, rot_a), (rb, rot_b)) = (a, b);
     let (ca, cb) = (ra.center(), rb.center());
     match connector.route {
         ConnectorRoute::Straight => {
@@ -422,6 +441,177 @@ pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnecto
                 .collect()
         }
     }
+}
+
+struct ConnectorResolver<'a> {
+    sheet: &'a Sheet,
+    layout: &'a Layout,
+    objects: HashMap<CanvasObjectId, &'a CanvasObject>,
+    paths: HashMap<CanvasObjectId, Option<Vec<Vec2>>>,
+}
+
+impl<'a> ConnectorResolver<'a> {
+    fn new(sheet: &'a Sheet, layout: &'a Layout) -> Self {
+        Self {
+            sheet,
+            layout,
+            objects: sheet.canvas.objects.iter().map(|o| (o.id, o)).collect(),
+            paths: HashMap::new(),
+        }
+    }
+
+    fn endpoint(&self, end: Endpoint) -> Option<(Rect, f32)> {
+        match end {
+            Endpoint::Point(p) => Some((Rect::from_center_size(p, Vec2::ZERO), 0.0)),
+            Endpoint::Topic(t) => {
+                let rect = topic_anchor_rect(self.sheet, self.layout, t)?;
+                let rotation = if self.layout.rect(t).is_some() {
+                    self.sheet
+                        .topic(t)
+                        .and_then(|topic| topic.card.as_ref())
+                        .map_or(0.0, |card| card.rotation)
+                } else {
+                    0.0
+                };
+                Some((rect, rotation))
+            }
+            Endpoint::Object(id) => {
+                let object = self.objects.get(&id)?;
+                if object.is_connector() {
+                    let points = self.paths.get(&id)?.as_ref()?;
+                    let center = points_bounds(points)?.center();
+                    Some((Rect::from_center_size(center, Vec2::ZERO), 0.0))
+                } else {
+                    Some((object.rect, object.rotation))
+                }
+            }
+        }
+    }
+
+    fn resolve(&mut self, id: CanvasObjectId) -> bool {
+        let mut stack = vec![(id, false)];
+        let mut active = HashSet::new();
+        while let Some((id, exit)) = stack.pop() {
+            if self.paths.contains_key(&id) {
+                continue;
+            }
+            let Some(object) = self.objects.get(&id) else {
+                return false;
+            };
+            let CanvasObjectKind::Connector(connector) = &object.kind else {
+                continue;
+            };
+            if exit {
+                active.remove(&id);
+                let path = self
+                    .endpoint(connector.from)
+                    .zip(self.endpoint(connector.to))
+                    .map(|(from, to)| routed_path(connector, from, to));
+                self.paths.insert(id, path);
+                continue;
+            }
+            if !active.insert(id) {
+                return false;
+            }
+            stack.push((id, true));
+            for end in [connector.from, connector.to] {
+                if let Endpoint::Object(target) = end
+                    && self.objects.get(&target).is_some_and(|o| o.is_connector())
+                    && !self.paths.contains_key(&target)
+                {
+                    if active.contains(&target) {
+                        return false;
+                    }
+                    stack.push((target, false));
+                }
+            }
+        }
+        true
+    }
+
+    fn path(&mut self, id: CanvasObjectId, connector: &CanvasConnector) -> Option<Vec<Vec2>> {
+        if self.objects.get(&id).is_some_and(|o| o.is_connector()) {
+            self.resolve(id)
+                .then(|| self.paths.get(&id).cloned().flatten())?
+        } else {
+            for end in [connector.from, connector.to] {
+                if let Endpoint::Object(target) = end
+                    && !self.resolve(target)
+                {
+                    return None;
+                }
+            }
+            self.endpoint(connector.from)
+                .zip(self.endpoint(connector.to))
+                .map(|(from, to)| routed_path(connector, from, to))
+        }
+    }
+}
+
+/// Reject cyclic connector dependencies before a board is edited or loaded.
+pub fn validate_connector_cycles(sheet: &Sheet) -> Result<(), String> {
+    let connectors: HashMap<_, _> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector) => Some((object.id, connector)),
+            _ => None,
+        })
+        .collect();
+    let mut pending = HashMap::new();
+    let mut dependents: HashMap<CanvasObjectId, Vec<CanvasObjectId>> = HashMap::new();
+    for (&id, connector) in &connectors {
+        let mut count = 0;
+        for end in [connector.from, connector.to] {
+            if let Endpoint::Object(target) = end
+                && connectors.contains_key(&target)
+            {
+                count += 1;
+                dependents.entry(target).or_default().push(id);
+            }
+        }
+        pending.insert(id, count);
+    }
+    let mut ready: VecDeque<_> = pending
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut visited = 0;
+    while let Some(id) = ready.pop_front() {
+        visited += 1;
+        if let Some(owners) = dependents.get(&id) {
+            for owner in owners {
+                let count = pending.get_mut(owner).expect("connector dependency exists");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push_back(*owner);
+                }
+            }
+        }
+    }
+    if visited == connectors.len() {
+        Ok(())
+    } else {
+        Err("connector dependencies contain a cycle".into())
+    }
+}
+
+/// Polyline of a free connector, clipped to its endpoint targets. Empty if an endpoint
+/// cannot be resolved (dangling reference, hidden anchor or invalid connector cycle).
+pub fn connector_path(sheet: &Sheet, layout: &Layout, connector: &CanvasConnector) -> Vec<Vec2> {
+    let mut resolver = ConnectorResolver::new(sheet, layout);
+    for end in [connector.from, connector.to] {
+        if let Endpoint::Object(id) = end
+            && !resolver.resolve(id)
+        {
+            return Vec::new();
+        }
+    }
+    resolver
+        .endpoint(connector.from)
+        .zip(resolver.endpoint(connector.to))
+        .map_or_else(Vec::new, |(from, to)| routed_path(connector, from, to))
 }
 
 #[cfg(test)]

@@ -17,8 +17,10 @@ id_type!(CanvasGroupId);
 
 /// Objects per sheet.
 pub const MAX_CANVAS_OBJECTS: usize = 20_000;
-/// Groups per sheet (a group needs at least two objects).
+/// Groups per sheet (a group needs at least two board members).
 pub const MAX_CANVAS_GROUPS: usize = MAX_CANVAS_OBJECTS / 2;
+/// Cards with explicit grouping or locking state per sheet.
+pub const MAX_CARD_STATES: usize = MAX_CANVAS_OBJECTS;
 /// Points of one ink stroke.
 pub const MAX_STROKE_POINTS: usize = 20_000;
 /// Ink points of all strokes of a sheet.
@@ -108,11 +110,14 @@ pub struct CanvasLayer {
     pub objects: Vec<CanvasObject>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<CanvasGroup>,
+    /// Only cards with a group or a direct lock need an entry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub card_states: Vec<CanvasCardState>,
 }
 
 impl CanvasLayer {
     pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.groups.is_empty()
+        self.objects.is_empty() && self.groups.is_empty() && self.card_states.is_empty()
     }
 
     pub fn object(&self, id: CanvasObjectId) -> Option<&CanvasObject> {
@@ -127,7 +132,12 @@ impl CanvasLayer {
         self.groups.iter().find(|g| g.id == id)
     }
 
-    /// Members of `group` in paint order.
+    pub fn card_state(&self, topic: TopicId) -> Option<&CanvasCardState> {
+        self.card_states.iter().find(|state| state.topic == topic)
+    }
+
+    /// Object members of `group` in paint order. For cards as well, use
+    /// [`Sheet::board_group_members`].
     pub fn group_members(&self, group: CanvasGroupId) -> Vec<CanvasObjectId> {
         self.objects
             .iter()
@@ -136,7 +146,8 @@ impl CanvasLayer {
             .collect()
     }
 
-    /// `ids` plus every member of the groups they belong to, in paint order.
+    /// Object members of the groups containing `ids`, in paint order. Mixed
+    /// selections should use [`Sheet::expand_board_selection`] instead.
     pub fn expand_to_groups(&self, ids: &[CanvasObjectId]) -> Vec<CanvasObjectId> {
         let wanted: HashSet<_> = ids.iter().copied().collect();
         let groups: HashSet<_> = self
@@ -174,12 +185,30 @@ impl CanvasLayer {
     }
 }
 
-/// A group of canvas objects; groups are flat (no nesting, so no cycles).
+/// A board group; groups are flat (no nesting, so no cycles).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanvasGroup {
     pub id: CanvasGroupId,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
+}
+
+/// Persistent board state for a floating card topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanvasCardState {
+    pub topic: TopicId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<CanvasGroupId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+}
+
+/// A selectable board item. Only floating topics with card presentation are
+/// members; ordinary topics and the hidden central anchor are not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BoardMember {
+    Card(TopicId),
+    Object(CanvasObjectId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -1074,12 +1103,16 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         return Err("board grid size is out of range".into());
     }
     if sheet.root_mode == SheetRootMode::Hidden {
+        if sheet.fim.is_some() {
+            return Err("FIM documents always show their central topic".into());
+        }
         validate_anchor(sheet)?;
     }
+    let floating: HashSet<_> = sheet.floating.iter().copied().collect();
     for (id, topic) in &sheet.topics {
         if let Some(card) = &topic.card {
             validate_card(card)?;
-            if *id == sheet.root || topic.parent.is_some() || !sheet.floating.contains(id) {
+            if *id == sheet.root || topic.parent.is_some() || !floating.contains(id) {
                 return Err(format!("card topic {id} is not a floating root"));
             }
         }
@@ -1091,6 +1124,9 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
     if canvas.groups.len() > MAX_CANVAS_GROUPS {
         return Err(format!("canvas exceeds {MAX_CANVAS_GROUPS} groups"));
     }
+    if canvas.card_states.len() > MAX_CARD_STATES {
+        return Err(format!("canvas exceeds {MAX_CARD_STATES} card states"));
+    }
     let mut groups = HashSet::new();
     for g in &canvas.groups {
         if !groups.insert(g.id) {
@@ -1098,6 +1134,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
         }
     }
     let mut ids = HashSet::new();
+    let mut group_counts: HashMap<CanvasGroupId, usize> = HashMap::new();
     let mut total_points = 0usize;
     for o in &canvas.objects {
         if !ids.insert(o.id) {
@@ -1112,13 +1149,49 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
                 ));
             }
         }
-        if let Some(g) = o.group
-            && !groups.contains(&g)
-        {
+        if let Some(g) = o.group {
+            if !groups.contains(&g) {
+                return Err(format!(
+                    "canvas object {} references missing group {g}",
+                    o.id
+                ));
+            }
+            *group_counts.entry(g).or_default() += 1;
+        }
+    }
+    let mut card_ids = HashSet::new();
+    let mut card_groups = HashSet::new();
+    for state in &canvas.card_states {
+        if !card_ids.insert(state.topic) {
+            return Err(format!("duplicate board state for card {}", state.topic));
+        }
+        let is_card = state.topic != sheet.root
+            && floating.contains(&state.topic)
+            && sheet
+                .topic(state.topic)
+                .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some());
+        if !is_card {
             return Err(format!(
-                "canvas object {} references missing group {g}",
-                o.id
+                "board state references non-card topic {}",
+                state.topic
             ));
+        }
+        if let Some(group) = state.group {
+            if !groups.contains(&group) {
+                return Err(format!(
+                    "card {} references missing group {group}",
+                    state.topic
+                ));
+            }
+            *group_counts.entry(group).or_default() += 1;
+            card_groups.insert(group);
+        }
+    }
+    // Older files could contain object-only groups with fewer than two members;
+    // retain their load compatibility while rejecting malformed new card groups.
+    for group in card_groups {
+        if group_counts.get(&group).copied().unwrap_or_default() < 2 {
+            return Err(format!("canvas group {group} has fewer than two members"));
         }
     }
     for o in &canvas.objects {
@@ -1136,6 +1209,7 @@ pub fn validate_board(sheet: &Sheet) -> Result<(), String> {
             }
         }
     }
+    crate::scene::validate_connector_cycles(sheet)?;
     Ok(())
 }
 
@@ -1257,6 +1331,7 @@ impl Sheet {
                 .then(pa.x.total_cmp(&pb.x))
                 .then(a.cmp(b))
         };
+        let floating: HashSet<_> = self.floating.iter().copied().collect();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for zone in &self.zones {
@@ -1264,7 +1339,7 @@ impl Sheet {
                 .roots
                 .iter()
                 .copied()
-                .filter(|r| self.floating.contains(r) && seen.insert(*r))
+                .filter(|r| floating.contains(r) && seen.insert(*r))
                 .collect();
             members.sort_by(by_reading);
             out.extend(members);
@@ -1350,11 +1425,11 @@ impl Sheet {
     /// boundaries, summaries, tasks, connectors and root branch slides are retargeted).
     /// Returns that new topic. Callers wrap this in one edit.
     pub fn hide_central_topic(&mut self) -> Result<Option<TopicId>, String> {
-        if self.root_mode == SheetRootMode::Hidden {
-            return Ok(None);
-        }
         if self.fim.is_some() {
             return Err("FIM documents always show their central topic".into());
+        }
+        if self.root_mode == SheetRootMode::Hidden {
+            return Ok(None);
         }
         if anchor_content(self, true).is_none() {
             self.root_mode = SheetRootMode::Hidden;
@@ -1451,21 +1526,255 @@ impl Sheet {
         Ok(())
     }
 
+    /// Maps a selectable topic to a board member only when it is a floating card.
+    pub fn board_member_for_topic(&self, id: TopicId) -> Option<BoardMember> {
+        (id != self.root
+            && self
+                .topic(id)
+                .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+            && self.is_floating(id))
+        .then_some(BoardMember::Card(id))
+    }
+
+    /// Returns the member's group, if any. Invalid members, including the hidden
+    /// anchor, are never exposed as board members.
+    pub fn board_member_group(&self, member: BoardMember) -> Option<CanvasGroupId> {
+        match member {
+            BoardMember::Card(id) => self
+                .board_member_for_topic(id)
+                .and_then(|_| self.canvas.card_state(id))
+                .and_then(|state| state.group),
+            BoardMember::Object(id) => self.canvas.object(id).and_then(|object| object.group),
+        }
+    }
+
+    /// A member is locked directly or through its group.
+    pub fn is_board_member_locked(&self, member: BoardMember) -> bool {
+        match member {
+            BoardMember::Card(id) => self.canvas.card_state(id).is_some_and(|state| {
+                self.board_member_for_topic(id).is_some()
+                    && (state.locked
+                        || state
+                            .group
+                            .and_then(|group| self.canvas.group(group))
+                            .is_some_and(|group| group.locked))
+            }),
+            BoardMember::Object(id) => self.canvas.is_locked(id),
+        }
+    }
+
+    /// Members of a group: objects in canvas order, then cards in floating order.
+    pub fn board_group_members(&self, group: CanvasGroupId) -> Vec<BoardMember> {
+        if self.canvas.group(group).is_none() {
+            return Vec::new();
+        }
+        let cards: HashSet<_> = self
+            .canvas
+            .card_states
+            .iter()
+            .filter(|state| state.group == Some(group))
+            .map(|state| state.topic)
+            .collect();
+        let mut members: Vec<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| object.group == Some(group))
+            .map(|object| BoardMember::Object(object.id))
+            .collect();
+        members.extend(
+            self.floating
+                .iter()
+                .copied()
+                .filter(|id| {
+                    cards.contains(id)
+                        && *id != self.root
+                        && self
+                            .topic(*id)
+                            .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+                })
+                .map(BoardMember::Card),
+        );
+        members
+    }
+
+    fn validate_board_selection(
+        &self,
+        members: &[BoardMember],
+    ) -> Result<HashSet<BoardMember>, String> {
+        let selected: HashSet<_> = members.iter().copied().collect();
+        if selected.is_empty() {
+            return Err("nothing selected".into());
+        }
+        let objects: HashSet<_> = self.canvas.objects.iter().map(|object| object.id).collect();
+        let cards: HashSet<_> = self
+            .floating
+            .iter()
+            .copied()
+            .filter(|id| {
+                *id != self.root
+                    && self
+                        .topic(*id)
+                        .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+            })
+            .collect();
+        for member in &selected {
+            match member {
+                BoardMember::Card(id) if !cards.contains(id) => {
+                    return Err(format!("floating card {id} not found"));
+                }
+                BoardMember::Object(id) if !objects.contains(id) => {
+                    return Err(format!("canvas object {id} not found"));
+                }
+                _ => {}
+            }
+        }
+        Ok(selected)
+    }
+
+    /// Expands a selection to complete groups, deduplicated and in the same
+    /// stable order as [`Sheet::board_group_members`].
+    pub fn expand_board_selection(
+        &self,
+        members: &[BoardMember],
+    ) -> Result<Vec<BoardMember>, String> {
+        let selected = self.validate_board_selection(members)?;
+        let mut groups = HashSet::new();
+        for object in &self.canvas.objects {
+            if selected.contains(&BoardMember::Object(object.id))
+                && let Some(group) = object.group
+            {
+                groups.insert(group);
+            }
+        }
+        for state in &self.canvas.card_states {
+            if selected.contains(&BoardMember::Card(state.topic))
+                && let Some(group) = state.group
+            {
+                groups.insert(group);
+            }
+        }
+        let group_cards: HashSet<_> = self
+            .canvas
+            .card_states
+            .iter()
+            .filter(|state| state.group.is_some_and(|group| groups.contains(&group)))
+            .map(|state| state.topic)
+            .collect();
+        let mut expanded: Vec<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| {
+                selected.contains(&BoardMember::Object(object.id))
+                    || object.group.is_some_and(|group| groups.contains(&group))
+            })
+            .map(|object| BoardMember::Object(object.id))
+            .collect();
+        expanded.extend(
+            self.floating
+                .iter()
+                .copied()
+                .filter(|id| {
+                    *id != self.root
+                        && (selected.contains(&BoardMember::Card(*id)) || group_cards.contains(id))
+                        && self
+                            .topic(*id)
+                            .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+                })
+                .map(BoardMember::Card),
+        );
+        Ok(expanded)
+    }
+
+    fn require_board_members_unlocked(&self, members: &[BoardMember]) -> Result<(), String> {
+        let selected: HashSet<_> = members.iter().copied().collect();
+        let locked_groups: HashSet<_> = self
+            .canvas
+            .groups
+            .iter()
+            .filter(|group| group.locked)
+            .map(|group| group.id)
+            .collect();
+        for object in &self.canvas.objects {
+            if selected.contains(&BoardMember::Object(object.id))
+                && (object.locked
+                    || object
+                        .group
+                        .is_some_and(|group| locked_groups.contains(&group)))
+            {
+                return Err(format!("canvas object {} is locked", object.id));
+            }
+        }
+        for state in &self.canvas.card_states {
+            if selected.contains(&BoardMember::Card(state.topic))
+                && (state.locked
+                    || state
+                        .group
+                        .is_some_and(|group| locked_groups.contains(&group)))
+            {
+                return Err(format!("card {} is locked", state.topic));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn require_unlocked_board_selection(
+        &self,
+        members: &[BoardMember],
+    ) -> Result<(), String> {
+        if self.canvas.groups.is_empty() {
+            if members.is_empty() {
+                return Err("nothing selected".into());
+            }
+            for member in members {
+                match *member {
+                    BoardMember::Object(id) if self.canvas.object(id).is_none() => {
+                        return Err(format!("canvas object {id} not found"));
+                    }
+                    BoardMember::Card(id) if self.board_member_for_topic(id) != Some(*member) => {
+                        return Err(format!("floating card {id} not found"));
+                    }
+                    _ => {}
+                }
+                if self.is_board_member_locked(*member) {
+                    return Err(match member {
+                        BoardMember::Card(id) => format!("card {id} is locked"),
+                        BoardMember::Object(id) => format!("canvas object {id} is locked"),
+                    });
+                }
+            }
+            return Ok(());
+        }
+        let expanded = self.expand_board_selection(members)?;
+        self.require_board_members_unlocked(&expanded)
+    }
+
     /// Sets or clears the card presentation of a floating root.
     pub fn set_topic_card(&mut self, id: TopicId, card: Option<Card>) -> Result<(), String> {
+        if self.is_anchor(id) {
+            return Err("the hidden central topic is not a card".into());
+        }
+        let current = self
+            .topic(id)
+            .ok_or_else(|| format!("topic {id} not found"))?;
+        if current.card.is_some() {
+            self.require_unlocked_board_selection(&[BoardMember::Card(id)])?;
+        }
         if let Some(card) = &card {
             validate_card(card)?;
             if id == self.root || self.parent(id).is_some() || !self.floating.contains(&id) {
                 return Err(format!("topic {id} is not a floating root"));
             }
         }
-        let topic = self
-            .topic_mut(id)
-            .ok_or_else(|| format!("topic {id} not found"))?;
+        let topic = self.topic_mut(id).expect("checked");
         topic.card = card.map(|mut c| {
             c.rotation = normalize_rotation(c.rotation);
             c
         });
+        if card.is_none() {
+            self.remove_card_board_states(&HashSet::from([id]));
+        }
         Ok(())
     }
 
@@ -1487,6 +1796,9 @@ impl Sheet {
     ) -> Result<CanvasObjectId, String> {
         if self.canvas.objects.len() >= MAX_CANVAS_OBJECTS {
             return Err(format!("canvas exceeds {MAX_CANVAS_OBJECTS} objects"));
+        }
+        if !object.rotation.is_finite() {
+            return Err("rotation must be finite".into());
         }
         object.id = self.alloc_canvas_object_id();
         object.rotation = normalize_rotation(object.rotation);
@@ -1535,6 +1847,10 @@ impl Sheet {
                 return Err(format!("canvas object {id} is locked"));
             }
         }
+        if !ids.is_empty() {
+            let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
+            self.require_unlocked_board_selection(&members)?;
+        }
         Ok(())
     }
 
@@ -1546,13 +1862,31 @@ impl Sheet {
         }
         self.require_unlocked(ids)?;
         let removed: HashSet<_> = ids.iter().copied().collect();
-        let centers: HashMap<_, _> = self
+        let referenced: HashSet<_> = self
             .canvas
             .objects
             .iter()
-            .filter(|o| removed.contains(&o.id))
-            .map(|o| (o.id, o.rect.center()))
+            .filter(|object| !removed.contains(&object.id))
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) => Some([connector.from, connector.to]),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|endpoint| match endpoint {
+                Endpoint::Object(id) if removed.contains(&id) => Some(id),
+                _ => None,
+            })
             .collect();
+        let centers = if referenced.is_empty() {
+            HashMap::new()
+        } else {
+            let layout = crate::layout::layout_sheet(self, &crate::layout::ApproxMeasure, false);
+            let centers = crate::scene::resolved_object_centers(self, &layout, &referenced);
+            if centers.len() != referenced.len() {
+                return Err("cannot resolve a deleted connector target".into());
+            }
+            centers
+        };
         self.canvas.objects.retain(|o| !removed.contains(&o.id));
         for o in &mut self.canvas.objects {
             if let CanvasObjectKind::Connector(c) = &mut o.kind {
@@ -1581,7 +1915,17 @@ impl Sheet {
         self.require_unlocked(ids)?;
         let set: HashSet<_> = ids.iter().copied().collect();
         let mut candidate = self.canvas.clone();
-        for o in candidate.objects.iter_mut().filter(|o| set.contains(&o.id)) {
+        Self::translate_canvas_objects(&mut candidate, &set, delta)?;
+        self.canvas = candidate;
+        Ok(())
+    }
+
+    fn translate_canvas_objects(
+        canvas: &mut CanvasLayer,
+        ids: &HashSet<CanvasObjectId>,
+        delta: Vec2,
+    ) -> Result<(), String> {
+        for o in canvas.objects.iter_mut().filter(|o| ids.contains(&o.id)) {
             o.rect = o.rect.translate(delta);
             match &mut o.kind {
                 CanvasObjectKind::Ink(ink) => {
@@ -1598,7 +1942,82 @@ impl Sheet {
             }
             validate_object(o)?;
         }
-        self.canvas = candidate;
+        Ok(())
+    }
+
+    /// Moves complete selected groups and ungrouped members as one atomic edit.
+    /// A locked member or an out-of-range destination rejects the entire move.
+    pub fn move_board_members(
+        &mut self,
+        members: &[BoardMember],
+        delta: Vec2,
+    ) -> Result<(), String> {
+        if !valid_position(delta) {
+            return Err("movement out of range".into());
+        }
+        let members = self.expand_board_selection(members)?;
+        self.require_board_members_unlocked(&members)?;
+        if delta == Vec2::ZERO {
+            return Ok(());
+        }
+        let objects: HashSet<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => Some(*id),
+                BoardMember::Card(_) => None,
+            })
+            .collect();
+        let mut positions = Vec::new();
+        for member in &members {
+            if let BoardMember::Card(id) = member {
+                let position = self
+                    .topic(*id)
+                    .and_then(|topic| topic.position)
+                    .unwrap_or_default()
+                    + delta;
+                if !valid_position(position) {
+                    return Err(format!("card {id} position is out of range"));
+                }
+                positions.push((*id, position));
+            }
+        }
+        let mut canvas = self.canvas.clone();
+        Self::translate_canvas_objects(&mut canvas, &objects, delta)?;
+        self.canvas = canvas;
+        for (id, position) in positions {
+            self.topic_mut(id).expect("selection validated").position = Some(position);
+        }
+        Ok(())
+    }
+
+    /// Deletes complete selected groups and ungrouped members atomically.
+    pub fn remove_board_members(&mut self, members: &[BoardMember]) -> Result<(), String> {
+        let members = self.expand_board_selection(members)?;
+        self.require_board_members_unlocked(&members)?;
+        let objects: Vec<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Object(id) => Some(*id),
+                BoardMember::Card(_) => None,
+            })
+            .collect();
+        let cards: Vec<_> = members
+            .iter()
+            .filter_map(|member| match member {
+                BoardMember::Card(id) => Some(*id),
+                BoardMember::Object(_) => None,
+            })
+            .collect();
+        let mut candidate = self.clone();
+        if !objects.is_empty() {
+            candidate.remove_canvas_objects(&objects)?;
+        }
+        if !cards.is_empty() {
+            candidate
+                .remove_topics(&cards)
+                .map_err(|error| error.to_string())?;
+        }
+        *self = candidate;
         Ok(())
     }
 
@@ -1667,6 +2086,9 @@ impl Sheet {
         object.id = id;
         object.group = group;
         object.locked = locked;
+        if !object.rotation.is_finite() {
+            return Err("rotation must be finite".into());
+        }
         object.rotation = normalize_rotation(object.rotation);
         validate_object(&object)?;
         if let CanvasObjectKind::Connector(c) = &object.kind {
@@ -1686,7 +2108,12 @@ impl Sheet {
                 ));
             }
         }
-        *self.canvas.object_mut(id).expect("checked") = object;
+        let is_connector = object.is_connector();
+        let previous = std::mem::replace(self.canvas.object_mut(id).expect("checked"), object);
+        if is_connector && let Err(error) = crate::scene::validate_connector_cycles(self) {
+            *self.canvas.object_mut(id).expect("checked") = previous;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -1769,45 +2196,173 @@ impl Sheet {
         Ok(())
     }
 
-    /// Groups at least two objects into a new group (previous groups are left).
+    /// Groups at least two board members. Only the explicitly selected members
+    /// are regrouped; an old group with fewer than two remaining members dissolves.
+    pub fn group_board_members(
+        &mut self,
+        members: &[BoardMember],
+    ) -> Result<CanvasGroupId, String> {
+        let selected = self.validate_board_selection(members)?;
+        if selected.len() < 2 {
+            return Err("select at least two board members to group".into());
+        }
+        let expanded = self.expand_board_selection(members)?;
+        self.require_board_members_unlocked(&expanded)?;
+
+        let mut remaining: HashMap<CanvasGroupId, usize> = HashMap::new();
+        for object in &self.canvas.objects {
+            if !selected.contains(&BoardMember::Object(object.id))
+                && let Some(group) = object.group
+            {
+                *remaining.entry(group).or_default() += 1;
+            }
+        }
+        for state in &self.canvas.card_states {
+            if !selected.contains(&BoardMember::Card(state.topic))
+                && let Some(group) = state.group
+            {
+                *remaining.entry(group).or_default() += 1;
+            }
+        }
+        let kept_groups = self
+            .canvas
+            .groups
+            .iter()
+            .filter(|group| remaining.get(&group.id).copied().unwrap_or_default() >= 2)
+            .count();
+        if kept_groups >= MAX_CANVAS_GROUPS {
+            return Err(format!("canvas exceeds {MAX_CANVAS_GROUPS} groups"));
+        }
+        let existing_cards: HashSet<_> = self
+            .canvas
+            .card_states
+            .iter()
+            .map(|state| state.topic)
+            .collect();
+        let new_cards = selected
+            .iter()
+            .filter(
+                |member| matches!(member, BoardMember::Card(id) if !existing_cards.contains(id)),
+            )
+            .count();
+        if self.canvas.card_states.len() + new_cards > MAX_CARD_STATES {
+            return Err(format!("canvas exceeds {MAX_CARD_STATES} card states"));
+        }
+
+        let id = self.alloc_canvas_group_id();
+        self.canvas.groups.push(CanvasGroup { id, locked: false });
+        for object in &mut self.canvas.objects {
+            if selected.contains(&BoardMember::Object(object.id)) {
+                object.group = Some(id);
+            }
+        }
+        for state in &mut self.canvas.card_states {
+            if selected.contains(&BoardMember::Card(state.topic)) {
+                state.group = Some(id);
+            }
+        }
+        for topic in &self.floating {
+            if selected.contains(&BoardMember::Card(*topic)) && !existing_cards.contains(topic) {
+                self.canvas.card_states.push(CanvasCardState {
+                    topic: *topic,
+                    group: Some(id),
+                    locked: false,
+                });
+            }
+        }
+        self.prune_canvas_groups();
+        Ok(id)
+    }
+
+    /// Groups objects using the mixed-member implementation. Cards in previous
+    /// groups remain attached or are ungrouped when that group dissolves.
     pub fn group_canvas_objects(
         &mut self,
         ids: &[CanvasObjectId],
     ) -> Result<CanvasGroupId, String> {
-        let set: HashSet<_> = ids.iter().copied().collect();
-        if set.len() < 2 {
-            return Err("select at least two objects to group".into());
-        }
-        self.require_unlocked(ids)?;
-        let id = self.alloc_canvas_group_id();
-        self.canvas.groups.push(CanvasGroup { id, locked: false });
-        for o in self
-            .canvas
-            .objects
-            .iter_mut()
-            .filter(|o| set.contains(&o.id))
-        {
-            o.group = Some(id);
-        }
-        self.prune_canvas_groups();
-        if self.canvas.groups.len() > MAX_CANVAS_GROUPS {
-            return Err(format!("canvas exceeds {MAX_CANVAS_GROUPS} groups"));
-        }
-        Ok(id)
+        let members: Vec<_> = ids.iter().copied().map(BoardMember::Object).collect();
+        self.group_board_members(&members)
     }
 
     /// Dissolves a group; its members keep their position and order.
-    pub fn ungroup_canvas_objects(&mut self, group: CanvasGroupId) -> Result<(), String> {
+    pub fn ungroup_board_members(&mut self, group: CanvasGroupId) -> Result<(), String> {
         if self.canvas.group(group).is_none() {
             return Err(format!("canvas group {group} not found"));
         }
-        self.require_unlocked(&self.canvas.group_members(group))?;
+        self.require_board_members_unlocked(&self.board_group_members(group))?;
         for o in &mut self.canvas.objects {
             if o.group == Some(group) {
                 o.group = None;
             }
         }
+        for state in &mut self.canvas.card_states {
+            if state.group == Some(group) {
+                state.group = None;
+            }
+        }
+        self.canvas
+            .card_states
+            .retain(|state| state.locked || state.group.is_some());
         self.canvas.groups.retain(|g| g.id != group);
+        Ok(())
+    }
+
+    /// Compatibility entry point; also clears any card members.
+    pub fn ungroup_canvas_objects(&mut self, group: CanvasGroupId) -> Result<(), String> {
+        self.ungroup_board_members(group)
+    }
+
+    /// Sets direct locks on individual members. Group locks remain independent.
+    pub fn set_board_members_locked(
+        &mut self,
+        members: &[BoardMember],
+        locked: bool,
+    ) -> Result<(), String> {
+        let selected = self.validate_board_selection(members)?;
+        let existing_cards: HashSet<_> = self
+            .canvas
+            .card_states
+            .iter()
+            .map(|state| state.topic)
+            .collect();
+        let new_cards = if locked {
+            selected
+                .iter()
+                .filter(|member| {
+                    matches!(member, BoardMember::Card(id) if !existing_cards.contains(id))
+                })
+                .count()
+        } else {
+            0
+        };
+        if self.canvas.card_states.len() + new_cards > MAX_CARD_STATES {
+            return Err(format!("canvas exceeds {MAX_CARD_STATES} card states"));
+        }
+        for object in &mut self.canvas.objects {
+            if selected.contains(&BoardMember::Object(object.id)) {
+                object.locked = locked;
+            }
+        }
+        for state in &mut self.canvas.card_states {
+            if selected.contains(&BoardMember::Card(state.topic)) {
+                state.locked = locked;
+            }
+        }
+        if locked {
+            for topic in &self.floating {
+                if selected.contains(&BoardMember::Card(*topic)) && !existing_cards.contains(topic)
+                {
+                    self.canvas.card_states.push(CanvasCardState {
+                        topic: *topic,
+                        group: None,
+                        locked: true,
+                    });
+                }
+            }
+        }
+        self.canvas
+            .card_states
+            .retain(|state| state.locked || state.group.is_some());
         Ok(())
     }
 
@@ -1846,12 +2401,28 @@ impl Sheet {
         Ok(())
     }
 
+    /// Removes state owned by deleted or converted cards and dissolves small groups.
+    pub(crate) fn remove_card_board_states(&mut self, topics: &HashSet<TopicId>) {
+        let before = self.canvas.card_states.len();
+        self.canvas
+            .card_states
+            .retain(|state| !topics.contains(&state.topic));
+        if self.canvas.card_states.len() != before {
+            self.prune_canvas_groups();
+        }
+    }
+
     /// Dissolves groups with fewer than two members.
     fn prune_canvas_groups(&mut self) {
         let mut counts: BTreeMap<CanvasGroupId, usize> = BTreeMap::new();
         for o in &self.canvas.objects {
             if let Some(g) = o.group {
                 *counts.entry(g).or_default() += 1;
+            }
+        }
+        for state in &self.canvas.card_states {
+            if let Some(group) = state.group {
+                *counts.entry(group).or_default() += 1;
             }
         }
         let alive: HashSet<_> = self
@@ -1867,6 +2438,14 @@ impl Sheet {
                 o.group = None;
             }
         }
+        for state in &mut self.canvas.card_states {
+            if state.group.is_some_and(|group| !alive.contains(&group)) {
+                state.group = None;
+            }
+        }
+        self.canvas
+            .card_states
+            .retain(|state| state.locked || state.group.is_some());
     }
 
     /// `true` if a connector references a topic or object missing from this sheet.
@@ -1892,6 +2471,21 @@ impl Sheet {
         }
         let layout = crate::layout::layout_sheet(before, &crate::layout::ApproxMeasure, false);
         let objects: HashSet<_> = self.canvas.objects.iter().map(|o| o.id).collect();
+        let missing_objects: HashSet<_> = self
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) => Some([connector.from, connector.to]),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|end| match end {
+                Endpoint::Object(id) if !objects.contains(&id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let centers = crate::scene::resolved_object_centers(before, &layout, &missing_objects);
         let mut converted = 0;
         let alive_topic = |t: TopicId| self.contains(t) && !self.is_anchor(t);
         let mut ends = Vec::new();
@@ -1907,13 +2501,9 @@ impl Sheet {
                             .or_else(|| before.topic(t).and_then(|t| t.position))
                             .unwrap_or(o.rect.center()),
                     ),
-                    Endpoint::Object(x) if !objects.contains(&x) => Some(
-                        before
-                            .canvas
-                            .object(x)
-                            .map(|b| b.rect.center())
-                            .unwrap_or(o.rect.center()),
-                    ),
+                    Endpoint::Object(x) if !objects.contains(&x) => {
+                        Some(centers.get(&x).copied().unwrap_or(o.rect.center()))
+                    }
                     _ => None,
                 };
                 if let Some(center) = center {

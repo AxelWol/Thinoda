@@ -1,7 +1,10 @@
-//! Find & replace and filtering across topics.
+//! Find & replace and filtering across topics and freeform objects.
 
+use crate::board::{CanvasObjectId, CanvasObjectKind};
 use crate::model::{Sheet, TopicId, Workbook};
 use std::borrow::Cow;
+use std::collections::HashSet;
+use std::ops::Range;
 
 fn searchable_note(note: &str) -> Cow<'_, str> {
     crate::notes::plain_text_projection(note)
@@ -29,6 +32,19 @@ pub struct SearchHit {
     pub sheet: usize,
     pub topic: TopicId,
     pub field: MatchField,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasMatchField {
+    Label,
+    AltText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasSearchHit {
+    pub sheet: usize,
+    pub object: CanvasObjectId,
+    pub field: CanvasMatchField,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,38 +178,109 @@ pub fn search_faceted(
         .collect()
 }
 
-fn find_in(hay: &str, needle: &str, opts: &SearchOptions) -> Vec<usize> {
+struct CaseLengthChange {
+    lowered: Range<usize>,
+    original: Range<usize>,
+}
+
+enum CaseBoundaries {
+    Identity,
+    Changes(Vec<CaseLengthChange>),
+    Dense(Vec<Option<usize>>),
+}
+
+impl CaseBoundaries {
+    fn original(&self, hay: &str, offset: usize) -> Option<usize> {
+        let original = match self {
+            Self::Identity => offset,
+            Self::Dense(offsets) => offsets[offset]?,
+            Self::Changes(changes) => {
+                let preceding = changes.partition_point(|change| change.lowered.end <= offset);
+                if changes
+                    .get(preceding)
+                    .is_some_and(|change| offset > change.lowered.start)
+                {
+                    return None;
+                }
+                if preceding == 0 {
+                    offset
+                } else {
+                    let previous = &changes[preceding - 1];
+                    previous.original.end + (offset - previous.lowered.end)
+                }
+            }
+        };
+        hay.is_char_boundary(original).then_some(original)
+    }
+}
+
+fn find_in(hay: &str, needle: &str, opts: &SearchOptions) -> Vec<Range<usize>> {
     if needle.is_empty() {
         return vec![];
     }
-    let (h, n) = if opts.case_sensitive {
-        (hay.to_string(), needle.to_string())
+    let (h, n): (Cow<'_, str>, Cow<'_, str>) = if opts.case_sensitive {
+        (Cow::Borrowed(hay), Cow::Borrowed(needle))
     } else {
-        (hay.to_lowercase(), needle.to_lowercase())
+        (
+            Cow::Owned(hay.to_lowercase()),
+            Cow::Owned(needle.to_lowercase()),
+        )
     };
-    // lowercase may change byte lengths for some scripts; fall back to no matches then
-    if h.len() != hay.len() || n.len() != needle.len() {
-        return if h.contains(&n) { vec![0] } else { vec![] };
-    }
+    let boundaries = if opts.case_sensitive || hay.is_ascii() {
+        CaseBoundaries::Identity
+    } else {
+        let mut changes = Vec::new();
+        let mut lower = 0;
+        for (original, ch) in hay.char_indices() {
+            let lower_len = ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+            if lower_len != ch.len_utf8() {
+                changes.push(CaseLengthChange {
+                    lowered: lower..lower + lower_len,
+                    original: original..original + ch.len_utf8(),
+                });
+            }
+            lower += lower_len;
+        }
+        if lower != h.len() {
+            let mut offsets = vec![None; h.len() + 1];
+            for (original, _) in hay.char_indices() {
+                let lower = hay[..original].to_lowercase().len();
+                if lower <= h.len() {
+                    offsets[lower] = Some(original);
+                }
+            }
+            offsets[h.len()] = Some(hay.len());
+            CaseBoundaries::Dense(offsets)
+        } else {
+            CaseBoundaries::Changes(changes)
+        }
+    };
     let mut out = Vec::new();
     let mut start = 0;
-    while let Some(pos) = h[start..].find(&n) {
+    while let Some(pos) = h[start..].find(n.as_ref()) {
         let i = start + pos;
-        let ok = !opts.whole_word || {
-            let before = h[..i]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_alphanumeric());
-            let after = h[i + n.len()..]
-                .chars()
-                .next()
-                .is_none_or(|c| !c.is_alphanumeric());
-            before && after
-        };
-        if ok {
-            out.push(i);
+        let end = i + n.len();
+        let original = boundaries
+            .original(hay, i)
+            .zip(boundaries.original(hay, end))
+            .map(|(start, end)| start..end);
+        if let Some(range) = original {
+            let ok = !opts.whole_word
+                || (hay[..range.start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric())
+                    && hay[range.end..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| !c.is_alphanumeric()));
+            if ok {
+                out.push(range);
+            }
+            start = end;
+        } else {
+            start = i + h[i..].chars().next().unwrap().len_utf8();
         }
-        start = i + n.len().max(1);
     }
     out
 }
@@ -247,44 +334,128 @@ pub fn search_workbook(wb: &Workbook, needle: &str, opts: &SearchOptions) -> Vec
         .collect()
 }
 
-/// Replaces all occurrences in titles of `ids`; returns the number of replacements.
+/// Searches canvas labels and accessibility descriptions in object order.
+pub fn search_canvas(
+    sheet: &Sheet,
+    sheet_index: usize,
+    needle: &str,
+    opts: &SearchOptions,
+) -> Vec<CanvasSearchHit> {
+    sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| {
+            let field = if matches(object.label(), needle, opts) {
+                CanvasMatchField::Label
+            } else if matches(&object.alt_text, needle, opts) {
+                CanvasMatchField::AltText
+            } else {
+                return None;
+            };
+            Some(CanvasSearchHit {
+                sheet: sheet_index,
+                object: object.id,
+                field,
+            })
+        })
+        .collect()
+}
+
+fn replace_text(text: &mut String, needle: &str, replacement: &str, opts: &SearchOptions) -> usize {
+    let ranges = find_in(text, needle, opts);
+    if ranges.is_empty() {
+        return 0;
+    }
+    let mut out = String::new();
+    let mut last = 0;
+    for range in &ranges {
+        out.push_str(&text[last..range.start]);
+        out.push_str(replacement);
+        last = range.end;
+    }
+    out.push_str(&text[last..]);
+    *text = out;
+    ranges.len()
+}
+
+/// Replaces all occurrences in titles of `ids`, rejecting locked cards atomically.
 pub fn replace_in_titles(
     sheet: &mut Sheet,
     ids: &[TopicId],
     needle: &str,
     replacement: &str,
     opts: &SearchOptions,
-) -> usize {
+) -> Result<usize, String> {
     let mut count = 0;
+    let mut updates = Vec::new();
     for id in ids {
         if sheet.is_anchor(*id) {
             continue;
         }
-        let Some(t) = sheet.topic_mut(*id) else {
+        let Some(topic) = sheet.topic(*id) else {
             continue;
         };
-        let positions = find_in(&t.title, needle, opts);
-        if positions.is_empty() || (positions == [0] && !t.title.is_char_boundary(needle.len())) {
+        let mut title = topic.title.clone();
+        let matches = replace_text(&mut title, needle, replacement, opts);
+        if matches > 0 {
+            if let Some(member) = sheet.board_member_for_topic(*id) {
+                sheet.require_unlocked_board_selection(&[member])?;
+            }
+            count += matches;
+            updates.push((*id, title));
+        }
+    }
+    for (id, title) in updates {
+        sheet
+            .set_title(id, &title)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(count)
+}
+
+/// Atomically replaces matching canvas labels and descriptions. Locked objects and
+/// invalid replacement results return an error without changing the sheet.
+pub fn replace_in_canvas(
+    sheet: &mut Sheet,
+    ids: &[CanvasObjectId],
+    needle: &str,
+    replacement: &str,
+    opts: &SearchOptions,
+) -> Result<usize, String> {
+    let mut candidate = sheet.clone();
+    let wanted: HashSet<_> = ids.iter().copied().collect();
+    if !wanted.is_empty() {
+        let members: Vec<_> = wanted
+            .iter()
+            .copied()
+            .map(crate::board::BoardMember::Object)
+            .collect();
+        candidate.require_unlocked_board_selection(&members)?;
+    }
+    let mut found = HashSet::new();
+    let mut count = 0;
+    for object in &mut candidate.canvas.objects {
+        if !wanted.contains(&object.id) {
             continue;
         }
-        let mut out = String::new();
-        let mut last = 0;
-        for p in &positions {
-            if *p < last
-                || !t.title.is_char_boundary(*p)
-                || !t.title.is_char_boundary(p + needle.len())
-            {
-                continue;
-            }
-            out.push_str(&t.title[last..*p]);
-            out.push_str(replacement);
-            last = p + needle.len();
-            count += 1;
+        found.insert(object.id);
+        count += replace_text(&mut object.alt_text, needle, replacement, opts);
+        let label = match &mut object.kind {
+            CanvasObjectKind::Shape { label, .. } => Some(label),
+            CanvasObjectKind::Connector(connector) => Some(&mut connector.label),
+            CanvasObjectKind::Ink(_) => None,
+        };
+        if let Some(label) = label {
+            count += replace_text(label, needle, replacement, opts);
         }
-        out.push_str(&t.title[last..]);
-        t.title = out;
     }
-    count
+    if let Some(id) = wanted.difference(&found).next() {
+        return Err(format!("canvas object {id} not found"));
+    }
+    candidate.validate()?;
+    sheet.canvas = candidate.canvas;
+    Ok(count)
 }
 
 /// Filter: topics having any of the given markers or labels (and their ancestors so the
@@ -438,9 +609,141 @@ mod tests {
     fn replace() {
         let mut s = s();
         let ids = s.all_ids_ordered();
-        let n = replace_in_titles(&mut s, &ids, "plan", "Goal", &SearchOptions::default());
+        let n = replace_in_titles(&mut s, &ids, "plan", "Goal", &SearchOptions::default()).unwrap();
         assert_eq!(n, 3);
         assert_eq!(s.root_topic().title, "Project Goal");
+    }
+
+    #[test]
+    fn case_insensitive_replacement_uses_original_unicode_boundaries() {
+        let mut sheet = Sheet::new("Board", "İ foo and İ FOO");
+        let root = sheet.root;
+        let options = SearchOptions::default();
+        assert!(matches(&sheet.root_topic().title, "foo", &options));
+        assert_eq!(
+            replace_in_titles(&mut sheet, &[root], "foo", "bar", &options).unwrap(),
+            2
+        );
+        assert_eq!(sheet.root_topic().title, "İ bar and İ bar");
+        sheet.topic_mut(root).unwrap().title = "i\u{307} İ".into();
+        assert_eq!(
+            replace_in_titles(&mut sheet, &[root], "İ", "X", &options).unwrap(),
+            2
+        );
+        assert_eq!(sheet.root_topic().title, "X X");
+        assert!(!matches("İ", "i", &options));
+        assert!(matches("İi", "i", &options));
+        let whole = SearchOptions {
+            whole_word: true,
+            ..options
+        };
+        assert!(!matches("İfoobar", "foo", &whole));
+    }
+
+    #[test]
+    fn title_replacement_rejects_locked_cards_without_partial_changes() {
+        use crate::{Card, CardKind, Vec2, board::BoardMember};
+
+        let mut sheet = Sheet::new("Board", "Needle root");
+        let root = sheet.root;
+        let card = sheet.add_floating("Needle card", Vec2::new(0.0, 100.0));
+        sheet
+            .set_topic_card(
+                card,
+                Some(Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0))),
+            )
+            .unwrap();
+        sheet
+            .set_board_members_locked(&[BoardMember::Card(card)], true)
+            .unwrap();
+        let before = sheet.clone();
+        assert!(
+            replace_in_titles(
+                &mut sheet,
+                &[root, card],
+                "needle",
+                "Goal",
+                &SearchOptions::default(),
+            )
+            .is_err()
+        );
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
+    fn canvas_search_and_replace_are_atomic_undoable_and_respect_locks() {
+        use crate::{
+            CanvasConnector, CanvasObject, Color, Document, Endpoint, InkStroke, InkTool, Rect,
+            ShapeKind, SheetRootMode, Vec2, Workbook,
+        };
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(80.0, 60.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "alpha alpha".into();
+        }
+        shape.alt_text = "alpha visual".into();
+        let shape = sheet.add_canvas_object(shape).unwrap();
+        let mut stroke = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(0, 0, 0),
+            2.0,
+            vec![Vec2::ZERO, Vec2::new(10.0, 10.0)],
+        ));
+        stroke.alt_text = "alpha ink".into();
+        let stroke = sheet.add_canvas_object(stroke).unwrap();
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::ZERO),
+            Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.label = "alpha link".into();
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let options = SearchOptions::default();
+        let hits = search_canvas(&sheet, 2, "ALPHA", &options);
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].field, CanvasMatchField::Label);
+        assert_eq!(hits[1].field, CanvasMatchField::AltText);
+        assert!(hits.iter().all(|hit| hit.sheet == 2));
+        let ids = [shape, stroke, connector];
+        sheet.set_canvas_objects_locked(&[connector], true).unwrap();
+        let locked = sheet.clone();
+        assert!(replace_in_canvas(&mut sheet, &ids, "alpha", "beta", &options).is_err());
+        assert_eq!(sheet, locked);
+        sheet
+            .set_canvas_objects_locked(&[connector], false)
+            .unwrap();
+        let mut doc = Document::new(Workbook::new(sheet));
+        let before = doc.sheet().clone();
+        let count = doc
+            .edit_sheet("Replace board text", |sheet| {
+                replace_in_canvas(sheet, &ids, "alpha", "beta", &options)
+                    .map_err(crate::EditError::Invalid)
+            })
+            .unwrap();
+        assert_eq!(count, 5);
+        assert_eq!(search_canvas(doc.sheet(), 0, "beta", &options).len(), 3);
+        assert!(doc.undo());
+        assert_eq!(doc.sheet(), &before);
+        assert!(doc.redo());
+        assert_eq!(search_canvas(doc.sheet(), 0, "beta", &options).len(), 3);
+
+        let mut invalid = before.clone();
+        assert!(
+            replace_in_canvas(
+                &mut invalid,
+                &[shape],
+                "alpha",
+                &"x".repeat(crate::board::MAX_BOARD_TEXT_CHARS + 1),
+                &options,
+            )
+            .is_err()
+        );
+        assert_eq!(invalid, before);
     }
 
     #[test]
@@ -487,7 +790,7 @@ mod tests {
         assert_eq!(sheet.topic_count(), 3);
         assert_eq!(word_count(&sheet), 4);
         assert_eq!(
-            replace_in_titles(&mut sheet, &[anchor], "Secret", "Changed", &options),
+            replace_in_titles(&mut sheet, &[anchor], "Secret", "Changed", &options).unwrap(),
             0
         );
         assert_eq!(sheet.topic(anchor).unwrap().title, "Secret anchor");

@@ -382,6 +382,27 @@ locales, Light/Dark, accessibility checks and updated user docs.
 - This is not phase acceptance: application controls, frame clipping in visual
   export, keyboard/screen-reader parity, and integration tests remain open.
 
+### Core integration checkpoint: critique
+
+- Mixed card/object groups use one selection and lock invariant. A locked member
+  blocks indirect edits to the rest of its group, including card presentation,
+  object geometry, stacking and text replacement.
+- Board clipboard payloads remap internal references and resources, convert
+  external connector ends to their resolved positions, and validate before
+  mutation. Plain-text clipboard ownership and host integration still require
+  end-to-end verification.
+- Connector-to-connector geometry is resolved iteratively; cycles are rejected.
+  Allocating after an imported maximum identifier finds an unused ID instead of
+  overflowing. Invalid paste and oversized content must fail atomically.
+- Undo accounting tracks shared ink allocations incrementally rather than
+  rescanning the entire history. A three-sample Windows release check measured
+  624 ms p50 for 300 moves on the 10,000-stroke case (the earlier repeated-scan
+  implementation took approximately 6.1 s). This is a CPU microbenchmark, not
+  a web, GPU, interaction-frame or recovery-size acceptance result.
+- This checkpoint does not complete the phases: board controls, export clipping,
+  browser/native interaction, and cloud reload history still need integration
+  and validation.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

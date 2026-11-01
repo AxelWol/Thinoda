@@ -1,8 +1,8 @@
 //! [`Document`]: a workbook plus snapshot based undo/redo and dirty tracking.
 
 use crate::board::{
-    Band, BoardSettings, CanvasGroupId, CanvasObject, CanvasObjectId, CanvasObjectKind, Card,
-    ZOrder,
+    Band, BoardMember, BoardSettings, CanvasGroupId, CanvasObject, CanvasObjectId,
+    CanvasObjectKind, Card, ZOrder,
 };
 use crate::edit::{EditError, EditResult};
 use crate::model::TopicId;
@@ -11,7 +11,7 @@ use crate::{
     geometry::{Rect, Vec2},
     model::{Presentation, PresentationSource, Sheet, SlideFrame, SlideId, Workbook, ZoneId},
 };
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 const MAX_HISTORY: usize = 300;
 /// Approximate memory budget of the undo stack. Large ink data is shared between
@@ -40,40 +40,73 @@ impl Snapshot {
         }
     }
 
-    fn shared_ink_bytes(&self, seen: &mut HashSet<usize>) -> usize {
-        fn sheet_bytes(sheet: &Sheet, seen: &mut HashSet<usize>) -> usize {
-            sheet
-                .canvas
-                .objects
-                .iter()
-                .filter_map(|object| match &object.kind {
-                    crate::board::CanvasObjectKind::Ink(ink) => Some(ink),
-                    _ => None,
-                })
-                .map(|ink| {
-                    let points = Arc::as_ptr(&ink.points) as *const () as usize;
-                    let mut bytes = if seen.insert(points) {
-                        ink.points.len() * std::mem::size_of::<Vec2>()
-                    } else {
-                        0
-                    };
+    fn visit_ink_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
+        fn visit_sheet(sheet: &Sheet, visit: &mut impl FnMut(usize, usize)) {
+            for object in &sheet.canvas.objects {
+                if let crate::board::CanvasObjectKind::Ink(ink) = &object.kind {
+                    visit(
+                        Arc::as_ptr(&ink.points) as *const () as usize,
+                        ink.points.len() * std::mem::size_of::<Vec2>(),
+                    );
                     if let Some(pressure) = &ink.pressure {
-                        let pressure_ptr = Arc::as_ptr(pressure) as *const () as usize;
-                        if seen.insert(pressure_ptr) {
-                            bytes += pressure.len() * std::mem::size_of::<f32>();
-                        }
+                        visit(
+                            Arc::as_ptr(pressure) as *const () as usize,
+                            pressure.len() * std::mem::size_of::<f32>(),
+                        );
                     }
-                    bytes
-                })
-                .sum()
+                }
+            }
         }
 
         match self {
-            Snapshot::Sheet { sheet, .. } => sheet_bytes(sheet, seen),
+            Snapshot::Sheet { sheet, .. } => visit_sheet(sheet, visit),
             Snapshot::Book { sheets, .. } => {
-                sheets.iter().map(|sheet| sheet_bytes(sheet, seen)).sum()
+                for sheet in sheets {
+                    visit_sheet(sheet, visit);
+                }
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct HistoryAccounting {
+    snapshot_bytes: usize,
+    ink_bytes: usize,
+    buffers: HashMap<usize, (usize, usize)>,
+}
+
+impl HistoryAccounting {
+    fn add(&mut self, entry: &Entry) {
+        self.snapshot_bytes += entry.bytes;
+        entry.snapshot.visit_ink_buffers(&mut |pointer, bytes| {
+            let allocation = self.buffers.entry(pointer).or_insert_with(|| {
+                self.ink_bytes += bytes;
+                (0, bytes)
+            });
+            debug_assert_eq!(allocation.1, bytes);
+            allocation.0 += 1;
+        });
+    }
+
+    fn remove(&mut self, entry: &Entry) {
+        self.snapshot_bytes -= entry.bytes;
+        entry.snapshot.visit_ink_buffers(&mut |pointer, bytes| {
+            let allocation = self
+                .buffers
+                .get_mut(&pointer)
+                .expect("undo ink allocation must be accounted");
+            debug_assert_eq!(allocation.1, bytes);
+            allocation.0 -= 1;
+            if allocation.0 == 0 {
+                self.ink_bytes -= allocation.1;
+                self.buffers.remove(&pointer);
+            }
+        });
+    }
+
+    fn bytes(&self) -> usize {
+        self.snapshot_bytes + self.ink_bytes
     }
 }
 
@@ -118,6 +151,7 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
         + topics
         + objects
         + sheet.canvas.groups.len() * size_of::<crate::board::CanvasGroup>()
+        + sheet.canvas.card_states.len() * size_of::<crate::board::CanvasCardState>()
         + sheet.relationships.len() * (size_of::<crate::model::Relationship>() + 32)
         + sheet.boundaries.len() * size_of::<crate::model::Boundary>()
         + sheet.summaries.len() * size_of::<crate::model::Summary>()
@@ -131,6 +165,7 @@ pub struct Document {
     workbook: Workbook,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
+    history: HistoryAccounting,
     state: u64,
     next_state: u64,
     saved_state: u64,
@@ -149,6 +184,7 @@ impl Document {
             workbook,
             undo: Vec::new(),
             redo: Vec::new(),
+            history: HistoryAccounting::default(),
             state: 0,
             next_state: 1,
             saved_state: 0,
@@ -158,13 +194,7 @@ impl Document {
 
     /// Approximate bytes held by the undo stack.
     pub fn history_bytes(&self) -> usize {
-        let mut seen = HashSet::new();
-        let unique_ink_bytes: usize = self
-            .undo
-            .iter()
-            .map(|entry| entry.snapshot.shared_ink_bytes(&mut seen))
-            .sum();
-        self.undo.iter().map(|e| e.bytes).sum::<usize>() + unique_ink_bytes
+        self.history.bytes()
     }
 
     /// Overrides the undo byte budget (the newest entry is always kept).
@@ -174,11 +204,11 @@ impl Document {
     }
 
     fn trim_history(&mut self) {
-        let mut total = self.history_bytes();
-        while self.undo.len() > 1 && (total > self.history_budget || self.undo.len() > MAX_HISTORY)
+        while self.undo.len() > 1
+            && (self.history.bytes() > self.history_budget || self.undo.len() > MAX_HISTORY)
         {
-            self.undo.remove(0);
-            total = self.history_bytes();
+            let removed = self.undo.remove(0);
+            self.history.remove(&removed);
         }
     }
 
@@ -229,12 +259,14 @@ impl Document {
 
     fn push(&mut self, label: &str, snapshot: Snapshot) {
         let bytes = snapshot.approx_bytes();
-        self.undo.push(Entry {
+        let entry = Entry {
             label: label.to_string(),
             snapshot,
             state: self.state,
             bytes,
-        });
+        };
+        self.history.add(&entry);
+        self.undo.push(entry);
         self.trim_history();
         self.redo.clear();
         self.state = self.bump();
@@ -411,6 +443,7 @@ impl Document {
         let Some(e) = self.undo.pop() else {
             return false;
         };
+        self.history.remove(&e);
         let snap = self.swap(e.snapshot);
         self.redo.push(Entry {
             label: e.label,
@@ -427,12 +460,15 @@ impl Document {
             return false;
         };
         let snap = self.swap(e.snapshot);
-        self.undo.push(Entry {
+        let entry = Entry {
             label: e.label,
             bytes: snap.approx_bytes(),
             snapshot: snap,
             state: self.state,
-        });
+        };
+        self.history.add(&entry);
+        self.undo.push(entry);
+        self.trim_history();
         self.state = e.state;
         true
     }
@@ -728,6 +764,24 @@ impl Document {
         })
     }
 
+    /// Moves a mixed board selection, expanding groups in one undoable edit.
+    pub fn move_board_members(&mut self, members: &[BoardMember], delta: Vec2) -> EditResult<()> {
+        self.edit_sheet("Move board items", |sheet| {
+            sheet
+                .move_board_members(members, delta)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    /// Deletes a mixed board selection, expanding groups in one undoable edit.
+    pub fn remove_board_members(&mut self, members: &[BoardMember]) -> EditResult<()> {
+        self.edit_sheet("Delete board items", |sheet| {
+            sheet
+                .remove_board_members(members)
+                .map_err(EditError::Invalid)
+        })
+    }
+
     pub fn resize_canvas_object(&mut self, id: CanvasObjectId, rect: Rect) -> EditResult<()> {
         self.edit_sheet("Resize object", |sheet| {
             sheet
@@ -791,6 +845,22 @@ impl Document {
         })
     }
 
+    pub fn group_board_members(&mut self, members: &[BoardMember]) -> EditResult<CanvasGroupId> {
+        self.edit_sheet("Group", |sheet| {
+            sheet
+                .group_board_members(members)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn ungroup_board_members(&mut self, group: CanvasGroupId) -> EditResult<()> {
+        self.edit_sheet("Ungroup", |sheet| {
+            sheet
+                .ungroup_board_members(group)
+                .map_err(EditError::Invalid)
+        })
+    }
+
     pub fn ungroup_canvas_objects(&mut self, group: CanvasGroupId) -> EditResult<()> {
         self.edit_sheet("Ungroup", |sheet| {
             sheet
@@ -807,6 +877,18 @@ impl Document {
         self.edit_sheet(if locked { "Lock" } else { "Unlock" }, |sheet| {
             sheet
                 .set_canvas_objects_locked(ids, locked)
+                .map_err(EditError::Invalid)
+        })
+    }
+
+    pub fn set_board_members_locked(
+        &mut self,
+        members: &[BoardMember],
+        locked: bool,
+    ) -> EditResult<()> {
+        self.edit_sheet(if locked { "Lock" } else { "Unlock" }, |sheet| {
+            sheet
+                .set_board_members_locked(members, locked)
                 .map_err(EditError::Invalid)
         })
     }
@@ -1023,6 +1105,65 @@ mod tests {
             ink_bytes
         );
         assert!(approx_sheet_bytes(d.sheet()) < 64 * 1024);
+    }
+
+    #[test]
+    fn incremental_history_accounting_matches_retained_buffers() {
+        use crate::board::{InkStroke, InkTool};
+        use std::collections::HashSet;
+
+        fn expected(document: &Document) -> usize {
+            let mut seen = HashSet::new();
+            let mut bytes = 0;
+            for entry in &document.undo {
+                bytes += entry.bytes;
+                entry.snapshot.visit_ink_buffers(&mut |pointer, size| {
+                    if seen.insert(pointer) {
+                        bytes += size;
+                    }
+                });
+            }
+            bytes
+        }
+
+        let mut document = Document::default();
+        let mut ink = InkStroke::new(
+            InkTool::Pen,
+            crate::geometry::Color::rgb(0, 0, 0),
+            2.0,
+            vec![Vec2::ZERO, Vec2::new(40.0, 0.0)],
+        );
+        ink.pressure = Some(vec![0.2, 0.8].into());
+        let first = document.add_canvas_object(CanvasObject::ink(ink)).unwrap();
+        let shared = document.sheet().canvas.object(first).unwrap().clone();
+        document.add_canvas_object(shared).unwrap();
+        document.duplicate_sheet(0).unwrap();
+        for _ in 0..5 {
+            document
+                .move_canvas_objects(&[first], Vec2::new(2.0, 0.0))
+                .unwrap();
+            assert_eq!(document.history_bytes(), expected(&document));
+        }
+        for _ in 0..3 {
+            assert!(document.undo());
+            assert_eq!(document.history_bytes(), expected(&document));
+        }
+        let cloned = document.clone();
+        assert_eq!(cloned.history_bytes(), expected(&cloned));
+        for _ in 0..2 {
+            assert!(document.redo());
+            assert_eq!(document.history_bytes(), expected(&document));
+        }
+        document.set_history_byte_budget(document.history_bytes() / 2);
+        assert_eq!(document.history_bytes(), expected(&document));
+        assert!(document.redo());
+        assert_eq!(document.history_bytes(), expected(&document));
+        let root = document.sheet().root;
+        document
+            .edit_sheet("Title", |sheet| sheet.set_title(root, "Fresh"))
+            .unwrap();
+        assert!(!document.can_redo());
+        assert_eq!(document.history_bytes(), expected(&document));
     }
 
     #[test]

@@ -608,10 +608,8 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
             add(Rect::from_center_size(p, Vec2::new(1.0, 1.0)));
         }
     }
-    for object in &sheet.canvas.objects {
-        if let Some(r) = crate::scene::object_bounds(sheet, &layout, object) {
-            add(r);
-        }
+    if let Some(r) = crate::scene::canvas_bounds(sheet, &layout) {
+        add(r);
     }
     layout.bounds = bounds.unwrap_or_default();
     layout

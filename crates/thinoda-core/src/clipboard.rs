@@ -4,6 +4,13 @@ use crate::model::{Sheet, Subtree, TopicId};
 use crate::outline::{OutlineNode, parse_indented_text, to_indented_text, to_outline};
 use serde::{Deserialize, Serialize};
 
+mod board;
+pub use board::{
+    BoardClipboardPayload, BoardPasteResult, MAX_BOARD_CLIPBOARD_BYTES, ResolvedBoardPaste,
+    copy_board_selection, decode_board_payload, encode_board_payload, paste_board_selection,
+    paste_floating_subtrees, resolve_board_paste,
+};
+
 const SHEET_PREFIX: &str = "THINODA-SHEET-1\n";
 const RESOURCE_SHEET_PREFIX: &str = "THINODA-SHEET-2\n";
 const FORMATTED_SHEET_PREFIX: &str = "THINODA-SHEET-3\n";

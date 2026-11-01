@@ -129,6 +129,50 @@ fn summary_topics_inherit_their_owner_frame_clip() {
 }
 
 #[test]
+fn attached_connectors_use_resolved_path_for_frame_clipping() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let clip = rect(900.0, 900.0, 200.0, 200.0);
+    let frame = sheet.create_board_frame("Frame", clip).unwrap();
+    sheet
+        .zones
+        .iter_mut()
+        .find(|zone| zone.id == frame)
+        .unwrap()
+        .clip = true;
+    let first = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(940.0, 940.0, 20.0, 20.0),
+        Band::Above,
+    );
+    let second = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(1140.0, 940.0, 20.0, 20.0),
+        Band::Above,
+    );
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(first),
+            Endpoint::Object(second),
+        )))
+        .unwrap();
+    let (_, clipped) = scene(&sheet);
+    assert_eq!(
+        clipped.item(SceneId::Object(connector)).unwrap().clip,
+        Some(clip)
+    );
+    assert_eq!(clipped.hit_test(Vec2::new(1120.0, 950.0)), None);
+
+    sheet
+        .move_canvas_objects(&[first, second], Vec2::new(500.0, 0.0))
+        .unwrap();
+    let (_, moved) = scene(&sheet);
+    assert_eq!(moved.item(SceneId::Object(connector)).unwrap().clip, None);
+}
+
+#[test]
 fn rotated_shape_hit_test() {
     let mut s = Sheet::new("Rot", "Root");
     let id = shape(
@@ -267,6 +311,119 @@ fn connectors_resolve_endpoints_and_hit() {
             .item(SceneId::Object(straight))
             .is_none()
     );
+}
+
+#[test]
+fn connectors_follow_resolved_connector_targets_and_detect_cycles() {
+    let mut sheet = Sheet::new("Connectors", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let target = shape(
+        &mut sheet,
+        ShapeKind::Rectangle,
+        rect(100.0, 0.0, 20.0, 20.0),
+        Band::Above,
+    );
+    let base = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(target),
+            Endpoint::Point(Vec2::new(300.0, 10.0)),
+        )))
+        .unwrap();
+    let dependent = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(base),
+            Endpoint::Point(Vec2::new(400.0, 100.0)),
+        )))
+        .unwrap();
+
+    let (layout, built_scene) = scene(&sheet);
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(dependent).unwrap().kind
+    else {
+        unreachable!();
+    };
+    let path = connector_path(&sheet, &layout, connector);
+    assert_eq!(path[0], Vec2::new(210.0, 10.0));
+    assert_eq!(
+        built_scene
+            .item(SceneId::Object(dependent))
+            .unwrap()
+            .geometry,
+        SceneGeometry::Polyline {
+            points: path,
+            width: connector.width
+        }
+    );
+
+    sheet
+        .move_canvas_objects(&[target], Vec2::new(100.0, 0.0))
+        .unwrap();
+    let (layout, _) = scene(&sheet);
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(dependent).unwrap().kind
+    else {
+        unreachable!();
+    };
+    assert_eq!(
+        connector_path(&sheet, &layout, connector)[0],
+        Vec2::new(260.0, 10.0)
+    );
+    assert!(validate_connector_cycles(&sheet).is_ok());
+
+    let mut deleted = sheet.clone();
+    deleted.remove_canvas_objects(&[base]).unwrap();
+    let CanvasObjectKind::Connector(connector) = &deleted.canvas.object(dependent).unwrap().kind
+    else {
+        unreachable!();
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(260.0, 10.0)));
+
+    let mut doc = crate::Document::new(crate::Workbook::new(sheet.clone()));
+    doc.edit_sheet("Remove", |sheet| {
+        sheet.canvas.objects.retain(|object| object.id != base);
+        Ok(())
+    })
+    .unwrap();
+    let CanvasObjectKind::Connector(connector) =
+        &doc.sheet().canvas.object(dependent).unwrap().kind
+    else {
+        unreachable!();
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(260.0, 10.0)));
+    assert!(doc.undo());
+    assert_eq!(doc.sheet(), &sheet);
+
+    let CanvasObjectKind::Connector(connector) = &mut sheet.canvas.object_mut(base).unwrap().kind
+    else {
+        unreachable!();
+    };
+    connector.from = Endpoint::Object(dependent);
+    assert!(validate_connector_cycles(&sheet).is_err());
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let CanvasObjectKind::Connector(connector) = &sheet.canvas.object(dependent).unwrap().kind
+    else {
+        unreachable!();
+    };
+    assert!(connector_path(&sheet, &layout, connector).is_empty());
+}
+
+#[test]
+fn long_connector_chains_resolve_without_recursion() {
+    let mut sheet = Sheet::new("Connectors", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut previous = Endpoint::Point(Vec2::ZERO);
+    for n in 0..4_000 {
+        let id = CanvasObjectId(n + 10);
+        let mut object = CanvasObject::connector(CanvasConnector::new(
+            previous,
+            Endpoint::Point(Vec2::new(100.0, 100.0)),
+        ));
+        object.id = id;
+        sheet.canvas.objects.push(object);
+        previous = Endpoint::Object(id);
+    }
+    assert!(validate_connector_cycles(&sheet).is_ok());
+    let (_, scene) = scene(&sheet);
+    assert_eq!(scene.items.len(), 4_000);
+    assert!(scene.item(SceneId::Object(CanvasObjectId(4_009))).is_some());
 }
 
 #[test]

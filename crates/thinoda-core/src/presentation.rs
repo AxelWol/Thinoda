@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ChildRange, Layout, PresentationScope, PresentationSlide, PresentationSource, Rect, Sheet,
-    TopicId, Vec2, Zone,
+    ChildRange, Layout, PresentationScope, PresentationSlide, PresentationSource, Rect, SceneId,
+    Sheet, TopicId, Vec2, Zone, build_scene,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +13,38 @@ pub struct ResolvedPresentationSlide {
     pub frame: Rect,
     /// Zones are not stored in `Layout`; consumers must paint this list, not `sheet.zones`.
     pub zones: Vec<Zone>,
+    /// Topics permitted by source, visibility and depth before collapsed layout filtering.
+    pub permitted_topics: HashSet<TopicId>,
+}
+
+impl ResolvedPresentationSlide {
+    /// Whether a scene connector may expose this endpoint. Collapsed descendants
+    /// can use their visible collapsed ancestor, but hidden or unrevealed topics cannot.
+    pub fn scene_topic_visible(&self, sheet: &Sheet, id: TopicId) -> bool {
+        if !self.permitted_topics.contains(&id) {
+            return false;
+        }
+        let mut current = Some(id);
+        let mut visible = id;
+        let mut seen = HashSet::new();
+        while let Some(topic_id) = current {
+            if !seen.insert(topic_id) || sheet.is_anchor(topic_id) {
+                return false;
+            }
+            let Some(topic) = sheet.topic(topic_id) else {
+                return false;
+            };
+            if topic.collapsed {
+                visible = topic_id;
+            }
+            current = topic.parent.or_else(|| {
+                sheet
+                    .summary_for_topic(topic_id)
+                    .map(|summary| summary.parent)
+            });
+        }
+        self.layout.topics.contains_key(&visible)
+    }
 }
 
 /// Resolves current slide content against a full-map layout. Never relayouts a filtered sheet.
@@ -25,12 +57,27 @@ pub fn resolve_presentation_slide(
     slide: &PresentationSlide,
     layout: &Layout,
 ) -> Result<ResolvedPresentationSlide, String> {
+    let saved_max = slide.frame.max();
+    let limit = crate::MAX_PRESENTATION_COORDINATE;
+    if !slide.frame.min.x.is_finite()
+        || !slide.frame.min.y.is_finite()
+        || !saved_max.x.is_finite()
+        || !saved_max.y.is_finite()
+        || !slide.frame.size.x.is_finite()
+        || !slide.frame.size.y.is_finite()
+        || slide.frame.size.x < 1.0
+        || slide.frame.size.y < 1.0
+        || slide.frame.size.x > limit
+        || slide.frame.size.y > limit
+        || slide.frame.min.x.abs() > limit
+        || slide.frame.min.y.abs() > limit
+        || saved_max.x.abs() > limit
+        || saved_max.y.abs() > limit
+    {
+        return Err("presentation frame has invalid dimensions".into());
+    }
     let roots = match slide.source {
-        PresentationSource::Branch(root)
-            if sheet.contains(root) && sheet.main_branch_of(root).is_some() =>
-        {
-            vec![root]
-        }
+        PresentationSource::Branch(root) if sheet.is_presentation_branch(root) => vec![root],
         PresentationSource::Branch(root) => {
             return Err(format!(
                 "presentation source branch {root} is missing or invalid"
@@ -75,7 +122,8 @@ pub fn resolve_presentation_slide(
         .keys()
         .copied()
         .filter(|id| {
-            !hidden.contains(id)
+            !sheet.is_anchor(*id)
+                && !hidden.contains(id)
                 && (slide.scope == PresentationScope::Context || depths.contains_key(id))
                 && slide
                     .max_depth
@@ -138,18 +186,31 @@ pub fn resolve_presentation_slide(
         .zones
         .iter()
         .filter(|zone| {
-            !zone.roots.is_empty()
-                && zone
-                    .roots
+            if zone.roots.is_empty() {
+                zone.keep_empty
+                    && (slide.scope == PresentationScope::Context
+                        || slide.source == PresentationSource::Viewport
+                        || slide.source == PresentationSource::Zone(zone.id))
+            } else {
+                zone.roots
                     .iter()
                     .all(|id| sheet.owned_subtree_ids(*id).into_iter().all(&allowed))
+            }
         })
         .cloned()
         .collect();
-    let mut bounds = filtered
-        .topics
-        .values()
-        .map(|t| t.rect)
+    let include_objects =
+        slide.source == PresentationSource::Viewport || slide.scope == PresentationScope::Context;
+    let zone_ids: HashSet<_> = zones.iter().map(|zone| zone.id).collect();
+    let mut bounds = build_scene(sheet, &filtered)
+        .items
+        .iter()
+        .filter(|item| match item.id {
+            SceneId::Topic(id) => included.contains(&id),
+            SceneId::Zone(id) => zone_ids.contains(&id),
+            SceneId::Object(_) => include_objects,
+        })
+        .filter_map(|item| item.visible_bounds())
         .reduce(|a, b| a.union(&b));
     let mut include_rect = |rect: Rect| {
         bounds = Some(bounds.map_or(rect, |bounds| bounds.union(&rect)));
@@ -179,7 +240,7 @@ pub fn resolve_presentation_slide(
     }
     // Empty content deliberately stays empty, with a stable saved viewport.
     // Never use the full map's bounds as an empty-slide fallback.
-    let frame = if slide.auto_frame {
+    let frame = if slide.auto_frame && slide.source != PresentationSource::Viewport {
         bounds.map_or(slide.frame, |b| b.expand(40.0))
     } else {
         slide.frame
@@ -198,6 +259,7 @@ pub fn resolve_presentation_slide(
         layout: filtered,
         frame,
         zones,
+        permitted_topics: permitted,
     })
 }
 
@@ -416,5 +478,109 @@ mod tests {
         assert!(!sheet.presentation.slides[0].auto_frame);
         sheet.rename_presentation_slide(id, "Renamed").unwrap();
         assert_eq!(sheet.presentation.slides[0].id, id);
+    }
+
+    #[test]
+    fn hidden_board_viewport_preserves_frame_and_excludes_anchor() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let first = sheet.add_floating("First", Vec2::new(120.0, 100.0));
+        let second = sheet.add_floating("Second", Vec2::new(500.0, 100.0));
+        let child = sheet.add_child(first, None, "Child");
+        let frame = Rect::from_min_size(Vec2::new(10.0, 20.0), Vec2::new(300.0, 200.0));
+        let zone = sheet.create_board_frame("Empty frame", frame).unwrap();
+        let mut viewport = slide(PresentationSource::Viewport);
+        viewport.frame = frame;
+        // Even old callers that leave auto-frame enabled must not replace the
+        // authored viewport with the bounds of content elsewhere on the board.
+        assert!(viewport.auto_frame);
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let resolved = resolve_presentation_slide(&sheet, &viewport, &layout).unwrap();
+        assert_eq!(resolved.frame, frame);
+        assert!(resolved.layout.topics.contains_key(&first));
+        assert!(resolved.layout.topics.contains_key(&second));
+        assert!(resolved.layout.topics.contains_key(&child));
+        assert!(!resolved.layout.topics.contains_key(&sheet.root));
+        assert!(resolved.zones.iter().any(|item| item.id == zone));
+
+        let mut source = slide(PresentationSource::Branch(first));
+        let branch = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+        assert!(branch.layout.topics.contains_key(&first));
+        assert!(branch.layout.topics.contains_key(&child));
+        assert!(!branch.layout.topics.contains_key(&second));
+        assert!(branch.zones.is_empty());
+        source.source = PresentationSource::Branch(sheet.root);
+        assert!(resolve_presentation_slide(&sheet, &source, &layout).is_err());
+    }
+
+    #[test]
+    fn empty_frame_sources_and_clipped_scene_bounds_remain_usable() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0));
+        let zone = sheet.create_board_frame("Frame", frame).unwrap();
+        sheet.zones[0].clip = true;
+        let object = crate::CanvasObject::shape(
+            crate::ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(60.0, 20.0), Vec2::new(60.0, 40.0)),
+        );
+        sheet.add_canvas_object(object).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+
+        let viewport = slide(PresentationSource::Viewport);
+        let resolved = resolve_presentation_slide(&sheet, &viewport, &layout).unwrap();
+        assert_eq!(resolved.frame, viewport.frame);
+        assert_eq!(resolved.layout.bounds, frame);
+        assert!(resolved.layout.topics.is_empty());
+        assert_eq!(resolved.zones[0].id, zone);
+
+        let source = slide(PresentationSource::Zone(zone));
+        let resolved = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+        assert_eq!(resolved.zones[0].id, zone);
+        assert_eq!(resolved.frame, frame.expand(40.0));
+    }
+
+    #[test]
+    fn branch_source_survives_hiding_and_showing_the_central_topic() {
+        let mut sheet = Sheet::new("Map", "Central");
+        let branch = sheet.add_child(sheet.root, None, "Branch");
+        let child = sheet.add_child(branch, None, "Child");
+        let other = sheet.add_child(sheet.root, None, "Other");
+        let source = slide(PresentationSource::Branch(branch));
+        sheet
+            .add_presentation_slide("Branch", source.source, source.frame)
+            .unwrap();
+        let moved = sheet.hide_central_topic().unwrap().unwrap();
+        sheet.validate().unwrap();
+        assert_eq!(sheet.presentation.slides[0].source, source.source);
+        for _ in 0..2 {
+            let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+            let resolved = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+            assert!(resolved.layout.topics.contains_key(&branch));
+            assert!(resolved.layout.topics.contains_key(&child));
+            assert!(!resolved.layout.topics.contains_key(&other));
+            assert!(!resolved.layout.topics.contains_key(&moved));
+            sheet.show_central_topic();
+            sheet.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_saved_viewport_frames_are_rejected_even_with_auto_frame() {
+        let sheet = Sheet::new("Map", "Central");
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        for frame in [
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(0.0, 100.0)),
+            Rect::from_min_size(Vec2::new(f32::NAN, 0.0), Vec2::new(100.0, 100.0)),
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(f32::INFINITY, 100.0)),
+            Rect::from_min_size(
+                Vec2::new(crate::MAX_PRESENTATION_COORDINATE, 0.0),
+                Vec2::new(100.0, 100.0),
+            ),
+        ] {
+            let mut viewport = slide(PresentationSource::Viewport);
+            viewport.frame = frame;
+            assert!(resolve_presentation_slide(&sheet, &viewport, &layout).is_err());
+        }
     }
 }
