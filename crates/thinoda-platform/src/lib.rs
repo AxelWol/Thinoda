@@ -44,8 +44,9 @@
 //! Recovery is best-effort after the latest queued/serialized state; it cannot
 //! protect edits never queued, hard termination before a flush, failed storage,
 //! or a lock held at panic time. Orphan handles keep an exclusive claim until
-//! dropped. Fingerprints are metadata, not hashes, and conflict/cloud discovery
-//! is heuristic. Platform launchers and actual macOS/Linux integration should
+//! dropped. Fingerprints combine metadata, file identity and a bounded content
+//! sample, not a full-file integrity digest; conflict/cloud discovery is
+//! heuristic. Platform launchers and actual macOS/Linux integration should
 //! additionally be smoke-tested on those operating systems. Local IPC is an
 //! at-most-once file-open queue, without acknowledgements or ordering guarantees.
 
@@ -53,6 +54,7 @@ pub mod ai_prompts;
 pub mod browser_storage;
 pub mod chat_history;
 pub mod cloud;
+pub mod cloud_auth;
 pub mod crash;
 pub mod credentials;
 pub mod fs;
