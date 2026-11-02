@@ -21,7 +21,7 @@ module.exports = defineConfig({
         },
     },
     webServer: process.env.THINODA_WEB_URL ? undefined : {
-        command: "python tests/serve-browser-tests.py",
+        command: `${process.platform === "win32" ? "python" : "python3"} tests/serve-browser-tests.py`,
         url: "http://127.0.0.1:8080/",
         reuseExistingServer: false,
         timeout: 30_000,
