@@ -333,6 +333,24 @@ memory-bound tests for that candidate remain unverified. A quiet interleaved
 comparison and permitted test environment are still required before
 reconsidering it.
 
+#### Shared ink-point cache checkpoint
+
+The mesh cache now shares the stroke's immutable point allocation rather than
+copying it. It compares unchanged allocations by identity and still compares
+values when allocations differ; copy-on-write edits, style and transform changes
+continue to invalidate the mesh. The cache budget conservatively counts the
+shared points because the cache can retain them after a document closes.
+
+On Windows, the same canvas/core-only, 50-JPEG harness used above ran two
+interleaved baseline/candidate pairs with 20 warm samples per run. Overview
+paint plus tessellation p50 was 2.59/3.41 ms baseline versus 2.98/3.00 ms
+candidate for 1,000 strokes, and 57.00/56.26 ms versus 58.61/55.83 ms for
+10,000. After-cold process private commit for 10,000 was 129.69/128.72 MB
+baseline versus 126.07/125.51 MB candidate. This is a whole-process
+measurement, not an isolated cache allocation. It supports a modest memory
+reduction but does not demonstrate a frame-time improvement or meet the F5
+performance gate; GPU, browser and physical-device measurements remain open.
+
 ### 5.5 Input devices
 
 - Mouse and touch drawing work everywhere. Pressure is **optional metadata**:

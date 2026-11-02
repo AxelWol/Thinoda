@@ -729,7 +729,7 @@ impl InkGeometryEntry {
     fn matches(
         &self,
         object: CanvasObjectId,
-        source_points: &[Vec2],
+        source_points: &Arc<[Vec2]>,
         center: Vec2,
         rotation: f32,
         xf: Xf,
@@ -739,7 +739,8 @@ impl InkGeometryEntry {
         tessellation: InkTessellationConfig,
     ) -> bool {
         self.object == object
-            && self.source_points.as_ref() == source_points
+            && (Arc::ptr_eq(&self.source_points, source_points)
+                || self.source_points.as_ref() == source_points.as_ref())
             && self.center == center
             && self.rotation_bits == rotation.to_bits()
             && self.zoom_bits == xf.zoom.to_bits()
@@ -823,7 +824,7 @@ fn ink_tessellated_mesh(
     painter: &Painter,
     cache: &mut InkGeometryCache,
     object: CanvasObjectId,
-    source_points: &[Vec2],
+    source_points: &Arc<[Vec2]>,
     center: Vec2,
     rotation: f32,
     xf: Xf,
@@ -874,7 +875,7 @@ fn ink_tessellated_mesh(
     let entry = InkGeometryEntry {
         object,
         token: 0,
-        source_points: Arc::from(source_points),
+        source_points: Arc::clone(source_points),
         mesh: Arc::clone(&mesh),
         center,
         rotation_bits: rotation.to_bits(),
@@ -2025,7 +2026,7 @@ mod tests {
         let screen = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
         let mut cache = InkGeometryCache::default();
         let object = CanvasObjectId(501);
-        let source = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
+        let source: Arc<[Vec2]> = [Vec2::ZERO, Vec2::new(10.0, 0.0)].into();
         let center = Vec2::ZERO;
         let color = Color32::from_rgba_unmultiplied(190, 45, 80, 72);
         let xf = Xf {
@@ -2033,7 +2034,7 @@ mod tests {
             zoom: 1.0,
         };
         let make_mesh = |cache: &mut InkGeometryCache,
-                         source: &[Vec2],
+                         source: &Arc<[Vec2]>,
                          rotation: f32,
                          xf: Xf,
                          stroke_width: f32,
@@ -2069,6 +2070,14 @@ mod tests {
         let first = make_mesh(&mut cache, &source, 0.0, xf, 3.0, color, screen);
         let reused = make_mesh(&mut cache, &source, 0.0, xf, 3.0, color, screen);
         assert!(Arc::ptr_eq(&first, &reused));
+        assert!(Arc::ptr_eq(
+            &cache.entries.get(&object).unwrap().source_points,
+            &source
+        ));
+        let equivalent: Arc<[Vec2]> = source.as_ref().to_vec().into();
+        assert!(!Arc::ptr_eq(&source, &equivalent));
+        let equivalent_mesh = make_mesh(&mut cache, &equivalent, 0.0, xf, 3.0, color, screen);
+        assert!(Arc::ptr_eq(&first, &equivalent_mesh));
         assert!(!first.indices.is_empty());
         assert!(first.is_valid());
         let expected_points: Vec<_> = source
@@ -2101,7 +2110,9 @@ mod tests {
         let rotated = make_mesh(&mut cache, &source, 90.0, zoomed_xf, 6.0, color, screen);
         assert!(!Arc::ptr_eq(&zoomed, &rotated));
 
-        let changed = [Vec2::ZERO, Vec2::new(12.0, 0.0)];
+        let mut changed = Arc::clone(&source);
+        Arc::make_mut(&mut changed)[1].x = 12.0;
+        assert!(!Arc::ptr_eq(&source, &changed));
         let updated = make_mesh(&mut cache, &changed, 90.0, zoomed_xf, 6.0, color, screen);
         assert!(!Arc::ptr_eq(&rotated, &updated));
         let recolored = make_mesh(
