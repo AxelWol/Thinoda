@@ -173,6 +173,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('name: thinoda-${{ inputs.target }}', source)
         self.assertIn('if-no-files-found: error', source)
 
+    def test_cold_intel_packaging_has_a_bounded_budget_without_changing_other_targets(self):
+        source = (WORKFLOWS / "package-target.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "timeout-minutes: ${{ inputs.target == 'x86_64-apple-darwin' && 240 || 120 }}",
+            job(source, "package"),
+        )
+
     def test_acceptance_campaigns_keep_sanitizers_and_failure_evidence(self):
         source = (WORKFLOWS / "importer-campaign.yml").read_text(encoding="utf-8")
         self.assertIn("target: [xmind, freemind, opml]", source)

@@ -49,7 +49,8 @@ env:
 jobs:
   package:
     name: package (${{ inputs.target }})
-    timeout-minutes: 120
+    # Intel's cold native tests consumed 96 minutes before the release build began.
+    timeout-minutes: ${{ inputs.target == 'x86_64-apple-darwin' && 240 || 120 }}
     runs-on: ${{ inputs.os }}
     steps:
       # The release/debug builds and AppImage tooling exceed hosted Linux disk space.

@@ -61,6 +61,10 @@ pub enum Cmd {
     Attachment,
     SaveAttachment,
     TaskPlanning,
+    EditFimNode,
+    AddFimChild,
+    InsertFimBefore,
+    InsertFimAfter,
     CreateZone,
     EditZone,
     Zones,
@@ -608,6 +612,22 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
+        if self.fim_node_has_draft()
+            && matches!(
+                cmd,
+                Cmd::Save
+                    | Cmd::SaveAs
+                    | Cmd::SaveAll
+                    | Cmd::Export(_)
+                    | Cmd::Quit
+                    | Cmd::CloseWindow
+                    | Cmd::CloseTab(_)
+            )
+        {
+            self.toasts
+                .warning(t("Apply or cancel the open FIM node draft first."));
+            return;
+        }
         for doc in &mut self.docs {
             if let Err(error) = doc.flush_inspector_edit(ctx) {
                 log::warn!("inspector commit before {cmd:?}: {error}");
@@ -820,6 +840,16 @@ impl ThinodaApp {
                 }
             }
             Cmd::TaskPlanning => self.begin_task_planning(ctx, false),
+            Cmd::EditFimNode => self.begin_fim_node(ctx, None, None),
+            Cmd::AddFimChild => {
+                self.begin_fim_node(ctx, None, Some(crate::fim::FimInsertion::Child))
+            }
+            Cmd::InsertFimBefore => {
+                self.begin_fim_node(ctx, None, Some(crate::fim::FimInsertion::Before))
+            }
+            Cmd::InsertFimAfter => {
+                self.begin_fim_node(ctx, None, Some(crate::fim::FimInsertion::After))
+            }
             Cmd::WorkCalendar => self.begin_task_planning(ctx, true),
             Cmd::Gantt => self.open_gantt(),
             Cmd::CreateZone => self.begin_zone_editor(ctx, None),
@@ -1105,7 +1135,31 @@ impl ThinodaApp {
         }
     }
 
-    fn canvas_action(&mut self, ctx: &Context, action: Action) {
+    pub(crate) fn canvas_action(&mut self, ctx: &Context, action: Action) {
+        if self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some()) {
+            let insertion = match action {
+                Action::InsertChild => Some(crate::fim::FimInsertion::Child),
+                Action::InsertSibling => Some(crate::fim::FimInsertion::After),
+                Action::InsertSiblingBefore => Some(crate::fim::FimInsertion::Before),
+                _ => None,
+            };
+            if insertion.is_some() || action == Action::StartEdit {
+                self.begin_fim_node(ctx, None, insertion);
+                return;
+            }
+            if action == Action::Duplicate {
+                self.begin_fim_duplicate(ctx);
+                return;
+            }
+            if action == Action::Delete
+                && self.doc().is_some_and(|doc| {
+                    doc.view.selection.len() == 1 && doc.view.selected_object.is_none()
+                })
+            {
+                self.request_fim_node_delete(ctx);
+                return;
+            }
+        }
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -1118,6 +1172,35 @@ impl ThinodaApp {
             return;
         }
         let starting_relationship = action == Action::StartRelationship;
+        if d.doc.sheet().fim.is_some()
+            && matches!(
+                action,
+                Action::MoveUp
+                    | Action::MoveDown
+                    | Action::Indent
+                    | Action::Outdent
+                    | Action::SortAscending
+                    | Action::SortDescending
+                    | Action::Cut
+                    | Action::Delete
+                    | Action::Paste(_)
+                    | Action::InsertFloating(_)
+                    | Action::InsertParent
+                    | Action::DeleteKeepChildren
+            )
+        {
+            let mut preview = d.doc.preview();
+            if let Err(error) = apply_action(&mut preview, &mut d.view, action) {
+                self.toasts
+                    .warning(format!("{}: {error}", t("Not possible here")));
+                return;
+            }
+            if let Some(text) = d.view.clipboard_out.take() {
+                ctx.copy_text(text);
+            }
+            self.accept_fim_canvas_preview(ctx, preview);
+            return;
+        }
         match apply_action(&mut d.doc, &mut d.view, action) {
             Ok(_) => {
                 if starting_relationship && d.view.relationship_from.is_some() {
@@ -1214,6 +1297,32 @@ impl ThinodaApp {
                     && !self.dialogs.about
             }
             Cmd::AiChat => self.doc().is_some() && !self.any_modal_open(),
+            Cmd::EditFimNode | Cmd::AddFimChild | Cmd::InsertFimBefore | Cmd::InsertFimAfter => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|doc| {
+                        doc.view.selection.len() == 1
+                            && doc.doc.sheet().fim.as_ref().is_some_and(|fim| {
+                                doc.view
+                                    .primary()
+                                    .and_then(|id| fim.record_for_topic(id))
+                                    .is_some_and(|record| match cmd {
+                                        Cmd::EditFimNode => true,
+                                        Cmd::AddFimChild => {
+                                            fim.record_metadata(record).is_some_and(|metadata| {
+                                                matches!(
+                                                    metadata.kind,
+                                                    thinoda_core::fim::FimKind::Schema
+                                                        | thinoda_core::fim::FimKind::Group
+                                                        | thinoda_core::fim::FimKind::Choice
+                                                        | thinoda_core::fim::FimKind::Field
+                                                )
+                                            })
+                                        }
+                                        _ => fim.node_parent(record).is_some(),
+                                    })
+                            })
+                    })
+            }
             Cmd::WorkCalendar
             | Cmd::Gantt
             | Cmd::Zones
@@ -1277,6 +1386,21 @@ impl ThinodaApp {
             }
             Cmd::EditCustomTheme | Cmd::ApplyCustomTheme(_) => {
                 !self.any_modal_open() && self.doc().is_some()
+            }
+            Cmd::Canvas(Action::InsertChild)
+                if self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some()) =>
+            {
+                self.command_available(&Cmd::AddFimChild)
+            }
+            Cmd::Canvas(
+                Action::InsertSibling | Action::InsertSiblingBefore | Action::Duplicate,
+            ) if self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some()) => {
+                self.command_available(&Cmd::InsertFimAfter)
+            }
+            Cmd::Canvas(Action::InsertParent | Action::DeleteKeepChildren)
+                if self.doc().is_some_and(|doc| doc.doc.sheet().fim.is_some()) =>
+            {
+                false
             }
             Cmd::Canvas(action) => self
                 .doc()
@@ -1869,6 +1993,11 @@ impl ThinodaApp {
     }
 
     pub fn request_close_tab(&mut self, i: usize) {
+        if self.fim_node_has_draft() {
+            self.toasts
+                .warning(t("Apply or cancel the open FIM node draft first."));
+            return;
+        }
         if self.save_all.is_some() || self.saving_document() {
             self.toasts.warning(t("Not possible here"));
             return;
@@ -1938,7 +2067,7 @@ impl ThinodaApp {
     }
 
     pub fn any_dirty(&self) -> bool {
-        self.docs.iter().any(|d| d.is_dirty())
+        self.docs.iter().any(|d| d.is_dirty()) || self.fim_node_has_draft()
     }
 
     // ----- per-frame housekeeping -------------------------------------------------------------
@@ -2175,6 +2304,11 @@ impl ThinodaApp {
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
             let viewport = ctx.viewport_id();
+            if viewport == egui::ViewportId::ROOT && self.fim_node_has_draft() {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                self.request_fim_draft_discard();
+                return;
+            }
             if viewport != egui::ViewportId::ROOT {
                 for doc in &mut self.docs {
                     if self.document_windows.get(&doc.key) == Some(&viewport) {
@@ -2790,6 +2924,10 @@ impl ThinodaApp {
             (Cmd::Import, "Import", "", "File"),
             (Cmd::Settings, "Settings…", "", "Edit"),
             (Cmd::TaskPlanning, "Task Planning", "", "Insert"),
+            (Cmd::EditFimNode, "Edit FIM node", "", "Edit"),
+            (Cmd::AddFimChild, "Add FIM child", "", "Insert"),
+            (Cmd::InsertFimBefore, "Insert FIM node before", "", "Insert"),
+            (Cmd::InsertFimAfter, "Insert FIM node after", "", "Insert"),
             (Cmd::CreateZone, "Create Zone", "", "Insert"),
             (Cmd::EditZone, "Edit Zone", "", "Edit"),
             (Cmd::Zones, "Zones", "", "Tools"),

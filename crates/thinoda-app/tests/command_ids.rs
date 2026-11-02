@@ -103,6 +103,7 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.word export.xmind
         file.close-tab file.home file.import file.masked-copy file.merge file.new file.open file.print
         file.quit file.save file.save-all file.save-as file.save-attachment file.show-in-folder
+        fim.add-child fim.edit-node fim.insert-after fim.insert-before
         help.about help.feedback help.project-news help.quick-start help.shortcuts help.user-guide
         insert.attachment insert.boundary insert.hyperlink insert.labels insert.local-image insert.notes insert.priority-1 insert.priority-2 insert.priority-3
         insert.relationship insert.summary insert.task insert.todo insert.zone

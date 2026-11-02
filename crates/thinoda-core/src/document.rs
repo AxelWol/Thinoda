@@ -56,6 +56,18 @@ impl Document {
         &self.workbook
     }
 
+    /// Independent working copy with the same content state, but no copied undo history.
+    pub fn preview(&self) -> Self {
+        Self {
+            workbook: self.workbook.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            state: self.state,
+            next_state: self.next_state,
+            saved_state: self.saved_state,
+        }
+    }
+
     pub fn sheet(&self) -> &Sheet {
         self.workbook.active()
     }
@@ -550,6 +562,48 @@ mod tests {
         assert!(doc.reload(invalid).is_err());
         assert_eq!(doc.workbook(), &local);
         assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn preview_preserves_content_state_without_sharing_history() {
+        let mut doc = Document::default();
+        let root = doc.sheet().root;
+        doc.edit_sheet("First", |sheet| sheet.insert_child(root, "First"))
+            .unwrap();
+        doc.mark_saved();
+        doc.edit_sheet("Second", |sheet| sheet.insert_child(root, "Second"))
+            .unwrap();
+        assert!(doc.undo());
+        let content = doc.workbook().clone();
+        let state = doc.state_id();
+        let mut preview = doc.preview();
+        assert_eq!(preview.workbook(), &content);
+        assert_eq!(preview.state_id(), state);
+        assert_eq!(preview.is_dirty(), doc.is_dirty());
+        assert!(!preview.can_undo());
+        assert!(!preview.can_redo());
+        preview
+            .edit_sheet("Proposal", |sheet| sheet.insert_child(root, "Proposal"))
+            .unwrap();
+        assert!(preview.is_dirty());
+        assert_ne!(preview.state_id(), state);
+        assert_eq!(doc.workbook(), &content);
+        assert_eq!(doc.state_id(), state);
+        assert_eq!(doc.undo_label(), Some("First"));
+        assert_eq!(doc.redo_label(), Some("Second"));
+        assert!(doc.redo());
+        assert!(
+            doc.sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Second")
+        );
+        assert!(
+            !doc.sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Proposal")
+        );
     }
 
     #[test]
