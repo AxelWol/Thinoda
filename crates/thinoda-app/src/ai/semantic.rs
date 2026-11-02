@@ -22,7 +22,7 @@ impl Source {
     fn valid(&self, app: &ThinodaApp) -> bool {
         app.settings.ai.enabled
             && self.config == embedding_config(&app.settings.ai)
-            && self.model == app.settings.ai.embedding_model.trim()
+            && self.model == app.settings.ai.active_embedding_model().trim()
             && app.docs.iter().any(|doc| {
                 doc.key == self.key
                     && doc.doc.active_index() == self.sheet
@@ -202,7 +202,7 @@ impl ThinodaApp {
         if !self.settings.ai.enabled {
             return Err(t("AI assistant is disabled in Settings").into());
         }
-        let model = self.settings.ai.embedding_model.trim();
+        let model = self.settings.ai.active_embedding_model().trim();
         if model.is_empty() {
             return Err(t("Set an explicit embedding model in Settings before indexing.").into());
         }
@@ -472,9 +472,10 @@ impl ThinodaApp {
     pub(super) fn semantic_panel(&mut self, ui: &mut Ui) {
         egui::CollapsingHeader::new(t("Semantic tools")).id_salt("semantic_tools").show(ui, |ui| {
             widgets::caption(ui, t("Build sends current-sheet titles to the embedding model. No background indexing."));
-            ui.add(egui::Label::new(format!("{}: {}", t("Server"), self.settings.ai.base_url)).truncate())
-                .on_hover_text(&self.settings.ai.base_url);
-            ui.label(format!("{}: {}", t("Embedding model"), self.settings.ai.embedding_model));
+            let endpoint = embedding_config(&self.settings.ai).base_url;
+            ui.add(egui::Label::new(format!("{}: {}", t("Server"), endpoint)).truncate())
+                .on_hover_text(&endpoint);
+            ui.label(format!("{}: {}", t("Embedding model"), self.settings.ai.active_embedding_model()));
             let allowed = widgets::touch_activation_allowed(ui.ctx());
             let mut error = None;
             ui.horizontal_wrapped(|ui| {

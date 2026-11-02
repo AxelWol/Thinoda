@@ -1,4 +1,8 @@
 Slides|Slides
+AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.|IA > Configurações de IA abre as configurações do provedor. Ollama usa seus próprios modelos de chat e embeddings. Os provedores CLI usam seu próprio login e embeddings de API separados; os navegadores não podem executar CLIs. As ações de IA não configuradas e a geração Copilot estão desativadas.
+AI settings|Configurações de IA
+AI provider is not ready. Check AI settings.|O provedor de IA não está pronto. Verifique as configurações de IA.
+Ollama uses its local OpenAI-compatible API. No API key is sent.|Ollama usa sua API local compatível com OpenAI. Nenhuma chave de API é enviada.
 Compare|Comparar
 Browser storage migration conflict|Conflito na migração do armazenamento do navegador
 Downloading file:|Baixando arquivo:

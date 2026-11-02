@@ -116,6 +116,7 @@ pub enum Cmd {
     EditField(FocusField),
     Ai(crate::ai::AiCommand),
     AiChat,
+    AiSettings,
 }
 
 /// Format panel fields that commands can focus.
@@ -865,6 +866,10 @@ impl ThinodaApp {
             Cmd::PitchPresenter => self.open_pitch(ctx, true),
             Cmd::EditPresentation => self.begin_presentation_editor(ctx),
             Cmd::Settings => self.dialogs.settings = true,
+            Cmd::AiSettings => {
+                self.dialogs.settings_tab = SettingsTab::Ai;
+                self.dialogs.settings = true;
+            }
             Cmd::About => self.dialogs.about = true,
             Cmd::Shortcuts => {
                 if let Some(doc) = self.doc_mut() {
@@ -1296,7 +1301,21 @@ impl ThinodaApp {
                     && !self.dialogs.settings
                     && !self.dialogs.about
             }
-            Cmd::AiChat => self.doc().is_some() && !self.any_modal_open(),
+            Cmd::AiChat => self.ai_available() && self.doc().is_some() && !self.any_modal_open(),
+            Cmd::Ai(action) => {
+                self.ai_available()
+                    && !self.any_modal_open()
+                    && self.ai.pending.is_none()
+                    && self.ai.review.is_none()
+                    && !self.ai.chat.is_busy()
+                    && !self.pitch.ai_busy()
+                    && (!action.needs_topic()
+                        || self.doc().is_some_and(|doc| {
+                            doc.view
+                                .primary()
+                                .is_some_and(|id| doc.doc.sheet().contains(id))
+                        }))
+            }
             Cmd::EditFimNode | Cmd::AddFimChild | Cmd::InsertFimBefore | Cmd::InsertFimAfter => {
                 !self.any_modal_open()
                     && self.doc().is_some_and(|doc| {
@@ -3015,6 +3034,7 @@ impl ThinodaApp {
             (Cmd::SaveAttachment, "Save/Download attachment", "", "File"),
             (Cmd::NewSheetFromTopic, "New Sheet from Topic", "", "Edit"),
             (Cmd::AiChat, "AI Chat", "", "AI"),
+            (Cmd::AiSettings, "AI settings", "", "AI"),
             (
                 Cmd::Ai(crate::ai::AiCommand::Rewrite),
                 "AI: Rewrite Topic…",

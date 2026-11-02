@@ -788,18 +788,36 @@ requirements, failures and manual acceptance boundaries.
    unavailable *Embedding model* is filled with the first one found.
 3. Select a topic and press **Ctrl+Shift+I** or use the **AI** menu.
 
-Ollama (`http://127.0.0.1:11434/v1`) and OpenAI (`https://api.openai.com/v1` + API key, or env
+OpenAI (`https://api.openai.com/v1` + API key, or env
 `THINODA_AI_API_KEY`) work the same way. API keys saved in Settings are kept in the operating
 system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service),
 not in `settings.toml`.
 
 ### Generation providers and native CLIs
 
-At the top of **Settings › AI**, **Generation provider** selects **OpenAI API**
+At the top of **Settings › AI**, **Generation provider** selects **None**, **Ollama**, **OpenAI API**
 (the existing OpenAI-compatible implementation), **GitHub Copilot CLI**,
 **Claude CLI**, or **OpenAI Codex CLI**. Old preferences default to OpenAI API.
 API endpoint, chat model, embedding model and credentials are preserved when
 switching; each CLI has its own optional model override.
+
+For local Ollama, start Ollama and install a chat model using `ollama pull <model>`.
+Select **Ollama**, keep **Server URL** at `http://127.0.0.1:11434/v1`, and enter the
+installed model name (or leave it empty for automatic discovery). **Test Connection**
+lists installed models. Ollama has separate endpoint, chat and embedding model
+preferences; switching back restores the API settings. No saved API key or
+`THINODA_AI_API_KEY` is sent to Ollama. Install and explicitly select an embedding
+model for semantic tools. Browser use requires Ollama to allow the web app's origin
+through `OLLAMA_ORIGINS`; browser mixed-content/local-network restrictions may also apply.
+
+**AI › AI settings**, the last menu item after a divider, opens the AI settings
+tab directly; native ribbons offer the same action in a separate group. AI actions
+in menus, ribbons and context menus are disabled when AI is off, **None** is selected,
+the endpoint or credential configuration is invalid, or a matching connection test
+failed (including unavailable models). Empty HTTP chat model fields are valid automatic
+selection, not missing configuration. Claude/Codex actions require a successful
+**Check CLI status** reporting authentication; unsupported, unknown or browser CLI
+configurations remain disabled. **AI settings** stays available to fix configuration.
 
 Claude and Codex generation routes chat, map, transform and Pitch requests to
 their native CLI. Install the CLI using its official instructions and ensure it
@@ -828,8 +846,9 @@ Claude/Codex `.cmd`/`.bat` installations are supported by invoking the known Nod
 entry point directly, **not by running the batch wrapper**. Arbitrary batch
 wrappers or nonstandard npm layouts are rejected.
 
-**Embeddings always use the separate OpenAI-compatible API settings**, regardless
-of the generation provider. **Test Connection** tests that API and discovers its
+**Ollama embeddings use the Ollama endpoint and embedding model**; CLI providers
+use the separate OpenAI-compatible API settings. **Test Connection** tests the
+displayed API and discovers its
 models without asking a CLI to perform inference. In browsers, a persisted CLI
 selection remains selected but generation reports native CLIs unavailable;
 there is no automatic fallback. Switch explicitly to OpenAI API to generate in

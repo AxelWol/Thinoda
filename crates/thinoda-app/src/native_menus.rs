@@ -485,6 +485,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ai_menu_ends_with_settings_and_disables_unconfigured_actions() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.provider = thinoda_platform::settings::AiProvider::None;
+        let entries = app.main_menu_entries();
+        let ai = entries
+            .iter()
+            .find_map(|entry| match entry {
+                MenuEntry::Submenu { entries, .. }
+                    if entries.iter().any(|entry| {
+                        matches!(
+                            entry,
+                            MenuEntry::Command {
+                                command: Cmd::AiChat,
+                                ..
+                            }
+                        )
+                    }) =>
+                {
+                    Some(entries)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(matches!(ai[ai.len() - 2], MenuEntry::Separator));
+        assert!(matches!(
+            ai.last(),
+            Some(MenuEntry::Command {
+                command: Cmd::AiSettings,
+                ..
+            })
+        ));
+        let ctx = Context::default();
+        let snapshot = app.native_menu_snapshot(&ctx);
+        assert!(snapshot.command_enabled(&Cmd::AiSettings));
+        assert!(!snapshot.command_enabled(&Cmd::AiChat));
+        for action in crate::ai::AiCommand::ALL {
+            assert!(!snapshot.command_enabled(&Cmd::Ai(action)));
+        }
+        app.dispatch_ribbon_command(&ctx, &snapshot, &Cmd::AiSettings);
+        assert!(app.dialogs.settings);
+        assert_eq!(app.dialogs.settings_tab, crate::app::SettingsTab::Ai);
+    }
+
+    #[test]
     fn macos_application_aliases_and_accelerators_use_shared_command_bindings() {
         let app = ThinodaApp::headless();
         let ctx = Context::default();

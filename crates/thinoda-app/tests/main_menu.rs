@@ -105,7 +105,7 @@ fn compact_root_menu_and_grouped_actions_preserve_localized_navigation() {
                         "AI",
                         thinoda_app::ai::AiCommand::Brainstorm.label(),
                         Cmd::Ai(thinoda_app::ai::AiCommand::Brainstorm),
-                        thinoda_app::ai::AiCommand::ALL.last().unwrap().label(),
+                        "AI settings",
                     ),
                     ("Tools", "Map Shot", Cmd::MapShot, "Merge Map Files…"),
                     ("View", "Previous Sheet", Cmd::PreviousSheet, "Collapse All"),

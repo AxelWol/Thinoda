@@ -104,7 +104,7 @@ const PAGES: &[Page] = &[
         paragraphs: &[
             "Settings controls system/light/dark appearance, language, scaling and editor preferences. Installed fonts are local to each machine; companion devices may need the same fonts.",
             "AI commands require a configured provider and may send selected topic content to that provider. Review provider settings and do not submit confidential content without permission.",
-            "Settings > AI selects the generation provider. Native Claude and Codex CLIs use their own login; replies are buffered. Copilot generation is blocked until a documented safe mode is available. Embeddings always use the separate OpenAI-compatible API. Browsers preserve CLI selections but cannot run them.",
+            "AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.",
             "Send Feedback opens the public GitHub issue chooser in your browser. It does not upload maps, settings or logs. Review anything you include before submitting an issue.",
             "Project News opens the repository commit history, not an automatic updater. Signing, native platform installation checks and additional cloud services remain under development.",
         ],

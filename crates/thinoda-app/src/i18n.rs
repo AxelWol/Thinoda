@@ -253,6 +253,19 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    (
+        "AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.",
+        "KI > KI-Einstellungen öffnet die Anbietereinstellungen. Ollama nutzt eigene Chat- und Embedding-Modelle. CLI-Anbieter nutzen ihre eigene Anmeldung und separate API-Embeddings; Browser können keine CLIs ausführen. Nicht konfigurierte KI-Aktionen und Copilot-Generierung sind deaktiviert.",
+    ),
+    ("AI settings", "KI-Einstellungen"),
+    (
+        "AI provider is not ready. Check AI settings.",
+        "Der KI-Anbieter ist nicht bereit. Prüfen Sie die KI-Einstellungen.",
+    ),
+    (
+        "Ollama uses its local OpenAI-compatible API. No API key is sent.",
+        "Ollama nutzt seine lokale OpenAI-kompatible API. Es wird kein API-Schlüssel gesendet.",
+    ),
     ("Compare", "Vergleichen"),
     (
         "Browser storage migration conflict",

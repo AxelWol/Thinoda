@@ -13,6 +13,9 @@ fn provider_switches_roundtrip_and_preserve_api_preferences() {
         base_url: "https://example.invalid/v1".into(),
         model: "api-model".into(),
         embedding_model: "embedding-model".into(),
+        ollama_base_url: "http://localhost:11434/v1".into(),
+        ollama_model: "local-chat".into(),
+        ollama_embedding_model: "nomic-embed-text".into(),
         cli_models: [
             "copilot-model".into(),
             "claude-model".into(),
@@ -31,9 +34,44 @@ fn provider_switches_roundtrip_and_preserve_api_preferences() {
         assert_eq!(restored.model, settings.model);
         assert_eq!(restored.embedding_model, settings.embedding_model);
         assert_eq!(restored.cli_models, settings.cli_models);
+        assert_eq!(restored.ollama_base_url, settings.ollama_base_url);
+        assert_eq!(restored.ollama_model, settings.ollama_model);
+        assert_eq!(
+            restored.ollama_embedding_model,
+            settings.ollama_embedding_model
+        );
         assert!(restored.api_key.is_empty());
         assert_eq!(settings.api_key, "not-for-settings-toml");
     }
+}
+
+#[test]
+fn generation_configuration_rejects_missing_and_invalid_endpoints() {
+    let mut settings = AiSettings::default();
+    assert!(settings.generation_configured()); // blank model is automatic
+    for endpoint in [
+        "",
+        "not a URL",
+        "file:///tmp/api",
+        "http://",
+        "http://user:password@localhost/v1",
+        "http://localhost/v1?token=secret",
+        "https://localhost/v1#fragment",
+    ] {
+        settings.base_url = endpoint.into();
+        assert!(!settings.generation_configured(), "{endpoint}");
+    }
+    settings.provider = AiProvider::Ollama;
+    settings.credentials_ready = false;
+    assert!(settings.generation_configured());
+    settings.ollama_base_url.clear();
+    assert!(!settings.generation_configured());
+    settings.provider = AiProvider::None;
+    assert!(!settings.generation_configured());
+    settings.provider = AiProvider::ClaudeCli;
+    assert!(settings.generation_configured());
+    settings.enabled = false;
+    assert!(!settings.generation_configured());
 }
 
 #[test]

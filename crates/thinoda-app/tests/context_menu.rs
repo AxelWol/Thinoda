@@ -102,12 +102,20 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 h.key_press(egui::Key::Escape);
                 h.run_steps(3);
                 assert_eq!(h.state().doc().unwrap().view.selection, selection);
+                h.state_mut().settings.ai.provider = thinoda_platform::settings::AiProvider::None;
                 right_click(&mut h, pos);
                 let ai = t("AI").to_string();
                 reveal(&mut h, &ai);
                 h.get_by_role_and_label(Role::Button, &ai).click();
                 h.run_steps(3);
                 reveal(&mut h, t(thinoda_app::ai::AiCommand::GenerateMap.label()));
+                for action in thinoda_app::ai::AiCommand::ALL {
+                    assert!(
+                        menu_action(&h, t(action.label()))
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                }
                 h.key_press(egui::Key::Escape);
                 h.run_steps(3);
                 assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);

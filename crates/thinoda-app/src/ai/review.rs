@@ -25,11 +25,12 @@ fn outline_text(nodes: &[thinoda_ai::OutlineNode], depth: usize, text: &mut Stri
 
 impl ThinodaApp {
     pub(super) fn validate_ai_target(&self, target: &AiTarget) -> Result<(), &'static str> {
-        if !self.settings.ai.enabled {
-            return Err(t("AI assistant is disabled in Settings"));
+        if !self.ai_available() {
+            return Err(t("AI provider is not ready. Check AI settings."));
         }
         let current = config(&self.settings.ai);
-        if current.base_url != target.config.base_url
+        if current.provider != target.config.provider
+            || current.base_url != target.config.base_url
             || current.model != target.config.model
             || current.api_key != target.config.api_key
             || current.temperature != target.config.temperature
@@ -284,6 +285,7 @@ mod tests {
             "title",
             "closed",
             "disabled",
+            "provider",
             "endpoint",
             "key",
             "model",
@@ -315,6 +317,11 @@ mod tests {
                 }
                 "closed" => app.docs.clear(),
                 "disabled" => app.settings.ai.enabled = false,
+                "provider" => {
+                    app.settings.ai.ollama_base_url = app.settings.ai.base_url.clone();
+                    app.settings.ai.ollama_model = app.settings.ai.model.clone();
+                    app.settings.ai.provider = thinoda_platform::settings::AiProvider::Ollama;
+                }
                 "endpoint" => app.settings.ai.base_url.push_str("/changed"),
                 "key" => app.settings.ai.api_key = "changed-test-key".into(),
                 "model" => app.settings.ai.model = "changed-model".into(),

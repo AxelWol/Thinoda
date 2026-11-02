@@ -222,7 +222,7 @@ impl ThinodaApp {
         let Some(pending) = &self.ai.chat.pending else {
             return;
         };
-        if !self.settings.ai.enabled || !self.docs.iter().any(|doc| doc.key == pending.doc_key) {
+        if !self.ai_available() || !self.docs.iter().any(|doc| doc.key == pending.doc_key) {
             self.cancel_ai_chat();
             return;
         }
@@ -280,8 +280,11 @@ impl ThinodaApp {
     }
 
     fn send_ai_chat(&mut self, key: &str, thread: &mut Conversation, scope_context: &str) {
-        if !self.settings.ai.enabled
-            || self.ai.pending.is_some()
+        if !self.ai_available() {
+            thread.error = Some(t("AI provider is not ready. Check AI settings.").into());
+            return;
+        }
+        if self.ai.pending.is_some()
             || self.ai.review.is_some()
             || self.ai.chat.is_busy()
             || self.pitch.ai_busy()
@@ -319,8 +322,9 @@ impl ThinodaApp {
             content: message.content.clone(),
         }));
         messages.push(Message::user(&thread.draft));
+        let model = config.model.clone();
         self.ai.chat.pending = Some(PendingChat {
-            job: AiStreamJob::chat(config, self.settings.ai.model.clone(), messages),
+            job: AiStreamJob::chat(config, model, messages),
             doc_key: key.into(),
             viewport: self.current_viewport,
             prompt: thread.draft.clone(),
@@ -468,10 +472,9 @@ impl ThinodaApp {
         if allowed {
             thread.scope = scope;
         }
-        ui.add(
-            egui::Label::new(format!("{}: {}", t("Server"), self.settings.ai.base_url)).truncate(),
-        )
-        .on_hover_text(&self.settings.ai.base_url);
+        let endpoint = config(&self.settings.ai).base_url;
+        ui.add(egui::Label::new(format!("{}: {}", t("Server"), endpoint)).truncate())
+            .on_hover_text(&endpoint);
         let scope_context = self.doc().map(|doc| context(doc, thread.scope)).unwrap();
         egui::CollapsingHeader::new(t("Context to send")).id_salt(("ai_context", &key)).show(ui, |ui| {
             widgets::caption(ui, t("Modes guide detail, not provider reasoning settings."));
@@ -491,8 +494,8 @@ impl ThinodaApp {
         if let Err(error) = &scope_context {
             ui.label(RichText::new(*error).color(ui.visuals().error_fg_color));
         }
-        if !self.settings.ai.enabled {
-            ui.label(t("AI assistant is disabled in Settings"));
+        if !self.ai_available() {
+            ui.label(t("AI provider is not ready. Check AI settings."));
         }
         if self.ai.pending.is_some() || self.ai.review.is_some() {
             ui.label(t("Review the current AI result first."));
@@ -506,7 +509,7 @@ impl ThinodaApp {
         if self.ai.chat.is_busy() && !pending_here {
             ui.label(t("AI is still working…"));
         }
-        let send_allowed = self.settings.ai.enabled
+        let send_allowed = self.ai_available()
             && self.ai.pending.is_none()
             && self.ai.review.is_none()
             && !self.ai.chat.is_busy()

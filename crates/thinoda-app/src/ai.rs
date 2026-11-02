@@ -125,7 +125,7 @@ pub struct AiState {
     /// Running "Test connection" request.
     pub test: Option<AiJob<Vec<String>>>,
     pub test_result: Option<Result<Vec<String>, String>>,
-    test_owner: Option<(String, String)>,
+    test_owner: Option<(AiProvider, String, String)>,
     cli_check: Option<AiJob<thinoda_ai::harness::CliStatus>>,
     cli_check_owner: Option<AiProvider>,
     cli_status: Option<thinoda_ai::harness::CliStatus>,
@@ -134,17 +134,26 @@ pub struct AiState {
 pub fn config(s: &AiSettings) -> AiConfig {
     AiConfig {
         provider: match s.provider {
+            AiProvider::None => thinoda_ai::harness::Provider::None,
             AiProvider::OpenAiApi => thinoda_ai::harness::Provider::OpenAiApi,
+            AiProvider::Ollama => thinoda_ai::harness::Provider::Ollama,
             AiProvider::CopilotCli => thinoda_ai::harness::Provider::CopilotCli,
             AiProvider::ClaudeCli => thinoda_ai::harness::Provider::ClaudeCli,
             AiProvider::CodexCli => thinoda_ai::harness::Provider::CodexCli,
         },
-        base_url: s.base_url.clone(),
-        model: s
-            .provider
-            .cli_index()
-            .map_or_else(|| s.model.clone(), |index| s.cli_models[index].clone()),
-        api_key: if s.credentials_ready {
+        base_url: if s.provider == AiProvider::Ollama {
+            s.ollama_base_url.clone()
+        } else {
+            s.base_url.clone()
+        },
+        model: if s.provider == AiProvider::Ollama {
+            s.ollama_model.clone()
+        } else {
+            s.provider
+                .cli_index()
+                .map_or_else(|| s.model.clone(), |index| s.cli_models[index].clone())
+        },
+        api_key: if s.credentials_ready && s.provider != AiProvider::Ollama {
             s.api_key.clone()
         } else {
             String::new()
@@ -155,21 +164,24 @@ pub fn config(s: &AiSettings) -> AiConfig {
     }
 }
 
-/// Semantic tools always use the separately configured OpenAI-compatible endpoint.
+/// Ollama provides its own embeddings; CLI providers use the separate API endpoint.
 pub fn embedding_config(s: &AiSettings) -> AiConfig {
     let mut cfg = config(s);
-    cfg.provider = thinoda_ai::harness::Provider::OpenAiApi;
-    cfg.model = s.model.clone();
+    if s.provider != AiProvider::Ollama {
+        cfg.provider = thinoda_ai::harness::Provider::OpenAiApi;
+        cfg.model = s.model.clone();
+    }
     cfg
 }
 
 fn config_with_api_key(s: &AiSettings, api_key: &str) -> AiConfig {
     let mut config = embedding_config(s);
-    config.api_key = if !s.credentials_ready && api_key == s.api_key {
-        String::new()
-    } else {
-        api_key.to_owned()
-    };
+    config.api_key =
+        if s.provider == AiProvider::Ollama || (!s.credentials_ready && api_key == s.api_key) {
+            String::new()
+        } else {
+            api_key.to_owned()
+        };
     config
 }
 
@@ -287,6 +299,41 @@ pub(crate) fn discovered_embedding_model(models: &[String], current: &str) -> Op
 }
 
 impl ThinodaApp {
+    pub fn ai_available(&self) -> bool {
+        if !self.settings.ai.generation_configured() {
+            return false;
+        }
+        match self.settings.ai.provider {
+            AiProvider::CopilotCli => false,
+            AiProvider::ClaudeCli | AiProvider::CodexCli => {
+                !cfg!(target_arch = "wasm32")
+                    && self.ai.cli_check.is_none()
+                    && self.ai.cli_check_owner == Some(self.settings.ai.provider)
+                    && self.ai.cli_status == Some(thinoda_ai::harness::CliStatus::Authenticated)
+            }
+            AiProvider::None => false,
+            AiProvider::OpenAiApi | AiProvider::Ollama => {
+                let cfg = config(&self.settings.ai);
+                if self.ai.test_owner.as_ref()
+                    != Some(&(self.settings.ai.provider, cfg.base_url, cfg.api_key))
+                {
+                    return true;
+                }
+                match &self.ai.test_result {
+                    Some(Err(_)) => false,
+                    Some(Ok(models)) => {
+                        if cfg.model.trim().is_empty() {
+                            models.iter().any(|model| thinoda_ai::is_chat_model(model))
+                        } else {
+                            models.iter().any(|model| model == cfg.model.trim())
+                        }
+                    }
+                    None => true,
+                }
+            }
+        }
+    }
+
     pub(crate) fn protect_ai_prompt_input(&mut self, ctx: &Context) {
         self.protect_prompt_editor_ime(ctx);
         self.protect_semantic_ime(ctx);
@@ -315,9 +362,9 @@ impl ThinodaApp {
 
     /// Starts an AI command for the current selection.
     pub fn start_ai(&mut self, cmd: AiCommand) {
-        if !self.settings.ai.enabled {
+        if !self.ai_available() {
             self.toasts
-                .warning(t("AI assistant is disabled in Settings"));
+                .warning(t("AI provider is not ready. Check AI settings."));
             return;
         }
         if self.ai.pending.is_some() || self.ai.chat.is_busy() || self.pitch.ai_busy() {
@@ -393,9 +440,9 @@ impl ThinodaApp {
 
     /// Starts generating a new map from a free-text prompt.
     pub fn start_generate_map(&mut self, prompt: String) {
-        if !self.settings.ai.enabled {
+        if !self.ai_available() {
             self.toasts
-                .warning(t("AI assistant is disabled in Settings"));
+                .warning(t("AI provider is not ready. Check AI settings."));
             return;
         }
 
@@ -475,10 +522,10 @@ impl ThinodaApp {
         self.poll_pitch_ai(ctx);
         self.poll_semantic(ctx);
         self.poll_ai_chat(ctx);
-        if !self.settings.ai.enabled && self.ai.pending.is_some() {
+        if !self.ai_available() && self.ai.pending.is_some() {
             self.cancel_ai();
             self.toasts
-                .warning(t("AI assistant is disabled in Settings"));
+                .warning(t("AI provider is not ready. Check AI settings."));
         }
         if let Some(owner) = &self.ai.test_owner {
             let draft = self
@@ -487,7 +534,9 @@ impl ThinodaApp {
                 .as_deref()
                 .unwrap_or(&self.settings.ai.api_key);
             let config = config_with_api_key(&self.settings.ai, draft);
-            if !self.settings.ai.enabled || owner != &(config.base_url, config.api_key) {
+            if !self.settings.ai.enabled
+                || owner != &(self.settings.ai.provider, config.base_url, config.api_key)
+            {
                 self.ai.test = None;
                 self.ai.test_result = None;
                 self.ai.test_owner = None;
@@ -497,11 +546,15 @@ impl ThinodaApp {
         }
         if let Some(job) = &self.ai.test {
             if let Some(r) = job.poll() {
+                let model = if self.settings.ai.provider == AiProvider::Ollama {
+                    &mut self.settings.ai.ollama_embedding_model
+                } else {
+                    &mut self.settings.ai.embedding_model
+                };
                 if let Ok(models) = &r
-                    && let Some(found) =
-                        discovered_embedding_model(models, &self.settings.ai.embedding_model)
+                    && let Some(found) = discovered_embedding_model(models, model)
                 {
-                    self.settings.ai.embedding_model = found;
+                    *model = found;
                 }
                 self.ai.test_result = Some(r.map_err(|e| error_text(&e)));
                 self.ai.test = None;
@@ -727,7 +780,7 @@ impl ThinodaApp {
                 ui.horizontal(|ui| {
                     if (ui
                         .add_enabled(
-                            self.settings.ai.enabled
+                            self.ai_available()
                                 && self.ai.pending.is_none()
                                 && self.ai.review.is_none()
                                 && !self.ai.chat.is_busy()
@@ -744,7 +797,7 @@ impl ThinodaApp {
                         )
                         .clicked()
                         || (enter
-                            && self.settings.ai.enabled
+                            && self.ai_available()
                             && self.ai.pending.is_none()
                             && self.ai.review.is_none()
                             && !self.ai.chat.is_busy()))
@@ -754,7 +807,7 @@ impl ThinodaApp {
                     }
                     widgets::caption(
                         ui,
-                        format!("{}: {}", t("Server"), self.settings.ai.base_url),
+                        format!("{}: {}", t("Server"), config(&self.settings.ai).base_url),
                     );
                 });
             });
@@ -791,13 +844,13 @@ impl ThinodaApp {
         let mut credentials_saved = false;
         widgets::property_field(ui, t("Generation provider"), |ui| {
             egui::ComboBox::from_id_salt("ai-generation-provider")
-                .selected_text(self.settings.ai.provider.label())
+                .selected_text(t(self.settings.ai.provider.label()))
                 .show_ui(ui, |ui| {
                     for provider in AiProvider::ALL {
                         ui.selectable_value(
                             &mut self.settings.ai.provider,
                             provider,
-                            provider.label(),
+                            t(provider.label()),
                         );
                     }
                 })
@@ -820,7 +873,7 @@ impl ThinodaApp {
                     t("CLI replies are buffered. Tools are disabled; no local files are supplied."),
                 );
             }
-            if ai.provider != AiProvider::OpenAiApi {
+            if ai.provider.cli_index().is_some() {
                 let provider = ai.provider;
                 let harness = config(ai).provider;
                 if self.ai.cli_check_owner != Some(provider) && activation_allowed {
@@ -886,131 +939,188 @@ impl ThinodaApp {
                 });
             }
         });
-        widgets::page_section(ui, t("OpenAI-compatible API"), |ui| {
-            let ai = &mut self.settings.ai;
-            widgets::caption(
-                ui,
-                t(
-                    "Embeddings always use this API, never a CLI. Switching providers preserves these settings and credentials.",
-                ),
-            );
-            widgets::caption(
-                ui,
-                t("Any OpenAI-compatible server: LM Studio, Ollama, llama.cpp, OpenAI…"),
-            );
-            widgets::property_field(ui, t("Server URL"), |ui| {
-                ui.text_edit_singleline(&mut ai.base_url)
-            });
-            if ai.provider == AiProvider::OpenAiApi {
-                widgets::property_field(ui, t("Model"), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut ai.model).hint_text(t("automatic")))
+        let ollama = self.settings.ai.provider == AiProvider::Ollama;
+        widgets::page_section(
+            ui,
+            if ollama {
+                "Ollama"
+            } else {
+                t("OpenAI-compatible API")
+            },
+            |ui| {
+                let ai = &mut self.settings.ai;
+                if ollama {
+                    widgets::caption(
+                        ui,
+                        t("Ollama uses its local OpenAI-compatible API. No API key is sent."),
+                    );
+                } else {
+                    widgets::caption(
+                        ui,
+                        t(
+                            "Embeddings always use this API, never a CLI. Switching providers preserves these settings and credentials.",
+                        ),
+                    );
+                }
+                widgets::caption(
+                    ui,
+                    t("Any OpenAI-compatible server: LM Studio, Ollama, llama.cpp, OpenAI…"),
+                );
+                widgets::property_field(ui, t("Server URL"), |ui| {
+                    ui.text_edit_singleline(if ollama {
+                        &mut ai.ollama_base_url
+                    } else {
+                        &mut ai.base_url
+                    })
                 });
-            }
-            widgets::property_field(ui, t("Embedding model"), |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut ai.embedding_model)
+                if ai.provider == AiProvider::OpenAiApi || ollama {
+                    widgets::property_field(ui, t("Model"), |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(if ollama {
+                                &mut ai.ollama_model
+                            } else {
+                                &mut ai.model
+                            })
+                            .hint_text(t("automatic")),
+                        )
+                    });
+                }
+                widgets::property_field(ui, t("Embedding model"), |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(if ollama {
+                            &mut ai.ollama_embedding_model
+                        } else {
+                            &mut ai.embedding_model
+                        })
                         .hint_text(t("Required for semantic tools")),
-                )
-            });
-            let key_label = ui.label(t("API Key"));
-            ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut api_key_draft)
-                        .password(true)
-                        .hint_text(thinoda_ai::API_KEY_ENV),
-                )
-                .labelled_by(key_label.id);
-                if ui.button(t("Save API Key")).clicked() && activation_allowed {
-                    save_api_key = true;
-                }
-                if ui.button(t("Clear")).clicked() && activation_allowed {
-                    api_key_draft.clear();
-                    clear_api_key = true;
-                }
-            });
-            widgets::caption(
-                ui,
-                t("API keys are stored in your operating system's secure credential store."),
-            );
-            if !ai.credentials_ready {
-                ui.colored_label(
+                    )
+                });
+                if !ollama {
+                    let key_label = ui.label(t("API Key"));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut api_key_draft)
+                                .password(true)
+                                .hint_text(thinoda_ai::API_KEY_ENV),
+                        )
+                        .labelled_by(key_label.id);
+                        if ui.button(t("Save API Key")).clicked() && activation_allowed {
+                            save_api_key = true;
+                        }
+                        if ui.button(t("Clear")).clicked() && activation_allowed {
+                            api_key_draft.clear();
+                            clear_api_key = true;
+                        }
+                    });
+                    widgets::caption(
+                        ui,
+                        t(
+                            "API keys are stored in your operating system's secure credential store.",
+                        ),
+                    );
+                    if !ai.credentials_ready {
+                        ui.colored_label(
                     ui.visuals().error_fg_color,
                     t("Secure credential storage is unavailable. Save a key to retry, or clear the saved key."),
                 );
-            }
-            if ai.provider == AiProvider::OpenAiApi {
-                widgets::property_field(ui, t("Creativity"), |ui| {
-                    ui.add(egui::Slider::new(&mut ai.temperature, 0.0..=1.5))
-                });
-            }
-            ui.horizontal(|ui| {
-                let busy = self.ai.test.is_some();
-                if ui
-                    .add_enabled(
-                        !busy && self.settings.ai.enabled,
-                        egui::Button::new(t("Test Connection")),
-                    )
-                    .clicked()
-                    && activation_allowed
-                {
-                    self.ai.test_result = None;
-                    let config = config_with_api_key(&self.settings.ai, &api_key_draft);
-                    self.ai.test_owner = Some((config.base_url.clone(), config.api_key.clone()));
-                    self.ai.test = Some(AiJob::models(config));
-                }
-                if busy {
-                    ui.spinner();
-                }
-            });
-            match &self.ai.test_result {
-                Some(Ok(models)) => {
-                    ui.label(
-                        RichText::new(format!("✔ {} ({})", t("Connected"), models.len()))
-                            .color(ui.visuals().widgets.active.bg_fill),
-                    );
-                    let mut pick = None;
-                    ui.horizontal_wrapped(|ui| {
-                        for m in models.iter().filter(|m| !is_embedding_model(m)) {
-                            if self.settings.ai.provider == AiProvider::OpenAiApi
-                                && ui
-                                    .selectable_label(self.settings.ai.model == *m, m)
-                                    .clicked()
-                            {
-                                pick = Some(m.clone());
-                            }
-                        }
-                    });
-                    if let Some(m) = pick {
-                        self.settings.ai.model = m;
                     }
-                    let embeddings: Vec<&String> =
-                        models.iter().filter(|m| is_embedding_model(m)).collect();
-                    if embeddings.is_empty() {
-                        widgets::caption(ui, t("No embedding models found on this server"));
-                    } else {
-                        ui.label(t("Embedding models"));
+                }
+                if ai.provider == AiProvider::OpenAiApi || ollama {
+                    widgets::property_field(ui, t("Creativity"), |ui| {
+                        ui.add(egui::Slider::new(&mut ai.temperature, 0.0..=1.5))
+                    });
+                }
+                ui.horizontal(|ui| {
+                    let busy = self.ai.test.is_some();
+                    if ui
+                        .add_enabled(
+                            !busy
+                                && self.settings.ai.enabled
+                                && AiSettings::valid_api_endpoint(
+                                    &embedding_config(&self.settings.ai).base_url,
+                                ),
+                            egui::Button::new(t("Test Connection")),
+                        )
+                        .clicked()
+                        && activation_allowed
+                    {
+                        self.ai.test_result = None;
+                        let config = config_with_api_key(&self.settings.ai, &api_key_draft);
+                        self.ai.test_owner = Some((
+                            self.settings.ai.provider,
+                            config.base_url.clone(),
+                            config.api_key.clone(),
+                        ));
+                        self.ai.test = Some(AiJob::models(config));
+                    }
+                    if busy {
+                        ui.spinner();
+                    }
+                });
+                match &self.ai.test_result {
+                    Some(Ok(models)) => {
+                        ui.label(
+                            RichText::new(format!("✔ {} ({})", t("Connected"), models.len()))
+                                .color(ui.visuals().widgets.active.bg_fill),
+                        );
                         let mut pick = None;
                         ui.horizontal_wrapped(|ui| {
-                            for m in embeddings {
-                                if ui
-                                    .selectable_label(self.settings.ai.embedding_model == *m, m)
-                                    .clicked()
+                            for m in models.iter().filter(|m| thinoda_ai::is_chat_model(m)) {
+                                if (self.settings.ai.provider == AiProvider::OpenAiApi || ollama)
+                                    && ui
+                                        .selectable_label(config(&self.settings.ai).model == *m, m)
+                                        .clicked()
                                 {
                                     pick = Some(m.clone());
                                 }
                             }
                         });
                         if let Some(m) = pick {
-                            self.settings.ai.embedding_model = m;
+                            if ollama {
+                                self.settings.ai.ollama_model = m;
+                            } else {
+                                self.settings.ai.model = m;
+                            }
+                        }
+                        let embeddings: Vec<&String> =
+                            models.iter().filter(|m| is_embedding_model(m)).collect();
+                        if embeddings.is_empty() {
+                            widgets::caption(ui, t("No embedding models found on this server"));
+                        } else {
+                            ui.label(t("Embedding models"));
+                            let mut pick = None;
+                            ui.horizontal_wrapped(|ui| {
+                                for m in embeddings {
+                                    if ui
+                                        .selectable_label(
+                                            self.settings.ai.active_embedding_model() == m,
+                                            m,
+                                        )
+                                        .clicked()
+                                    {
+                                        pick = Some(m.clone());
+                                    }
+                                }
+                            });
+                            if let Some(m) = pick {
+                                if ollama {
+                                    self.settings.ai.ollama_embedding_model = m;
+                                } else {
+                                    self.settings.ai.embedding_model = m;
+                                }
+                            }
                         }
                     }
+                    Some(Err(e)) => {
+                        ui.colored_label(ui.visuals().error_fg_color, e);
+                    }
+                    None => {}
                 }
-                Some(Err(e)) => {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
-                }
-                None => {}
-            }
-        });
+            },
+        );
+        if !self.ai_available() {
+            ui.label(t("AI provider is not ready. Check AI settings."));
+        }
         self.ai.api_key_draft = Some(api_key_draft.clone());
         if save_api_key || clear_api_key {
             let mut settings = self.settings.clone();
@@ -1051,6 +1161,106 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ollama_routes_generation_and_embeddings_without_api_credentials() {
+        let settings = AiSettings {
+            provider: AiProvider::Ollama,
+            ollama_model: "local-chat".into(),
+            ollama_embedding_model: "nomic-embed-text".into(),
+            model: "preserved-api-model".into(),
+            api_key: "preserved-api-key".into(),
+            credentials_ready: false,
+            ..Default::default()
+        };
+        let cfg = config(&settings);
+        assert_eq!(cfg.provider, thinoda_ai::harness::Provider::Ollama);
+        assert_eq!(cfg.base_url, "http://127.0.0.1:11434/v1");
+        assert_eq!(cfg.model, "local-chat");
+        assert!(cfg.api_key.is_empty());
+        assert_eq!(embedding_config(&settings), cfg);
+        assert_eq!(settings.active_embedding_model(), "nomic-embed-text");
+        assert!(
+            config_with_api_key(&settings, "draft-api-key")
+                .api_key
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ai_actions_require_ready_configuration_but_settings_remain_available() {
+        use crate::app::{Cmd, SettingsTab};
+        use thinoda_ai::harness::CliStatus;
+        let mut app = ThinodaApp::headless();
+        for provider in AiProvider::ALL {
+            app.settings.ai.provider = provider;
+            let ready = matches!(provider, AiProvider::OpenAiApi | AiProvider::Ollama);
+            assert_eq!(app.ai_available(), ready, "{provider:?}");
+            for action in AiCommand::ALL {
+                assert_eq!(app.command_available(&Cmd::Ai(action)), ready, "{action:?}");
+            }
+            assert_eq!(app.command_available(&Cmd::AiChat), ready);
+            assert!(app.command_available(&Cmd::AiSettings));
+        }
+        for provider in [AiProvider::ClaudeCli, AiProvider::CodexCli] {
+            app.settings.ai.provider = provider;
+            app.ai.cli_check_owner = Some(provider);
+            for status in [
+                CliStatus::Missing,
+                CliStatus::Unauthenticated,
+                CliStatus::Unknown,
+                CliStatus::Unsupported,
+                CliStatus::Browser,
+                CliStatus::Authenticated,
+            ] {
+                app.ai.cli_status = Some(status);
+                assert_eq!(app.ai_available(), status == CliStatus::Authenticated);
+            }
+        }
+        app.settings.ai.provider = AiProvider::Ollama;
+        app.settings.ai.ollama_base_url.clear();
+        assert!(!app.ai_available());
+        app.start_ai(AiCommand::GenerateMap);
+        assert!(app.ai.prompt.is_none());
+        app.settings.ai.provider = AiProvider::OpenAiApi;
+        app.settings.ai.credentials_ready = false;
+        assert!(!app.ai_available());
+        app.settings.ai.credentials_ready = true;
+        app.settings.ai.enabled = false;
+        assert!(!app.command_available(&Cmd::AiChat));
+        app.exec(&Context::default(), Cmd::AiSettings);
+        assert!(app.dialogs.settings);
+        assert_eq!(app.dialogs.settings_tab, SettingsTab::Ai);
+    }
+
+    #[test]
+    fn connection_validation_is_bound_to_provider_endpoint_key_and_models() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.provider = AiProvider::Ollama;
+        let cfg = config(&app.settings.ai);
+        app.ai.test_owner = Some((AiProvider::Ollama, cfg.base_url, cfg.api_key));
+        app.ai.test_result = Some(Err("Connection refused".into()));
+        assert!(!app.ai_available());
+        app.ai.test_result = Some(Ok(vec!["nomic-embed-text".into()]));
+        assert!(!app.ai_available());
+        app.ai.test_result = Some(Ok(vec!["local-chat".into()]));
+        assert!(app.ai_available());
+        app.settings.ai.ollama_model = "not-installed".into();
+        assert!(!app.ai_available());
+        app.settings.ai.ollama_model = "local-chat".into();
+        assert!(app.ai_available());
+        app.settings.ai.provider = AiProvider::OpenAiApi;
+        assert!(
+            app.ai_available(),
+            "Ollama failure must not disable the API"
+        );
+        app.settings.ai.provider = AiProvider::Ollama;
+        app.settings.ai.ollama_base_url = "http://localhost:11434/v1".into();
+        assert!(
+            app.ai_available(),
+            "old endpoint results must not be reused"
+        );
+    }
+
+    #[test]
     fn generation_routing_and_embeddings_are_independent() {
         let mut settings = AiSettings {
             model: "api-chat".into(),
@@ -1068,7 +1278,7 @@ mod tests {
             assert_eq!(
                 cfg.provider.command(),
                 match provider {
-                    AiProvider::OpenAiApi => "",
+                    AiProvider::None | AiProvider::OpenAiApi | AiProvider::Ollama => "",
                     AiProvider::CopilotCli => "copilot",
                     AiProvider::ClaudeCli => "claude",
                     AiProvider::CodexCli => "codex",
@@ -1076,11 +1286,17 @@ mod tests {
             );
             assert_eq!(
                 cfg.model,
-                provider
-                    .cli_index()
-                    .map_or("api-chat", |i| settings.cli_models[i].as_str())
+                if provider == AiProvider::Ollama {
+                    ""
+                } else {
+                    provider
+                        .cli_index()
+                        .map_or("api-chat", |i| settings.cli_models[i].as_str())
+                }
             );
-            assert_eq!(embedding_config(&settings), original_embeddings);
+            if provider != AiProvider::Ollama {
+                assert_eq!(embedding_config(&settings), original_embeddings);
+            }
             assert_eq!(settings.model, "api-chat");
         }
     }
@@ -1153,7 +1369,11 @@ mod tests {
         for change in ["endpoint", "key", "disabled", "model", "unchanged"] {
             let mut app = ThinodaApp::headless();
             app.ai.api_key_draft = Some("local-test-key".into());
-            app.ai.test_owner = Some((app.settings.ai.base_url.clone(), "local-test-key".into()));
+            app.ai.test_owner = Some((
+                app.settings.ai.provider,
+                app.settings.ai.base_url.clone(),
+                "local-test-key".into(),
+            ));
             app.ai.test_result = Some(Ok(vec!["old-model".into()]));
             app.ai.test = Some(AiJob::spawn_with(AiConfig::default(), |_| {
                 Ok(vec!["completed-model".into()])

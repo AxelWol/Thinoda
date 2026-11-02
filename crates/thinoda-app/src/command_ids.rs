@@ -86,6 +86,7 @@ impl Cmd {
             Self::EditField(FocusField::Hyperlink) => "insert.hyperlink",
             Self::EditField(FocusField::Notes) => "insert.notes",
             Self::AiChat => "ai.chat",
+            Self::AiSettings => "ai.settings",
             Self::Ai(action) => match action {
                 crate::ai::AiCommand::Brainstorm => "ai.brainstorm",
                 crate::ai::AiCommand::Breakdown => "ai.breakdown",

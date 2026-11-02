@@ -96,7 +96,7 @@ fn parse(text: &str, candidates: &Presentation) -> Result<Presentation, String> 
 
 impl ThinodaApp {
     fn pitch_ai_valid(&self, editor: &PitchEditor, request: &Request) -> bool {
-        self.settings.ai.enabled
+        self.ai_available()
             && request.config == crate::ai::config(&self.settings.ai)
             && request.generation == editor.generation
             && request.instruction == editor.ai.instruction
@@ -111,6 +111,9 @@ impl ThinodaApp {
     }
 
     fn start_pitch_ai(&self, editor: &mut PitchEditor) -> Result<(), String> {
+        if !self.ai_available() {
+            return Err(t("AI provider is not ready. Check AI settings.").into());
+        }
         if self.ai.pending.is_some() || self.ai.chat.is_busy() || editor.ai.pending.is_some() {
             return Err(t("AI is still working…").into());
         }
@@ -248,12 +251,12 @@ impl ThinodaApp {
     pub(super) fn pitch_ai_panel(&self, ui: &mut egui::Ui, editor: &mut PitchEditor, touch: bool) {
         egui::CollapsingHeader::new(t("AI Pitch outline")).id_salt("pitch-ai").show(ui, |ui| {
             ui.label(t("AI suggests slide order and titles only. Frames stay unchanged. Send transmits slide titles and instructions."));
-            ui.label(format!("{}: {}", t("Server"), self.settings.ai.base_url));
+            ui.label(format!("{}: {}", t("Server"), crate::ai::config(&self.settings.ai).base_url));
             let label = ui.label(t("Pitch instructions"));
             ui.add(egui::TextEdit::multiline(&mut editor.ai.instruction).desired_rows(2).char_limit(8192))
                 .labelled_by(label.id);
             let mut error = None;
-            if ui.add_enabled(self.settings.ai.enabled && editor.ai.pending.is_none() && editor.ai.proposal.is_none(),
+            if ui.add_enabled(self.ai_available() && editor.ai.pending.is_none() && editor.ai.proposal.is_none(),
                 egui::Button::new(t("Suggest Pitch outline"))).clicked() && touch {
                 error = self.start_pitch_ai(editor).err();
             }

@@ -1532,7 +1532,16 @@ impl ThinodaApp {
                     ui.horizontal(|ui| {
                         if self.settings.ai.enabled {
                             if ui
-                                .button(format!("{} {}", icons::BRAINSTORM, t("Expand ideas")))
+                                .add_enabled(
+                                    self.command_available(&Cmd::Ai(
+                                        crate::ai::AiCommand::Brainstorm,
+                                    )),
+                                    egui::Button::new(format!(
+                                        "{} {}",
+                                        icons::BRAINSTORM,
+                                        t("Expand ideas")
+                                    )),
+                                )
                                 .clicked()
                             {
                                 cmd = Some(Cmd::Ai(crate::ai::AiCommand::Brainstorm));
@@ -1771,17 +1780,20 @@ impl ThinodaApp {
                 item(ui, t(label), command, available);
             }
         });
-        if self.settings.ai.enabled {
-            ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
-                scroll_menu(ui, |ui| {
-                    for a in crate::ai::AiCommand::ALL {
-                        item(ui, t(a.label()), Cmd::Ai(a), has_sel || !a.needs_topic());
-                    }
-                });
-            })
-            .response
-            .accessible_name(t("AI"));
-        }
+        ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
+            scroll_menu(ui, |ui| {
+                for a in crate::ai::AiCommand::ALL {
+                    item(
+                        ui,
+                        t(a.label()),
+                        Cmd::Ai(a),
+                        self.command_available(&Cmd::Ai(a)),
+                    );
+                }
+            });
+        })
+        .response
+        .accessible_name(t("AI"));
         if has_link {
             item(ui, t("Open Link"), Cmd::OpenLink, true);
         }

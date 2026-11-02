@@ -42,7 +42,21 @@ fn provider_settings_are_localized_and_preserve_api_settings_in_all_appearances(
                 h.get_by_role_and_label(Role::TextInput, t("Server URL"));
                 h.get_by_role_and_label(Role::TextInput, t("Embedding model"));
                 h.get_by_role_and_label(Role::Button, t("Test Connection"));
-                if provider != AiProvider::OpenAiApi {
+                if provider == AiProvider::Ollama {
+                    assert!(
+                        h.query_by_role_and_label(Role::Button, t("Save API Key"))
+                            .is_none()
+                    );
+                    assert!(
+                        h.query_by_role_and_label(Role::Button, t("Check CLI status"))
+                            .is_none()
+                    );
+                    assert_eq!(
+                        h.state().settings.ai.ollama_base_url,
+                        "http://127.0.0.1:11434/v1"
+                    );
+                }
+                if provider.cli_index().is_some() {
                     h.get_by_role_and_label(Role::Button, t("Check CLI status"));
                     h.get_by_role_and_label(Role::Button, t("Copy login command"));
                 }

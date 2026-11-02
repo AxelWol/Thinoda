@@ -53,6 +53,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::NewSheetFromTopic => (I::SHEET, Some(I::BRANCH), T::Create),
         Cmd::DeleteSheet => (I::SHEET, Some(I::REMOVE), T::Danger),
         Cmd::AiChat => (I::AI_CHAT, Some(I::AI), T::Ai),
+        Cmd::AiSettings => (I::SETTINGS, Some(I::AI), T::Ai),
         Cmd::Ai(action) => match action {
             AiCommand::Brainstorm => (I::BRAINSTORM, None, T::Ai),
             AiCommand::Breakdown => (I::TODO, Some(I::AI), T::Ai),

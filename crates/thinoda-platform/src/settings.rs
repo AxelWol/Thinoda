@@ -197,16 +197,20 @@ pub enum AiResponseMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiProvider {
+    None,
     #[default]
     OpenAiApi,
+    Ollama,
     CopilotCli,
     ClaudeCli,
     CodexCli,
 }
 
 impl AiProvider {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
+        Self::None,
         Self::OpenAiApi,
+        Self::Ollama,
         Self::CopilotCli,
         Self::ClaudeCli,
         Self::CodexCli,
@@ -214,7 +218,9 @@ impl AiProvider {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::None => "None",
             Self::OpenAiApi => "OpenAI API",
+            Self::Ollama => "Ollama",
             Self::CopilotCli => "GitHub Copilot CLI",
             Self::ClaudeCli => "Claude CLI",
             Self::CodexCli => "OpenAI Codex CLI",
@@ -223,7 +229,7 @@ impl AiProvider {
 
     pub fn cli_index(self) -> Option<usize> {
         match self {
-            Self::OpenAiApi => None,
+            Self::None | Self::OpenAiApi | Self::Ollama => None,
             Self::CopilotCli => Some(0),
             Self::ClaudeCli => Some(1),
             Self::CodexCli => Some(2),
@@ -231,7 +237,7 @@ impl AiProvider {
     }
 }
 
-/// AI assistant preferences. Embeddings always use the OpenAI-compatible API.
+/// AI assistant preferences. Ollama and the general API retain independent settings.
 /// API keys are stored in the OS credential store; the environment variable remains an override.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -241,6 +247,9 @@ pub struct AiSettings {
     /// Separate optional model overrides, preserving API and other CLI choices.
     pub cli_models: [String; 3],
     pub base_url: String,
+    pub ollama_base_url: String,
+    pub ollama_model: String,
+    pub ollama_embedding_model: String,
     /// Empty = first chat model offered by the server.
     pub model: String,
     /// Kept in memory only; `settings.toml` must never contain this value.
@@ -268,6 +277,9 @@ impl fmt::Debug for AiSettings {
             .field("provider", &self.provider)
             .field("cli_models", &self.cli_models)
             .field("base_url", &self.base_url)
+            .field("ollama_base_url", &self.ollama_base_url)
+            .field("ollama_model", &self.ollama_model)
+            .field("ollama_embedding_model", &self.ollama_embedding_model)
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .field("api_key_stored", &self.api_key_stored)
@@ -290,6 +302,9 @@ impl Default for AiSettings {
             provider: AiProvider::default(),
             cli_models: Default::default(),
             base_url: "http://127.0.0.1:1234/v1".into(),
+            ollama_base_url: "http://127.0.0.1:11434/v1".into(),
+            ollama_model: String::new(),
+            ollama_embedding_model: String::new(),
             model: String::new(),
             api_key: String::new(),
             api_key_stored: false,
@@ -304,6 +319,48 @@ impl Default for AiSettings {
 }
 
 impl AiSettings {
+    /// Empty HTTP model overrides intentionally use server model discovery.
+    pub fn generation_configured(&self) -> bool {
+        if !self.enabled
+            || self.provider == AiProvider::None
+            || !self.temperature.is_finite()
+            || !(0.0..=1.5).contains(&self.temperature)
+        {
+            return false;
+        }
+        if self.provider.cli_index().is_some() {
+            return true;
+        }
+        let endpoint = if self.provider == AiProvider::Ollama {
+            &self.ollama_base_url
+        } else {
+            if !self.credentials_ready {
+                return false;
+            }
+            &self.base_url
+        };
+        Self::valid_api_endpoint(endpoint)
+    }
+
+    pub fn valid_api_endpoint(endpoint: &str) -> bool {
+        reqwest::Url::parse(endpoint.trim()).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
+    }
+
+    pub fn active_embedding_model(&self) -> &str {
+        if self.provider == AiProvider::Ollama {
+            &self.ollama_embedding_model
+        } else {
+            &self.embedding_model
+        }
+    }
+
     /// Replace the API key and mark it for secure persistence.
     pub fn set_api_key(&mut self, api_key: impl Into<String>) {
         self.api_key = api_key.into();

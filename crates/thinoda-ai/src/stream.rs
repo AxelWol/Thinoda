@@ -563,7 +563,7 @@ async fn stream_chat(
     messages: Vec<Message>,
     shared: Arc<Shared<impl Sized>>,
 ) -> Result<(String, String)> {
-    if cfg.provider != crate::harness::Provider::OpenAiApi {
+    if !cfg.provider.is_api() {
         let model = requested_model.unwrap_or_else(|| cfg.model.clone());
         let text = crate::harness::chat(&cfg, &model, &messages, || shared.is_cancelled())?;
         // CLI output is buffered. Do not emit fabricated token-by-token deltas.
@@ -782,7 +782,7 @@ async fn stream_chat(
     messages: Vec<Message>,
     shared: Arc<Shared<impl Sized>>,
 ) -> Result<(String, String)> {
-    if cfg.provider != crate::harness::Provider::OpenAiApi {
+    if !cfg.provider.is_api() {
         return Err(AiError::Harness(crate::harness::HarnessError::Browser));
     }
     let model = match requested_model {

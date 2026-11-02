@@ -77,7 +77,7 @@ impl Client {
 
     /// Configured model, or the first chat model the server offers.
     pub async fn resolve_model(&self) -> Result<String> {
-        if self.cfg.provider != crate::harness::Provider::OpenAiApi {
+        if !self.cfg.provider.is_api() {
             return Err(AiError::Harness(crate::harness::HarnessError::Browser));
         }
         if !self.cfg.model.trim().is_empty() {
@@ -88,7 +88,7 @@ impl Client {
 
     /// One non-streaming chat completion; returns the assistant text.
     pub async fn chat(&self, model: &str, messages: &[Message]) -> Result<String> {
-        if self.cfg.provider != crate::harness::Provider::OpenAiApi {
+        if !self.cfg.provider.is_api() {
             return Err(AiError::Harness(crate::harness::HarnessError::Browser));
         }
         let body = chat_body(&self.cfg, model, messages);
