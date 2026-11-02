@@ -1,3 +1,5 @@
+_Last updated: 2026-11-01 10:51:35 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Remote storage adapter primitives (C3–C5)
 
 These are platform-only protocol primitives, not an accepted cloud-storage

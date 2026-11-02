@@ -1,3 +1,5 @@
+_Last updated: 2026-11-01 08:37:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Freeform boards: research, concept and plan
 
 Status: **concept and plan only, no code yet** (user-directed, 2026-10-28).

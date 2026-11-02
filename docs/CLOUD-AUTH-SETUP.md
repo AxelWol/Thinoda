@@ -1,3 +1,5 @@
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Publisher setup for Thinoda cloud sign-in
 
 This is the maintainer's registration and build guide. **There are currently no

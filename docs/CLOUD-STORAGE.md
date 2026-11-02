@@ -1,3 +1,5 @@
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Cloud storage: current state, gap analysis and plan
 
 Status: **C0-C5 implementation; live acceptance remains open** (user-directed,
