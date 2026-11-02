@@ -1,4 +1,4 @@
-_Last updated: 2026-10-26 14:10:43 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-02 11:58:26 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Embeddings transport API
 
