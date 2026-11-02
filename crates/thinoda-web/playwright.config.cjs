@@ -5,6 +5,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
     testDir: "./tests",
     testMatch: [
+        "board-export.browser.spec.ts",
         "board-workflows.browser.spec.ts",
         "image-card.browser.spec.ts",
         "startup.browser.spec.ts",

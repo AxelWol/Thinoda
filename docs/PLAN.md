@@ -2971,11 +2971,12 @@ stay disabled until publisher registrations are in place.
 
 Automated production-browser checks now exercise a rootless board's saved
 sticky, shape, connector, frame and ink, plus ink undo and a captured Pitch
-viewport. The locked browser suite also runs startup and offline checks on the
-release build before CI publishes it. Same-frame text entry and touch-menu
-ownership have focused regressions. These checks do not replace real device,
-screen-reader, export or large-board recovery acceptance; see the checkpoint
-critiques in FREEFORM.
+viewport. It also checks SVG export consent, cancellation and output. The locked
+browser suite runs these and startup/offline checks on the release build before
+CI publishes it. Same-frame text entry and touch-menu ownership have focused
+regressions. These checks do not replace real device, screen-reader, other
+export-format or large-board recovery acceptance; see the checkpoint critiques
+in FREEFORM.
 
 Desktop browser inspection found that the editor's canvas controls are absent
 from the browser accessibility tree and its transparent IME input is unlabeled.

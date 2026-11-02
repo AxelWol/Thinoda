@@ -252,9 +252,11 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
 - Hard limits (validated on load and paste): objects per sheet, points per
   stroke, total points, coordinate and size ranges, label length, group depth,
   decoded image size.
-- Rendering caches bounded, zoom-projected stroke geometry at the exact zoom
-  and culls off-screen strokes. egui still tessellates visible strokes each
-  frame; performance measurements determine whether a mesh cache is needed.
+- Rendering culls off-screen strokes and caches bounded, screen-space
+  tessellated meshes keyed by geometry, transform, clip, style and
+  tessellation settings. Changes such as panning invalidate affected entries;
+  visible working sets larger than the cache can repeatedly evict and
+  retessellate strokes. The cache is not a guarantee of the frame-time target.
 - F0 benchmark gate: 1,000 and 10,000 strokes, plus a 50-image board, on native
   and web: frame time, memory, undo memory, save/load time, recovery journal
   size.
@@ -586,8 +588,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - The Pitch stage now fits its containing player rather than the height of the
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both
-  appear within the player. This is not a substitute for the remaining export,
-  physical-device and cross-platform presentation acceptance.
+  appear within the player. A browser SVG regression verifies consent and
+  cancellation, the exported objects and an actual image decode. These do not
+  substitute for the remaining format, physical-device and cross-platform
+  presentation acceptance.
 
 ### Integrated editing checkpoint: critique
 
