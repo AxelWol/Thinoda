@@ -41,6 +41,9 @@ pub(crate) fn set_browser_recovery_announcement(id: &str, message: Option<&str>)
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id(id));
     if let Some(element) = element {
+        if let Err(error) = element.set_attribute("lang", i18n::lang().language_tag()) {
+            log::warn!("browser recovery announcement language could not be set: {error:?}");
+        }
         element.set_text_content(message);
     } else {
         log::warn!("browser recovery announcement element is unavailable: {id}");

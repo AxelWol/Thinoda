@@ -64,6 +64,7 @@ test("the pending loader is accessible and honors reduced motion", async ({ page
         await expect(loader).toBeVisible();
         await expect(loader).toHaveAttribute("role", "status");
         await expect(loader).toHaveAttribute("aria-live", "polite");
+        await expect(loader).toHaveAttribute("lang", "en");
         await expect(loader.locator("#loading-message")).toHaveText("Loading Thinoda…");
         await wasmRequested;
         const image = loader.locator("img");

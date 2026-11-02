@@ -57,11 +57,27 @@ impl Lang {
             Lang::PtBr => "Brazilian Portuguese",
         }
     }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    pub(crate) const fn language_tag(self) -> &'static str {
+        match self {
+            Lang::En => "en",
+            Lang::De => "de",
+            Lang::Es => "es",
+            Lang::Fr => "fr",
+            Lang::Da => "da",
+            Lang::Nl => "nl",
+            Lang::Pt => "pt-PT",
+            Lang::It => "it",
+            Lang::Pl => "pl",
+            Lang::PtBr => "pt-BR",
+        }
+    }
 }
 
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
-/// Resolves the configured language (Auto = operating system locale).
+/// Resolves the configured language (Auto = system or browser locale).
 pub fn resolve(lang: Language) -> Lang {
     match lang {
         Language::English => Lang::En,
@@ -74,7 +90,15 @@ pub fn resolve(lang: Language) -> Lang {
         Language::PortugueseBrazil => Lang::PtBr,
         Language::Italian => Lang::It,
         Language::Polish => Lang::Pl,
-        Language::Auto => resolve_locale(&sys_locale::get_locale().unwrap_or_default()),
+        Language::Auto => {
+            #[cfg(target_arch = "wasm32")]
+            let locale = web_sys::window()
+                .and_then(|window| window.navigator().language())
+                .unwrap_or_default();
+            #[cfg(not(target_arch = "wasm32"))]
+            let locale = sys_locale::get_locale().unwrap_or_default();
+            resolve_locale(&locale)
+        }
     }
 }
 
@@ -105,6 +129,20 @@ pub fn resolve_locale(locale: &str) -> Lang {
 
 pub fn set_lang(lang: Lang) {
     CURRENT.store(lang as u8, Ordering::Relaxed);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let root = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element());
+        match root {
+            Some(root) => {
+                if let Err(error) = root.set_attribute("lang", lang.language_tag()) {
+                    log::warn!("could not set browser document language: {error:?}");
+                }
+            }
+            None => log::warn!("browser document language could not be updated"),
+        }
+    }
 }
 
 pub fn lang() -> Lang {
@@ -3783,6 +3821,25 @@ mod tests {
             }
         }
         assert_eq!(resolved.len(), 10);
+    }
+
+    #[test]
+    fn browser_language_tags_match_their_catalogs() {
+        for (language, tag) in [
+            (Lang::En, "en"),
+            (Lang::De, "de"),
+            (Lang::Es, "es"),
+            (Lang::Fr, "fr"),
+            (Lang::Da, "da"),
+            (Lang::Nl, "nl"),
+            (Lang::Pt, "pt-PT"),
+            (Lang::It, "it"),
+            (Lang::Pl, "pl"),
+            (Lang::PtBr, "pt-BR"),
+        ] {
+            assert_eq!(language.language_tag(), tag);
+            assert_eq!(resolve_locale(tag), language);
+        }
     }
 
     #[test]

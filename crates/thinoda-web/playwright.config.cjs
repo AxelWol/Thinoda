@@ -8,6 +8,7 @@ module.exports = defineConfig({
         "board-export.browser.spec.ts",
         "board-workflows.browser.spec.ts",
         "image-card.browser.spec.ts",
+        "language.browser.spec.ts",
         "recovery-legacy-lock.browser.spec.ts",
         "startup.browser.spec.ts",
         "startup-service-worker.browser.spec.ts",
@@ -17,6 +18,7 @@ module.exports = defineConfig({
     use: {
         browserName: "chromium",
         headless: true,
+        locale: "en-US",
         launchOptions: {
             executablePath: process.env.THINODA_BROWSER_EXECUTABLE || undefined,
             args: ["--enable-unsafe-swiftshader"],

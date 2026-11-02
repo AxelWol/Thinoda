@@ -2984,9 +2984,10 @@ Automated production-browser checks now exercise a rootless board's saved
 sticky, shape, connector, frame and ink, plus ink undo and a captured Pitch
 viewport. It also checks SVG export consent, cancellation and output, and a
 downloaded vector PDF's framing and rendered objects without mutating the board.
-The locked browser suite passed 28 headless Chromium cases against the production
-candidate; eight focused startup and recovery checks also passed in both WebKit
-and Firefox on Windows. CI runs the Chromium suite before publishing. Same-frame
+The locked browser suite passed 35 headless Chromium cases against the production
+candidate; eight focused startup and recovery checks and six browser-language
+cases also passed in both WebKit and Firefox on Windows. CI runs the Chromium
+suite before publishing. Same-frame
 text entry and touch-menu ownership have focused regressions. These checks do not
 replace real-device, screen-reader, remaining export-format or large-board
 recovery acceptance; see the checkpoint critiques in FREEFORM.

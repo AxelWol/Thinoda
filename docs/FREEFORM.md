@@ -488,10 +488,10 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The candidate production bundle passed 28 headless Chromium cases,
-including mixed-board editing, SVG/PDF export and browser recovery failures;
-eight focused startup/recovery checks passed in each of WebKit and Firefox on
-Windows.
+open. The candidate production bundle passed 35 headless Chromium cases,
+including mixed-board editing, SVG/PDF export, browser-language selection and
+browser recovery failures; eight focused startup/recovery checks and six
+language cases passed in each of WebKit and Firefox on Windows.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).

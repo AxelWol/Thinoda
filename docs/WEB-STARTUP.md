@@ -182,6 +182,19 @@ Browser recovery warnings additionally have localized live-alert regions, but
 these do not expose the editor controls and do not replace real screen-reader
 testing.
 
+Browser **Auto** language previously always resolved to English because the
+native locale provider did not read the browser's language. It now uses the
+browser preference while preserving explicit Settings choices. The document
+language follows the active catalog, the English static loader identifies its
+own language, and each recovery announcement retains the language it was
+written in if the setting changes. This improves the language metadata of
+existing DOM content; it is not an editor accessibility bridge. On Windows,
+German and both Portuguese variants, an unsupported-language fallback and
+explicit preferences were checked in Chromium, WebKit and Firefox; Chromium
+also exercised a settings change and reload. Auto does not react immediately to
+a changed browser preference, and the static bootstrap remains English. No real
+screen reader was tested.
+
 AccessKit's [published adapter list](https://lib.rs/crates/accesskit) does not
 include a web adapter. Its [experimental web adapter discussion](https://github.com/AccessKit/accesskit/discussions/514)
 also reports unreliable screen-reader focus in an early prototype. That work is
@@ -212,12 +225,13 @@ bytes. This does not recover the oversized unsaved board or establish storage
 limits on other browsers. Device-level reload, quota, concurrent-tab and
 large-board acceptance therefore remain open.
 
-The current candidate production bundle passed 28 headless Chromium regressions,
-including startup and offline-shell failures, mixed-board editing, SVG and PDF
-export, recovery lease loss, quota retry and the real-quota case. Desktop and
-390-pixel screenshots showed the warning and dismiss control within the
-viewport. Eight focused startup and recovery checks also passed in headless
-WebKit and Firefox on Windows. An earlier run had one failure when its loopback
+The current candidate production bundle passed 35 headless Chromium regressions,
+including startup and offline-shell failures, browser-language selection,
+mixed-board editing, SVG and PDF export, recovery lease loss, quota retry and
+the real-quota case. Desktop and 390-pixel screenshots showed the warning and
+dismiss control within the viewport. Eight focused startup and recovery checks
+and six language cases also passed in headless WebKit and Firefox on Windows.
+An earlier run had one failure when its loopback
 server refused a static-resource connection; that case passed three isolated
 repeats and the later full run passed on a dedicated server. These checks do not
 replace physical-device, screen-reader or cross-platform CI acceptance.

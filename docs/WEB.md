@@ -71,6 +71,13 @@ All editing features are the same shared code as on the desktop: topics,
 structures, themes, styles, symbols, relationships, boundaries, summaries,
 notes, labels, links, images, search, outline, templates, multiple sheets and
 documents, undo/redo, Map Shot, AI tools, settings, languages and shortcuts.
+
+The **Auto** language uses the browser's preferred language at startup or when
+switching back to Auto, with English as the fallback for unsupported languages.
+An explicit Settings choice takes precedence; reload after changing the
+browser's language preference. The static startup and bootstrap-error messages
+remain in English.
+
 Browsers cannot access files, printers or OS services directly, so these
 features work differently:
 
