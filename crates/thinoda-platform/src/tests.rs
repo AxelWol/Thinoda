@@ -1387,6 +1387,132 @@ fn dropping_suspended_recovery_does_not_delete_a_claimed_orphan() {
 }
 
 #[test]
+fn dropping_an_unclaimed_suspended_recovery_preserves_the_snapshot() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Still recoverable"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    drop(manager);
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].docs[0].meta.title, "Still recoverable");
+    orphans[0].docs[0].load().unwrap();
+    orphans[0].discard().unwrap();
+}
+
+#[test]
+fn scanning_an_empty_suspended_session_does_not_prevent_resume() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager.suspend().unwrap();
+    assert!(RecoveryManager::find_orphans(&paths).is_empty());
+    manager.resume().unwrap();
+    manager
+        .snapshot("doc", meta("After resume"), &Workbook::default())
+        .unwrap();
+    manager.finish().unwrap();
+}
+
+#[test]
+fn discarding_an_orphan_retires_the_suspended_session() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Discarded"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    assert_eq!(orphans.len(), 1);
+    orphans[0].discard().unwrap();
+    assert!(manager.resume().is_err());
+}
+
+#[test]
+fn failed_snapshot_removal_keeps_queued_bytes_for_retry() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    let blocked = manager.session_dir().join("docs").join("doc.json");
+    mkdir(&blocked);
+    manager
+        .queue_snapshot(
+            "doc",
+            Snapshot::to_bytes(meta("Pending"), &Workbook::default()).unwrap(),
+        )
+        .unwrap();
+    assert!(manager.remove("doc").is_err());
+    fs::remove_dir(&blocked).unwrap();
+    manager.flush().unwrap();
+    let snapshot: Snapshot = serde_json::from_slice(&fs::read(&blocked).unwrap()).unwrap();
+    assert_eq!(snapshot.meta.title, "Pending");
+    manager.finish().unwrap();
+}
+
+#[test]
+fn orphan_cleanup_never_recursively_deletes_unrelated_files() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Orphan"), &Workbook::default())
+        .unwrap();
+    let extra = manager.session_dir().join("unrelated");
+    fs::write(&extra, b"preserve").unwrap();
+    manager.suspend().unwrap();
+    let orphans = RecoveryManager::find_orphans(&paths);
+    orphans[0].discard().unwrap();
+    assert_eq!(fs::read(&extra).unwrap(), b"preserve");
+    assert!(manager.resume().is_err());
+}
+
+#[test]
+fn incomplete_discovery_preserves_and_reports_other_claimable_sessions() {
+    let dir = directory();
+    let paths = paths(&dir);
+    let manager = RecoveryManager::start(&paths).unwrap();
+    manager
+        .snapshot("doc", meta("Recoverable"), &Workbook::default())
+        .unwrap();
+    manager.suspend().unwrap();
+    let invalid = paths.data_dir.join("recovery").join("invalid").join("docs");
+    mkdir(invalid.join("not-a-file.json"));
+    let discovery = RecoveryManager::discover_orphans(&paths);
+    assert!(discovery.incomplete);
+    assert_eq!(discovery.sessions.len(), 1);
+    assert_eq!(discovery.sessions[0].docs[0].meta.title, "Recoverable");
+    drop(discovery);
+    assert!(RecoveryManager::discard_all_orphans(&paths).is_err());
+    assert!(
+        manager
+            .session_dir()
+            .join("docs")
+            .join("doc.json")
+            .is_file()
+    );
+    fs::remove_dir(invalid.join("not-a-file.json")).unwrap();
+    let discovery = RecoveryManager::discover_orphans(&paths);
+    assert!(!discovery.incomplete);
+    assert_eq!(discovery.sessions.len(), 1);
+    discovery.sessions[0].discard().unwrap();
+}
+
+#[test]
+fn inaccessible_recovery_root_is_not_reported_as_empty_success() {
+    let dir = directory();
+    let paths = paths(&dir);
+    mkdir(&paths.data_dir);
+    fs::write(paths.data_dir.join("recovery"), b"not a directory").unwrap();
+    let discovery = RecoveryManager::discover_orphans(&paths);
+    assert!(discovery.incomplete);
+    assert!(discovery.sessions.is_empty());
+}
+
+#[test]
 fn failed_suspend_retains_the_live_lock_and_pending_snapshot() {
     let dir = directory();
     let paths = paths(&dir);

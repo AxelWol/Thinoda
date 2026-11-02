@@ -566,8 +566,9 @@ impl ThinodaApp {
                     // Edits made while writing keep their crash-recovery snapshot.
                     if !doc.is_dirty()
                         && let Some(recovery) = &self.services.recovery
+                        && let Err(error) = recovery.remove(&doc.key)
                     {
-                        let _ = recovery.remove(&doc.key);
+                        log::warn!("recovery snapshot cleanup failed: {error}");
                     }
                 }
                 if !save.autosave {

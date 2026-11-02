@@ -5077,8 +5077,13 @@ impl ThinodaApp {
         }
         // Crash recovery.
         if !self.dialogs.recovery.is_empty() {
+            enum RecoveryAction {
+                Restore(Option<usize>),
+                Discard,
+                Keep,
+            }
             let touch_allowed = widgets::touch_activation_allowed(ctx);
-            let mut action: Option<(bool, Option<usize>)> = None;
+            let mut action = None;
             let labels = i18n::dialog_labels();
             thinoda_ui::Dialog::new(
                 egui::Id::unique("thinoda_recovery"),
@@ -5092,9 +5097,11 @@ impl ThinodaApp {
             .default_height(500.0)
             .min_size(egui::vec2(340.0, 220.0))
             .show(ctx, |ui| {
-                ui.label(t(
-                    "Thinoda was not closed properly. The following documents can be restored:",
-                ));
+                ui.label(t(if self.recovery_discovery_incomplete {
+                    "Some recovery data could not be checked. Keep existing storage and save your work."
+                } else {
+                    "Thinoda was not closed properly. The following documents can be restored:"
+                }));
                 ui.add_space(8.0);
                 for (i, s) in self.dialogs.recovery.iter().enumerate() {
                     for doc in &s.docs {
@@ -5105,25 +5112,34 @@ impl ThinodaApp {
                             }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui.button(t("Restore")).clicked() && touch_allowed {
-                                    action = Some((true, Some(i)));
+                                    action = Some(RecoveryAction::Restore(Some(i)));
                                 }
                             });
                         });
                     }
                 }
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if widgets::primary_button(ui, t("Restore All")).clicked() && touch_allowed {
-                        action = Some((true, None));
+                        action = Some(RecoveryAction::Restore(None));
                     }
-                    if widgets::secondary_button(ui, t("Discard All")).clicked() && touch_allowed {
-                        action = Some((false, None));
+                    if self.recovery_discovery_incomplete {
+                        if widgets::secondary_button(ui, t("Keep recovery data")).clicked()
+                            && touch_allowed
+                        {
+                            action = Some(RecoveryAction::Keep);
+                        }
+                    } else if widgets::secondary_button(ui, t("Discard All")).clicked()
+                        && touch_allowed
+                    {
+                        action = Some(RecoveryAction::Discard);
                     }
                 });
             });
             match action {
-                Some((true, which)) => self.restore_orphans(which),
-                Some((false, _)) => self.discard_orphans(),
+                Some(RecoveryAction::Restore(which)) => self.restore_orphans(which),
+                Some(RecoveryAction::Discard) => self.discard_orphans(),
+                Some(RecoveryAction::Keep) => self.dialogs.recovery.clear(),
                 None => {}
             }
         }

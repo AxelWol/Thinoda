@@ -1,10 +1,11 @@
 /**
  * Production-browser coverage for exporting a mixed rootless board.
  * The document is created in the test's isolated browser context, and the
- * downloaded SVG is inspected rather than inferred from the canvas.
+ * downloaded SVG and PDF are inspected rather than inferred from the canvas.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { chromium, expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { inflateSync } from "node:zlib";
 import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -39,6 +40,7 @@ type BoardSheet = {
     topics: Record<string, {
         id: number;
         title: string;
+        position?: { x: number; y: number };
         card?: { kind: string; color?: string; size: { x: number; y: number } };
     }>;
     zones: {
@@ -52,7 +54,7 @@ type BoardSheet = {
             kind: {
                 shape?: { shape: string; label?: string };
                 connector?: { from: unknown; to: unknown; label?: string };
-                ink?: { points: unknown[] };
+                ink?: { points: { x: number; y: number }[] };
             };
             rect: BoardRect;
             style: { fill?: string; text_color?: string };
@@ -360,4 +362,353 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     expect(raster.styledPixels).toBeGreaterThan(1_000);
 
     expect(sheetFrom(await saveAs(page, "f6-after-export.thinoda"))).toEqual(baseline);
+});
+
+function inspectVectorPdf(bytes: Buffer) {
+    const pdf = bytes.toString("latin1");
+    expect(bytes.length).toBeGreaterThan(1_000);
+    expect(pdf).toMatch(/^%PDF-\d\.\d/);
+    const trailer = /startxref\s+(\d+)\s+%%EOF\s*$/.exec(pdf);
+    expect(trailer).not.toBeNull();
+    if (!trailer) throw new Error("Missing PDF trailer");
+    const xref = Number(trailer[1]);
+    expect(xref).toBeGreaterThan(0);
+    expect(xref).toBeLessThan(bytes.length);
+    expect(pdf.slice(xref, xref + 40)).toMatch(/^(?:xref\b|\d+\s+\d+\s+obj\b)/);
+
+    expect(pdf).toMatch(/\/Type\s*\/Catalog\b/);
+    expect(pdf).toMatch(/\/Count\s+1\b/);
+    const pages = Array.from(pdf.matchAll(/\/Type\s*\/Page\b/g));
+    expect(pages).toHaveLength(1);
+    const pageStart = pages[0]!.index!;
+    const pageEnd = pdf.indexOf("endobj", pageStart);
+    expect(pageEnd).toBeGreaterThan(pageStart);
+    const page = pdf.slice(pageStart, pageEnd);
+    const mediaBox = /\/MediaBox\s*\[([^\]]+)\]/.exec(page)?.[1]
+        .trim().split(/\s+/).map(Number);
+    expect(mediaBox).toHaveLength(4);
+    if (!mediaBox || mediaBox.length !== 4) throw new Error("Missing PDF MediaBox");
+    expect(mediaBox.every(Number.isFinite)).toBe(true);
+    const width = mediaBox[2] - mediaBox[0];
+    const height = mediaBox[3] - mediaBox[1];
+    expect(width).toBeGreaterThan(0);
+    expect(height).toBeGreaterThan(0);
+
+    // This board contains no images. Inspect the page's actual content stream
+    // as well as ruling out image XObjects, so a raster-only PDF cannot pass.
+    expect(pdf).not.toMatch(/\/Subtype\s*\/Image\b/);
+    const contents = /\/Contents\s+(\d+)\s+(\d+)\s+R\b/.exec(page);
+    expect(contents).not.toBeNull();
+    if (!contents) throw new Error("Missing PDF page contents");
+    const stream = new RegExp(
+        `(?:^|\\r?\\n)${contents[1]}\\s+${contents[2]}\\s+obj\\s*<<([\\s\\S]*?)>>\\s*stream\\r?\\n`,
+    ).exec(pdf);
+    expect(stream).not.toBeNull();
+    if (!stream) throw new Error("Missing PDF content stream");
+    const length = /\/Length\s+(\d+)\b/.exec(stream[1]);
+    expect(length).not.toBeNull();
+    if (!length) throw new Error("Missing PDF stream length");
+    const start = stream.index + stream[0].length;
+    const end = start + Number(length[1]);
+    expect(end).toBeLessThanOrEqual(bytes.length);
+    const encoded = bytes.subarray(start, end);
+    const filtered = /\/Filter\b/.test(stream[1]);
+    if (filtered && !/\/FlateDecode\b/.test(stream[1])) {
+        throw new Error("Unsupported PDF content stream filter");
+    }
+    const commands = (filtered ? inflateSync(encoded) : encoded).toString("latin1");
+    expect(commands).toMatch(/(?:^|\s)(?:m|l|c|re)(?=\s|$)/);
+    expect(commands).toMatch(/(?:^|\s)(?:f|f\*|B|B\*|b|b\*)(?=\s|$)/);
+    expect(commands).toMatch(/(?:^|\s)(?:S|s|B|B\*)(?=\s|$)/);
+    return { width, height };
+}
+
+async function renderedPdfPixels(
+    page: Page,
+    viewer: Page,
+    frame: BoardRect,
+    points: { x: number; y: number }[],
+) {
+    const screenshot = await viewer.screenshot();
+    return page.evaluate(async ({ screenshot, frame, points }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${screenshot}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Cannot inspect the rendered PDF");
+        context.drawImage(image, 0, 0);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const emptyBounds = () => ({
+            minX: canvas.width, minY: canvas.height, maxX: -1, maxY: -1, count: 0,
+        });
+        const include = (bounds: ReturnType<typeof emptyBounds>, x: number, y: number) => {
+            bounds.minX = Math.min(bounds.minX, x);
+            bounds.minY = Math.min(bounds.minY, y);
+            bounds.maxX = Math.max(bounds.maxX, x);
+            bounds.maxY = Math.max(bounds.maxY, y);
+            bounds.count++;
+        };
+        const paper = emptyBounds();
+        const framePixels = emptyBounds();
+        const columns = Array.from({ length: canvas.width }, emptyBounds);
+        for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
+                const i = (y * canvas.width + x) * 4;
+                const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
+                if (r === 255 && g === 255 && b === 255) include(paper, x, y);
+                if (r === 242 && g === 244 && b === 246) include(framePixels, x, y);
+                if (r === 255 && g === 237 && b === 213) include(columns[x], x, y);
+            }
+        }
+        const warnings: ReturnType<typeof emptyBounds>[] = [];
+        let run: ReturnType<typeof emptyBounds> | null = null;
+        for (const column of columns) {
+            if (column.count) {
+                if (!run) run = emptyBounds();
+                run.minX = Math.min(run.minX, column.minX);
+                run.minY = Math.min(run.minY, column.minY);
+                run.maxX = Math.max(run.maxX, column.maxX);
+                run.maxY = Math.max(run.maxY, column.maxY);
+                run.count += column.count;
+            } else if (run) {
+                if (run.count > 500) warnings.push(run);
+                run = null;
+            }
+        }
+        if (run && run.count > 500) warnings.push(run);
+        const dark = (x: number, y: number) => {
+            const i = (y * canvas.width + x) * 4;
+            return pixels[i] < 80 && pixels[i + 1] < 80 && pixels[i + 2] < 80;
+        };
+        const labelPixels = warnings.map((bounds) => {
+            let count = 0;
+            for (let y = bounds.minY; y <= bounds.maxY; y++) {
+                for (let x = bounds.minX; x <= bounds.maxX; x++) {
+                    const i = (y * canvas.width + x) * 4;
+                    if (pixels[i] >= 80 && pixels[i] <= 160
+                        && pixels[i + 1] < 80 && pixels[i + 2] < 80) count++;
+                }
+            }
+            return count;
+        });
+        let connectorPixels = 0;
+        if (warnings.length === 2) {
+            for (let y = Math.max(warnings[0].minY, warnings[1].minY);
+                y <= Math.min(warnings[0].maxY, warnings[1].maxY); y++) {
+                for (let x = warnings[0].maxX + 1; x < warnings[1].minX; x++) {
+                    if (dark(x, y)) connectorPixels++;
+                }
+            }
+        }
+        const connectorHits = [0.2, 0.8].map((t) => {
+            if (warnings.length !== 2) return false;
+            const x = Math.round(warnings[0].maxX + t * (warnings[1].minX - warnings[0].maxX));
+            const y = Math.round((warnings[0].minY + warnings[0].maxY
+                + warnings[1].minY + warnings[1].maxY) / 4);
+            for (let dy = -4; dy <= 4; dy++) {
+                for (let dx = -4; dx <= 4; dx++) {
+                    if (x + dx < 0 || x + dx >= canvas.width || y + dy < 0 || y + dy >= canvas.height) {
+                        continue;
+                    }
+                    const i = ((y + dy) * canvas.width + x + dx) * 4;
+                    if (pixels[i] < 110 && pixels[i + 1] < 125 && pixels[i + 2] < 145) return true;
+                }
+            }
+            return false;
+        });
+        const inkHits = [0.2, 0.5, 0.8].map((t) => {
+            if (!framePixels.count || points.length < 2) return false;
+            const first = points[0];
+            const last = points[points.length - 1];
+            const x = Math.round(framePixels.minX + (first.x + t * (last.x - first.x) - frame.min.x)
+                / frame.size.x * (framePixels.maxX - framePixels.minX + 1));
+            const y = Math.round(framePixels.minY + (first.y + t * (last.y - first.y) - frame.min.y)
+                / frame.size.y * (framePixels.maxY - framePixels.minY + 1));
+            for (let dy = -4; dy <= 4; dy++) {
+                for (let dx = -4; dx <= 4; dx++) {
+                    if (x + dx >= 0 && x + dx < canvas.width && y + dy >= 0
+                        && y + dy < canvas.height && dark(x + dx, y + dy)) return true;
+                }
+            }
+            return false;
+        });
+        return { paper, frame: framePixels, warnings, labelPixels, connectorPixels, connectorHits, inkHits };
+    }, { screenshot: screenshot.toString("base64"), frame, points });
+}
+
+test.describe("PDF export", () => {
+    test("downloads a framed vector PDF without changing a mixed rootless board", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+
+        await command(page, "Sticky note");
+        await page.mouse.click(220, 400);
+        await frames(page);
+        await expect(page.locator("input[type='text']")).toBeFocused();
+        await page.locator("input[type='text']").pressSequentially("Export idea");
+        await page.keyboard.press("Enter");
+        await frames(page);
+        await command(page, "Quick Style: Warning");
+
+        await command(page, "Shape tool");
+        await page.mouse.click(650, 400);
+        await frames(page);
+        await command(page, "Quick Style: Warning");
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("F2");
+        await frames(page);
+        await expect(page.locator("input[type='text']")).toBeFocused();
+        await page.locator("input[type='text']").pressSequentially("Export shape");
+        await page.keyboard.press("Enter");
+        await frames(page);
+
+        await command(page, "Connector tool");
+        await page.mouse.move(260, 400);
+        await page.mouse.down();
+        await page.mouse.move(610, 400, { steps: 8 });
+        await page.mouse.up();
+        await frames(page);
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("F2");
+        await frames(page);
+        await expect(page.locator("input[type='text']")).toBeFocused();
+        await page.locator("input[type='text']").pressSequentially("Export link");
+        await page.keyboard.press("Enter");
+        await frames(page);
+
+        await command(page, "Frame tool");
+        await page.mouse.move(300, 750);
+        await page.mouse.down();
+        await page.mouse.move(850, 1000, { steps: 8 });
+        await page.mouse.up();
+        await frames(page);
+        await command(page, "Pen");
+        await page.mouse.move(450, 850);
+        await page.mouse.down();
+        await page.mouse.move(600, 900, { steps: 12 });
+        await page.mouse.up();
+        await frames(page);
+        await command(page, "Line grid");
+
+        const baseline = sheetFrom(await saveAs(page, "f6-pdf-before.thinoda"));
+        expect(baseline.root_mode).toBe("hidden");
+        expect(baseline.board.grid).toBe("lines");
+        const sticky = Object.values(baseline.topics).find((topic) => topic.card?.kind === "sticky");
+        const shape = baseline.canvas.objects.find((object) => object.kind.shape);
+        const connector = baseline.canvas.objects.find((object) => object.kind.connector);
+        const ink = baseline.canvas.objects.find((object) => object.kind.ink);
+        const frame = baseline.zones.find((zone) => zone.keep_empty);
+        if (!sticky?.card || !sticky.position || !shape?.kind.shape
+            || !connector?.kind.connector || !ink?.kind.ink || !frame) {
+            throw new Error("Incomplete synthetic PDF board");
+        }
+        expect(sticky.title).toBe("Export idea");
+        expect(sticky.card.color).toBe("#FFEDD5");
+        expect(baseline.floating).toContain(sticky.id);
+        expect(shape.kind.shape).toMatchObject({ shape: "rectangle", label: "Export shape" });
+        expect(shape.style.fill).toBe("#FFEDD5");
+        expect(connector.kind.connector).toMatchObject({
+            from: { topic: sticky.id },
+            to: { object: shape.id },
+            label: "Export link",
+        });
+        expect(ink.kind.ink.points.length).toBeGreaterThan(1);
+        expect(frame.name).toBe("Frame");
+
+        await setExportPrompt(page, "f6-rootless-board.pdf");
+        // "PDF" alone also matches FreeMind / Freeplane in the fuzzy palette.
+        await command(page, "Export PDF");
+        await page.waitForTimeout(300);
+        expect(await exportPrompts(page)).toEqual([]);
+        const pending = page.waitForEvent("download", { timeout: 30_000 });
+        await confirmSvgPreflight(page); // PDF uses the same grid-loss dialog.
+        const download = await pending;
+        expect(download.suggestedFilename()).toBe("f6-rootless-board.pdf");
+        expect(await exportPrompts(page)).toEqual([{
+            message: "File name",
+            suggested: expect.stringMatching(/\.pdf$/i),
+        }]);
+        const bytes = await readFile(await download.path());
+        const pdf = inspectVectorPdf(bytes);
+        expect(sheetFrom(await saveAs(page, "f6-pdf-after.thinoda"))).toEqual(baseline);
+
+        const stickyRect: BoardRect = {
+            min: {
+                x: sticky.position.x - sticky.card.size.x / 2,
+                y: sticky.position.y - sticky.card.size.y / 2,
+            },
+            size: sticky.card.size,
+        };
+        const knownRects = [stickyRect, shape.rect, ink.rect, frame.frame];
+        const spanX = Math.max(...knownRects.map((r) => r.min.x + r.size.x))
+            - Math.min(...knownRects.map((r) => r.min.x));
+        const spanY = Math.max(...knownRects.map((r) => r.min.y + r.size.y))
+            - Math.min(...knownRects.map((r) => r.min.y));
+        expect(pdf.width).toBeGreaterThanOrEqual(spanX - 0.1);
+        expect(pdf.height).toBeGreaterThanOrEqual(spanY - 0.1);
+        expect(pdf.width).toBeLessThan(spanX + 600);
+        expect(pdf.height).toBeLessThan(spanY + 600);
+
+        // The full Chromium build has a PDF viewer; headless-shell downloads
+        // PDFs instead. Serve the exact downloaded bytes through an intercepted
+        // loopback URL, without starting another server or adding a dependency.
+        const renderer = await chromium.launch({
+            channel: "chromium",
+            executablePath: process.env.THINODA_BROWSER_EXECUTABLE || undefined,
+            headless: true,
+            args: ["--enable-unsafe-swiftshader"],
+        });
+        try {
+            const viewer = await renderer.newPage({
+                viewport: { width: 1252, height: 1278 },
+                deviceScaleFactor: 1,
+            });
+            const url = "http://127.0.0.1:9/f6-downloaded.pdf";
+            await viewer.route(url, (route) => route.fulfill({
+                status: 200, contentType: "application/pdf", body: bytes,
+            }));
+            const response = await viewer.goto(`${url}#toolbar=0&navpanes=0&view=Fit`);
+            expect(response?.status()).toBe(200);
+            expect(await viewer.evaluate(() => document.contentType)).toBe("application/pdf");
+            await expect.poll(async () => {
+                const image = await renderedPdfPixels(page, viewer, frame.frame, ink.kind.ink!.points);
+                return image.warnings.length === 2 && image.frame.count > 500;
+            }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+            const image = await renderedPdfPixels(page, viewer, frame.frame, ink.kind.ink.points);
+            expect(image.paper.count).toBeGreaterThan(1_000);
+            expect(image.warnings).toHaveLength(2);
+            expect(image.labelPixels.every((count) => count > 10)).toBe(true);
+            expect(image.connectorPixels).toBeGreaterThan(30);
+            expect(image.connectorHits).toEqual([true, true]);
+            expect(image.inkHits).toEqual([true, true, true]);
+
+            const paperWidth = image.paper.maxX - image.paper.minX + 1;
+            const paperHeight = image.paper.maxY - image.paper.minY + 1;
+            for (const [pixels, rect] of [
+                [image.warnings[0], stickyRect],
+                [image.warnings[1], shape.rect],
+                [image.frame, frame.frame],
+            ] as const) {
+                expect(pixels.minX).toBeGreaterThan(image.paper.minX);
+                expect(pixels.minY).toBeGreaterThan(image.paper.minY);
+                expect(pixels.maxX).toBeLessThan(image.paper.maxX);
+                expect(pixels.maxY).toBeLessThan(image.paper.maxY);
+                expect(Math.abs((pixels.maxX - pixels.minX + 1) / paperWidth - rect.size.x / pdf.width))
+                    .toBeLessThan(0.02);
+                expect(Math.abs((pixels.maxY - pixels.minY + 1) / paperHeight - rect.size.y / pdf.height))
+                    .toBeLessThan(0.02);
+            }
+        } finally {
+            await renderer.close();
+        }
+    });
 });

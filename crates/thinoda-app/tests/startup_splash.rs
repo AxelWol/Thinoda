@@ -30,7 +30,106 @@ fn startup(language: Language, theme: ThemeMode, orphans: Vec<OrphanSession>) ->
         services: Services::default(),
         warning: Some("settings warning".into()),
         orphans,
+        recovery_discovery_incomplete: false,
     }
+}
+
+#[test]
+fn incomplete_recovery_discovery_shows_a_persistent_warning() {
+    let _guard = LANGUAGE.lock().unwrap();
+    let mut launch = startup(Language::English, ThemeMode::System, Vec::new());
+    launch.recovery_discovery_incomplete = true;
+    let mut app = ThinodaApp::launch(launch, &[]);
+    let warning =
+        "Some recovery data could not be checked. Keep existing storage and save your work.";
+    assert!(app.toasts.texts().any(|text| text == warning));
+    app.toasts.tick(60.0);
+    assert!(app.toasts.texts().any(|text| text == warning));
+}
+
+#[test]
+fn incomplete_recovery_discovery_cannot_bulk_discard_and_can_be_deferred() {
+    let _guard = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let workbook = thinoda_core::Workbook::new(thinoda_core::Sheet::new("Sheet", "Unsaved"));
+    for key in ["readable", "unreadable"] {
+        recovery
+            .snapshot(
+                key,
+                SnapshotMeta {
+                    title: key.into(),
+                    ..Default::default()
+                },
+                &workbook,
+            )
+            .unwrap();
+    }
+    let readable = recovery.session_dir().join("docs").join("readable.json");
+    let unreadable = recovery.session_dir().join("docs").join("unreadable.json");
+    let expected = std::fs::read(&readable).unwrap();
+    recovery.suspend().unwrap();
+    drop(recovery);
+    std::fs::write(&unreadable, b"unreadable recovery data").unwrap();
+
+    let discovery = RecoveryManager::discover_orphans(&paths);
+    assert!(discovery.incomplete);
+    assert_eq!(discovery.sessions.len(), 1);
+    let mut launch = startup(Language::English, ThemeMode::System, discovery.sessions);
+    launch.recovery_discovery_incomplete = true;
+    let mut h = harness(ThinodaApp::launch(launch, &[]));
+    step_until_ready(&mut h);
+    h.run_steps(2);
+    h.state_mut().app.discard_orphans();
+    assert_eq!(std::fs::read(&readable).unwrap(), expected);
+    assert_eq!(
+        std::fs::read(&unreadable).unwrap(),
+        b"unreadable recovery data"
+    );
+    assert_eq!(h.state().app.dialogs.recovery.len(), 1);
+    h.run_steps(2);
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Discard All")
+            .is_none()
+    );
+    for language in thinoda_app::i18n::Lang::ALL {
+        thinoda_app::i18n::set_lang(language);
+        for size in [egui::vec2(390.0, 844.0), egui::vec2(1252.0, 900.0)] {
+            h.set_size(size);
+            h.run_steps(4);
+            let keep = h
+                .get_by_role_and_label(Role::Button, t("Keep recovery data"))
+                .rect();
+            let restore = h
+                .get_by_role_and_label(Role::Button, t("Restore All"))
+                .rect();
+            assert!(
+                h.ctx.content_rect().contains_rect(keep)
+                    && h.ctx.content_rect().contains_rect(restore),
+                "{language:?} at {size:?}: {keep:?}, {restore:?}"
+            );
+            assert!(
+                !keep.intersects(restore),
+                "{language:?} at {size:?}: {keep:?}, {restore:?}"
+            );
+        }
+    }
+    thinoda_app::i18n::set_lang(thinoda_app::i18n::Lang::En);
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Keep recovery data")
+        .click();
+    h.run_steps(2);
+    assert!(h.state().app.dialogs.recovery.is_empty());
+    assert_eq!(std::fs::read(&readable).unwrap(), expected);
+    assert_eq!(
+        std::fs::read(&unreadable).unwrap(),
+        b"unreadable recovery data"
+    );
+    let later = RecoveryManager::discover_orphans(&paths);
+    assert!(later.incomplete);
+    assert_eq!(later.sessions.len(), 1);
+    drop(later);
 }
 
 /// The UI language is process-global; tests that set or read it must not interleave.

@@ -320,6 +320,7 @@ fn startup_loader_retains_loss_consent_and_source_protection() {
             services: Services::default(),
             warning: None,
             orphans: Vec::new(),
+            recovery_discovery_incomplete: false,
         },
         std::slice::from_ref(&path),
     );

@@ -46,7 +46,7 @@ pub fn main() {
             )
             .await;
         match result {
-            Ok(()) => hide_loading(),
+            Ok(()) => thinoda_app::startup::browser_renderer_ready(),
             Err(e) => show_graphics_error(&format!("{e:?}")),
         }
     });
@@ -97,20 +97,6 @@ fn install_page_handlers(recovery: Option<Arc<RecoveryManager>>) {
             .add_event_listener_with_callback("pageshow", page_show.as_ref().unchecked_ref())
             .ok();
         page_show.forget();
-    }
-}
-
-fn element(id: &str) -> Option<web_sys::HtmlElement> {
-    web_sys::window()?
-        .document()?
-        .get_element_by_id(id)?
-        .dyn_into::<web_sys::HtmlElement>()
-        .ok()
-}
-
-fn hide_loading() {
-    if let Some(loading) = element("loading") {
-        loading.remove();
     }
 }
 

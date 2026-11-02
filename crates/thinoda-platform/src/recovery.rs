@@ -71,6 +71,13 @@ pub struct RecoveryManager {
     closed: AtomicBool,
 }
 
+/// Claimable sessions and whether some recovery data could not be inspected.
+#[derive(Default)]
+pub struct OrphanDiscovery {
+    pub sessions: Vec<OrphanSession>,
+    pub incomplete: bool,
+}
+
 fn check_key(key: &str) -> Result<()> {
     if key.is_empty()
         || key.len() > 180
@@ -81,6 +88,40 @@ fn check_key(key: &str) -> Result<()> {
         return Err(Error::InvalidDocKey(key.into()));
     }
     Ok(())
+}
+
+fn retire_session(dir: &Path) -> Result<()> {
+    match fs::remove_file(dir.join("session.json")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn cleanup_retired_session(dir: &Path) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Only remove empty directories; never delete a newly resumed owner's data.
+        for (path, file) in [
+            (dir.join("docs"), false),
+            (dir.join("lock"), true),
+            (dir.to_path_buf(), false),
+        ] {
+            let result = if file {
+                std::fs::remove_file(&path)
+            } else {
+                std::fs::remove_dir(&path)
+            };
+            if let Err(error) = result
+                && error.kind() != io::ErrorKind::NotFound
+            {
+                log::warn!("Recovery session cleanup failed: {error}");
+                break;
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = dir;
 }
 
 impl RecoveryManager {
@@ -148,7 +189,7 @@ impl RecoveryManager {
             return Err(Error::Finished);
         }
         let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
-        lock.refresh();
+        lock.refresh()?;
         let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
         atomic_write(
             self.session_dir
@@ -173,9 +214,14 @@ impl RecoveryManager {
         Ok(())
     }
 
-    fn write_pending(&self, pending: &mut BTreeMap<String, Vec<u8>>) -> Result<()> {
+    fn write_pending(
+        &self,
+        pending: &mut BTreeMap<String, Vec<u8>>,
+        mut refresh: impl FnMut() -> io::Result<()>,
+    ) -> Result<()> {
         // Remove only successful writes, retaining failed and unattempted snapshots.
         while let Some((key, bytes)) = pending.first_key_value() {
+            refresh()?;
             atomic_write(
                 self.session_dir.join("docs").join(format!("{key}.json")),
                 bytes,
@@ -208,10 +254,15 @@ impl RecoveryManager {
     /// process or tab claimed the session in the meantime.
     pub fn resume(&self) -> Result<()> {
         let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
-        if state.finished || state.lock.is_some() {
-            return Ok(());
+        if state.finished {
+            return Err(Error::Finished);
         }
-        state.lock = Some(Lock::try_acquire(&self.session_dir.join("lock"))?);
+        if let Some(lock) = &state.lock {
+            return Ok(lock.refresh()?);
+        }
+        let lock = Lock::try_resume(&self.session_dir.join("lock"))?;
+        fs::read_bounded(self.session_dir.join("session.json"), 4096)?;
+        state.lock = Some(lock);
         Ok(())
     }
 
@@ -227,12 +278,12 @@ impl RecoveryManager {
             return Err(Error::Finished);
         }
         let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
-        lock.refresh();
+        lock.refresh()?;
         let mut pending = {
             let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
             std::mem::take(&mut *shared)
         };
-        let result = self.write_pending(&mut pending);
+        let result = self.write_pending(&mut pending, || lock.refresh());
         if !pending.is_empty() {
             let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
             for (key, bytes) in pending {
@@ -252,13 +303,16 @@ impl RecoveryManager {
         if state.finished {
             return true;
         }
-        if state.lock.is_none() {
+        let Some(lock) = state.lock.as_ref() else {
+            return false;
+        };
+        if lock.refresh().is_err() {
             return false;
         }
         let Ok(mut pending) = self.pending.try_lock() else {
             return false;
         };
-        self.write_pending(&mut pending).is_ok()
+        self.write_pending(&mut pending, || lock.refresh()).is_ok()
     }
 
     /// Remove a saved/closed document and cancel its pending snapshot.
@@ -268,34 +322,32 @@ impl RecoveryManager {
         if state.finished {
             return Err(Error::Finished);
         }
-        if state.lock.is_none() {
-            return Err(Error::Suspended);
-        }
-        self.pending
-            .lock()
-            .map_err(|_| Error::Poisoned)?
-            .remove(doc_key);
+        let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
+        lock.refresh()?;
+        let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
         match fs::remove_file(
             self.session_dir
                 .join("docs")
                 .join(format!("{doc_key}.json")),
         ) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
+        pending.remove(doc_key);
+        Ok(())
     }
 
     /// Clean shutdown: discard pending snapshots, release the lock and remove the session.
     /// Call only after documents are saved or the user explicitly discards them.
+    /// A suspended session must be resumed explicitly before it can be removed.
     pub fn finish(&self) -> Result<()> {
         let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
         if state.finished {
             return Ok(());
         }
-        if state.lock.is_none() {
-            state.lock = Some(Lock::try_acquire(&self.session_dir.join("lock"))?);
-        }
+        let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
+        lock.refresh()?;
         let mut pending = self.pending.lock().map_err(|_| Error::Poisoned)?;
         // Remove docs while the lock is held; no scanner can claim them in between.
         match fs::remove_dir_all(self.session_dir.join("docs")) {
@@ -303,25 +355,39 @@ impl RecoveryManager {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
+        retire_session(&self.session_dir)?;
+        cleanup_retired_session(&self.session_dir);
         state.finished = true;
         self.closed.store(true, Ordering::Release);
         pending.clear();
         state.lock.take();
-        match fs::remove_dir_all(&self.session_dir) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        Ok(())
     }
 
     /// Discover unlocked sessions containing snapshots. Active sessions are skipped.
     /// Returned handles retain the orphan lock so concurrent processes cannot claim it.
     pub fn find_orphans(paths: &Paths) -> Vec<OrphanSession> {
+        Self::discover_orphans(paths).sessions
+    }
+
+    /// Discover claimable sessions and report unreadable or corrupt recovery data.
+    pub fn discover_orphans(paths: &Paths) -> OrphanDiscovery {
         let root = paths.data_dir.join("recovery");
-        let Ok(entries) = fs::list_dir(root) else {
-            return Vec::new();
+        let entries = match fs::list_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return OrphanDiscovery::default();
+            }
+            Err(error) => {
+                log::warn!("Recovery discovery failed: {error}");
+                return OrphanDiscovery {
+                    sessions: Vec::new(),
+                    incomplete: true,
+                };
+            }
         };
         let mut sessions = Vec::new();
+        let mut incomplete = false;
         for (dir, kind) in entries {
             if kind != EntryKind::Dir {
                 continue;
@@ -330,8 +396,14 @@ impl RecoveryManager {
             else {
                 continue;
             };
-            let Ok(lock) = Lock::try_acquire(&dir.join("lock")) else {
-                continue;
+            let lock = match Lock::try_acquire(&dir.join("lock")) {
+                Ok(lock) => lock,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => {
+                    log::warn!("Could not inspect a recovery session: {error}");
+                    incomplete = true;
+                    continue;
+                }
             };
             let mut documents = Vec::new();
             let mut can_cleanup = true;
@@ -343,31 +415,68 @@ impl RecoveryManager {
                         }
                         if kind != EntryKind::File {
                             can_cleanup = false;
+                            incomplete = true;
                             continue;
                         }
                         let Some(key) = path.file_stem().and_then(|s| s.to_str()) else {
                             can_cleanup = false;
+                            incomplete = true;
                             continue;
                         };
-                        let meta = fs::read(&path)
-                            .ok()
-                            .and_then(|bytes| serde_json::from_slice::<Snapshot>(&bytes).ok())
-                            .map(|s| s.meta)
-                            .unwrap_or_else(|| SnapshotMeta {
-                                title: key.into(),
-                                ..SnapshotMeta::default()
-                            });
+                        let meta = match fs::read(&path).and_then(|bytes| {
+                            serde_json::from_slice::<Snapshot>(&bytes).map_err(io::Error::other)
+                        }) {
+                            Ok(snapshot) => snapshot.meta,
+                            Err(error) => {
+                                log::warn!("Could not inspect a recovery snapshot: {error}");
+                                incomplete = true;
+                                SnapshotMeta {
+                                    title: key.into(),
+                                    ..SnapshotMeta::default()
+                                }
+                            }
+                        };
                         documents.push((key.to_owned(), meta, path));
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(_) => can_cleanup = false,
+                Err(error) => {
+                    log::warn!("Could not list recovery snapshots: {error}");
+                    can_cleanup = false;
+                    incomplete = true;
+                }
             }
             if documents.is_empty() {
-                drop(lock);
-                if can_cleanup {
-                    let _ = fs::remove_dir_all(&dir);
+                // A suspended live page can still resume an empty session.
+                // Keep its marker; only clean abandoned directories without one.
+                let marker_missing = match fs::read_bounded(dir.join("session.json"), 4096) {
+                    Ok(_) => false,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+                    Err(error) => {
+                        log::warn!("Could not inspect a recovery session marker: {error}");
+                        incomplete = true;
+                        false
+                    }
+                };
+                if can_cleanup && marker_missing {
+                    if let Err(error) = lock.refresh() {
+                        log::warn!("Recovery session cleanup failed: {error}");
+                        incomplete = true;
+                        continue;
+                    }
+                    if let Err(error) = retire_session(&dir) {
+                        log::warn!("Recovery session cleanup failed: {error}");
+                        incomplete = true;
+                        continue;
+                    }
+                    cleanup_retired_session(&dir);
                 }
+                drop(lock);
+                continue;
+            }
+            if let Err(error) = lock.refresh() {
+                log::warn!("Recovery session claim was lost: {error}");
+                incomplete = true;
                 continue;
             }
             let lease = Arc::new(OrphanLease {
@@ -388,12 +497,19 @@ impl RecoveryManager {
             sessions.push(OrphanSession { session_id, docs });
         }
         sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
-        sessions
+        OrphanDiscovery {
+            sessions,
+            incomplete,
+        }
     }
 
     /// Delete all currently claimable orphan snapshots, never a live session.
     pub fn discard_all_orphans(paths: &Paths) -> Result<()> {
-        for session in Self::find_orphans(paths) {
+        let discovery = Self::discover_orphans(paths);
+        if discovery.incomplete {
+            return Err(io::Error::other("some recovery sessions could not be inspected").into());
+        }
+        for session in discovery.sessions {
             session.discard()?;
         }
         Ok(())
@@ -418,9 +534,10 @@ struct OrphanLease {
 impl OrphanLease {
     fn discard(&self, path: &Path) -> Result<()> {
         let mut lock = self.lock.lock().map_err(|_| Error::Poisoned)?;
-        if lock.is_none() {
+        let Some(held) = lock.as_ref() else {
             return Ok(());
-        }
+        };
+        held.refresh()?;
         match fs::remove_file(path) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -435,13 +552,9 @@ impl OrphanLease {
             Err(e) => return Err(e.into()),
         };
         if !has_docs {
-            // Empty docs are no longer recoverable, so unlocking before deletion is safe.
+            retire_session(&self.dir)?;
+            cleanup_retired_session(&self.dir);
             lock.take();
-            match fs::remove_dir_all(&self.dir) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
         }
         Ok(())
     }
@@ -475,7 +588,8 @@ pub struct OrphanDoc {
 impl OrphanDoc {
     /// Deserialize and validate before exposing a workbook to application code.
     pub fn load(&self) -> Result<Workbook> {
-        let _guard = self.lease.lock.lock().map_err(|_| Error::Poisoned)?;
+        let guard = self.lease.lock.lock().map_err(|_| Error::Poisoned)?;
+        guard.as_ref().ok_or(Error::Finished)?.refresh()?;
         let snapshot: Snapshot = serde_json::from_slice(&fs::read(&self.path)?)?;
         snapshot
             .workbook
@@ -561,6 +675,42 @@ mod lock_tests {
         assert!(!manager.try_flush_for_crash());
         drop(state);
         assert!(manager.try_flush_for_crash());
+        manager.finish().unwrap();
+    }
+
+    #[test]
+    fn pending_flush_rechecks_ownership_before_each_document() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let manager = RecoveryManager::start(&Paths::from_root(dir.path())).unwrap();
+        let first = b"first snapshot".to_vec();
+        let second = b"second snapshot".to_vec();
+        let mut pending = BTreeMap::from([
+            ("a".to_owned(), first.clone()),
+            ("b".to_owned(), second.clone()),
+        ]);
+        let mut checks = 0;
+        let result = manager.write_pending(&mut pending, || {
+            checks += 1;
+            if checks == 2 {
+                Err(io::Error::new(io::ErrorKind::WouldBlock, "claim lost"))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_err());
+        assert_eq!(checks, 2);
+        assert_eq!(
+            fs::read(manager.session_dir.join("docs").join("a.json")).unwrap(),
+            first
+        );
+        assert!(!fs::exists(manager.session_dir.join("docs").join("b.json")));
+        assert_eq!(pending, BTreeMap::from([("b".to_owned(), second.clone())]));
+        manager.write_pending(&mut pending, || Ok(())).unwrap();
+        assert_eq!(
+            fs::read(manager.session_dir.join("docs").join("b.json")).unwrap(),
+            second
+        );
+        assert!(pending.is_empty());
         manager.finish().unwrap();
     }
 

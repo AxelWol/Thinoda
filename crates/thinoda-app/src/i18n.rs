@@ -254,6 +254,14 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 /// English → German.
 const DE: &[(&str, &str)] = &[
     // Pending freehand input and recovery.
+    (
+        "Crash recovery is unavailable. Save or download your work.",
+        "Die Wiederherstellung nach einem Absturz ist nicht verfügbar. Speichern Sie Ihre Arbeit oder laden Sie sie herunter.",
+    ),
+    (
+        "Some recovery data could not be checked. Keep existing storage and save your work.",
+        "Einige Wiederherstellungsdaten konnten nicht geprüft werden. Löschen Sie keine gespeicherten Daten und speichern Sie Ihre Arbeit.",
+    ),
     ("Pending ink gesture", "Ausstehende Freihandgeste"),
     (
         "Ink is not saved or included in crash recovery until it is finished.",
@@ -2813,6 +2821,7 @@ const DE: &[(&str, &str)] = &[
     ("Restore", "Wiederherstellen"),
     ("Restore All", "Alle wiederherstellen"),
     ("Discard All", "Alle verwerfen"),
+    ("Keep recovery data", "Wiederherstellungsdaten behalten"),
     (
         "Recover Unsaved Work",
         "Ungespeicherte Arbeit wiederherstellen",

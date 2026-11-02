@@ -64,6 +64,8 @@
     <style>
         html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #1f2430; }
         canvas#thinoda_canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; outline: none; }
+        .screen-reader-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
         #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
             justify-content: center; gap: 16px; color: #e6e9ef; font: 16px system-ui, sans-serif; text-align: center; padding: 24px; }
         #loading img { width: 96px; height: 96px; animation: loading-pulse 1.8s ease-in-out infinite; }
@@ -94,6 +96,8 @@
 </head>
 <body>
     <canvas id="thinoda_canvas"></canvas>
+    <div id="thinoda-recovery-availability" class="screen-reader-only" role="alert" aria-atomic="true"></div>
+    <div id="thinoda-recovery-discovery" class="screen-reader-only" role="alert" aria-atomic="true"></div>
     <div id="loading" role="status" aria-live="polite" aria-atomic="true">
         <img src="icon-256.png" alt="">
         <noscript>Thinoda needs JavaScript and WebAssembly to run.</noscript>

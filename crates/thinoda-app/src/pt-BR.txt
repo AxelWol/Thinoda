@@ -399,6 +399,7 @@ Unsaved changes|Alterações não salvas
 No recent files|Nenhum arquivo recente
 Open File…|Abrir arquivo…
 Don't Save|Não salvar
+Keep recovery data|Manter dados de recuperação
 Recover Unsaved Work|Recuperar trabalho não salvo
 Save changes?|Salvar alterações?
 Do you want to save the changes you made? Your changes will be lost if you don't save them.|Deseja salvar as alterações? Elas serão perdidas se você não as salvar.
@@ -415,6 +416,8 @@ Default save folder|Pasta padrão de salvamento
 Open settings folder|Abrir pasta de configurações
 Saved to|Salvo em
 Could not save|Não foi possível salvar
+Crash recovery is unavailable. Save or download your work.|A recuperação após falha não está disponível. Salve ou baixe seu trabalho.
+Some recovery data could not be checked. Keep existing storage and save your work.|Não foi possível verificar alguns dados de recuperação. Não exclua os dados salvos e salve seu trabalho.
 Autosaved|Salvo automaticamente
 Autosave|Salvamento automático
 Autosave interval (s)|Intervalo de salvamento automático (s)

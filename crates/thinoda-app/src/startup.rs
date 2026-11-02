@@ -20,6 +20,31 @@ use thinoda_ui::tokens::Palette;
 
 use crate::{Startup, ThinodaApp, doc::OpenDoc, i18n::t};
 
+#[cfg(target_arch = "wasm32")]
+fn mark_browser_startup_ready(attribute: &str) {
+    let Some(loading) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("loading"))
+    else {
+        return;
+    };
+    if let Err(error) = loading.set_attribute(attribute, "true") {
+        log::warn!("could not mark browser startup progress: {error:?}");
+        return;
+    }
+    if loading.has_attribute("data-renderer-ready")
+        && loading.has_attribute("data-application-ready")
+    {
+        loading.remove();
+    }
+}
+
+/// Keep the web loader until both the renderer and the app have initialized.
+#[cfg(target_arch = "wasm32")]
+pub fn browser_renderer_ready() {
+    mark_browser_startup_ready("data-renderer-ready");
+}
+
 type Imported = Result<crate::doc::LoadedWorkbook, String>;
 
 /// What the splash currently waits for.
@@ -155,6 +180,9 @@ impl ThinodaApp {
     /// `files` are opened, then the main UI and any pending recovery prompt appear.
     pub fn launch(startup: Startup, files: &[PathBuf]) -> Self {
         let mut app = Self::new(startup.settings, startup.services, &[]);
+        if startup.recovery_discovery_incomplete {
+            app.warn_incomplete_recovery_discovery();
+        }
         app.launch = Some(Launch::new(files, startup.orphans, startup.warning));
         // Later opens and saves keep painting, with a busy indicator, like the launch files.
         app.set_file_work_mode(crate::file_ops::FileWorkMode::Background);
@@ -196,6 +224,8 @@ impl ThinodaApp {
             if let Some(w) = launch.warning {
                 self.toasts.warning(w);
             }
+            #[cfg(target_arch = "wasm32")]
+            mark_browser_startup_ready("data-application-ready");
             return true;
         }
         let phase = launch.phase();

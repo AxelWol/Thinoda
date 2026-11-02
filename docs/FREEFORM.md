@@ -487,7 +487,11 @@ and Text controls, and the custom Fill-Color Picker; focused styling and
 undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
-recovery, history accounting, and full native/web verification remain open.
+recovery, complete history accounting, and cross-platform verification remain
+open. The candidate production bundle passed 28 headless Chromium cases,
+including mixed-board editing, SVG/PDF export and browser recovery failures;
+eight focused startup/recovery checks passed in each of WebKit and Firefox on
+Windows.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
@@ -607,9 +611,11 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both
   appear within the player. A browser SVG regression verifies consent and
-  cancellation, the exported objects and an actual image decode. These do not
-  substitute for the remaining format, physical-device and cross-platform
-  presentation acceptance.
+  cancellation, the exported objects and an actual image decode. A PDF
+  regression checks downloaded vector commands, page framing and rendered
+  sticky, shape, connector, frame and ink while verifying the board is unchanged.
+  These do not substitute for the remaining format, physical-device and
+  cross-platform presentation acceptance.
 
 ### Integrated editing checkpoint: critique
 
@@ -622,6 +628,22 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   sticky, styled shape, labeled connector, frame and ink, then undoes the ink.
   The picker used by browser automation is not a real OS picker, and this
   workflow does not close screen-reader or physical-device acceptance.
+
+### Recovery safety checkpoint: critique
+
+- An incomplete discovery could previously leave a corrupt snapshot in the
+  recovery list while the app's **Discard All** action still deleted it.
+  Bulk discard now fails closed after incomplete discovery or a later failed
+  restore; **Keep recovery data** dismisses the dialog without deleting the
+  snapshots. The actions are covered at narrow and desktop sizes in all
+  supported UI languages.
+- Keeping data is not a repair or raw-export tool. An unreadable snapshot can
+  still require external recovery. An open document retries failed cleanup
+  after saving even when its content state has not changed; persistent errors
+  or closing first can still leave saved work to be offered again.
+- Browser leases remain cooperative and non-atomic; quota failures, large
+  snapshots, real devices and concurrent-tab races remain separate acceptance
+  work. The asynchronous recovery draft is not integrated.
 
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library

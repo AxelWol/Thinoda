@@ -2964,19 +2964,32 @@ the responsive toolbox, and pending-ink safeguards also have focused coverage.
 Board objects support Quick Styles, the existing Shape and Text controls, and
 the custom Fill-Color Picker, with focused styling and undo coverage. F1-F3
 still need broader integrated acceptance; F5 needs its realistic performance
-gate; F6 needs final scene/export acceptance. Local browser storage and recovery
-and full native/web verification remain open. Provider/cloud code is merged
+gate; F6 needs final scene/export acceptance. Large-board browser recovery,
+cross-platform CI and real-device verification remain open. Provider/cloud code is merged
 upstream behind the default-off `integrated-cloud-services` feature; providers
 stay disabled until publisher registrations are in place.
 
+The browser recovery hardening in progress detects lost or corrupt cooperative
+leases, retains failed queued writes, and warns about incomplete discovery;
+localStorage still cannot provide atomic cross-tab compare-and-swap. The
+separate asynchronous recovery draft is not integrated because its bounded
+discovery can miss uncoordinated writes or remain gated by retained tombstones.
+Headless Chromium now also exercises an actual localStorage quota failure with
+a large image: the previous snapshot survives and a full native download remains
+available. Recovery of the oversized unsaved board itself is not established.
+The published cross-platform CI run passed both Windows jobs but failed two
+macOS tests; local fixes require a fresh CI run before that gate can close.
+
 Automated production-browser checks now exercise a rootless board's saved
 sticky, shape, connector, frame and ink, plus ink undo and a captured Pitch
-viewport. It also checks SVG export consent, cancellation and output. The locked
-browser suite runs these and startup/offline checks on the release build before
-CI publishes it. Same-frame text entry and touch-menu ownership have focused
-regressions. These checks do not replace real device, screen-reader, other
-export-format or large-board recovery acceptance; see the checkpoint critiques
-in FREEFORM.
+viewport. It also checks SVG export consent, cancellation and output, and a
+downloaded vector PDF's framing and rendered objects without mutating the board.
+The locked browser suite passed 28 headless Chromium cases against the production
+candidate; eight focused startup and recovery checks also passed in both WebKit
+and Firefox on Windows. CI runs the Chromium suite before publishing. Same-frame
+text entry and touch-menu ownership have focused regressions. These checks do not
+replace real-device, screen-reader, remaining export-format or large-board
+recovery acceptance; see the checkpoint critiques in FREEFORM.
 
 Desktop browser inspection found that the editor's canvas controls are absent
 from the browser accessibility tree and its transparent IME input is unlabeled.
@@ -3010,7 +3023,8 @@ accessible and truthful. Compare reproducible cold and warm starts and clearly
 distinguish emulation from actual iPad measurements. The investigation, concept
 and rubber-duck review are in [WEB-STARTUP.md](WEB-STARTUP.md). A measured
 desktop cold-start improvement now avoids concurrent Wasm precaching; warm and
-physical iPad acceptance remain open.
+physical iPad acceptance remain open. The loading surface now also waits for
+both renderer and application readiness before allowing interaction.
 
 ### Phase P4 - OS-integrated menus and windows (R12 and above)
 

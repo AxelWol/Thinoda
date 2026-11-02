@@ -49,6 +49,35 @@ export async function command(page: Page, name: string) {
     await frames(page);
 }
 
+export async function imagePicker(page: Page, file?: { name: string; mimeType: string; buffer: Buffer }) {
+    const pending = page.waitForEvent("filechooser");
+    await command(page, "Image card");
+    const picker = await pending;
+    await picker.setFiles(file ?? []);
+}
+
+export async function jpeg(page: Page, side: number, quality: number): Promise<Buffer> {
+    const dataUrl = await page.evaluate(({ side, quality }) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = side;
+        const context = canvas.getContext("2d")!;
+        const pixels = context.createImageData(side, side);
+        let state = 0x75a3b4c9;
+        for (let i = 0; i < pixels.data.length; i += 4) {
+            state ^= state << 13;
+            state ^= state >>> 17;
+            state ^= state << 5;
+            pixels.data[i] = state & 255;
+            pixels.data[i + 1] = (state >>> 8) & 255;
+            pixels.data[i + 2] = (state >>> 16) & 255;
+            pixels.data[i + 3] = 255;
+        }
+        context.putImageData(pixels, 0, 0);
+        return canvas.toDataURL("image/jpeg", quality);
+    }, { side, quality });
+    return Buffer.from(dataUrl.split(",")[1], "base64");
+}
+
 export async function saveAs(page: Page, name: string): Promise<Buffer> {
     await page.evaluate((fileName) => { window.prompt = () => fileName; }, name);
     const pending = page.waitForEvent("download", { timeout: 30_000 });

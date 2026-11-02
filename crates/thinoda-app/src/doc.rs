@@ -170,6 +170,7 @@ pub struct OpenDoc {
     pub(crate) storage_revision: Option<Revision>,
     pub(crate) externally_changed: bool,
     snapshot_state: u64,
+    snapshot_dirty: bool,
     last_change: Instant,
     last_seen_state: u64,
     /// Set when the user accepted that the on-disk file may be overwritten.
@@ -209,6 +210,7 @@ impl OpenDoc {
             storage_revision: None,
             externally_changed: false,
             snapshot_state: state,
+            snapshot_dirty: false,
             last_change: Instant::now(),
             last_seen_state: state,
             ignore_conflict: false,
@@ -790,7 +792,9 @@ impl OpenDoc {
             .view
             .board_label_draft()
             .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        let dirty = self.is_dirty();
         if s == self.snapshot_state
+            && dirty == self.snapshot_dirty
             && self.inspector_edit == self.snapshot_inspector_edit
             && title_draft == self.snapshot_title
             && board_label == self.snapshot_board_label
@@ -799,10 +803,11 @@ impl OpenDoc {
         {
             return;
         }
-        if !self.is_dirty() {
+        if !dirty {
             match recovery.remove(&self.key) {
                 Ok(()) => {
                     self.snapshot_state = s;
+                    self.snapshot_dirty = false;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                     self.snapshot_title = title_draft;
                     self.snapshot_board_label = board_label;
@@ -831,6 +836,7 @@ impl OpenDoc {
             Ok(bytes) => match recovery.queue_snapshot(&self.key, bytes) {
                 Ok(()) => {
                     self.snapshot_state = s;
+                    self.snapshot_dirty = true;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                     self.snapshot_title = title_draft;
                     self.snapshot_board_label = board_label;
@@ -1483,7 +1489,8 @@ mod tests {
         assert!(!doc.view.selection.contains(&doc.doc.sheet().root));
     }
 
-    #[cfg(unix)]
+    // macOS filesystems reject this deliberately invalid UTF-8 filename.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn legacy_import_without_chat_binding_retains_revision_and_can_save() {
         use std::os::unix::ffi::OsStringExt;

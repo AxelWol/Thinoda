@@ -83,7 +83,7 @@ features work differently:
 | Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
-| Crash recovery | The recovery journal is flushed to local storage every half second and when the page is hidden. After a reload, a crash or closing the tab, the next visit offers **Recover Unsaved Work**. |
+| Crash recovery | The app attempts to flush recovery snapshots to local storage every half second and when the page is hidden. Available snapshots are offered under **Recover Unsaved Work** on a later launch. Storage failures or competing tabs can prevent recovery; save or download important work and keep external backups. |
 | Unsaved changes on quit | Closing or reloading the tab with unsaved changes asks for confirmation. **Quit** shows a hint to close the tab instead. |
 | OS keychain for the AI API key | The key is kept in session storage for the current tab only and is not written to local storage. |
 | AI server | Requests use `fetch`. The server must allow cross-origin requests (CORS) from the site's origin; LM Studio has a CORS option in its server settings. An `https` site can only call `https` servers or `http://localhost`. |
@@ -740,6 +740,23 @@ use localStorage and can exceed its separate limit, including recovery snapshots
 of large maps. Storage errors are reported; download maps and keep external
 backups rather than assuming that a browser save guarantees recovery. Clearing site
 data in the browser deletes stored documents, settings and recovery data.
+
+Browser recovery uses cooperative localStorage leases, not transactional
+cross-tab locks. It checks the current claim before recovery operations and
+retains queued snapshots when a write fails; missing, corrupt or competing
+claims stop the former owner from intentionally resuming its writes. An
+unavailable journal or incomplete recovery scan produces a warning. A browser
+can still interleave a claim change between checking it and writing or
+removing a value, so this is not a guarantee against simultaneous-tab races.
+When discovery is incomplete, the recovery dialog offers **Keep recovery
+data** instead of **Discard All**; this closes the dialog without deleting the
+listed snapshots. They can be inspected again after a later restart.
+Failed cleanup is logged and preserves recovery data. While a saved document
+remains open, Thinoda retries removing its snapshot on a later recovery cycle.
+A persistent failure or a document closed before cleanup succeeds can still
+leave a snapshot to be offered again on a later launch.
+Do not treat crash recovery as a substitute for downloaded backups.
+
 GitHub Pages serves all project sites of an account from the same
 `<owner>.github.io` origin, so they share storage quotas. Thinoda uses its named
 OPFS directory, `thinoda.documents.v1` IndexedDB database and `thinoda.`-prefixed

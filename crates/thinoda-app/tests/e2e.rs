@@ -2597,6 +2597,34 @@ fn recovery_cleanup_retries_after_suspended_session_resumes() {
 }
 
 #[test]
+fn recovery_cleanup_retries_when_saving_the_snapshotted_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_root(dir.path());
+    let recovery = RecoveryManager::start(&paths).unwrap();
+    let mut doc = thinoda_app::doc::OpenDoc::new(Workbook::default());
+    doc.doc
+        .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Saved"))
+        .unwrap();
+    doc.snapshot(&recovery);
+    recovery.suspend().unwrap();
+    let snapshot = recovery
+        .session_dir()
+        .join("docs")
+        .join(format!("{}.json", doc.key));
+    assert!(snapshot.exists());
+    doc.doc.mark_saved();
+    doc.snapshot(&recovery);
+    assert!(snapshot.exists(), "suspended cleanup cannot remove data");
+    recovery.resume().unwrap();
+    doc.snapshot(&recovery);
+    assert!(
+        !snapshot.exists(),
+        "saving without another edit must still retry recovery cleanup"
+    );
+    recovery.finish().unwrap();
+}
+
+#[test]
 fn crash_recovery_restores_unsaved_work() {
     for _ in 0..50 {
         assert_crash_recovery_restores_unsaved_work();
@@ -2817,6 +2845,13 @@ fn failed_recovery_load_preserves_the_whole_session_for_retry() {
     );
     assert_eq!(app.dialogs.recovery.len(), 1);
     assert_eq!(std::fs::read(&snapshots[0].0).unwrap(), snapshots[0].1);
+    app.discard_orphans();
+    assert_eq!(app.dialogs.recovery.len(), 1);
+    assert_eq!(std::fs::read(&snapshots[0].0).unwrap(), snapshots[0].1);
+    assert_eq!(
+        std::fs::read(&snapshots[1].0).unwrap(),
+        b"temporarily unreadable snapshot"
+    );
     std::fs::write(&snapshots[1].0, &snapshots[1].1).unwrap();
     app.restore_orphans(None);
     assert!(app.dialogs.recovery.is_empty());

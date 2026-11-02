@@ -35,6 +35,18 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
     ("MindManager", &["mmap"]),
 ];
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn set_browser_recovery_announcement(id: &str, message: Option<&str>) {
+    let element = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id));
+    if let Some(element) = element {
+        element.set_text_content(message);
+    } else {
+        log::warn!("browser recovery announcement element is unavailable: {id}");
+    }
+}
+
 /// Every user command of the app (menus, toolbar, shortcuts and command palette).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
@@ -285,6 +297,11 @@ pub struct ThinodaApp {
     pub sheet_paste_request: Option<(Instant, String)>,
     pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
+    pub(crate) recovery_discovery_incomplete: bool,
+    #[cfg(any(test, target_arch = "wasm32"))]
+    recovery_warning: Option<u64>,
+    #[cfg(target_arch = "wasm32")]
+    recovery_is_memory_only: bool,
     pub(crate) updates: crate::updates::Updates,
     pub palette: CommandPalette,
     pub search: SearchState,
@@ -359,6 +376,9 @@ impl ThinodaApp {
     pub fn new(settings: Settings, services: Services, files: &[PathBuf]) -> Self {
         i18n::set_lang(i18n::resolve(settings.language));
         let fim = crate::fim::FimState::new(services.paths.as_ref());
+        #[cfg(target_arch = "wasm32")]
+        let recovery_is_memory_only =
+            services.paths.is_some() && !thinoda_platform::vfs::global_uses_local_storage();
         let mut app = Self {
             docs: Vec::new(),
             document_windows: HashMap::new(),
@@ -390,6 +410,11 @@ impl ThinodaApp {
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
+            recovery_discovery_incomplete: false,
+            #[cfg(any(test, target_arch = "wasm32"))]
+            recovery_warning: None,
+            #[cfg(target_arch = "wasm32")]
+            recovery_is_memory_only,
             updates: Default::default(),
             cloud_changes: Default::default(),
             cloud_program: Default::default(),
@@ -423,10 +448,53 @@ impl ThinodaApp {
             last_titles: HashMap::new(),
             launch: None,
         };
+        #[cfg(target_arch = "wasm32")]
+        if app.services.paths.is_some()
+            && (app.services.recovery.is_none() || app.recovery_is_memory_only)
+        {
+            app.update_browser_recovery_warning(Some("browser recovery storage is unavailable"));
+        }
         for f in files {
             app.open_path(f);
         }
         app
+    }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn update_browser_recovery_warning(&mut self, error: Option<&str>) {
+        match error {
+            Some(error) if self.recovery_warning.is_none() => {
+                log::warn!("crash recovery unavailable: {error}");
+                let message = t("Crash recovery is unavailable. Save or download your work.");
+                #[cfg(target_arch = "wasm32")]
+                set_browser_recovery_announcement("thinoda-recovery-availability", Some(message));
+                self.recovery_warning = Some(
+                    self.toasts
+                        .sticky(thinoda_ui::toast::ToastKind::Warning, message),
+                );
+            }
+            None => {
+                if let Some(id) = self.recovery_warning.take() {
+                    self.toasts.dismiss(id);
+                    #[cfg(target_arch = "wasm32")]
+                    set_browser_recovery_announcement("thinoda-recovery-availability", None);
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
+    pub(crate) fn warn_incomplete_recovery_discovery(&mut self) {
+        if self.recovery_discovery_incomplete {
+            return;
+        }
+        self.recovery_discovery_incomplete = true;
+        let message =
+            t("Some recovery data could not be checked. Keep existing storage and save your work.");
+        #[cfg(target_arch = "wasm32")]
+        set_browser_recovery_announcement("thinoda-recovery-discovery", Some(message));
+        self.toasts
+            .sticky(thinoda_ui::toast::ToastKind::Warning, message);
     }
 
     /// App for tests: no OS services, English UI, one new document.
@@ -2486,8 +2554,10 @@ impl ThinodaApp {
         ) {
             Ok(()) => {
                 self.cloud_program.forget_document(&d.key);
-                if let Some(r) = &self.services.recovery {
-                    let _ = r.remove(&d.key);
+                if let Some(r) = &self.services.recovery
+                    && let Err(error) = r.remove(&d.key)
+                {
+                    log::warn!("recovery snapshot cleanup failed: {error}");
                 }
                 self.settings.add_recent(target);
                 self.save_settings();
@@ -2675,8 +2745,10 @@ impl ThinodaApp {
         if let Some(owner) = owner {
             self.prune_empty_document_window(owner);
         }
-        if let Some(r) = &self.services.recovery {
-            let _ = r.remove(&d.key);
+        if let Some(r) = &self.services.recovery
+            && let Err(error) = r.remove(&d.key)
+        {
+            log::warn!("recovery snapshot cleanup failed: {error}");
         }
         if home {
             self.active = self.docs.len();
@@ -2941,8 +3013,10 @@ impl ThinodaApp {
                     if let Err(e) = d.save_to(&p, backup) {
                         d.autosave_failed(interval);
                         self.toasts.error(format!("{}: {e}", t("Could not save")));
-                    } else if let Some(r) = &self.services.recovery {
-                        let _ = r.remove(&d.key);
+                    } else if let Some(r) = &self.services.recovery
+                        && let Err(error) = r.remove(&d.key)
+                    {
+                        log::warn!("recovery snapshot cleanup failed: {error}");
                     }
                 }
             }
@@ -2959,10 +3033,16 @@ impl ThinodaApp {
             // The browser has no background flusher thread; this also refreshes the
             // recovery lock heartbeat of this tab.
             #[cfg(target_arch = "wasm32")]
-            if let Some(r) = &self.services.recovery
-                && let Err(e) = r.flush()
-            {
-                log::debug!("recovery flush: {e}");
+            if let Some(result) = self.services.recovery.as_ref().map(|r| r.flush()) {
+                match result {
+                    Err(error) => {
+                        self.update_browser_recovery_warning(Some(&error.to_string()));
+                    }
+                    Ok(()) if !self.recovery_is_memory_only => {
+                        self.update_browser_recovery_warning(None);
+                    }
+                    Ok(()) => {}
+                }
             }
             let paths = self
                 .services
@@ -3106,14 +3186,19 @@ impl ThinodaApp {
         self.save_settings();
         if let Some(r) = self.services.recovery.take() {
             for d in &self.docs {
-                if !d.is_dirty() {
-                    let _ = r.remove(&d.key);
+                if !d.is_dirty()
+                    && let Err(error) = r.remove(&d.key)
+                {
+                    log::warn!("recovery snapshot cleanup failed: {error}");
                 }
             }
-            if !self.any_dirty() {
-                let _ = r.finish();
+            let result = if !self.any_dirty() {
+                r.finish()
             } else {
-                let _ = r.flush();
+                r.flush()
+            };
+            if let Err(error) = result {
+                log::warn!("recovery shutdown failed: {error}");
             }
         }
     }
@@ -3212,6 +3297,7 @@ impl ThinodaApp {
                 }
                 Err(message) => {
                     log::warn!("Recovery restore failed: {message}");
+                    self.warn_incomplete_recovery_discovery();
                     self.toasts.error(message);
                     keep.push(s);
                     continue;
@@ -3230,6 +3316,10 @@ impl ThinodaApp {
     }
 
     pub fn discard_orphans(&mut self) {
+        if self.recovery_discovery_incomplete {
+            log::warn!("Recovery discard blocked because discovery was incomplete");
+            return;
+        }
         for mut session in std::mem::take(&mut self.dialogs.recovery) {
             session.docs.retain(|doc| match doc.discard() {
                 Ok(()) => false,
@@ -4145,6 +4235,7 @@ pub struct Startup {
     pub services: Services,
     pub warning: Option<String>,
     pub orphans: Vec<OrphanSession>,
+    pub recovery_discovery_incomplete: bool,
 }
 
 /// Creates the services used by the real application (settings dir, recovery, single instance).
@@ -4154,7 +4245,7 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
         Ok(l) => (l.settings, l.warning),
         Err(e) => (Settings::default(), Some(e.to_string())),
     };
-    let orphans = RecoveryManager::find_orphans(&paths);
+    let discovery = RecoveryManager::discover_orphans(&paths);
     let recovery = match RecoveryManager::start(&paths) {
         Ok(r) => Some(Arc::new(r)),
         Err(e) => {
@@ -4192,12 +4283,40 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
         settings,
         services,
         warning,
-        orphans,
+        orphans: discovery.sessions,
+        recovery_discovery_incomplete: discovery.incomplete,
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_recovery_warning_is_deduplicated_and_cleared_on_success() {
+        let mut app = ThinodaApp::headless();
+        let warning = "Crash recovery is unavailable. Save or download your work.";
+        app.update_browser_recovery_warning(Some("lease lost"));
+        let first = app.recovery_warning.unwrap();
+        assert_eq!(
+            app.toasts.texts().filter(|text| *text == warning).count(),
+            1
+        );
+        app.update_browser_recovery_warning(Some("lease still lost"));
+        assert_eq!(app.recovery_warning, Some(first));
+        assert_eq!(
+            app.toasts.texts().filter(|text| *text == warning).count(),
+            1
+        );
+        app.update_browser_recovery_warning(None);
+        assert_eq!(app.recovery_warning, None);
+        assert!(!app.toasts.texts().any(|text| text == warning));
+        app.update_browser_recovery_warning(Some("quota"));
+        assert_ne!(app.recovery_warning, Some(first));
+        assert_eq!(
+            app.toasts.texts().filter(|text| *text == warning).count(),
+            1
+        );
+    }
 
     #[test]
     fn save_alias_cannot_bypass_external_change_conflict() {

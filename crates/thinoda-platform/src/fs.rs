@@ -826,13 +826,8 @@ pub(crate) struct Lock {
     _file: fs::File,
     #[cfg(target_arch = "wasm32")]
     path: PathBuf,
-}
-
-/// Identity of this browser tab for heartbeat locks.
-#[cfg(target_arch = "wasm32")]
-fn tab_id() -> &'static str {
-    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ID.get_or_init(|| uuid::Uuid::new_v4().to_string())
+    #[cfg(target_arch = "wasm32")]
+    owner: String,
 }
 
 impl Lock {
@@ -840,9 +835,11 @@ impl Lock {
     pub(crate) fn try_acquire(path: &Path) -> io::Result<Self> {
         #[cfg(target_arch = "wasm32")]
         {
-            vfs::global().try_lock(path, tab_id(), vfs::now_ms())?;
+            let owner = uuid::Uuid::new_v4().to_string();
+            vfs::global().try_lock(path, &owner, vfs::now_ms())?;
             Ok(Self {
                 path: path.to_path_buf(),
+                owner,
             })
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -858,11 +855,32 @@ impl Lock {
         }
     }
 
-    /// Keep a browser lock alive; a no-op for OS locks.
-    pub(crate) fn refresh(&self) {
+    /// Resume without taking over another browser tab's claim.
+    pub(crate) fn try_resume(path: &Path) -> io::Result<Self> {
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = vfs::global().try_lock(&self.path, tab_id(), vfs::now_ms());
+            let owner = uuid::Uuid::new_v4().to_string();
+            vfs::global().try_resume_lock(path, &owner, vfs::now_ms())?;
+            Ok(Self {
+                path: path.to_path_buf(),
+                owner,
+            })
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::try_acquire(path)
+        }
+    }
+
+    /// Verify and refresh a browser lock; a no-op for OS locks.
+    pub(crate) fn refresh(&self) -> io::Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            vfs::global().refresh_lock(&self.path, &self.owner, vfs::now_ms())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Ok(())
         }
     }
 }
@@ -870,7 +888,9 @@ impl Lock {
 #[cfg(target_arch = "wasm32")]
 impl Drop for Lock {
     fn drop(&mut self) {
-        vfs::global().unlock(&self.path, tab_id());
+        if let Err(error) = vfs::global().unlock(&self.path, &self.owner) {
+            log::warn!("Recovery lock release failed: {error}");
+        }
     }
 }
 

@@ -1889,10 +1889,16 @@ F0-F5 implementation and the F6 viewport-scene/mini-map work have focused
 coverage. F1-F3 integration acceptance, the full F0/F5 performance gate, F6
 export acceptance, browser recovery, and native/web integration verification
 remain open as described in the linked plan. Production-browser regressions now
-cover a saved mixed board, ink undo, a captured Pitch viewport and SVG export.
+cover a saved mixed board, ink undo, a captured Pitch viewport, SVG export and
+the framing and rendered contents of a downloaded vector PDF.
 CI runs them and the startup/offline suite against the release build; they do
-not establish real touch-device, screen-reader or other export-format
+not establish real touch-device, screen-reader or remaining export-format
 acceptance.
+
+The live browser recovery path is being hardened, but its cooperative
+localStorage leases remain non-atomic across tabs. The separate asynchronous
+recovery draft remains blocked on safe bounded discovery and is not integrated.
+
 - P2 F0 groundwork (implemented; full acceptance open): root query APIs and
   migration of all `sheet.root` callers, derived scene with layer bands,
   `required_native_version`, central export capability analysis, ink/undo

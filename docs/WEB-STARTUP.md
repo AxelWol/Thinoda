@@ -85,7 +85,13 @@ migration also runs before recovery and has not been measured against this
 budget. Before integration, bound synchronous work and provide explicit pending,
 failure, retry and rescue behavior without allowing unresolved snapshots to be
 silently overwritten or discarded. Verify the deadline and ownership behavior
-before using that build as the startup baseline.
+before using that build as the startup baseline. A proposed resumable scan also
+missed a snapshot written by an uncoordinated same-origin writer after a
+checkpoint; it was removed rather than treating an incomplete scan as empty.
+Retained deletion tombstones can therefore still exhaust the draft's
+discovery limits and gate editing across retries and reloads. The draft's
+discard/verification work remains unintegrated, and a bounded protocol that
+accounts for uncoordinated writers is still needed.
 
 Early editing is acceptable only for a newly fenced, distinct document while
 discovery remains visibly pending. Late recovery results must not interrupt
@@ -107,6 +113,11 @@ bindings and success event while catching initialization failures; a scoped
 listener handles failure to import the application module itself. Unrelated
 script errors are not classified as bootstrap failures. The brand mark gently
 pulses while pending; reduced-motion users get no animation.
+
+The loader now waits for both the browser renderer and the app's initial
+launch state before it disappears. Previously a shortcut sent immediately
+after loader removal could arrive while the splash still blocked commands.
+The loader does not assert that every optional background task has finished.
 
 On a cold online load, registering the service worker before the Wasm bootstrap
 completed caused its complete-shell precache to request the same Wasm file
@@ -158,6 +169,58 @@ add a generic label merely to improve an audit score without preserving real
 editing and IME semantics. Investigate an accessible browser bridge and verify
 real screen readers, keyboard focus, editing and localized labels before closing
 the F1-F3 accessibility gates.
+
+One possible integration point is egui's `Plugin::output_hook`, which receives
+the completed `FullOutput` before eframe handles and discards it. A browser
+bridge could enable AccessKit and observe its tree there without forking
+eframe. This is a direction to investigate, not an implemented bridge: it also
+needs a synchronized semantic DOM, action requests, focus and IME ownership,
+localized names, modal behavior, document privacy and performance checks. Board
+content painted directly on the canvas may require additional semantic nodes.
+An output observer or generic canvas label alone would not meet these gates.
+Browser recovery warnings additionally have localized live-alert regions, but
+these do not expose the editor controls and do not replace real screen-reader
+testing.
+
+AccessKit's [published adapter list](https://lib.rs/crates/accesskit) does not
+include a web adapter. Its [experimental web adapter discussion](https://github.com/AccessKit/accesskit/discussions/514)
+also reports unreliable screen-reader focus in an early prototype. That work is
+useful prior art, not evidence that a browser bridge is ready to ship.
+
+### Recovery safety critique
+
+The synchronous recovery path now checks a per-claim owner before operations,
+retains queued bytes after failed writes or removals, and reports incomplete
+discovery without bulk-discarding the data it could not inspect. A suspended
+session must resume before cleanup. A listing that visibly changes length or
+loses an indexed key fails instead of treating a partial scan as complete.
+An incomplete scan or a later failed recovery load also blocks the app's
+bulk-discard action and offers a non-destructive way to leave the recovery
+dialog; it does not yet provide raw export or repair of an unreadable snapshot.
+This narrows observed stale-owner hazards; it cannot make localStorage's
+separate read, check and write operations atomic. Same-length key changes or
+competing tabs can still race between them, large snapshots remain
+subject to localStorage quota and main-thread costs, and the asynchronous draft
+above is not integrated. Cleanup errors are logged rather than silently ignored.
+An open document retries removing its saved snapshot on a later recovery cycle;
+persistent failures or closing before a successful retry can still leave a saved
+snapshot to be offered again.
+In headless Chromium, a real quota failure while adding
+a synthetic JPEG larger than 4 MiB retained the previous snapshot, announced
+the failure, and still allowed a native download containing the exact image
+bytes. This does not recover the oversized unsaved board or establish storage
+limits on other browsers. Device-level reload, quota, concurrent-tab and
+large-board acceptance therefore remain open.
+
+The current candidate production bundle passed 28 headless Chromium regressions,
+including startup and offline-shell failures, mixed-board editing, SVG and PDF
+export, recovery lease loss, quota retry and the real-quota case. Desktop and
+390-pixel screenshots showed the warning and dismiss control within the
+viewport. Eight focused startup and recovery checks also passed in headless
+WebKit and Firefox on Windows. An earlier run had one failure when its loopback
+server refused a static-resource connection; that case passed three isolated
+repeats and the later full run passed on a dedicated server. These checks do not
+replace physical-device, screen-reader or cross-platform CI acceptance.
 
 ## Acceptance
 

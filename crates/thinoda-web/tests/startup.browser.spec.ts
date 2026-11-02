@@ -35,6 +35,22 @@ test("the pending loader is accessible and honors reduced motion", async ({ page
     let requested!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const wasmRequested = new Promise<void>(resolve => { requested = resolve; });
+    await page.addInitScript(() => {
+        document.addEventListener("DOMContentLoaded", () => {
+            const loading = document.getElementById("loading");
+            if (!loading) return;
+            const observer = new MutationObserver(() => {
+                if (!loading.isConnected) {
+                    sessionStorage.setItem("thinoda-test-loader-release", JSON.stringify({
+                        renderer: loading.getAttribute("data-renderer-ready"),
+                        application: loading.getAttribute("data-application-ready"),
+                    }));
+                    observer.disconnect();
+                }
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        });
+    });
     await page.route(/\.wasm(?:[?#].*)?$/, async route => {
         requested();
         await gate;
@@ -61,6 +77,9 @@ test("the pending loader is accessible and honors reduced motion", async ({ page
     }
 
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    expect(await page.evaluate(() => JSON.parse(
+        sessionStorage.getItem("thinoda-test-loader-release") ?? "null",
+    ))).toEqual({ renderer: "true", application: "true" });
     await openCommandPalette(page);
 });
 

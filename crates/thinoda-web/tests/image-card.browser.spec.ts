@@ -8,7 +8,7 @@
  * where documents are stored, so it can run with either browser storage backend.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { command, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -19,35 +19,6 @@ test.setTimeout(120_000);
 
 function documentJson(zip: Buffer, name: string) {
     return JSON.parse(zipEntry(zip, name).toString("utf8"));
-}
-
-async function imagePicker(page: Page, file?: { name: string; mimeType: string; buffer: Buffer }) {
-    const pending = page.waitForEvent("filechooser");
-    await command(page, "Image card");
-    const picker = await pending;
-    await picker.setFiles(file ?? []);
-}
-
-async function jpeg(page: Page, side: number, quality: number): Promise<Buffer> {
-    const dataUrl = await page.evaluate(({ side, quality }) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = canvas.height = side;
-        const context = canvas.getContext("2d")!;
-        const pixels = context.createImageData(side, side);
-        let state = 0x75a3b4c9;
-        for (let i = 0; i < pixels.data.length; i += 4) {
-            state ^= state << 13;
-            state ^= state >>> 17;
-            state ^= state << 5;
-            pixels.data[i] = state & 255;
-            pixels.data[i + 1] = (state >>> 8) & 255;
-            pixels.data[i + 2] = (state >>> 16) & 255;
-            pixels.data[i + 3] = 255;
-        }
-        context.putImageData(pixels, 0, 0);
-        return canvas.toDataURL("image/jpeg", quality);
-    }, { side, quality });
-    return Buffer.from(dataUrl.split(",")[1], "base64");
 }
 
 async function boardCenter(page: Page): Promise<Buffer> {

@@ -62,7 +62,12 @@ impl Toasts {
             remaining,
         });
         if self.items.len() > 5 {
-            self.items.remove(0);
+            let index = self
+                .items
+                .iter()
+                .position(|toast| toast.remaining.is_some())
+                .unwrap_or(0);
+            self.items.remove(index);
         }
         self.next
     }
@@ -106,7 +111,7 @@ impl Toasts {
         self.tick(dt);
         let p = Palette::of(ctx);
         let mut dismiss = None;
-        egui::Area::new(Id::unique("thinoda_toasts"))
+        egui::Area::new(Id::unique(("thinoda_toasts", modal_open)))
             .order(if modal_open {
                 Order::Middle
             } else {
@@ -115,6 +120,7 @@ impl Toasts {
             .anchor(Align2::CENTER_BOTTOM, [0.0, -36.0])
             .interactable(true)
             .show(ctx, |ui| {
+                ui.set_max_width((ctx.content_rect().width() - 24.0).max(1.0));
                 for t in &self.items {
                     let (icon, color) = match t.kind {
                         ToastKind::Info => (crate::icons::INFO, p.accent),
@@ -129,7 +135,13 @@ impl Toasts {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon).color(color));
-                                ui.label(RichText::new(&t.text).color(p.text));
+                                ui.scope(|ui| {
+                                    ui.set_max_width((ui.available_width() - 40.0).max(1.0));
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&t.text).color(p.text))
+                                            .wrap(),
+                                    );
+                                });
                                 if ui
                                     .small_button(crate::icons::CLOSE)
                                     .on_hover_text("Dismiss")
@@ -175,5 +187,70 @@ mod tests {
         }
         assert_eq!(t.len(), 5);
         assert_eq!(t.texts().next(), Some("5"));
+    }
+
+    #[test]
+    fn transient_toasts_do_not_evict_a_sticky_warning() {
+        let mut toasts = Toasts::default();
+        let warning = toasts.sticky(ToastKind::Warning, "Recovery is unavailable");
+        for i in 0..10 {
+            toasts.info(i.to_string());
+        }
+        assert_eq!(toasts.len(), 5);
+        assert!(toasts.texts().any(|text| text == "Recovery is unavailable"));
+        toasts.dismiss(warning);
+        assert!(!toasts.texts().any(|text| text == "Recovery is unavailable"));
+    }
+
+    #[test]
+    fn modal_and_nonmodal_toasts_can_render_in_one_frame() {
+        let context = Context::default();
+        let mut toasts = Toasts::default();
+        toasts.warning("A warning");
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            toasts.show_with_modal(ui.ctx(), false);
+            toasts.show_with_modal(ui.ctx(), true);
+        });
+        output.textures_delta.clear();
+        assert_eq!(toasts.texts().collect::<Vec<_>>(), vec!["A warning"]);
+    }
+
+    #[test]
+    fn long_toasts_and_dismiss_buttons_fit_narrow_windows() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        for width in [240.0, 320.0, 390.0, 1252.0] {
+            let mut toasts = Toasts::default();
+            toasts.sticky(
+                ToastKind::Warning,
+                "Some recovery data could not be checked. Keep existing storage and save your work. \
+                 RecoveryInformationWithoutAnyWhitespaceMustAlsoFitInsideTheWindow.",
+            );
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(width, 600.0))
+                .with_context_setup(|ctx| {
+                    ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+                    crate::fonts::install_fallbacks(ctx);
+                })
+                .build_ui_state(|ui, toasts: &mut Toasts| toasts.show(ui.ctx()), toasts);
+            h.run_steps(6);
+            let rect = h
+                .ctx
+                .memory(|memory| memory.area_rect(Id::unique(("thinoda_toasts", false))))
+                .unwrap();
+            assert!(
+                h.ctx.content_rect().contains_rect(rect),
+                "{width}: {rect:?}"
+            );
+            let dismiss = h.get_by_label(crate::icons::CLOSE);
+            assert!(
+                h.ctx.content_rect().contains_rect(dismiss.rect()),
+                "{width}: {:?}",
+                dismiss.rect()
+            );
+            dismiss.click();
+            h.run_steps(2);
+            assert!(h.state().is_empty());
+        }
     }
 }
