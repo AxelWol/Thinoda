@@ -1,3 +1,5 @@
+_Last updated: 2026-11-02 20:10:56 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Web first-start performance: concept and critique
 
 Status: **investigation and implementation in progress**. A user reports that
