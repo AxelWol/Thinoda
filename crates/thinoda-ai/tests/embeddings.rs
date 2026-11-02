@@ -118,6 +118,32 @@ fn exercise(status: u16, body: &[u8], inputs: &[String]) -> Vec<Result<Vec<Vec<f
 }
 
 #[test]
+fn ollama_embeddings_use_explicit_model_without_authorization() {
+    for background in [false, true] {
+        let body = json!({"data":[{"index":0,"embedding":[1.0,0.0]}]}).to_string();
+        let (url, received, worker) = server(200, body.into_bytes());
+        let mut cfg = config(url);
+        cfg.provider = thinoda_ai::harness::Provider::Ollama;
+        let inputs = vec!["local topic".into()];
+        let result = if background {
+            collect(&AiEmbeddingJob::spawn(
+                cfg,
+                "nomic-embed-text".into(),
+                inputs,
+            ))
+        } else {
+            Client::new(cfg).embeddings("nomic-embed-text", &inputs)
+        };
+        assert_eq!(result.unwrap(), vec![vec![1.0, 0.0]]);
+        let (path, auth, request) = received.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(path.trim(), "POST /v1/embeddings HTTP/1.1");
+        assert!(auth.is_empty());
+        assert_eq!(request["model"], "nomic-embed-text");
+        worker.join().unwrap();
+    }
+}
+
+#[test]
 fn returns_ordered_and_reordered_vectors_without_modifying_them() {
     for entries in [
         json!([{"index":0,"embedding":[1.25,-2.5]},{"index":1,"embedding":[0.0,3.0]}]),

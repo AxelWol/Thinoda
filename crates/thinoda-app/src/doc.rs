@@ -6,10 +6,12 @@ use web_time::Instant;
 
 use thinoda_canvas::MapView;
 use thinoda_core::{CanvasObjectId, CanvasObjectKind, Document, TopicId, Workbook};
+pub(crate) use thinoda_io::import_read_limit;
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
     fs::{FileFingerprint, atomic_write, fingerprint},
     recovery::{RecoveryManager, Snapshot, SnapshotMeta},
+    storage::{CancelToken, ExpectedRevision, Revision, StorageError, StorageId, StorageProvider},
 };
 
 use crate::i18n::t;
@@ -17,6 +19,34 @@ use crate::i18n::t;
 /// Formats that can be written back without losing Thinoda features.
 pub fn is_native(format: Format) -> bool {
     matches!(format, Format::Thinoda | Format::XMind)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn oversized_import_error(path: &Path) -> Option<thinoda_io::IoError> {
+    let limit = import_read_limit(path)?;
+    thinoda_io::validate_import_size(path, limit as u64 + 1).err()
+}
+
+pub(crate) fn import_size_error(path: &Path) -> String {
+    if matches!(
+        Format::from_path(path),
+        Some(Format::MindManager | Format::MindManagerXml)
+    ) {
+        t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.")
+            .into()
+    } else {
+        t(crate::file_ops::DOCUMENT_TOO_LARGE).into()
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn vfs_import_error(path: &Path, error: std::io::Error) -> thinoda_io::IoError {
+    if thinoda_platform::vfs::is_read_limit_exceeded(&error)
+        && let Some(error) = oversized_import_error(path)
+    {
+        return error;
+    }
+    error.into()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +167,8 @@ pub struct OpenDoc {
     /// Format the document was loaded from / is saved as.
     pub format: Format,
     pub fingerprint: Option<FileFingerprint>,
+    pub(crate) storage_revision: Option<Revision>,
+    pub(crate) externally_changed: bool,
     snapshot_state: u64,
     last_change: Instant,
     last_seen_state: u64,
@@ -174,6 +206,8 @@ impl OpenDoc {
             import_source: None,
             format: Format::Thinoda,
             fingerprint: None,
+            storage_revision: None,
+            externally_changed: false,
             snapshot_state: state,
             last_change: Instant::now(),
             last_seen_state: state,
@@ -203,8 +237,20 @@ impl OpenDoc {
     }
 
     pub fn open_with_report(path: &Path) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
-        let report = import_report(path)?;
-        Self::from_import_report(path, report)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let loaded = run_storage(load_workbook_async(path, CancelToken::default()))
+                .map_err(|error| crate::file_ops::storage_error(&error))?;
+            Self::from_storage_report(path, loaded)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if crate::files::is_durable_document(path) {
+                return Err(t("Use the asynchronous file workflow for browser documents.").into());
+            }
+            let report = import_report(path)?;
+            Self::from_import_report(path, report)
+        }
     }
 
     /// Wraps a report imported on the UI or startup loader thread.
@@ -217,21 +263,55 @@ impl OpenDoc {
         if is_native(format) {
             d.path = Some(path.to_path_buf());
             d.format = format;
-            d.fingerprint = fingerprint(path).ok();
-            d.chat_identity = (|| {
-                let (binding, bytes) =
-                    thinoda_platform::chat_history::Binding::read_document(path).ok()?;
-                let current = thinoda_io::import_bytes_with_report(format, &bytes).ok()?;
-                // A background import may have finished before an external
-                // replacement. Never bind its old workbook to the newer file.
-                (current.workbook == *d.doc.workbook()).then_some(binding)
+            let observed = (|| {
+                let before = fingerprint(path).ok()?;
+                let bytes = pfs::read(path).ok()?;
+                let current = thinoda_io::import_named_bytes_with_report(path, &bytes).ok()?;
+                let after = fingerprint(path).ok()?;
+                if before != after || current.workbook != *d.doc.workbook() {
+                    return None;
+                }
+                Some((
+                    after,
+                    thinoda_platform::chat_history::Binding::from_bytes(path, &bytes).ok(),
+                ))
             })();
+            if let Some((fingerprint, binding)) = observed {
+                d.storage_revision = Some(thinoda_platform::storage::revision_from_fingerprint(
+                    &fingerprint,
+                ));
+                d.fingerprint = Some(fingerprint);
+                d.chat_identity = binding;
+            }
         } else {
             // Imported from a foreign format: saving asks for a new native file name.
             d.import_source = Some(pfs::canonicalize(path).map_err(|e| e.to_string())?);
             d.doc.mark_dirty();
         }
         Ok((d, report.warnings))
+    }
+
+    pub(crate) fn from_storage_report(
+        path: &Path,
+        loaded: LoadedWorkbook,
+    ) -> Result<(Self, Vec<thinoda_io::ImportWarning>), String> {
+        let format = loaded.report.format;
+        let mut doc = Self::new(loaded.report.workbook);
+        if is_native(format) {
+            doc.path = Some(path.to_path_buf());
+            doc.format = format;
+            doc.fingerprint = loaded.fingerprint;
+            doc.storage_revision = Some(loaded.revision);
+            doc.chat_identity = loaded.chat_identity;
+        } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            let source = pfs::canonicalize(path).map_err(|error| error.to_string())?;
+            #[cfg(target_arch = "wasm32")]
+            let source = pfs::absolute(path).map_err(|error| error.to_string())?;
+            doc.import_source = Some(source);
+            doc.doc.mark_dirty();
+        }
+        Ok((doc, loaded.report.warnings))
     }
 
     pub fn title(&self) -> String {
@@ -439,28 +519,86 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
-        self.save_to_with_consent(path, backup, false, false)
+        self.save_to_with_backup_directory_and_consent(
+            path,
+            backup,
+            None,
+            crate::export_preflight::SaveConsent::default(),
+        )
     }
 
-    pub(crate) fn save_to_with_consent(
+    pub(crate) fn save_to_with_backup_directory_and_consent(
         &mut self,
         path: &Path,
         backup: bool,
-        allow_board_loss: bool,
-        allow_mindmanager_loss: bool,
+        backup_directory: Option<PathBuf>,
+        consent: crate::export_preflight::SaveConsent,
     ) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        if crate::files::is_durable_document(path) {
+            return Err(t("Use the asynchronous file workflow for browser documents.").into());
+        }
         let format = self.prepare_save(path)?;
+        let expected = self.expected_revision(path)?;
         let state = self.doc.state_id();
-        let identity = write_workbook(
+        #[cfg(not(target_arch = "wasm32"))]
+        let identity = run_storage(write_workbook_async(
             self.doc.workbook(),
             format,
             path,
             backup,
-            allow_board_loss,
-            allow_mindmanager_loss,
-        )?;
+            expected,
+            CancelToken::default(),
+            backup_directory,
+            consent,
+        ))
+        .map_err(|error| error.to_string())?;
+        #[cfg(target_arch = "wasm32")]
+        let identity = {
+            let _ = (expected, backup_directory);
+            write_workbook(
+                self.doc.workbook(),
+                format,
+                path,
+                backup,
+                consent.board,
+                consent.mindmanager,
+            )?
+        };
         self.finish_save(path, format, state, identity);
         Ok(())
+    }
+
+    pub(crate) fn expected_revision(&self, path: &Path) -> Result<ExpectedRevision, String> {
+        if self.ignore_conflict {
+            return Ok(ExpectedRevision::Any);
+        }
+        if self.targets_current_file(path)? {
+            return self
+                .storage_revision
+                .clone()
+                .or_else(|| {
+                    self.fingerprint
+                        .as_ref()
+                        .map(thinoda_platform::storage::revision_from_fingerprint)
+                })
+                .map(ExpectedRevision::Match)
+                .ok_or_else(|| t("File changed on disk").to_owned());
+        }
+        #[cfg(target_arch = "wasm32")]
+        if crate::files::is_durable_document(path) {
+            // A browser filename prompt does not grant overwrite consent.
+            return Ok(ExpectedRevision::Missing);
+        }
+        match fingerprint(path) {
+            Ok(value) => Ok(ExpectedRevision::Match(
+                thinoda_platform::storage::revision_from_fingerprint(&value),
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ExpectedRevision::Missing)
+            }
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// Commits pending drafts and validates `path` as a save destination.
@@ -495,6 +633,8 @@ impl OpenDoc {
         self.path = Some(path.to_path_buf());
         self.format = format;
         self.fingerprint = identity.fingerprint;
+        self.storage_revision = identity.revision;
+        self.externally_changed = false;
         self.ignore_conflict = false;
         self.autosave_retry_at = None;
         if self.doc.state_id() == state {
@@ -593,6 +733,33 @@ impl OpenDoc {
                 .map_err(|error| error.to_string())?;
         }
         Ok(document)
+    }
+
+    pub(crate) fn has_pending_drafts(&self) -> bool {
+        self.view.has_title_changes()
+            || self.view.has_board_label_changes()
+            || self.inspector_edit.is_some()
+            || self.fim_edit.is_some()
+            || self.has_unresolved_ink()
+    }
+
+    pub(crate) fn reload_storage(&mut self, loaded: LoadedWorkbook) -> Result<(), String> {
+        if self.has_pending_drafts() {
+            return Err(t("Not possible here").into());
+        }
+        if !loaded.report.warnings.is_empty() {
+            return Err(t("Import requires confirmation").into());
+        }
+        self.doc
+            .reload(loaded.report.workbook)
+            .map_err(|error| error.to_string())?;
+        self.format = loaded.report.format;
+        self.storage_revision = Some(loaded.revision);
+        self.fingerprint = loaded.fingerprint;
+        self.chat_identity = loaded.chat_identity;
+        self.externally_changed = false;
+        self.ignore_conflict = false;
+        Ok(())
     }
 
     pub fn ensure_export_destination(&self, path: &Path) -> Result<(), String> {
@@ -765,10 +932,12 @@ pub fn convert_with_consent(
 pub(crate) struct WrittenWorkbook {
     fingerprint: Option<FileFingerprint>,
     chat_identity: Option<thinoda_platform::chat_history::Binding>,
+    revision: Option<Revision>,
 }
 
 /// Serializes and atomically writes a workbook prepared by [`OpenDoc::prepare_save`].
 /// Runs on the file worker thread; returns the written file's identity.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn write_workbook(
     workbook: &Workbook,
     format: Format,
@@ -793,6 +962,10 @@ pub(crate) fn write_workbook(
     atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
     Ok(WrittenWorkbook {
         fingerprint: fingerprint(path).ok(),
+        revision: fingerprint(path)
+            .ok()
+            .as_ref()
+            .map(thinoda_platform::storage::revision_from_fingerprint),
         chat_identity: if is_native(format) {
             thinoda_platform::chat_history::Binding::from_bytes(path, &bytes).ok()
         } else {
@@ -801,21 +974,190 @@ pub(crate) fn write_workbook(
     })
 }
 
-pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {
-    // Natively the reader bounds MindManager input before allocating; the browser
-    // stores files in its virtual file system, which import reads from memory.
-    #[cfg(not(target_arch = "wasm32"))]
-    let report = thinoda_io::import_file_with_report(path);
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_storage<T>(
+    future: impl std::future::Future<Output = Result<T, StorageError>>,
+) -> Result<T, StorageError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(future)
+}
+
+// Keep revision, cancellation, backup, and export consent explicit at the save boundary.
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn write_workbook_async(
+    workbook: &Workbook,
+    format: Format,
+    path: &Path,
+    backup: bool,
+    expected: ExpectedRevision,
+    cancel: CancelToken,
+    backup_directory: Option<PathBuf>,
+    consent: crate::export_preflight::SaveConsent,
+) -> Result<WrittenWorkbook, StorageError> {
+    cancel.check()?;
+    crate::export_preflight::require_board_consent(
+        workbook,
+        format,
+        &ExportOptions::default(),
+        consent.board,
+    )
+    .map_err(StorageError::Remote)?;
+    let bytes = thinoda_io::export_bytes_with_consent(
+        workbook,
+        format,
+        &ExportOptions::default(),
+        consent.mindmanager,
+    )
+    .map_err(|error| StorageError::Remote(export_error(error)))?;
+    let provider = document_provider(path, backup, backup_directory.as_deref());
     #[cfg(target_arch = "wasm32")]
-    let report = pfs::read(path)
-        .map_err(thinoda_io::IoError::from)
-        .and_then(|bytes| thinoda_io::import_named_bytes_with_report(path, &bytes));
-    report.map_err(|error| {
-        if matches!(error, thinoda_io::IoError::MindManager(_)) || matches!(Format::from_path(path), Some(Format::MindManager | Format::MindManagerXml)) {
-            log::warn!("MindManager import failed: {error}");
-            t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").into()
-        } else { error.to_string() }
+    let overwrite_picked_conflict = matches!(&expected, ExpectedRevision::Any);
+    let revision = provider
+        .write(&document_id(path), &bytes, expected, cancel.clone())
+        .await?;
+    #[cfg(target_arch = "wasm32")]
+    if crate::files::has_picked_file(path) {
+        // A durable copy is not a successful save to the original picked file.
+        crate::files::save_back_picked_with_overwrite(
+            path,
+            &bytes,
+            overwrite_picked_conflict,
+            cancel,
+        )
+        .await?;
+    }
+    let fingerprint = fingerprint(path)
+        .ok()
+        .filter(|value| thinoda_platform::storage::revision_from_fingerprint(value) == revision);
+    Ok(WrittenWorkbook {
+        fingerprint,
+        revision: Some(revision),
+        chat_identity: if is_native(format) {
+            thinoda_platform::chat_history::Binding::from_bytes(path, &bytes).ok()
+        } else {
+            None
+        },
     })
+}
+
+pub(crate) struct LoadedWorkbook {
+    pub(crate) report: thinoda_io::ImportReport,
+    fingerprint: Option<FileFingerprint>,
+    revision: Revision,
+    chat_identity: Option<thinoda_platform::chat_history::Binding>,
+}
+
+pub(crate) async fn load_workbook_async(
+    path: &Path,
+    cancel: CancelToken,
+) -> Result<LoadedWorkbook, StorageError> {
+    let provider = document_provider(path, false, None);
+    let id = document_id(path);
+    let read = match import_read_limit(path) {
+        Some(limit) => provider
+            .read_bounded(&id, limit, cancel.clone())
+            .await
+            .map_err(|error| match error {
+                StorageError::TooLarge
+                    if matches!(
+                        Format::from_path(path),
+                        Some(Format::MindManager | Format::MindManagerXml)
+                    ) =>
+                {
+                    StorageError::Remote(import_size_error(path))
+                }
+                error => error,
+            })?,
+        None => provider.read(&id, cancel.clone()).await?,
+    };
+    cancel.check()?;
+    let report = thinoda_io::import_named_bytes_with_report(path, &read.bytes)
+        .map_err(|error| StorageError::Remote(import_error(path, error)))?;
+    let fingerprint = fingerprint(path).ok().filter(|value| {
+        thinoda_platform::storage::revision_from_fingerprint(value) == read.revision
+    });
+    let chat_identity = if is_native(report.format) {
+        thinoda_platform::chat_history::Binding::from_bytes(path, &read.bytes).ok()
+    } else {
+        None
+    };
+    Ok(LoadedWorkbook {
+        report,
+        fingerprint,
+        revision: read.revision,
+        chat_identity,
+    })
+}
+
+fn document_id(path: &Path) -> StorageId {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::files::document_id(path)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        StorageId::from_path(path)
+    }
+}
+
+fn document_provider(
+    path: &Path,
+    backup: bool,
+    directory: Option<&Path>,
+) -> Box<dyn StorageProvider> {
+    #[cfg(target_arch = "wasm32")]
+    if crate::files::is_durable_document(path) {
+        return Box::new(thinoda_platform::browser_storage::BrowserStorageProvider::new(backup));
+    }
+    let _ = path;
+    let mut provider = thinoda_platform::storage::LocalStorageProvider::new(backup);
+    if let Some(directory) = directory {
+        provider = provider.with_backup_directory(directory.to_path_buf());
+    }
+    Box::new(provider)
+}
+
+pub(crate) fn import_report(path: &Path) -> Result<thinoda_io::ImportReport, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let report = run_storage(load_workbook_async(path, CancelToken::default()))
+        .map(|loaded| loaded.report)
+        .map_err(|error| crate::file_ops::storage_error(&error));
+    #[cfg(target_arch = "wasm32")]
+    let report = match import_read_limit(path) {
+        Some(limit) => thinoda_platform::vfs::global().read_bounded(path, limit),
+        None => pfs::read(path),
+    }
+    .map_err(|error| {
+        if thinoda_platform::vfs::is_read_limit_exceeded(&error) {
+            import_size_error(path)
+        } else {
+            import_error(path, error.into())
+        }
+    })
+    .and_then(|bytes| {
+        thinoda_io::import_named_bytes_with_report(path, &bytes)
+            .map_err(|error| import_error(path, error))
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    return report;
+    #[cfg(target_arch = "wasm32")]
+    report
+}
+
+pub(crate) fn import_error(path: &Path, error: thinoda_io::IoError) -> String {
+    if matches!(error, thinoda_io::IoError::MindManager(_))
+        || matches!(
+            Format::from_path(path),
+            Some(Format::MindManager | Format::MindManagerXml)
+        )
+    {
+        log::warn!("MindManager import failed: {error}");
+        t("Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.").into()
+    } else {
+        error.to_string()
+    }
 }
 
 pub(crate) fn export_error(error: thinoda_io::IoError) -> String {
@@ -870,6 +1212,106 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
 mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn document_read_limits_match_import_format_policy() {
+        for name in [
+            "map.mmap",
+            "map.XMMAP",
+            "map.textbundle",
+            "map.textpack",
+            "map.docx",
+            "map.xml",
+            "map.unknown",
+        ] {
+            let path = Path::new(name);
+            assert_eq!(import_read_limit(path), Some(64 * 1024 * 1024));
+            assert!(thinoda_io::validate_import_size(path, 64 * 1024 * 1024).is_ok());
+            assert!(thinoda_io::validate_import_size(path, 64 * 1024 * 1024 + 1).is_err());
+        }
+        for name in ["map.xdf2", "map.XDF3"] {
+            let path = Path::new(name);
+            assert_eq!(
+                import_read_limit(path),
+                Some(thinoda_io::fim::MAX_XML_BYTES)
+            );
+            assert!(
+                thinoda_io::validate_import_size(path, thinoda_io::fim::MAX_XML_BYTES as u64)
+                    .is_ok()
+            );
+            assert!(
+                thinoda_io::validate_import_size(path, thinoda_io::fim::MAX_XML_BYTES as u64 + 1)
+                    .is_err()
+            );
+        }
+        for name in ["map.thinoda", "map.xmind", "map.mm", "map.opml", "map.md"] {
+            assert_eq!(import_read_limit(Path::new(name)), None);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn loading_rejects_oversized_documents_before_import_and_honors_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["large.mmap", "large.xdf3", "large.xml", "large.unknown"] {
+            let path = dir.path().join(name);
+            let size = import_read_limit(&path).unwrap() as u64 + 1;
+            std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+            let cancelled = CancelToken::default();
+            cancelled.cancel();
+            assert!(matches!(
+                run_storage(load_workbook_async(&path, cancelled)),
+                Err(StorageError::Cancelled)
+            ));
+            let error = run_storage(load_workbook_async(&path, CancelToken::default()))
+                .err()
+                .expect("oversized document must be rejected");
+            if name == "large.mmap" {
+                assert!(
+                    matches!(error, StorageError::Remote(message) if message == import_size_error(&path))
+                );
+            } else {
+                assert!(matches!(error, StorageError::TooLarge));
+                assert_eq!(
+                    crate::file_ops::storage_error(&error),
+                    t(crate::file_ops::DOCUMENT_TOO_LARGE)
+                );
+            }
+            assert_eq!(std::fs::metadata(path).unwrap().len(), size);
+        }
+    }
+
+    #[test]
+    fn bounded_vfs_errors_preserve_import_messages_without_masking_corruption() {
+        let vfs = thinoda_platform::vfs::Vfs::memory();
+        let path = Path::new("/Documents/map.xml");
+        vfs.write(path, b"12345", 1).unwrap();
+        let error = vfs.read_bounded(path, 4).unwrap_err();
+        assert_eq!(
+            vfs_import_error(path, error).to_string(),
+            "invalid document: import archive exceeds size limit"
+        );
+        let corrupt = std::io::Error::new(std::io::ErrorKind::InvalidData, "corrupt storage");
+        assert!(matches!(
+            vfs_import_error(path, corrupt),
+            thinoda_io::IoError::Io(error) if error.to_string() == "corrupt storage"
+        ));
+    }
+
+    fn incoming_workbook() -> LoadedWorkbook {
+        let bytes = thinoda_io::export_bytes(
+            &Workbook::default(),
+            Format::Thinoda,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        LoadedWorkbook {
+            report: thinoda_io::import_bytes_with_report(Format::Thinoda, &bytes).unwrap(),
+            fingerprint: None,
+            revision: Revision("incoming".into()),
+            chat_identity: None,
+        }
+    }
 
     fn pending_board_label() -> (Harness<'static, OpenDoc>, CanvasObjectId) {
         use thinoda_core::{CanvasObject, Rect, ShapeKind, Sheet, SheetRootMode, Vec2};
@@ -999,6 +1441,34 @@ mod tests {
     }
 
     #[test]
+    fn pending_board_label_blocks_external_reload() {
+        let (mut harness, _) = pending_board_label();
+        let doc = harness.state_mut();
+        let before = doc.doc.workbook().clone();
+        assert!(doc.has_pending_drafts());
+        assert!(!doc.doc.is_dirty(), "the draft is not yet committed");
+        assert!(doc.reload_storage(incoming_workbook()).is_err());
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(doc.view.has_board_label_changes());
+    }
+
+    #[test]
+    fn unresolved_ink_feedback_blocks_external_reload() {
+        use thinoda_canvas::ink_controller::InkControllerError;
+
+        let mut doc = OpenDoc::new(Workbook::default());
+        assert!(!doc.has_pending_drafts());
+        let state = doc.doc.state_id();
+        doc.ink_feedback.record(InkControllerError::GesturePending);
+        assert!(doc.has_pending_drafts());
+        assert_eq!(doc.doc.state_id(), state, "the ink is not yet committed");
+        assert!(doc.reload_storage(incoming_workbook()).is_err());
+        assert!(doc.has_unresolved_ink());
+        doc.discard_pending_ink();
+        assert!(!doc.has_pending_drafts());
+    }
+
+    #[test]
     fn hidden_boards_select_content_not_the_anchor() {
         let mut sheet = thinoda_core::Sheet::new("Board title", "");
         sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
@@ -1011,6 +1481,55 @@ mod tests {
         let doc = OpenDoc::new(Workbook::new(sheet));
         assert_eq!(doc.view.primary(), Some(first));
         assert!(!doc.view.selection.contains(&doc.doc.sheet().root));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_import_without_chat_binding_retains_revision_and_can_save() {
+        use std::os::unix::ffi::OsStringExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(b"map-\xff.thinoda".to_vec()));
+        let bytes = thinoda_io::export_bytes(
+            &Workbook::default(),
+            Format::Thinoda,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let report = thinoda_io::import_named_bytes_with_report(&path, &bytes).unwrap();
+        let (mut document, _) = OpenDoc::from_import_report(&path, report).unwrap();
+        assert!(document.chat_identity.is_none());
+        assert!(document.storage_revision.is_some());
+        assert!(document.fingerprint.is_some());
+        assert!(!document.changed_on_disk());
+        document.save_to(&path, false).unwrap();
+    }
+
+    #[test]
+    fn stale_legacy_report_cannot_adopt_the_new_files_revision() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("stale.thinoda");
+        let before = thinoda_io::export_bytes(
+            &Workbook::default(),
+            Format::Thinoda,
+            &ExportOptions::default(),
+        )
+        .unwrap();
+        std::fs::write(&path, &before).unwrap();
+        let report = thinoda_io::import_named_bytes_with_report(&path, &before).unwrap();
+        let mut changed = Workbook::default();
+        let root = changed.sheets[0].root;
+        changed.sheets[0].set_title(root, "External edit").unwrap();
+        let after =
+            thinoda_io::export_bytes(&changed, Format::Thinoda, &ExportOptions::default()).unwrap();
+        std::fs::write(&path, &after).unwrap();
+        let (mut document, _) = OpenDoc::from_import_report(&path, report).unwrap();
+        assert!(document.storage_revision.is_none());
+        assert!(document.changed_on_disk());
+        assert!(document.save_to(&path, false).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), after);
     }
 
     #[test]

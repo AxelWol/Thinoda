@@ -785,6 +785,56 @@ fn player_harness(width: f32, presenter: bool) -> Harness<'static, Playing> {
 }
 
 #[test]
+fn playback_stage_fits_the_embedded_player_instead_of_the_host_viewport() {
+    struct EmbeddedPlayer {
+        playing: Playing,
+        bounds: egui::Rect,
+    }
+
+    for (size, presenter) in [
+        (egui::vec2(850.0, 420.0), false),
+        (egui::vec2(850.0, 420.0), true),
+        (egui::vec2(360.0, 420.0), false),
+        (egui::vec2(360.0, 420.0), true),
+    ] {
+        let mut app = setup(true);
+        app.open_pitch(&Context::default(), presenter);
+        let player = app.pitch.player.take().unwrap();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1200.0, 1100.0))
+            .build_ui_state(
+                move |ui, state: &mut EmbeddedPlayer| {
+                    ui.allocate_ui(size, |ui| {
+                        state.bounds = ui.max_rect();
+                        let playing = &mut state.playing;
+                        if playing.open {
+                            playing.open = playing.app.pitch_player_ui(ui, &mut playing.player);
+                        }
+                    });
+                },
+                EmbeddedPlayer {
+                    playing: Playing {
+                        app,
+                        player,
+                        open: true,
+                    },
+                    bounds: egui::Rect::NOTHING,
+                },
+            );
+        h.run_steps(3);
+        let stage = h.get_by_label("Slide preview").rect();
+        let bounds = h.state().bounds;
+        assert!(
+            stage.min.x >= bounds.min.x - 1.0
+                && stage.max.x <= bounds.max.x + 1.0
+                && stage.min.y >= bounds.min.y - 1.0
+                && stage.max.y <= bounds.max.y + 1.0,
+            "stage {stage:?} overflows {bounds:?} at {size:?}, presenter={presenter}"
+        );
+    }
+}
+
+#[test]
 fn playback_pointer_and_keyboard_navigation_preserve_document_and_exit_without_quitting() {
     for width in [360.0, 1100.0] {
         let mut h = player_harness(width, true);

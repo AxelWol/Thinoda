@@ -4,7 +4,7 @@ use egui::{
     Align, Color32, Context, CornerRadius, Key, Layout, Margin, Modifiers, RichText, Sense,
     TextEdit, Ui, vec2,
 };
-use thinoda_canvas::{Action, MapCanvas};
+use thinoda_canvas::{Action, BoardTool, MapCanvas, MapView, ObjectSelection};
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
     Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers, templates,
@@ -27,6 +27,51 @@ use crate::{
 
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
+
+fn fim_hierarchy_shortcut(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::MoveUp
+            | Action::MoveDown
+            | Action::Indent
+            | Action::Outdent
+            | Action::SortAscending
+            | Action::SortDescending
+    )
+}
+
+fn fim_canvas_owns_keyboard(ctx: &Context, view: &MapView) -> bool {
+    let Some(focused) = ctx.memory(|memory| memory.focused()) else {
+        return true;
+    };
+    let canvas = MapCanvas::id();
+    if focused == canvas {
+        return true;
+    }
+
+    // Board items and handles are separate focusable canvas children. Match
+    // their IDs so FIM routing also applies when an accessible child owns
+    // focus, while leaving unrelated controls and text editors alone.
+    let mut items = view
+        .selection
+        .iter()
+        .copied()
+        .map(thinoda_core::SceneId::Topic)
+        .chain(
+            view.board_selection
+                .iter()
+                .copied()
+                .map(thinoda_core::SceneId::Object),
+        )
+        .chain(match view.selected_object {
+            Some(ObjectSelection::Zone(id)) => Some(thinoda_core::SceneId::Zone(id)),
+            _ => None,
+        });
+    items.any(|item| {
+        focused == canvas.with(("board-item", item))
+            || (0..=3).any(|part| focused == canvas.with(("board-control", item, part)))
+    })
+}
 
 fn data_divider(ui: &mut Ui) {
     ui.add_space(8.0);
@@ -717,6 +762,7 @@ impl ThinodaApp {
                 )
                 .show(ui, |ui| {
                     if self.palette.open
+                        || self.fim_hierarchy_review_open()
                         || self.planning.editing()
                         || self.zones.editing()
                         || self.pitch.blocks_map()
@@ -744,6 +790,7 @@ impl ThinodaApp {
                     )
                     .show(ui, |ui| {
                         if self.palette.open
+                            || self.fim_hierarchy_review_open()
                             || self.map_shot.active()
                             || self.printing.active()
                             || self.dialogs.legal.open
@@ -786,6 +833,7 @@ impl ThinodaApp {
                         )
                         .show(ui, |ui| {
                             if self.palette.open
+                                || self.fim_hierarchy_review_open()
                                 || self.map_shot.active()
                                 || self.printing.active()
                                 || self.dialogs.legal.open
@@ -837,6 +885,7 @@ impl ThinodaApp {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 if self.palette.open
+                    || self.fim_hierarchy_review_open()
                     || self.planning.editing()
                     || self.zones.editing()
                     || self.pitch.blocks_map()
@@ -1065,6 +1114,10 @@ impl ThinodaApp {
 
     pub(crate) fn any_modal_open(&self) -> bool {
         if self.dialogs.masked_copy
+            || self.cloud_program.modal_open()
+            || self.cloud_changes.modal_open()
+            || self.fim_node_modal_open()
+            || self.fim_hierarchy_review_open()
             || self.fim.consent.is_some()
             || self.planning.editing()
             || self.zones.editing()
@@ -1489,10 +1542,155 @@ impl ThinodaApp {
         d.view.show_add_controls = self.settings.show_topic_add_buttons;
         d.view.show_alignment_guides = self.settings.show_alignment_guides;
         d.view.host_handles_clipboard = true;
-        let out = MapCanvas::show_with_shortcuts(ui, &mut d.doc, &mut d.view, &shortcuts);
-        d.record_ink_output(&out.ink_outcomes, &out.ink_errors);
-        for action in out.clipboard_requests.iter().cloned() {
+        let (out, preview, clipboard_requests, clipboard_text, deferred_shortcut) = {
+            let fim = d.doc.sheet().fim.is_some();
+            let canvas_focused = fim && fim_canvas_owns_keyboard(&ctx, &d.view);
+            // Board and ink gestures remember the actual sheet allocation.
+            // Passing a cloned preview on release would cancel the gesture
+            // (or strand its ink samples as stale). Keep those interactions
+            // on the live document; source-changing shortcuts are handed
+            // back to the FIM-aware command path below.
+            let board_context = fim
+                && (d.view.board_tool != BoardTool::Select
+                    || !d.view.board_selection.is_empty()
+                    || d.view.selected_object.is_some()
+                    || d.view.editing_board_object().is_some()
+                    || d.has_unresolved_ink());
+            let pending_board = d.has_unresolved_ink()
+                || d.view.board_tool == BoardTool::Connector
+                || ctx.input(|input| input.pointer.any_down() || input.any_touches());
+            let guarded_shortcut = |action: &Action| {
+                fim_hierarchy_shortcut(action)
+                    || (pending_board && matches!(action, Action::Undo | Action::Redo))
+            };
+            // egui's logical shortcut matching ignores extra Alt/Shift. Do
+            // not let a plain-arrow binding consume a guarded Alt+arrow
+            // before the board controller or FIM command path sees it.
+            let guarded_keys = if board_context {
+                ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter_map(|event| match event {
+                            egui::Event::Key {
+                                key,
+                                modifiers,
+                                pressed: true,
+                                ..
+                            } if shortcuts.iter().any(|(shortcut, action)| {
+                                guarded_shortcut(action)
+                                    && *key == shortcut.logical_key
+                                    && modifiers.matches_logically(shortcut.modifiers)
+                            }) =>
+                            {
+                                Some((*key, *modifiers))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                Vec::new()
+            };
+            let board_shortcuts: Vec<_> = if board_context {
+                shortcuts
+                    .iter()
+                    .filter(|(shortcut, action)| {
+                        !guarded_shortcut(action)
+                            && !guarded_keys.iter().any(|(key, modifiers)| {
+                                *key == shortcut.logical_key
+                                    && modifiers.matches_logically(shortcut.modifiers)
+                            })
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let key_presses = if board_context {
+                ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+                        .count()
+                })
+            } else {
+                0
+            };
+            // A mixed board/topic selection can still start a map-topic
+            // drag. Route its release through FIM preview even though board
+            // input normally needs the live sheet identity.
+            let preview_input = fim
+                && (!board_context || d.view.has_active_topic_drag())
+                && ctx.input(|input| {
+                    input.pointer.any_released()
+                        || canvas_focused
+                            && input.events.iter().any(|event| {
+                                matches!(
+                                    event,
+                                    egui::Event::Key { pressed: true, .. }
+                                        | egui::Event::Text(_)
+                                        | egui::Event::Cut
+                                        | egui::Event::Paste(_)
+                                )
+                            })
+                });
+            let mut preview = preview_input.then(|| d.doc.preview());
+            let out = MapCanvas::show_with_shortcuts(
+                ui,
+                preview.as_mut().unwrap_or(&mut d.doc),
+                &mut d.view,
+                if board_context {
+                    &board_shortcuts
+                } else {
+                    &shortcuts
+                },
+            );
+            // Board shortcuts get first refusal (for example Alt+arrow
+            // duplicates a selection). Forward only an unconsumed map
+            // hierarchy shortcut, and reject it while a gesture is pending.
+            let key_consumed = board_context
+                && ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+                        .count()
+                        < key_presses
+                });
+            let deferred_shortcut = if board_context
+                && !key_consumed
+                && !out.minimap_blocks_keyboard
+                && !egui::Popup::is_any_open(&ctx)
+                && fim_canvas_owns_keyboard(&ctx, &d.view)
+            {
+                shortcuts
+                    .iter()
+                    .filter(|(_, action)| guarded_shortcut(action))
+                    .find_map(|(shortcut, action)| {
+                        ctx.input_mut(|input| input.consume_shortcut(shortcut))
+                            .then(|| (action.clone(), pending_board))
+                    })
+            } else {
+                None
+            };
+            d.record_ink_output(&out.ink_outcomes, &out.ink_errors);
+            let clipboard_requests = out.clipboard_requests.clone();
+            let clipboard_text = d.view.clipboard_out.take();
+            (
+                out,
+                preview,
+                clipboard_requests,
+                clipboard_text,
+                deferred_shortcut,
+            )
+        };
+        for action in clipboard_requests {
             self.clipboard_action(&ctx, action);
+        }
+        if let Some(text) = clipboard_text {
+            ctx.copy_text(text);
         }
         if let Some(link) = &out.open_link {
             self.open_link(link);
@@ -1505,6 +1703,22 @@ impl ThinodaApp {
         {
             self.toasts
                 .warning(format!("{}: {error}", t("Not possible here")));
+        }
+        if let Some(preview) = preview {
+            self.accept_fim_rendered_preview(&ctx, preview);
+        }
+        if let Some((action, pending_board)) = deferred_shortcut {
+            if pending_board {
+                self.toasts.warning(t("Not possible here"));
+            } else {
+                self.exec(&ctx, Cmd::Canvas(action));
+            }
+        }
+        if let Some(action) = &out.authoring_action {
+            self.exec(&ctx, Cmd::Canvas(action.clone()));
+            if let Some(text) = &out.authoring_text {
+                self.set_fim_node_name(text);
+            }
         }
         let mut cmd = None;
         out.context_menu(|ui| {
@@ -1642,7 +1856,16 @@ impl ThinodaApp {
                     ui.horizontal(|ui| {
                         if self.settings.ai.enabled {
                             if ui
-                                .button(format!("{} {}", icons::BRAINSTORM, t("Expand ideas")))
+                                .add_enabled(
+                                    self.command_available(&Cmd::Ai(
+                                        crate::ai::AiCommand::Brainstorm,
+                                    )),
+                                    egui::Button::new(format!(
+                                        "{} {}",
+                                        icons::BRAINSTORM,
+                                        t("Expand ideas")
+                                    )),
+                                )
                                 .clicked()
                             {
                                 cmd = Some(Cmd::Ai(crate::ai::AiCommand::Brainstorm));
@@ -1754,6 +1977,9 @@ impl ThinodaApp {
                 .is_some_and(|t| t.hyperlink.is_some())
         });
         let mode = self.mode;
+        let fim_edit = self.command_available(&Cmd::EditFimNode);
+        let fim_child = self.command_available(&Cmd::AddFimChild);
+        let fim_sibling = self.command_available(&Cmd::InsertFimBefore);
         let mut item = |ui: &mut Ui, label: &str, c: Cmd, enabled: bool| {
             let shortcut = Self::shortcut_hint_for_mode(ui.ctx(), &c, mode);
             let icon = crate::command_icons::command_glyph(&c);
@@ -1769,6 +1995,23 @@ impl ThinodaApp {
                 ui.close();
             }
         };
+        if fim_edit {
+            item(ui, t("Edit FIM node"), Cmd::EditFimNode, true);
+            item(ui, t("Add FIM child"), Cmd::AddFimChild, fim_child);
+            item(
+                ui,
+                t("Insert FIM node before"),
+                Cmd::InsertFimBefore,
+                fim_sibling,
+            );
+            item(
+                ui,
+                t("Insert FIM node after"),
+                Cmd::InsertFimAfter,
+                fim_sibling,
+            );
+            ui.separator();
+        }
         item(ui, t("Topic"), Cmd::Canvas(Action::InsertSibling), has_sel);
         item(ui, t("Subtopic"), Cmd::Canvas(Action::InsertChild), has_sel);
         item(
@@ -1861,17 +2104,20 @@ impl ThinodaApp {
                 item(ui, t(label), command, available);
             }
         });
-        if self.settings.ai.enabled {
-            ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
-                scroll_menu(ui, |ui| {
-                    for a in crate::ai::AiCommand::ALL {
-                        item(ui, t(a.label()), Cmd::Ai(a), has_sel || !a.needs_topic());
-                    }
-                });
-            })
-            .response
-            .accessible_name(t("AI"));
-        }
+        ui.menu_button(format!("{} {}", icons::AI, t("AI")), |ui| {
+            scroll_menu(ui, |ui| {
+                for a in crate::ai::AiCommand::ALL {
+                    item(
+                        ui,
+                        t(a.label()),
+                        Cmd::Ai(a),
+                        self.command_available(&Cmd::Ai(a)),
+                    );
+                }
+            });
+        })
+        .response
+        .accessible_name(t("AI"));
         if has_link {
             item(ui, t("Open Link"), Cmd::OpenLink, true);
         }
@@ -2083,6 +2329,27 @@ impl ThinodaApp {
     fn outliner(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let mut fim_record = None;
+        let mut fim_node_request = None;
+        if let Some((record, can_insert)) = self.doc().and_then(|doc| {
+            let source = doc.doc.sheet().fim.as_ref()?;
+            let record = source.record_for_topic(doc.view.primary()?)?;
+            Some((record, source.node_parent(record).is_some()))
+        }) {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(t("Edit FIM node")).clicked() {
+                    fim_node_request = Some((record, None));
+                }
+                if ui.button(t("Add FIM child")).clicked() {
+                    fim_node_request = Some((record, Some(crate::fim::FimInsertion::Child)));
+                }
+                if ui
+                    .add_enabled(can_insert, egui::Button::new(t("Insert FIM node after")))
+                    .clicked()
+                {
+                    fim_node_request = Some((record, Some(crate::fim::FimInsertion::After)));
+                }
+            });
+        }
         let shortcuts = self.active_canvas_bindings(ctx.os());
         let touch_actions_allowed = widgets::touch_activation_allowed(&ctx);
         let p = Palette::of_ui(ui);
@@ -2475,6 +2742,34 @@ impl ThinodaApp {
                                             ui.selectable_label(selected, text)
                                         })
                                         .inner;
+                                    if let Some(record) =
+                                        sheet.fim.as_ref().and_then(|fim| fim.record_for_topic(id))
+                                    {
+                                        r.context_menu(|ui| {
+                                            for (label, position) in [
+                                                ("Edit FIM node", None),
+                                                (
+                                                    "Add FIM child",
+                                                    Some(crate::fim::FimInsertion::Child),
+                                                ),
+                                                (
+                                                    "Insert FIM node before",
+                                                    Some(crate::fim::FimInsertion::Before),
+                                                ),
+                                                (
+                                                    "Insert FIM node after",
+                                                    Some(crate::fim::FimInsertion::After),
+                                                ),
+                                            ] {
+                                                if ui.button(t(label)).clicked()
+                                                    && touch_actions_allowed
+                                                {
+                                                    fim_node_request = Some((record, position));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                    }
                                     topic_focus |= focused == Some(r.id);
                                     if focus_topic == Some(id) {
                                         r.request_focus();
@@ -2563,10 +2858,17 @@ impl ThinodaApp {
                                                 "C"
                                             },
                                         );
-                                        if ui.add(egui::Button::new(&record.name).wrap()).clicked()
-                                        {
+                                        let response =
+                                            ui.add(egui::Button::new(&record.name).wrap());
+                                        if response.clicked() {
                                             fim_record = Some(record.record);
                                         }
+                                        response.context_menu(|ui| {
+                                            if ui.button(t("Edit FIM node")).clicked() {
+                                                fim_node_request = Some((record.record, None));
+                                                ui.close();
+                                            }
+                                        });
                                     });
                                 }
                             }
@@ -2628,31 +2930,24 @@ impl ThinodaApp {
             }
         }
         if let Some(a) = action {
-            if matches!(a, Action::Copy | Action::Cut | Action::Paste(_)) {
-                self.clipboard_action(&ctx, a);
-                if topic_focus {
-                    let primary = self.doc().and_then(|doc| doc.view.primary());
-                    ui.data_mut(|data| {
-                        data.insert_temp(outline_id.with("focus_topic"), primary);
-                    });
-                }
-            } else {
-                match thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a) {
-                    Ok(_) if topic_focus && d.view.editing_topic().is_none() => {
-                        ui.data_mut(|data| {
-                            data.insert_temp(outline_id.with("focus_topic"), d.view.primary());
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        log::debug!("outline action failed: {error}");
-                        self.toasts.warning(t("Not possible here"));
-                    }
-                }
+            self.canvas_action(&ctx, a);
+            if topic_focus
+                && let Some(doc) = self.doc()
+                && doc.view.editing_topic().is_none()
+            {
+                ui.data_mut(|data| {
+                    data.insert_temp(outline_id.with("focus_topic"), doc.view.primary());
+                });
+            }
+            if let Some(text) = self.doc_mut().and_then(|doc| doc.view.clipboard_out.take()) {
+                ctx.copy_text(text);
             }
         }
         if let Some(record) = fim_record {
             self.select_fim_record(&ctx, record);
+        }
+        if let Some((record, position)) = fim_node_request {
+            self.begin_fim_node(&ctx, Some(record), position);
         }
     }
 
@@ -2983,6 +3278,17 @@ impl ThinodaApp {
                         thinoda_platform::cloud::provider_for_path(&self.services.cloud, p)
                     }) {
                         widgets::caption(ui, format!("{} {}", icons::CLOUD, c.name));
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if self.settings.cloud.show_cloud_badges
+                            && let Some(path) = &d.path
+                        {
+                            let state = match thinoda_platform::fs::online_only(path) {
+                                Ok(true) => t("Online-only"),
+                                Ok(false) => t("Local copy; sync status unavailable"),
+                                Err(_) => t("Sync status unavailable"),
+                            };
+                            widgets::caption(ui, state);
+                        }
                     }
                     widgets::caption(
                         ui,
@@ -4454,6 +4760,8 @@ impl ThinodaApp {
         if self.board_preflight_ui(ctx) {
             return;
         }
+        self.cloud_change_dialogs(ctx);
+        self.show_cloud_dialogs(ctx);
         if self.fim_dialogs(ctx) {
             return;
         }
@@ -4878,10 +5186,13 @@ impl ThinodaApp {
         }
 
         // External modification conflict.
-        if let Some(key) = self.dialogs.conflict.clone() {
+        if !self.cloud_changes.comparing()
+            && let Some(key) = self.dialogs.conflict.clone()
+        {
             let buttons = [
                 (t("Overwrite"), DialogButton::Danger),
                 (t("Save As Copy"), DialogButton::Primary),
+                (t("Compare"), DialogButton::Secondary),
                 (t("Cancel"), DialogButton::Secondary),
             ];
             if let Some(b) = confirm_dialog(
@@ -4893,14 +5204,35 @@ impl ThinodaApp {
                 &i18n::dialog_labels(),
             ) {
                 self.dialogs.conflict = None;
+                let conflict_target = self
+                    .dialogs
+                    .conflict_save_target
+                    .take()
+                    .filter(|(owner, _)| *owner == key);
                 let saved = if let Some(index) = self.docs.iter().position(|doc| doc.key == key) {
                     self.active = index;
                     match b {
                         0 => {
                             self.docs[index].ignore_conflict = true;
-                            self.save_active(false)
+                            if let Some((_, target)) = conflict_target {
+                                self.save_active_to(&target, self.settings.backup_on_save)
+                            } else {
+                                self.save_active(false)
+                            }
                         }
                         1 => self.save_active(true),
+                        2 => {
+                            if let Some(path) = conflict_target
+                                .as_ref()
+                                .map(|(_, path)| path.clone())
+                                .or_else(|| self.docs[index].path.clone())
+                            {
+                                self.compare_file(&key, &path);
+                                self.dialogs.conflict = Some(key.clone());
+                                self.dialogs.conflict_save_target = conflict_target;
+                            }
+                            false
+                        }
                         _ => false,
                     }
                 } else {
@@ -5396,6 +5728,7 @@ impl ThinodaApp {
                         self.ai_settings_section(ui, activation_allowed && !pointer_down);
                 }
                 if self.dialogs.settings_tab == SettingsTab::Cloud {
+                    self.cloud_settings_section(ui, activation_allowed && !pointer_down);
                     widgets::section(ui, t("Cloud"), true, |ui| {
                         ui.label(RichText::new(t("Detected cloud folders")).strong());
                         if self.services.cloud.is_empty() {

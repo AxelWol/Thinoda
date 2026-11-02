@@ -2157,18 +2157,6 @@ pub(super) fn show_label_editor(
         ui.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
         return;
     }
-    if commit {
-        match view.try_commit_board_label(doc) {
-            Ok(_) => ui.memory_mut(|memory| memory.request_focus(MapCanvas::id())),
-            Err(error) => {
-                out.error = Some(error);
-                ui.memory_mut(|memory| memory.request_focus(edit_id));
-            }
-        }
-
-        return;
-    }
-
     let background = object
         .style
         .fill
@@ -2188,6 +2176,7 @@ pub(super) fn show_label_editor(
         )))
         .lock_focus(true);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    // Text queued with a finish key must reach the editor before the commit.
     let output = text_edit.show(&mut child);
     output.response.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -2196,7 +2185,15 @@ pub(super) fn show_label_editor(
             &view.board_labels.label_editor,
         )
     });
-    if !edit.focus_requested && !out.minimap_blocks_keyboard {
+    if commit {
+        match view.try_commit_board_label(doc) {
+            Ok(_) => ui.memory_mut(|memory| memory.request_focus(MapCanvas::id())),
+            Err(error) => {
+                out.error = Some(error);
+                ui.memory_mut(|memory| memory.request_focus(edit_id));
+            }
+        }
+    } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
         edit.focus_requested = true;
         ui.memory_mut(|memory| memory.request_focus(edit_id));
         let end = edit.text.chars().count();

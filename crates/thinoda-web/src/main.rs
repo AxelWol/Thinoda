@@ -8,7 +8,12 @@ mod web_main;
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    web_main::main();
+    // Durable /Documents migration must finish before settings, recovery,
+    // recents or the app start. Failure blocks startup with a visible error.
+    thinoda_web::start_after_storage_ready(|report| {
+        thinoda_app::files::record_browser_migration(report);
+        web_main::main();
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]

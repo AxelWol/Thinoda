@@ -261,7 +261,8 @@ impl ThinodaApp {
             egui::ScrollArea::vertical()
                 .min_scrolled_height(0.0)
                 .max_height(body_height)
-                .show(ui, |ui| {
+                .show_viewport(ui, |ui, viewport| {
+                let content_top = ui.cursor().top();
                 ui.label(&editor.sheet.title);
                 ui.label(t("Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation."));
                 ui.horizontal_wrapped(|ui| {
@@ -270,7 +271,8 @@ impl ThinodaApp {
                     ui.label(t("View"));
                     capture_view = ui.button(t("Capture")).clicked() && touch;
                 });
-                editor.workspace(ui, touch && !ime && !editor.composing);
+                let filmstrip_height = (viewport.height() - (ui.cursor().top() - content_top)).max(0.0);
+                editor.workspace_with_height(ui, touch && !ime && !editor.composing, filmstrip_height);
                 if let Some(error) = &editor.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }

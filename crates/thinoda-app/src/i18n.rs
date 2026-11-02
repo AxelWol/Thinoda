@@ -455,6 +455,46 @@ const DE: &[(&str, &str)] = &[
         "Replaces topic titles, board labels and descriptions.",
         "Ersetzt Thementitel, Board-Beschriftungen und Beschreibungen.",
     ),
+    (
+        "AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.",
+        "KI > KI-Einstellungen öffnet die Anbietereinstellungen. Ollama nutzt eigene Chat- und Embedding-Modelle. CLI-Anbieter nutzen ihre eigene Anmeldung und separate API-Embeddings; Browser können keine CLIs ausführen. Nicht konfigurierte KI-Aktionen und Copilot-Generierung sind deaktiviert.",
+    ),
+    ("AI settings", "KI-Einstellungen"),
+    (
+        "AI provider is not ready. Check AI settings.",
+        "Der KI-Anbieter ist nicht bereit. Prüfen Sie die KI-Einstellungen.",
+    ),
+    (
+        "Ollama uses its local OpenAI-compatible API. No API key is sent.",
+        "Ollama nutzt seine lokale OpenAI-kompatible API. Es wird kein API-Schlüssel gesendet.",
+    ),
+    ("Compare", "Vergleichen"),
+    (
+        "Browser storage migration conflict",
+        "Konflikt bei der Browser-Speichermigration",
+    ),
+    ("Downloading file:", "Datei wird heruntergeladen:"),
+    ("Reload file", "Datei neu laden"),
+    ("Keep my edits", "Meine Änderungen behalten"),
+    (
+        "Reload the changed file? Your current content remains available through Undo.",
+        "Geänderte Datei neu laden? Der aktuelle Inhalt bleibt über Rückgängig verfügbar.",
+    ),
+    ("Sync conflict copies", "Synchronisationskonfliktkopien"),
+    (
+        "These files are kept by your sync client. Thinoda never deletes them.",
+        "Diese Dateien werden vom Synchronisationsprogramm aufbewahrt. Thinoda löscht sie niemals.",
+    ),
+    ("Sheets added", "Hinzugefügte Blätter"),
+    ("Sheets removed", "Entfernte Blätter"),
+    ("Sheets changed", "Geänderte Blätter"),
+    ("Topics added", "Hinzugefügte Themen"),
+    ("Topics removed", "Entfernte Themen"),
+    ("Topics changed", "Geänderte Themen"),
+    (
+        "Sheet positions and topic IDs are compared; this summary does not merge content.",
+        "Blattpositionen und Themen-IDs werden verglichen; diese Übersicht führt keine Inhalte zusammen.",
+    ),
     ("Previous", "Zurück"),
     ("Next", "Weiter"),
     ("Append", "Am Ende einfügen"),
@@ -915,6 +955,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Import requires confirmation",
         "Import erfordert Bestätigung",
+    ),
+    (
+        "This file exceeds the supported size limit.",
+        "Diese Datei überschreitet die unterstützte Größenbeschränkung.",
     ),
     (
         "Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe.",
@@ -1385,8 +1429,12 @@ const DE: &[(&str, &str)] = &[
         "Wird eine geöffnete Datei extern geändert, bietet Thinoda eine Konfliktbehandlung statt Ihre Änderungen still zu ersetzen. Beide Versionen prüfen, bevor Sie eine behalten.",
     ),
     (
-        "Cloud-folder support uses locally synchronized folders supplied by your cloud client. OAuth sharing and live collaboration are not implemented.",
-        "Cloud-Ordner verwenden lokal synchronisierte Verzeichnisse Ihres Cloud-Clients. OAuth-Freigaben und Live-Zusammenarbeit sind nicht implementiert.",
+        "Cloud settings connect explicitly configured providers. Open and save are revision-checked; uploads and sharing require user actions. Live provider and sync-client compatibility remain unverified; real-time collaboration is not implemented.",
+        "Cloud-Einstellungen verbinden ausdrücklich konfigurierte Anbieter. Öffnen und Speichern werden anhand der Revision geprüft; Uploads und Freigaben erfordern eine Nutzeraktion. Die Kompatibilität mit Live-Anbietern und Synchronisierungsclients ist nicht verifiziert; Zusammenarbeit in Echtzeit ist nicht implementiert.",
+    ),
+    (
+        "Integrated cloud accounts are disabled by default while publisher registrations are pending. Local sync folders, backups and browser document storage remain available.",
+        "Integrierte Cloud-Konten sind standardmäßig deaktiviert, solange die Registrierungen des Herausgebers noch ausstehen. Lokale Synchronisierungsordner, Sicherungen und der Dokumentspeicher des Browsers bleiben verfügbar.",
     ),
     (
         "Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.",
@@ -2848,6 +2896,556 @@ const DE: &[(&str, &str)] = &[
         "Wait until the file is saved",
         "Warten Sie, bis die Datei gespeichert ist",
     ),
+    ("Box", "Box"),
+    ("Browse cloud files…", "Cloud-Dateien durchsuchen…"),
+    ("Browser document storage", "Dokumentspeicher des Browsers"),
+    (
+        "Browser storage information is unavailable.",
+        "Informationen zum Browserspeicher sind nicht verfügbar.",
+    ),
+    (
+        "Browser storage is private to this site. Check quota or request persistence explicitly; the browser may decline.",
+        "Der Browserspeicher ist nur für diese Website zugänglich. Prüfen Sie das Kontingent oder fordern Sie ausdrücklich dauerhafte Speicherung an; der Browser kann dies ablehnen.",
+    ),
+    (
+        "Browser storage persistence is granted.",
+        "Dauerhafte Speicherung im Browser wurde gewährt.",
+    ),
+    (
+        "Browser storage persistence is not granted.",
+        "Dauerhafte Speicherung im Browser wurde nicht gewährt.",
+    ),
+    (
+        "Browser storage persistence request failed.",
+        "Die Anfrage für dauerhafte Speicherung im Browser ist fehlgeschlagen.",
+    ),
+    (
+        "Browser storage persistence status is unavailable.",
+        "Der Status der dauerhaften Browserspeicherung ist nicht verfügbar.",
+    ),
+    ("Check storage usage", "Speichernutzung prüfen"),
+    (
+        "Cloud sign-in configuration is invalid. Check the server address or contact the publisher.",
+        "Die Cloud-Anmeldekonfiguration ist ungültig. Prüfen Sie die Serveradresse oder wenden Sie sich an den Herausgeber.",
+    ),
+    (
+        "Complete sign-in after the browser redirect.",
+        "Schließen Sie die Anmeldung nach der Browser-Umleitung ab.",
+    ),
+    ("Checking browser storage…", "Browserspeicher wird geprüft…"),
+    (
+        "Choose a backup folder outside detected cloud sync folders. This does not change the provider's synchronization or version history.",
+        "Wählen Sie einen Sicherungsordner außerhalb erkannter Cloud-Synchronisierungsordner. Dies ändert weder die Synchronisierung des Anbieters noch den Versionsverlauf.",
+    ),
+    (
+        "Choose a single file name ending in .thinoda.",
+        "Wählen Sie einen einzelnen Dateinamen mit der Endung .thinoda.",
+    ),
+    (
+        "Choose an existing folder outside every detected cloud sync folder.",
+        "Wählen Sie einen vorhandenen Ordner außerhalb aller erkannten Cloud-Synchronisierungsordner.",
+    ),
+    ("Choose backup folder…", "Sicherungsordner auswählen…"),
+    ("Cloud accounts", "Cloud-Konten"),
+    (
+        "Cloud accounts are optional. Selecting a provider or opening Settings never connects.",
+        "Cloud-Konten sind optional. Durch die Auswahl eines Anbieters oder das Öffnen der Einstellungen wird niemals eine Verbindung hergestellt.",
+    ),
+    (
+        "Cloud connection changed. Downloaded content was not installed.",
+        "Die Cloud-Verbindung wurde geändert. Heruntergeladene Inhalte wurden nicht übernommen.",
+    ),
+    ("Cloud document", "Cloud-Dokument"),
+    ("Cloud document saved.", "Cloud-Dokument gespeichert."),
+    ("Cloud save conflict", "Cloud-Speicherkonflikt"),
+    (
+        "The cloud revision changed or the new file name already exists. Your edits remain open. No overwrite or retry will be attempted. Cancel this save, then use Save As locally or upload a new copy with a different name.",
+        "Die Cloud-Revision hat sich geändert oder der neue Dateiname ist bereits vorhanden. Ihre Änderungen bleiben geöffnet. Es wird weder überschrieben noch erneut versucht. Brechen Sie diesen Speichervorgang ab und verwenden Sie lokal „Speichern unter“ oder laden Sie eine neue Kopie unter einem anderen Namen hoch.",
+    ),
+    (
+        "Cloud file changed. No overwrite was attempted; open the remote file separately or upload a new copy.",
+        "Die Cloud-Datei wurde geändert. Es wurde kein Überschreiben versucht; öffnen Sie die entfernte Datei separat oder laden Sie eine neue Kopie hoch.",
+    ),
+    ("Cloud file name", "Name der Cloud-Datei"),
+    ("Cloud files", "Cloud-Dateien"),
+    ("Cloud folder listed.", "Cloud-Ordner aufgelistet."),
+    ("Cloud operation", "Cloud-Vorgang"),
+    (
+        "Cloud operation cancelled. An upload may already have reached the server; reopen before saving again.",
+        "Cloud-Vorgang abgebrochen. Ein Upload könnte den Server bereits erreicht haben; öffnen Sie die Datei erneut, bevor Sie wieder speichern.",
+    ),
+    (
+        "Cloud creation returned no stable identity or revision. The upload may have reached the server; reopen before saving again.",
+        "Die Cloud-Erstellung lieferte keine stabile Identität oder Revision. Der Upload könnte den Server bereits erreicht haben; öffnen Sie die Datei erneut, bevor Sie wieder speichern.",
+    ),
+    ("Cloud provider", "Cloud-Anbieter"),
+    (
+        "Cloud request failed. Your local edits are unchanged.",
+        "Cloud-Anfrage fehlgeschlagen. Ihre lokalen Änderungen sind unverändert.",
+    ),
+    ("Cloud sign-in cancelled.", "Cloud-Anmeldung abgebrochen."),
+    (
+        "Cloud sign-in failed. Live provider authentication has not been verified for this build.",
+        "Cloud-Anmeldung fehlgeschlagen. Die Authentifizierung bei Live-Anbietern wurde für diesen Build nicht verifiziert.",
+    ),
+    (
+        "Cloud snapshot uploaded. Newer edits or the local source still need saving.",
+        "Cloud-Momentaufnahme hochgeladen. Neuere Änderungen oder die lokale Quelldatei müssen noch gespeichert werden.",
+    ),
+    (
+        "Cloud worker could not start. No request was made.",
+        "Der Cloud-Prozess konnte nicht gestartet werden. Es wurde keine Anfrage gesendet.",
+    ),
+    (
+        "Cloud worker stopped. Your local edits are unchanged.",
+        "Der Cloud-Prozess wurde beendet. Ihre lokalen Änderungen sind unverändert.",
+    ),
+    ("Connect", "Verbinden"),
+    (
+        "Provider sign-in is not enabled in this build. The publisher must configure a registered OAuth application before you can connect.",
+        "Die Anmeldung beim Anbieter ist in diesem Build nicht aktiviert. Der Herausgeber muss eine registrierte OAuth-Anwendung konfigurieren, bevor Sie eine Verbindung herstellen können.",
+    ),
+    (
+        "Connect opens the selected provider’s sign-in page so you can authorize Thinoda. Account folders are chosen automatically; no registration IDs are needed.",
+        "„Verbinden“ öffnet die Anmeldeseite des ausgewählten Anbieters, damit Sie Thinoda autorisieren können. Kontoordner werden automatisch ausgewählt; Registrierungs-IDs sind nicht erforderlich.",
+    ),
+    (
+        "Web sign-in redirects this tab. Save local work before connecting.",
+        "Bei der Webanmeldung wird dieser Tab weitergeleitet. Speichern Sie Ihre lokale Arbeit, bevor Sie eine Verbindung herstellen.",
+    ),
+    ("Connect cloud account", "Cloud-Konto verbinden"),
+    (
+        "Connect contacts your configured provider and may open its sign-in page. Browsing sends folder identifiers; Open downloads content. Save and Upload send document content only when you request them.",
+        "Beim Verbinden wird Ihr konfigurierter Anbieter kontaktiert und möglicherweise dessen Anmeldeseite geöffnet. Beim Durchsuchen werden Ordnerkennungen gesendet; Öffnen lädt Inhalte herunter. Speichern und Hochladen übertragen Dokumentinhalte nur auf Ihre Anforderung.",
+    ),
+    (
+        "Connected. Choose List folder to browse; no files are downloaded automatically.",
+        "Verbunden. Wählen Sie „Ordner auflisten“, um ihn zu durchsuchen; Dateien werden nicht automatisch heruntergeladen.",
+    ),
+    ("Connecting cloud account…", "Cloud-Konto wird verbunden…"),
+    ("Copy link", "Link kopieren"),
+    (
+        "Could not commit document drafts. Your edits are unchanged.",
+        "Dokumententwürfe konnten nicht übernommen werden. Ihre Änderungen sind unverändert.",
+    ),
+    (
+        "Could not encode the cloud document. Your local edits are unchanged.",
+        "Das Cloud-Dokument konnte nicht codiert werden. Ihre lokalen Änderungen sind unverändert.",
+    ),
+    (
+        "Could not import the cloud document. No existing document was changed.",
+        "Das Cloud-Dokument konnte nicht importiert werden. Kein vorhandenes Dokument wurde geändert.",
+    ),
+    (
+        "Could not open the cloud sign-in page.",
+        "Die Cloud-Anmeldeseite konnte nicht geöffnet werden.",
+    ),
+    (
+        "Create restricted share link",
+        "Eingeschränkten Freigabelink erstellen",
+    ),
+    ("Create share link", "Freigabelink erstellen"),
+    (
+        "Creating restricted share link…",
+        "Eingeschränkter Freigabelink wird erstellt…",
+    ),
+    (
+        "Credentials use the OS keychain on desktop and this tab's session storage on web. No cloud autosave or background reconnection.",
+        "Anmeldedaten werden auf dem Desktop im Schlüsselbund des Betriebssystems und im Web im Sitzungsspeicher dieses Tabs abgelegt. Es gibt weder automatisches Speichern in der Cloud noch eine Wiederverbindung im Hintergrund.",
+    ),
+    ("Disconnect", "Trennen"),
+    ("Disconnect cloud account", "Cloud-Konto trennen"),
+    (
+        "Disconnected locally. Provider grants and remote files were not deleted; revoke access in the provider's account settings.",
+        "Lokal getrennt. Anbieterberechtigungen und entfernte Dateien wurden nicht gelöscht; widerrufen Sie den Zugriff in den Kontoeinstellungen des Anbieters.",
+    ),
+    ("Disconnecting cloud account…", "Cloud-Konto wird getrennt…"),
+    (
+        "Downloading cloud document…",
+        "Cloud-Dokument wird heruntergeladen…",
+    ),
+    ("Dropbox", "Dropbox"),
+    (
+        "Dropbox's starting folder must be an absolute path or empty for the app root.",
+        "Der Startordner von Dropbox muss ein absoluter Pfad oder leer sein, um den App-Stammordner zu verwenden.",
+    ),
+    ("File ID", "Datei-ID"),
+    ("Folder", "Ordner"),
+    ("Google Drive", "Google Drive"),
+    (
+        "Google Drive allows duplicate file names. This upload creates a distinct new file in the selected folder, even if the same name already exists. Existing files are not replaced. Later Save targets only the returned file ID.",
+        "Google Drive erlaubt doppelte Dateinamen. Dieser Upload erstellt im ausgewählten Ordner eine eigene neue Datei, auch wenn bereits eine Datei mit demselben Namen vorhanden ist. Vorhandene Dateien werden nicht ersetzt. Spätere Speichervorgänge gelten nur für die zurückgegebene Datei-ID.",
+    ),
+    ("I agree to this action", "Ich stimme dieser Aktion zu"),
+    (
+        "I authorize Thinoda to contact this provider, open sign-in if needed, and store credentials securely. This does not browse, upload or share any document.",
+        "Ich ermächtige Thinoda, diesen Anbieter zu kontaktieren, bei Bedarf die Anmeldung zu öffnen und Anmeldedaten sicher zu speichern. Dabei wird kein Dokument durchsucht, hochgeladen oder freigegeben.",
+    ),
+    ("List folder", "Ordner auflisten"),
+    ("Listing cloud folder…", "Cloud-Ordner wird aufgelistet…"),
+    (
+        "Loading version metadata…",
+        "Versionsmetadaten werden geladen…",
+    ),
+    ("Local backups", "Lokale Sicherungen"),
+    (
+        "Nextcloud / ownCloud / WebDAV",
+        "Nextcloud / ownCloud / WebDAV",
+    ),
+    (
+        "Nextcloud default: remote.php/dav/files. Leave empty if the server URL is the complete DAV collection.",
+        "Nextcloud-Standard: remote.php/dav/files. Lassen Sie das Feld leer, wenn die Server-URL bereits die vollständige DAV-Sammlung bezeichnet.",
+    ),
+    (
+        "No stored credentials. Start a new sign-in.",
+        "Keine gespeicherten Anmeldedaten. Starten Sie eine neue Anmeldung.",
+    ),
+    ("OneDrive", "OneDrive"),
+    (
+        "OneDrive connection locates the app folder and may create it. No document is transferred, and access is not broadened if discovery fails.",
+        "Beim Verbinden mit OneDrive wird der App-Ordner gesucht und gegebenenfalls erstellt. Es werden keine Dokumente übertragen und der Zugriff wird nicht erweitert, falls die Suche fehlschlägt.",
+    ),
+    (
+        "OneDrive requires the drive ID and app-folder item ID for your registration.",
+        "OneDrive benötigt die Laufwerk-ID und die Element-ID des App-Ordners für Ihre Registrierung.",
+    ),
+    ("Open", "Öffnen"),
+    ("Open remote copy", "Entfernte Kopie öffnen"),
+    ("Parent folder", "Übergeordneter Ordner"),
+    (
+        "Progress is indeterminate. Cancel cannot undo an upload already accepted by the provider.",
+        "Der Fortschritt ist nicht bestimmbar. Abbrechen kann einen bereits vom Anbieter angenommenen Upload nicht rückgängig machen.",
+    ),
+    (
+        "Remove this connection and its stored credentials on this device/tab. Documents and unsaved edits remain open. Remote files and provider grants are not deleted.",
+        "Diese Verbindung und ihre gespeicherten Anmeldedaten auf diesem Gerät bzw. in diesem Tab entfernen. Dokumente und ungespeicherte Änderungen bleiben geöffnet. Entfernte Dateien und Anbieterberechtigungen werden nicht gelöscht.",
+    ),
+    (
+        "Request persistent storage",
+        "Dauerhafte Speicherung anfordern",
+    ),
+    (
+        "Requesting persistent storage…",
+        "Dauerhafte Speicherung wird angefordert…",
+    ),
+    ("Restricted share link", "Eingeschränkter Freigabelink"),
+    (
+        "Restricted share link created. It was not opened or copied automatically.",
+        "Eingeschränkter Freigabelink erstellt. Er wurde nicht automatisch geöffnet oder kopiert.",
+    ),
+    ("Revision", "Revision"),
+    ("Root folder", "Stammordner"),
+    (
+        "Save local work before redirecting this tab to sign in.",
+        "Speichern Sie Ihre lokale Arbeit, bevor dieser Tab zur Anmeldung weitergeleitet wird.",
+    ),
+    (
+        "Secure credential storage is unavailable. No connection was retained.",
+        "Sichere Speicherung von Anmeldedaten ist nicht verfügbar. Es wurde keine Verbindung gespeichert.",
+    ),
+    (
+        "Select and configure a cloud provider first.",
+        "Wählen Sie zuerst einen Cloud-Anbieter aus und konfigurieren Sie ihn.",
+    ),
+    ("Storage quota (bytes)", "Speicherkontingent (Bytes)"),
+    ("Storage used (bytes)", "Belegter Speicher (Bytes)"),
+    (
+        "Stored credentials do not match this configuration. Start a new sign-in.",
+        "Die gespeicherten Anmeldedaten stimmen nicht mit dieser Konfiguration überein. Starten Sie eine neue Anmeldung.",
+    ),
+    (
+        "This changes sharing on the selected remote file. Box uses existing collaborators; OneDrive uses organization-only view access. No anonymous/public link is requested. The provider may reject this permission.",
+        "Dies ändert die Freigabe der ausgewählten entfernten Datei. Box verwendet vorhandene Mitwirkende; OneDrive gewährt nur der Organisation lesenden Zugriff. Es wird kein anonymer/öffentlicher Link angefordert. Der Anbieter kann diese Berechtigung ablehnen.",
+    ),
+    (
+        "This document's cloud connection was disconnected. Save As locally or upload a new copy; reconnecting does not retarget it.",
+        "Die Cloud-Verbindung dieses Dokuments wurde getrennt. Speichern Sie es lokal unter einem anderen Namen oder laden Sie eine neue Kopie hoch; durch erneutes Verbinden wird das Dokument nicht neu zugeordnet.",
+    ),
+    (
+        "This folder has no safe new-file upload path. Choose another folder.",
+        "Für diesen Ordner gibt es keinen sicheren Weg, eine neue Datei hochzuladen. Wählen Sie einen anderen Ordner.",
+    ),
+    (
+        "This operation is unavailable for this provider or file size.",
+        "Dieser Vorgang ist bei diesem Anbieter oder für diese Dateigröße nicht verfügbar.",
+    ),
+    ("Unavailable", "Nicht verfügbar"),
+    (
+        "Unsupported source content may be omitted. The cloud original is not changed.",
+        "Nicht unterstützte Quellinhalte können ausgelassen werden. Das Cloud-Original wird nicht geändert.",
+    ),
+    ("Upload", "Hochladen"),
+    (
+        "Upload a snapshot of the current document to the chosen folder as a new .thinoda file. Existing files are never overwritten. Local documents remain local; unsaved documents gain an explicit cloud Save destination.",
+        "Laden Sie eine Momentaufnahme des aktuellen Dokuments als neue .thinoda-Datei in den ausgewählten Ordner hoch. Vorhandene Dateien werden niemals überschrieben. Lokale Dokumente bleiben lokal; ungespeicherte Dokumente erhalten ein ausdrücklich gewähltes Cloud-Speicherziel.",
+    ),
+    ("Upload current document", "Aktuelles Dokument hochladen"),
+    ("Upload current document…", "Aktuelles Dokument hochladen…"),
+    ("Uploading…", "Wird hochgeladen…"),
+    (
+        "Use HTTPS without credentials, a query or a fragment.",
+        "Verwenden Sie HTTPS ohne Anmeldedaten, Abfrageparameter oder Fragment.",
+    ),
+    (
+        "Use an app password instead of browser sign-in",
+        "Verwenden Sie anstelle der Browseranmeldung ein App-Passwort",
+    ),
+    (
+        "Use a public native/SPA registration with PKCE, never a client secret. Permissions may restrict which files appear.",
+        "Verwenden Sie eine öffentliche Registrierung für native Apps/SPAs mit PKCE, niemals ein Clientgeheimnis. Berechtigungen können einschränken, welche Dateien angezeigt werden.",
+    ),
+    (
+        "Use previously stored credentials",
+        "Zuvor gespeicherte Anmeldedaten verwenden",
+    ),
+    (
+        "Version metadata loaded. No version content was downloaded.",
+        "Versionsmetadaten geladen. Es wurden keine Versionsinhalte heruntergeladen.",
+    ),
+    ("Versions", "Versionen"),
+    (
+        "Versions and sharing are unavailable where the adapter does not implement them.",
+        "Versionen und Freigaben sind nicht verfügbar, wenn der Adapter sie nicht implementiert.",
+    ),
+    ("WebDAV app password", "WebDAV-App-Passwort"),
+    ("WebDAV collection prefix", "WebDAV-Sammlungspräfix"),
+    ("WebDAV server URL", "WebDAV-Server-URL"),
+    ("WebDAV username", "WebDAV-Benutzername"),
+    ("Online-only", "Nur online"),
+    (
+        "Local copy; sync status unavailable",
+        "Lokale Kopie; Synchronisierungsstatus nicht verfügbar",
+    ),
+    (
+        "Sync status unavailable",
+        "Synchronisierungsstatus nicht verfügbar",
+    ),
+    (
+        "Choose a backup folder outside every detected cloud folder.",
+        "Wählen Sie einen Sicherungsordner außerhalb aller erkannten Cloud-Ordner.",
+    ),
+    (
+        "Use the asynchronous file workflow for browser documents.",
+        "Verwenden Sie für Browserdokumente den asynchronen Datei-Workflow.",
+    ),
+    // FIM node wizard: labels, dynamic choices, and draft feedback.
+    ("Edit FIM node", "FIM-Knoten bearbeiten"),
+    ("Add FIM child", "FIM-Unterknoten hinzufügen"),
+    ("Insert FIM node before", "FIM-Knoten davor einfügen"),
+    ("Insert FIM node after", "FIM-Knoten danach einfügen"),
+    ("Create FIM node", "FIM-Knoten erstellen"),
+    ("Add child", "Unterknoten hinzufügen"),
+    ("Insert after", "Danach einfügen"),
+    ("Field constraints", "Feldeinschränkungen"),
+    ("Reuse and structure", "Wiederverwendung und Struktur"),
+    ("Rules and code lists", "Regeln und Codelisten"),
+    ("Legal basis", "Rechtsnormgebunden"),
+    ("Harmonized", "Harmonisiert"),
+    ("Abstract", "Abstrakt"),
+    ("Choice group", "Auswahlgruppe"),
+    ("Input", "Eingabe"),
+    ("Static", "Statisch"),
+    ("Selection", "Auswahl"),
+    ("Hidden", "Verborgen"),
+    ("Boolean", "Wahrheitswert"),
+    ("Date", "Datum"),
+    ("Decimal number", "Dezimalzahl"),
+    ("Integer", "Ganzzahl"),
+    ("Currency", "Währung"),
+    ("Object", "Objekt"),
+    ("Date and time", "Datum und Uhrzeit"),
+    ("Time", "Uhrzeit"),
+    ("String.Latin+", "Zeichenfolge (String.Latin+)"),
+    ("Validation", "Validierung"),
+    ("Multiplicity", "Multiplizität"),
+    ("Calculation", "Berechnung"),
+    ("Complex rule", "Komplexe Regel"),
+    (
+        "Apply or cancel the open FIM node draft first.",
+        "Übernehmen oder verwerfen Sie zuerst den offenen FIM-Knotenentwurf.",
+    ),
+    (
+        "Select a FIM node first.",
+        "Wählen Sie zuerst einen FIM-Knoten aus.",
+    ),
+    (
+        "The root has no sibling insertion point.",
+        "Neben dem Wurzelknoten können keine Geschwisterknoten eingefügt werden.",
+    ),
+    (
+        "FIM validation worker stopped",
+        "FIM-Validierungsprozess wurde beendet",
+    ),
+    (
+        "The document changed. The FIM draft was kept; cancel and reopen it.",
+        "Das Dokument wurde geändert. Der FIM-Entwurf wurde beibehalten; brechen Sie die Bearbeitung ab und öffnen Sie ihn erneut.",
+    ),
+    ("Show in map", "In der Map anzeigen"),
+    (
+        "This draft stays attached to this node while you navigate the map.",
+        "Dieser Entwurf bleibt diesem Knoten zugeordnet, während Sie in der Map navigieren.",
+    ),
+    (
+        "Validating FIM changes…",
+        "FIM-Änderungen werden validiert…",
+    ),
+    ("More schema properties…", "Weitere Schemaeigenschaften…"),
+    ("Delete FIM node…", "FIM-Knoten löschen…"),
+    ("Discard FIM draft?", "FIM-Entwurf verwerfen?"),
+    (
+        "Only the unapplied node draft is discarded. The document is unchanged.",
+        "Nur der noch nicht übernommene Knotenentwurf wird verworfen. Das Dokument bleibt unverändert.",
+    ),
+    ("Keep editing", "Weiter bearbeiten"),
+    ("Discard draft", "Entwurf verwerfen"),
+    ("Delete FIM node?", "FIM-Knoten löschen?"),
+    ("Delete FIM node", "FIM-Knoten löschen"),
+    (
+        "Delete this occurrence and its contained nodes? Shared parent usages are affected. Dangling references and invalid schemas block deletion.",
+        "Dieses Vorkommen und seine enthaltenen Knoten löschen? Gemeinsam genutzte übergeordnete Strukturen sind betroffen. Verwaiste Referenzen und ungültige Schemas verhindern das Löschen.",
+    ),
+    (
+        "Confirm the shared-definition impact or make this occurrence independent.",
+        "Bestätigen Sie die Auswirkungen auf die gemeinsam genutzte Definition oder machen Sie dieses Vorkommen unabhängig.",
+    ),
+    (
+        "Install the official schemas before applying FIM changes.",
+        "Installieren Sie die offiziellen Schemas, bevor Sie FIM-Änderungen übernehmen.",
+    ),
+    ("Node type", "Knotentyp"),
+    (
+        "XDF3 code lists use canonical references, not FIM registry IDs.",
+        "XDF3-Codelisten verwenden kanonische Referenzen statt FIM-Register-IDs.",
+    ),
+    ("Assigned FIM ID", "Zugewiesene FIM-ID"),
+    ("Definition", "Definition"),
+    ("Input label", "Eingabebezeichnung"),
+    ("Output label", "Ausgabebezeichnung"),
+    ("Input help text", "Eingabehilfetext"),
+    ("Output help text", "Ausgabehilfetext"),
+    ("Structure element type", "Strukturelementtyp"),
+    ("Field type", "Feldart"),
+    ("Data type", "Datentyp"),
+    ("Precision", "Präzisierung"),
+    ("Minimum length", "Minimale Länge"),
+    ("Maximum length", "Maximale Länge"),
+    ("Minimum value", "Minimaler Wert"),
+    ("Maximum value", "Maximaler Wert"),
+    ("Pattern", "Muster"),
+    ("Rule type", "Regelart"),
+    ("Rule text", "Regeltext"),
+    (
+        "Rule script (not executed)",
+        "Regelskript (wird nicht ausgeführt)",
+    ),
+    (
+        "Only properties defined for this node type are changed.",
+        "Nur die für diesen Knotentyp definierten Eigenschaften werden geändert.",
+    ),
+    ("BOB number range (60)", "BOB-Nummernkreis (60)"),
+    (
+        "Reuse evidence comes from IDs and preserved relations; it does not prove registry provenance.",
+        "Hinweise auf Wiederverwendung stammen aus IDs und erhaltenen Beziehungen; sie belegen keine Herkunft aus einem Register.",
+    ),
+    (
+        "Update all shared usages",
+        "Alle gemeinsamen Verwendungen aktualisieren",
+    ),
+    (
+        "Make this occurrence independent",
+        "Dieses Vorkommen unabhängig machen",
+    ),
+    (
+        "A new assigned ID is required. Nested reuse and provenance are preserved.",
+        "Eine neue zugewiesene ID ist erforderlich. Verschachtelte Wiederverwendung und Herkunft bleiben erhalten.",
+    ),
+    ("Parent", "Übergeordneter Knoten"),
+    ("Insertion position", "Einfügeposition"),
+    (
+        "Reuse existing definition",
+        "Vorhandene Definition wiederverwenden",
+    ),
+    (
+        "XDF3 groups require an initial child. Choose an existing field or group.",
+        "XDF3-Gruppen benötigen einen ersten Unterknoten. Wählen Sie ein vorhandenes Feld oder eine Gruppe aus.",
+    ),
+    ("Initial child", "Erster Unterknoten"),
+    ("Multiplicity (Min:Max)", "Multiplizität (Min:Max)"),
+    ("Usage justification", "Verwendungsbegründung"),
+    (
+        "Multiplicity and usage justification belong to the incoming structure, not the definition.",
+        "Multiplizität und Verwendungsbegründung gehören zur eingehenden Struktur, nicht zur Definition.",
+    ),
+    ("Associated rules", "Zugeordnete Regeln"),
+    (
+        "No rule definitions in this document.",
+        "Dieses Dokument enthält keine Regeldefinitionen.",
+    ),
+    ("Code list reference", "Codelistenreferenz"),
+    ("Canonical identification", "Kanonische Identifikation"),
+    ("Canonical version URI", "Kanonische Versions-URI"),
+    ("Code column", "Codespalte"),
+    ("Name column", "Namensspalte"),
+    ("Help column", "Hilfespalte"),
+    (
+        "External code lists are referenced, never downloaded automatically.",
+        "Externe Codelisten werden referenziert und niemals automatisch heruntergeladen.",
+    ),
+    ("More schema properties", "Weitere Schemaeigenschaften"),
+    (
+        "Advanced source editing. Changes are staged with the node and validated before Apply.",
+        "Erweiterte Quelltextbearbeitung. Änderungen werden mit dem Knoten vorgemerkt und vor dem Übernehmen validiert.",
+    ),
+    (
+        "Use as insertion parent",
+        "Als übergeordneten Einfügeknoten verwenden",
+    ),
+    ("Add schema property", "Schemaeigenschaft hinzufügen"),
+    ("XML element name", "XML-Elementname"),
+    ("Namespace", "Namensraum"),
+    ("Stage property", "Eigenschaft vormerken"),
+    ("Stage attribute", "Attribut vormerken"),
+    (
+        "Edit the canonical reference on the Rules and code lists page.",
+        "Bearbeiten Sie die kanonische Referenz auf der Seite „Regeln und Codelisten“.",
+    ),
+    ("Message metadata", "Nachrichtenmetadaten"),
+    (
+        "Use More schema properties to edit message metadata without expanding the node tree.",
+        "Verwenden Sie „Weitere Schemaeigenschaften“, um Nachrichtenmetadaten zu bearbeiten, ohne den Knotenbaum aufzuklappen.",
+    ),
+    ("Default value", "Standardwert"),
+    ("Prefill", "Vorbefüllung"),
+    ("Optional", "Optional"),
+    ("Required", "Erforderlich"),
+    ("Maximum file size (bytes)", "Maximale Dateigröße (Bytes)"),
+    ("Allowed media types", "Zulässige Medientypen"),
+    ("Code list version", "Codelistenversion"),
+    (
+        "Create and edit more properties…",
+        "Erstellen und weitere Eigenschaften bearbeiten…",
+    ),
+    (
+        "Reusing a definition preserves its metadata. Edit it after insertion.",
+        "Bei der Wiederverwendung einer Definition bleiben ihre Metadaten erhalten. Bearbeiten Sie sie nach dem Einfügen.",
+    ),
+    ("Remove schema property", "Schemaeigenschaft entfernen"),
+    ("Remove attribute", "Attribut entfernen"),
+    ("XML fragment", "XML-Fragment"),
+    ("Stage XML fragment", "XML-Fragment vormerken"),
+    (
+        "Insert one complete schema element with explicit namespaces. FIM definitions must use the node wizard.",
+        "Fügen Sie ein vollständiges Schemaelement mit expliziten Namensräumen ein. Verwenden Sie für FIM-Definitionen den Knotenassistenten.",
+    ),
+    (
+        "Stage or clear unfinished schema properties before applying.",
+        "Merken Sie unvollständige Schemaeigenschaften vor oder leeren Sie die Eingaben, bevor Sie die Änderungen übernehmen.",
+    ),
+    (
+        "Hierarchy changes are staged. Apply validates the whole document; Cancel keeps the original hierarchy.",
+        "Hierarchieänderungen sind vorgemerkt. „Übernehmen“ validiert das gesamte Dokument; „Abbrechen“ behält die ursprüngliche Hierarchie bei.",
+    ),
+    ("Review hierarchy changes", "Hierarchieänderungen prüfen"),
 ];
 
 #[cfg(test)]
@@ -2867,6 +3465,67 @@ mod tests {
     ];
 
     #[test]
+    fn fim_wizard_dynamic_labels_are_in_every_catalog() {
+        for key in [
+            "General",
+            "Field constraints",
+            "Reuse and structure",
+            "Rules and code lists",
+            "Legal basis",
+            "Harmonized",
+            "Abstract",
+            "Choice group",
+            "Input",
+            "Static",
+            "Selection",
+            "Hidden",
+            "Locked",
+            "Text",
+            "Boolean",
+            "Date",
+            "Decimal number",
+            "Integer",
+            "Currency",
+            "File",
+            "Object",
+            "Date and time",
+            "Time",
+            "String.Latin+",
+            "Validation",
+            "Multiplicity",
+            "Calculation",
+            "Complex rule",
+            "Add child",
+            "Insert after",
+            "Edit FIM node",
+            "Add FIM child",
+            "Insert FIM node before",
+            "Insert FIM node after",
+            "Create FIM node",
+            "Default value",
+            "Prefill",
+            "None",
+            "Optional",
+            "Required",
+            "Maximum file size (bytes)",
+            "Allowed media types",
+            "Code list version",
+            "Message metadata",
+        ] {
+            assert!(german().contains_key(key), "Missing German FIM key: {key}");
+            assert!(additional().contains_key(key), "Missing FIM key: {key}");
+            assert!(
+                brazilian().contains_key(key),
+                "Missing Brazilian FIM key: {key}"
+            );
+        }
+        assert_eq!(
+            t_in(Lang::De, "Multiplicity (Min:Max)"),
+            "Multiplizität (Min:Max)"
+        );
+    }
+
+    #[test]
     fn formatted_note_export_errors_are_translated_in_every_catalog() {
         for language in TRANSLATED {
             assert_ne!(t_in(language, "Export note source"), "Export note source");
@@ -2883,6 +3542,14 @@ mod tests {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
                 assert!(t_in(language, key).contains("Thinoda"));
             }
+        }
+    }
+
+    #[test]
+    fn document_size_limit_feedback_is_translated_in_every_catalog() {
+        let key = crate::file_ops::DOCUMENT_TOO_LARGE;
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, key), key, "{language:?}: {key}");
         }
     }
 
@@ -3262,6 +3929,8 @@ mod tests {
             include_str!("shortcut_browser.rs"),
             include_str!("keymap_editor.rs"),
             include_str!("planning.rs"),
+            include_str!("fim.rs"),
+            include_str!("fim/node_editor.rs"),
             include_str!("zones.rs"),
             include_str!("pitch.rs"),
             include_str!("pitch/pitch_editor.rs"),

@@ -21,6 +21,16 @@ use crate::{
     i18n::t,
 };
 
+mod node_editor;
+pub(crate) use node_editor::Insertion as FimInsertion;
+
+struct SidebarSnapshot {
+    source: thinoda_core::fim::FimDocument,
+    records: Vec<thinoda_core::fim::RecordMetadata>,
+    diagnostics: Vec<thinoda_core::fim::FimDiagnostic>,
+    dependencies: Vec<thinoda_core::fim::FimDependency>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Owner {
     key: String,
@@ -43,19 +53,10 @@ pub(crate) struct FimState {
     report: Option<(Owner, ExchangeReport)>,
     error: Option<String>,
     selected_record: Option<(String, usize, RecordId)>,
-    filter: String,
-    page: usize,
-    new_name: String,
-    new_element: String,
-    new_namespace: String,
-    new_attribute: String,
-    reuse: Option<RecordId>,
     context: Option<Context>,
     selection: Option<(String, usize, Option<thinoda_core::TopicId>)>,
-    insert_before: Option<RecordId>,
-    occurrence_only: bool,
-    independent_identity: String,
-    independent_version: String,
+    editor: Option<node_editor::NodeEditor>,
+    sidebar: Option<std::sync::Arc<SidebarSnapshot>>,
 }
 
 impl FimState {
@@ -82,7 +83,6 @@ impl ThinodaApp {
         let owner = (doc.key.clone(), doc.doc.active_index(), doc.view.primary());
         self.fim.selected_record = Some((owner.0.clone(), owner.1, record));
         self.fim.selection = Some(owner);
-        self.fim.page = 0;
         self.format_tab = crate::app::FormatTab::Fim;
         self.sidebar_family = crate::app::SidebarFamily::Format;
         self.settings.show_format_panel = true;
@@ -186,6 +186,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn fim_dialogs(&mut self, ctx: &Context) -> bool {
+        self.fim_node_dialog(ctx);
         let Some(dialect) = self.fim.consent else {
             return false;
         };
@@ -195,6 +196,7 @@ impl ThinodaApp {
         let labels = crate::i18n::dialog_labels();
         let response = Dialog::new(egui::Id::unique("fim_schema_consent"), t("Download official schemas?"))
             .labels(&labels)
+            .modal(true)
             .default_width(510.0)
             .show(ctx, |ui| {
                 ui.label(t("Only official schema archives are downloaded from XRepository. Your document stays on this device. Validation then works offline."));
@@ -420,29 +422,6 @@ impl ThinodaApp {
         self.fim.context.clone().unwrap_or_default()
     }
 
-    fn apply_fim(&mut self, ctx: &Context, change: FimChange) {
-        let independent = matches!(&change, FimChange::MakeIndependent { .. });
-        let Some(doc) = self.doc_mut() else { return };
-        let result = doc.flush_inspector_edit(ctx).and_then(|()| {
-            doc.doc
-                .edit_sheet("FIM data", |sheet| {
-                    sheet
-                        .apply_fim_change(change)
-                        .map_err(|error| thinoda_core::EditError::Invalid(error.to_string()))
-                })
-                .map_err(|error| error.to_string())
-        });
-        if let Err(error) = result {
-            self.fim.error = Some(error);
-        } else {
-            self.fim.error = None;
-            if independent {
-                self.fim.independent_identity.clear();
-                self.fim.independent_version.clear();
-            }
-        }
-    }
-
     pub(crate) fn fim_tab(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.fim.context = Some(ctx.clone());
@@ -459,13 +438,7 @@ impl ThinodaApp {
         let selection_changed = self.fim.selection.as_ref() != Some(&selection);
         if selection_changed {
             self.fim.selected_record = None;
-            self.fim.page = 0;
             self.fim.selection = Some(selection);
-            self.fim.occurrence_only = false;
-            self.fim.independent_identity.clear();
-            self.fim.independent_version.clear();
-            self.fim.reuse = None;
-            self.fim.insert_before = None;
         }
         let selected = self
             .fim
@@ -473,11 +446,33 @@ impl ThinodaApp {
             .as_ref()
             .filter(|(owner, sheet, _)| owner == &key && *sheet == index)
             .map(|(_, _, record)| *record);
+        let selected = selected.filter(|record| {
+            source.record_metadata(*record).is_some() || *record == source.root_record()
+        });
         let map_record = primary.and_then(|id| source.record_for_topic(id));
         let selected = selected
             .or(map_record)
             .unwrap_or_else(|| source.root_record());
-        let records = source.records();
+        if self
+            .fim
+            .sidebar
+            .as_ref()
+            .is_none_or(|cache| !cache.source.same_source_revision(&source))
+        {
+            self.fim.sidebar = Some(std::sync::Arc::new(SidebarSnapshot {
+                source: source.clone(),
+                records: source.records(),
+                diagnostics: source.diagnostics(),
+                dependencies: source.dependencies(),
+            }));
+        }
+        let snapshot = self
+            .fim
+            .sidebar
+            .as_ref()
+            .expect("FIM sidebar snapshot")
+            .clone();
+        let records = &snapshot.records;
         let bound_topic = source.topic_for_record(selected);
         let metadata = bound_topic
             .and_then(|id| source.topic_metadata(id))
@@ -539,11 +534,18 @@ impl ThinodaApp {
                 entry.response.scroll_to_me(None);
             }
         }
-        let mut change = None;
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(t("Edit FIM node")).clicked() {
+                self.begin_fim_node(&ctx, Some(selected), None);
+            }
+            if ui.button(t("Create FIM node")).clicked() {
+                self.begin_fim_node(&ctx, Some(selected), Some(FimInsertion::Child));
+            }
+        });
         widgets::section(ui, t("FIM validation"), true, |ui| {
             self.schema_controls(ui, dialect);
-            let semantic_errors = source
-                .diagnostics()
+            let semantic_errors = snapshot
+                .diagnostics
                 .iter()
                 .any(|d| d.severity == DiagnosticSeverity::Error);
             if self.fim.work.is_some() {
@@ -674,75 +676,37 @@ impl ThinodaApp {
                     }
                 });
             }
-            if let Some(record) = source
-                .records()
-                .into_iter()
+            if let Some(record) = records
+                .iter()
                 .find(|record| record.record == metadata.record)
             {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(t("Name"));
-                    if ui.add(egui::Button::new(&record.name).wrap()).clicked()
-                        && let Some(doc) = self.doc_mut()
-                    {
-                        doc.set_fim_edit(FimChange::RenameDefinition {
-                            record: record.record,
-                            name: record.name,
-                        });
+                    if ui.add(egui::Button::new(&record.name).wrap()).clicked() {
+                        self.begin_fim_node(&ctx, Some(record.record), None);
                     }
                 });
             }
             if let Some(cardinality) = &metadata.cardinality {
                 ui.horizontal(|ui| {
                     ui.label(t("Cardinality"));
-                    if ui.button(cardinality).clicked()
-                        && let Some(topic) = bound_topic
-                        && let Some(doc) = self.doc_mut()
-                    {
-                        doc.set_fim_edit(FimChange::SetCardinality {
-                            topic,
-                            value: cardinality.clone(),
-                        });
+                    if ui.button(cardinality).clicked() {
+                        self.begin_fim_node(&ctx, Some(metadata.record), None);
+                        if let Some(editor) = self.fim.editor.as_mut() {
+                            editor.show_structure();
+                        }
                     }
                 });
             }
-            if metadata.identity.is_some()
-                && let Some(topic) = bound_topic
-            {
-                widgets::section(ui, t("Make independent"), false, |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.fim.independent_identity)
-                            .hint_text(t("New identity"))
-                            .desired_width(ui.available_width()),
-                    )
-                    .accessible_name(t("New identity"));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.fim.independent_version)
-                            .hint_text(t("Version"))
-                            .desired_width(ui.available_width()),
-                    )
-                    .accessible_name(t("Version"));
-                    if ui
-                        .add_enabled(
-                            !self.fim.independent_identity.trim().is_empty(),
-                            egui::Button::new(t("Make independent")),
-                        )
-                        .clicked()
-                    {
-                        change = Some(FimChange::MakeIndependent {
-                            topic,
-                            identity: self.fim.independent_identity.trim().to_owned(),
-                            version: if self.fim.independent_version.trim().is_empty() {
-                                metadata.version.clone()
-                            } else {
-                                Some(self.fim.independent_version.trim().to_owned())
-                            },
-                        });
-                    }
-                });
+            if metadata.identity.is_some() && ui.button(t("Make independent")).clicked() {
+                self.begin_fim_node(&ctx, Some(metadata.record), None);
+                if let Some(editor) = self.fim.editor.as_mut() {
+                    editor.show_structure();
+                }
             }
         }
         widgets::section(ui, t("Semantic diagnostics"), false, |ui| {
-            for diagnostic in source.diagnostics() {
+            for diagnostic in &snapshot.diagnostics {
                 let color = match diagnostic.severity {
                     DiagnosticSeverity::Error => ui.visuals().error_fg_color,
                     DiagnosticSeverity::Warning => ui.visuals().warn_fg_color,
@@ -762,69 +726,30 @@ impl ThinodaApp {
                     }
                     if let Some(record) = diagnostic.record {
                         self.fim.selected_record = Some((key.clone(), index, record));
-                        self.fim.page = 0;
                     }
                 }
             }
         });
         widgets::section(ui, t("Add FIM element"), false, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.fim.new_name).hint_text(t("Name")))
-                .accessible_name(t("Name"));
-            if let Some(parent) = bound_topic {
+            if bound_topic.is_some() {
                 ui.horizontal_wrapped(|ui| {
-                    for kind in [
-                        FimKind::Field,
-                        FimKind::Group,
-                        FimKind::Choice,
-                        FimKind::CodeList,
-                        FimKind::Rule,
+                    for (position, label) in [
+                        (FimInsertion::Child, "Add child"),
+                        (FimInsertion::Before, "Insert before"),
+                        (FimInsertion::After, "Insert after"),
                     ] {
-                        if ui
-                            .button(format!("{} · {}", kind_label(kind), kind_name(kind)))
-                            .clicked()
-                        {
-                            change = Some(FimChange::Add {
-                                parent,
-                                kind,
-                                name: self.fim.new_name.clone(),
-                            });
+                        if ui.button(t(label)).clicked() {
+                            self.begin_fim_node(&ctx, Some(selected), Some(position));
                         }
                     }
                 });
-                egui::ComboBox::from_label(t("Shared definition"))
-                    .selected_text(t("Shared definition"))
-                    .show_ui(ui, |ui| {
-                        for record in &records {
-                            if ui
-                                .selectable_label(
-                                    self.fim.reuse == Some(record.record),
-                                    format!("{} · {}", kind_label(record.kind), record.name),
-                                )
-                                .clicked()
-                            {
-                                self.fim.reuse = Some(record.record);
-                            }
-                        }
-                    });
-                if let Some(record) = self.fim.reuse
-                    && ui.button(t("Apply")).clicked()
-                {
-                    change = Some(FimChange::Reuse { parent, record });
-                }
-                if ui.button(t("Duplicate")).clicked() {
-                    change = Some(FimChange::Duplicate { topic: parent });
-                }
-                if ui.button(t("Remove")).clicked() {
-                    change = Some(FimChange::Remove { topic: parent });
-                }
             }
         });
         widgets::section(ui, t("Document metadata"), false, |ui| {
-            if ui.button(t("All source data")).clicked() {
-                self.fim.selected_record = Some((key.clone(), index, source.root_record()));
-                self.fim.page = 0;
+            if ui.button(t("Message metadata")).clicked() {
+                self.begin_fim_node(&ctx, Some(source.root_record()), None);
             }
-            for record in &records {
+            for record in records {
                 let mut button =
                     egui::Button::new(format!("{} · {}", kind_label(record.kind), record.name))
                         .selected(selected == record.record)
@@ -832,9 +757,12 @@ impl ThinodaApp {
                 if map_record == Some(record.record) {
                     button = button.stroke(egui::Stroke::new(2.0, palette.accent));
                 }
-                if ui.add(button).clicked() {
+                let response = ui.add(button);
+                if selection_changed && map_record == Some(record.record) {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() {
                     self.fim.selected_record = Some((key.clone(), index, record.record));
-                    self.fim.page = 0;
                     if let Some(topic) = source.topic_for_record(record.record)
                         && let Some(doc) = self.doc_mut()
                     {
@@ -844,7 +772,7 @@ impl ThinodaApp {
             }
         });
         widgets::section(ui, t("Dependencies"), false, |ui| {
-            for dependency in source.dependencies() {
+            for dependency in &snapshot.dependencies {
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(egui::Button::new(&dependency.identity).wrap())
@@ -852,7 +780,6 @@ impl ThinodaApp {
                         .clicked()
                     {
                         self.fim.selected_record = Some((key.clone(), index, dependency.source));
-                        self.fim.page = 0;
                     }
                     match &dependency.resolution {
                         DependencyResolution::Internal(targets)
@@ -868,7 +795,6 @@ impl ThinodaApp {
                                     );
                                 if ui.add(egui::Button::new(label).wrap()).clicked() {
                                     self.fim.selected_record = Some((key.clone(), index, *target));
-                                    self.fim.page = 0;
                                 }
                             }
                             if matches!(dependency.resolution, DependencyResolution::Ambiguous(_)) {
@@ -891,212 +817,6 @@ impl ThinodaApp {
                 });
             }
         });
-        widgets::section(ui, t("All source data"), true, |ui| {
-            ui.checkbox(
-                &mut self.fim.occurrence_only,
-                t("Edit only this occurrence"),
-            );
-            let occurrence_only = self.fim.occurrence_only;
-            if ui
-                .add(egui::TextEdit::singleline(&mut self.fim.filter).hint_text(t("Search")))
-                .changed()
-            {
-                self.fim.page = 0;
-            }
-            let filter = self.fim.filter.to_lowercase();
-            let fields: Vec<_> = source
-                .fields(selected)
-                .into_iter()
-                .filter(|field| {
-                    filter.is_empty()
-                        || field.path.to_lowercase().contains(&filter)
-                        || field.value.to_lowercase().contains(&filter)
-                        || field
-                            .attributes
-                            .iter()
-                            .any(|attribute| attribute.value.to_lowercase().contains(&filter))
-                })
-                .collect();
-            const PAGE: usize = 40;
-            self.fim.page = self.fim.page.min(fields.len().saturating_sub(1) / PAGE);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(self.fim.page > 0, egui::Button::new("<"))
-                    .accessible_name(t("Previous"))
-                    .clicked()
-                {
-                    self.fim.page -= 1;
-                }
-                ui.label(format!(
-                    "{} / {} · {}",
-                    self.fim.page + 1,
-                    fields.len().div_ceil(PAGE).max(1),
-                    fields.len()
-                ));
-                if ui
-                    .add_enabled(
-                        (self.fim.page + 1) * PAGE < fields.len(),
-                        egui::Button::new(">"),
-                    )
-                    .accessible_name(t("Next"))
-                    .clicked()
-                {
-                    self.fim.page += 1;
-                }
-            });
-            for field in fields.into_iter().skip(self.fim.page * PAGE).take(PAGE) {
-                ui.push_id(field.record.0, |ui| {
-                    egui::CollapsingHeader::new(format!("{} · #{}", field.name, field.record.0))
-                        .default_open(!field.value.trim().is_empty())
-                        .show(ui, |ui| {
-                            ui.add(egui::Label::new(&field.path).wrap());
-                            ui.small(&field.namespace);
-                            if !field.has_elements {
-                                let value = if field.value.is_empty() {
-                                    t("Value")
-                                } else {
-                                    field.value.as_str()
-                                };
-                                if ui.add(egui::Button::new(value).wrap()).clicked()
-                                    && let Some(doc) = self.doc_mut()
-                                {
-                                    let change = if occurrence_only {
-                                        FimChange::SetOccurrenceText {
-                                            record: field.record,
-                                            value: field.value.clone(),
-                                        }
-                                    } else {
-                                        FimChange::SetText {
-                                            record: field.record,
-                                            value: field.value.clone(),
-                                        }
-                                    };
-                                    doc.set_fim_edit(change);
-                                }
-                            }
-                            for attribute in &field.attributes {
-                                ui.horizontal_wrapped(|ui| {
-                                    if ui
-                                        .add(
-                                            egui::Button::new(format!(
-                                                "@{} = {}",
-                                                attribute.name, attribute.value
-                                            ))
-                                            .wrap(),
-                                        )
-                                        .clicked()
-                                        && let Some(doc) = self.doc_mut()
-                                    {
-                                        doc.set_fim_edit(FimChange::SetAttribute {
-                                            record: field.record,
-                                            name: attribute.name.clone(),
-                                            value: Some(attribute.value.clone()),
-                                        });
-                                    }
-                                    if ui
-                                        .small_button("×")
-                                        .accessible_name(format!(
-                                            "{} @{}",
-                                            t("Remove"),
-                                            attribute.name
-                                        ))
-                                        .clicked()
-                                    {
-                                        change = Some(FimChange::SetAttribute {
-                                            record: field.record,
-                                            name: attribute.name.clone(),
-                                            value: None,
-                                        });
-                                    }
-                                });
-                            }
-                            ui.horizontal_wrapped(|ui| {
-                                if ui.button("+").accessible_name(t("Attribute")).clicked() {
-                                    self.fim.selected_record =
-                                        Some((key.clone(), index, field.record));
-                                }
-                                if ui.button(t("Remove")).clicked() {
-                                    change = Some(FimChange::RemoveElement {
-                                        record: field.record,
-                                    });
-                                }
-                            });
-                        });
-                });
-            }
-            ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.fim.new_element).hint_text(t("Name")))
-                .accessible_name(t("Name"));
-            ui.add(egui::TextEdit::singleline(&mut self.fim.new_namespace).hint_text("Namespace"))
-                .accessible_name("Namespace");
-            let children: Vec<_> = source
-                .fields(selected)
-                .into_iter()
-                .filter(|field| field.parent == Some(selected))
-                .collect();
-            if self
-                .fim
-                .insert_before
-                .is_some_and(|record| !children.iter().any(|field| field.record == record))
-            {
-                self.fim.insert_before = None;
-            }
-            egui::ComboBox::from_label(t("Insert before"))
-                .selected_text(
-                    self.fim
-                        .insert_before
-                        .and_then(|record| children.iter().find(|field| field.record == record))
-                        .map_or_else(
-                            || t("Append").to_owned(),
-                            |field| format!("{}: {}", t("Insert before"), field.name),
-                        ),
-                )
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.fim.insert_before, None, t("Append"));
-                    for field in &children {
-                        ui.selectable_value(
-                            &mut self.fim.insert_before,
-                            Some(field.record),
-                            &field.name,
-                        );
-                    }
-                });
-            if ui.button(t("Add FIM element")).clicked() {
-                let namespace = if self.fim.new_namespace.is_empty() {
-                    source
-                        .fields(selected)
-                        .first()
-                        .map(|field| field.namespace.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.fim.new_namespace.clone()
-                };
-                change = Some(FimChange::InsertElement {
-                    parent: selected,
-                    before: self.fim.insert_before,
-                    name: self.fim.new_element.clone(),
-                    namespace,
-                    text: None,
-                });
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.fim.new_attribute).hint_text(t("Attribute")),
-            )
-            .accessible_name(t("Attribute"));
-            let attribute_name = self.fim.new_attribute.clone();
-            if ui.button(t("Attribute")).clicked()
-                && let Some(doc) = self.doc_mut()
-            {
-                doc.set_fim_edit(FimChange::SetAttribute {
-                    record: selected,
-                    name: attribute_name,
-                    value: Some(String::new()),
-                });
-            }
-        });
-        if let Some(change) = change {
-            self.apply_fim(&ctx, change);
-        }
     }
 }
 

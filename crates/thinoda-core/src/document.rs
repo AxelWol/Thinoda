@@ -22,6 +22,7 @@ pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 enum Snapshot {
     Sheet { index: usize, sheet: Box<Sheet> },
     Book { sheets: Vec<Sheet>, active: usize },
+    Workbook(Box<Workbook>),
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,7 @@ impl Snapshot {
         match self {
             Snapshot::Sheet { sheet, .. } => approx_sheet_bytes(sheet),
             Snapshot::Book { sheets, .. } => sheets.iter().map(approx_sheet_bytes).sum(),
+            Snapshot::Workbook(workbook) => approx_workbook_bytes(workbook),
         }
     }
 
@@ -83,8 +85,30 @@ impl Snapshot {
                     visit_sheet(sheet, visit);
                 }
             }
+            Snapshot::Workbook(workbook) => {
+                for sheet in &workbook.sheets {
+                    visit_sheet(sheet, visit);
+                }
+            }
         }
     }
+}
+
+fn approx_workbook_bytes(workbook: &Workbook) -> usize {
+    std::mem::size_of::<Workbook>()
+        + workbook
+            .sheets
+            .iter()
+            .map(approx_sheet_bytes)
+            .sum::<usize>()
+        + workbook.metadata.creator.len()
+        + workbook.metadata.created.as_ref().map_or(0, String::len)
+        + workbook.metadata.modified.as_ref().map_or(0, String::len)
+        + workbook
+            .metadata
+            .description
+            .as_ref()
+            .map_or(0, String::len)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -300,6 +324,20 @@ impl Document {
         &self.workbook
     }
 
+    /// Independent working copy with the same content state, but no copied undo history.
+    pub fn preview(&self) -> Self {
+        Self {
+            workbook: self.workbook.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            history: HistoryAccounting::default(),
+            state: self.state,
+            next_state: self.next_state,
+            saved_state: self.saved_state,
+            history_budget: self.history_budget,
+        }
+    }
+
     pub fn sheet(&self) -> &Sheet {
         self.workbook.active()
     }
@@ -482,6 +520,9 @@ impl Document {
 
     fn swap(&mut self, snapshot: Snapshot) -> Snapshot {
         match snapshot {
+            Snapshot::Workbook(workbook) => {
+                Snapshot::Workbook(Box::new(std::mem::replace(&mut self.workbook, *workbook)))
+            }
             Snapshot::Sheet { index, sheet } => {
                 let index = index.min(self.workbook.sheets.len() - 1);
                 let cur = std::mem::replace(&mut self.workbook.sheets[index], *sheet);
@@ -552,6 +593,17 @@ impl Document {
         let budget = self.history_budget;
         *self = Document::new(workbook);
         self.history_budget = budget;
+    }
+
+    /// Reloads complete content as one undoable action, including workbook metadata.
+    pub fn reload(&mut self, workbook: Workbook) -> EditResult<()> {
+        workbook.validate().map_err(EditError::Invalid)?;
+        if self.workbook != workbook {
+            let previous = std::mem::replace(&mut self.workbook, workbook);
+            self.push("Reload file", Snapshot::Workbook(Box::new(previous)));
+        }
+        self.mark_saved();
+        Ok(())
     }
 
     pub fn add_sheet(&mut self, sheet: Sheet) -> EditResult<usize> {
@@ -983,6 +1035,79 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reload_is_one_undo_step_including_metadata_and_restores_dirty_edits() {
+        let mut doc = Document::default();
+        let root = doc.sheet().root;
+        doc.edit_sheet("Local edit", |sheet| sheet.set_title(root, "Unsaved"))
+            .unwrap();
+        let local = doc.workbook().clone();
+        let mut external = Workbook::default();
+        external.metadata.creator = "External".into();
+        doc.reload(external.clone()).unwrap();
+        assert_eq!(doc.workbook(), &external);
+        assert!(!doc.is_dirty());
+        assert!(doc.undo());
+        assert_eq!(doc.workbook(), &local);
+        assert!(doc.is_dirty());
+        assert!(doc.redo());
+        assert_eq!(doc.workbook(), &external);
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn invalid_reload_preserves_content_and_history() {
+        let mut doc = Document::default();
+        let local = doc.workbook().clone();
+        let mut invalid = Workbook::default();
+        invalid.sheets.clear();
+        assert!(doc.reload(invalid).is_err());
+        assert_eq!(doc.workbook(), &local);
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn preview_preserves_content_state_without_sharing_history() {
+        let mut doc = Document::default();
+        let root = doc.sheet().root;
+        doc.edit_sheet("First", |sheet| sheet.insert_child(root, "First"))
+            .unwrap();
+        doc.mark_saved();
+        doc.edit_sheet("Second", |sheet| sheet.insert_child(root, "Second"))
+            .unwrap();
+        assert!(doc.undo());
+        let content = doc.workbook().clone();
+        let state = doc.state_id();
+        let mut preview = doc.preview();
+        assert_eq!(preview.workbook(), &content);
+        assert_eq!(preview.state_id(), state);
+        assert_eq!(preview.is_dirty(), doc.is_dirty());
+        assert!(!preview.can_undo());
+        assert!(!preview.can_redo());
+        preview
+            .edit_sheet("Proposal", |sheet| sheet.insert_child(root, "Proposal"))
+            .unwrap();
+        assert!(preview.is_dirty());
+        assert_ne!(preview.state_id(), state);
+        assert_eq!(doc.workbook(), &content);
+        assert_eq!(doc.state_id(), state);
+        assert_eq!(doc.undo_label(), Some("First"));
+        assert_eq!(doc.redo_label(), Some("Second"));
+        assert!(doc.redo());
+        assert!(
+            doc.sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Second")
+        );
+        assert!(
+            !doc.sheet()
+                .topics
+                .values()
+                .any(|topic| topic.title == "Proposal")
+        );
+    }
 
     #[test]
     fn merge_validates_every_sheet_before_mutation_and_undoes_once() {

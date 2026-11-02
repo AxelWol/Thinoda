@@ -6,6 +6,8 @@ mod attachments;
 mod board_clipboard;
 mod board_ui;
 pub mod brand;
+mod cloud_changes;
+mod cloud_program;
 mod command_icons;
 mod command_ids;
 pub mod doc;

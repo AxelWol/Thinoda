@@ -414,6 +414,7 @@ fn settings_roundtrip_every_field() {
         cloud: CloudSettings {
             preferred_folder: Some(dir.path().join("cloud")),
             show_cloud_badges: false,
+            ..Default::default()
         },
         ..Settings::default()
     };
@@ -1118,6 +1119,41 @@ fn cloud_prefix_boundaries_case_and_nested_provider() {
             .provider,
         CloudProvider::Box
     );
+    // Save As can name several not-yet-created directories through a worktree
+    // junction/drive alias. Resolve the existing ancestor, not only whole paths.
+    assert_eq!(
+        provider_for_path(
+            &folders,
+            &root
+                .join("nested")
+                .join("new-folder")
+                .join("deeper")
+                .join("new.xmind")
+        )
+        .unwrap()
+        .provider,
+        CloudProvider::Box
+    );
+    let canonical_root = fs::canonicalize(&root).unwrap();
+    assert_eq!(
+        provider_for_path(
+            &folders,
+            &root
+                .join("nested")
+                .join("missing")
+                .join("..")
+                .join("new.xmind")
+        )
+        .unwrap()
+        .provider,
+        CloudProvider::Box
+    );
+    assert_eq!(
+        provider_for_path(&folders, &canonical_root.join("nested").join("new.xmind"))
+            .unwrap()
+            .provider,
+        CloudProvider::Box
+    );
     assert!(
         provider_for_path(
             &folders,
@@ -1126,6 +1162,17 @@ fn cloud_prefix_boundaries_case_and_nested_provider() {
         .is_none()
     );
     assert!(provider_for_path(&folders, &root.join("..").join("outside.xmind")).is_none());
+    assert!(
+        provider_for_path(
+            &folders,
+            &root
+                .join("new-folder")
+                .join("..")
+                .join("..")
+                .join("outside.xmind")
+        )
+        .is_none()
+    );
     let upper = PathBuf::from(root.join("new.xmind").to_string_lossy().to_uppercase());
     assert!(provider_for_path_on_os(&folders, &upper, CloudOs::Windows).is_some());
     assert!(provider_for_path_on_os(&folders, &upper, CloudOs::MacOs).is_some());

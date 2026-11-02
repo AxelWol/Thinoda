@@ -1636,6 +1636,157 @@ fn shape_accessibility_and_keyboard_label_editing() {
 }
 
 #[test]
+fn pending_text_is_applied_before_finishing_board_labels() {
+    for connector in [false, true] {
+        for key in [Key::Enter, Key::Tab, Key::Escape] {
+            let mut sheet = board();
+            let id = if connector {
+                let mut line = CanvasConnector::new(
+                    Endpoint::Point(Vec2::new(-100.0, 0.0)),
+                    Endpoint::Point(Vec2::new(100.0, 0.0)),
+                );
+                line.label = "Original".into();
+                sheet
+                    .add_canvas_object(CanvasObject::connector(line))
+                    .unwrap()
+            } else {
+                shape(&mut sheet, 0.0, 0.0, "Original")
+            };
+            let mut h = harness(sheet);
+            {
+                let state = h.state_mut();
+                assert!(state.view.begin_board_label(&state.doc, id));
+            }
+            h.run_steps(3);
+            h.input_mut().events.extend([
+                egui::Event::Text("Fast label".into()),
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+            h.run_steps(3);
+            let expected = if key == Key::Escape {
+                "Original"
+            } else {
+                "Fast label"
+            };
+            assert_eq!(
+                h.state().doc.sheet().canvas.object(id).unwrap().label(),
+                expected,
+                "connector={connector}, key={key:?}"
+            );
+            assert_eq!(h.state().view.editing_board_object(), None);
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+            if key != Key::Escape {
+                assert!(h.state_mut().doc.undo());
+                assert_eq!(
+                    h.state().doc.sheet().canvas.object(id).unwrap().label(),
+                    "Original"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ime_candidate_keys_do_not_finish_board_label_editing() {
+    for key in [Key::Enter, Key::Tab, Key::Escape] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "Original");
+        let mut h = harness(sheet);
+        {
+            let state = h.state_mut();
+            assert!(state.view.begin_board_label(&state.doc, id));
+        }
+        h.run_steps(3);
+        h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "composition".into(),
+            active_range_chars: None,
+        }));
+        h.run_steps(2);
+        h.key_press(key);
+        h.run_steps(2);
+        assert_eq!(h.state().view.editing_board_object(), Some(id), "{key:?}");
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Original"
+        );
+        h.input_mut().events.extend([
+            egui::Event::Ime(egui::ImeEvent::Commit("Committed".into())),
+            egui::Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(2);
+        assert_eq!(h.state().view.editing_board_object(), Some(id));
+        assert_eq!(
+            h.state().view.board_label_draft(),
+            Some((id, "Original", "Committed"))
+        );
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert_eq!(h.state().view.editing_board_object(), None);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().label(),
+            "Committed"
+        );
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn failed_same_frame_board_label_commit_keeps_text_and_focus() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Original");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(3);
+    h.state_mut()
+        .doc
+        .update_canvas_object("Concurrent edit", id, |object| {
+            if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                *label = "External".into();
+            }
+        })
+        .unwrap();
+    h.input_mut().events.extend([
+        egui::Event::Text("Pending draft".into()),
+        egui::Event::Key {
+            key: Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "External"
+    );
+    assert_eq!(
+        h.state().view.board_label_draft(),
+        Some((id, "Original", "Pending draft"))
+    );
+    assert_eq!(
+        h.ctx.memory(|memory| memory.focused()),
+        Some(MapCanvas::id().with("board-label-edit"))
+    );
+    assert!(!h.state().errors.is_empty());
+}
+
+#[test]
 fn escape_and_touch_cancel_discard_in_progress_gestures() {
     let mut sheet = board();
     let id = shape(&mut sheet, 0.0, 0.0, "Move");

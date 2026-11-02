@@ -118,11 +118,9 @@ fn hide_loading() {
 /// to start; the raw error stays available for bug reports.
 fn show_graphics_error(details: &str) {
     log::error!("Thinoda could not start: {details}");
-    let Some(loading) = element("loading") else {
-        return;
-    };
-    loading.set_inner_html(&graphics_error_html(details));
-    loading.set_class_name("error");
+    thinoda_web::show_loading_error(|loading| {
+        loading.set_inner_html(&graphics_error_html(details))
+    });
 }
 
 fn graphics_error_html(details: &str) -> String {
@@ -159,8 +157,5 @@ fn escape_html(text: &str) -> String {
 
 fn show_error(message: &str) {
     log::error!("{message}");
-    if let Some(loading) = element("loading") {
-        loading.set_inner_text(message);
-        loading.set_class_name("error");
-    }
+    thinoda_web::show_loading_error(|loading| loading.set_inner_text(message));
 }

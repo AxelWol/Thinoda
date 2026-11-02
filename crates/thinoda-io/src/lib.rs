@@ -432,23 +432,92 @@ pub fn import_file(path: &Path) -> Result<Workbook, IoError> {
     Ok(report.workbook)
 }
 
-/// Largest accepted MindManager input, bounded before parsing.
+/// Largest accepted archive/unknown-format input, bounded before parsing.
 const IMPORT_ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum ImportReadPolicy {
+    Fim,
+    MindManager,
+    Archive,
+}
+
+impl ImportReadPolicy {
+    fn limit(self) -> usize {
+        match self {
+            Self::Fim => fim::MAX_XML_BYTES,
+            Self::MindManager | Self::Archive => IMPORT_ARCHIVE_LIMIT,
+        }
+    }
+
+    fn named_limit_error(self, name: &Path) -> IoError {
+        match self {
+            // FIM detection has always treated an over-limit XDF as unsupported.
+            Self::Fim => IoError::UnsupportedFormat(name.display().to_string()),
+            Self::MindManager | Self::Archive => {
+                IoError::Invalid("import archive exceeds size limit".into())
+            }
+        }
+    }
+
+    fn file_limit_error(self, path: &Path) -> IoError {
+        match self {
+            Self::Fim => IoError::UnsupportedFormat(path.display().to_string()),
+            Self::MindManager => IoError::Invalid("MindManager file exceeds size limit".into()),
+            Self::Archive => IoError::Invalid("import archive exceeds size limit".into()),
+        }
+    }
+}
+
+fn import_read_policy(name: &Path) -> Option<ImportReadPolicy> {
+    match Format::from_path(name) {
+        Some(Format::FimXdf2 | Format::FimXdf3) => Some(ImportReadPolicy::Fim),
+        Some(Format::MindManager | Format::MindManagerXml) => Some(ImportReadPolicy::MindManager),
+        None | Some(Format::TextBundle | Format::Word) => Some(ImportReadPolicy::Archive),
+        _ => None,
+    }
+}
+
+/// Input-byte limit determined by the file name, before format detection.
+///
+/// Explicit XDF names use the FIM XML limit. Unknown extensions, including
+/// `.xml`, use the archive limit until their content can be identified.
+/// `None` means the named format has no limit at this layer.
+pub fn import_read_limit(name: &Path) -> Option<usize> {
+    import_read_policy(name).map(ImportReadPolicy::limit)
+}
+
+/// Validate a named input's size using the same error as named-byte import.
+///
+/// This can be used before allocating the input, such as with browser file
+/// metadata. Unknown and XML names retain the archive limit until detection.
+pub fn validate_import_size(name: &Path, size: u64) -> Result<(), IoError> {
+    if let Some(policy) = import_read_policy(name)
+        && size > policy.limit() as u64
+    {
+        return Err(policy.named_limit_error(name));
+    }
+    Ok(())
+}
+
+/// Validate a file's size using the same error as file import.
+///
+/// Unlike named-byte import, oversized MindManager files retain their
+/// historical file-specific error.
+pub fn validate_import_file_size(path: &Path, size: u64) -> Result<(), IoError> {
+    if let Some(policy) = import_read_policy(path)
+        && size > policy.limit() as u64
+    {
+        return Err(policy.file_limit_error(path));
+    }
+    Ok(())
+}
 
 /// Import bytes whose format is detected from `name` (a file name or path) and
 /// content, as for [`import_file_with_report`]. Used where files arrive as
 /// bytes, for example from a browser file picker or drag and drop.
 pub fn import_named_bytes_with_report(name: &Path, bytes: &[u8]) -> Result<ImportReport, IoError> {
-    let format_hint = Format::from_path(name);
-    let bounded = matches!(
-        format_hint,
-        None | Some(
-            Format::MindManager | Format::MindManagerXml | Format::TextBundle | Format::Word
-        )
-    );
-    if bounded && bytes.len() > IMPORT_ARCHIVE_LIMIT {
-        return Err(IoError::Invalid("import archive exceeds size limit".into()));
-    }
+    validate_import_size(name, bytes.len() as u64)?;
     let f = detect_format(name, bytes)
         .ok_or_else(|| IoError::UnsupportedFormat(name.display().to_string()))?;
     import_bytes_with_report(f, bytes)
@@ -465,41 +534,14 @@ pub fn import_named_bytes(name: &Path, bytes: &[u8]) -> Result<Workbook, IoError
 
 /// File counterpart of [`import_bytes_with_report`].
 pub fn import_file_with_report(path: &Path) -> Result<ImportReport, IoError> {
-    // Bound MindManager file reads before allocating the input buffer.
-    let format_hint = Format::from_path(path);
-    let bounded = matches!(
-        format_hint,
-        None | Some(
-            Format::MindManager | Format::MindManagerXml | Format::TextBundle | Format::Word
-        )
-    );
-    if bounded && fs::metadata(path)?.len() > IMPORT_ARCHIVE_LIMIT as u64 {
-        let message = if matches!(
-            format_hint,
-            Some(Format::MindManager | Format::MindManagerXml)
-        ) {
-            "MindManager file exceeds size limit"
-        } else {
-            "import archive exceeds size limit"
-        };
-        return Err(IoError::Invalid(message.into()));
-    }
-    let b = if bounded {
+    let b = if let Some(policy) = import_read_policy(path) {
+        let limit = policy.limit();
+        validate_import_file_size(path, fs::metadata(path)?.len())?;
         let mut bytes = Vec::new();
         fs::File::open(path)?
-            .take(IMPORT_ARCHIVE_LIMIT as u64 + 1)
+            .take(limit as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() > IMPORT_ARCHIVE_LIMIT {
-            let message = if matches!(
-                format_hint,
-                Some(Format::MindManager | Format::MindManagerXml)
-            ) {
-                "MindManager file exceeds size limit"
-            } else {
-                "import archive exceeds size limit"
-            };
-            return Err(IoError::Invalid(message.into()));
-        }
+        validate_import_file_size(path, bytes.len() as u64)?;
         bytes
     } else {
         fs::read(path)?

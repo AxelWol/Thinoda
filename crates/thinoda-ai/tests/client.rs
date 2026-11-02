@@ -20,6 +20,77 @@ fn ctx() -> TopicContext {
 }
 
 #[test]
+fn ollama_discovery_and_blocking_chat_do_not_forward_api_keys() {
+    let srv = MockServer::start(&["nomic-embed-text", "local-chat"], "Local response");
+    let client = Client::new(AiConfig {
+        provider: thinoda_ai::harness::Provider::Ollama,
+        base_url: srv.base_url.clone(),
+        api_key: "key-for-another-provider".into(),
+        ..Default::default()
+    });
+    assert_eq!(client.resolve_model().unwrap(), "local-chat");
+    assert_eq!(
+        client
+            .chat("local-chat", &[Message::user("Hello")])
+            .unwrap(),
+        "Local response"
+    );
+    let requests = srv.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.authorization.is_none())
+    );
+    assert_eq!(requests[0].path, "/v1/models");
+    assert_eq!(requests[1].path, "/v1/chat/completions");
+}
+
+#[test]
+fn ollama_streaming_tasks_use_the_selected_local_model() {
+    let srv = MockServer::start_sse(
+        &["nomic-embed-text", "local-chat"],
+        &[r#"{"choices":[{"delta":{"content":"- First idea\n- Second idea"}}]}"#],
+    );
+    let job = AiStreamJob::spawn(
+        AiConfig {
+            provider: thinoda_ai::harness::Provider::Ollama,
+            base_url: srv.base_url.clone(),
+            api_key: "key-for-another-provider".into(),
+            ..Default::default()
+        },
+        AiTask::Brainstorm(ctx()),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut preview = String::new();
+    let result = loop {
+        match job.poll() {
+            Some(AiStreamEvent::Delta(delta)) => preview.push_str(&delta),
+            Some(AiStreamEvent::Finished(result)) => break result.unwrap(),
+            None => {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    };
+    assert!(preview.contains("First idea"));
+    assert_eq!(result.model, "local-chat");
+    let AiOutput::Outline(outline) = result.output else {
+        panic!("expected outline")
+    };
+    assert_eq!(outline.items.len(), 2);
+    let requests = srv.requests.lock().unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.authorization.is_none())
+    );
+    let body: serde_json::Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(body["model"], "local-chat");
+    assert_eq!(body["stream"], true);
+}
+
+#[test]
 fn brainstorm_against_mock_server() {
     let srv = MockServer::start(
         &["text-embedding-x", "chat-model"],

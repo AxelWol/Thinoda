@@ -1,3 +1,5 @@
+_Last updated: 2026-11-01 08:37:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Freeform boards: research, concept and plan
 
 Status: **implementation in progress**. Board data, native format support,
@@ -310,6 +312,25 @@ does not establish recovery or end-to-end file-flow acceptance. At the time of
 this baseline, redo and embedded image buffers were not counted in the history
 budget.
 
+#### Post-merge ink-cache experiment
+
+A smaller canvas/core-only Windows release harness repeated the original
+50-image paint workload for 20 warm samples per run. It excludes archive,
+storage, recovery and undo, and its dependency features differ from the
+earlier full harness, so compare only these runs. With 1,000 strokes, combined
+paint and tessellation was 3.05 / 3.54 ms p50 / p95 before the candidate and
+4.27 / 5.14 ms afterward. With 10,000 strokes, it was 56.83 / 63.07 ms before
+and 112.53 / 379.33 ms afterward; a candidate repeat was 65.93 / 73.30 ms.
+
+The candidate reduced the 10,000-stroke paint component but not the combined
+measurement, and the samples were noisy and not interleaved. It was therefore
+not applied. These headless CPU timings are not GPU frame times, input latency
+or iPad results. Windows application control also blocked build scripts in the
+separate experimental target directory, so focused invalidation and
+memory-bound tests for that candidate remain unverified. A quiet interleaved
+comparison and permitted test environment are still required before
+reconsidering it.
+
 ### 5.5 Input devices
 
 - Mouse and touch drawing work everywhere. Pressure is **optional metadata**:
@@ -451,13 +472,21 @@ Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
 
+The production browser accessibility tree currently exposes the egui canvas
+and an unlabeled IME input, but not the board controls or their egui
+accessibility names. Focused egui accessibility tests therefore do not close
+the browser screen-reader gate. The observed gap and required follow-up are
+recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
+
 ### History resource-accounting checkpoint: critique
 
 - Retained undo and redo snapshots now account for distinct shared ink and
   embedded-resource allocations once, as well as an estimate of owned metadata.
-  Focused tests passed for shared and replaced resources, clearing redo,
-  cloning and budget trimming. Reload and equal-content/distinct-allocation
-  regressions have been added and await the next coordinated test run.
+  Undoable workbook reloads include workbook metadata and share resource, ink
+  and pressure allocations with sheet snapshots; previews retain the source
+  history budget without inheriting history. Focused tests cover these paths,
+  shared and replaced resources, equal-content distinct allocations, redo
+  invalidation, cloning and budget trimming.
 - The budget is an approximation, not a process-memory cap. The nearest undo and
   redo entries are deliberately kept even if they exceed it; live-document and
   rendering allocations are outside this history estimate. Allocator overhead,
@@ -542,6 +571,11 @@ disabled until publisher registrations are in place; see
   crash-recoverable until it is committed.
 - Pixel erasing can split strokes while retaining their metadata and undo
   behavior; pressure remains optional and does not affect rendering.
+- Touch de-duplication now distinguishes a mouse press owned by ink from a
+  non-ink synthetic press. This keeps a single-finger context menu open after
+  release without forwarding a canceled ink gesture; multi-touch cancellation
+  and subsequent clicks remain covered by automated regressions. Real touch
+  device acceptance remains open.
 
 ### F6 presentation checkpoint: critique
 
@@ -549,6 +583,23 @@ disabled until publisher registrations are in place; see
   is not redaction, and editable PowerPoint output reports clipping it cannot
   preserve. Browser storage limits and realistic rendering performance still
   require integration acceptance.
+- The Pitch stage now fits its containing player rather than the height of the
+  browser window. An automated production-browser check captures a rootless
+  board containing both a sticky and a floating tree and verifies that both
+  appear within the player. This is not a substitute for the remaining export,
+  physical-device and cross-platform presentation acceptance.
+
+### Integrated editing checkpoint: critique
+
+- Topic/card and shape/connector label editors process queued text before an
+  Enter or Tab commit. Escape retains each editor's existing behavior: it
+  commits topic/card titles and cancels shape/connector labels. IME candidate
+  keys do not commit, and failed commits retain the draft instead of creating a
+  child. Focused same-frame and undo regressions cover these paths.
+- A production-browser workflow saves and inspects a rootless board with a
+  sticky, styled shape, labeled connector, frame and ink, then undoes the ink.
+  The picker used by browser automation is not a real OS picker, and this
+  workflow does not close screen-reader or physical-device acceptance.
 
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library

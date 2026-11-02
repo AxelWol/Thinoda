@@ -33,6 +33,10 @@ impl Cmd {
             Self::Attachment => "insert.attachment",
             Self::SaveAttachment => "file.save-attachment",
             Self::TaskPlanning => "insert.task",
+            Self::EditFimNode => "fim.edit-node",
+            Self::AddFimChild => "fim.add-child",
+            Self::InsertFimBefore => "fim.insert-before",
+            Self::InsertFimAfter => "fim.insert-after",
             Self::CreateZone => "insert.zone",
             Self::EditZone => "edit.zone",
             Self::Zones => "tools.zones",
@@ -135,6 +139,7 @@ impl Cmd {
             Self::BoardMinimap => "board.minimap",
             Self::BoardImage => "board.image",
             Self::BoardZoomSelection => "board.zoom-selection",
+            Self::AiSettings => "ai.settings",
             Self::Ai(action) => match action {
                 crate::ai::AiCommand::Brainstorm => "ai.brainstorm",
                 crate::ai::AiCommand::Breakdown => "ai.breakdown",

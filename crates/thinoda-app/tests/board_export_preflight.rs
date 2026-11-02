@@ -931,6 +931,91 @@ fn save_all_pauses_for_consent_and_cancel_does_not_save_other_documents() {
 }
 
 #[test]
+fn background_save_all_keeps_both_mindmanager_and_board_consent() {
+    let _guard = lock_ui();
+    let directory = tempfile::tempdir().unwrap();
+    let mindmanager = directory.path().join("first.mmap");
+    let native = directory.path().join("second.thinoda");
+    let mut app = app(Workbook::default(), Language::English);
+    app.doc_mut().unwrap().save_to(&mindmanager, false).unwrap();
+    let mindmanager_before = std::fs::read(&mindmanager).unwrap();
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Change title and add shape", |sheet| {
+            sheet.set_title(sheet.root, "Updated MindManager root")?;
+            sheet
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 40.0)),
+                ))
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+    app.new_doc(Workbook::default());
+    app.doc_mut().unwrap().save_to(&native, false).unwrap();
+    let native_before = std::fs::read(&native).unwrap();
+    let root = app.doc().unwrap().doc.sheet().root;
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Change title", |sheet| sheet.set_title(root, "Changed"))
+        .unwrap();
+    app.set_file_work_mode(FileWorkMode::Background);
+    let mut h = harness(app);
+    h.state().pause_file_workers(true);
+    let ctx = h.ctx.clone();
+
+    h.state_mut().exec(&ctx, Cmd::SaveAll);
+    h.run_steps(3);
+    assert!(h.state().dialogs.mindmanager_save.is_some());
+    click(&mut h, t("Save"));
+    has_label(&h, t("Board export changes"));
+    click(&mut h, t("Confirm"));
+    assert!(matches!(
+        h.state().file_activity().as_slice(),
+        [FileBusy::Saving { .. }]
+    ));
+    assert_eq!(std::fs::read(&mindmanager).unwrap(), mindmanager_before);
+    assert_eq!(std::fs::read(&native).unwrap(), native_before);
+
+    h.state().pause_file_workers(false);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !h.state().file_activity().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "save worker timed out"
+        );
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(h.state().docs.iter().all(|doc| !doc.is_dirty()));
+    let mindmanager_after = std::fs::read(&mindmanager).unwrap();
+    let native_after = std::fs::read(&native).unwrap();
+    assert_ne!(mindmanager_after, mindmanager_before);
+    assert_ne!(native_after, native_before);
+    assert_eq!(
+        import_bytes(Format::MindManager, &mindmanager_after)
+            .unwrap()
+            .active()
+            .root_topic()
+            .title,
+        "Updated MindManager root"
+    );
+    assert_eq!(
+        import_bytes(Format::Thinoda, &native_after)
+            .unwrap()
+            .active()
+            .root_topic()
+            .title,
+        "Changed"
+    );
+    assert_eq!(h.state().docs[0].doc.sheet().canvas.objects.len(), 1);
+    assert_eq!(h.state().active, 1);
+}
+
+#[test]
 fn native_save_remains_lossless_without_a_preflight() {
     let _guard = lock_ui();
     let directory = tempfile::tempdir().unwrap();

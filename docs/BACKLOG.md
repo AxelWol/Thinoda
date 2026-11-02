@@ -1,4 +1,4 @@
-_Last updated: 2026-10-30 09:27:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda backlog
 
@@ -1858,10 +1858,23 @@ requirements to add XMind's cloud account, billing or hosted AI service.
   painted frame, so native window/GPU initialization before that frame (about
   0.3–0.4 s warm on Windows x64, longer cold) cannot be covered without a second
   native window and renderer.
-- P2 Real cloud APIs (OneDrive/Google Drive/Dropbox) beyond synced folders, conflict resolution UI.
-  **Merged upstream behind the default-off `integrated-cloud-services` feature;
-  providers stay disabled until publisher registrations are in place.** Gap analysis and
-  phases C0-C6 (async storage contract, OPFS/File System Access
+- P2 / R10 Cloud APIs beyond synced folders: C0-C5 implementation adds WebDAV,
+  OneDrive/Graph, Dropbox and Google Drive connections plus Box transport, conditional saves,
+  explicit uploads/versions/share links, durable browser documents and
+  external-change/conflict-copy comparison. Native and wasm automated gates and
+  local HTTP mocks cover implementation, not live account/provider acceptance.
+  OAuth registrations, deployed CORS/callbacks, real browser picker permissions
+  and sync-client/OS history/offline/two-machine checks remain open. Drive
+  creation uses distinct IDs with an explicit duplicate-name warning.
+  Normal OAuth uses publisher-owned build registrations and browser consent,
+  not end-user client/drive/redirect fields; no publisher registrations exist yet.
+  Box public sign-in and Google Drive web code exchange are unavailable in this
+  architecture. Supported-target setup and build mappings are documented in
+  [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md).
+  User-directed pause: remote accounts are disabled by default behind the
+  opt-in `integrated-cloud-services` build feature until registrations are
+  completed. Local sync folders and browser storage remain available.
+  Gap analysis and phases C0-C6 (async storage contract, OPFS/File System Access
   on web, placeholder/online-only awareness, file watching, conflict-copy
   detection, WebDAV for Nextcloud, OAuth adapters; iCloud native-only) are in
   [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
@@ -1872,33 +1885,44 @@ requirements to add XMind's cloud account, billing or hosted AI service.
 User-directed concept (2026-10-28), planned as **R14** in
 [PLAN.md](PLAN.md#r14---freeform-boards-and-flexible-map-roots); research,
 feature verdicts, concept and rubber-duck critique in [FREEFORM.md](FREEFORM.md).
-F4 templates are implemented with focused coverage; F0 core/IO and export
-preflight are implemented, while the full F0 acceptance gate and other phases
-remain open as described in the linked plan.
-- P2 F0 groundwork: root query APIs and migration of all `sheet.root` callers,
-  derived scene with layer bands, `required_native_version`, central export
-  capability analysis, ink/undo benchmark. No visible change; gate for all below.
-- P2 F1 maps without a central topic and maps with several root topics
-  (hidden anchor root, floating trees/zones), with per-format export projection.
-- P2 F2 sticky notes, text and image cards (floating topics), frames (zones),
-  grid, snapping, guides, align/distribute, and existing quick styles and
-  Shape/Text controls alongside the custom fill picker.
-- P3 F3 shape library, connectors between topics and objects, z-order, groups,
-  lock, rotation, and the same existing styling controls for applicable shapes.
+F0-F5 implementation and the F6 viewport-scene/mini-map work have focused
+coverage. F1-F3 integration acceptance, the full F0/F5 performance gate, F6
+export acceptance, browser recovery, and native/web integration verification
+remain open as described in the linked plan. Production-browser regressions now
+cover a saved mixed board, ink undo and a captured Pitch viewport. CI runs them
+and the startup/offline suite against the release build; they do not establish
+real touch-device, screen-reader or export acceptance.
+- P2 F0 groundwork (implemented; full acceptance open): root query APIs and
+  migration of all `sheet.root` callers, derived scene with layer bands,
+  `required_native_version`, central export capability analysis, ink/undo
+  benchmark. No visible change; gate for all below.
+- P2 F1 (implemented; integration acceptance open): maps without a central topic
+  and maps with several root topics (hidden anchor root, floating trees/zones),
+  with per-format export projection.
+- P2 F2 (implemented; integration acceptance open): sticky notes, text and image
+  cards (floating topics), frames (zones), grid, snapping, guides,
+  align/distribute, and existing quick styles and Shape/Text controls alongside
+  the custom fill picker.
+- P3 F3 (implemented; integration acceptance open): shape library, connectors
+  between topics and objects, z-order, groups, lock, rotation, and the same
+  existing styling controls for applicable shapes.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
   Flowchart and SWOT board (more templates listed with prerequisites).
-- P3 F5 freehand ink (pen, highlighter, object eraser, lasso); pressure optional.
-- P3 F6 viewport scenes in Pitch/PDF, mini-map, pen pressure after a spike.
+- P3 F5 freehand ink (implemented; realistic performance gate open): pen,
+  highlighter, object/pixel eraser and lasso; pressure optional.
+- P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance
+  and optional pen pressure remain open.
 
 ## Quality
 - P1 Web first start: investigate the reported two-minute clean-cache load on
-  iPad Safari/Edge, then reduce time to an interactive app without feature or
-  offline/update regressions. Use truthful, accessible loading feedback and
-  verify cold/warm, failure and browser-compatibility paths. See
+  iPad Safari/Edge. Deferred offline-shell registration improved a synthetic
+  desktop cold-start comparison without changing the Wasm bundle; verify warm
+  starts, real iPads and the remaining browser-compatibility paths. See
   [WEB-STARTUP.md](WEB-STARTUP.md).
 - P1 Visual regression tests (kittest snapshot images) per theme
-- P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca)
+- P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca), including
+  a browser accessibility bridge for canvas controls and correct IME semantics
 - [x] P2 Fuzzing of the XMind/FreeMind/OPML importers (`cargo fuzz`; bounded CI smoke)
 - P2 Performance budget: 10 000-topic map at 60 fps, benchmark in CI
 - [x] Expanded UI localization: ES, FR, DA, NL, PT-PT, PT-BR, IT and PL, retaining

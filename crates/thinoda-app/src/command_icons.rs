@@ -42,6 +42,10 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::SaveSheetAs => (I::SAVE_AS, Some(I::SHEET), T::File),
         Cmd::Print => (I::PRINT, None, T::File),
         Cmd::TaskPlanning => (I::TASK_PLANNING, None, T::Create),
+        Cmd::EditFimNode => (I::TOPIC, Some(I::EDIT), T::Edit),
+        Cmd::AddFimChild => (I::SUBTOPIC, Some(I::ADD), T::Create),
+        Cmd::InsertFimBefore => (I::TOPIC_BEFORE, Some(I::ADD), T::Create),
+        Cmd::InsertFimAfter => (I::TOPIC, Some(I::ADD), T::Create),
         Cmd::LocalImage | Cmd::BoardImage => (I::IMAGE, Some(I::ADD), T::Create),
         Cmd::Attachment => (I::NEW_FILE, Some(I::ADD), T::Create),
         Cmd::SaveAttachment => (I::SAVE_AS, None, T::File),
@@ -141,6 +145,7 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::NewSheetFromTopic => (I::SHEET, Some(I::BRANCH), T::Create),
         Cmd::DeleteSheet => (I::SHEET, Some(I::REMOVE), T::Danger),
         Cmd::AiChat => (I::AI_CHAT, Some(I::AI), T::Ai),
+        Cmd::AiSettings => (I::SETTINGS, Some(I::AI), T::Ai),
         Cmd::Ai(action) => match action {
             AiCommand::Brainstorm => (I::BRAINSTORM, None, T::Ai),
             AiCommand::Breakdown => (I::TODO, Some(I::AI), T::Ai),

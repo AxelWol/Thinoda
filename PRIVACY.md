@@ -1,8 +1,8 @@
-_Last updated: 2026-10-30 09:27:31 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Privacy Policy
 
-Effective date: October 29, 2026
+Effective date: November 1, 2026
 
 ## No data collection by Thinoda
 
@@ -28,8 +28,8 @@ to share them.
 
 In the web app, map editing and file conversion run in your browser, not on a
 Thinoda application server. Documents, settings and recovery data are stored
-in the browser's local storage. The web app uses this storage for application
-functionality, not tracking.
+in browser-managed storage belonging to the web app's origin. The web app uses
+this storage for application functionality, not tracking.
 
 You control your saved files. To remove local application data, delete the
 relevant documents, settings and recovery files. Clearing the web app's site
@@ -91,6 +91,95 @@ per-file forgetting and global deletion are available in AI Chat; failed writes
 leave transcripts in memory. Deletion is not secure erasure of backups or
 provider-side copies. See [local history behavior](docs/AI-HISTORY.md).
 
+## Optional cloud accounts
+
+Cloud accounts are optional and distinct from local synchronized folders.
+Integrated remote accounts are currently disabled by default behind the opt-in
+`integrated-cloud-services` build feature while publisher registrations are
+pending. Disabled native/web artifacts expose no account connection controls
+and do not consume OAuth callbacks or initiate remote cloud jobs, regardless
+of saved provider settings. Local sync-folder access and browser document
+storage remain available. Populating publisher registration Variables alone
+does not enable the feature.
+Opening Settings, selecting a provider, or opening the cloud browser does not
+look up stored account credentials or contact a provider. Connecting requires
+explicit consent and can contact the configured WebDAV server or OAuth provider
+and open its sign-in page. Native OAuth uses the system browser and a temporary
+loopback callback; web OAuth redirects the current tab to the provider and
+returns to a publisher-registered same-origin URI. A returned web callback is
+scrubbed from the address bar. Only a valid, unexpired callback bound to the
+one-time PKCE transaction initiated by your Connect consent automatically
+continues that sign-in and account-folder discovery. Unsolicited, expired or
+mismatched callbacks never trigger token exchange. Startup does not otherwise
+look up credentials or reconnect.
+Nextcloud Login Flow v2 contacts the configured server and polls during the
+requested sign-in only.
+
+Provider selection, public WebDAV server/collection configuration and the
+optional local backup directory are saved as preferences. OAuth registration
+IDs and redirect configuration belong to the publisher/self-hosted build, not
+ordinary settings. Legacy saved OAuth client, redirect, drive and folder values
+are ignored in the consumer workflow; no saved configuration is used as a
+fallback registration. There are currently no registered Thinoda publisher
+OAuth apps. Missing or unsupported build registration is reported before
+browser launch, credential lookup or account requests. Box sign-in and Google
+Drive web sign-in are disabled by the current public-client protocol boundaries.
+See the [publisher build setup guide](docs/CLOUD-AUTH-SETUP.md); preparation
+does not register applications or establish live provider acceptance.
+Account usernames, app passwords, access/refresh tokens and PKCE transactions
+are not saved in settings. Account credentials use the operating system's
+credential store on desktop, and session storage for the current browser tab
+on web. Active operations also hold credentials in memory. Stored credentials
+are only read when you explicitly request their use; an expiring OAuth token
+may be refreshed as part of that Connect action. There is no automatic cloud
+connection, credential refresh loop or cloud autosave.
+
+After requested authorization, the connection locates its starting folder
+automatically. OneDrive looks up only the app folder and derives the drive
+identifier from that metadata; it never retries with broader full-drive access.
+The provider may create its app folder during lookup. No document content is
+transferred by discovery, but it is not a promise of no remote metadata changes.
+Other OAuth providers use their default root in the granted account namespace.
+WebDAV defaults to Nextcloud browser login after you supply the server address;
+app-password inputs are available only when explicitly selected.
+
+An explicit folder listing sends folder identifiers to the chosen provider.
+Open downloads the selected document and imports it into a new local editing
+session without a local file path. Explicit Save or Upload sends the document
+snapshot to that provider, not to Thinoda's maintainers. Saves use the revision
+being replaced; conflicts do not cause an automatic overwrite. Upload uses
+create-only operations on WebDAV, Dropbox, OneDrive and Box, without a preflight
+listing or automatic rename, overwrite or retry. The returned file ID and
+revision remain in the app session for later explicit conditional Saves.
+Google Drive Upload creates a distinct new file and may duplicate an existing
+name. The upload confirmation shows an explicit duplicate-name warning with
+the filename and destination before transmission. It does not check that the
+name is missing or update a sibling; later Save conditionally targets only the
+returned file ID.
+Cancellation cannot undo a request already accepted by a provider.
+
+Version listing, where implemented, downloads metadata only. Creating a sharing
+link requires separate consent and changes sharing on the selected remote file:
+OneDrive requests organization-only view access, Box existing-collaborator access.
+No anonymous/public link is requested, and links are not automatically opened
+or copied. Provider permissions may reject these requests. Other adapters do
+not offer version/sharing actions they have not implemented.
+
+Disconnect removes the active connection and requests deletion of its locally
+stored credentials without changing open content or unsaved edits. It does not
+delete remote files or revoke provider-side grants; remove those in the provider's
+account settings. A failed credential-store deletion is reported rather than
+claimed successful. Reconnecting does not silently bind already-open documents
+to a potentially different account. Live provider sign-in, OS credential stores
+and deployed browser redirects have not been verified end to end for this build.
+Your provider/server may process content and ordinary request metadata, including
+IP address, under its own policy. Review that policy before connecting or
+transferring sensitive documents.
+
+The browser storage usage/quota and persistence controls are explicit local
+browser API requests, not cloud-account calls. Persistence may be denied and
+does not prevent deletion when you clear site data.
+
 ## Cloud folders, printing and external links
 
 Saving a document in a folder synchronized by OneDrive, iCloud Drive, Dropbox
@@ -122,8 +211,8 @@ for GitHub's practices.
 ## Policy scope and contact
 
 This policy covers the desktop and web versions of Thinoda in this repository.
-Third-party AI providers, cloud synchronization services, websites and print
-services have their own privacy policies.
+Third-party AI providers, cloud account providers, cloud synchronization services,
+websites and print services have their own privacy policies.
 
 Changes to this policy will be published in this file with an updated effective
 date. For privacy questions, use the

@@ -328,6 +328,8 @@ pub struct InkController {
     block_touch: bool,
     suppress_mouse: bool,
     mouse_down: bool,
+    // Touch de-duplication alone does not mean ink owns the mouse press.
+    mouse_owned: bool,
 }
 
 impl InkController {
@@ -445,7 +447,10 @@ impl InkController {
                     pressed: false,
                     ..
                 }
-                | Event::PointerGone => self.mouse_down = false,
+                | Event::PointerGone => {
+                    self.mouse_down = false;
+                    self.mouse_owned = false;
+                }
                 Event::Touch {
                     device_id,
                     id,
@@ -471,6 +476,7 @@ impl InkController {
                 Event::WindowFocused(false) => {
                     self.touches.clear();
                     self.mouse_down = false;
+                    self.mouse_owned = false;
                 }
                 _ => {}
             }
@@ -571,7 +577,8 @@ impl InkController {
                     pressed,
                     modifiers,
                 } => {
-                    let suppressing_owned_mouse = self.suppress_mouse && self.mouse_down;
+                    let suppressing_owned_mouse =
+                        self.suppress_mouse && self.mouse_down && self.mouse_owned;
                     let ignore_mouse =
                         frame_has_touch || !self.touches.is_empty() || self.suppress_mouse;
                     if !frame_has_touch && self.touches.is_empty() {
@@ -581,6 +588,9 @@ impl InkController {
                     }
                     if ignore_mouse {
                         output.captured |= suppressing_owned_mouse;
+                        if !pressed {
+                            self.mouse_owned = false;
+                        }
                         if !pressed && !frame_has_touch && self.touches.is_empty() {
                             self.suppress_mouse = false;
                         }
@@ -594,6 +604,7 @@ impl InkController {
                                 && can_start_at(input.canvas, *pos)
                         }) {
                             output.captured = true;
+                            self.mouse_owned = true;
                             if let Err(error) = self.start(
                                 document,
                                 mode,
@@ -624,9 +635,12 @@ impl InkController {
                             &mut output,
                         );
                     }
+                    if !pressed {
+                        self.mouse_owned = false;
+                    }
                 }
                 Event::PointerMoved(pos) if !frame_has_touch && self.touches.is_empty() => {
-                    if self.suppress_mouse && self.mouse_down {
+                    if self.suppress_mouse && self.mouse_down && self.mouse_owned {
                         output.captured = true;
                     } else if !self.suppress_mouse && self.owns(PointerOwner::Mouse) {
                         output.captured = true;
@@ -756,15 +770,18 @@ impl InkController {
                     self.block_touch = false;
                     self.suppress_mouse = false;
                     self.mouse_down = false;
+                    self.mouse_owned = false;
                     focus_lost = true;
                 }
-                Event::PointerGone
+                Event::PointerGone => {
                     if self.owns(PointerOwner::Mouse)
-                        || (self.suppress_mouse && self.mouse_down) =>
-                {
-                    output.captured = true;
-                    self.interrupt_with(InkCancelReason::PointerGone, &mut output);
+                        || (self.suppress_mouse && self.mouse_down && self.mouse_owned)
+                    {
+                        output.captured = true;
+                        self.interrupt_with(InkCancelReason::PointerGone, &mut output);
+                    }
                     self.mouse_down = false;
+                    self.mouse_owned = false;
                     if self.touches.is_empty() {
                         self.suppress_mouse = false;
                     }
@@ -2319,6 +2336,80 @@ mod tests {
         );
         assert!(next.errors.is_empty());
         assert!(matches!(next.outcomes.as_slice(), [InkOutcome::Drawn(_)]));
+    }
+
+    #[test]
+    fn non_ink_touch_does_not_capture_a_preceding_synthetic_mouse_press() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let settings = InkSettings::default();
+        let p = pos2(100.0, 100.0);
+        for events in [
+            vec![button(p, true)],
+            vec![touch(1, TouchPhase::Start, p, None)],
+            vec![Event::PointerMoved(p + vec2(1.0, 0.0))],
+            vec![touch(1, TouchPhase::End, p, None), button(p, false)],
+        ] {
+            let output = frame(
+                &mut controller,
+                &mut document,
+                &scene,
+                None,
+                settings,
+                xf(),
+                &events,
+            );
+            assert!(!output.captured, "non-ink events claimed: {events:?}");
+            assert!(output.errors.is_empty());
+        }
+        assert!(!controller.needs_input_tracking());
+        assert!(!document.can_undo());
+    }
+
+    #[test]
+    fn canceled_ink_mouse_stays_captured_after_touch_interruption() {
+        let mut document = Document::default();
+        let scene = scene(&document);
+        let mut controller = InkController::default();
+        let settings = InkSettings::default();
+        let p = pos2(100.0, 100.0);
+        let down = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[button(p, true)],
+        );
+        assert!(down.captured);
+        let interrupted = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[touch(1, TouchPhase::Start, p, None)],
+        );
+        assert_eq!(
+            interrupted.errors,
+            vec![InkControllerError::Interrupted(InkCancelReason::Multitouch)]
+        );
+        assert!(controller.cancel());
+        let release = frame(
+            &mut controller,
+            &mut document,
+            &scene,
+            Some(InkMode::Pen),
+            settings,
+            xf(),
+            &[touch(1, TouchPhase::End, p, None), button(p, false)],
+        );
+        assert!(release.captured);
+        assert!(!controller.needs_input_tracking());
+        assert!(!document.can_undo());
     }
 
     #[test]

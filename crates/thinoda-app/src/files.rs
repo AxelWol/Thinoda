@@ -1,10 +1,14 @@
 //! File pickers, save targets and deliveries.
 //!
-//! Desktop builds use the native dialogs of `rfd` and write straight to disk. The
-//! browser build (`crates/thinoda-web`) has no file system access: document uploads
-//! are copied into the virtual file system (VFS, backed by `localStorage`), documents
-//! are saved in `/Documents` and exports or explicit saves are delivered as browser
-//! downloads. Image picker and dropped-image uploads are passed directly in memory.
+//! Desktop builds use the native dialogs of `rfd` and write straight to disk. In the
+//! browser build (`crates/thinoda-web`) uploaded documents are stored in durable
+//! origin-private storage (`/Documents`, OPFS or IndexedDB through
+//! [`thinoda_platform::browser_storage::BrowserStorageProvider`]). Attachments,
+//! merge/schema inputs and export scratch files stay in the synchronous virtual
+//! file system (VFS, `localStorage`); image picker and dropped image uploads stay
+//! in memory. Exports and explicit saves are delivered as browser downloads; files
+//! picked with the File System Access API can additionally be saved back with
+//! [`save_back_picked`].
 
 use std::{
     io,
@@ -18,6 +22,44 @@ use thinoda_platform::fs as pfs;
 pub const WEB_DOCUMENTS: &str = "/Documents";
 /// VFS scratch folder for downloads; files are removed after delivery.
 pub const WEB_DOWNLOADS: &str = "/Downloads";
+/// VFS folder for uploads read synchronously (merge sources, FIM schema archives).
+pub const WEB_UPLOAD_INPUTS: &str = "/UploadInputs";
+pub use thinoda_platform::browser_storage::{MigrationConflict, MigrationReport};
+
+thread_local! {
+    static BROWSER_MIGRATION: std::cell::RefCell<Option<MigrationReport>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Web entry hook: stores the verified startup migration result before the app
+/// starts. Startup does not run at all when migration failed.
+pub fn record_browser_migration(report: MigrationReport) {
+    BROWSER_MIGRATION.with(|slot| *slot.borrow_mut() = Some(report));
+}
+
+/// The startup migration report, once. Conflicts list legacy documents whose
+/// different bytes were preserved as copies next to a newer durable original;
+/// the app must tell the user about them.
+pub fn take_browser_migration() -> Option<MigrationReport> {
+    BROWSER_MIGRATION.with(|slot| slot.borrow_mut().take())
+}
+
+/// Whether `path` is a durable browser document (not VFS).
+pub fn is_durable_document(path: &Path) -> bool {
+    is_web() && path.starts_with(WEB_DOCUMENTS) && path != Path::new(WEB_DOCUMENTS)
+}
+
+/// Whether a document path currently exists, without I/O for durable browser
+/// documents: those use the metadata index filled at startup and by commits,
+/// other paths the synchronous VFS. Opening still reads the real storage.
+pub fn document_exists(path: &Path) -> bool {
+    thinoda_platform::browser_storage::known_document(path).unwrap_or_else(|| pfs::exists(path))
+}
+
+/// Durable browser document identifier for a `/Documents/...` path.
+pub fn document_id(path: &Path) -> thinoda_platform::storage::StorageId {
+    thinoda_platform::storage::StorageId(path.to_string_lossy().replace('\\', "/"))
+}
 
 /// What the user picked files for. On the web, pickers finish asynchronously and
 /// the app dispatches the result by purpose in its housekeeping.
@@ -171,6 +213,10 @@ pub fn save_target(
 pub fn deliver(path: &Path) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     {
+        if is_durable_document(path) {
+            web::deliver_durable(path.to_path_buf());
+            return Ok(());
+        }
         let bytes = pfs::read(path).map_err(|e| e.to_string())?;
         let name = path
             .file_name()
@@ -216,6 +262,109 @@ pub fn deliver_attachment(path: &Path) -> Result<(), String> {
 /// Whether `path` is a temporary web download that is not kept.
 pub fn is_scratch(path: &Path) -> bool {
     path.starts_with(WEB_DOWNLOADS)
+}
+
+/// Failures of asynchronous durable-document downloads started by [`deliver`]
+/// (always empty on desktop). Callers must surface them; [`deliver`] only
+/// reports that the download was started.
+pub fn take_delivery_errors() -> Vec<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::take_delivery_errors()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Vec::new()
+    }
+}
+
+/// Whether `path` was opened from a file explicitly picked with the File System
+/// Access API in this tab, so [`save_back_picked`] can write it back.
+pub fn has_picked_file(path: &Path) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::has_picked_file(path)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug)]
+struct PickedRevision {
+    saved: thinoda_platform::storage::Revision,
+    conflict: Option<thinoda_platform::storage::Revision>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl PickedRevision {
+    fn expected(&self, overwrite_approved: bool) -> thinoda_platform::storage::ExpectedRevision {
+        let revision = if overwrite_approved {
+            self.conflict.as_ref().unwrap_or(&self.saved)
+        } else {
+            &self.saved
+        };
+        thinoda_platform::storage::ExpectedRevision::Match(revision.clone())
+    }
+
+    fn record(
+        &mut self,
+        result: &Result<
+            thinoda_platform::storage::Revision,
+            thinoda_platform::storage::StorageError,
+        >,
+    ) {
+        match result {
+            Ok(revision) => {
+                self.saved = revision.clone();
+                self.conflict = None;
+            }
+            Err(thinoda_platform::storage::StorageError::Conflict { actual }) => {
+                self.conflict = actual.clone();
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// Writes `bytes` (normally the just-saved durable document) back to the file the
+/// user picked for `path`. Fails with `Conflict` when that file changed since it
+/// was read or last saved, and with `Unsupported` when no picked handle exists.
+/// Never falls back to a download.
+pub async fn save_back_picked(
+    path: &Path,
+    bytes: &[u8],
+    cancel: thinoda_platform::storage::CancelToken,
+) -> Result<thinoda_platform::storage::Revision, thinoda_platform::storage::StorageError> {
+    save_back_picked_with_overwrite(path, bytes, false, cancel).await
+}
+
+pub(crate) async fn save_back_picked_with_overwrite(
+    path: &Path,
+    bytes: &[u8],
+    overwrite_approved: bool,
+    cancel: thinoda_platform::storage::CancelToken,
+) -> Result<thinoda_platform::storage::Revision, thinoda_platform::storage::StorageError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::save_back_picked(path, bytes, overwrite_approved, cancel).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, bytes, overwrite_approved, cancel);
+        Err(thinoda_platform::storage::StorageError::Unsupported)
+    }
+}
+
+/// Releases a picked-file handle, for example when its document closes.
+pub fn forget_picked(path: &Path) {
+    #[cfg(target_arch = "wasm32")]
+    web::forget_picked(path);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = path;
 }
 
 /// Uploads that finished since the last call (always empty on desktop).
@@ -265,11 +414,28 @@ pub(crate) fn dropped_files(
 pub fn import_workbook(path: &Path) -> Result<Workbook, thinoda_io::IoError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if let Some(limit) = crate::doc::import_read_limit(path) {
+            let bytes = pfs::read_bounded(path, limit).map_err(|error| {
+                if pfs::is_read_limit_exceeded(&error)
+                    && let Err(error) =
+                        thinoda_io::validate_import_file_size(path, limit as u64 + 1)
+                {
+                    return error;
+                }
+                error.into()
+            })?;
+            return thinoda_io::import_named_bytes(path, &bytes);
+        }
         thinoda_io::import_file(path)
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let bytes = pfs::read(path)?;
+        let bytes = match crate::doc::import_read_limit(path) {
+            Some(limit) => thinoda_platform::vfs::global()
+                .read_bounded(path, limit)
+                .map_err(|error| crate::doc::vfs_import_error(path, error))?,
+            None => pfs::read(path)?,
+        };
         thinoda_io::import_named_bytes(path, &bytes)
     }
 }
@@ -285,21 +451,27 @@ pub fn web_save_name(input: &str, allowed: &[&str]) -> Option<String> {
     thinoda_platform::web::sanitize_file_name(input, if keeps { "" } else { default })
 }
 
-/// Copies uploaded `bytes` into `dir` under a safe, unused name. An identical
-/// existing file is reused so re-opening the same upload does not pile up copies.
-pub fn store_upload_in(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+/// Safe upload names in deduplication order: `name`, then `stem (2).ext` … `(999)`.
+pub fn upload_candidates(name: &str) -> io::Result<impl Iterator<Item = String>> {
     let file = thinoda_platform::web::sanitize_file_name(name, "")
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid file name"))?;
     let (stem, extension) = match file.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => (stem.to_owned(), format!(".{ext}")),
         _ => (file.clone(), String::new()),
     };
-    for n in 1..1000 {
-        let candidate = if n == 1 {
+    Ok((1..1000).map(move |n| {
+        if n == 1 {
             file.clone()
         } else {
             format!("{stem} ({n}){extension}")
-        };
+        }
+    }))
+}
+
+/// Copies uploaded `bytes` into `dir` under a safe, unused name. An identical
+/// existing file is reused so re-opening the same upload does not pile up copies.
+pub fn store_upload_in(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    for candidate in upload_candidates(name)? {
         let path = dir.join(candidate);
         if !pfs::exists(&path) {
             pfs::atomic_write(&path, bytes, false)?;
@@ -322,6 +494,25 @@ fn is_dropped_image(name: &str) -> bool {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn normalized_upload_name(name: &str) -> String {
+    thinoda_platform::web::sanitize_file_name(name, "").unwrap_or_else(|| name.to_owned())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn document_upload_size_error(purpose: Purpose, name: &str, size: u64) -> Option<String> {
+    let document = matches!(purpose, Purpose::Open | Purpose::Import | Purpose::Merge)
+        || matches!(purpose, Purpose::Dropped) && !is_dropped_image(name);
+    if !document {
+        return None;
+    }
+    let name = normalized_upload_name(name);
+    let path = Path::new(&name);
+    thinoda_io::validate_import_size(path, size)
+        .is_err()
+        .then(|| crate::doc::import_size_error(path))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn dropped_image_size_error(picked: &Picked, size: u64) -> Option<&'static str> {
     if size > thinoda_core::resources::MAX_RESOURCE_BYTES as u64 {
         return Some("local resource exceeds 8 MiB");
@@ -341,7 +532,7 @@ fn dropped_image_size_error(picked: &Picked, size: u64) -> Option<&'static str> 
     None
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(test)]
 fn store_uploaded_file(picked: &mut Picked, name: &str, bytes: Result<Vec<u8>, String>) {
     store_uploaded_file_with(picked, name, bytes, store_upload_in);
 }
@@ -397,16 +588,144 @@ fn store_uploaded_file_with(
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn upload_read_error(purpose: Purpose) -> &'static str {
+    match purpose {
+        Purpose::Image(_) => "could not read local image",
+        Purpose::Attachment(_) => "could not read local attachment",
+        _ => "could not read local document",
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod browser_upload {
+    use super::{
+        Picked, Purpose, WEB_DOCUMENTS, WEB_UPLOAD_INPUTS, document_id, document_upload_size_error,
+        is_dropped_image, store_uploaded_file_with, upload_candidates,
+    };
+    use std::{
+        io,
+        path::{Path, PathBuf},
+    };
+    use thinoda_platform::storage::{CancelToken, ExpectedRevision, StorageError, StorageProvider};
+
+    /// Create a document with conditional writes, optionally reusing identical uploads.
+    pub(super) async fn store_document(
+        provider: &impl StorageProvider,
+        name: &str,
+        bytes: &[u8],
+        reuse_identical: bool,
+    ) -> Result<PathBuf, String> {
+        if let Some(error) = document_upload_size_error(Purpose::Open, name, bytes.len() as u64) {
+            return Err(error);
+        }
+        for candidate in upload_candidates(name).map_err(|e| e.to_string())? {
+            let path = Path::new(WEB_DOCUMENTS).join(candidate);
+            let id = document_id(&path);
+            match provider
+                .write(
+                    &id,
+                    bytes,
+                    ExpectedRevision::Missing,
+                    CancelToken::default(),
+                )
+                .await
+            {
+                Ok(_) => return Ok(path),
+                Err(StorageError::Conflict { .. }) if reuse_identical => {
+                    let existing = match crate::doc::import_read_limit(&path) {
+                        Some(limit) => {
+                            provider
+                                .read_bounded(&id, limit, CancelToken::default())
+                                .await
+                        }
+                        None => provider.read(&id, CancelToken::default()).await,
+                    };
+                    match existing {
+                        Ok(existing) if existing.bytes == bytes => return Ok(path),
+                        Ok(_) | Err(StorageError::TooLarge) => {}
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                Err(StorageError::Conflict { .. }) => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err("too many files with this name".into())
+    }
+
+    /// Route a browser upload to durable documents, synchronous inputs, or memory.
+    pub(super) async fn store_with(
+        picked: &mut Picked,
+        name: &str,
+        bytes: Result<Vec<u8>, String>,
+        provider: &impl StorageProvider,
+        store_vfs: impl FnOnce(&Path, &str, &[u8]) -> io::Result<PathBuf>,
+    ) {
+        if let Ok(bytes) = &bytes
+            && let Some(error) =
+                document_upload_size_error(picked.purpose, name, bytes.len() as u64)
+        {
+            picked.errors.push(format!("{name}: {error}"));
+            return;
+        }
+        let durable_document = matches!(picked.purpose, Purpose::Open | Purpose::Import)
+            || matches!(picked.purpose, Purpose::Dropped) && !is_dropped_image(name);
+        if durable_document {
+            match bytes {
+                Ok(bytes) => match store_document(provider, name, &bytes, true).await {
+                    Ok(path) if matches!(picked.purpose, Purpose::Dropped) => {
+                        picked
+                            .dropped_uploads
+                            .push(super::DroppedUpload::Document(path));
+                    }
+                    Ok(path) => picked.paths.push(path),
+                    Err(error) => picked.errors.push(format!("{name}: {error}")),
+                },
+                Err(error) => picked.errors.push(format!("{name}: {error}")),
+            }
+        } else if matches!(picked.purpose, Purpose::Merge | Purpose::FimSchemas) {
+            match bytes.and_then(|bytes| {
+                store_vfs(Path::new(WEB_UPLOAD_INPUTS), name, &bytes)
+                    .map_err(|error| error.to_string())
+            }) {
+                Ok(path) => picked.paths.push(path),
+                Err(error) => picked.errors.push(format!("{name}: {error}")),
+            }
+        } else {
+            store_uploaded_file_with(picked, name, bytes, store_vfs);
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod web {
     use super::{
-        Filter, Picked, Purpose, dropped_image_size_error, is_dropped_image, store_uploaded_file,
+        Filter, Picked, PickedRevision, Purpose, document_id, document_upload_size_error,
+        dropped_image_size_error, is_dropped_image, normalized_upload_name, store_upload_in,
+        upload_read_error,
     };
-    use std::cell::RefCell;
+    use std::{
+        cell::RefCell,
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
+    use thinoda_platform::{
+        browser_storage::{self as bs, BrowserStorageProvider},
+        storage::{CancelToken, Revision, StorageError, StorageProvider},
+    };
+
+    /// A file explicitly picked with the File System Access API for this tab.
+    struct PickedHandle {
+        session: String,
+        revision: PickedRevision,
+    }
 
     thread_local! {
         static INBOX: RefCell<Vec<Picked>> = const { RefCell::new(Vec::new()) };
         static CONTEXT: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
+        static DELIVERY_ERRORS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        static HANDLES: RefCell<HashMap<PathBuf, PickedHandle>> = RefCell::new(HashMap::new());
     }
 
     pub(super) fn set_context(ctx: &egui::Context) {
@@ -417,8 +736,20 @@ mod web {
         });
     }
 
+    fn repaint() {
+        CONTEXT.with(|c| {
+            if let Some(ctx) = c.borrow().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+    }
+
     pub(super) fn take_picked() -> Vec<Picked> {
         INBOX.with(|inbox| std::mem::take(&mut *inbox.borrow_mut()))
+    }
+
+    pub(super) fn take_delivery_errors() -> Vec<String> {
+        DELIVERY_ERRORS.with(|errors| std::mem::take(&mut *errors.borrow_mut()))
     }
 
     fn deliver(picked: Picked) {
@@ -431,11 +762,40 @@ mod web {
             return;
         }
         INBOX.with(|inbox| inbox.borrow_mut().push(picked));
-        CONTEXT.with(|c| {
-            if let Some(ctx) = c.borrow().as_ref() {
-                ctx.request_repaint();
+        repaint();
+    }
+
+    /// Reads a durable document and downloads it; failures are queued for
+    /// [`super::take_delivery_errors`] instead of being reported as success.
+    pub(super) fn deliver_durable(path: PathBuf) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "download".into());
+            let result = BrowserStorageProvider::default()
+                .read(&document_id(&path), CancelToken::default())
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|read| thinoda_platform::web::download(&name, &read.bytes));
+            if let Err(error) = result {
+                log::warn!("durable document download failed: {error}");
+                DELIVERY_ERRORS.with(|errors| errors.borrow_mut().push(format!("{name}: {error}")));
+                repaint();
             }
         });
+    }
+
+    async fn store(picked: &mut Picked, name: &str, bytes: Result<Vec<u8>, String>) {
+        let provider = BrowserStorageProvider::default();
+        super::browser_upload::store_with(picked, name, bytes, &provider, store_upload_in).await;
+    }
+
+    async fn store_document(name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+        let provider = BrowserStorageProvider::default();
+        // A byte-identical file may be a different OS file. Never attach a new
+        // writable handle to an existing open document's durable path.
+        super::browser_upload::store_document(&provider, name, bytes, false).await
     }
 
     pub(super) fn pick_files(
@@ -444,6 +804,12 @@ mod web {
         filters: &[Filter<'_>],
         multiple: bool,
     ) {
+        // Open with File System Access keeps a writable handle for save-back.
+        // The picker is started first, inside the user gesture.
+        if purpose == Purpose::Open && bs::file_system_access_supported() {
+            wasm_bindgen_futures::spawn_local(open_with_handles(multiple));
+            return;
+        }
         let mut dialog = rfd::AsyncFileDialog::new();
         if let Some(title) = title {
             dialog = dialog.set_title(title);
@@ -466,34 +832,150 @@ mod web {
                 dropped_uploads: Vec::new(),
             };
             for handle in handles {
+                let name = handle.file_name();
                 if matches!(purpose, Purpose::Image(_) | Purpose::Attachment(_))
                     && handle.inner().size() > thinoda_core::resources::MAX_RESOURCE_BYTES as f64
                 {
                     picked.errors.push("local resource exceeds 8 MiB".into());
                     continue;
                 }
-                let bytes =
-                    if matches!(purpose, Purpose::Image(_) | Purpose::Open | Purpose::Import) {
-                        // Unlike rfd's FileReader wrapper, Blob::arrayBuffer rejects
-                        // on read failure, allowing us to clear the pending request.
-                        let error = if matches!(purpose, Purpose::Image(_)) {
-                            "could not read local image"
+                if let Some(error) =
+                    document_upload_size_error(purpose, &name, handle.inner().size() as u64)
+                {
+                    picked.errors.push(format!("{name}: {error}"));
+                    continue;
+                }
+                // Unlike rfd's FileReader wrapper, Blob::arrayBuffer rejects on
+                // failure for every purpose, including attachments and inputs.
+                let bytes = handle
+                    .inner()
+                    .array_buffer()
+                    .await
+                    .map_err(|_| upload_read_error(purpose).to_owned())
+                    .and_then(|buffer| {
+                        let bytes = js_sys::Uint8Array::new(&buffer);
+                        if let Some(error) =
+                            document_upload_size_error(purpose, &name, bytes.length() as u64)
+                        {
+                            Err(error)
                         } else {
-                            "could not read local document"
-                        };
-                        handle
-                            .inner()
-                            .array_buffer()
-                            .await
-                            .map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec())
-                            .map_err(|_| error.to_owned())
-                    } else {
-                        Ok(handle.read().await)
-                    };
-                store_uploaded_file(&mut picked, &handle.file_name(), bytes);
+                            Ok(bytes.to_vec())
+                        }
+                    });
+                store(&mut picked, &name, bytes).await;
             }
             deliver(picked);
         });
+    }
+
+    async fn open_with_handles(multiple: bool) {
+        let mut picked = Picked {
+            purpose: Purpose::Open,
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        };
+        match bs::pick_file_handles(multiple).await {
+            Err(StorageError::Cancelled) => {}
+            Err(error) => picked.errors.push(error.to_string()),
+            Ok(files) => {
+                for file in files {
+                    let file = match file {
+                        Ok(file) => file,
+                        Err(error) => {
+                            picked.errors.push(error.to_string());
+                            continue;
+                        }
+                    };
+                    if let Err(error) = super::upload_candidates(&file.name) {
+                        bs::forget_picked_file(&file.session);
+                        picked.errors.push(format!("{}: {error}", file.name));
+                        continue;
+                    }
+                    let name = normalized_upload_name(&file.name);
+                    let limit = crate::doc::import_read_limit(Path::new(&name));
+                    let content =
+                        match bs::read_picked_file(&file.session, limit, CancelToken::default())
+                            .await
+                        {
+                            Ok(content) => content,
+                            Err(error) => {
+                                bs::forget_picked_file(&file.session);
+                                let message = match error {
+                                    StorageError::TooLarge => {
+                                        crate::doc::import_size_error(Path::new(&name))
+                                    }
+                                    error => crate::file_ops::storage_error(&error),
+                                };
+                                picked.errors.push(format!("{}: {message}", file.name));
+                                continue;
+                            }
+                        };
+                    match store_document(&file.name, &content.bytes).await {
+                        Ok(path) => {
+                            let previous = HANDLES.with(|handles| {
+                                handles.borrow_mut().insert(
+                                    path.clone(),
+                                    PickedHandle {
+                                        session: file.session,
+                                        revision: PickedRevision {
+                                            saved: content.revision,
+                                            conflict: None,
+                                        },
+                                    },
+                                )
+                            });
+                            if let Some(previous) = previous {
+                                bs::forget_picked_file(&previous.session);
+                            }
+                            picked.paths.push(path);
+                        }
+                        Err(error) => {
+                            bs::forget_picked_file(&file.session);
+                            picked.errors.push(format!("{}: {error}", file.name));
+                        }
+                    }
+                }
+            }
+        }
+        deliver(picked);
+    }
+
+    pub(super) fn has_picked_file(path: &Path) -> bool {
+        HANDLES.with(|handles| handles.borrow().contains_key(path))
+    }
+
+    pub(super) async fn save_back_picked(
+        path: &Path,
+        bytes: &[u8],
+        overwrite_approved: bool,
+        cancel: CancelToken,
+    ) -> Result<Revision, StorageError> {
+        let (session, expected) = HANDLES
+            .with(|handles| {
+                handles
+                    .borrow()
+                    .get(path)
+                    .map(|h| (h.session.clone(), h.revision.expected(overwrite_approved)))
+            })
+            .ok_or(StorageError::Unsupported)?;
+        let result = bs::write_picked_file(&session, bytes, expected, cancel).await;
+        HANDLES.with(|handles| {
+            if let Some(handle) = handles.borrow_mut().get_mut(path)
+                && handle.session == session
+            {
+                handle.revision.record(&result);
+            }
+        });
+        result
+    }
+
+    pub(super) fn forget_picked(path: &Path) {
+        if let Some(handle) = HANDLES.with(|handles| handles.borrow_mut().remove(path)) {
+            bs::forget_picked_file(&handle.session);
+        }
     }
 
     pub(super) fn store_dropped(
@@ -511,17 +993,20 @@ mod web {
             };
             for file in files {
                 let name = file.path().to_string_lossy().into_owned();
-                // egui exposes the browser File, so reject oversized images
-                // before `bytes_async` allocates an ArrayBuffer and Rust copy.
-                if is_dropped_image(&name)
-                    && let Some(file) = file.web_file()
-                    && let Some(error) = dropped_image_size_error(&picked, file.size() as u64)
-                {
-                    picked.errors.push(format!("{name}: {error}"));
-                    continue;
+                // Check the browser File before `bytes_async` allocates.
+                if let Some(web_file) = file.web_file() {
+                    let error = if is_dropped_image(&name) {
+                        dropped_image_size_error(&picked, web_file.size() as u64).map(str::to_owned)
+                    } else {
+                        document_upload_size_error(Purpose::Dropped, &name, web_file.size() as u64)
+                    };
+                    if let Some(error) = error {
+                        picked.errors.push(format!("{name}: {error}"));
+                        continue;
+                    }
                 }
                 let bytes = file.bytes_async().await;
-                store_uploaded_file(&mut picked, &name, bytes);
+                store(&mut picked, &name, bytes).await;
             }
             deliver(picked);
         });
@@ -530,6 +1015,8 @@ mod web {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::browser_upload::{store_document, store_with as store_browser_upload_with};
     use super::*;
     use thinoda_platform::vfs::KvStore;
 
@@ -559,6 +1046,26 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_upload_test(future: impl std::future::Future<Output = ()>) {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn empty_picked(purpose: Purpose) -> Picked {
+        Picked {
+            purpose,
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        }
+    }
+
     #[test]
     fn document_quota_failure_keeps_the_existing_local_copy_intact() {
         let vfs = thinoda_platform::vfs::Vfs::new(Box::new(QuotaStore {
@@ -577,60 +1084,486 @@ mod tests {
     }
 
     #[test]
+    fn document_upload_limits_use_the_staged_name_and_only_document_purposes() {
+        let archive_limit = 64 * 1024 * 1024;
+        for purpose in [
+            Purpose::Open,
+            Purpose::Import,
+            Purpose::Merge,
+            Purpose::Dropped,
+        ] {
+            assert_eq!(
+                document_upload_size_error(purpose, "map.mmap", archive_limit),
+                None
+            );
+            assert_eq!(
+                document_upload_size_error(purpose, "map.mmap", archive_limit + 1),
+                Some(
+                    crate::i18n::t(
+                        "Could not read this MindManager file. It may be invalid, encrypted, too large or unsafe."
+                    )
+                    .to_owned()
+                )
+            );
+            assert_eq!(
+                document_upload_size_error(
+                    purpose,
+                    "map.xdf?2",
+                    thinoda_io::fim::MAX_XML_BYTES as u64
+                ),
+                None
+            );
+            assert_eq!(
+                document_upload_size_error(
+                    purpose,
+                    "map.xdf?2",
+                    thinoda_io::fim::MAX_XML_BYTES as u64 + 1
+                ),
+                Some(crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE).into())
+            );
+            assert_eq!(
+                document_upload_size_error(purpose, "map.xml", archive_limit + 1),
+                Some(crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE).into())
+            );
+            assert_eq!(
+                document_upload_size_error(purpose, "map.xmind", u64::MAX),
+                None
+            );
+        }
+        assert_eq!(
+            document_upload_size_error(Purpose::FimSchemas, "schemas.xdf2", u64::MAX),
+            None
+        );
+        assert_eq!(
+            document_upload_size_error(Purpose::Dropped, "image.png", u64::MAX),
+            None
+        );
+        assert_eq!(
+            document_upload_size_error(Purpose::Image(1), "image.xdf2", u64::MAX),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn oversized_uploaded_document_is_not_staged() {
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::memory());
+        let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs.clone(), false);
+        let mut picked = empty_picked(Purpose::Import);
+        run_upload_test(async {
+            store_browser_upload_with(
+                &mut picked,
+                "map.xdf3",
+                Ok(vec![0; thinoda_io::fim::MAX_XML_BYTES + 1]),
+                &provider,
+                |_, _, _| panic!("document must not reach VFS staging"),
+            )
+            .await;
+        });
+        assert!(picked.paths.is_empty());
+        assert_eq!(
+            picked.errors,
+            [format!(
+                "map.xdf3: {}",
+                crate::i18n::t(crate::file_ops::DOCUMENT_TOO_LARGE)
+            )]
+        );
+        assert!(!vfs.exists(Path::new("/Documents/map.xdf3")));
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn merged_fim_input_is_bounded_before_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.xdf2");
+        let size = thinoda_io::fim::MAX_XML_BYTES as u64 + 1;
+        std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+        let error = import_workbook(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            thinoda_io::IoError::UnsupportedFormat(name) if name == path.display().to_string()
+        ));
+        assert_eq!(std::fs::metadata(path).unwrap().len(), size);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn oversized_merged_mindmanager_keeps_the_file_import_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.mmap");
+        let size = thinoda_io::import_read_limit(&path).unwrap() as u64 + 1;
+        std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+        assert!(matches!(
+            import_workbook(&path),
+            Err(thinoda_io::IoError::Invalid(message))
+                if message == "MindManager file exceeds size limit"
+        ));
+        assert_eq!(std::fs::metadata(path).unwrap().len(), size);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_and_import_only_dispatch_a_successfully_stored_document() {
         for purpose in [Purpose::Open, Purpose::Import] {
-            let vfs = thinoda_platform::vfs::Vfs::new(Box::new(QuotaStore {
+            let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::new(Box::new(QuotaStore {
                 inner: Default::default(),
                 max_value: 256,
-            }));
+            })));
+            let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs.clone(), false);
             let original = Path::new("/Documents/existing.thinoda");
             vfs.write(original, b"existing document", 1).unwrap();
-            let mut picked = Picked {
-                purpose,
-                paths: Vec::new(),
-                errors: Vec::new(),
-                image_owner: None,
-                image_upload: None,
-                dropped_uploads: Vec::new(),
-            };
-            let store = |directory: &Path, name: &str, bytes: &[u8]| {
-                assert_eq!(directory, Path::new(WEB_DOCUMENTS));
-                let path = directory.join(name);
-                vfs.write(&path, bytes, 2)?;
-                Ok(path)
-            };
-            store_uploaded_file_with(&mut picked, "small.thinoda", Ok(vec![1, 2, 3]), store);
-            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
-            assert!(picked.errors.is_empty());
-            assert!(picked.image_upload.is_none());
-            assert!(picked.dropped_uploads.is_empty());
+            let mut picked = empty_picked(purpose);
+            run_upload_test(async {
+                store_browser_upload_with(
+                    &mut picked,
+                    "small.thinoda",
+                    Ok(vec![1, 2, 3]),
+                    &provider,
+                    |_, _, _| panic!("documents must use the durable provider"),
+                )
+                .await;
+                assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+                assert!(picked.errors.is_empty());
+                assert!(picked.image_upload.is_none());
+                assert!(picked.dropped_uploads.is_empty());
 
-            let store = |directory: &Path, name: &str, bytes: &[u8]| {
-                assert_eq!(directory, Path::new(WEB_DOCUMENTS));
-                let path = directory.join(name);
-                vfs.write(&path, bytes, 3)?;
-                Ok(path)
-            };
-            store_uploaded_file_with(&mut picked, "large.thinoda", Ok(vec![0; 1024]), store);
-            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
-            assert_eq!(picked.errors.len(), 1);
-            assert!(picked.errors[0].contains("storage may be full"));
-            assert!(!vfs.exists(Path::new("/Documents/large.thinoda")));
-            assert_eq!(vfs.read(original).unwrap(), b"existing document");
+                store_browser_upload_with(
+                    &mut picked,
+                    "large.thinoda",
+                    Ok(vec![0; 1024]),
+                    &provider,
+                    |_, _, _| panic!("documents must use the durable provider"),
+                )
+                .await;
+                assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+                assert_eq!(picked.errors.len(), 1);
+                assert!(picked.errors[0].contains("storage may be full"));
+                assert!(!vfs.exists(Path::new("/Documents/large.thinoda")));
+                assert_eq!(vfs.read(original).unwrap(), b"existing document");
 
-            store_uploaded_file_with(
-                &mut picked,
+                store_browser_upload_with(
+                    &mut picked,
+                    "unreadable.thinoda",
+                    Err("could not read local document".into()),
+                    &provider,
+                    |_, _, _| panic!("unreadable documents must not be stored"),
+                )
+                .await;
+                assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+                assert_eq!(
+                    picked.errors[1],
+                    "unreadable.thinoda: could not read local document"
+                );
+                assert_eq!(vfs.read(original).unwrap(), b"existing document");
+            });
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn durable_uploads_reuse_identical_data_without_overwriting_conflicts() {
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::new(Box::new(
+            thinoda_platform::vfs::MemoryStore::default(),
+        )));
+        let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs.clone(), false);
+        run_upload_test(async {
+            let first = store_document(&provider, "map.thinoda", b"first", true)
+                .await
+                .unwrap();
+            let same = store_document(&provider, "map.thinoda", b"first", true)
+                .await
+                .unwrap();
+            let different = store_document(&provider, "map.thinoda", b"second", true)
+                .await
+                .unwrap();
+            assert_eq!(first, Path::new(WEB_DOCUMENTS).join("map.thinoda"));
+            assert_eq!(same, first);
+            assert_eq!(different, Path::new(WEB_DOCUMENTS).join("map (2).thinoda"));
+            assert_eq!(vfs.read(&first).unwrap(), b"first");
+            assert_eq!(vfs.read(&different).unwrap(), b"second");
+
+            let bounded = store_document(&provider, "bounded.mmap", b"same", true)
+                .await
+                .unwrap();
+            let reused = store_document(&provider, "bounded.mmap", b"same", true)
+                .await
+                .unwrap();
+            assert_eq!(bounded, reused);
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn oversized_existing_upload_is_preserved_and_not_read_unbounded() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use thinoda_platform::storage::{
+            CancelToken, Capabilities, Entry, ExpectedRevision, ReadResult, Revision, StorageError,
+            StorageFuture, StorageId, StorageProvider, VfsStorageProvider,
+        };
+
+        struct OversizedExisting {
+            inner: VfsStorageProvider,
+            bounded_reads: AtomicUsize,
+        }
+        impl StorageProvider for OversizedExisting {
+            fn capabilities(&self) -> Capabilities {
+                self.inner.capabilities()
+            }
+            fn list<'a>(
+                &'a self,
+                id: &'a StorageId,
+                cancel: CancelToken,
+            ) -> StorageFuture<'a, Vec<Entry>> {
+                self.inner.list(id, cancel)
+            }
+            fn read<'a>(
+                &'a self,
+                _id: &'a StorageId,
+                _cancel: CancelToken,
+            ) -> StorageFuture<'a, ReadResult> {
+                panic!("bounded document collisions must not use an unbounded read")
+            }
+            fn read_bounded<'a>(
+                &'a self,
+                _id: &'a StorageId,
+                limit: usize,
+                _cancel: CancelToken,
+            ) -> StorageFuture<'a, ReadResult> {
+                assert_eq!(limit, 64 * 1024 * 1024);
+                self.bounded_reads.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err(StorageError::TooLarge) })
+            }
+            fn write<'a>(
+                &'a self,
+                id: &'a StorageId,
+                bytes: &'a [u8],
+                expected: ExpectedRevision,
+                cancel: CancelToken,
+            ) -> StorageFuture<'a, Revision> {
+                self.inner.write(id, bytes, expected, cancel)
+            }
+        }
+
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::memory());
+        let original = Path::new("/Documents/map.mmap");
+        vfs.write(original, b"preserved", 1).unwrap();
+        let provider = OversizedExisting {
+            inner: VfsStorageProvider::new(vfs.clone(), false),
+            bounded_reads: AtomicUsize::new(0),
+        };
+        run_upload_test(async {
+            let copy = store_document(&provider, "map.mmap", b"new", true)
+                .await
+                .unwrap();
+            assert_eq!(copy, Path::new("/Documents/map (2).mmap"));
+            assert_eq!(vfs.read(original).unwrap(), b"preserved");
+            assert_eq!(vfs.read(&copy).unwrap(), b"new");
+        });
+        assert_eq!(provider.bounded_reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn picked_file_handles_get_distinct_paths_even_for_identical_files() {
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::new(Box::new(
+            thinoda_platform::vfs::MemoryStore::default(),
+        )));
+        let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs.clone(), false);
+        run_upload_test(async {
+            let existing = store_document(&provider, "map.thinoda", b"same", true)
+                .await
+                .unwrap();
+            let first_handle = store_document(&provider, "map.thinoda", b"same", false)
+                .await
+                .unwrap();
+            let second_handle = store_document(&provider, "map.thinoda", b"same", false)
+                .await
+                .unwrap();
+            assert_ne!(existing, first_handle);
+            assert_ne!(first_handle, second_handle);
+            for path in [existing, first_handle, second_handle] {
+                assert_eq!(vfs.read(&path).unwrap(), b"same");
+            }
+        });
+    }
+
+    #[test]
+    fn picked_file_overwrite_matches_only_the_observed_conflict_revision() {
+        use thinoda_platform::storage::{ExpectedRevision, Revision, StorageError};
+
+        let revision = |value: &str| Revision(value.into());
+        let mut picked = PickedRevision {
+            saved: revision("saved"),
+            conflict: None,
+        };
+        assert_eq!(
+            picked.expected(true),
+            ExpectedRevision::Match(revision("saved"))
+        );
+        picked.record(&Err(StorageError::Conflict {
+            actual: Some(revision("external")),
+        }));
+        assert_eq!(
+            picked.expected(false),
+            ExpectedRevision::Match(revision("saved"))
+        );
+        assert_eq!(
+            picked.expected(true),
+            ExpectedRevision::Match(revision("external"))
+        );
+        picked.record(&Err(StorageError::Conflict {
+            actual: Some(revision("newer external")),
+        }));
+        assert_eq!(
+            picked.expected(true),
+            ExpectedRevision::Match(revision("newer external"))
+        );
+        picked.record(&Ok(revision("written")));
+        assert_eq!(
+            picked.expected(true),
+            ExpectedRevision::Match(revision("written"))
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn browser_upload_routes_preserve_drop_order_and_synchronous_inputs() {
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::new(Box::new(
+            thinoda_platform::vfs::MemoryStore::default(),
+        )));
+        let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs.clone(), false);
+        run_upload_test(async {
+            let mut dropped = empty_picked(Purpose::Dropped);
+            for (name, bytes) in [
+                ("before.j?pg", vec![1]),
+                ("map.thinoda", vec![2]),
+                ("after.PNG", vec![3]),
+            ] {
+                store_browser_upload_with(&mut dropped, name, Ok(bytes), &provider, |_, _, _| {
+                    panic!("dropped images stay in memory and documents use durable storage")
+                })
+                .await;
+            }
+            assert!(dropped.paths.is_empty());
+            assert!(dropped.errors.is_empty());
+            assert_eq!(dropped.dropped_uploads.len(), 3);
+            assert!(matches!(
+                &dropped.dropped_uploads[0],
+                DroppedUpload::Image(image) if image.name == "before.jpg" && image.bytes == [1]
+            ));
+            assert!(matches!(
+                &dropped.dropped_uploads[1],
+                DroppedUpload::Document(path) if path == &Path::new(WEB_DOCUMENTS).join("map.thinoda")
+            ));
+            assert!(matches!(
+                &dropped.dropped_uploads[2],
+                DroppedUpload::Image(image) if image.name == "after.PNG" && image.bytes == [3]
+            ));
+            assert_eq!(
+                vfs.read(&Path::new(WEB_DOCUMENTS).join("map.thinoda"))
+                    .unwrap(),
+                [2]
+            );
+            store_browser_upload_with(
+                &mut dropped,
                 "unreadable.thinoda",
                 Err("could not read local document".into()),
-                |_, _, _| panic!("unreadable documents must not be stored"),
-            );
-            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+                &provider,
+                |_, _, _| panic!("unreadable drops must not enter the VFS"),
+            )
+            .await;
+            assert_eq!(dropped.dropped_uploads.len(), 3);
             assert_eq!(
-                picked.errors[1],
-                "unreadable.thinoda: could not read local document"
+                dropped.errors,
+                ["unreadable.thinoda: could not read local document"]
             );
-            assert_eq!(vfs.read(original).unwrap(), b"existing document");
-        }
+
+            for purpose in [Purpose::Merge, Purpose::FimSchemas] {
+                let mut picked = empty_picked(purpose);
+                store_browser_upload_with(
+                    &mut picked,
+                    "input.bin",
+                    Ok(vec![4]),
+                    &provider,
+                    |directory, name, bytes| {
+                        assert_eq!(directory, Path::new(WEB_UPLOAD_INPUTS));
+                        assert_eq!(bytes, [4]);
+                        Ok(directory.join(name))
+                    },
+                )
+                .await;
+                assert_eq!(
+                    picked.paths,
+                    [Path::new(WEB_UPLOAD_INPUTS).join("input.bin")]
+                );
+                assert!(picked.errors.is_empty());
+            }
+
+            let mut image = empty_picked(Purpose::Image(1));
+            store_browser_upload_with(
+                &mut image,
+                "oversized.jpg",
+                Ok(vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES + 1]),
+                &provider,
+                |_, _, _| panic!("images must not enter the VFS"),
+            )
+            .await;
+            assert!(image.image_upload.is_none());
+            assert!(image.errors[0].contains("local resource exceeds 8 MiB"));
+
+            let mut attachment = empty_picked(Purpose::Attachment(47));
+            store_browser_upload_with(
+                &mut attachment,
+                "file.txt",
+                Ok(vec![5]),
+                &provider,
+                |directory, name, bytes| {
+                    assert_eq!(directory, Path::new("/AttachmentUploads/47"));
+                    assert_eq!(bytes, [5]);
+                    Ok(directory.join(name))
+                },
+            )
+            .await;
+            assert_eq!(
+                attachment.paths,
+                [Path::new("/AttachmentUploads/47").join("file.txt")]
+            );
+            assert!(attachment.errors.is_empty());
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn picker_read_failures_are_reported_without_staging_any_upload() {
+        let vfs = std::sync::Arc::new(thinoda_platform::vfs::Vfs::new(Box::new(
+            thinoda_platform::vfs::MemoryStore::default(),
+        )));
+        let provider = thinoda_platform::storage::VfsStorageProvider::new(vfs, false);
+        run_upload_test(async {
+            for (purpose, message) in [
+                (Purpose::Open, "could not read local document"),
+                (Purpose::Import, "could not read local document"),
+                (Purpose::Merge, "could not read local document"),
+                (Purpose::FimSchemas, "could not read local document"),
+                (Purpose::Image(1), "could not read local image"),
+                (Purpose::Attachment(2), "could not read local attachment"),
+            ] {
+                assert_eq!(upload_read_error(purpose), message);
+                let mut picked = empty_picked(purpose);
+                store_browser_upload_with(
+                    &mut picked,
+                    "unreadable.dat",
+                    Err(message.into()),
+                    &provider,
+                    |_, _, _| panic!("failed reads must not enter the VFS"),
+                )
+                .await;
+                assert_eq!(picked.errors, [format!("unreadable.dat: {message}")]);
+                assert!(picked.paths.is_empty());
+                assert!(picked.image_upload.is_none());
+                assert!(picked.dropped_uploads.is_empty());
+            }
+        });
     }
 
     #[test]
@@ -847,7 +1780,40 @@ mod tests {
     }
 
     #[test]
+    fn upload_candidates_deduplicate_in_order() {
+        let names: Vec<_> = upload_candidates("dir/map.thinoda")
+            .unwrap()
+            .take(3)
+            .collect();
+        assert_eq!(names, ["map.thinoda", "map (2).thinoda", "map (3).thinoda"]);
+        assert_eq!(
+            upload_candidates("README").unwrap().nth(1).unwrap(),
+            "README (2)"
+        );
+        assert_eq!(upload_candidates("a").unwrap().count(), 999);
+        assert!(upload_candidates("..").is_err());
+    }
+
+    #[test]
+    fn migration_report_hook_is_taken_once() {
+        record_browser_migration(MigrationReport {
+            backend: "opfs".into(),
+            verified: 1,
+            conflicts: vec![MigrationConflict {
+                original: "/Documents/a".into(),
+                preserved: "/Documents/.thinoda-legacy/x/y/a".into(),
+            }],
+        });
+        assert_eq!(take_browser_migration().unwrap().conflicts.len(), 1);
+        assert!(take_browser_migration().is_none());
+    }
+
+    #[test]
     fn desktop_builds_have_no_web_side_effects() {
+        assert!(take_delivery_errors().is_empty());
+        assert!(!has_picked_file(Path::new("/Documents/x.thinoda")));
+        assert!(!is_durable_document(Path::new("/Documents/x.thinoda")));
+        assert_eq!(document_id(Path::new("/Documents/x")).0, "/Documents/x");
         assert!(!is_web());
         assert!(take_picked().is_empty());
         assert!(deliver(Path::new("/nonexistent")).is_ok());

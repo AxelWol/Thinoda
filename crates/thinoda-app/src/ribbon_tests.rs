@@ -1,6 +1,9 @@
 use super::*;
 use egui::accesskit::Role;
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 
 fn harness(width: f32, height: f32) -> Harness<'static, ThinodaApp> {
     Harness::builder()
@@ -15,6 +18,23 @@ fn harness(width: f32, height: f32) -> Harness<'static, ThinodaApp> {
             },
             ThinodaApp::headless(),
         )
+}
+
+#[test]
+fn ai_ribbon_keeps_settings_available_when_generation_is_disabled() {
+    let mut h = harness(1800.0, 700.0);
+    h.state_mut().settings.ai.provider = thinoda_platform::settings::AiProvider::None;
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, t("AI")).click();
+    h.run_steps(3);
+    let brainstorm = h.get_by_role_and_label(Role::Button, t("AI: Brainstorm Subtopics"));
+    assert!(brainstorm.accesskit_node().is_disabled());
+    let settings = h.get_by_role_and_label(Role::Button, t("AI settings"));
+    assert!(!settings.accesskit_node().is_disabled());
+    settings.click();
+    h.run_steps(3);
+    assert!(h.state().dialogs.settings);
+    assert_eq!(h.state().dialogs.settings_tab, crate::app::SettingsTab::Ai);
 }
 
 #[test]

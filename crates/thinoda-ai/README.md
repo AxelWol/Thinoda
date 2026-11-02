@@ -2,6 +2,17 @@ _Last updated: 2026-10-26 14:10:43 UTC (non-binding repository metadata)._ <!-- 
 
 # Embeddings transport API
 
+## Local Ollama
+
+`AiConfig { provider: thinoda_ai::harness::Provider::Ollama,
+base_url: "http://127.0.0.1:11434/v1".into(), ..Default::default() }` uses
+Ollama's OpenAI-compatible model discovery, chat completions (including streaming)
+and embeddings endpoints on native and browser builds. Ollama requests never send
+a configured bearer key or the `THINODA_AI_API_KEY` environment fallback.
+Models must already be installed in Ollama; this client does not start the server
+or download models. Browser access requires CORS (`OLLAMA_ORIGINS`) and may be
+restricted by browser mixed-content/local-network policies.
+
 `thinoda-ai` supports explicitly configured OpenAI-compatible `/embeddings`
 endpoints. This crate supplies transport, not app settings, semantic search,
 clustering, model discovery, caching, or automatic document mutation.

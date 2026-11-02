@@ -147,7 +147,8 @@ pub struct Client {
     agent: ureq::Agent,
 }
 
-fn is_chat_model(id: &str) -> bool {
+/// Excludes embedding, reranking, speech recognition and speech synthesis models.
+pub fn is_chat_model(id: &str) -> bool {
     let id = id.to_ascii_lowercase();
     !(id.contains("embed") || id.contains("rerank") || id.contains("whisper") || id.contains("tts"))
 }
@@ -159,6 +160,9 @@ fn join_url(base_url: &str, path: &str) -> String {
 
 /// Configured key, falling back to `THINODA_AI_API_KEY` (desktop only).
 fn configured_key(cfg: &AiConfig) -> Option<String> {
+    if cfg.provider == harness::Provider::Ollama {
+        return None;
+    }
     let k = cfg.api_key.trim();
     if !k.is_empty() {
         return Some(k.to_string());
@@ -323,7 +327,7 @@ impl Client {
 
     /// Configured model, or the first chat model the server offers.
     pub fn resolve_model(&self) -> Result<String> {
-        if self.cfg.provider != harness::Provider::OpenAiApi {
+        if !self.cfg.provider.is_api() {
             return Ok(self.cfg.model.clone());
         }
         if !self.cfg.model.trim().is_empty() {
@@ -334,7 +338,7 @@ impl Client {
 
     /// One non-streaming chat completion; returns the assistant text.
     pub fn chat(&self, model: &str, messages: &[Message]) -> Result<String> {
-        if self.cfg.provider != harness::Provider::OpenAiApi {
+        if !self.cfg.provider.is_api() {
             return harness::chat_blocking(&self.cfg, model, messages);
         }
         let body = chat_body(&self.cfg, model, messages);

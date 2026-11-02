@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ai"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "js-sys",
  "libc",
@@ -4852,7 +4852,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-app"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4878,6 +4878,7 @@ dependencies = [
  "thinoda-io",
  "thinoda-platform",
  "thinoda-ui",
+ "tokio",
  "ureq",
  "uuid",
  "wasm-bindgen",
@@ -4889,7 +4890,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-canvas"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "earcutr",
  "egui",
@@ -4900,7 +4901,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-core"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -4914,7 +4915,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-io"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "base64 0.23.1",
  "epaint_default_fonts",
@@ -4938,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-platform"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "base64 0.23.1",
  "cc",
@@ -4947,16 +4948,20 @@ dependencies = [
  "keyring",
  "log",
  "pkg-config",
+ "quick-xml 0.42.0",
  "raw-window-handle",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thinoda-core",
  "thiserror 2.0.21",
+ "tokio",
  "toml",
  "uuid",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "web-time",
  "windows-sys 0.61.2",
@@ -4964,7 +4969,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-ui"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -4974,7 +4979,7 @@ dependencies = [
 
 [[package]]
 name = "thinoda-web"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "eframe",
  "egui",
@@ -6516,7 +6521,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "image",

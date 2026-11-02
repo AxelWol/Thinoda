@@ -22,6 +22,13 @@ measure time to interaction separately without the debugger enabled. Record
 the artifact and toolchain used, sample counts and device/browser limitations.
 Desktop emulation or WebKit automation is not an actual iPad measurement.
 
+On 2026-11-02 the then-deployed Pages build exposed a hashed Wasm preload.
+For a gzip-capable request, its Wasm response reported `application/wasm`,
+`Content-Encoding: gzip`, and a compressed length of 8,907,096 bytes. This is
+an observation of the previous deployed build, not a post-merge benchmark or
+evidence of iPad download or compilation time. Cache, network and host behavior
+still need measurement against the new release artifact.
+
 ## Proposed approach
 
 The existing site is a static Trunk/Wasm app with a versioned, complete
@@ -67,16 +74,16 @@ actual release boot chain before choosing the changes:
 
 ### Recovery integration blocker
 
-The separate, unintegrated browser-recovery draft currently uses independent
-timeouts that can accumulate to roughly 138 seconds under adverse conditions;
-scheduling and parsing mean that is not a hard wall-clock limit. This is a
-design finding, **not** a measurement of the existing app. Before integration,
-recovery discovery needs one overall asynchronous deadline, bounded synchronous
-work and explicit pending, failure and retry states, without allowing
-unresolved snapshots to be silently overwritten or discarded. Permission
-requests may overlap where safe. Browser throttling can delay callbacks, so the
-deadline is not a guaranteed wall-clock bound. Verify the deadline and ownership
-behavior before using that build as the startup baseline.
+The separate, unintegrated browser-recovery draft specifies one nominal
+30-second asynchronous discovery budget. Scheduling, parsing and browser
+throttling mean this is not a hard wall-clock limit or a measurement of startup.
+The draft still lacks a non-destructive in-app rescue path for oversized or
+unreadable sources; those cases can leave editing gated. Browser document
+migration also runs before recovery and has not been measured against this
+budget. Before integration, bound synchronous work and provide explicit pending,
+failure, retry and rescue behavior without allowing unresolved snapshots to be
+silently overwritten or discarded. Verify the deadline and ownership behavior
+before using that build as the startup baseline.
 
 Early editing is acceptable only for a newly fenced, distinct document while
 discovery remains visibly pending. Late recovery results must not interrupt
@@ -86,6 +93,69 @@ preserved until a safe handoff; restore into a separate unsaved document or
 otherwise prove equivalent isolation. If that cannot be guaranteed, editing
 must remain gated. Measure the first safe interaction and completed recovery
 discovery separately.
+
+### Current loader and offline-shell checkpoint
+
+The static loader now exposes the storage-preparation and app-start phases as
+an accessible status, announces the existing storage, startup and graphics
+error paths as alerts, and offers a reload link. A bootstrap guard also reports
+application-module and Wasm loading failures before Rust can render an error.
+Trunk's custom bootstrap pattern preserves its normal Wasm fetch, preloads,
+bindings and success event while catching initialization failures; a scoped
+listener handles failure to import the application module itself. Unrelated
+script errors are not classified as bootstrap failures. The brand mark gently
+pulses while pending; reduced-motion users get no animation.
+
+On a cold online load, registering the service worker before the Wasm bootstrap
+completed caused its complete-shell precache to request the same Wasm file
+while the foreground request was still downloading. Registration now waits
+until that bootstrap succeeds or reports a scoped failure. Existing cached
+HTML without the new bootstrap signal still registers normally. Bootstrap
+completion is **not** the same as the fully interactive app: storage and UI
+initialization can still be running when precaching starts.
+
+On 2026-11-02, six matched cold-start pairs compared the previous and new
+production shells in headless Edge 156 on Windows, with fresh browser contexts
+and a synthetic shared 4 MiB/s bandwidth limit for uncompressed Wasm responses.
+Both shells used the identical 27,318,703-byte Wasm file. Median loader removal
+changed from 13.20 s to 7.36 s; median time to a handled Open shortcut changed
+from 13.42 s to 7.65 s. The shortcut reached a test file-picker shim that
+immediately cancelled; it did not test a real operating-system picker.
+Pairwise interaction improvements ranged from 42.5% to 44.3%.
+
+The change postpones the second full download rather than eliminating it; total
+transfer and Wasm size are essentially unchanged. An early tab close can leave
+the first offline installation incomplete. The complete versioned shell and
+waiting-worker update policy are unchanged, and the worker is still registered
+after a bootstrap failure. Tests cover deferred installation, offline reload,
+Wasm and module failures, and an update waiting while an old tab remains open.
+These synthetic desktop results show a reproducible contention improvement,
+not the magnitude of an improvement on a real iPad, a compressed production
+connection, a warm launch, or a busy document. Actual iPad Safari and Edge
+acceptance remains open.
+
+As a size-only probe, applying `wasm-opt -Oz` to the already optimized final
+Wasm reduced it from 27,318,620 to 25,889,852 bytes; gzip level 6 reduced the
+same artifacts from 9,738,066 to 9,649,777 bytes (about 0.9%). This is not a
+fresh size-optimized production build and neither startup time nor behavior was
+measured for it. The probe was not adopted; transfer size alone does not
+establish a useful iPad improvement.
+
+### Browser accessibility checkpoint
+
+A desktop Lighthouse navigation audit of the production shell identified the
+transparent, unlabeled text input created for egui's browser IME. The browser
+accessibility tree exposed the canvas and that input, but not the application's
+board controls or their egui accessibility names. The current eframe 0.37 web
+backend explicitly discards `accesskit_update`; enabling egui accessibility
+metadata alone therefore does not expose it to the browser. Eframe's optional
+web speech synthesis is not an accessibility-tree bridge. The loader's semantic
+status and reduced-motion behavior are useful, but they do not establish
+browser screen-reader access to the editor or toolbox. Do not mask the input or
+add a generic label merely to improve an audit score without preserving real
+editing and IME semantics. Investigate an accessible browser bridge and verify
+real screen readers, keyboard focus, editing and localized labels before closing
+the F1-F3 accessibility gates.
 
 ## Acceptance
 

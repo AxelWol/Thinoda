@@ -3,8 +3,7 @@
 //! Importing or writing a large document (for example a FIM model) can take a while. The
 //! interactive app runs that work on a worker thread and paints a busy indicator with the
 //! file name until the result is applied on the UI thread, like the startup loader does.
-//! Without worker threads (browser build) the work runs on the UI thread, but only after
-//! the indicator was presented, so it stays visible while the page waits.
+//! Browser storage is awaited asynchronously; native I/O runs on a worker.
 //!
 //! Progress inside one file cannot be measured, so the indicator is indeterminate; only the
 //! position within several queued files is shown. A save writes a snapshot of the committed
@@ -16,15 +15,26 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
 };
 
 use egui::{Context, ViewportId};
 use thinoda_io::Format;
+use thinoda_platform::storage::{CancelToken, StorageError, StorageFuture};
 use thinoda_ui::tokens::Palette;
 
 use crate::{ThinodaApp, doc::OpenDoc, i18n::t, startup::display_name};
+
+pub(crate) const DOCUMENT_TOO_LARGE: &str = "This file exceeds the supported size limit.";
+
+pub(crate) fn storage_error(error: &StorageError) -> String {
+    match error {
+        StorageError::TooLarge => t(DOCUMENT_TOO_LARGE).into(),
+        _ => error.to_string(),
+    }
+}
 
 /// How document file operations started from the UI are executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,14 +59,16 @@ pub enum FileBusy {
     },
     /// The document is being written to the named file.
     Saving { name: String },
+    /// A user-requested read of an online-only sync placeholder.
+    Downloading { name: String },
 }
 
-type Job<R> = Box<dyn FnOnce() -> Result<R, String> + Send>;
+type Job<R> = Box<dyn FnOnce() -> StorageFuture<'static, R> + Send>;
 
 enum Work<R> {
     /// Requested but not started yet (starting needs the frame context).
     Pending(Option<Job<R>>),
-    Thread(Receiver<Result<R, String>>),
+    Thread(Receiver<Result<R, StorageError>>),
     Deferred(Option<Job<R>>),
 }
 
@@ -73,33 +85,48 @@ impl<R: Send + 'static> Work<R> {
             *self = Self::Deferred(None);
             return;
         };
-        if mode != FileWorkMode::Background || cfg!(target_arch = "wasm32") {
-            *self = Self::Deferred(Some(job));
-            return;
-        }
-        let slot = Arc::new(Mutex::new(Some(job)));
-        let (tx, rx) = mpsc::channel();
-        let (worker_slot, gate, ctx) = (slot.clone(), gate.clone(), ctx.clone());
-        let spawned = std::thread::Builder::new()
-            .name("thinoda-file".into())
-            .spawn(move || {
-                let job = worker_slot
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .take();
-                if let Some(job) = job {
-                    gate.wait();
-                    let _ = tx.send(job());
-                    ctx.request_repaint_of(ViewportId::ROOT);
-                }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (mode, gate);
+            let (tx, rx) = mpsc::channel();
+            let ctx = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = tx.send(job().await);
+                ctx.request_repaint_of(ViewportId::ROOT);
             });
-        *self = match spawned {
-            Ok(_) => Self::Thread(rx),
-            Err(error) => {
-                log::warn!("could not start the file worker thread, using the UI thread: {error}");
-                Self::Deferred(slot.lock().unwrap_or_else(PoisonError::into_inner).take())
+            *self = Self::Thread(rx);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if mode != FileWorkMode::Background {
+                *self = Self::Deferred(Some(job));
+                return;
             }
-        };
+            let slot = Arc::new(Mutex::new(Some(job)));
+            let (tx, rx) = mpsc::channel();
+            let (worker_slot, gate, ctx) = (slot.clone(), gate.clone(), ctx.clone());
+            let spawned = std::thread::Builder::new()
+                .name("thinoda-file".into())
+                .spawn(move || {
+                    let job = worker_slot
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                    if let Some(job) = job {
+                        gate.wait();
+                        let _ = tx.send(crate::doc::run_storage(job()));
+                        ctx.request_repaint_of(ViewportId::ROOT);
+                    }
+                });
+            *self = match spawned {
+                Ok(_) => Self::Thread(rx),
+                Err(error) => {
+                    let (tx, rx) = mpsc::channel();
+                    let _ = tx.send(Err(StorageError::Io(error)));
+                    Self::Thread(rx)
+                }
+            };
+        }
     }
 
     fn deferred(&self) -> bool {
@@ -107,17 +134,29 @@ impl<R: Send + 'static> Work<R> {
     }
 
     /// The finished result. Deferred work only runs when blocking the UI is acceptable.
-    fn poll(&mut self, may_block: bool, stopped: &str) -> Option<Result<R, String>> {
+    fn poll(&mut self, may_block: bool, stopped: &str) -> Option<Result<R, StorageError>> {
         match self {
             Self::Pending(_) => None,
             Self::Thread(rx) => match rx.try_recv() {
                 Ok(result) => Some(result),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Err(stopped.to_owned())),
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err(StorageError::Remote(stopped.to_owned())))
+                }
             },
             Self::Deferred(job) => may_block.then(|| {
-                job.take()
-                    .map_or_else(|| Err(stopped.to_owned()), |job| job())
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    job.take().map_or_else(
+                        || Err(StorageError::Remote(stopped.to_owned())),
+                        |job| crate::doc::run_storage(job()),
+                    )
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = job;
+                    Err(StorageError::Remote(stopped.to_owned()))
+                }
             }),
         }
     }
@@ -136,6 +175,7 @@ impl Gate {
         self.resume.notify_all();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn wait(&self) {
         let mut paused = self.paused.lock().unwrap_or_else(PoisonError::into_inner);
         while *paused {
@@ -150,7 +190,9 @@ impl Gate {
 struct Opening {
     path: PathBuf,
     viewport: ViewportId,
-    work: Work<thinoda_io::ImportReport>,
+    work: Work<crate::doc::LoadedWorkbook>,
+    cancel: CancelToken,
+    downloading: Arc<AtomicBool>,
 }
 
 struct Saving {
@@ -162,7 +204,19 @@ struct Saving {
     /// Browser: download the written file once it is complete.
     deliver: bool,
     autosave: bool,
+    consent: crate::export_preflight::SaveConsent,
     work: Work<crate::doc::WrittenWorkbook>,
+    cancel: CancelToken,
+}
+
+/// Consent applies only to the same content and destination on an explicit
+/// overwrite retry after a queued write encountered a conflict.
+struct ConflictRetry {
+    key: String,
+    target: PathBuf,
+    state: u64,
+    deliver: bool,
+    consent: crate::export_preflight::SaveConsent,
 }
 
 #[derive(Default)]
@@ -174,6 +228,7 @@ pub(crate) struct FileOps {
     /// Files of the current open batch that already finished.
     opened: usize,
     save: Option<Saving>,
+    conflict_retry: Option<ConflictRetry>,
     /// Root frame in which the indicator was first drawn for pending deferred work.
     presented: Option<u64>,
 }
@@ -209,11 +264,21 @@ impl FileOps {
             .map(|o| &o.path)
             .or_else(|| self.queued.front().map(|(path, _)| path));
         if let Some(path) = current {
-            busy.push(FileBusy::Opening {
-                index: self.opened + 1,
-                total: self.opened + usize::from(self.opening.is_some()) + self.queued.len(),
-                name: display_name(path),
-            });
+            if self
+                .opening
+                .as_ref()
+                .is_some_and(|opening| opening.downloading.load(Ordering::Relaxed))
+            {
+                busy.push(FileBusy::Downloading {
+                    name: display_name(path),
+                });
+            } else {
+                busy.push(FileBusy::Opening {
+                    index: self.opened + 1,
+                    total: self.opened + usize::from(self.opening.is_some()) + self.queued.len(),
+                    name: display_name(path),
+                });
+            }
         }
         busy
     }
@@ -228,6 +293,29 @@ impl FileOps {
 }
 
 impl ThinodaApp {
+    pub(crate) fn saving_document(&self) -> bool {
+        self.file_ops.saving() || self.cloud_program.saving()
+    }
+
+    pub(crate) fn document_save_pending(&self, key: &str) -> bool {
+        self.file_ops.saving_key(key) || self.cloud_program.saving_key(key)
+    }
+
+    pub(crate) fn configured_backup_directory(
+        &self,
+        backup: bool,
+    ) -> Result<Option<PathBuf>, String> {
+        if !backup {
+            return Ok(None);
+        }
+        if let Some(path) = &self.settings.cloud.backup_folder
+            && !crate::cloud_program::backup_folder_allowed(path, &self.services.cloud)
+        {
+            return Err(t("Choose a backup folder outside every detected cloud folder.").into());
+        }
+        Ok(self.settings.cloud.backup_folder.clone())
+    }
+
     /// Selects how UI-requested opens and saves run. The interactive app uses
     /// [`FileWorkMode::Background`]; the default completes work inside each call.
     pub fn set_file_work_mode(&mut self, mode: FileWorkMode) {
@@ -289,22 +377,55 @@ impl ThinodaApp {
         backup: bool,
         deliver: bool,
         autosave: bool,
-        consent: crate::export_preflight::SaveConsent,
+        mut consent: crate::export_preflight::SaveConsent,
     ) -> Result<(), String> {
         debug_assert!(self.file_ops.save.is_none());
+        let backup_directory = self.configured_backup_directory(backup)?;
         let doc = &mut self.docs[index];
+        let expected = doc.expected_revision(target)?;
         let format = doc.prepare_save(target)?;
+        let mut deliver = deliver;
+        if let Some(retry) = self.file_ops.conflict_retry.take()
+            && doc.ignore_conflict
+            && retry.key == doc.key
+            && retry.target.as_path() == target
+        {
+            deliver |= retry.deliver;
+            if retry.state == doc.doc.state_id() {
+                consent.board |= retry.consent.board;
+                consent.mindmanager |= retry.consent.mindmanager;
+            } else if !autosave
+                && format == Format::MindManager
+                && retry.consent.mindmanager
+                && !consent.mindmanager
+            {
+                // A retry may arrive from the board preflight after the
+                // document changed. The earlier MindManager consent no longer
+                // applies; resume through the normal confirmation dialog.
+                self.dialogs.mindmanager_save =
+                    Some((doc.key.clone(), target.to_path_buf(), false));
+                self.dialogs.mindmanager_save_deliver = deliver;
+                return Ok(());
+            }
+        }
         let workbook = doc.doc.workbook().clone();
         let path = target.to_path_buf();
+        let cancel = CancelToken::default();
+        let worker_cancel = cancel.clone();
         let job: Job<crate::doc::WrittenWorkbook> = Box::new(move || {
-            crate::doc::write_workbook(
-                &workbook,
-                format,
-                &path,
-                backup,
-                consent.board,
-                consent.mindmanager,
-            )
+            Box::pin(async move {
+                crate::doc::write_workbook_async(
+                    &workbook,
+                    format,
+                    &path,
+                    backup,
+                    expected,
+                    worker_cancel,
+                    backup_directory,
+                    consent,
+                )
+                .await
+            })
         });
         self.file_ops.save = Some(Saving {
             key: doc.key.clone(),
@@ -313,7 +434,9 @@ impl ThinodaApp {
             state: doc.doc.state_id(),
             deliver,
             autosave,
+            consent,
             work: Work::new(job),
+            cancel,
         });
         Ok(())
     }
@@ -364,10 +487,14 @@ impl ThinodaApp {
                     .expect("open state checked above")
                     .path;
                 self.file_ops.opened += 1;
-                self.add_opened(
-                    &path,
-                    result.and_then(|report| OpenDoc::from_import_report(&path, report)),
-                );
+                if !matches!(result, Err(StorageError::Cancelled)) {
+                    self.add_opened(
+                        &path,
+                        result
+                            .map_err(|error| storage_error(&error))
+                            .and_then(|report| OpenDoc::from_storage_report(&path, report)),
+                    );
+                }
                 self.next_open();
                 if let Some(opening) = &mut self.file_ops.opening
                     && opening.viewport == self.current_viewport
@@ -402,12 +529,23 @@ impl ThinodaApp {
                 continue;
             }
             let source = path.clone();
-            let job: Job<thinoda_io::ImportReport> =
-                Box::new(move || crate::doc::import_report(&source));
+            let cancel = CancelToken::default();
+            let worker_cancel = cancel.clone();
+            let downloading = Arc::new(AtomicBool::new(false));
+            let worker_downloading = downloading.clone();
+            let job: Job<crate::doc::LoadedWorkbook> = Box::new(move || {
+                Box::pin(async move {
+                    let online_only = thinoda_platform::fs::online_only(&source)?;
+                    worker_downloading.store(online_only, Ordering::Relaxed);
+                    crate::doc::load_workbook_async(&source, worker_cancel).await
+                })
+            });
             self.file_ops.opening = Some(Opening {
                 path,
                 viewport,
                 work: Work::new(job),
+                cancel,
+                downloading,
             });
             return;
         }
@@ -417,7 +555,7 @@ impl ThinodaApp {
         &mut self,
         ctx: &Context,
         save: Saving,
-        result: Result<crate::doc::WrittenWorkbook, String>,
+        result: Result<crate::doc::WrittenWorkbook, StorageError>,
     ) {
         let index = self.docs.iter().position(|doc| doc.key == save.key);
         let saved = match result {
@@ -433,6 +571,7 @@ impl ThinodaApp {
                     }
                 }
                 if !save.autosave {
+                    self.cloud_program.forget_document(&save.key);
                     self.settings.add_recent(&save.target);
                     self.save_settings();
                     self.toasts
@@ -456,13 +595,44 @@ impl ThinodaApp {
                         doc.autosave_failed(self.settings.autosave_interval_secs.max(5) as f32);
                     }
                 }
-                self.toasts
-                    .error(format!("{}: {error}", t("Could not save")));
+                match error {
+                    StorageError::Conflict { .. } => {
+                        self.file_ops.conflict_retry = Some(ConflictRetry {
+                            key: save.key.clone(),
+                            target: save.target.clone(),
+                            state: save.state,
+                            deliver: save.deliver,
+                            consent: save.consent,
+                        });
+                        self.dialogs.conflict = Some(save.key.clone());
+                        self.dialogs.conflict_save_target =
+                            Some((save.key.clone(), save.target.clone()));
+                    }
+                    StorageError::Cancelled => {}
+                    error => {
+                        self.toasts.error(format!(
+                            "{}: {}",
+                            t("Could not save"),
+                            storage_error(&error)
+                        ));
+                    }
+                }
                 false
             }
         };
         if !save.autosave && !self.resolve_save_all(ctx, &save.key, saved) {
             self.resolve_save_close_tab(&save.key, saved);
+        }
+    }
+
+    /// Cancels pending I/O without closing documents or discarding edits.
+    pub fn cancel_file_work(&mut self) {
+        self.file_ops.queued.clear();
+        if let Some(opening) = &self.file_ops.opening {
+            opening.cancel.cancel();
+        }
+        if let Some(save) = &self.file_ops.save {
+            save.cancel.cancel();
         }
     }
 
@@ -479,7 +649,7 @@ impl ThinodaApp {
         egui::Area::new(egui::Id::unique("thinoda_file_busy"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -48.0))
-            .interactable(false)
+            .interactable(true)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(palette.surface)
@@ -488,13 +658,17 @@ impl ThinodaApp {
                         ui.set_max_width(360.0);
                         for item in &busy {
                             match item {
-                                FileBusy::Saving { name } => {
+                                FileBusy::Saving { name } | FileBusy::Downloading { name } => {
                                     ui.horizontal(|ui| {
                                         ui.add(egui::Spinner::new());
                                         ui.add(
                                             egui::Label::new(format!(
                                                 "{} {name}",
-                                                t("Saving file:")
+                                                if matches!(item, FileBusy::Downloading { .. }) {
+                                                    t("Downloading file:")
+                                                } else {
+                                                    t("Saving file:")
+                                                }
                                             ))
                                             .truncate(),
                                         );
@@ -524,6 +698,9 @@ impl ThinodaApp {
                                 }
                             }
                         }
+                        if ui.button(t("Cancel")).clicked() {
+                            self.cancel_file_work();
+                        }
                     });
             });
         ctx.request_repaint();
@@ -534,14 +711,282 @@ impl ThinodaApp {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::FileWorkMode;
-    use crate::ThinodaApp;
+    use super::{DOCUMENT_TOO_LARGE, FileWorkMode, storage_error};
+    use crate::{ThinodaApp, export_preflight::SaveConsent};
+    use thinoda_platform::storage::StorageError;
+
+    #[test]
+    fn size_limit_errors_are_localized_without_hiding_other_errors() {
+        assert_eq!(
+            storage_error(&StorageError::TooLarge),
+            crate::i18n::t(DOCUMENT_TOO_LARGE)
+        );
+        assert_eq!(
+            storage_error(&StorageError::Unsupported),
+            StorageError::Unsupported.to_string()
+        );
+    }
 
     fn failures(app: &ThinodaApp) -> usize {
         app.toasts
             .texts()
             .filter(|text| text.starts_with("Could not save"))
             .count()
+    }
+
+    fn finish(app: &mut ThinodaApp, ctx: &egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !app.file_activity().is_empty() {
+            assert!(Instant::now() < deadline, "file work never completed");
+            app.poll_file_ops(ctx);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn add_board_shape(app: &mut ThinodaApp) {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        app.docs[0]
+            .doc
+            .edit_sheet("Add shape", |sheet| {
+                sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        Rect::from_min_size(Vec2::ZERO, Vec2::new(40.0, 40.0)),
+                    ))
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn queued_mindmanager_save_requires_both_loss_consents() {
+        for (board, mindmanager, should_save) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("board.mmap");
+            let original = b"existing destination";
+            std::fs::write(&path, original).unwrap();
+            let mut app = ThinodaApp::headless();
+            add_board_shape(&mut app);
+            app.set_file_work_mode(FileWorkMode::Background);
+            app.queue_save_with_consent(
+                0,
+                &path,
+                true,
+                true,
+                false,
+                SaveConsent { board, mindmanager },
+            )
+            .unwrap();
+            finish(&mut app, &egui::Context::default());
+
+            let backup = thinoda_platform::fs::backup_path(&path);
+            if should_save {
+                assert_ne!(std::fs::read(&path).unwrap(), original);
+                assert_eq!(std::fs::read(backup).unwrap(), original);
+                assert!(!app.docs[0].is_dirty());
+            } else {
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+                assert!(!backup.exists());
+                assert!(app.docs[0].is_dirty());
+                assert_eq!(failures(&app), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn conflict_retry_reuses_consent_only_for_the_same_saved_content() {
+        for changed in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("save-as.mmap");
+            std::fs::write(&path, b"original destination").unwrap();
+            let mut app = ThinodaApp::headless();
+            add_board_shape(&mut app);
+            app.set_file_work_mode(FileWorkMode::Background);
+            app.pause_file_workers(true);
+            app.queue_save_with_consent(
+                0,
+                &path,
+                true,
+                true,
+                false,
+                SaveConsent {
+                    board: true,
+                    mindmanager: true,
+                },
+            )
+            .unwrap();
+            let ctx = egui::Context::default();
+            app.poll_file_ops(&ctx);
+            let external = b"external modification after the save was queued";
+            std::fs::write(&path, external).unwrap();
+            app.pause_file_workers(false);
+            finish(&mut app, &ctx);
+            assert_eq!(std::fs::read(&path).unwrap(), external);
+            assert_eq!(
+                app.dialogs.conflict.as_deref(),
+                Some(app.docs[0].key.as_str())
+            );
+
+            if changed {
+                let doc = &mut app.docs[0].doc;
+                let root = doc.sheet().root;
+                doc.edit_sheet("New edit", |sheet| sheet.set_title(root, "New content"))
+                    .unwrap();
+            }
+            // Model the conflict dialog's explicit Overwrite followed by a fresh
+            // board confirmation. MindManager consent came from the first attempt.
+            app.dialogs.conflict = None;
+            app.dialogs.conflict_save_target = None;
+            app.docs[0].ignore_conflict = true;
+            app.queue_save_with_consent(
+                0,
+                &path,
+                true,
+                false,
+                false,
+                SaveConsent {
+                    board: true,
+                    mindmanager: false,
+                },
+            )
+            .unwrap();
+            if changed {
+                assert!(app.file_ops.save.is_none());
+                assert_eq!(
+                    app.dialogs.mindmanager_save.as_ref(),
+                    Some(&(app.docs[0].key.clone(), path.clone(), false))
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), external);
+                assert!(app.docs[0].is_dirty());
+                app.dialogs.mindmanager_save = None;
+                let deliver = std::mem::take(&mut app.dialogs.mindmanager_save_deliver);
+                assert!(deliver);
+                app.queue_save_with_consent(
+                    0,
+                    &path,
+                    true,
+                    deliver,
+                    false,
+                    SaveConsent {
+                        board: true,
+                        mindmanager: true,
+                    },
+                )
+                .unwrap();
+            }
+            assert!(app.file_ops.save.as_ref().unwrap().deliver);
+            finish(&mut app, &ctx);
+
+            let backup = thinoda_platform::fs::backup_path(&path);
+            assert_ne!(std::fs::read(&path).unwrap(), external);
+            assert_eq!(std::fs::read(backup).unwrap(), external);
+            assert!(!app.docs[0].is_dirty());
+        }
+    }
+
+    #[test]
+    fn cancelled_open_does_not_install_a_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cancel.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        app.docs.clear();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.request_open(&path);
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        app.cancel_file_work();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.toasts.texts().count(), 0);
+    }
+
+    #[test]
+    fn cancelled_save_keeps_original_bytes_and_unsaved_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cancel.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let doc = &mut app.docs[0];
+        let root = doc.doc.sheet().root;
+        doc.doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(root, "Unsaved"))
+            .unwrap();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.queue_save(0, &path, true, false, false).unwrap();
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        app.cancel_file_work();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(app.docs[0].is_dirty());
+        assert!(!thinoda_platform::fs::backup_path(&path).exists());
+        assert_eq!(failures(&app), 0);
+    }
+
+    #[test]
+    fn queued_save_rechecks_revision_after_an_external_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stale.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.pause_file_workers(true);
+        app.queue_save(0, &path, true, false, false).unwrap();
+        let ctx = egui::Context::default();
+        app.poll_file_ops(&ctx);
+        std::fs::write(&path, b"external edit").unwrap();
+        app.pause_file_workers(false);
+        finish(&mut app, &ctx);
+        assert_eq!(std::fs::read(&path).unwrap(), b"external edit");
+        assert_eq!(
+            app.dialogs.conflict.as_deref(),
+            Some(app.docs[0].key.as_str())
+        );
+        assert!(!thinoda_platform::fs::backup_path(&path).exists());
+    }
+
+    #[test]
+    fn queued_save_uses_the_configured_backup_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let sources = dir.path().join("sources");
+        let backups = dir.path().join("backups");
+        std::fs::create_dir(&sources).unwrap();
+        std::fs::create_dir(&backups).unwrap();
+        let path = sources.join("map.thinoda");
+        let mut app = ThinodaApp::headless();
+        app.docs[0].save_to(&path, false).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let doc = &mut app.docs[0].doc;
+        let root = doc.sheet().root;
+        doc.edit_sheet("Edit", |sheet| sheet.set_title(root, "Updated"))
+            .unwrap();
+        app.settings.cloud.backup_folder = Some(backups.clone());
+        app.set_file_work_mode(FileWorkMode::Background);
+        app.queue_save(0, &path, true, false, false).unwrap();
+        finish(&mut app, &egui::Context::default());
+
+        assert_ne!(std::fs::read(&path).unwrap(), original);
+        assert!(!thinoda_platform::fs::backup_path(&path).exists());
+        let entries = std::fs::read_dir(backups)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(std::fs::read(entries[0].path()).unwrap(), original);
+        assert!(!app.docs[0].is_dirty());
     }
 
     #[test]

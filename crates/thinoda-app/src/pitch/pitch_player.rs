@@ -451,11 +451,9 @@ impl ThinodaApp {
                 steps
             ));
         }
+        let available_height = ui.available_height().max(100.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let available = egui::vec2(
-                ui.available_width(),
-                (ui.ctx().content_rect().height() - 170.0).max(100.0),
-            );
+            let available = egui::vec2(ui.available_width(), available_height);
             if player.presenter && available.x >= 760.0 {
                 ui.horizontal_top(|ui| {
                     player.playback.show(

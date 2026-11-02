@@ -1,4 +1,4 @@
-_Last updated: 2026-10-30 17:30:12 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 
@@ -2879,6 +2879,33 @@ native QA are required for this package.
 Cloud gap analysis (2026-10-28): [CLOUD-STORAGE.md](CLOUD-STORAGE.md) refines step 2
 into phases C0-C6 (async revision-aware storage contract first, then web OPFS/File
 System Access, native sync-folder hardening, WebDAV, one REST provider, then others).
+User-directed C0-C5 implementation (2026-11-01) adds revision-aware background
+open/save/cancel, durable browser migration, placeholder-safe local access,
+external-change reload/keep/compare, and explicitly connected WebDAV, Graph,
+Dropbox and Drive workflows plus Box transport. Credentials, versions and sharing remain
+explicit actions, not automatic synchronization. Offline protocol mocks and
+native/wasm gates cover implementation; live OAuth, deployed CORS/callbacks,
+real browser pickers and the sync-client/OS matrix remain acceptance work.
+Google Drive new uploads explicitly create distinct IDs and can duplicate names,
+as approved by the user; existing-file saves remain revision-conditional.
+Normal OAuth now uses publisher-owned compile-time registrations and browser
+consent with automatic app-folder discovery, not end-user client/drive/redirect
+fields. [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md) prepares the registrations and
+CI/release/Pages build mappings; no publisher apps exist yet. Box public sign-in
+and Google Drive web code exchange remain explicitly unavailable without a
+separately reviewed architecture.
+At the user's request, integrated remote accounts are now disabled by default
+behind the opt-in `integrated-cloud-services` build feature while registrations
+are pending. Release/Pages builds stay disabled; setting public registration
+Variables does not automatically re-enable them. Local folders and browser
+storage remain available.
+Before re-enabling remote accounts, resolve the Freeform cloud-save integration
+gap documented in [CLOUD-STORAGE.md](CLOUD-STORAGE.md): pending canvas drafts
+and board export-loss confirmation must receive the same safeguards as local
+saves, with revision-aware mock-provider tests.
+R10 as a whole is not complete: protected-file formats, its remaining consent
+decisions and native/live acceptance are outside this cloud-storage slice.
+C6 real-time collaboration is not included.
 
 ### R11 - Distribution, signing and updates
 
@@ -2942,6 +2969,19 @@ and full native/web verification remain open. Provider/cloud code is merged
 upstream behind the default-off `integrated-cloud-services` feature; providers
 stay disabled until publisher registrations are in place.
 
+Automated production-browser checks now exercise a rootless board's saved
+sticky, shape, connector, frame and ink, plus ink undo and a captured Pitch
+viewport. The locked browser suite also runs startup and offline checks on the
+release build before CI publishes it. Same-frame text entry and touch-menu
+ownership have focused regressions. These checks do not replace real device,
+screen-reader, export or large-board recovery acceptance; see the checkpoint
+critiques in FREEFORM.
+
+Desktop browser inspection found that the editor's canvas controls are absent
+from the browser accessibility tree and its transparent IME input is unlabeled.
+The existing egui accessibility tests do not establish browser screen-reader
+access; F1-F3 accessibility acceptance remains open.
+
 1. F0 groundwork: `semantic_roots`/`visible_topic_ids`/`project_to_outline`
    queries and migration of all root callers; derived scene with layer bands for
    paint, hit-test, selection, a11y and visual export; ID allocator coverage;
@@ -2967,7 +3007,9 @@ first-interactive loading and safe background/on-demand optional work without
 losing features or offline/update reliability. Loading feedback must be
 accessible and truthful. Compare reproducible cold and warm starts and clearly
 distinguish emulation from actual iPad measurements. The investigation, concept
-and rubber-duck review are in [WEB-STARTUP.md](WEB-STARTUP.md).
+and rubber-duck review are in [WEB-STARTUP.md](WEB-STARTUP.md). A measured
+desktop cold-start improvement now avoids concurrent Wasm precaching; warm and
+physical iPad acceptance remain open.
 
 ### Phase P4 - OS-integrated menus and windows (R12 and above)
 

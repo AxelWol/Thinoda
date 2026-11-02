@@ -117,6 +117,21 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo install cargo-fuzz --version 0.13.2 --locked",
                       job(source, "fuzz-smoke"))
 
+    def test_web_ci_runs_browser_storage_picker_regressions(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        web = job(source, "web")
+        self.assertIn("node --test crates/thinoda-web/tests/pwa.test.cjs "
+                      "crates/thinoda-platform/tests/browser_storage_file_picker.mjs", web)
+        self.assertLess(web.index("browser_storage_file_picker.mjs"), web.index("trunk build"))
+
+    def test_web_ci_tests_the_production_build_before_publication(self):
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        web = job(source, "web")
+        self.assertIn("run: npm ci", web)
+        self.assertIn("npx playwright install --with-deps chromium", web)
+        self.assertLess(web.index("trunk build"), web.index("npm run test:browser"))
+        self.assertLess(web.index("npm run test:browser"), web.index("actions/upload-artifact"))
+
     def test_release_order_separates_apple_jobs_and_orders_linux_architectures(self):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         expected = {
@@ -172,6 +187,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('if: always() && runner.os == \'macOS\'', source)
         self.assertIn('name: thinoda-${{ inputs.target }}', source)
         self.assertIn('if-no-files-found: error', source)
+
+    def test_cold_intel_packaging_has_a_bounded_budget_without_changing_other_targets(self):
+        source = (WORKFLOWS / "package-target.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "timeout-minutes: ${{ inputs.target == 'x86_64-apple-darwin' && 240 || 120 }}",
+            job(source, "package"),
+        )
 
     def test_acceptance_campaigns_keep_sanitizers_and_failure_evidence(self):
         source = (WORKFLOWS / "importer-campaign.yml").read_text(encoding="utf-8")

@@ -5,10 +5,14 @@ use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::{Arc, OnceLock},
 };
 use thiserror::Error;
+
+#[path = "authoring.rs"]
+mod authoring;
+pub use authoring::*;
 
 pub const MAX_XML_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECORDS: usize = 1_000_000;
@@ -131,7 +135,28 @@ pub struct FimDocument {
     tree: Arc<XmlTree>,
     /// Authoritative native presentation binding, not a transient parse cache.
     bindings: BTreeMap<TopicId, RecordId>,
+    #[serde(skip)]
+    metadata: MetadataCache,
 }
+type DefinitionKey = (FimKind, String, Option<String>);
+#[derive(Debug, Default)]
+struct MetadataIndex {
+    records: BTreeMap<RecordId, RecordMetadata>,
+    identities: BTreeMap<DefinitionKey, Vec<RecordId>>,
+    /// Exact shared-definition aliases: record -> canonical first copy. Only
+    /// identity groups whose copies all share one fingerprint are present, so
+    /// conflicting same-ID/version copies stay distinct, as in core edits.
+    aliases: OnceLock<HashMap<RecordId, RecordId>>,
+}
+/// Derived data is neither persisted nor part of document content equality.
+#[derive(Debug, Clone, Default)]
+struct MetadataCache(Arc<OnceLock<MetadataIndex>>);
+impl PartialEq for MetadataCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for MetadataCache {}
 #[derive(Deserialize)]
 struct PersistedFimDocument {
     dialect: Dialect,
@@ -178,6 +203,7 @@ impl TryFrom<PersistedFimDocument> for FimDocument {
             baseline: value.baseline,
             tree: value.tree,
             bindings: value.bindings,
+            metadata: MetadataCache::default(),
         })
     }
 }
@@ -267,6 +293,14 @@ pub enum FimModelError {
 /// `None` appends. Existing siblings and mixed content are never sorted/dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FimChange {
+    /// Composite candidate staging, with one final invariant/reparse/projection pass.
+    Batch(Vec<FimChange>),
+    /// One staged typed authoring operation; scripts are retained as inert text.
+    AuthorNode {
+        target: FimNodeTarget,
+        draft: Box<FimNodeDraft>,
+        timestamp: String,
+    },
     /// Explicit one-copy repair, never an implicit merge of conflicting identities.
     SetOccurrenceText {
         record: RecordId,
@@ -294,6 +328,14 @@ pub enum FimChange {
         name: String,
         namespace: String,
         text: Option<String>,
+    },
+    /// Import exactly one complete, namespace-explicit XML element subtree at the
+    /// caller's schema-order anchor (`None` appends). Definitions (F/G/R/C, schema,
+    /// document profile) must use the typed node wizard instead.
+    InsertFragment {
+        parent: RecordId,
+        before: Option<RecordId>,
+        xml: String,
     },
     RemoveElement {
         record: RecordId,
@@ -697,6 +739,100 @@ impl XmlTree {
         children.insert(first.min(children.len()), Content::Raw(escape(value)));
         Ok(())
     }
+    fn set_attribute(
+        &mut self,
+        id: RecordId,
+        name: &str,
+        value: Option<&str>,
+    ) -> Result<(), FimModelError> {
+        let e = self
+            .records
+            .get_mut(&id)
+            .ok_or_else(|| xml_error("record missing"))?;
+        let existing = e.attributes.iter().position(|a| a.name == name);
+        if existing.map(|i| e.attributes[i].value.as_str()) == value {
+            return Ok(());
+        }
+        if let Some(index) = existing {
+            // Change only this lexical attribute, preserving all other quotes/entities.
+            let bytes = e.open.as_bytes();
+            let mut cursor = 1 + e.name.len();
+            let mut found = None;
+            while cursor < bytes.len() {
+                let start = cursor;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+                if cursor >= bytes.len() || matches!(bytes[cursor], b'/' | b'>') {
+                    break;
+                }
+                let key_start = cursor;
+                while cursor < bytes.len()
+                    && !bytes[cursor].is_ascii_whitespace()
+                    && bytes[cursor] != b'='
+                {
+                    cursor += 1;
+                }
+                let key_end = cursor;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+                if bytes.get(cursor) != Some(&b'=') {
+                    return Err(xml_error("invalid lexical attribute"));
+                }
+                cursor += 1;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+                let quote = *bytes
+                    .get(cursor)
+                    .ok_or_else(|| xml_error("attribute quote missing"))?;
+                if !matches!(quote, b'\'' | b'"') {
+                    return Err(xml_error("attribute quote missing"));
+                }
+                cursor += 1;
+                let value_start = cursor;
+                while cursor < bytes.len() && bytes[cursor] != quote {
+                    cursor += 1;
+                }
+                if cursor >= bytes.len() {
+                    return Err(xml_error("unterminated attribute"));
+                }
+                let value_end = cursor;
+                cursor += 1;
+                if &e.open[key_start..key_end] == name {
+                    found = Some((start, cursor, value_start, value_end));
+                    break;
+                }
+            }
+            let (start, end, value_start, value_end) =
+                found.ok_or_else(|| xml_error("attribute lexical/model mismatch"))?;
+            if let Some(value) = value {
+                e.open.replace_range(value_start..value_end, &escape(value));
+                e.attributes[index].value = value.into();
+            } else {
+                e.open.replace_range(start..end, "");
+                e.attributes.remove(index);
+            }
+        } else if let Some(value) = value {
+            let end = e
+                .open
+                .rfind('>')
+                .ok_or_else(|| xml_error("element opening tag missing"))?;
+            let end = if e.open.as_bytes().get(end.wrapping_sub(1)) == Some(&b'/') {
+                end - 1
+            } else {
+                end
+            };
+            e.open
+                .insert_str(end, &format!(" {name}=\"{}\"", escape(value)));
+            e.attributes.push(XmlAttribute {
+                name: name.into(),
+                value: value.into(),
+            });
+        }
+        Ok(())
+    }
     fn insert(
         &mut self,
         parent: RecordId,
@@ -756,6 +892,70 @@ impl XmlTree {
             .unwrap()
             .children
             .insert(index, Content::Element(id));
+        Ok(id)
+    }
+    /// Parse an untrusted fragment with the same safe reader as complete messages
+    /// (no DTD, entities, fetching or processing instructions named xml).
+    fn parse_fragment(xml: &str) -> Result<(Self, RecordId), FimModelError> {
+        let fragment = Self::parse(xml.as_bytes())?;
+        let mut root = None;
+        for content in &fragment.document {
+            match content {
+                Content::Element(id) => root = Some(*id),
+                Content::Raw(raw)
+                    if raw
+                        .bytes()
+                        .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n')) => {}
+                Content::Raw(_) => {
+                    return Err(xml_error(
+                        "fragment must be exactly one element without declaration, BOM, comments or instructions outside it",
+                    ));
+                }
+            }
+        }
+        let root = root.ok_or_else(|| xml_error("fragment root missing"))?;
+        let mut stack = vec![(root, false)];
+        while let Some((id, default_declared)) = stack.pop() {
+            let e = &fragment.records[&id];
+            let default_declared =
+                default_declared || e.attributes.iter().any(|a| a.name == "xmlns");
+            if !e.name.contains(':') && !default_declared {
+                return Err(xml_error(
+                    "fragment must declare its default namespace explicitly (xmlns, or xmlns=\"\" for unqualified elements)",
+                ));
+            }
+            stack.extend(
+                fragment
+                    .children(id)
+                    .into_iter()
+                    .map(|c| (c, default_declared)),
+            );
+        }
+        Ok((fragment, root))
+    }
+    fn import(
+        &mut self,
+        source: &Self,
+        record: RecordId,
+        parent: RecordId,
+    ) -> Result<RecordId, FimModelError> {
+        if self.records.len() >= MAX_RECORDS {
+            return Err(FimModelError::Limit("XML records"));
+        }
+        let mut e = source.records[&record].clone();
+        let id = RecordId(self.next_id);
+        self.next_id += 1;
+        e.id = id;
+        e.parent = Some(parent);
+        e.children = e
+            .children
+            .into_iter()
+            .map(|c| match c {
+                Content::Element(c) => self.import(source, c, id).map(Content::Element),
+                other => Ok(other),
+            })
+            .collect::<Result<_, _>>()?;
+        self.records.insert(id, e);
         Ok(id)
     }
     fn remove(&mut self, id: RecordId) -> Result<(), FimModelError> {
@@ -857,6 +1057,7 @@ impl FimDocument {
             baseline: tree.clone(),
             tree,
             bindings: BTreeMap::new(),
+            metadata: MetadataCache::default(),
         })
     }
     pub fn original_bytes(&self) -> &[u8] {
@@ -885,7 +1086,7 @@ impl FimDocument {
             .find_map(|(t, r)| (*r == record).then_some(*t))
     }
     fn kind(&self, id: RecordId) -> Option<FimKind> {
-        let e = &self.tree.records[&id];
+        let e = self.tree.records.get(&id)?;
         if e.namespace == "http://docs.oasis-open.org/codelist/ns/genericode/1.0/"
             && e.local() == "CodeList"
         {
@@ -905,10 +1106,11 @@ impl FimDocument {
         Some(match e.local() {
             "stammdatenschema" => FimKind::Schema,
             "datenfeldgruppe"
-                if self
-                    .tree
-                    .child(id, "schemaelementart")
-                    .is_some_and(|c| self.tree.text(c).trim() == "X") =>
+                if (self.dialect == Dialect::Xdf3
+                    && self.tree.child(id, "art").is_some_and(|c| self.tree.text(c).trim() == "X"))
+                    // Preserve legacy invalid choices as inspectable repair sources.
+                    || self.tree.child(id, "schemaelementart")
+                        .is_some_and(|c| self.tree.text(c).trim() == "X") =>
             {
                 FimKind::Choice
             }
@@ -930,7 +1132,12 @@ impl FimDocument {
         let version = identification.and_then(|i| self.tree.child_text(i, "version"));
         if kind == FimKind::CodeList && identity.is_none() {
             if self.tree.records[&id].local() == "codelisteReferenz" {
-                return None;
+                let canonical = self.tree.child_text(id, "canonicalIdentification");
+                let version = self.tree.child_text(id, "version");
+                let uri = self.tree.child_text(id, "canonicalVersionUri");
+                return canonical
+                    .or_else(|| uri.clone())
+                    .map(|canonical| (kind, canonical, Some(format!("{version:?}|{uri:?}"))));
             }
             // Genericode has a different natural key; retain all three components.
             let identification = self
@@ -959,13 +1166,7 @@ impl FimDocument {
         let Some(key) = self.key(id) else {
             return Ok(vec![id]);
         };
-        let ids: Vec<_> = self
-            .tree
-            .records
-            .keys()
-            .copied()
-            .filter(|r| self.key(*r).as_ref() == Some(&key))
-            .collect();
+        let ids = self.metadata_index().identities[&key].clone();
         let fingerprint = self.tree.fingerprint(id);
         if ids.iter().any(|r| self.tree.fingerprint(*r) != fingerprint) {
             return Err(FimModelError::DecisionRequired(format!(
@@ -976,36 +1177,69 @@ impl FimDocument {
         }
         Ok(ids)
     }
+    /// Whether two records are the same shared definition under exactly the
+    /// key/fingerprint rule core edits use. Unknown records are never
+    /// equivalent; a known record is equivalent to itself; same-ID/version
+    /// copies with conflicting content are never collapsed. The alias index is
+    /// computed once per immutable snapshot, then each query is O(1).
+    pub fn equivalent_definition(&self, a: RecordId, b: RecordId) -> bool {
+        if !self.tree.records.contains_key(&a) || !self.tree.records.contains_key(&b) {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        let index = self.metadata_index();
+        let aliases = index.aliases.get_or_init(|| {
+            let mut aliases = HashMap::new();
+            for ids in index.identities.values().filter(|ids| ids.len() > 1) {
+                let fingerprint = self.tree.fingerprint(ids[0]);
+                if ids[1..]
+                    .iter()
+                    .all(|r| self.tree.fingerprint(*r) == fingerprint)
+                {
+                    aliases.extend(ids.iter().map(|r| (*r, ids[0])));
+                }
+            }
+            aliases
+        });
+        matches!((aliases.get(&a), aliases.get(&b)), (Some(x), Some(y)) if x == y)
+    }
     pub fn records(&self) -> Vec<RecordMetadata> {
-        self.tree
-            .records
-            .keys()
-            .filter_map(|id| {
-                let kind = self.kind(*id)?;
+        self.metadata_index().records.values().cloned().collect()
+    }
+    pub fn record_metadata(&self, record: RecordId) -> Option<RecordMetadata> {
+        self.metadata_index().records.get(&record).cloned()
+    }
+    fn metadata_index(&self) -> &MetadataIndex {
+        self.metadata.0.get_or_init(|| {
+            let mut index = MetadataIndex::default();
+            for id in self.tree.records.keys() {
+                if let Some(key) = self.key(*id) {
+                    index.identities.entry(key).or_default().push(*id);
+                }
+            }
+            for id in self.tree.records.keys() {
+                let Some(kind) = self.kind(*id) else { continue };
                 let key = self.key(*id);
-                Some(RecordMetadata {
-                    record: *id,
-                    kind,
-                    name: self.label(*id),
-                    identity: key.as_ref().map(|k| k.1.clone()),
-                    version: key.as_ref().and_then(|k| k.2.clone()),
-                    usages: key
-                        .as_ref()
-                        .map(|k| {
-                            self.tree
-                                .records
-                                .keys()
-                                .filter(|r| self.key(**r).as_ref() == Some(k))
-                                .count()
-                        })
-                        .unwrap_or(1),
-                })
-            })
-            .collect()
+                index.records.insert(
+                    *id,
+                    RecordMetadata {
+                        record: *id,
+                        kind,
+                        name: self.label(*id),
+                        identity: key.as_ref().map(|k| k.1.clone()),
+                        version: key.as_ref().and_then(|k| k.2.clone()),
+                        usages: key.as_ref().map(|k| index.identities[k].len()).unwrap_or(1),
+                    },
+                );
+            }
+            index
+        })
     }
     pub fn topic_metadata(&self, topic: TopicId) -> Option<TopicMetadata> {
         let record = self.record_for_topic(topic)?;
-        let metadata = self.records().into_iter().find(|r| r.record == record);
+        let metadata = self.record_metadata(record);
         let kind = metadata
             .as_ref()
             .map(|m| m.kind)
@@ -1208,7 +1442,7 @@ impl FimDocument {
             .unwrap_or_else(|| self.tree.records[&id].local().into())
     }
     fn usage(&self, id: RecordId) -> Option<RecordId> {
-        let parent = self.tree.records[&id].parent?;
+        let parent = self.tree.records.get(&id)?.parent?;
         let e = &self.tree.records[&parent];
         if e.local() == "enthaelt" {
             e.parent
@@ -1617,6 +1851,11 @@ impl FimDocument {
                 ));
             }
         };
+        if kind == FimKind::Choice && self.dialect == Dialect::Xdf2 && reuse.is_none() {
+            return Err(FimModelError::Integrity(
+                "XDF2 has no choice group type".into(),
+            ));
+        }
         if let Some(source) = reuse {
             self.equivalent(source)?;
             if source == parent_record
@@ -1652,7 +1891,7 @@ impl FimDocument {
             let object = tree.insert(container, None, local, ns, None)?;
             tree.insert(object, None, "name", ns, Some(name))?;
             if kind == FimKind::Choice {
-                let kind = tree.insert(object, None, "schemaelementart", ns, None)?;
+                let kind = tree.insert(object, None, "art", ns, None)?;
                 tree.insert(kind, None, "code", "", Some("X"))?;
             }
             object
@@ -1674,8 +1913,71 @@ impl FimDocument {
         Ok(())
     }
     fn apply(&mut self, change: FimChange) -> Result<(), FimModelError> {
+        let before = self.clone();
         let previous = self.diagnostics();
+        let authoring = self.apply_staged(change, 0)?;
+        // Every XML-first edit is staged and reparsed before commit. This checks namespace
+        // bindings, escaping, envelope and processing budgets, without a network resolver.
+        let bytes = self.tree.bytes();
+        let parsed = Self::parse(&bytes)?;
+        self.tree.validate_native()?;
+        if parsed.dialect != self.dialect || parsed.message_kind != self.message_kind {
+            return Err(FimModelError::Integrity(
+                "change altered exchange envelope".into(),
+            ));
+        }
+        if self.dialect == Dialect::Xdf3 {
+            for record in self.tree.records.keys().copied() {
+                if matches!(
+                    self.kind(record),
+                    Some(FimKind::Group | FimKind::Choice | FimKind::Schema)
+                ) && self.node_children(record).is_empty()
+                    && (!before.node_children(record).is_empty()
+                        || (authoring && !before.tree.records.contains_key(&record)))
+                {
+                    return Err(FimModelError::Integrity(
+                        "XDF3 containment must retain at least one explicitly chosen child".into(),
+                    ));
+                }
+            }
+        }
+        for diagnostic in self.diagnostics() {
+            if matches!(
+                diagnostic.code,
+                "cardinality"
+                    | "kind-identity"
+                    | "conflicting-identity"
+                    | "unresolved-reference"
+                    | "ambiguous-reference"
+            ) && !previous.iter().any(|old| {
+                old.code == diagnostic.code
+                    && old.record == diagnostic.record
+                    && old.message == diagnostic.message
+            }) {
+                return Err(FimModelError::Integrity(diagnostic.message));
+            }
+        }
+        Ok(())
+    }
+    fn apply_staged(&mut self, change: FimChange, depth: usize) -> Result<bool, FimModelError> {
+        if depth > MAX_DEPTH {
+            return Err(FimModelError::Limit("composite authoring depth"));
+        }
+        let mut authoring = false;
         match change {
+            FimChange::Batch(changes) => {
+                for change in changes {
+                    authoring |= self.apply_staged(change, depth + 1)?;
+                }
+            }
+            FimChange::AuthorNode {
+                target,
+                draft,
+                timestamp,
+            } => {
+                authoring = true;
+                self.author_node(target, &draft, &timestamp)?;
+            }
             FimChange::SetOccurrenceText { record, value } => {
                 Arc::make_mut(&mut self.tree).set_text(record, &value)?;
             }
@@ -1758,32 +2060,7 @@ impl FimDocument {
                 let records = self.shared_records(record)?;
                 let tree = Arc::make_mut(&mut self.tree);
                 for record in records {
-                    let e = tree
-                        .records
-                        .get_mut(&record)
-                        .ok_or_else(|| xml_error("record missing"))?;
-                    if let Some(i) = e.attributes.iter().position(|a| a.name == name) {
-                        if let Some(value) = &value {
-                            e.attributes[i].value = value.clone();
-                        } else {
-                            e.attributes.remove(i);
-                        }
-                    } else if let Some(value) = &value {
-                        e.attributes.push(XmlAttribute {
-                            name: name.clone(),
-                            value: value.clone(),
-                        });
-                    }
-                    let empty = e.close.is_empty();
-                    e.open = format!(
-                        "<{}{}{}>",
-                        e.name,
-                        e.attributes
-                            .iter()
-                            .map(|a| format!(" {}=\"{}\"", a.name, escape(&a.value)))
-                            .collect::<String>(),
-                        if empty { "/" } else { "" }
-                    );
+                    tree.set_attribute(record, &name, value.as_deref())?;
                 }
             }
             FimChange::InsertElement {
@@ -1814,11 +2091,83 @@ impl FimDocument {
                     )?;
                 }
             }
-            FimChange::RemoveElement { record } => {
-                let records = self.shared_records(record)?;
-                for record in &records {
-                    self.check_removal(*record)?;
+            FimChange::InsertFragment {
+                parent,
+                before,
+                xml,
+            } => {
+                let (fragment, root) = XmlTree::parse_fragment(&xml)?;
+                let definitions = [
+                    "stammdatenschema",
+                    "datenfeldgruppe",
+                    "datenfeld",
+                    "regel",
+                    "codeliste",
+                    "codelisteReferenz",
+                    "dokumentsteckbrief",
+                ];
+                if fragment.records.values().any(|e| {
+                    (e.namespace == self.dialect.namespace() && definitions.contains(&e.local()))
+                        || (e.namespace == "http://docs.oasis-open.org/codelist/ns/genericode/1.0/"
+                            && e.local() == "CodeList")
+                }) {
+                    return Err(FimModelError::DecisionRequired(
+                        "FIM definitions and code-list references require the typed node wizard"
+                            .into(),
+                    ));
                 }
+                let parents = self.shared_records(parent)?;
+                let position = before
+                    .map(|b| {
+                        self.tree
+                            .children(parent)
+                            .iter()
+                            .position(|r| *r == b)
+                            .ok_or_else(|| xml_error("order anchor is not a child"))
+                    })
+                    .transpose()?;
+                let tree = Arc::make_mut(&mut self.tree);
+                for parent in parents {
+                    let index = match position.and_then(|i| tree.children(parent).get(i).copied()) {
+                        Some(anchor) => tree.records[&parent]
+                            .children
+                            .iter()
+                            .position(|c| *c == Content::Element(anchor))
+                            .ok_or_else(|| xml_error("order anchor is not a child"))?,
+                        None if position.is_some() => {
+                            return Err(xml_error("equivalent definition order mismatch"));
+                        }
+                        None => tree.records[&parent].children.len(),
+                    };
+                    let imported = tree.import(&fragment, root, parent)?;
+                    tree.ensure_open(parent);
+                    tree.records
+                        .get_mut(&parent)
+                        .unwrap()
+                        .children
+                        .insert(index, Content::Element(imported));
+                }
+            }
+            FimChange::RemoveElement { record } => {
+                let satellite =
+                    matches!(self.kind(record), Some(FimKind::Rule | FimKind::CodeList))
+                        && self.tree.records[&record].parent.is_some_and(|parent| {
+                            matches!(
+                                self.kind(parent),
+                                Some(
+                                    FimKind::Schema
+                                        | FimKind::Group
+                                        | FimKind::Choice
+                                        | FimKind::Field
+                                )
+                            )
+                        });
+                let records = if satellite {
+                    self.occurrence_records(record)?
+                } else {
+                    self.shared_records(record)?
+                };
+                self.check_removals(&records)?;
                 for record in records {
                     Arc::make_mut(&mut self.tree).remove(record)?;
                 }
@@ -1854,9 +2203,7 @@ impl FimDocument {
                     .ok_or_else(|| xml_error("topic missing"))?;
                 let remove = self.usage(record).unwrap_or(record);
                 let records = self.shared_records(remove)?;
-                for record in &records {
-                    self.check_removal(*record)?;
-                }
+                self.check_removals(&records)?;
                 for record in records {
                     Arc::make_mut(&mut self.tree).remove(record)?;
                 }
@@ -1968,36 +2315,17 @@ impl FimDocument {
                 }
             }
         }
-        // Every XML-first edit is staged and reparsed before commit. This checks namespace
-        // bindings, escaping, envelope and processing budgets, without a network resolver.
-        let bytes = self.tree.bytes();
-        let parsed = Self::parse(&bytes)?;
-        self.tree.validate_native()?;
-        if parsed.dialect != self.dialect || parsed.message_kind != self.message_kind {
-            return Err(FimModelError::Integrity(
-                "change altered exchange envelope".into(),
-            ));
-        }
-        for diagnostic in self.diagnostics() {
-            if matches!(
-                diagnostic.code,
-                "cardinality"
-                    | "kind-identity"
-                    | "conflicting-identity"
-                    | "unresolved-reference"
-                    | "ambiguous-reference"
-            ) && !previous.iter().any(|old| {
-                old.code == diagnostic.code
-                    && old.record == diagnostic.record
-                    && old.message == diagnostic.message
-            }) {
-                return Err(FimModelError::Integrity(diagnostic.message));
-            }
-        }
-        Ok(())
+        self.metadata = MetadataCache::default();
+        Ok(authoring)
     }
     fn check_removal(&self, record: RecordId) -> Result<(), FimModelError> {
-        let removed: BTreeSet<_> = self.fields(record).iter().map(|f| f.record).collect();
+        self.check_removals(&[record])
+    }
+    fn check_removals(&self, records: &[RecordId]) -> Result<(), FimModelError> {
+        let removed: BTreeSet<_> = records
+            .iter()
+            .flat_map(|r| self.fields(*r).into_iter().map(|f| f.record))
+            .collect();
         for dependency in self.dependencies() {
             if removed.contains(&dependency.source)
                 || dependency.kind == DependencyKind::Containment

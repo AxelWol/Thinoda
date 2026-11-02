@@ -451,6 +451,11 @@ impl MapView {
         }
     }
 
+    /// Whether a map-topic drag is currently in progress.
+    pub fn has_active_topic_drag(&self) -> bool {
+        matches!(self.drag, Drag::Topics { .. })
+    }
+
     /// Whether a held or failed ink gesture is retained outside the document.
     pub fn has_pending_ink_gesture(&self) -> bool {
         self.ink_controller.has_pending_gesture()
@@ -1146,6 +1151,9 @@ pub struct CanvasOutput {
     /// Copy, cut and paste requests for hosts that enabled
     /// [`MapView::host_handles_clipboard`], in input order.
     pub clipboard_requests: Vec<Action>,
+    /// FIM edits that need the host's schema-aware authoring flow.
+    pub authoring_action: Option<Action>,
+    pub authoring_text: Option<String>,
 }
 
 impl CanvasOutput {
@@ -1314,6 +1322,8 @@ impl MapCanvas {
             ink_errors: Vec::new(),
             ink_outcomes: Vec::new(),
             clipboard_requests: Vec::new(),
+            authoring_action: None,
+            authoring_text: None,
         };
 
         let mut layout = view.layout_with(&ctx, doc);
@@ -1838,13 +1848,22 @@ impl MapCanvas {
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
-            if let Some(t) = scene_topic_hit(&scene, sp) {
+            let topic_hit = match scene.hit_test(sp) {
+                Some(SceneHit::Topic(id)) => Some(id),
+                Some(SceneHit::Object(_)) => None,
+                None => layout.hit_test(sp),
+            };
+            if let Some(t) = topic_hit {
                 if doc.sheet().board_member_for_topic(t).is_some() {
                     board_input::select_hit(view, doc.sheet(), SceneHit::Topic(t), false);
                 } else {
                     view.select_only(t);
                 }
-                view.begin_edit(doc.sheet(), t, true);
+                if doc.sheet().fim.is_some() {
+                    out.authoring_action = Some(Action::StartEdit);
+                } else {
+                    view.begin_edit(doc.sheet(), t, true);
+                }
             } else if scene.hit_test(sp).is_none()
                 && layout.hit_badge(sp).is_none()
                 && hit_object(doc.sheet(), &layout, sp, 6.0 / view.zoom).is_none()
@@ -2282,6 +2301,24 @@ impl MapCanvas {
 }
 
 fn run(doc: &mut Document, view: &mut MapView, action: Action, out: &mut CanvasOutput) {
+    if doc.sheet().fim.is_some()
+        && matches!(
+            action,
+            Action::InsertChild
+                | Action::InsertSibling
+                | Action::InsertSiblingBefore
+                | Action::InsertParent
+                | Action::InsertFloating(_)
+                | Action::Delete
+                | Action::DeleteKeepChildren
+                | Action::Duplicate
+                | Action::StartEdit
+                | Action::Paste(_)
+        )
+    {
+        out.authoring_action = Some(action);
+        return;
+    }
     if let Err(e) = apply_action(doc, view, action) {
         out.error = Some(e);
     }
@@ -2423,7 +2460,12 @@ fn handle_keys(
                     && view.selection.len() == 1
                     && let Some(t) = view.primary()
                 {
-                    view.begin_edit_with(doc.sheet(), t, &text);
+                    if doc.sheet().fim.is_some() {
+                        out.authoring_action = Some(Action::StartEdit);
+                        out.authoring_text = Some(text);
+                    } else {
+                        view.begin_edit_with(doc.sheet(), t, &text);
+                    }
                     break;
                 }
             }
@@ -2471,15 +2513,7 @@ fn show_editor(
             )
         })
     };
-    if enter || tab || esc {
-        view.commit_edit(doc);
-        ui.memory_mut(|m| m.request_focus(MapCanvas::id()));
-        if tab {
-            run(doc, view, Action::InsertChild, out);
-        }
-        return;
-    }
-
+    // Text queued with a finish key must reach the editor before the commit.
     let edit = view.editing.as_mut().unwrap();
     let align = match style.align {
         thinoda_core::TextAlign::Left => egui::Align::LEFT,
@@ -2499,7 +2533,12 @@ fn show_editor(
             Modifiers::SHIFT,
             Key::Enter,
         )))
-        .lock_focus(true);
+        .event_filter(EventFilter {
+            tab: true,
+            horizontal_arrows: true,
+            vertical_arrows: true,
+            escape: true,
+        });
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let output = te.show(&mut child);
     if output.response.changed() {
@@ -2508,7 +2547,17 @@ fn show_editor(
     output.response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title")
     });
-    if !edit.focus_requested && !out.minimap_blocks_keyboard {
+    if enter || tab || esc {
+        view.commit_edit(doc);
+        if view.editing_topic().is_some() {
+            ui.memory_mut(|m| m.request_focus(edit_id));
+        } else {
+            ui.memory_mut(|m| m.request_focus(MapCanvas::id()));
+            if tab {
+                run(doc, view, Action::InsertChild, out);
+            }
+        }
+    } else if !edit.focus_requested && !out.minimap_blocks_keyboard {
         edit.focus_requested = true;
         ui.memory_mut(|m| m.request_focus(edit_id));
         if edit.select_all {
@@ -2842,7 +2891,7 @@ mod tests {
                     let out = MapCanvas::show(ui, &mut s.doc, &mut s.view);
                     assert!(out.error.is_none(), "{:?}", out.error);
                     out.context_menu(|ui| {
-                        ui.label("Topic context actions");
+                        let _ = ui.button("Topic context actions");
                     });
                 },
                 State {
@@ -2895,7 +2944,11 @@ mod tests {
         assert_eq!(h.state().view.selection, vec![root]);
         assert!(matches!(h.state().view.drag, Drag::None));
         touch_pointer(&mut h, egui::TouchPhase::End, p);
+        h.run_steps(3);
+        assert!(egui::Popup::is_any_open(&h.ctx));
         assert_eq!(h.state().doc.workbook(), &before);
+        click_at(&mut h, pos2(20.0, 20.0), PointerButton::Primary);
+        assert!(!egui::Popup::is_any_open(&h.ctx));
     }
 
     #[test]
@@ -3337,6 +3390,126 @@ mod tests {
             assert!(h.state_mut().doc.undo());
             assert_eq!(h.state().doc.sheet().root_topic().title, original);
         }
+    }
+
+    #[test]
+    fn pending_text_is_applied_before_finishing_topic_and_card_titles() {
+        for card in [false, true] {
+            for key in [Key::Enter, Key::Escape] {
+                let mut h = harness();
+                h.run_steps(3);
+                let topic = if card {
+                    h.state_mut()
+                        .doc
+                        .add_card(
+                            "Sticky note",
+                            Vec2::new(0.0, 200.0),
+                            thinoda_core::Card::new(
+                                thinoda_core::CardKind::Sticky,
+                                Vec2::new(180.0, 150.0),
+                            ),
+                        )
+                        .unwrap()
+                } else {
+                    h.state().doc.sheet().root
+                };
+                let original = h.state().doc.sheet().topic(topic).unwrap().title.clone();
+                {
+                    let state = h.state_mut();
+                    state.view.select_only(topic);
+                    state.view.begin_edit(state.doc.sheet(), topic, true);
+                }
+                h.run_steps(4);
+                h.input_mut().events.extend([
+                    egui::Event::Text("Fast title".into()),
+                    egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+                h.run_steps(3);
+                assert_eq!(
+                    h.state().doc.sheet().topic(topic).unwrap().title,
+                    "Fast title",
+                    "card={card}, key={key:?}"
+                );
+                assert_eq!(h.state().view.editing_topic(), None);
+                assert!(h.state_mut().doc.undo());
+                assert_eq!(h.state().doc.sheet().topic(topic).unwrap().title, original);
+            }
+        }
+    }
+
+    #[test]
+    fn pending_title_text_is_applied_before_tab_adds_a_child() {
+        let mut h = harness();
+        h.run_steps(3);
+        let root = h.state().doc.sheet().root;
+        let children = h.state().doc.sheet().children(root).len();
+        {
+            let state = h.state_mut();
+            state.view.begin_edit(state.doc.sheet(), root, true);
+        }
+        h.run_steps(4);
+        h.input_mut().events.extend([
+            egui::Event::Text("Fast parent".into()),
+            egui::Event::Key {
+                key: Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_eq!(h.state().doc.sheet().root_topic().title, "Fast parent");
+        assert_eq!(h.state().doc.sheet().children(root).len(), children + 1);
+    }
+
+    #[test]
+    fn failed_same_frame_title_commit_keeps_text_focus_and_does_not_add_a_child() {
+        let mut h = harness();
+        h.run_steps(3);
+        let root = h.state().doc.sheet().root;
+        let children = h.state().doc.sheet().children(root).len();
+        {
+            let state = h.state_mut();
+            state.view.begin_edit(state.doc.sheet(), root, true);
+        }
+        h.run_steps(4);
+        h.state_mut()
+            .doc
+            .edit_sheet("Concurrent edit", |sheet| sheet.set_title(root, "External"))
+            .unwrap();
+        h.input_mut().events.extend([
+            egui::Event::Text("Pending draft".into()),
+            egui::Event::Key {
+                key: Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_eq!(h.state().doc.sheet().root_topic().title, "External");
+        assert_eq!(h.state().doc.sheet().children(root).len(), children);
+        assert_eq!(h.state().view.editing_topic(), Some(root));
+        assert_eq!(h.state().view.editing_text(), Some("Pending draft"));
+        assert_eq!(
+            h.ctx.memory(|memory| memory.focused()),
+            Some(MapCanvas::id().with("edit"))
+        );
+        assert!(
+            h.state_mut()
+                .view
+                .take_title_error()
+                .unwrap()
+                .contains("changed")
+        );
     }
 
     #[test]

@@ -113,6 +113,7 @@ fn command_groups<'a>(
     for entry in entries {
         let label = match entry {
             MenuEntry::Command { command, .. } => match command {
+                Cmd::AiSettings => t("AI settings"),
                 Cmd::New | Cmd::Open => t("Open…"),
                 Cmd::Save | Cmd::SaveAs | Cmd::SaveAll => t("Save"),
                 Cmd::Import | Cmd::Print | Cmd::ShowInFolder => t("Export"),

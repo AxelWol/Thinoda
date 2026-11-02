@@ -82,7 +82,11 @@ const PAGES: &[Page] = &[
         paragraphs: &[
             "Use .thinoda for full-fidelity native storage. Crash-recovery snapshots are stored locally; available recovery copies are offered at startup. Recovery is not a substitute for saving or backups.",
             "When an open file changes externally, Thinoda offers conflict handling rather than silently replacing your edits. Inspect both versions before deciding which to keep.",
-            "Cloud-folder support uses locally synchronized folders supplied by your cloud client. OAuth sharing and live collaboration are not implemented.",
+            if cfg!(feature = "integrated-cloud-services") {
+                "Cloud settings connect explicitly configured providers. Open and save are revision-checked; uploads and sharing require user actions. Live provider and sync-client compatibility remain unverified; real-time collaboration is not implemented."
+            } else {
+                "Integrated cloud accounts are disabled by default while publisher registrations are pending. Local sync folders, backups and browser document storage remain available."
+            },
             "Merge Map Files appends sheets only after every input loads successfully. Create Masked Copy creates an unsaved preview with identifying text removed; inspect every sheet before sharing because visual structure can still reveal information.",
         ],
     },
@@ -113,7 +117,7 @@ const PAGES: &[Page] = &[
         paragraphs: &[
             "Settings controls system/light/dark appearance, language, scaling and editor preferences. Installed fonts are local to each machine; companion devices may need the same fonts.",
             "AI commands require a configured provider and may send selected topic content to that provider. Review provider settings and do not submit confidential content without permission.",
-            "Settings > AI selects the generation provider. Native Claude and Codex CLIs use their own login; replies are buffered. Copilot generation is blocked until a documented safe mode is available. Embeddings always use the separate OpenAI-compatible API. Browsers preserve CLI selections but cannot run them.",
+            "AI > AI settings opens provider settings. Ollama uses its own chat and embedding models. CLI providers use their own login and separate API embeddings; browsers cannot run CLIs. Unconfigured AI actions and Copilot generation are disabled.",
             "Send Feedback opens the public GitHub issue chooser in your browser. It does not upload maps, settings or logs. Review anything you include before submitting an issue.",
             "Project News opens the repository commit history, not an automatic updater. Signing, native platform installation checks and additional cloud services remain under development.",
         ],

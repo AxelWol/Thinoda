@@ -208,12 +208,17 @@ impl ThinodaApp {
                 ("Local Image", Cmd::LocalImage),
                 ("Attachment", Cmd::Attachment),
                 ("Save/Download attachment", Cmd::SaveAttachment),
+                ("Add FIM child", Cmd::AddFimChild),
+                ("Insert FIM node before", Cmd::InsertFimBefore),
+                ("Insert FIM node after", Cmd::InsertFimAfter),
             ])),
             submenu("AI", std::iter::once(item("AI Chat", Cmd::AiChat))
                 .chain(std::iter::once(MenuEntry::Separator))
                 .chain(crate::ai::AiCommand::ALL.into_iter().map(|action| {
                     item(action.label(), Cmd::Ai(action))
-                })).collect()),
+                }))
+                .chain([MenuEntry::Separator, item("AI settings", Cmd::AiSettings)])
+                .collect()),
             submenu("Tools", vec![
                 item("Map Shot", Cmd::MapShot),
                 item("Create Masked Copy…", Cmd::MaskedCopy),
@@ -240,6 +245,7 @@ impl ThinodaApp {
                         ))
                         .collect(),
                 ),
+                item("Edit FIM node", Cmd::EditFimNode),
             ]),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),

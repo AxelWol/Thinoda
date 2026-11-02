@@ -65,6 +65,12 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    env:
+      THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID }}
+      THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI }}
+      THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID }}
+      THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI }}
+      THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +96,10 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+      - name: Check opt-in cloud integration without enabling release artifacts
+        run: |
+          cargo clippy --locked -p thinoda-app --all-targets --features integrated-cloud-services -- -D warnings
+          cargo test --locked -p thinoda-app --lib --features integrated-cloud-services cloud_program
       - name: Repeat ARM64 recovery in isolation (50 crash/restore cycles)
         if: matrix.os == 'ubuntu-24.04-arm'
         run: cargo test -p thinoda-app --test e2e crash_recovery_restores_unsaved_work -- --exact --test-threads=1
@@ -137,6 +147,9 @@ jobs:
 
   web:
     name: web app (wasm32)
+    env:
+      THINODA_OAUTH_ONEDRIVE_SPA_CLIENT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.THINODA_OAUTH_ONEDRIVE_SPA_CLIENT_ID || '' }}
+      THINODA_OAUTH_DROPBOX_SPA_CLIENT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.THINODA_OAUTH_DROPBOX_SPA_CLIENT_ID || '' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -149,16 +162,27 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - name: Test PWA manifest, icons, install lifecycle and offline isolation
-        run: node --test crates/thinoda-web/tests/pwa.test.cjs
+      - name: Test PWA shell and browser document storage
+        run: node --test crates/thinoda-web/tests/pwa.test.cjs crates/thinoda-platform/tests/browser_storage_file_picker.mjs
       - name: Install Trunk
         run: |
           python3 .github/scripts/install_trunk.py "$RUNNER_TEMP/thinoda-tools"
           echo "$RUNNER_TEMP/thinoda-tools" >> "$GITHUB_PATH"
       - run: cargo clippy --locked --target wasm32-unknown-unknown -p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings
+      - name: Check opt-in browser cloud integration
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p thinoda-web --features integrated-cloud-services -- -D warnings
       - name: Build static site
         working-directory: crates/thinoda-web
         run: trunk build --release --locked
+      - name: Install browser test dependencies
+        working-directory: crates/thinoda-web
+        run: npm ci
+      - name: Install Chromium
+        working-directory: crates/thinoda-web
+        run: npx playwright install --with-deps chromium
+      - name: Test production startup and board workflows
+        working-directory: crates/thinoda-web
+        run: npm run test:browser
       - uses: actions/upload-artifact@v7
         with:
           name: thinoda-web

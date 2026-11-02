@@ -79,6 +79,13 @@ fn date_pickers_follow_work_calendar_in_every_language_and_appearance() {
             due_date.click();
             due_date.type_text("2026-10-31");
             h.run_steps(2);
+            assert_eq!(
+                h.get_by_role_and_label(egui::Role::TextInput, t("Due date"))
+                    .value()
+                    .as_deref(),
+                Some("2026-10-31"),
+                "due-date input must be accepted before navigating, {language:?}/{theme:?}"
+            );
             h.query_all_by_role_and_label(egui::Role::Button, t("Open calendar"))
                 .nth(1)
                 .unwrap()

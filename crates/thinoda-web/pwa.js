@@ -91,7 +91,7 @@
     };
 
     if ("serviceWorker" in navigator && window.isSecureContext) {
-        window.addEventListener("load", () => {
+        const registerWorker = () => {
             navigator.serviceWorker.register("./sw.js", { scope: "./", updateViaCache: "none" })
                 .then(registration => {
                     const key = `thinoda-update:${registration.scope}`;
@@ -188,6 +188,17 @@
                     startupError = String(error);
                     refreshPanel();
                 });
+        };
+        window.addEventListener("load", () => {
+            if (!window.thinodaBootstrapSettled) {
+                // Older cached HTML may load this script without the bootstrap guard.
+                registerWorker();
+                return;
+            }
+            Promise.resolve(window.thinodaBootstrapSettled).then(registerWorker, error => {
+                console.error("Thinoda bootstrap tracking failed", error);
+                registerWorker();
+            });
         });
     }
 })();

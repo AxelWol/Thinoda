@@ -10,17 +10,23 @@ use crate::{AiConfig, AiError, Message, Result};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
+    None,
     #[default]
     OpenAiApi,
+    Ollama,
     CopilotCli,
     ClaudeCli,
     CodexCli,
 }
 
 impl Provider {
+    pub fn is_api(self) -> bool {
+        matches!(self, Self::OpenAiApi | Self::Ollama)
+    }
+
     pub fn command(self) -> &'static str {
         match self {
-            Self::OpenAiApi => "",
+            Self::None | Self::OpenAiApi | Self::Ollama => "",
             Self::CopilotCli => "copilot",
             Self::ClaudeCli => "claude",
             Self::CodexCli => "codex",
@@ -29,7 +35,7 @@ impl Provider {
 
     pub fn login_command(self) -> &'static str {
         match self {
-            Self::OpenAiApi => "",
+            Self::None | Self::OpenAiApi | Self::Ollama => "",
             Self::CopilotCli => "copilot login",
             Self::ClaudeCli => "claude auth login",
             Self::CodexCli => "codex login",
@@ -38,7 +44,9 @@ impl Provider {
 
     pub fn documentation(self) -> &'static str {
         match self {
+            Self::None => "",
             Self::OpenAiApi => "https://platform.openai.com/docs",
+            Self::Ollama => "https://docs.ollama.com/openai",
             Self::CopilotCli => "https://docs.github.com/en/copilot/how-tos/copilot-cli",
             Self::ClaudeCli => "https://code.claude.com/docs/en/setup",
             Self::CodexCli => "https://developers.openai.com/codex/cli",
@@ -465,7 +473,9 @@ mod native {
             .map(String::from)
             .collect(),
             Provider::CopilotCli => return Err(error(HarnessError::CopilotSafety)),
-            Provider::OpenAiApi => return Err(error(HarnessError::Unsupported)),
+            Provider::None | Provider::OpenAiApi | Provider::Ollama => {
+                return Err(error(HarnessError::Unsupported));
+            }
         };
         if !model.trim().is_empty() {
             args.extend(["--model".into(), model.to_owned()]);

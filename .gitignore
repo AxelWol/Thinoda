@@ -9,3 +9,6 @@
 
 __pycache__/
 /crates/thinoda-web/dist
+/crates/thinoda-web/node_modules
+/crates/thinoda-web/playwright-report
+/crates/thinoda-web/test-results

@@ -96,6 +96,28 @@ fn not_found(path: &str) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, format!("{path} not found"))
 }
 
+#[derive(Debug)]
+pub(crate) struct ReadLimitExceeded;
+
+impl std::fmt::Display for ReadLimitExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("storage exceeds limit")
+    }
+}
+
+impl std::error::Error for ReadLimitExceeded {}
+
+/// Whether a VFS read failed specifically because its configured limit was exceeded.
+pub fn is_read_limit_exceeded(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|source| source.is::<ReadLimitExceeded>())
+}
+
+fn read_limit_error() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, ReadLimitExceeded)
+}
+
 /// Lexically normalize to an absolute `/`-separated path (`\` is treated as `/`).
 pub fn normalize(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
@@ -150,35 +172,47 @@ impl Vfs {
     /// Bounded decoding for app-local data. Reject oversized envelopes before
     /// parsing/base64 allocation; malformed entries are not treated as missing.
     pub fn read_bounded(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
-        let path = normalize(path);
-        let raw = self
-            .store
-            .get(&Self::key(&path))
-            .ok_or_else(|| not_found(&path))?;
-        if raw.len() > limit.saturating_mul(2).saturating_add(1024) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "storage exceeds limit",
-            ));
-        }
-        let entry: Entry = serde_json::from_str(&raw)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid storage"))?;
-        if entry.l > limit as u64 || entry.d.len() > limit.saturating_add(2) / 3 * 4 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "storage exceeds limit",
-            ));
-        }
+        let entry = self.bounded_entry(path, limit)?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(entry.d)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid storage"))?;
-        if bytes.len() > limit || bytes.len() as u64 != entry.l {
+        if bytes.len() > limit {
+            return Err(read_limit_error());
+        }
+        if bytes.len() as u64 != entry.l {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid storage length",
             ));
         }
         Ok(bytes)
+    }
+
+    fn bounded_entry(&self, path: &Path, limit: usize) -> io::Result<Entry> {
+        let path = normalize(path);
+        let raw = self
+            .store
+            .get(&Self::key(&path))
+            .ok_or_else(|| not_found(&path))?;
+        if raw.len() > limit.saturating_mul(2).saturating_add(1024) {
+            return Err(read_limit_error());
+        }
+        let entry: Entry = serde_json::from_str(&raw)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid storage"))?;
+        let max_encoded = (limit.saturating_add(2) / 3).saturating_mul(4);
+        if entry.l > limit as u64 || entry.d.len() > max_encoded {
+            return Err(read_limit_error());
+        }
+        Ok(entry)
+    }
+
+    /// Like `metadata`, but reject oversized VFS envelopes before parsing.
+    pub(crate) fn metadata_bounded(&self, path: &Path, limit: usize) -> io::Result<Meta> {
+        let entry = self.bounded_entry(path, limit)?;
+        Ok(Meta {
+            len: entry.l,
+            modified_ms: entry.m,
+        })
     }
 
     /// Replace a file in one store operation (atomic with respect to this tab).

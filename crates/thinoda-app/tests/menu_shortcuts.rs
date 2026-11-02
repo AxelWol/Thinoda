@@ -309,7 +309,7 @@ fn clipboard_reference_metadata_keeps_event_driven_copy_cut_paste_and_undo() {
     app.exec(&ctx, Cmd::Canvas(Action::Undo));
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     app.doc_mut().unwrap().view.select_only(root);
-    ctx.run_ui(Default::default(), |ui| app.exec(ui.ctx(), Cmd::MenuPaste));
+    let _ = ctx.run_ui(Default::default(), |ui| app.exec(ui.ctx(), Cmd::MenuPaste));
     assert_ne!(app.doc().unwrap().doc.workbook(), &before);
     app.exec(&ctx, Cmd::Canvas(Action::Undo));
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);

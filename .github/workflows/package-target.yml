@@ -40,11 +40,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   THINODA_AI_SKIP_LIVE: "1"
+  THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_CLIENT_ID }}
+  THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_ONEDRIVE_NATIVE_REDIRECT_URI }}
+  THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_CLIENT_ID }}
+  THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI: ${{ vars.THINODA_OAUTH_DROPBOX_NATIVE_REDIRECT_URI }}
+  THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID: ${{ vars.THINODA_OAUTH_GOOGLE_DRIVE_NATIVE_CLIENT_ID }}
 
 jobs:
   package:
     name: package (${{ inputs.target }})
-    timeout-minutes: 120
+    # Intel's cold native tests consumed 96 minutes before the release build began.
+    timeout-minutes: ${{ inputs.target == 'x86_64-apple-darwin' && 240 || 120 }}
     runs-on: ${{ inputs.os }}
     steps:
       # The release/debug builds and AppImage tooling exceed hosted Linux disk space.

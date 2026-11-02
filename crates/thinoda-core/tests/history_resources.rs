@@ -1,4 +1,9 @@
-use thinoda_core::{Document, edit::EditError, resources::Resource};
+use thinoda_core::{
+    Color, Document, Vec2,
+    board::{CanvasObject, InkStroke, InkTool},
+    edit::EditError,
+    resources::Resource,
+};
 
 const RESOURCE_BYTES: usize = 128 * 1024;
 
@@ -32,6 +37,22 @@ fn rename_root(document: &mut Document, title: &str) {
     let root = document.sheet().root;
     document
         .edit_sheet("Rename", |sheet| sheet.set_title(root, title))
+        .unwrap();
+}
+
+fn add_ink(document: &mut Document, point_count: usize) {
+    let points = (0..point_count)
+        .map(|index| Vec2::new(index as f32 * 0.01, (index % 7) as f32))
+        .collect();
+    let mut stroke = InkStroke::new(InkTool::Pen, Color::rgb(10, 20, 30), 2.0, points);
+    stroke.pressure = Some(vec![0.5; point_count].into());
+    document
+        .edit_sheet("Draw", |sheet| {
+            sheet
+                .add_canvas_object(CanvasObject::ink(stroke))
+                .map(|_| ())
+                .map_err(EditError::Invalid)
+        })
         .unwrap();
 }
 
@@ -191,6 +212,65 @@ fn reload_clears_old_history_and_accounts_for_new_snapshots() {
     assert_eq!(document.sheet().root_topic().title, "Saved");
     assert!(document.redo());
     assert_eq!(document.sheet().root_topic().title, "After reload");
+}
+
+#[test]
+fn undoable_reload_accounts_for_workbook_metadata_and_shared_buffers() {
+    const POINT_COUNT: usize = 8 * 1024;
+    const INK_BYTES: usize =
+        POINT_COUNT * (std::mem::size_of::<Vec2>() + std::mem::size_of::<f32>());
+
+    let mut original = Document::default();
+    replace_resource(&mut original, 1);
+    add_ink(&mut original, POINT_COUNT);
+    let mut workbook = original.workbook().clone();
+    workbook.metadata.description = Some("m".repeat(RESOURCE_BYTES));
+    let mut document = Document::new(workbook);
+    rename_root(&mut document, "Local edit");
+    let before_reload = document.history_bytes();
+
+    let mut external = Document::default();
+    replace_resource(&mut external, 2);
+    let external = external.workbook().clone();
+    document.reload(external.clone()).unwrap();
+
+    let after_reload = document.history_bytes();
+    let added = after_reload - before_reload;
+    assert!(added >= RESOURCE_BYTES, "workbook metadata must be counted");
+    assert!(
+        added < RESOURCE_BYTES + INK_BYTES / 2,
+        "the workbook snapshot must share ink, pressure and resource buffers"
+    );
+    assert!(!document.is_dirty());
+
+    assert!(document.undo());
+    assert!(document.is_dirty());
+    assert_eq!(document.sheet().root_topic().title, "Local edit");
+    assert!(
+        document.history_bytes() >= 2 * RESOURCE_BYTES + INK_BYTES,
+        "undo and redo must account for both distinct resources and shared ink"
+    );
+    assert!(document.redo());
+    assert_eq!(document.workbook(), &external);
+    assert!(!document.is_dirty());
+    assert_eq!(document.history_bytes(), after_reload);
+}
+
+#[test]
+fn preview_starts_without_history_and_keeps_the_source_budget() {
+    let mut document = Document::default();
+    rename_root(&mut document, "Original");
+    document.set_history_byte_budget(1);
+
+    let mut preview = document.preview();
+    assert_eq!(preview.history_bytes(), 0);
+    assert!(!preview.can_undo());
+    rename_root(&mut preview, "First proposal");
+    rename_root(&mut preview, "Second proposal");
+    assert!(preview.undo());
+    assert_eq!(preview.sheet().root_topic().title, "First proposal");
+    assert!(!preview.can_undo(), "the tiny budget must trim older edits");
+    assert_eq!(document.sheet().root_topic().title, "Original");
 }
 
 #[test]

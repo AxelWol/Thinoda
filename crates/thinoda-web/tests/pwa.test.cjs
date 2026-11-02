@@ -25,7 +25,115 @@ test("mobile viewport metadata leaves browser zoom available", () => {
     assert.equal(directives.has("user-scalable"), false);
 });
 
-function installFixture({ standalone = false, register, build, storage = new Map(), storageFails = false } = {}) {
+test("startup loader announces real phases and respects reduced motion", () => {
+    const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+    const loader = html.match(/<div id="loading"[^>]*>/)?.[0];
+    assert.match(loader || "", /role="status"/);
+    assert.match(loader || "", /aria-live="polite"/);
+    assert.match(html, /id="loading-message">Loading Thinoda…<\/span>/);
+    assert.match(html, /@keyframes loading-pulse/);
+    assert.match(html, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?#loading img \{ animation: none; \}/);
+
+    const startup = fs.readFileSync(path.join(root, "src", "lib.rs"), "utf8");
+    assert.match(startup, /set_loading_phase\("Preparing browser documents…"\)/);
+    assert.match(startup, /set_loading_phase\("Starting Thinoda…"\)/);
+    assert.doesNotMatch(startup, /set_attribute\("aria-busy", "true"\)/);
+    assert.match(startup, /"role", "alert"/);
+    assert.match(startup, /Reload Thinoda/);
+});
+
+function bootstrapFixture({ initiallyMissing = false } = {}) {
+    const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+    const source = html.match(/<script id="thinoda-bootstrap-guard">([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(source, "bootstrap guard is present");
+    const listeners = {};
+    const loading = {
+        attributes: {}, children: [], textContent: "Loading", className: "",
+        setAttribute(name, value) { this.attributes[name] = value; },
+        append(...children) { this.children.push(...children); },
+    };
+    let mounted = !initiallyMissing;
+    const document = {
+        readyState: initiallyMissing ? "loading" : "complete",
+        getElementById: () => mounted ? loading : null,
+        addEventListener(name, callback) { listeners[`document:${name}`] = callback; },
+        createElement: tag => ({ tag, textContent: "" }),
+    };
+    const window = {
+        WebAssembly,
+        addEventListener(name, callback) { listeners[name] = callback; },
+    };
+    vm.runInNewContext(source, { window, document });
+    return {
+        window, listeners, loading,
+        mount() {
+            mounted = true;
+            document.readyState = "interactive";
+            listeners["document:DOMContentLoaded"]();
+        },
+    };
+}
+
+test("bootstrap failures expose an accessible reload without masking unrelated errors", () => {
+    const unrelated = bootstrapFixture();
+    unrelated.listeners.error({
+        target: { id: "another-script" },
+    });
+    assert.equal(unrelated.loading.className, "");
+
+    for (const fail of [
+        fixture => fixture.listeners.error({ target: { id: "thinoda-app-bootstrap" } }),
+        fixture => fixture.window.thinodaBootstrapFailed(),
+    ]) {
+        const fixture = bootstrapFixture();
+        fail(fixture);
+        assert.equal(fixture.loading.className, "error");
+        assert.equal(fixture.loading.attributes.role, "alert");
+        assert.equal(fixture.loading.attributes["aria-live"], "assertive");
+        assert.equal(fixture.loading.children[0].textContent, "Thinoda could not load");
+        assert.equal(fixture.loading.children[2].textContent, "Reload Thinoda");
+        assert.equal(fixture.loading.children[2].href, "");
+    }
+
+    const started = bootstrapFixture();
+    started.listeners.TrunkApplicationStarted();
+    started.window.thinodaBootstrapFailed();
+    assert.equal(started.loading.className, "");
+
+    const early = bootstrapFixture({ initiallyMissing: true });
+    early.listeners.error({ target: { id: "thinoda-app-bootstrap" } });
+    assert.equal(early.loading.className, "");
+    early.mount();
+    assert.equal(early.loading.attributes.role, "alert");
+
+    const trunk = fs.readFileSync(path.join(root, "Trunk.toml"), "utf8");
+    assert.match(trunk, /import init, \* as bindings from '\{base\}\{js\}'/);
+    assert.match(trunk, /init\(\{ module_or_path: '\{base\}\{wasm\}' \}\)/);
+    assert.match(trunk, /window\.wasmBindings = bindings/);
+    assert.match(trunk, /TrunkApplicationStarted/);
+    assert.match(trunk, /catch \(error\)[\s\S]*thinodaBootstrapFailed/);
+});
+
+test("the bootstrap signal settles only on Wasm initialization or a scoped failure", async () => {
+    const success = bootstrapFixture();
+    let settled = false;
+    success.window.thinodaBootstrapSettled.then(() => { settled = true; });
+    success.listeners.error({ target: { id: "another-script" } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    success.listeners.TrunkApplicationStarted();
+    await success.window.thinodaBootstrapSettled;
+    assert.equal(settled, true);
+
+    const early = bootstrapFixture({ initiallyMissing: true });
+    early.listeners.error({ target: { id: "thinoda-app-bootstrap" } });
+    await early.window.thinodaBootstrapSettled;
+    assert.equal(early.loading.className, "");
+    early.mount();
+    assert.equal(early.loading.attributes.role, "alert");
+});
+
+function installFixture({ standalone = false, register, build, bootstrap, storage = new Map(), storageFails = false } = {}) {
     const listeners = {};
     const errors = [];
     const elements = [];
@@ -44,6 +152,7 @@ function installFixture({ standalone = false, register, build, storage = new Map
             setItem(key, value) { if (storageFails) throw Error("quota"); storage.set(key, value); },
         },
     };
+    if (bootstrap !== undefined) window.thinodaBootstrapSettled = bootstrap;
     if (register) window.navigator.serviceWorker = {
         register, controller: {},
         addEventListener(name, callback) { workerListeners[name] = callback; },
@@ -81,6 +190,39 @@ function installFixture({ standalone = false, register, build, storage = new Map
         status() { return elements.filter(element => element.tag === "p").at(-1); },
     };
 }
+
+test("offline registration waits for the bootstrap signal and survives a rejected signal", async () => {
+    let resolveBootstrap;
+    let registrations = 0;
+    const bootstrap = new Promise(resolve => { resolveBootstrap = resolve; });
+    const r = registrationFixture();
+    const fixture = installFixture({
+        bootstrap, register: async () => { registrations++; return r.registration; },
+    });
+    fixture.listeners.load();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(registrations, 0);
+    resolveBootstrap();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(registrations, 1);
+
+    const alreadySettled = installFixture({
+        bootstrap: Promise.resolve(),
+        register: async () => { registrations++; return r.registration; },
+    });
+    alreadySettled.listeners.load();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(registrations, 2);
+
+    const rejected = installFixture({
+        bootstrap: Promise.reject(new Error("tracking unavailable")),
+        register: async () => { registrations++; return r.registration; },
+    });
+    rejected.listeners.load();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(registrations, 3);
+    assert.match(rejected.errors[0][0], /bootstrap tracking failed/);
+});
 
 test("install is progressive, one-shot and never runs before a button click", async () => {
     const fixture = installFixture();

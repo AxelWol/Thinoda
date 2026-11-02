@@ -48,6 +48,35 @@ fn wait(h: &mut Harness<'static, ThinodaApp>) {
 }
 
 #[test]
+fn ollama_chat_sends_the_ollama_model_not_the_preserved_api_model() {
+    let (mut h, server, key) = harness("Ollama response");
+    h.state_mut().settings.ai.provider = thinoda_platform::settings::AiProvider::Ollama;
+    h.state_mut().settings.ai.ollama_base_url = server.base_url.clone();
+    h.state_mut().settings.ai.ollama_model = "mock-chat".into();
+    h.state_mut().settings.ai.model = "wrong-api-model".into();
+    h.state_mut().settings.ai.api_key = "preserved-key".into();
+    let doc = h.state().doc().unwrap();
+    let scope_context = context(doc, Scope::Sheet).unwrap();
+    let mut thread = Conversation {
+        draft: "Hello local model".into(),
+        scope: Scope::Sheet,
+        ..Default::default()
+    };
+    h.state_mut()
+        .send_ai_chat(&key, &mut thread, &scope_context);
+    assert!(h.state().ai.chat.pending.is_some());
+    wait(&mut h);
+    let requests = server.requests.lock().unwrap();
+    let chat = requests
+        .iter()
+        .find(|request| request.path == "/v1/chat/completions")
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&chat.body).unwrap();
+    assert_eq!(body["model"], "mock-chat");
+    assert!(chat.authorization.is_none());
+}
+
+#[test]
 fn scoped_chat_context_preserves_hierarchy_without_notes_or_unselected_trees() {
     let mut app = ThinodaApp::headless();
     let doc = app.doc_mut().unwrap();

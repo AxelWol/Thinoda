@@ -12,6 +12,8 @@ publish = false
 default-run = "thinoda"
 
 [features]
+default = []
+integrated-cloud-services = []
 gpu-tests = ["egui_kittest/wgpu"]
 
 [lib]
@@ -48,6 +50,7 @@ pulldown-cmark.workspace = true
 arboard = { version = "3.7", default-features = false }
 env_logger.workspace = true
 ureq.workspace = true
+tokio.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Rich board clipboard must work on a pure Wayland session, not only XWayland.

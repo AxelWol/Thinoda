@@ -1,22 +1,42 @@
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+
 # Cloud storage: current state, gap analysis and plan
 
-Status: **the prepared cloud implementation is merged upstream (main/develop)
-behind the `integrated-cloud-services` feature, which is OFF by default in both
-the native app and the web build.** No publisher registrations exist and no
-live-provider acceptance has been completed; providers stay disabled until
-registrations are provisioned (see `docs/CLOUD-AUTH-SETUP.md` on main).
-No broker or additional OAuth scope was added. Local browser file storage and
-recovery remain part of the Freeform work.
+Status: **C0-C5 implementation; live acceptance remains open** (user-directed,
+2026-11-01). C6 is not included.
+Integrated remote accounts are **disabled by default** at the user's request
+while publisher registrations are pending. The opt-in
+`integrated-cloud-services` Cargo feature is not enabled in normal native
+packages or Pages builds. Local sync-folder hardening and durable browser
+storage remain active; see [feature/build setup](CLOUD-AUTH-SETUP.md).
+The disabled build was checked in isolated Chromium: account controls were
+absent, browser-storage controls remained visible, and a stale OAuth callback
+was scrubbed without PKCE state or external requests. Disabled/enabled cloud
+tests and native/wasm lint both pass; CI retains opt-in test coverage without
+enabling the feature in release artifacts.
+Sections 1–3 retain the pre-implementation inventory. Delivery and verification
+are recorded below; mock tests are not evidence of live provider acceptance.
+No publisher registrations exist and no live-provider acceptance has been
+completed. Providers stay disabled until registrations are provisioned (see
+`docs/CLOUD-AUTH-SETUP.md`). No broker or additional OAuth scope was added.
+The Freeform merge also identified an opt-in cloud-save integration gap:
+cloud saves can bypass board export-loss confirmation and snapshot pending
+canvas text or ink without the local save's draft checks. Before enabling
+remote accounts, route those saves through equivalent draft and loss safeguards,
+recheck drafts at completion, and test cancellation and revision changes with
+mock providers. This gap is unreachable in the default-disabled build.
+Local browser file storage and recovery remain active independently of remote
+accounts.
 Extends [PLAN.md R10](PLAN.md#r10---protected-files-cloud-synchronization-and-sharing)
 and the Platform & collaboration items in [BACKLOG.md](BACKLOG.md#platform--collaboration).
-Freeform boards are planned separately in [FREEFORM.md](FREEFORM.md); nothing here
-is on their critical path.
+Freeform boards are tracked separately in [FREEFORM.md](FREEFORM.md); remote
+provider work is not on their default-build critical path.
 
 Providers in scope: **OneDrive, iCloud Drive, Dropbox, Box, Nextcloud** (plus
 Google Drive and ownCloud, which Thinoda already detects). Platforms: Windows,
 macOS, Linux native builds and the web (wasm) build.
 
-## 1. What Thinoda does today
+## 1. Pre-implementation inventory
 
 | Area | Current behaviour | Source |
 |---|---|---|
@@ -61,14 +81,16 @@ or IndexedDB on web.
   The Origin Private File System (OPFS) and IndexedDB are available in all
   major browsers but are private to the site. `localStorage` is small (about
   5 MB) and synchronous.
-- **Provider APIs**: OneDrive (Microsoft Graph), Dropbox and Box offer REST APIs
-  with OAuth 2.0 + PKCE and revision IDs (eTag/`rev`) for conditional uploads.
+- **Provider APIs**: OneDrive (Microsoft Graph) and Dropbox support public
+  OAuth 2.0 + PKCE; Box's documented code exchange requires a client secret
+  and is not enabled in this native/static public-client implementation.
+  Their REST APIs provide revision IDs (eTag/`rev`) for conditional uploads.
   Nextcloud and ownCloud use WebDAV (eTags, `If-Match`); browser access needs
   CORS configured on the server. **iCloud Drive has no general web API for
   third-party apps** (CloudKit only covers an app's own container), so iCloud
   stays native-only via the local folder.
 
-## 3. Gap analysis
+## 3. Pre-implementation gap analysis
 
 Legend: ✅ works today · 🟡 partly · ❌ missing · ➖ not applicable / not possible
 
@@ -151,8 +173,9 @@ Rules:
   the provider supports it); explicit user action for connecting accounts,
   uploading and sharing; nothing about document content in logs or telemetry.
   A dedicated security review is required (as for R10).
-- The synchronous `localStorage` VFS stays as a fallback; the app moves to the
-  async contract first, so OPFS and provider adapters fit behind it.
+- The synchronous `localStorage` VFS remains for settings, recovery and scratch
+  inputs. Durable document errors never silently fall back to old VFS bytes;
+  OPFS's document fallback is IndexedDB behind the async contract.
 
 ## 5. Phased plan
 
@@ -167,6 +190,61 @@ Rules:
 | **C6 (optional) Real-time collaboration** | Only after C0–C4, via PLAN R12 (CRDT) | Out of scope here |
 
 iCloud Drive is covered by C2 (native local folder) only.
+
+### Implementation checkpoints
+
+| Phase | Implementation | Verification / remaining acceptance |
+|---|---|---|
+| C0 | Revision-aware async contract, cancellable local/VFS providers and conditional writes. App and startup loaders retain exact read identity; worker saves recheck it and preserve newer edits. | Platform, file-job, progress and document tests cover cancellation, conflicts, startup identity and failed-save drafts. Review fixed chat-binding/revision coupling; full-suite regression checks also restored undoable inspector commits before a failed save. |
+| C1 | OPFS with IndexedDB fallback, lossless migration, metadata-only listing, conflict preservation, persistence/quota controls and tab-lifetime FSA handles; app open/save uses the async provider. | Isolated Chromium module checks cover 6 MiB documents, migrations, contention, backups and bounded repeated-save storage. A Trunk-built app initialized and saved a real OPFS document; Settings displayed actual usage/quota without requesting persistence. Review fixed orphan reclamation and metadata separation. Real Firefox/Safari and picker permission flows remain unverified. |
+| C2 | Windows recall/offline and macOS dataless detection; bounded identity hashes; settling/debounced polling, own-save suppression, external-change reload/keep/compare and sibling conflicts; optional external backup directory. | Native primitives and comparison/debounce/whole-workbook reload tests pass. Review found no remaining blocking C2 defects. Real sync-client/OS history, hydration, offline and two-machine cases are not verified. Cancellation cannot abort a blocked OS hydration syscall. Atomic rename remains the default; in-place/coordinated save and a provider-confirmed synced badge are not claimed. |
+| C3 | WebDAV listing/read/conditional write/create, app-password and Nextcloud Login Flow v2; explicit app connection, browse/open/upload/save and disconnect. | Offline authorization tests and local HTTP mocks cover ETag/preconditions, malformed replies, cancellation and ambiguous successful writes without a revision. Live server/login/CORS acceptance remains open. |
+| C4 | Graph PKCE, system browser/loopback and web callbacks, small/large conditional uploads and creation, explicit versions/share links, secure credential store and connected app workflow. Consumer sign-in uses publisher-owned configuration and discovers its app folder instead of asking ordinary users for registration IDs. Current consent supports personal Microsoft accounts, not organizational OneDrive/SharePoint. | Offline OAuth and protocol mocks plus app workflow tests cover implementation. Dedicated security review found no vulnerabilities. No Thinoda-owned OAuth registrations exist yet: publisher registration/build preparation is required before enabling live sign-in. OS keyrings, revocation, real large uploads and Graph final-commit races remain unverified. |
+| C5 | Dropbox revision updates/creation, Box conditional transport/creation and Drive v3 existing-file conditional updates plus explicit distinct-ID creation; same consent/cancellation/app workflow. Supported public sign-in targets are Dropbox native/web and Google Drive Desktop. Box sign-in on either target and Google Drive web code exchange are explicitly unavailable without a separately reviewed architecture. | Offline protocol and app tests cover provider requests, conflicts, stable returned identities and upload binding/dirty-state guards. The user approved Drive creation that can duplicate names, with an explicit warning; no name-atomicity guarantee is claimed. Live account/registration, signed-download/CORS and enterprise/browser acceptance remain open; tested Box transport does not establish an available consumer connection. |
+
+Each phase received a rubber-duck review; meaningful findings were fixed before
+integration. The native workspace gate is `cargo xtask ci`; browser compilation
+is checked with the combined wasm Clippy command in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Automated protocol tests use local mock servers, never live provider accounts.
+Runtime storage checks used an isolated Chromium profile and synthetic documents.
+Neither those checks nor a successful Trunk build establish deployed OAuth,
+cross-browser picker, power-loss, OS keyring or sync-client acceptance.
+
+User-directed consumer sign-in correction: the normal OAuth screen is
+**Connect -> provider sign-in -> provider authorization**, not client-ID,
+drive-ID or callback-URI entry. Public application registrations belong to
+the publisher/build deployment; users authorize that registered Thinoda app.
+The user confirmed that registrations do not yet exist and requested
+[publisher registration/build preparation](CLOUD-AUTH-SETUP.md). Unconfigured
+builds must explain that sign-in is unavailable rather than launch a fabricated
+authorization request. WebDAV remains different: users must identify their own
+server; Nextcloud's browser login can then authorize access.
+
+Native CI and reusable release packaging now map the supported public publisher
+Variables at compilation. SPA Variables are mapped only for the `main` push
+that builds the canonical Pages site; pull-request web previews remain
+unconfigured. These workflow mappings do not create external registrations.
+Follow-up reviews found no blocking consumer-authorization or security defects,
+including with offline tests compiled against fixture publisher registrations.
+A final production Trunk build was opened in isolated Chromium: OneDrive's
+normal settings had no registration/account/redirect inputs and explained the
+unconfigured-build limitation. Selecting it and pressing Connect kept the page
+local, issued no external fetch and created no OAuth session state. This
+verifies the unavailable-build guard, not a live authorization.
+
+Creation is an explicit action returning a new stable ID and revision, distinct
+from `write(existing_id, ExpectedRevision::Match(...))`. Graph, WebDAV, Dropbox
+and Box reject conflicting names rather than silently overwrite or rename.
+Google Drive permits duplicate names: its explicit creation always creates a
+distinct file and never updates an existing one. Current creation
+bounds are 256 MiB for WebDAV/Graph, 150,000,000 bytes for Dropbox and 50,000,000
+bytes for Box and 5,000,000 bytes for Drive; Graph switches to upload sessions
+for large content.
+
+The local revision is an identity plus a bounded 192-KiB content sample, not a
+full-file integrity digest. Conditional local saves serialize Thinoda writers
+and recheck before replacement; external programs do not participate in that
+lock, so filesystem replacement is not a provider-grade compare-and-swap.
 
 ## 6. Risks and open questions
 

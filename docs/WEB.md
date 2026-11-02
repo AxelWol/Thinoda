@@ -1,4 +1,4 @@
-_Last updated: 2026-10-30 22:14:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-01 11:36:42 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda for the web
 
@@ -7,7 +7,8 @@ app are compiled to WebAssembly (`wasm32-unknown-unknown`): model, layout,
 canvas, import/export, AI client, dialogs, translations and themes. The site is
 plain files (HTML, JavaScript glue, `.wasm`), so any static host can serve it.
 There is no server-side code; your maps never leave the browser unless you
-download them or use an AI server.
+download them, use an explicitly configured AI server, or explicitly connect
+and upload to a cloud storage provider.
 
 The shared Notes inspector includes the bounded offline equation-preview editor
 (fractions, groups, superscripts/subscripts), without browser MathML, downloaded
@@ -28,6 +29,17 @@ trunk build --release               # static site in crates/thinoda-web/dist
 Trunk downloads `wasm-bindgen` and `wasm-opt` on first use. The build uses
 relative URLs (`public_url = "./"` in `Trunk.toml`), so `dist` works from any
 sub path. WebGL 2 is required; Thinoda renders through wgpu's WebGL backend.
+The custom Trunk bootstrap pattern uses the generated wasm-bindgen loader and
+default preloads, and reports initialization failures before the Rust UI is
+available. Preserve `window.wasmBindings` and the `TrunkApplicationStarted`
+event when changing it.
+
+Integrated remote cloud accounts are disabled in the default build while
+publisher registrations are pending. OPFS/IndexedDB document storage, quota
+and persistence controls, local file pickers and downloads remain available.
+Only an intentional `trunk build --release --features integrated-cloud-services`
+enables account integration, and it still requires publisher registrations;
+see [CLOUD-AUTH-SETUP.md](CLOUD-AUTH-SETUP.md). Pages builds do not pass that flag.
 
 ## Publishing on GitHub Pages
 The web app is built and deployed by the `CI` workflow
@@ -35,8 +47,8 @@ The web app is built and deployed by the `CI` workflow
 
 | Job | Runs on | What it does |
 |---|---|---|
-| `web` | every push and pull request | wasm32 Clippy for all browser crates, `trunk build --release --locked`, uploads `dist` as the `thinoda-web` artifact; on `main` also packages it as the Pages artifact |
-| `pages` | pushes to `main` | after `web` and all native `test` jobs pass, deploys the site with `actions/deploy-pages` to the `github-pages` environment |
+| `web` | pushes to `main` and pull requests | wasm32 Clippy, a locked release build and Chromium startup/board regressions; uploads `dist` as the `thinoda-web` artifact and packages it for Pages on `main` |
+| `pages` | pushes to `main` | after `web`, native `test` and Office validation pass, deploys the site with `actions/deploy-pages` to the `github-pages` environment |
 
 The site is published at <https://axelwol.github.io/Thinoda/>. One-time setup:
 in **Settings > Pages**, set **Build and deployment > Source** to
@@ -64,10 +76,10 @@ features work differently:
 
 | Desktop feature | In the browser |
 |---|---|
-| Files on disk | Documents are kept in the browser's local storage under `/Documents` (a small virtual file system). **Open Recent** and autosave work with these copies. |
-| Open / Import / Merge dialogs | The browser's file picker. The chosen file is copied into `/Documents` (`name (2).ext` if a different file has the same name). |
+| Files on disk | Documents under `/Documents` use OPFS with an IndexedDB fallback. **Open Recent** and autosave use these site-private copies; settings and recovery retain the synchronous virtual file system. |
+| Open / Import / Merge dialogs | The browser's file picker. Open and Import copy files into `/Documents`; Merge uses a temporary browser input. Name collisions receive a suffix. |
 | Drag & drop onto the window | Supported. Dropped files are copied into `/Documents` and opened. |
-| Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. A plain Save of an already named document only updates the browser copy; use Save As to download again. |
+| Save As, first save, Save Sheet As | Asks for a file name, stores the document and **downloads** it. Plain Save updates the browser copy and, for a file explicitly picked with Chromium File System Access in this tab, saves back to the original file. Firefox/Safari retain downloads; use Save As to download again. |
 | Export (PNG, PDF, Word, Excel, XMind, …) | Generated in the browser, then downloaded. Graphical exports use font-measured node text; PDF contains vector graphics and outlined text, not a page-sized bitmap. |
 | Map Shot "Save PNG" | Downloaded. Copy to clipboard uses the browser clipboard. |
 | Native print dialog | **Continue to print…** renders the same print page and opens the browser's print dialog. Select the same paper size and orientation there and set margins to none/default. **Save print PDF…** downloads a paper-sized PDF for exact output. |
@@ -77,10 +89,233 @@ features work differently:
 | AI server | Requests use `fetch`. The server must allow cross-origin requests (CORS) from the site's origin; LM Studio has a CORS option in its server settings. An `https` site can only call `https` servers or `http://localhost`. |
 | Open link | Opens a new browser tab. |
 | Fonts | System font enumeration is unavailable; the bundled Ubuntu and Hack fonts are used for rendering and export. |
-| Show in folder, settings folder, cloud folder picker | Not available in the browser; hidden in the UI. Planned browser storage and cloud options are in [CLOUD-STORAGE.md](CLOUD-STORAGE.md). |
+| Show in folder, settings folder, cloud folder picker | Native folder actions are hidden. Settings > Cloud offers browser storage usage/persistence controls; API connections are unavailable in default builds during the provider-registration pause. See [CLOUD-STORAGE.md](CLOUD-STORAGE.md). |
 | Single instance, file associations, CLI `--convert` | Not applicable. Each tab is independent. |
 | Separate native Gantt window | **View > Gantt Chart** opens an in-app window over the same document instead of a separate OS window. |
 | Native Pitch window/fullscreen | **View > Pitch** opens an embedded player. **Expand Player** fills more of the tab, not the operating system's fullscreen mode. |
+
+## Durable browser documents (C1 platform integration)
+
+The platform provides `browser_storage::BrowserStorageProvider::new(backup)`
+for asynchronous `/Documents` storage. **It is not a synchronous VFS
+replacement.** The web binary awaits migration before app startup, and
+`thinoda-app/src/files.rs` stores opened, imported and dropped documents in it.
+Interactive document open/save and startup in `doc.rs` use this provider and
+retain the exact read revision for conditional writes. Synchronous document
+helpers reject durable paths instead of reading a stale VFS copy. Settings, crash
+recovery, exports, images, attachments, merge/schema inputs and other scratch
+files intentionally stay on the synchronous VFS.
+
+The adapter prefers **Origin Private File System (OPFS)** blobs and falls back
+to **IndexedDB bytes** if OPFS cannot be initialized. IndexedDB is also required
+for OPFS's revision index: it atomically commits the document ID, SHA-256 revision,
+and pointer to a fully written, closed, reread/verified immutable blob. A stale
+conditional save never replaces the index. IndexedDB-only writes commit the
+bytes and revision in the same readwrite transaction. A document's recorded
+backend remains authoritative across later visits; failed OPFS reads never
+silently return an empty file or an older IndexedDB/localStorage copy.
+
+This is site-private local storage, not a cloud upload, sync-folder workspace,
+or backup guarantee. It requires a secure context (HTTPS or loopback).
+Explicitly clearing site data removes it; private browsing, browser policy,
+quota, eviction and device/power loss can affect availability. Strict IndexedDB
+transaction durability is requested where supported; older browsers use the
+standard atomic transaction with browser-defined power-loss durability.
+The IndexedDB database (schema v2) keeps metadata only in `documents` (indexed by
+blob), so listing never loads document bytes. IndexedDB-fallback bytes live in a
+separate `contents` store. A v1 database is upgraded in its versionchange
+transaction, moving inline bytes into `contents`.
+
+Superseded blobs are reclaimed, so repeated saves use bounded storage: the
+current document, plus its `.bak` when backups are enabled. A blob is deleted
+only when no record (including `.bak`, which shares the previous blob)
+references it. Because blob names are never reused, an unreferenced blob cannot
+become referenced again. IndexedDB contents are deleted in the commit
+transaction. OPFS files are deleted after the commit, under the document's
+exclusive Web Lock and the blob's exclusive lock. Readers hold a shared blob lock
+while reading, and retry against the newer record if a blob disappeared.
+Initialization also sweeps unreferenced OPFS blobs left by interrupted writes,
+skipping any blob whose lock is held by an in-flight write in another tab.
+Without Web Locks, superseded blobs are still reclaimed (readers retry), but the
+crash-orphan sweep is skipped.
+
+### Legacy migration and startup
+
+`initialize_documents().await` reads only `thinoda.vfs:/Documents/...` entries
+from localStorage. It validates the complete snapshot's paths, JSON envelope,
+timestamp/length integer ranges, canonical base64 and decoded byte lengths before
+writing. Malformed entries or blocked legacy access fail initialization, not an
+apparently successful empty migration. Settings and recovery keys are untouched.
+
+For each document it writes with `ExpectedRevision::Missing` and rereads the
+durable bytes. Equal existing bytes need no write. Different durable bytes win,
+regardless of legacy mtime; the legacy content is preserved and verified under
+`/Documents/.thinoda-legacy/<path hash>/<content hash>/<original name>`.
+The migration report lists original and preserved IDs so an app can offer both
+versions. Repeated migration reuses and verifies that same copy. Concurrent
+conditional-write conflicts are re-evaluated with bounded retries; continuous
+changes fail safely. Changes to the localStorage snapshot during migration
+also fail and require retry. **No legacy key is removed, even after verification.**
+This retention supports rollback while older tabs or the old synchronous app
+can still write VFS documents. It is not continuous synchronization.
+
+Wiring status:
+
+1. Done: `thinoda-web/src/main.rs` calls
+   `thinoda_web::start_after_storage_ready(|report| { thinoda_app::files::record_browser_migration(report); web_main::main() })`.
+   Migration completes **before** the app creates paths, starts recovery or
+   launches the renderer. On failure the loading element shows the error and the
+   app does not start. Persistence and filesystem consent are never requested.
+2. Done in `files.rs`: Open/Import/non-image drops go to durable storage under
+   `/Documents` with deduplication (`name`, `name (2).ext`, …). Each candidate is
+   written with `ExpectedRevision::Missing`; on conflict an identical document
+   is reused and a different one is never overwritten. Merge and FIM schema
+   inputs go to VFS `/UploadInputs` (synchronous readers), dropped images go to
+   `/ImageUploads/dropped`, and image/attachment uploads stay where they were.
+   Delivering a durable document reads the provider and downloads it; failures
+   are queued for `files::take_delivery_errors()`.
+3. Done in `doc.rs`/`app.rs`: use `BrowserStorageProvider::new(backup)`
+   for `/Documents` (`backup` writes the previous record to `<id>.bak` in the same
+   transaction), and `browser_storage::document_revision(id, cancel)` for
+   `expected_revision`; VFS fingerprints are not mixed with SHA-256 revisions.
+   Migration conflicts and delivery failures enter the translated error flow.
+   Successful saves call `files::save_back_picked` for retained picked handles;
+   save-back failure leaves the document dirty. Closing releases the handle.
+
+The provider lists immediate children without reading blobs, reports local
+availability, supports content revisions, and has no watch/version-history/share
+capabilities. Cancellation is cooperative at asynchronous checkpoints and before
+the atomic commit; a successful commit is never reported as cancelled afterward.
+Dropping a Rust future is not an undo of an in-flight write: explicitly cancel
+its token and await its result when the outcome matters.
+
+### Known-document availability (recent files)
+
+Synchronous UI checks such as `Settings::existing_recent` cannot await the
+provider. `browser_storage::known_document(path) -> Option<bool>` answers from an
+in-memory, **metadata-only** index of durable `/Documents` IDs: `None` outside the
+namespace (callers keep using the VFS), `Some(true)` for a known record, and
+`Some(false)` before initialization or for unknown IDs. The index stores no bytes
+and never creates VFS content. It is filled from the IndexedDB metadata keys
+returned by initialization (after migration, before the app starts) and refreshed
+by successful writes (including `.bak`), reads, revision probes, listings, `Missing`
+conflicts and `notfound` reads. Commits are also announced to other tabs through a
+`BroadcastChannel`. `files::document_exists(path)` wraps this for app code.
+`Settings::existing_recent` uses the index for durable paths, so durable documents
+stay in Open Recent.
+
+Recovered documents retain known durable original paths and asynchronously
+refresh their revision from IndexedDB metadata, without a legacy VFS
+fingerprint. A delayed result cannot rebind a saved or retargeted document;
+missing/failed identity keeps recovery edits dirty and requires conflict
+resolution rather than permitting an unchecked overwrite.
+
+Limits: a stale entry, such as data cleared by another context or eviction, only
+fails safely when opened (the provider read returns a real error). There is no
+delete event. Without `BroadcastChannel`, a document another tab created stays
+unknown here until a list/read/revision call reconciles it. Native builds return
+`None`.
+
+### Persistence consent and quota
+
+`storage_estimate().await` returns optional origin-wide usage/quota and persisted
+status. It does not prompt. `request_persistence().await` calls
+`navigator.storage.persist()` **only when invoked explicitly**, returns `false`
+when denied, and skips the request if storage is already persistent. Initialize
+never calls it. Settings > Cloud can request protection and show estimates;
+do not claim that permission, a successful save, or an estimate means an
+off-device backup exists. Unsupported APIs return `StorageError::Unsupported`.
+
+### Explicitly picked files and download fallback
+
+`file_system_access_supported()` detects the secure-context open-picker API.
+Poll `pick_file_handles(multiple)` immediately from an explicit user gesture,
+before any other awaited work. Read and stage each selected handle separately
+with `read_picked_file`, retaining its opaque **tab-lifetime session** and file
+revision. Each opened handle gets a distinct durable path, even when two files
+have the same name and bytes. Handles are never inferred from paths or persisted
+as permission grants. Use `write_picked_file` with the revision from that
+handle, not the browser-copy revision, and release the session with
+`forget_picked_file` on close. After reload, pick the file again.
+
+Known bounded input formats are size-checked before reading: explicit XDF2/3
+files use the 32 MiB FIM XML limit; MindManager, TextBundle, Word and unknown
+or XML filenames use the 64 MiB archive/format-detection limit. Other supported
+formats retain their existing limits. The picker rejects oversized files
+without calling `arrayBuffer`; unexpected growth is also checked after reading.
+For save-back, rereads are bounded by the import limit or the last verified
+saved size, so saving a larger valid output does not prevent a later smaller
+save. IndexedDB must still clone a corrupt record's bytes before it can check
+their actual length when its size metadata is inconsistent; `localStorage`
+similarly materializes its stored string before checking it.
+
+A Save can request read/write permission; denial/cancellation/errors are real
+failures, never fake successful downloads. Saving uses `createWritable`, checks
+for changes before writing and immediately before close, then rereads to verify.
+Web Locks serialize cooperating Thinoda picked-file saves on the same origin;
+without Web Locks save-back returns Unsupported. **File System Access cannot
+provide atomic compare-and-swap against external OS applications**; an external
+edit in the final check/close interval can still race. This limitation is not
+the origin-private provider's atomic IndexedDB revision contract.
+
+Firefox/Safari (or policy-blocked browsers) retain the existing file-import and
+`thinoda_platform::web::download` flow. Download/export remains unchanged; no
+fallback download is silently triggered after a picked-handle save failure.
+Folder workspace selection and persisted handle permissions are not implemented
+in this bounded slice.
+
+### C1 verification
+
+Native unit tests in `browser_storage.rs` cover strict binary migration decoding,
+malformed entries, namespace isolation, missing/equal/conflicting content and
+repeatable conflict-copy IDs. `files.rs` tests cover upload name deduplication and the migration report hook.
+Known-index tests cover namespace mapping, readiness, records and child reconciliation.
+Run:
+
+```sh
+cargo test --offline -p thinoda-platform --lib browser_storage
+cargo clippy --offline --target wasm32-unknown-unknown \
+  -p thinoda-web -p thinoda-app -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings
+```
+
+Isolated Chromium checks against the actual bundled JS module exercised real
+OPFS/IndexedDB initialization, binary read/write/revision checks, two competing
+`Missing` writes (one winner), stale revision rejection, cancellation, verified
+migration retaining legacy data, stable preserved conflict copies, malformed
+migration failure, shallow listing, and a 6 MiB document. These are platform API
+checks, **not** independent QA approval or cross-browser acceptance.
+Forced OPFS initialization failure also exercised real IndexedDB byte fallback,
+mixed-backend reads, successful/stale conditional saves, concurrent `Missing`
+writes, path/directory collision rejection and fallback migration. Initialization
+made no persistence request; a synthetic denied persistence request remained
+`false`. Synthetic picked-file handles (with real Web Locks) covered read/save,
+permission denial, external-change conflicts, staged-write cancellation, competing
+saves and session release; no real filesystem picker prompt or OS file was used.
+With the integrated workspace, the platform and `files.rs` native tests pass, and
+wasm `cargo check`/Clippy of `thinoda-web`, `thinoda-app` and `thinoda-platform` are
+clean for these files. Chromium checks of the module confirmed `.bak` backups,
+`documentRevision`, stale `Match` and duplicate `Missing` rejection, estimates
+without a persistence prompt, and File System Access detection. GC checks covered:
+- the v1 to v2 upgrade (inline bytes moved, a pre-existing orphan swept);
+- 40 autosaves with backup plus 10 without, staying at 2 OPFS files;
+- 20 reads during saves without failures, and 10 parallel `Any` writes;
+- a held reader lock delaying deletion until release;
+- an IndexedDB fallback with 31 saves keeping 3 content rows;
+- metadata-only listing, legacy migration conflicts and malformed-entry failure.
+
+A Trunk-built app initialized in isolated Chromium without runtime errors and
+saved a synthetic native document through Ctrl+N / Ctrl+S. Its IndexedDB metadata
+record referenced a real OPFS blob and SHA-256 revision; the document survived
+reload. Settings > Cloud showed actual origin usage/quota and a non-persistent
+status after the explicit usage action, without a persistence prompt. After the
+known-document index was added, the same built app listed the saved document under
+File > Open Recent after reload and opened it from there. Before the fix, the legacy
+VFS filter hid it. A Chromium module check confirmed the initialization snapshot
+(including migrated documents, excluding settings), the `backup` commit flag,
+cross-instance commit broadcasts and `notfound` reads.
+Firefox/Safari, real picker permission prompts, external-application races,
+browser eviction/power loss, deployed callbacks/CORS and broader integrated
+settings/recovery/app flows still require browser acceptance.
 
 ## Reviewing AI results
 
@@ -435,12 +670,16 @@ distribution, native file associations or native multi-window support.
 
 ### Offline use and updates
 
-After a successful complete online load, the service worker precaches the built
-app shell, including the matching JavaScript, WASM and imported snippets. It
-caches **only build assets**, not maps, AI responses or other sites. Documents
-and recovery remain in the existing browser virtual file system. Offline
-editing works while that shell and site storage remain available; online AI,
-external links and remote services still need a connection.
+The service worker precaches the built app shell, including the matching
+JavaScript, WASM and imported snippets. On a first load it registers after the
+WASM bootstrap succeeds or reports a failure, so its downloads do not compete
+with the initial WASM download. Bootstrap completion can precede a usable app.
+Closing the tab before caching finishes can leave the first offline installation
+incomplete. The worker caches **only build assets**, not maps, AI responses or
+other sites. Documents remain in OPFS/IndexedDB; recovery stays in the
+synchronous VFS. Offline editing works once that shell has been cached and while
+site storage remains available; online AI, external links and remote services
+still need a connection.
 
 Trunk's post-build hook (`cargo xtask web-pwa`) creates `dist/sw.js` from the
 exact staged artifacts and a content-derived revision. URLs, manifest identity,
@@ -495,14 +734,17 @@ Actual installation, icon appearance and platform assistive technology still nee
 Windows/Linux/macOS/iOS/iPadOS acceptance; shared assets do not prove OS acceptance.
 
 ## Storage limits and privacy
-Local storage is per site origin and typically limited to about 5 MB. Large
-maps or many embedded images can exceed it; Thinoda then reports a save error,
-and you should download the map (Save As or Export) to keep it. Clearing site
+OPFS/IndexedDB document storage uses the browser's origin-wide quota rather than
+localStorage's roughly 5 MB limit. Settings, recovery and scratch VFS data still
+use localStorage and can exceed its separate limit, including recovery snapshots
+of large maps. Storage errors are reported; download maps and keep external
+backups rather than assuming that a browser save guarantees recovery. Clearing site
 data in the browser deletes stored documents, settings and recovery data.
 GitHub Pages serves all project sites of an account from the same
-`<owner>.github.io` origin, so they share one storage quota. Thinoda stores its
-documents, settings and recovery data under `thinoda.`-prefixed keys to avoid
-collisions with other sites on that origin.
+`<owner>.github.io` origin, so they share storage quotas. Thinoda uses its named
+OPFS directory, `thinoda.documents.v1` IndexedDB database and `thinoda.`-prefixed
+VFS keys to avoid accidental collisions; these names are not an isolation
+boundary between applications served on the same origin.
 
 ## Troubleshooting: "Thinoda could not start"
 Thinoda prefers WebGPU and falls back to WebGL 2. Browsers usually still offer
@@ -552,7 +794,8 @@ the raw error under **Technical details**:
 ## Testing
 - Use Node.js 24, selected by the repository root `.node-version` file. CI reads
   that same file through the Node-24-based `actions/setup-node` action; the PWA
-  tests reject a different Node major. No npm install is needed.
+  tests reject a different Node major. The Node-only PWA tests need no npm
+  install; the browser suite uses the locked dependencies below.
 - `node --test crates/thinoda-web/tests/pwa.test.cjs` (Node 24, repository root)
   checks real PNG dimensions/manifest scope, install/dismiss/error/standalone
   states, and offline worker cache/update isolation without installing software.
@@ -567,6 +810,15 @@ the raw error under **Technical details**:
 - `cargo clippy --target wasm32-unknown-unknown -p thinoda-web -p thinoda-app
   -p thinoda-platform -p thinoda-ai -p thinoda-io -- -D warnings` checks the
   browser-only code paths.
+- From `crates/thinoda-web`, run `trunk build --release --locked`, `npm ci`,
+  `npx playwright install chromium`, and `npm run test:browser`. The suite
+  serves `dist` on loopback with Python, runs one isolated Chromium context per
+  test, and covers the production loader, deferred offline installation,
+  rootless board editing, image cards and Pitch viewport. Set
+  `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
+  test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an
+  installed Chromium-compatible browser. These desktop checks do not replace
+  physical iPad or screen-reader testing.
 - Browser smoke test (manual or scripted): load the site, create a map from a
   template, add a topic, save (download), reload and confirm the recovery
   prompt, open the downloaded file, print and save the print PDF.

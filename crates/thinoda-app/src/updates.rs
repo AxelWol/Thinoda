@@ -330,6 +330,7 @@ mod tests {
                         Err(error) => panic!("{error}"),
                     }
                 };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
