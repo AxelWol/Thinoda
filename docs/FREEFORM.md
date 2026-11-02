@@ -40,7 +40,10 @@ Hard constraints (repository conventions, see [PLAN.md](PLAN.md)):
   `thinoda-io` (`formats.rs`, `native_resources.rs`), `thinoda-app`
   (`template_gallery.rs`, `ui.rs`).
 
-## 3. What Thinoda already has
+## 3. Thinoda's research baseline
+
+The following inventory describes the application at the start of this
+research; implementation progress is tracked in the status and roadmap above.
 
 | Building block | Where | Use for boards |
 |---|---|---|
@@ -55,9 +58,9 @@ Hard constraints (repository conventions, see [PLAN.md](PLAN.md)):
 | Snapshot undo (whole active sheet, 300 steps) | `document.rs` | Must be budgeted for ink |
 | Template catalogue (28 tree templates, 8 categories) | `templates.rs`, `template_gallery.rs` | New "Boards" category |
 
-Missing today: arbitrary shapes, ink/pen input, free connectors, z-order,
+At that baseline, arbitrary shapes, ink/pen input, free connectors, z-order,
 groups, locking, rotation, snapping guides, rootless or multi-root sheets, and
-any non-tree template.
+non-tree templates were missing.
 
 ## 4. Feature inventory and verdicts
 
@@ -237,8 +240,9 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
 ### 5.4 Ink, undo and performance
 
 - Raw pointer samples are buffered in the canvas widget, outside `Document`.
-  On pointer-up the stroke is simplified (Ramer–Douglas–Peucker plus smoothing),
-  validated and committed as **one** edit.
+  On pointer-up the stroke is simplified with Ramer–Douglas–Peucker, validated
+  and committed as **one** edit. Smoothing is available in the input pipeline
+  but is not enabled by default.
 - Stroke points are stored as shared immutable data (`Arc<[Point]>`), so the
   snapshot undo copies references instead of point arrays. If benchmarks still
   fail, canvas edits get delta undo.
@@ -246,8 +250,9 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
 - Hard limits (validated on load and paste): objects per sheet, points per
   stroke, total points, coordinate and size ranges, label length, group depth,
   decoded image size.
-- Rendering caches tessellated strokes per zoom bucket; off-screen strokes are
-  culled.
+- Rendering caches bounded, zoom-projected stroke geometry at the exact zoom
+  and culls off-screen strokes. egui still tessellates visible strokes each
+  frame; performance measurements determine whether a mesh cache is needed.
 - F0 benchmark gate: 1,000 and 10,000 strokes, plus a 50-image board, on native
   and web: frame time, memory, undo memory, save/load time, recovery journal
   size.
@@ -256,9 +261,11 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
 
 `cargo run --release -p thinoda-core --example board_benchmark` (Windows x86_64,
 release, 20 samples, p50 / p95 in ms). Each board has a hidden root, 64 points
-per stroke and 50 image cards. The scene row covers layout plus scene build.
-Undo is 300 undoable object moves through `Document`, including the snapshot,
-validation and trimming. Hit-test is 1,000 queries.
+per stroke and 50 image-card placeholders without embedded bytes. This baseline
+does not measure realistic image memory, upload or recovery. The scene row
+covers layout plus scene build. Undo is 300 undoable object moves through
+`Document`, including the snapshot, validation and trimming. Hit-test is 1,000
+queries.
 
 | Strokes | Scene | Hit-test ×1000 | Undo push ×300 | Serialize | Deserialize | JSON | Snapshot estimate | History after 300 |
 |---|---|---|---|---|---|---|---|---|
@@ -271,6 +278,37 @@ snapshot then costs about 0.2 KB per stroke. At 10,000 strokes the
 (about 140 steps). A single edit costs about 2–3 ms; the sheet clone plus full
 validation dominate that cost. Delta undo for canvas edits stays the fallback if
 F5 shows this is too slow. Web and GPU frame-time measurements belong to F5.
+
+#### F5 realistic-image baseline
+
+A separate pre-integration release harness measured 20 samples each on Windows
+x64 and in Chromium/Wasm. Its boards contained 0, 1,000 or 10,000 strokes plus
+50 distinct JPEG crops totalling 7.7 MB; these were real embedded resources,
+unlike the F0 placeholders. Times below are p50 / p95 milliseconds.
+
+| Environment | Strokes | Overview paint + tessellation | Tessellation alone | Archive load/decode |
+|---|---:|---:|---:|---:|
+| Windows | 1,000 | 2.96 / 3.54 | 2.53 / 3.14 | 98.87 / 101.38 |
+| Windows | 10,000 | 38.74 / 40.43 | 30.06 / 30.51 | 155.56 / 159.50 |
+| Chromium/Wasm | 1,000 | 2.9 / 3.0 | 2.2 / 2.3 | 4,659.3 / 5,137.6 |
+| Chromium/Wasm | 10,000 | 40.4 / 42.4 | 27.7 / 29.0 | 4,725.4 / 4,737.8 |
+
+These are CPU paint and tessellation measurements, not GPU presentation or
+input-to-frame latency. Wasm decode is in memory and excludes the file picker.
+A later diagnostic found that enabling Chrome's debugger slowed the same Wasm
+SHA workload from 16.6 ms to 170.9 ms, returning to 21.2 ms after disabling it.
+An isolated three-sample comparison of the pre-optimization 1,000-stroke
+archive import measured medians of 385.7 ms with the debugger off, 4,709.1 ms
+with it enabled, and 426.1 ms after disabling it again. The diagnostic used
+`Runtime.evaluate`, excluded the picker and rendering, and is not a percentile
+or a post-optimization result. The earlier baseline's debugger state was not
+recorded, so its cause cannot be established from this comparison.
+The photo fixture consists of 50 crops of one
+[public-domain NASA image](https://svs.gsfc.nasa.gov/30613). The browser
+recovery and synchronous VFS writes failed on localStorage quota; this baseline
+does not establish recovery or end-to-end file-flow acceptance. At the time of
+this baseline, redo and embedded image buffers were not counted in the history
+budget.
 
 ### 5.5 Input devices
 
@@ -294,8 +332,29 @@ semantics and require native v6.
 - Board toolbar (floating, collapsible, all locales): Select, Hand, Sticky,
   Text, Shape (library popover with search), Connector, Pen, Highlighter,
   Eraser, Lasso, Frame, Image. `Esc` returns to Select.
+- Use a recognizable action icon for every tool and an expand/collapse icon at
+  the top. Expanded rows show icons and localized labels; collapsed rows retain
+  the icons, localized tooltips, accessible names, and keyboard access. Bound
+  the toolbar to the available canvas height and scroll rather than hiding
+  actions on short windows or at high UI scale. The toolbox starts collapsed
+  to avoid obscuring canvas content; either state can be changed by the user.
+- Show contextual action icons for the active mode. For ink, expose colour,
+  width, opacity, and the supported pen/highlighter stroke types; erasers expose
+  their radius. These controls remain usable in either toolbar presentation.
 - Inspector sections for card colour, shape fill/stroke, ink width/colour/
   opacity, rotation, lock, alt text.
+- Keep the working custom Fill-Color Picker and also reuse the existing quick
+  styles and Shape/Text controls for selected sticky notes, text cards and
+  shapes. Apply the relevant visual properties to each compatible object
+  without replacing its content, geometry or kind.
+  Mixed selections and locked groups must follow the existing atomic edit
+  rules; unsupported properties must not appear to have been applied. Changes
+  must survive native save/reopen, undo/redo and visual export without changing
+  ordinary mind-map styling.
+  Cards support fill and text colours; shapes support fill, border and label
+  colours, while shape typography is not editable. Quick Styles also apply a
+  supported border width to shapes. Locked groups and unsupported items are
+  skipped, and each action is a single undo step.
 - Keyboard parity: create objects at the viewport centre, move with arrows
   (Shift = larger steps), resize/rotate with modifiers, cycle z-order, group/
   lock commands, Tab order = reading order (frames, then top-to-bottom,
@@ -324,8 +383,8 @@ semantics and require native v6.
 | Format | Board content |
 |---|---|
 | Thinoda native | Everything (v6 when needed) |
-| SVG, PNG, JPEG, PDF, print | Everything visible, via the shared scene |
-| PPTX | Scenes become slides; objects as pictures or native shapes (later) |
+| SVG, PNG, JPEG, PDF, print | Visible scene with frame clipping, subject to the limitations below |
+| PPTX | Viewport scenes are rasterized; branch/zone slides remain editable where supported |
 | XMind | Cards as floating topics; shapes/ink/connectors reported as lost, or refused if the user selects strict mode |
 | FreeMind, OPML, Markdown, text, DOCX, XLSX, CSV, MindManager, TextBundle | Outline projection of cards and topics; drawn objects reported as lost |
 | FIM | Unchanged; board content reported as lost |
@@ -339,20 +398,30 @@ semantics and require native v6.
   their previous version and identical bytes (golden tests).
 - `export_losses(workbook, format, options)` returns itemised `ExportLoss`
   values (shapes, ink, connectors, cards converted, rotation, viewport slides,
-  zones, floating topics, synthesized root, zone clip, board settings). It is
-  plain data for a later preflight UI; MindManager export asks for
-  confirmation only when the sheet uses board semantics.
+  zones, floating topics, synthesized root, zone clip, board settings). A
+  shared preflight reports relevant losses before save, export and print;
+  viewport slides flattened in PowerPoint are reported separately.
 - Outline formats export `project_to_outline` (synthesized root, no anchor).
 - SVG/PNG/JPEG/PDF/print and editable PPTX paint the scene: coloured zones,
   Below objects, map, Above objects, styled cards, shapes, ink (highlighter
   alpha), connectors with arrowheads and labels. Export bounds include canvas
   objects; the grid is not exported.
+- Visual frame clipping is applied by the canvas and SVG-backed exports.
+  Map connectors use the child topic's clip, boundaries the parent topic's
+  clip and summaries the summary topic's clip. Relationships are clipped only
+  when both endpoints belong to the same clipped frame; cross-frame
+  relationships remain visible even if two frames have identical bounds.
+  Clipping is visual and is **not secure redaction**.
+- Board-semantic SVG summaries include the tip-to-topic connector; plain
+  legacy maps retain the historical summary path for byte compatibility.
+- Viewport scenes can be captured, edited, played and exported. PowerPoint
+  viewport slides are flattened to images; editable branch/zone slides do not
+  fully preserve frame clipping and the preflight reports that loss.
 - XMind titles a Hidden root with the sheet title; imports run board
   validation and reject malformed or oversized data without panicking.
-- Known gaps: zone clipping is not rendered (reported as a loss); ink pressure
-  is ignored; card rotation and rotated shape labels stay upright in editable
-  PPTX; generated presentations and branch frames do not yet handle Hidden
-  boards; the XMind central topic keeps the anchor's non-title fields.
+- Known gaps: ink pressure is ignored; card rotation and rotated shape labels
+  stay upright in editable PPTX; the XMind central topic keeps the anchor's
+  non-title fields.
 
 ## 6. Phased plan
 
@@ -363,11 +432,37 @@ locales, Light/Dark, accessibility checks and updated user docs.
 |---|---|---|
 | **F0 Groundwork** | Root query APIs (5.1) and migration of all root callers; derived Scene with bands; typed IDs and `bump_next_id` coverage; limits and validation; `required_native_version`; central export capability analysis; ink/undo benchmark | No behaviour change for existing maps (full test suite, golden exports unchanged); contract tests prove the anchor never appears in render, search, outline, AI, a11y, statistics, export or presentation; benchmark report checked in |
 | **F1 Flexible roots** | `SheetRootMode::Hidden`, multi-root via floating trees and zones, mode switch commands, export projection policies | Rootless and multi-root sheets round-trip in native v6; every export shows the projection; v5 readers refuse v6 files |
-| **F2 Cards and frames** | Card presentation for floating topics (sticky, text, image), zone frames, grid, snapping and guides, align/distribute | Sticky wall usable by mouse, touch and keyboard; screen-reader labels; SVG/PDF show cards and frames |
-| **F3 Shapes and connectors** | Shape library (basic + flowchart), connectors with typed endpoints, z-order within bands, groups, lock, rotation | Flowchart can be built and exported to SVG/PDF; endpoint deletion behaves as specified; undo of group operations |
+| **F2 Cards and frames** | Card presentation for floating topics (sticky, text, image), zone frames, grid, snapping and guides, align/distribute, responsive icon toolbox, existing quick styles and Shape/Text colours | Sticky wall usable by mouse, touch and keyboard; existing style controls work for selected cards; toolbox actions remain accessible in expanded and icon-only states at short heights and high UI scale; screen-reader labels; SVG/PDF show cards and frames |
+| **F3 Shapes and connectors** | Shape library (basic + flowchart), existing quick styles and Shape/Text colours, connectors with typed endpoints, z-order within bands, groups, lock, rotation | Flowchart can be built, restyled and exported to SVG/PDF; endpoint deletion behaves as specified; undo of group operations |
 | **F4 Board templates** (implemented) | Data-driven template definitions and the template MVP (section 7) | Templates localised in all UI language catalogs, theme-aware, validated in tests |
-| **F5 Ink** | Pen, highlighter, object eraser, lasso, simplification, caches | Benchmark gate from F0 met on native and web; no pressure dependency |
+| **F5 Ink** | Pen, highlighter, object eraser, lasso, simplification, caches, mode-specific ink controls | Colour, width, opacity and pen/highlighter type are available in either toolbox state; benchmark gate from F0 met on native and web; no pressure dependency |
 | **F6 Scenes and polish** | Viewport scenes in Pitch and PDF, mini-map, pressure (if the spike succeeds), pixel eraser, more templates | Scenes play and export; pressure optional |
+
+**Current implementation status:** The F0 core model and IO, F4 templates,
+export preflight, board alignment guides, zoom-to-selection, responsive toolbox,
+frame-identity clipping fix and pending-ink host safeguards have focused
+regression coverage. F1/F2 and F3 remain open for board-object styling and
+integration acceptance; F5 remains open for the realistic performance gate;
+F6 remains open for final scene/export acceptance. Local browser large-board
+storage and recovery, history accounting, and full native/web verification
+remain open. Cloud-provider code is merged upstream behind a default-off
+feature and stays disabled until publisher registrations are in place; see
+[CLOUD-STORAGE.md](CLOUD-STORAGE.md).
+
+### History resource-accounting checkpoint: critique
+
+- Retained undo and redo snapshots now account for distinct shared ink and
+  embedded-resource allocations once, as well as an estimate of owned metadata.
+  Focused tests passed for shared and replaced resources, clearing redo,
+  cloning and budget trimming. Reload and equal-content/distinct-allocation
+  regressions have been added and await the next coordinated test run.
+- The budget is an approximation, not a process-memory cap. The nearest undo and
+  redo entries are deliberately kept even if they exceed it; live-document and
+  rendering allocations are outside this history estimate. Allocator overhead,
+  spare capacity and some nested non-board data, including FIM trees, are not
+  fully estimated either.
+- This checkpoint does not establish large-board browser recovery, cloud reload,
+  or a new performance baseline. Those remain separate acceptance work.
 
 ### F1/F2 core checkpoint: critique
 
@@ -402,6 +497,56 @@ locales, Light/Dark, accessibility checks and updated user docs.
 - This checkpoint does not complete the phases: board controls, export clipping,
   browser/native interaction, and cloud reload history still need integration
   and validation.
+
+### Toolbox checkpoint: critique
+
+- Icons are bundled with the application and use the shared command-button focus,
+  selected-state and accessible-name behavior. Icon-only controls retain their
+  localized tooltips and keyboard activation.
+- The toolbar uses available canvas height before scrolling. Very short canvases
+  reduce row height so the pinned toggle does not make the remaining actions
+  unreachable; this is a fallback for constrained space, not a new default
+  touch-target size.
+- Ink and eraser controls are shown for the active mode in either presentation.
+  Switching to one of these modes reveals its controls even if the tools were
+  previously scrolled; the toolbox starts collapsed so that board content is
+  not hidden by default. Board fit reserves room for the compact toolbox. A
+  selected-topic toolbar is repositioned away from the toolbox and frame
+  titles, or omitted when it cannot fit, where the normal menus remain
+  available.
+- Light/dark desktop previews and focused interaction tests cover these states.
+  Browser, screen-reader and cross-platform acceptance remain part of the full
+  integration, not evidence that the whole phase is complete.
+
+### F3 geometry checkpoint: critique
+
+- Mixed groups preserve relative positions through rotation and undo. Locked
+  members prevent indirect group edits; connectors attached outside a rotated
+  group remain attached, although their routed paths can reflow.
+- Frames are identified by their zone IDs, not their rectangles. Two distinct
+  frames with identical bounds must not accidentally clip a relationship as if
+  both ends belonged to one frame.
+
+### F4 templates checkpoint: critique
+
+- Eight board templates use the same validated primitives and translated
+  creation-time strings. The additional layouts do not imply structured
+  Kanban, table or collaboration semantics.
+
+### F5 ink checkpoint: critique
+
+- Ink gestures commit atomically, and pending or rejected gestures are exposed
+  for retry or cancellation rather than silently discarded. Pending ink is not
+  crash-recoverable until it is committed.
+- Pixel erasing can split strokes while retaining their metadata and undo
+  behavior; pressure remains optional and does not affect rendering.
+
+### F6 presentation checkpoint: critique
+
+- Viewport presentations and the mini-map reuse scene geometry. Visual clipping
+  is not redaction, and editable PowerPoint output reports clipping it cannot
+  preserve. Browser storage limits and realistic rendering performance still
+  require integration acceptance.
 
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library

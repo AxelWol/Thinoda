@@ -1,6 +1,12 @@
 # Cloud storage: current state, gap analysis and plan
 
-Status: **analysis and plan only, no code yet** (user-directed, 2026-10-28).
+Status: **the prepared cloud implementation is merged upstream (main/develop)
+behind the `integrated-cloud-services` feature, which is OFF by default in both
+the native app and the web build.** No publisher registrations exist and no
+live-provider acceptance has been completed; providers stay disabled until
+registrations are provisioned (see `docs/CLOUD-AUTH-SETUP.md` on main).
+No broker or additional OAuth scope was added. Local browser file storage and
+recovery remain part of the Freeform work.
 Extends [PLAN.md R10](PLAN.md#r10---protected-files-cloud-synchronization-and-sharing)
 and the Platform & collaboration items in [BACKLOG.md](BACKLOG.md#platform--collaboration).
 Freeform boards are planned separately in [FREEFORM.md](FREEFORM.md); nothing here

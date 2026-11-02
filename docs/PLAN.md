@@ -2931,21 +2931,41 @@ list and rubber-duck critique: [FREEFORM.md](FREEFORM.md). Extends existing
 floating topics, zones, relationships, presentation and templates instead of a
 parallel document model.
 
+**Status:** F0 core model and IO, F4 board templates, and export preflight have
+focused coverage. F3 arrangement, guides, zoom-to-selection and frame clipping,
+the responsive toolbox, and pending-ink safeguards also have focused coverage.
+F1-F3 still need board styling and integrated acceptance; F5 needs its realistic
+performance gate; F6 needs final scene/export acceptance. Local browser storage
+and recovery and full native/web verification remain open. Provider/cloud code is
+merged upstream behind the default-off `integrated-cloud-services` feature;
+providers stay disabled until publisher registrations are in place.
+
 1. F0 groundwork: `semantic_roots`/`visible_topic_ids`/`project_to_outline`
    queries and migration of all root callers; derived scene with layer bands for
    paint, hit-test, selection, a11y and visual export; ID allocator coverage;
    limits; single `required_native_version`; central export capability analysis;
    ink/undo benchmark.
 2. F1 Hidden root mode and multi-root sheets; native v6 only when used.
-3. F2 cards (sticky/text/image as floating topics) and zone frames, grid, snapping.
-4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation.
-5. F4 data-driven "Boards" templates (MVP of four).
+3. F2 cards (sticky/text/image as floating topics) and zone frames, grid, snapping;
+   existing quick styles and Shape/Text controls alongside the custom fill picker.
+4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
+   the same existing styling controls for applicable shapes.
+5. F4 data-driven "Boards" templates (eight implemented).
 6. F5 ink; F6 viewport scenes, mini-map, optional pen pressure.
 
 **Exit:** existing maps and golden exports unchanged; anchor-root contract tests;
 v5 readers refuse v6; every export itemises board losses; benchmark gates met on
 native and web; all locales, Light/Dark, keyboard and screen-reader acceptance.
 Per-phase rubber-duck reviews as for P4.
+
+**Cross-cutting web first-start work:** A user reports that a clean-cache load on
+iPad Safari/Edge can take about two minutes. Audit the download, Wasm
+compilation and initialization path; critique and implement faster
+first-interactive loading and safe background/on-demand optional work without
+losing features or offline/update reliability. Loading feedback must be
+accessible and truthful. Compare reproducible cold and warm starts and clearly
+distinguish emulation from actual iPad measurements. The investigation, concept
+and rubber-duck review are in [WEB-STARTUP.md](WEB-STARTUP.md).
 
 ### Phase P4 - OS-integrated menus and windows (R12 and above)
 
