@@ -13,7 +13,8 @@ The disabled build was checked in isolated Chromium: account controls were
 absent, browser-storage controls remained visible, and a stale OAuth callback
 was scrubbed without PKCE state or external requests. Disabled/enabled cloud
 tests and native/wasm lint both pass; CI retains opt-in test coverage without
-enabling the feature in release artifacts.
+enabling the feature in release artifacts. A workflow contract checks the
+default feature graph and the native and Pages packaging paths.
 Sections 1–3 retain the pre-implementation inventory. Delivery and verification
 are recorded below; mock tests are not evidence of live provider acceptance.
 No publisher registrations exist and no live-provider acceptance has been

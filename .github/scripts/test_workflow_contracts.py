@@ -132,6 +132,37 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertLess(web.index("trunk build"), web.index("npm run test:browser"))
         self.assertLess(web.index("npm run test:browser"), web.index("actions/upload-artifact"))
 
+    def test_published_builds_keep_integrated_cloud_services_opt_in(self):
+        feature = "integrated-cloud-services"
+        for package in ["thinoda-app", "thinoda-web"]:
+            manifest = tomllib.loads((ROOT / "crates" / package / "Cargo.toml").read_text())
+            features = manifest["features"]
+            self.assertIn(feature, features)
+            pending = list(features.get("default", []))
+            seen = set()
+            while pending:
+                item = pending.pop()
+                self.assertNotEqual(item.split("/")[-1], feature, package)
+                if item not in seen:
+                    seen.add(item)
+                    pending.extend(features.get(item, []))
+
+        web = job((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"), "web")
+        builds = re.findall(r"(?m)^\s*run: (trunk build[^\n]*)$", web)
+        self.assertTrue(builds)
+        for build in builds:
+            self.assertNotIn("--features", build)
+            self.assertNotIn("--all-features", build)
+        for path in [
+            WORKFLOWS / "package-target.yml",
+            ROOT / "xtask" / "src" / "main.rs",
+            ROOT / ".github" / "scripts" / "package_macos.py",
+        ]:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn(feature, source)
+            self.assertNotIn("--features", source)
+            self.assertNotIn("--all-features", source)
+
     def test_release_order_separates_apple_jobs_and_orders_linux_architectures(self):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         expected = {
