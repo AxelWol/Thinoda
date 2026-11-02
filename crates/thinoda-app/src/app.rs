@@ -1,7 +1,7 @@
 //! Application state, command dispatch and lifecycle (recovery, autosave, close handling).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -9,8 +9,8 @@ use std::{
 use web_time::Instant;
 
 use egui::{Color32, Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
-use thinoda_canvas::{Action, FloatingArrangement, apply_action};
-use thinoda_core::{Workbook, search::SearchOptions, templates};
+use thinoda_canvas::{Action, BoardAction, BoardTool, FloatingArrangement, apply_action};
+use thinoda_core::{GridKind, SheetRootMode, Workbook, search::SearchOptions, templates};
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
     Paths, Settings,
@@ -39,6 +39,14 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
     Canvas(Action),
+    BoardTool(BoardTool),
+    BoardAction(BoardAction),
+    BoardRoot(SheetRootMode),
+    BoardGrid(GridKind),
+    BoardSnap,
+    BoardMinimap,
+    BoardImage,
+    BoardZoomSelection,
     New,
     NewFromTemplate(&'static str),
     Home,
@@ -155,6 +163,7 @@ pub struct SearchState {
     pub show_replace: bool,
     pub opts: SearchOptions,
     pub hits: Vec<thinoda_core::search::SearchHit>,
+    pub canvas_hits: Vec<thinoda_core::search::CanvasSearchHit>,
     pub all_sheets: bool,
     pub current: usize,
     pub dim: bool,
@@ -171,6 +180,24 @@ pub struct SearchState {
         bool,
         thinoda_core::search::Facets,
     ),
+}
+
+impl SearchState {
+    pub fn result_count(&self) -> usize {
+        self.hits.len() + self.canvas_hits.len()
+    }
+
+    pub fn current_sheet(&self) -> Option<usize> {
+        self.hits
+            .get(self.current)
+            .map(|hit| hit.sheet)
+            .or_else(|| {
+                self.current
+                    .checked_sub(self.hits.len())
+                    .and_then(|index| self.canvas_hits.get(index))
+                    .map(|hit| hit.sheet)
+            })
+    }
 }
 
 /// Optional OS integrations (absent in tests and when the profile is unavailable).
@@ -200,6 +227,8 @@ pub struct Dialogs {
     pub(crate) powerpoint_preview: crate::powerpoint_preview::PowerPointPreview,
     pub mindmanager_symbol_color_loss: bool,
     pub mindmanager_save: Option<(String, PathBuf, bool)>,
+    pub(crate) mindmanager_save_deliver: bool,
+    pub(crate) board_export: Option<crate::export_preflight::BoardPreflight>,
     pub(crate) save_close_tab: Option<String>,
     pub imports: std::collections::VecDeque<(PathBuf, OpenDoc, Vec<thinoda_io::ImportWarning>)>,
     pub symbol_export: Option<(usize, Format)>,
@@ -241,6 +270,9 @@ pub struct ThinodaApp {
     pub home_return_to: Option<String>,
     /// Explicit topic-style overrides, shared by documents for this app session.
     pub style_clipboard: Option<thinoda_core::TopicStyle>,
+    pub(crate) clipboard_bridge: crate::board_clipboard::ClipboardBridge,
+    pub(crate) card_style_color: Option<Option<thinoda_core::Color>>,
+    pub(crate) board_style_clipboard: Option<crate::board_ui::BoardStyleClipboard>,
     pub symbol_color: Option<thinoda_core::Color>,
     pub sheet_paste_request: Option<(Instant, String)>,
     pub discard_late_sheet_paste: bool,
@@ -256,8 +288,6 @@ pub struct ThinodaApp {
     pub(crate) save_all: Option<crate::save_all::SaveAll>,
     last_poll: Instant,
     last_frame: Instant,
-    /// Ask the OS clipboard for text on the next frame (menu "Paste").
-    pub(crate) paste_requested: bool,
     /// Format panel field to focus on the next frame.
     pub focus_field: Option<FocusField>,
     pub ai: crate::ai::AiState,
@@ -345,6 +375,9 @@ impl ThinodaApp {
             template_category: None,
             home_return_to: None,
             style_clipboard: None,
+            clipboard_bridge: Default::default(),
+            card_style_color: None,
+            board_style_clipboard: None,
             symbol_color: None,
             sheet_paste_request: None,
             discard_late_sheet_paste: false,
@@ -360,7 +393,6 @@ impl ThinodaApp {
             save_all: None,
             last_poll: Instant::now(),
             last_frame: Instant::now(),
-            paste_requested: false,
             focus_field: None,
             ai: Default::default(),
             map_shot: Default::default(),
@@ -394,6 +426,10 @@ impl ThinodaApp {
             ..Settings::default()
         };
         let mut app = Self::new(settings, Services::default(), &[]);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.clipboard_bridge = crate::board_clipboard::ClipboardBridge::headless();
+        }
         app.new_doc(templates::instantiate("mind-map"));
         app
     }
@@ -603,6 +639,73 @@ impl ThinodaApp {
     // ----- commands --------------------------------------------------------------------------
 
     pub fn exec(&mut self, ctx: &Context, cmd: Cmd) {
+        if matches!(&cmd, Cmd::SaveAll)
+            && let Some(index) = self.docs.iter().position(|doc| doc.has_unresolved_ink())
+        {
+            self.focus_pending_ink(ctx, index);
+            return;
+        }
+        // Keep document edits and exports from invalidating an unresolved gesture.
+        // Navigation and presentation commands remain available so its owner can
+        // be reached, and the recovery controls are not commands.
+        if !matches!(
+            &cmd,
+            Cmd::BoardTool(_)
+                | Cmd::BoardMinimap
+                | Cmd::New
+                | Cmd::NewFromTemplate(_)
+                | Cmd::Home
+                | Cmd::Open
+                | Cmd::OpenPath(_)
+                | Cmd::NextDoc
+                | Cmd::CloseTab(_)
+                | Cmd::CloseWindow
+                | Cmd::Quit
+                | Cmd::SaveAll
+                | Cmd::Settings
+                | Cmd::About
+                | Cmd::Shortcuts
+                | Cmd::UserGuide
+                | Cmd::QuickStart
+                | Cmd::Feedback
+                | Cmd::ProjectNews
+                | Cmd::ToggleOutliner
+                | Cmd::ToggleZen
+                | Cmd::ToggleFormatPanel
+                | Cmd::ToggleSymbolsPanel
+                | Cmd::ToggleStatusBar
+                | Cmd::Find
+                | Cmd::Palette
+                | Cmd::SetTheme(_)
+        ) && let Some(doc) = self.doc()
+            && let Err(error) = doc.ensure_no_pending_ink()
+        {
+            self.toasts.warning(error);
+            return;
+        }
+        if matches!(
+            &cmd,
+            Cmd::New
+                | Cmd::NewFromTemplate(_)
+                | Cmd::Home
+                | Cmd::Open
+                | Cmd::OpenPath(_)
+                | Cmd::NextDoc
+        ) && let Some(doc) = self.doc_mut()
+        {
+            doc.suspend_ink(ctx);
+        }
+        if let Cmd::CloseTab(index) = &cmd
+            && let Some(doc) = self.docs.get(*index)
+            && self
+                .document_windows
+                .get(&doc.key)
+                .copied()
+                .unwrap_or(egui::ViewportId::ROOT)
+                == ctx.viewport_id()
+        {
+            self.docs[*index].suspend_ink(ctx);
+        }
         for doc in &mut self.docs {
             if let Err(error) = doc.flush_inspector_edit(ctx) {
                 log::warn!("inspector commit before {cmd:?}: {error}");
@@ -611,7 +714,13 @@ impl ThinodaApp {
             }
         }
         if let Some(doc) = self.doc()
-            && let Err(error) = doc.validate_pending_title()
+            && let Err(error) = doc.validate_pending_drafts()
+        {
+            self.toasts.error(error.to_string());
+            return;
+        }
+        if let Some(doc) = self.doc_mut()
+            && let Err(error) = doc.view.try_commit_board_label(&mut doc.doc)
         {
             self.toasts.error(error.to_string());
             return;
@@ -626,6 +735,26 @@ impl ThinodaApp {
         }
         match cmd {
             Cmd::Canvas(action) => self.canvas_action(ctx, action),
+            Cmd::BoardTool(tool) => self.select_board_tool(ctx, tool),
+            Cmd::BoardAction(action) => self.run_board_action(action),
+            Cmd::BoardRoot(mode) => self.set_board_root(mode),
+            Cmd::BoardGrid(grid) => self.set_board_grid(grid),
+            Cmd::BoardSnap => self.toggle_board_snap(),
+            Cmd::BoardMinimap => {
+                if !self.command_available(&Cmd::BoardMinimap) {
+                    self.toasts.warning(t("Not possible here"));
+                } else if let Some(doc) = self.doc_mut() {
+                    doc.view.set_minimap_visible(!doc.view.show_minimap);
+                }
+            }
+            Cmd::BoardImage => {
+                if self.command_available(&Cmd::BoardImage) {
+                    self.begin_board_image(ctx);
+                } else {
+                    self.toasts.warning(t("Not possible here"));
+                }
+            }
+            Cmd::BoardZoomSelection => self.zoom_to_board_selection(),
             Cmd::New => {
                 self.remember_map_defaults();
                 let mut workbook = templates::instantiate("mind-map");
@@ -1002,7 +1131,6 @@ impl ThinodaApp {
                 if let Some(d) = self.doc_mut() {
                     d.view.commit_edit(&mut d.doc);
                     let key = d.key.clone();
-                    self.paste_requested = false;
                     self.discard_late_sheet_paste = false;
                     self.sheet_paste_request = Some((Instant::now(), key));
                     ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
@@ -1064,8 +1192,12 @@ impl ThinodaApp {
             }
             Cmd::MenuPaste => {
                 self.discard_late_sheet_paste = false;
-                self.paste_requested = true;
-                ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
+                if self.mode == CenterMode::Map {
+                    ctx.memory_mut(|memory| {
+                        memory.request_focus(thinoda_canvas::MapCanvas::id());
+                    });
+                }
+                self.clipboard_action(ctx, Action::Paste(None));
             }
             Cmd::Ai(a) => self.start_ai(a),
             Cmd::AiChat => self.toggle_ai_chat(),
@@ -1101,10 +1233,18 @@ impl ThinodaApp {
     }
 
     fn canvas_action(&mut self, ctx: &Context, action: Action) {
+        if matches!(action, Action::Copy | Action::Cut | Action::Paste(_)) {
+            self.clipboard_action(ctx, action);
+            return;
+        }
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
         if let Err(error) = d.view.try_commit_edit(&mut d.doc) {
+            self.toasts.error(error.to_string());
+            return;
+        }
+        if let Err(error) = d.view.try_commit_board_label(&mut d.doc) {
             self.toasts.error(error.to_string());
             return;
         }
@@ -1125,26 +1265,177 @@ impl ThinodaApp {
                     .warning(format!("{}: {e}", t("Not possible here")));
             }
         }
-        if let Some(text) = d.view.clipboard_out.take() {
-            ctx.copy_text(text);
+    }
+
+    fn select_board_tool(&mut self, ctx: &Context, tool: BoardTool) {
+        if !self.command_available(&Cmd::BoardTool(tool)) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if self.finish_canvas_text_edit()
+            && let Some(doc) = self.doc_mut()
+        {
+            doc.view.set_board_tool(tool);
+            ctx.memory_mut(|memory| memory.request_focus(thinoda_canvas::MapCanvas::id()));
+        }
+    }
+
+    fn run_board_action(&mut self, action: BoardAction) {
+        if !self.command_available(&Cmd::BoardAction(action)) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        if let Err(error) = thinoda_canvas::apply_board_action(&mut doc.doc, &mut doc.view, action)
+        {
+            self.toasts
+                .error(format!("{}: {error}", t("Not possible here")));
+        }
+    }
+
+    fn zoom_to_board_selection(&mut self) {
+        if !self.command_available(&Cmd::BoardZoomSelection) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        doc.view.prune_selection(doc.doc.sheet());
+        let layout = doc.view.layout_for(&doc.doc);
+        let sheet = doc.doc.sheet();
+        let scene = thinoda_core::scene::build_scene(sheet, &layout);
+        let mut selected: HashSet<_> = doc
+            .view
+            .selection
+            .iter()
+            .copied()
+            .map(thinoda_core::SceneId::Topic)
+            .chain(
+                doc.view
+                    .board_selection
+                    .iter()
+                    .copied()
+                    .map(thinoda_core::SceneId::Object),
+            )
+            .collect();
+        let members: Vec<_> = doc
+            .view
+            .selection
+            .iter()
+            .filter_map(|id| sheet.board_member_for_topic(*id))
+            .chain(
+                doc.view
+                    .board_selection
+                    .iter()
+                    .copied()
+                    .map(thinoda_core::board::BoardMember::Object),
+            )
+            .collect();
+        if !members.is_empty() {
+            let expanded = match sheet.expand_board_selection(&members) {
+                Ok(expanded) => expanded,
+                Err(error) => {
+                    self.toasts.error(error);
+                    return;
+                }
+            };
+            selected.extend(expanded.into_iter().map(|member| match member {
+                thinoda_core::board::BoardMember::Card(id) => thinoda_core::SceneId::Topic(id),
+                thinoda_core::board::BoardMember::Object(id) => thinoda_core::SceneId::Object(id),
+            }));
+        }
+        if let Some(thinoda_canvas::ObjectSelection::Zone(id)) = doc.view.selected_object {
+            selected.insert(thinoda_core::SceneId::Zone(id));
+        }
+        let bounds = scene
+            .items
+            .iter()
+            .filter(|item| selected.contains(&item.id))
+            .filter_map(|item| item.visible_bounds())
+            .reduce(|a, b| a.union(&b));
+        let area = doc.view.canvas_rect().shrink(40.0);
+        let Some(bounds) = bounds.filter(|_| area.is_positive()) else {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        };
+        let zoom =
+            (area.width() / bounds.size.x.max(1.0)).min(area.height() / bounds.size.y.max(1.0));
+        doc.view.set_zoom(zoom);
+        let zoom = doc.view.zoom;
+        let center = bounds.center();
+        doc.view.offset = egui::vec2(-center.x * zoom, -center.y * zoom);
+    }
+
+    fn set_board_root(&mut self, mode: SheetRootMode) {
+        if !self.command_available(&Cmd::BoardRoot(mode)) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        let result = match mode {
+            SheetRootMode::Central => doc
+                .doc
+                .show_central_topic()
+                .map(|()| Some(doc.doc.sheet().root)),
+            SheetRootMode::Hidden => doc.doc.hide_central_topic(),
+        };
+        match result {
+            Ok(Some(topic)) => doc.view.select_only(topic),
+            Ok(None) => doc.view.prune_selection(doc.doc.sheet()),
+            Err(error) => {
+                self.toasts
+                    .error(format!("{}: {error}", t("Not possible here")));
+            }
+        }
+    }
+
+    fn set_board_grid(&mut self, grid: GridKind) {
+        if !self.command_available(&Cmd::BoardGrid(grid)) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        let mut settings = doc.doc.sheet().board;
+        settings.grid = grid;
+        if let Err(error) = doc.doc.set_board_settings(settings) {
+            self.toasts
+                .error(format!("{}: {error}", t("Not possible here")));
+        }
+    }
+
+    fn toggle_board_snap(&mut self) {
+        if !self.command_available(&Cmd::BoardSnap) {
+            self.toasts.warning(t("Not possible here"));
+            return;
+        }
+        if !self.finish_canvas_text_edit() {
+            return;
+        }
+        let Some(doc) = self.doc_mut() else { return };
+        let mut settings = doc.doc.sheet().board;
+        settings.snap = !settings.snap;
+        if let Err(error) = doc.doc.set_board_settings(settings) {
+            self.toasts
+                .error(format!("{}: {error}", t("Not possible here")));
         }
     }
 
     pub fn switch_sheet(&mut self, index: usize) {
         let Some(d) = self.doc_mut() else { return };
-        if index >= d.doc.workbook().sheets.len() {
-            self.toasts.warning(t("Not possible here"));
-            return;
-        }
-        if index == d.doc.active_index() {
-            return;
-        }
-        if let Err(error) = d.view.try_commit_edit(&mut d.doc) {
+        if let Err(error) = d.switch_sheet(index) {
             self.toasts.error(error.to_string());
-            return;
         }
-        d.doc.set_active(index);
-        d.view.reset();
     }
 
     pub fn command_available(&self, cmd: &Cmd) -> bool {
@@ -1276,40 +1567,113 @@ impl ThinodaApp {
             Cmd::Canvas(action) => self
                 .doc()
                 .is_some_and(|d| action.available(&d.doc, &d.view)),
+            Cmd::BoardTool(_)
+            | Cmd::BoardGrid(_)
+            | Cmd::BoardSnap
+            | Cmd::BoardMinimap
+            | Cmd::BoardImage => {
+                !self.any_modal_open() && self.mode == CenterMode::Map && self.doc().is_some()
+            }
+            Cmd::BoardZoomSelection => {
+                !self.any_modal_open()
+                    && self.mode == CenterMode::Map
+                    && self.doc().is_some_and(|doc| {
+                        !doc.view.selection.is_empty()
+                            || !doc.view.board_selection.is_empty()
+                            || matches!(
+                                doc.view.selected_object,
+                                Some(thinoda_canvas::ObjectSelection::Zone(_))
+                            )
+                    })
+            }
+            Cmd::BoardAction(action) => {
+                !self.any_modal_open()
+                    && self.mode == CenterMode::Map
+                    && self
+                        .doc()
+                        .is_some_and(|doc| action.available(&doc.doc, &doc.view))
+            }
+            Cmd::BoardRoot(mode) => {
+                !self.any_modal_open()
+                    && self.doc().is_some_and(|doc| {
+                        doc.doc.sheet().fim.is_none() && doc.doc.sheet().root_mode != *mode
+                    })
+            }
             Cmd::SaveQuickStyle => {
                 !self.any_modal_open()
                     && self.doc().is_some_and(|d| {
                         d.view.selected_object.is_none()
+                            && d.view.board_selection.is_empty()
                             && d.view.selection.len() == 1
-                            && d.view
-                                .primary()
-                                .is_some_and(|id| d.doc.sheet().contains(id))
+                            && crate::quick_styles::StyleTargets::from_view(d.doc.sheet(), &d.view)
+                                .is_some_and(|targets| {
+                                    targets.topics == d.view.selection && targets.shapes.is_empty()
+                                })
                     })
             }
-            Cmd::ApplyQuickStyle(_) => {
+            Cmd::ApplyQuickStyle(_) | Cmd::ResetStyle => {
                 !self.any_modal_open()
                     && self.doc().is_some_and(|d| {
-                        d.view.selected_object.is_none()
-                            && !d.view.selection.is_empty()
-                            && d.view
-                                .selection
-                                .iter()
-                                .all(|id| d.doc.sheet().contains(*id))
+                        crate::quick_styles::StyleTargets::from_view(d.doc.sheet(), &d.view)
+                            .is_some_and(|targets| !targets.is_empty())
                     })
             }
-            Cmd::CopyStyle | Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
+            Cmd::NewSheetFromTopic => self.doc().is_some_and(|d| {
                 d.view.selection.len() == 1
                     && d.view
                         .primary()
                         .is_some_and(|id| d.doc.sheet().contains(id))
             }),
-            Cmd::PasteStyle | Cmd::ResetStyle => self.doc().is_some_and(|d| {
-                !d.view.selection.is_empty()
+            Cmd::CopyStyle => self.doc().is_some_and(|d| {
+                (d.view.board_selection.is_empty()
+                    && d.view.selection.len() == 1
                     && d.view
-                        .selection
-                        .iter()
-                        .all(|id| d.doc.sheet().contains(*id))
-                    && (*cmd != Cmd::PasteStyle || self.style_clipboard.is_some())
+                        .primary()
+                        .is_some_and(|id| d.doc.sheet().contains(id)))
+                    || (d.view.selection.is_empty()
+                        && d.view.board_selection.len() == 1
+                        && d.doc
+                            .sheet()
+                            .canvas
+                            .object(d.view.board_selection[0])
+                            .is_some())
+            }),
+            Cmd::PasteStyle => self.doc().is_some_and(|d| {
+                let sheet = d.doc.sheet();
+                let topics = d.view.board_selection.is_empty()
+                    && !d.view.selection.is_empty()
+                    && d.view.selection.iter().all(|id| sheet.contains(*id))
+                    && self.style_clipboard.is_some()
+                    && crate::quick_styles::StyleTargets::from_view(sheet, &d.view).is_some_and(
+                        |targets| {
+                            targets.topics.len() == d.view.selection.len()
+                                && targets.shapes.is_empty()
+                        },
+                    );
+                let objects = d.view.selection.is_empty()
+                    && !d.view.board_selection.is_empty()
+                    && self.board_style_clipboard.is_some_and(|style| {
+                        d.view.board_selection.iter().all(|id| {
+                            sheet
+                                .canvas
+                                .object(*id)
+                                .is_some_and(|object| style.matches(object))
+                        }) && sheet
+                            .expand_board_selection(
+                                &d.view
+                                    .board_selection
+                                    .iter()
+                                    .copied()
+                                    .map(thinoda_core::board::BoardMember::Object)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .is_ok_and(|members| {
+                                members
+                                    .iter()
+                                    .all(|member| !sheet.is_board_member_locked(*member))
+                            })
+                    });
+                topics || objects
             }),
             Cmd::NextSheet | Cmd::PreviousSheet | Cmd::DeleteSheet => self
                 .doc()
@@ -1333,29 +1697,70 @@ impl ThinodaApp {
         }
         if cmd == Cmd::CopyStyle {
             let d = self.doc().unwrap();
-            self.style_clipboard = d
-                .view
-                .primary()
-                .and_then(|id| d.doc.sheet().topic(id))
-                .map(|topic| topic.style.clone());
-            self.toasts.info(t("Copied topic style overrides"));
+            if let Some(id) = d.view.board_selection.first() {
+                let style = d
+                    .doc
+                    .sheet()
+                    .canvas
+                    .object(*id)
+                    .map(crate::board_ui::BoardStyleClipboard::from_object);
+                self.board_style_clipboard = style;
+                self.style_clipboard = None;
+                self.card_style_color = None;
+                self.toasts.info(t("Copied"));
+            } else {
+                let topic = d.view.primary().and_then(|id| d.doc.sheet().topic(id));
+                let style = topic.map(|topic| topic.style.clone());
+                let color = topic.and_then(|topic| topic.card.map(|card| card.color));
+                self.style_clipboard = style;
+                self.card_style_color = color;
+                self.board_style_clipboard = None;
+                self.toasts.info(t("Copied topic style overrides"));
+            }
             return;
         }
-        let style = if cmd == Cmd::PasteStyle {
-            self.style_clipboard.clone().unwrap()
-        } else {
-            thinoda_core::TopicStyle::default()
-        };
-        let label = if cmd == Cmd::PasteStyle {
-            "Paste Style"
-        } else {
-            "Reset Style"
-        };
+        if cmd == Cmd::ResetStyle {
+            self.reset_selection_style();
+            return;
+        }
+        if self
+            .doc()
+            .is_some_and(|d| !d.view.board_selection.is_empty())
+        {
+            let style = self.board_style_clipboard.expect("command availability");
+            let d = self.doc_mut().unwrap();
+            let selection = d.view.board_selection.clone();
+            if let Err(error) = d.doc.edit_sheet("Paste Style", |sheet| {
+                for id in &selection {
+                    sheet
+                        .update_canvas_object(*id, |object| style.apply(object))
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                }
+                Ok(())
+            }) {
+                self.toasts
+                    .error(format!("{}: {error}", t("Not possible here")));
+            }
+            return;
+        }
+        let style = self.style_clipboard.clone().unwrap();
+        let card_color = self.card_style_color;
         let d = self.doc_mut().unwrap();
         d.view.commit_edit(&mut d.doc);
         let selection = d.view.selection.clone();
-        if let Err(e) = d.doc.edit_sheet(label, |sheet| {
-            sheet.update_style(&selection, |target| *target = style.clone())
+        if let Err(e) = d.doc.edit_sheet("Paste Style", |sheet| {
+            sheet.update_style(&selection, |target| *target = style.clone())?;
+            if let Some(color) = card_color {
+                for id in &selection {
+                    if let Some(mut card) = sheet.topic(*id).and_then(|topic| topic.card) {
+                        card.color = color;
+                        sheet
+                            .set_topic_card(*id, Some(card))
+                            .map_err(thinoda_core::EditError::Invalid)?;
+                    }
+                }
+            }
+            Ok(())
         }) {
             self.toasts
                 .error(format!("{}: {e}", t("Not possible here")));
@@ -1413,7 +1818,10 @@ impl ThinodaApp {
             }
         }
         let d = self.doc_mut().unwrap();
-        d.view.commit_edit(&mut d.doc);
+        if let Err(error) = d.commit_canvas_drafts() {
+            self.toasts.error(error);
+            return false;
+        }
         match d.doc.merge_sheets(sheets) {
             Ok(_) => {
                 d.view.reset();
@@ -1434,7 +1842,10 @@ impl ThinodaApp {
             self.toasts.warning(t("Not possible here"));
             return;
         };
-        d.view.commit_edit(&mut d.doc);
+        if let Err(error) = d.commit_canvas_drafts() {
+            self.toasts.error(error);
+            return;
+        }
         let workbook = d.doc.workbook().masked_copy();
         self.new_doc(workbook);
         self.doc_mut().unwrap().doc.mark_dirty();
@@ -1494,6 +1905,78 @@ impl ThinodaApp {
         ]
     }
 
+    pub fn board_commands() -> Vec<(Cmd, &'static str)> {
+        use thinoda_core::{Band, ShapeKind, ZOrder};
+        vec![
+            (Cmd::BoardTool(BoardTool::Select), "Select tool"),
+            (Cmd::BoardTool(BoardTool::Hand), "Hand tool"),
+            (Cmd::BoardTool(BoardTool::Sticky), "Sticky note"),
+            (Cmd::BoardTool(BoardTool::Text), "Text card"),
+            (
+                Cmd::BoardTool(BoardTool::Shape(ShapeKind::Rectangle)),
+                "Shape tool",
+            ),
+            (Cmd::BoardTool(BoardTool::Connector), "Connector tool"),
+            (Cmd::BoardTool(BoardTool::Frame), "Frame tool"),
+            (Cmd::BoardTool(BoardTool::Pen), "Pen"),
+            (Cmd::BoardTool(BoardTool::Highlighter), "Highlighter"),
+            (Cmd::BoardTool(BoardTool::ObjectEraser), "Object eraser"),
+            (Cmd::BoardTool(BoardTool::PixelEraser), "Pixel eraser"),
+            (Cmd::BoardTool(BoardTool::Lasso), "Lasso"),
+            (Cmd::BoardImage, "Image card"),
+            (Cmd::BoardZoomSelection, "Zoom to selection"),
+            (Cmd::BoardRoot(SheetRootMode::Hidden), "Hide central topic"),
+            (Cmd::BoardRoot(SheetRootMode::Central), "Show central topic"),
+            (Cmd::BoardGrid(GridKind::None), "No grid"),
+            (Cmd::BoardGrid(GridKind::Dots), "Dot grid"),
+            (Cmd::BoardGrid(GridKind::Lines), "Line grid"),
+            (Cmd::BoardSnap, "Snap to grid"),
+            (Cmd::BoardMinimap, "Board minimap"),
+            (
+                Cmd::BoardAction(BoardAction::Group),
+                "Group board selection",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::Ungroup),
+                "Ungroup board selection",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::Lock(true)),
+                "Lock board selection",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::Lock(false)),
+                "Unlock board selection",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Forward)),
+                "Bring forward",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Backward)),
+                "Send backward",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Front)),
+                "Bring to front",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::ZOrder(ZOrder::Back)),
+                "Send to back",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::SetBand(Band::Above)),
+                "Above map",
+            ),
+            (
+                Cmd::BoardAction(BoardAction::SetBand(Band::Below)),
+                "Below map",
+            ),
+            (Cmd::BoardAction(BoardAction::Rotate(-15.0)), "Rotate left"),
+            (Cmd::BoardAction(BoardAction::Rotate(15.0)), "Rotate right"),
+        ]
+    }
+
     pub fn handle_sheet_paste(&mut self, ctx: &Context) {
         if self.discard_late_sheet_paste {
             let discarded = ctx.input_mut(|input| {
@@ -1517,7 +2000,9 @@ impl ThinodaApp {
         }
         if self.sheet_paste_request.is_none()
             && !ctx.text_edit_focused()
-            && self.doc().is_some_and(|d| d.view.editing_topic().is_none())
+            && self.doc().is_some_and(|d| {
+                d.view.editing_topic().is_none() && d.view.editing_board_object().is_none()
+            })
             && !self.any_modal_open()
             && ctx.input(|input| {
                 input.events.iter().any(|event| {
@@ -1559,10 +2044,13 @@ impl ThinodaApp {
             }
             return;
         };
-        self.paste_requested = false;
         match thinoda_core::clipboard::decode_sheet(&text) {
             Ok(sheet) => {
                 let d = self.doc_mut().unwrap();
+                if let Err(error) = d.commit_canvas_drafts() {
+                    self.toasts.error(error);
+                    return;
+                }
                 match d.doc.add_sheet(sheet) {
                     Ok(_) => d.view.reset(),
                     Err(error) => {
@@ -1580,6 +2068,10 @@ impl ThinodaApp {
 
     fn save_sheet_as(&mut self) {
         let Some(d) = self.doc_mut() else { return };
+        if let Err(error) = d.ensure_no_pending_ink() {
+            self.toasts.warning(error);
+            return;
+        }
         d.view.commit_edit(&mut d.doc);
         let dir = d.path.as_ref().and_then(|path| path.parent());
         if let Some(path) = files::save_target(
@@ -1594,22 +2086,41 @@ impl ThinodaApp {
     }
 
     pub fn save_sheet_to(&mut self, path: &Path) -> bool {
+        if self.dialogs.board_export.is_some() {
+            return false;
+        }
+        if let Some(doc) = self.doc()
+            && let Err(error) = doc.ensure_no_pending_ink()
+        {
+            self.toasts.warning(error);
+            return false;
+        }
         if Format::from_path(path) == Some(Format::MindManager) {
             if let Some(doc) = self.doc() {
                 self.dialogs.mindmanager_save = Some((doc.key.clone(), path.to_path_buf(), true));
+                self.dialogs.mindmanager_save_deliver = true;
             }
             return false;
         }
-        self.save_sheet_to_confirmed(path)
+        self.request_save_preflight(path, self.settings.backup_on_save, true, true, false)
     }
 
-    pub(crate) fn save_sheet_to_confirmed(&mut self, path: &Path) -> bool {
-        let backup = self.settings.backup_on_save;
+    pub(crate) fn save_sheet_to_confirmed(
+        &mut self,
+        path: &Path,
+        backup: bool,
+        allow_board_loss: bool,
+        allow_mindmanager_loss: bool,
+    ) -> bool {
         let Some(d) = self.doc_mut() else {
             return false;
         };
+        if let Err(error) = d.ensure_no_pending_ink() {
+            self.toasts.warning(error);
+            return false;
+        }
         d.view.commit_edit(&mut d.doc);
-        match d.save_sheet_to(path, backup) {
+        match d.save_sheet_to_with_consent(path, backup, allow_board_loss, allow_mindmanager_loss) {
             Ok(()) => {
                 self.toasts
                     .success(format!("{} {}", t("Saved sheet to"), path.display()));
@@ -1630,7 +2141,7 @@ impl ThinodaApp {
             self.toasts.warning(t("Not possible here"));
             return false;
         }
-        if self.dialogs.mindmanager_save.is_some() {
+        if self.dialogs.mindmanager_save.is_some() || self.dialogs.board_export.is_some() {
             return false;
         }
         let backup = self.settings.backup_on_save;
@@ -1643,6 +2154,10 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
+        if let Err(error) = d.ensure_no_pending_ink() {
+            self.toasts.warning(error);
+            return false;
+        }
         d.view.commit_edit(&mut d.doc);
         let (target, chosen) = match (&d.path, save_as) {
             (Some(p), false) if is_native(d.format) || d.format == Format::MindManager => {
@@ -1672,10 +2187,15 @@ impl ThinodaApp {
         };
         if Format::from_path(&target) == Some(Format::MindManager) {
             self.dialogs.mindmanager_save = Some((d.key.clone(), target, false));
+            self.dialogs.mindmanager_save_deliver = chosen;
             return false;
         }
         // Browser: a newly chosen file name is also downloaded; later saves stay in browser storage.
-        self.save_active_file(&target, backup, chosen)
+        if chosen {
+            self.request_save_preflight(&target, backup, true, false, false)
+        } else {
+            self.save_active_to(&target, backup)
+        }
     }
 
     /// Web: downloads a written file (desktop: no-op).
@@ -1690,10 +2210,17 @@ impl ThinodaApp {
     /// [`FileOps::saving_key`](crate::file_ops) reports the pending save. The result is then
     /// applied, including the Save All and close-tab continuations, when it completes.
     pub(crate) fn save_active_to(&mut self, target: &Path, backup: bool) -> bool {
-        self.save_active_file(target, backup, false)
+        self.request_save_preflight(target, backup, false, false, false)
     }
 
-    fn save_active_file(&mut self, target: &Path, backup: bool, deliver: bool) -> bool {
+    pub(crate) fn save_active_file(
+        &mut self,
+        target: &Path,
+        backup: bool,
+        deliver: bool,
+        allow_board_loss: bool,
+        allow_mindmanager_loss: bool,
+    ) -> bool {
         if self.file_ops.saving() {
             self.toasts.warning(t("Not possible here"));
             return false;
@@ -1701,6 +2228,10 @@ impl ThinodaApp {
         let Some(d) = self.docs.get_mut(self.active) else {
             return false;
         };
+        if let Err(error) = d.ensure_no_pending_ink() {
+            self.toasts.warning(error);
+            return false;
+        }
         let same_file = match d.targets_current_file(target) {
             Ok(same_file) => same_file,
             Err(error) => {
@@ -1715,14 +2246,24 @@ impl ThinodaApp {
             return false;
         }
         if !self.file_ops.inline() {
-            if let Err(e) = self.queue_save(self.active, target, backup, deliver, false) {
+            if let Err(e) = self.queue_save_with_consent(
+                self.active,
+                target,
+                backup,
+                deliver,
+                false,
+                crate::export_preflight::SaveConsent {
+                    board: allow_board_loss,
+                    mindmanager: allow_mindmanager_loss,
+                },
+            ) {
                 self.docs[self.active].ignore_conflict = false;
                 self.toasts.error(format!("{}: {e}", t("Could not save")));
             }
             return false;
         }
         let d = &mut self.docs[self.active];
-        match d.save_to(target, backup) {
+        match d.save_to_with_consent(target, backup, allow_board_loss, allow_mindmanager_loss) {
             Ok(()) => {
                 if let Some(r) = &self.services.recovery {
                     let _ = r.remove(&d.key);
@@ -1745,8 +2286,14 @@ impl ThinodaApp {
     }
 
     pub(crate) fn export(&mut self, format: Format, allow_symbol_color_loss: bool) {
+        if let Some(doc) = self.doc()
+            && let Err(error) = doc.ensure_no_pending_ink()
+        {
+            self.toasts.warning(error);
+            return;
+        }
         if matches!(format, Format::FimXdf2 | Format::FimXdf3) {
-            self.export_fim(format);
+            self.request_export_preflight(format, allow_symbol_color_loss, false);
             return;
         }
         if self.doc().is_some_and(|doc| {
@@ -1786,6 +2333,25 @@ impl ThinodaApp {
         allow_symbol_color_loss: bool,
         allow_note_format_loss: bool,
     ) {
+        self.request_export_preflight(format, allow_symbol_color_loss, allow_note_format_loss);
+    }
+
+    pub(crate) fn perform_preflight_export(
+        &mut self,
+        format: Format,
+        allow_symbol_color_loss: bool,
+        allow_note_format_loss: bool,
+    ) {
+        if let Some(doc) = self.doc()
+            && let Err(error) = doc.ensure_no_pending_ink()
+        {
+            self.toasts.warning(error);
+            return;
+        }
+        if matches!(format, Format::FimXdf2 | Format::FimXdf3) {
+            self.export_fim(format);
+            return;
+        }
         let dark = self
             .applied
             .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
@@ -1850,6 +2416,10 @@ impl ThinodaApp {
         if i >= self.docs.len() {
             return;
         }
+        if self.docs[i].has_unresolved_ink() {
+            self.note_pending_ink(i, true);
+            return;
+        }
         let d = &mut self.docs[i];
         d.view.commit_edit(&mut d.doc);
         if self.docs[i].is_dirty() {
@@ -1862,6 +2432,10 @@ impl ThinodaApp {
 
     pub fn close_tab_now(&mut self, i: usize) {
         if i >= self.docs.len() {
+            return;
+        }
+        if self.docs[i].has_unresolved_ink() {
+            self.note_pending_ink(i, true);
             return;
         }
         let home = self.active >= self.docs.len();
@@ -1892,7 +2466,8 @@ impl ThinodaApp {
                     .dialogs
                     .mindmanager_save
                     .as_ref()
-                    .is_some_and(|(pending, _, sheet_only)| pending == key && !sheet_only))
+                    .is_some_and(|(pending, _, sheet_only)| pending == key && !sheet_only)
+                || self.board_save_pending_for(key))
         {
             return;
         }
@@ -1907,6 +2482,50 @@ impl ThinodaApp {
 
     pub fn any_dirty(&self) -> bool {
         self.docs.iter().any(|d| d.is_dirty())
+    }
+
+    fn note_pending_ink(&mut self, index: usize, interrupt: bool) {
+        let Some(doc) = self.docs.get_mut(index) else {
+            return;
+        };
+        if interrupt {
+            doc.interrupt_ink(thinoda_canvas::ink_controller::InkCancelReason::Disabled);
+        }
+        self.active = index;
+        self.toasts.warning(t(
+            "Resolve pending ink before continuing. Retry, copy, or discard it.",
+        ));
+    }
+
+    pub(crate) fn focus_pending_ink(&mut self, ctx: &Context, index: usize) {
+        // A different viewport owns its own unprocessed pointer events.
+        if let Some(doc) = self.docs.get(index)
+            && self
+                .document_windows
+                .get(&doc.key)
+                .copied()
+                .unwrap_or(egui::ViewportId::ROOT)
+                == ctx.viewport_id()
+        {
+            self.docs[index].suspend_ink(ctx);
+        }
+        self.note_pending_ink(index, false);
+        let Some(doc) = self.docs.get(index) else {
+            return;
+        };
+        let viewport = self
+            .document_windows
+            .get(&doc.key)
+            .copied()
+            .unwrap_or(egui::ViewportId::ROOT);
+        if viewport == egui::ViewportId::ROOT {
+            self.window_active_documents.remove(&viewport);
+        } else {
+            self.window_active_documents
+                .insert(viewport, doc.key.clone());
+        }
+        ctx.send_viewport_cmd_to(viewport, ViewportCommand::Focus);
+        ctx.request_repaint_of(viewport);
     }
 
     // ----- per-frame housekeeping -------------------------------------------------------------
@@ -1971,6 +2590,14 @@ impl ThinodaApp {
                             self.request_open(path);
                         }
                     }
+                    for upload in picked.dropped_uploads {
+                        match upload {
+                            files::DroppedUpload::Image(image) => {
+                                self.finish_dropped_image_upload(picked.image_owner.clone(), image);
+                            }
+                            files::DroppedUpload::Document(path) => self.request_open(&path),
+                        }
+                    }
                 }
                 files::Purpose::Merge => {
                     self.merge_files(&picked.paths);
@@ -1985,7 +2612,9 @@ impl ThinodaApp {
                     }
                 }
                 files::Purpose::Image(request) => {
-                    if let Some(path) = picked.paths.first() {
+                    if let Some(upload) = picked.image_upload {
+                        self.complete_image_upload(request, upload);
+                    } else if let Some(path) = picked.paths.first() {
                         self.finish_image(request, path);
                     }
                     for path in &picked.paths {
@@ -2028,10 +2657,29 @@ impl ThinodaApp {
                     && d.path.is_some()
                     && is_native(d.format)
                     && d.view.editing_topic().is_none()
+                    && d.view.editing_board_object().is_none()
                     && d.idle_secs() >= interval
                     && d.autosave_due()
                     && !d.changed_on_disk()
                 {
+                    if d.format == Format::XMind {
+                        let losses = match crate::export_preflight::save_losses(d, false, d.format)
+                        {
+                            Ok(losses) => losses,
+                            Err(error) => {
+                                d.autosave_failed(interval);
+                                self.toasts
+                                    .error(format!("{}: {error}", t("Could not save")));
+                                continue;
+                            }
+                        };
+                        if !losses.is_empty() {
+                            // Autosave cannot supply consent on the user's behalf.
+                            d.autosave_failed(interval.max(60.0));
+                            self.toasts.warning(t("Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it."));
+                            continue;
+                        }
+                    }
                     let p = d.path.clone().unwrap();
                     if background {
                         // One write at a time, behind the busy indicator.
@@ -2123,6 +2771,23 @@ impl ThinodaApp {
     pub fn handle_close_request(&mut self, ctx: &Context) {
         if ctx.input(|i| i.viewport().close_requested()) {
             let viewport = ctx.viewport_id();
+            let pending = self.docs.iter().enumerate().find_map(|(index, doc)| {
+                let owner = self
+                    .document_windows
+                    .get(&doc.key)
+                    .copied()
+                    .unwrap_or(egui::ViewportId::ROOT);
+                (doc.has_unresolved_ink()
+                    && (viewport == egui::ViewportId::ROOT || owner == viewport))
+                    .then_some(index)
+            });
+            if let Some(index) = pending {
+                self.approved_close = None;
+                self.pending_close = None;
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                self.focus_pending_ink(ctx, index);
+                return;
+            }
             if viewport != egui::ViewportId::ROOT {
                 for doc in &mut self.docs {
                     if self.document_windows.get(&doc.key) == Some(&viewport) {
@@ -2138,6 +2803,7 @@ impl ThinodaApp {
                 self.return_planning_viewport(viewport);
                 self.return_zone_viewport(viewport);
                 self.return_pitch_viewport(viewport);
+                self.return_board_preflight_viewport(viewport);
                 self.return_ai_viewport(viewport);
                 self.return_print_viewport(viewport);
                 self.return_document_window_to_root(viewport);
@@ -2337,7 +3003,9 @@ impl ThinodaApp {
             && !ctx.text_edit_focused()
             && !ctx.input(|input| input.pointer.any_down())
             && self.doc().is_none_or(|doc| {
-                doc.view.editing_topic().is_none() && doc.view.relationship_from.is_none()
+                doc.view.editing_topic().is_none()
+                    && doc.view.editing_board_object().is_none()
+                    && doc.view.relationship_from.is_none()
             })
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
@@ -2439,6 +3107,7 @@ impl ThinodaApp {
     pub fn update_search(&mut self) {
         let Some(d) = self.docs.get_mut(self.active) else {
             self.search.hits.clear();
+            self.search.canvas_hits.clear();
             self.search.current = 0;
             return;
         };
@@ -2488,6 +3157,31 @@ impl ThinodaApp {
                 &self.search.facets,
             )
         };
+        self.search.canvas_hits = if self.search.facets.active() {
+            Vec::new()
+        } else if self.search.all_sheets {
+            d.doc
+                .workbook()
+                .sheets
+                .iter()
+                .enumerate()
+                .flat_map(|(index, sheet)| {
+                    thinoda_core::search::search_canvas(
+                        sheet,
+                        index,
+                        &self.search.query,
+                        &self.search.opts,
+                    )
+                })
+                .collect()
+        } else {
+            thinoda_core::search::search_canvas(
+                d.doc.sheet(),
+                d.doc.active_index(),
+                &self.search.query,
+                &self.search.opts,
+            )
+        };
         self.search.current = 0;
         self.apply_search_filter();
     }
@@ -2520,27 +3214,60 @@ impl ThinodaApp {
         }
     }
 
+    pub(crate) fn finish_canvas_text_edit(&mut self) -> bool {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return false;
+        };
+        let result = doc.commit_canvas_drafts();
+        if let Err(error) = result {
+            self.toasts
+                .error(format!("{}: {error}", t("Not possible here")));
+            return false;
+        }
+        true
+    }
+
     /// Selects the next (`+1`) or previous (`-1`) search hit, expanding collapsed ancestors.
     pub fn goto_hit(&mut self, delta: isize) {
-        if let Some(d) = self.doc_mut() {
-            d.view.commit_edit(&mut d.doc);
+        if !self.finish_canvas_text_edit() {
+            return;
         }
         self.update_search();
-        let n = self.search.hits.len();
+        let n = self.search.result_count();
         if n == 0 {
             return;
         }
         self.search.current =
             ((self.search.current as isize + delta).rem_euclid(n as isize)) as usize;
-        let hit = &self.search.hits[self.search.current];
-        let (sheet, id) = (hit.sheet, hit.topic);
+        let topic = self.search.hits.get(self.search.current).cloned();
+        let object = self
+            .search
+            .current
+            .checked_sub(self.search.hits.len())
+            .and_then(|index| self.search.canvas_hits.get(index))
+            .cloned();
+        let sheet = topic
+            .as_ref()
+            .map(|hit| hit.sheet)
+            .or_else(|| object.as_ref().map(|hit| hit.sheet))
+            .expect("search index is within the result count");
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
-        if d.doc.active_index() != sheet {
-            d.doc.set_active(sheet);
-            d.view.reset();
+        if d.doc.active_index() != sheet
+            && let Err(error) = d.switch_sheet(sheet)
+        {
+            self.toasts.warning(error);
+            return;
         }
+        if let Some(hit) = object {
+            d.view.select_board_object(hit.object);
+            self.apply_search_filter();
+            return;
+        }
+        let id = topic
+            .expect("search result is a topic or canvas object")
+            .topic;
         let mut hidden = Vec::new();
         let mut p = d.doc.sheet().parent(id);
         while let Some(x) = p {
@@ -2573,14 +3300,15 @@ impl ThinodaApp {
             self.toasts.info(t("Replaces topic titles only."));
             return;
         }
-        if let Some(d) = self.doc_mut() {
-            d.view.commit_edit(&mut d.doc);
+        if !self.finish_canvas_text_edit() {
+            return;
         }
         self.update_search();
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
         let hits = self.search.hits.clone();
+        let canvas_hits = self.search.canvas_hits.clone();
         let (q, r, o) = (
             self.search.query.clone(),
             self.search.replace.clone(),
@@ -2594,7 +3322,17 @@ impl ThinodaApp {
                     .filter(|h| h.sheet == index)
                     .map(|h| h.topic)
                     .collect();
-                total += thinoda_core::search::replace_in_titles(sheet, &topics, &q, &r, &o);
+                total += thinoda_core::search::replace_in_titles(sheet, &topics, &q, &r, &o)
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let objects: Vec<_> = canvas_hits
+                    .iter()
+                    .filter(|hit| hit.sheet == index)
+                    .map(|hit| hit.object)
+                    .collect();
+                if !objects.is_empty() {
+                    total += thinoda_core::search::replace_in_canvas(sheet, &objects, &q, &r, &o)
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                }
             }
             Ok(total)
         });
@@ -2914,6 +3652,27 @@ impl ThinodaApp {
         for f in EXPORT_MENU {
             v.push((Cmd::Export(*f), f.label(), "", "Export"));
         }
+        v.extend(
+            Self::board_commands()
+                .into_iter()
+                .map(|(command, label)| (command, label, "", "Boards")),
+        );
+        v.extend(
+            Self::arrangement_commands()
+                .into_iter()
+                .filter_map(|(action, label)| {
+                    if let Action::AlignFloating(arrangement) = action {
+                        Some((
+                            Cmd::BoardAction(BoardAction::Arrange(arrangement)),
+                            label,
+                            "",
+                            "Boards",
+                        ))
+                    } else {
+                        None
+                    }
+                }),
+        );
         for (action, label) in Self::selection_commands()
             .into_iter()
             .chain(Self::arrangement_commands())
@@ -2953,7 +3712,10 @@ impl ThinodaApp {
 
     /// Additional canvas shortcuts not handled by the canvas widget itself.
     pub fn insert_shortcuts(&mut self, ctx: &Context) {
-        if self.doc().is_none_or(|d| d.view.editing_topic().is_some()) || ctx.text_edit_focused() {
+        if self.doc().is_none_or(|d| {
+            d.view.editing_topic().is_some() || d.view.editing_board_object().is_some()
+        }) || ctx.text_edit_focused()
+        {
             return;
         }
         for (shortcut, action) in self.active_canvas_bindings(ctx.os()) {
@@ -3275,6 +4037,92 @@ mod tests {
         let d = app.doc().unwrap();
         assert_eq!(d.view.selection, vec![id]);
         assert!(!d.doc.sheet().topic(first).unwrap().collapsed);
+    }
+
+    #[test]
+    fn board_search_navigates_sheets_and_replaces_atomically() {
+        use thinoda_core::{CanvasObject, CanvasObjectKind, Rect, ShapeKind, Sheet, Vec2};
+
+        fn shape(text: &str, locked: bool) -> CanvasObject {
+            let mut object = CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(500.0, 300.0), Vec2::new(100.0, 60.0)),
+            );
+            if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                *label = text.into();
+            }
+            object.alt_text = text.into();
+            object.locked = locked;
+            object
+        }
+
+        let mut app = ThinodaApp::headless();
+        let (first, second) = app
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_book("Board search fixture", |book| {
+                let sheet = &mut book.sheets[0];
+                sheet.set_title(sheet.root, "Needle topic")?;
+                let first = sheet
+                    .add_canvas_object(shape("Needle shape", false))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                let mut other = Sheet::new("Other", "Anchor");
+                let second = other
+                    .add_canvas_object(shape("Needle object", true))
+                    .map_err(thinoda_core::EditError::Invalid)?;
+                book.sheets.push(other);
+                Ok((first, second))
+            })
+            .unwrap();
+        app.search.open = true;
+        app.search.query = "needle".into();
+        app.search.replace = "Goal".into();
+        app.search.all_sheets = true;
+        app.update_search();
+        assert_eq!(app.search.hits.len(), 1);
+        assert_eq!(app.search.canvas_hits.len(), 2);
+        assert_eq!(app.search.result_count(), 3);
+        app.goto_hit(1);
+        assert_eq!(app.doc().unwrap().view.board_selection, vec![first]);
+        app.goto_hit(1);
+        assert_eq!(app.doc().unwrap().doc.active_index(), 1);
+        assert_eq!(app.doc().unwrap().view.board_selection, vec![second]);
+        assert_eq!(app.search.current_sheet(), Some(1));
+
+        let locked = app.doc().unwrap().doc.workbook().clone();
+        app.replace_all();
+        assert_eq!(app.doc().unwrap().doc.workbook(), &locked);
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Unlock", |sheet| {
+                sheet
+                    .set_canvas_objects_locked(&[second], false)
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.replace_all();
+        let after = app.doc().unwrap().doc.workbook().clone();
+        assert_ne!(before, after);
+        assert_eq!(after.sheets[0].root_topic().title, "Goal topic");
+        assert_eq!(
+            after.sheets[0].canvas.object(first).unwrap().label(),
+            "Goal shape"
+        );
+        assert_eq!(
+            after.sheets[1].canvas.object(second).unwrap().alt_text,
+            "Goal object"
+        );
+        assert!(app.doc_mut().unwrap().doc.undo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+        assert!(app.doc_mut().unwrap().doc.redo());
+        assert_eq!(app.doc().unwrap().doc.workbook(), &after);
+
+        app.search.facets.notes_only = true;
+        app.update_search();
+        assert!(app.search.canvas_hits.is_empty());
     }
 
     #[test]

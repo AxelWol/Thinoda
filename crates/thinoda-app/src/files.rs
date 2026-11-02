@@ -1,9 +1,10 @@
 //! File pickers, save targets and deliveries.
 //!
 //! Desktop builds use the native dialogs of `rfd` and write straight to disk. The
-//! browser build (`crates/thinoda-web`) has no file system access: uploads are copied
-//! into the virtual file system (VFS, backed by `localStorage`), documents are saved
-//! in `/Documents` and exports or explicit saves are delivered as browser downloads.
+//! browser build (`crates/thinoda-web`) has no file system access: document uploads
+//! are copied into the virtual file system (VFS, backed by `localStorage`), documents
+//! are saved in `/Documents` and exports or explicit saves are delivered as browser
+//! downloads. Image picker and dropped-image uploads are passed directly in memory.
 
 use std::{
     io,
@@ -31,13 +32,43 @@ pub enum Purpose {
     FimSchemas,
 }
 
-/// Files that finished uploading into the browser VFS.
+/// A bounded image picker upload, owned only until the app consumes the result.
+#[derive(Debug)]
+pub(crate) struct ImageUpload {
+    pub(crate) name: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+impl ImageUpload {
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn new(name: &str, bytes: Vec<u8>) -> Result<Self, String> {
+        if bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES {
+            return Err("local resource exceeds 8 MiB".into());
+        }
+        let name = thinoda_platform::web::sanitize_file_name(name, "")
+            .ok_or_else(|| "invalid file name".to_owned())?;
+        Ok(Self { name, bytes })
+    }
+}
+
+/// Browser drops keep image bytes and document paths in their original order.
+// Native `take_picked` is always empty; the variants are built by web staging.
+#[cfg_attr(not(any(target_arch = "wasm32", test)), expect(dead_code))]
+#[derive(Debug)]
+pub(crate) enum DroppedUpload {
+    Image(ImageUpload),
+    Document(PathBuf),
+}
+
+/// Files or image bytes that finished uploading in the browser.
 #[derive(Debug)]
 pub struct Picked {
     pub purpose: Purpose,
     pub paths: Vec<PathBuf>,
     pub errors: Vec<String>,
     pub(crate) image_owner: Option<crate::images::ImageRequest>,
+    pub(crate) image_upload: Option<ImageUpload>,
+    pub(crate) dropped_uploads: Vec<DroppedUpload>,
 }
 
 /// Where a save dialog result is written.
@@ -208,7 +239,7 @@ pub fn set_repaint_context(ctx: &egui::Context) {
 }
 
 /// Files dropped onto the window. Desktop: their paths. Web: browsers only expose
-/// contents, which are copied into the VFS and returned later by [`take_picked`].
+/// contents, which are returned later by [`take_picked`].
 pub(crate) fn dropped_files(
     ctx: &egui::Context,
     image_owner: Option<crate::images::ImageRequest>,
@@ -284,10 +315,94 @@ pub fn store_upload_in(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathB
     ))
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn is_dropped_image(name: &str) -> bool {
+    thinoda_platform::web::sanitize_file_name(name, "")
+        .is_some_and(|name| crate::images::is_supported_image_path(Path::new(&name)))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn dropped_image_size_error(picked: &Picked, size: u64) -> Option<&'static str> {
+    if size > thinoda_core::resources::MAX_RESOURCE_BYTES as u64 {
+        return Some("local resource exceeds 8 MiB");
+    }
+    let staged = picked
+        .dropped_uploads
+        .iter()
+        .filter_map(|upload| match upload {
+            DroppedUpload::Image(image) => Some(image.bytes.len()),
+            DroppedUpload::Document(_) => None,
+        })
+        .sum::<usize>();
+    let remaining = thinoda_core::resources::MAX_SHEET_RESOURCE_BYTES.saturating_sub(staged);
+    if size > remaining as u64 {
+        return Some("dropped images exceed the 32 MiB staging limit");
+    }
+    None
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn store_uploaded_file(picked: &mut Picked, name: &str, bytes: Result<Vec<u8>, String>) {
+    store_uploaded_file_with(picked, name, bytes, store_upload_in);
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn store_uploaded_file_with(
+    picked: &mut Picked,
+    name: &str,
+    bytes: Result<Vec<u8>, String>,
+    store: impl FnOnce(&Path, &str, &[u8]) -> io::Result<PathBuf>,
+) {
+    match bytes.and_then(|bytes| {
+        let bounded_image_drop =
+            matches!(picked.purpose, Purpose::Dropped) && is_dropped_image(name);
+        if matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
+            && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
+        {
+            return Err("local resource exceeds 8 MiB".into());
+        }
+        if matches!(picked.purpose, Purpose::Image(_)) || bounded_image_drop {
+            if bounded_image_drop
+                && let Some(error) = dropped_image_size_error(picked, bytes.len() as u64)
+            {
+                return Err(error.into());
+            }
+            let upload = ImageUpload::new(name, bytes)?;
+            if bounded_image_drop {
+                picked.dropped_uploads.push(DroppedUpload::Image(upload));
+            } else if picked.image_upload.is_none() {
+                picked.image_upload = Some(upload);
+            }
+            return Ok(None);
+        }
+        let directory = match picked.purpose {
+            Purpose::Attachment(request) => format!("/AttachmentUploads/{request}"),
+            _ => WEB_DOCUMENTS.into(),
+        };
+        let name = if matches!(picked.purpose, Purpose::Attachment(_)) {
+            thinoda_core::attachments::safe_name(name)
+        } else {
+            name.to_owned()
+        };
+        store(Path::new(&directory), &name, &bytes)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    }) {
+        Ok(Some(path)) if matches!(picked.purpose, Purpose::Dropped) => {
+            picked.dropped_uploads.push(DroppedUpload::Document(path));
+        }
+        Ok(Some(path)) => picked.paths.push(path),
+        Ok(None) => {}
+        Err(error) => picked.errors.push(format!("{name}: {error}")),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use super::{Filter, Picked, Purpose, WEB_DOCUMENTS, store_upload_in};
-    use std::{cell::RefCell, path::Path};
+    use super::{
+        Filter, Picked, Purpose, dropped_image_size_error, is_dropped_image, store_uploaded_file,
+    };
+    use std::cell::RefCell;
 
     thread_local! {
         static INBOX: RefCell<Vec<Picked>> = const { RefCell::new(Vec::new()) };
@@ -308,6 +423,8 @@ mod web {
 
     fn deliver(picked: Picked) {
         if picked.paths.is_empty()
+            && picked.image_upload.is_none()
+            && picked.dropped_uploads.is_empty()
             && picked.errors.is_empty()
             && !matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
         {
@@ -319,33 +436,6 @@ mod web {
                 ctx.request_repaint();
             }
         });
-    }
-
-    fn store(picked: &mut Picked, name: &str, bytes: Result<Vec<u8>, String>) {
-        match bytes.and_then(|bytes| {
-            let directory = match picked.purpose {
-                Purpose::Image(request) => format!("/ImageUploads/{request}"),
-                Purpose::Attachment(request) => format!("/AttachmentUploads/{request}"),
-                _ => WEB_DOCUMENTS.into(),
-            };
-            let bounded_image_drop = matches!(picked.purpose, Purpose::Dropped)
-                && crate::images::is_supported_image_path(Path::new(name));
-            if (matches!(picked.purpose, Purpose::Image(_) | Purpose::Attachment(_))
-                || bounded_image_drop)
-                && bytes.len() > thinoda_core::resources::MAX_RESOURCE_BYTES
-            {
-                return Err("local resource exceeds 8 MiB".into());
-            }
-            let name = if matches!(picked.purpose, Purpose::Attachment(_)) {
-                thinoda_core::attachments::safe_name(name)
-            } else {
-                name.to_owned()
-            };
-            store_upload_in(Path::new(&directory), &name, &bytes).map_err(|e| e.to_string())
-        }) {
-            Ok(path) => picked.paths.push(path),
-            Err(error) => picked.errors.push(format!("{name}: {error}")),
-        }
     }
 
     pub(super) fn pick_files(
@@ -372,6 +462,8 @@ mod web {
                 paths: Vec::new(),
                 errors: Vec::new(),
                 image_owner: None,
+                image_upload: None,
+                dropped_uploads: Vec::new(),
             };
             for handle in handles {
                 if matches!(purpose, Purpose::Image(_) | Purpose::Attachment(_))
@@ -380,8 +472,25 @@ mod web {
                     picked.errors.push("local resource exceeds 8 MiB".into());
                     continue;
                 }
-                let bytes = handle.read().await;
-                store(&mut picked, &handle.file_name(), Ok(bytes));
+                let bytes =
+                    if matches!(purpose, Purpose::Image(_) | Purpose::Open | Purpose::Import) {
+                        // Unlike rfd's FileReader wrapper, Blob::arrayBuffer rejects
+                        // on read failure, allowing us to clear the pending request.
+                        let error = if matches!(purpose, Purpose::Image(_)) {
+                            "could not read local image"
+                        } else {
+                            "could not read local document"
+                        };
+                        handle
+                            .inner()
+                            .array_buffer()
+                            .await
+                            .map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec())
+                            .map_err(|_| error.to_owned())
+                    } else {
+                        Ok(handle.read().await)
+                    };
+                store_uploaded_file(&mut picked, &handle.file_name(), bytes);
             }
             deliver(picked);
         });
@@ -397,11 +506,22 @@ mod web {
                 paths: Vec::new(),
                 errors: Vec::new(),
                 image_owner,
+                image_upload: None,
+                dropped_uploads: Vec::new(),
             };
             for file in files {
                 let name = file.path().to_string_lossy().into_owned();
+                // egui exposes the browser File, so reject oversized images
+                // before `bytes_async` allocates an ArrayBuffer and Rust copy.
+                if is_dropped_image(&name)
+                    && let Some(file) = file.web_file()
+                    && let Some(error) = dropped_image_size_error(&picked, file.size() as u64)
+                {
+                    picked.errors.push(format!("{name}: {error}"));
+                    continue;
+                }
                 let bytes = file.bytes_async().await;
-                store(&mut picked, &name, bytes);
+                store_uploaded_file(&mut picked, &name, bytes);
             }
             deliver(picked);
         });
@@ -411,6 +531,284 @@ mod web {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use thinoda_platform::vfs::KvStore;
+
+    struct QuotaStore {
+        inner: thinoda_platform::vfs::MemoryStore,
+        max_value: usize,
+    }
+
+    impl KvStore for QuotaStore {
+        fn get(&self, key: &str) -> Option<String> {
+            self.inner.get(key)
+        }
+
+        fn set(&self, key: &str, value: &str) -> io::Result<()> {
+            if value.len() > self.max_value {
+                return Err(io::Error::other("QuotaExceededError"));
+            }
+            self.inner.set(key, value)
+        }
+
+        fn remove(&self, key: &str) {
+            self.inner.remove(key);
+        }
+
+        fn keys(&self) -> Vec<String> {
+            self.inner.keys()
+        }
+    }
+
+    #[test]
+    fn document_quota_failure_keeps_the_existing_local_copy_intact() {
+        let vfs = thinoda_platform::vfs::Vfs::new(Box::new(QuotaStore {
+            inner: Default::default(),
+            max_value: 256,
+        }));
+        let original = Path::new("/Documents/existing.thinoda");
+        let upload = Path::new("/Documents/large.thinoda");
+        vfs.write(original, b"existing document", 1).unwrap();
+        let error = vfs.write(upload, &[0; 1024], 2).unwrap_err();
+        assert!(error.to_string().contains("storage may be full"));
+        assert!(!vfs.exists(upload));
+        assert_eq!(vfs.read(original).unwrap(), b"existing document");
+        assert!(vfs.write(original, &[0; 1024], 3).is_err());
+        assert_eq!(vfs.read(original).unwrap(), b"existing document");
+    }
+
+    #[test]
+    fn open_and_import_only_dispatch_a_successfully_stored_document() {
+        for purpose in [Purpose::Open, Purpose::Import] {
+            let vfs = thinoda_platform::vfs::Vfs::new(Box::new(QuotaStore {
+                inner: Default::default(),
+                max_value: 256,
+            }));
+            let original = Path::new("/Documents/existing.thinoda");
+            vfs.write(original, b"existing document", 1).unwrap();
+            let mut picked = Picked {
+                purpose,
+                paths: Vec::new(),
+                errors: Vec::new(),
+                image_owner: None,
+                image_upload: None,
+                dropped_uploads: Vec::new(),
+            };
+            let store = |directory: &Path, name: &str, bytes: &[u8]| {
+                assert_eq!(directory, Path::new(WEB_DOCUMENTS));
+                let path = directory.join(name);
+                vfs.write(&path, bytes, 2)?;
+                Ok(path)
+            };
+            store_uploaded_file_with(&mut picked, "small.thinoda", Ok(vec![1, 2, 3]), store);
+            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+            assert!(picked.errors.is_empty());
+            assert!(picked.image_upload.is_none());
+            assert!(picked.dropped_uploads.is_empty());
+
+            let store = |directory: &Path, name: &str, bytes: &[u8]| {
+                assert_eq!(directory, Path::new(WEB_DOCUMENTS));
+                let path = directory.join(name);
+                vfs.write(&path, bytes, 3)?;
+                Ok(path)
+            };
+            store_uploaded_file_with(&mut picked, "large.thinoda", Ok(vec![0; 1024]), store);
+            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+            assert_eq!(picked.errors.len(), 1);
+            assert!(picked.errors[0].contains("storage may be full"));
+            assert!(!vfs.exists(Path::new("/Documents/large.thinoda")));
+            assert_eq!(vfs.read(original).unwrap(), b"existing document");
+
+            store_uploaded_file_with(
+                &mut picked,
+                "unreadable.thinoda",
+                Err("could not read local document".into()),
+                |_, _, _| panic!("unreadable documents must not be stored"),
+            );
+            assert_eq!(picked.paths, [PathBuf::from("/Documents/small.thinoda")]);
+            assert_eq!(
+                picked.errors[1],
+                "unreadable.thinoda: could not read local document"
+            );
+            assert_eq!(vfs.read(original).unwrap(), b"existing document");
+        }
+    }
+
+    #[test]
+    fn attachments_keep_request_scoped_storage_and_safe_names() {
+        let mut picked = Picked {
+            purpose: Purpose::Attachment(47),
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        };
+        store_uploaded_file_with(
+            &mut picked,
+            r"C:\docs\bad?.txt",
+            Ok(vec![1, 2, 3]),
+            |directory, name, bytes| {
+                assert_eq!(directory, Path::new("/AttachmentUploads/47"));
+                assert_eq!(name, "bad_.txt");
+                assert_eq!(bytes, [1, 2, 3]);
+                Ok(directory.join(name))
+            },
+        );
+        assert_eq!(
+            picked.paths,
+            [PathBuf::from("/AttachmentUploads/47/bad_.txt")]
+        );
+        assert!(picked.image_upload.is_none());
+        assert!(picked.errors.is_empty());
+        store_uploaded_file_with(
+            &mut picked,
+            "oversized.txt",
+            Ok(vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES + 1]),
+            |_, _, _| panic!("oversized attachments must not be stored"),
+        );
+        assert_eq!(picked.paths.len(), 1);
+        assert_eq!(picked.errors.len(), 1);
+        assert!(picked.errors[0].contains("local resource exceeds 8 MiB"));
+    }
+
+    #[test]
+    fn image_upload_is_bounded_sanitized_and_kept_in_memory() {
+        let bytes = vec![42; 4_368_119];
+        let original_allocation = bytes.as_ptr();
+        let upload = ImageUpload::new(r"C:\photos\large.jpg", bytes).unwrap();
+        assert_eq!(upload.name, "large.jpg");
+        assert_eq!(upload.bytes.len(), 4_368_119);
+        assert_eq!(upload.bytes.as_ptr(), original_allocation);
+        assert!(ImageUpload::new("..", vec![1]).is_err());
+        assert!(
+            ImageUpload::new(
+                "maximum.jpg",
+                vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES]
+            )
+            .is_ok()
+        );
+        assert!(
+            ImageUpload::new(
+                "oversized.jpg",
+                vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES + 1]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn image_picker_and_drop_stage_bytes_without_vfs_paths() {
+        let mut picker = Picked {
+            purpose: Purpose::Image(7),
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        };
+        store_uploaded_file_with(
+            &mut picker,
+            r"C:\photos\large.jpg",
+            Ok(vec![7; 4_368_119]),
+            |_, _, _| panic!("image bytes must not enter the persistent store"),
+        );
+        assert!(picker.paths.is_empty());
+        assert!(picker.errors.is_empty());
+        let upload = picker.image_upload.as_ref().unwrap();
+        assert_eq!(upload.name, "large.jpg");
+        assert_eq!(upload.bytes.len(), 4_368_119);
+        store_uploaded_file(
+            &mut picker,
+            "oversized.jpg",
+            Ok(vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES + 1]),
+        );
+        assert_eq!(picker.errors.len(), 1);
+        assert_eq!(picker.image_upload.unwrap().name, "large.jpg");
+
+        let mut dropped = Picked {
+            purpose: Purpose::Dropped,
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: vec![DroppedUpload::Document(PathBuf::from("first.thinoda"))],
+        };
+        // The sanitized name, not just the raw browser name, determines how
+        // housekeeping would classify the dropped file.
+        store_uploaded_file(&mut dropped, "a.j?pg", Ok(vec![1, 2, 3]));
+        assert!(dropped.paths.is_empty());
+        assert!(dropped.errors.is_empty());
+        assert!(matches!(
+            &dropped.dropped_uploads[0],
+            DroppedUpload::Document(path) if path == Path::new("first.thinoda")
+        ));
+        assert!(matches!(
+            &dropped.dropped_uploads[1],
+            DroppedUpload::Image(upload) if upload.name == "a.jpg" && upload.bytes == [1, 2, 3]
+        ));
+    }
+
+    #[test]
+    fn image_picker_read_failure_is_reported_without_staging() {
+        let mut picker = Picked {
+            purpose: Purpose::Image(8),
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        };
+        store_uploaded_file(
+            &mut picker,
+            "unreadable.jpg",
+            Err("could not read local image".into()),
+        );
+        assert!(picker.paths.is_empty());
+        assert!(picker.image_upload.is_none());
+        assert_eq!(
+            picker.errors,
+            ["unreadable.jpg: could not read local image"]
+        );
+    }
+
+    #[test]
+    fn image_drop_staging_has_a_bounded_batch_budget() {
+        let mut dropped = Picked {
+            purpose: Purpose::Dropped,
+            paths: Vec::new(),
+            errors: Vec::new(),
+            image_owner: None,
+            image_upload: None,
+            dropped_uploads: Vec::new(),
+        };
+        assert_eq!(
+            dropped_image_size_error(&dropped, thinoda_core::resources::MAX_RESOURCE_BYTES as u64),
+            None
+        );
+        assert_eq!(
+            dropped_image_size_error(
+                &dropped,
+                thinoda_core::resources::MAX_RESOURCE_BYTES as u64 + 1
+            ),
+            Some("local resource exceeds 8 MiB")
+        );
+        for _ in 0..4 {
+            store_uploaded_file(
+                &mut dropped,
+                "maximum.jpg",
+                Ok(vec![0; thinoda_core::resources::MAX_RESOURCE_BYTES]),
+            );
+        }
+        assert_eq!(dropped.dropped_uploads.len(), 4);
+        assert!(dropped.errors.is_empty());
+        assert_eq!(
+            dropped_image_size_error(&dropped, 1),
+            Some("dropped images exceed the 32 MiB staging limit")
+        );
+        store_uploaded_file(&mut dropped, "extra.jpg", Ok(vec![1]));
+        assert_eq!(dropped.dropped_uploads.len(), 4);
+        assert!(dropped.errors[0].contains("dropped images exceed the 32 MiB staging limit"));
+    }
 
     #[test]
     fn web_save_names_keep_allowed_extensions_and_strip_paths() {

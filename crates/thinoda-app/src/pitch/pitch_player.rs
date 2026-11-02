@@ -69,11 +69,13 @@ impl ThinodaApp {
 
     pub(crate) fn open_pitch(&mut self, ctx: &Context, presenter: bool) {
         let Some(doc) = self.doc_mut() else { return };
-        if let Err(error) = doc.flush_inspector_edit(ctx) {
+        if let Err(error) = doc
+            .flush_inspector_edit(ctx)
+            .and_then(|()| doc.commit_canvas_drafts())
+        {
             self.toasts.error(error);
             return;
         }
-        doc.view.commit_edit(&mut doc.doc);
         if let Err(error) = thinoda_core::images::validate_visual(doc.doc.sheet()) {
             self.toasts.error(error);
             return;
@@ -99,6 +101,28 @@ impl ThinodaApp {
         });
     }
 
+    /// Export the current player scene, including drafts on its source sheet.
+    /// A player may outlive a sheet switch, so never commit a different sheet's
+    /// canvas drafts just because the player still refers to this document.
+    pub(super) fn prepare_pitch_player_export(
+        &mut self,
+        ctx: &Context,
+        player: &mut PitchPlayer,
+    ) -> Result<(), String> {
+        self.refresh_pitch(player)?;
+        let doc = self
+            .docs
+            .iter_mut()
+            .find(|doc| doc.key == player.owner.document)
+            .ok_or_else(|| t("The presentation sheet is unavailable.").to_string())?;
+        if doc.doc.active_index() == player.owner.sheet {
+            doc.flush_inspector_edit(ctx)?;
+            doc.commit_canvas_drafts()?;
+            self.refresh_pitch(player)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn pitch_window(&mut self, ctx: &Context) {
         self.poll_pitch_export(ctx);
         let Some(mut player) = self.pitch.player.take() else {
@@ -111,6 +135,17 @@ impl ThinodaApp {
             }
             Ok(false) => {}
             Err(error) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.cancel_board_preflight_in_viewport(
+                    ctx,
+                    if ctx.embed_viewports() {
+                        ctx.viewport_id()
+                    } else {
+                        player_viewport()
+                    },
+                );
+                #[cfg(target_arch = "wasm32")]
+                self.cancel_board_preflight_in_viewport(ctx, ctx.viewport_id());
                 self.toasts.warning(error);
                 return;
             }
@@ -137,6 +172,7 @@ impl ThinodaApp {
                 |ui, _| {
                     let ctx = ui.ctx().clone();
                     if ctx.input(|input| input.viewport().close_requested()) {
+                        self.cancel_board_preflight_viewport(&ctx);
                         open = false;
                         return;
                     }
@@ -160,6 +196,11 @@ impl ThinodaApp {
                         }
                     }
                     open &= self.pitch_player_ui(ui, &mut player);
+                    if open {
+                        self.board_preflight_ui(&ctx);
+                    } else {
+                        self.cancel_board_preflight_viewport(&ctx);
+                    }
                     self.toasts.show_with_modal(&ctx, self.any_modal_open());
                     #[cfg(target_os = "macos")]
                     if ctx.input(|input| input.focused) {
@@ -194,6 +235,8 @@ impl ThinodaApp {
         if open {
             self.pitch.player = Some(player);
         } else {
+            #[cfg(target_arch = "wasm32")]
+            self.cancel_board_preflight_viewport(ctx);
             ctx.request_repaint_of(egui::ViewportId::ROOT);
         }
     }
@@ -361,8 +404,26 @@ impl ThinodaApp {
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(player.fullscreen));
         }
         if let Some(images) = export {
-            self.begin_pitch_export(ui.ctx(), (*player.sheet).clone(), options.clone(), images);
+            match self.prepare_pitch_player_export(ui.ctx(), player) {
+                Ok(()) => self.request_pitch_export(
+                    ui.ctx(),
+                    (
+                        &player.owner.document,
+                        player.owner.sheet,
+                        player.owner.revision,
+                    ),
+                    (*player.sheet).clone(),
+                    options.clone(),
+                    images,
+                ),
+                Err(error) => {
+                    self.toasts
+                        .error(format!("{}: {error}", t("Export failed")));
+                }
+            }
         }
+        let count = player.sheet.presentation.slides.len();
+        player.selected = player.selected.min(count.saturating_sub(1));
         if count == 0 {
             ui.label(t(
                 "No slides yet. Generate branch and Zone slides, or add the selected branch.",

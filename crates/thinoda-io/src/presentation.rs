@@ -1,9 +1,16 @@
 //! Deterministic slide generation and live, source-aware presentation exports.
 
 use image::ImageFormat;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 use thinoda_core::{
     Presentation, PresentationScope, PresentationSlide, PresentationSource, Rect,
-    ResolvedPresentationSlide, Sheet, SlideId, resolve_presentation_slide,
+    ResolvedPresentationSlide, Sheet, SlideId,
+    board::{CanvasObjectId, CanvasObjectKind, Endpoint},
+    resolve_presentation_slide,
+    theme::Theme,
 };
 
 use crate::{ExportOptions, IoError, render};
@@ -40,36 +47,44 @@ pub const MAX_PRESENTATION_ARCHIVE_BYTES: usize = 128 * 1024 * 1024;
 
 const MAX_PRESENTATION_PAGE_POINTS: f32 = 20_000.0;
 
-/// Generates one slide for each central-topic branch, followed by one per Zone.
+/// Generates central-topic branches or Hidden-board semantic roots, followed by
+/// Zones. Unzoned floating roots on Central sheets are appended so existing
+/// Central branch and Zone ordering remains unchanged without duplicating
+/// roots already represented by a Zone slide.
 /// The returned slide order and frames can be persisted with `Document::replace_presentation`.
 pub fn generate_presentation(
     sheet: &Sheet,
     options: &ExportOptions,
 ) -> Result<Presentation, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
-    if sheet.children(sheet.root).len() + sheet.zones.len() > thinoda_core::MAX_PRESENTATION_SLIDES
-    {
+    let hidden = sheet.is_anchor(sheet.root);
+    let mut branches = if hidden {
+        sheet.semantic_roots()
+    } else {
+        sheet.children(sheet.root).to_vec()
+    };
+    let primary_count = branches.len();
+    if !hidden {
+        let zoned: HashSet<_> = sheet
+            .zones
+            .iter()
+            .flat_map(|zone| zone.roots.iter().copied())
+            .collect();
+        branches.extend(
+            sheet
+                .all_content_roots()
+                .into_iter()
+                .filter(|root| *root != sheet.root && !zoned.contains(root)),
+        );
+    }
+    if branches.len() + sheet.zones.len() > thinoda_core::MAX_PRESENTATION_SLIDES {
         return Err(IoError::PresentationLimit("slide count"));
     }
-    let branches = sheet.children(sheet.root);
-    let frames = render::branch_frames(sheet, branches, options.dark)?;
-    let mut slides = Vec::new();
-    for (root, frame) in branches.iter().zip(frames) {
-        let title = sheet
-            .topic(*root)
-            .ok_or_else(|| IoError::Invalid(format!("missing branch topic {root}")))?
-            .title
-            .clone();
-        slides.push(PresentationSlide {
-            id: SlideId(slides.len() as u64 + 1),
-            title,
-            source: PresentationSource::Branch(*root),
-            frame,
-            scope: PresentationScope::Source,
-            auto_frame: true,
-            hidden_topics: Vec::new(),
-            max_depth: None,
-        });
+    let frames = render::branch_frames(sheet, &branches, options.dark)?;
+    let mut slides = Vec::with_capacity(branches.len() + sheet.zones.len());
+    let mut branch_frames = branches.into_iter().zip(frames);
+    for (root, frame) in branch_frames.by_ref().take(primary_count) {
+        slides.push(generated_branch_slide(sheet, root, frame, slides.len())?);
     }
     for zone in &sheet.zones {
         slides.push(PresentationSlide {
@@ -83,16 +98,43 @@ pub fn generate_presentation(
             max_depth: None,
         });
     }
-    if slides.len() > thinoda_core::MAX_PRESENTATION_SLIDES {
-        return Err(IoError::PresentationLimit("slide count"));
+    for (root, frame) in branch_frames {
+        slides.push(generated_branch_slide(sheet, root, frame, slides.len())?);
     }
     let presentation = Presentation { slides };
     presentation.validate(sheet).map_err(IoError::Invalid)?;
     Ok(presentation)
 }
 
-/// Renders live slide content using the shared core resolver and original map geometry.
-/// Legacy contextual slides retain spatial clipping; source slides exclude unrelated content.
+fn generated_branch_slide(
+    sheet: &Sheet,
+    root: thinoda_core::TopicId,
+    frame: Rect,
+    index: usize,
+) -> Result<PresentationSlide, IoError> {
+    let title = sheet
+        .topic(root)
+        .ok_or_else(|| IoError::Invalid(format!("missing branch topic {root}")))?
+        .title
+        .clone();
+    Ok(PresentationSlide {
+        id: SlideId(index as u64 + 1),
+        title,
+        source: PresentationSource::Branch(root),
+        frame,
+        scope: PresentationScope::Source,
+        auto_frame: true,
+        hidden_topics: Vec::new(),
+        max_depth: None,
+    })
+}
+
+/// Renders live slide content using the original map geometry. Viewports show
+/// the board scene within their saved frame and visibility settings; legacy
+/// contextual slides retain spatial clipping and source slides exclude unrelated content.
+///
+/// Viewport clipping is visual, not a redaction guarantee: intersecting paths,
+/// images, and some off-frame scene data may still occur in the SVG source.
 pub fn render_presentation_slide_svg(
     sheet: &Sheet,
     slide_index: usize,
@@ -100,7 +142,12 @@ pub fn render_presentation_slide_svg(
 ) -> Result<String, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     let resolved = resolve_slide(sheet, slide_index, options)?;
-    render::svg_resolved(sheet, options, &resolved)
+    svg_for_slide(
+        sheet,
+        &sheet.presentation.slides[slide_index],
+        options,
+        &resolved,
+    )
 }
 
 fn resolve_slide(
@@ -115,8 +162,209 @@ fn resolve_slide(
     let layout = render::presentation_layout(sheet, options.dark)?;
     let mut resolved =
         resolve_presentation_slide(sheet, slide, &layout).map_err(IoError::Invalid)?;
-    resolved.frame = render::extend_equation_frame(sheet, &resolved.layout, resolved.frame)?;
+    if slide.source != PresentationSource::Viewport {
+        resolved.frame = render::extend_equation_frame(sheet, &resolved.layout, resolved.frame)?;
+    }
     Ok(resolved)
+}
+
+fn svg_for_slide(
+    sheet: &Sheet,
+    slide: &PresentationSlide,
+    options: &ExportOptions,
+    resolved: &ResolvedPresentationSlide,
+) -> Result<String, IoError> {
+    if slide.source != PresentationSource::Viewport {
+        let scene_sheet = scene_sheet_without_hidden_connectors(sheet, resolved);
+        return render::svg_resolved(sheet, &scene_sheet, options, resolved, false);
+    }
+
+    // The map exporter appends equation notes below the drawing. A viewport
+    // instead represents only the board scene, so preserve the original layout
+    // but omit that synthetic appendix. Still validate all notes against the
+    // same rules as other presentation exports.
+    let has_equation = resolved.layout.order.iter().any(|id| {
+        sheet
+            .topic(*id)
+            .and_then(|topic| topic.notes.as_ref())
+            .is_some_and(thinoda_core::equations::has_equation)
+    });
+    let has_hidden_connectors = sheet
+        .canvas
+        .objects
+        .iter()
+        .any(|object| !scene_connector_visible(sheet, resolved, object));
+    let off_frame_images: Vec<_> = resolved
+        .layout
+        .order
+        .iter()
+        .copied()
+        .filter(|id| {
+            let Some(topic) = sheet.topic(*id).filter(|topic| topic.image.is_some()) else {
+                return false;
+            };
+            let Some(layout) = resolved.layout.topics.get(id) else {
+                return false;
+            };
+            let Some(image) = layout.image_rect else {
+                return true;
+            };
+            let rotation = topic
+                .card
+                .as_ref()
+                .filter(|_| topic.parent.is_none())
+                .map_or(0.0, |card| card.rotation);
+            let max = image.max();
+            let corners = [
+                image.min,
+                thinoda_core::Vec2::new(max.x, image.min.y),
+                max,
+                thinoda_core::Vec2::new(image.min.x, max.y),
+            ]
+            .map(|point| thinoda_core::board::rotate_around(point, layout.rect.center(), rotation));
+            let bounds = thinoda_core::board::points_bounds(&corners).unwrap_or(image);
+            // Keep a small margin for edge antialiasing and floating-point
+            // rounding. An intersecting image must retain its source bytes.
+            !bounds.intersects(&resolved.frame.expand(10.0))
+        })
+        .collect();
+    let off_frame_objects = viewport_off_frame_objects(sheet, resolved);
+    if !has_equation
+        && !has_hidden_connectors
+        && off_frame_images.is_empty()
+        && off_frame_objects.is_empty()
+    {
+        return render::svg_resolved(sheet, sheet, options, resolved, true);
+    }
+    if !off_frame_images.is_empty() {
+        // Pruning an unused photo must not hide a malformed embedded resource.
+        thinoda_core::images::validate_visual(sheet).map_err(|error| {
+            IoError::Invalid(format!("embedded resources cannot be rendered: {error}"))
+        })?;
+    }
+    let mut scene_sheet = sheet.clone();
+    for id in off_frame_images {
+        if let Some(topic) = scene_sheet.topics.get_mut(&id) {
+            // Keep layout and endpoint geometry intact, but do not embed an
+            // original photo that cannot contribute to this viewport.
+            topic.image = None;
+        }
+    }
+    if !off_frame_objects.is_empty() {
+        scene_sheet
+            .canvas
+            .objects
+            .retain(|object| !off_frame_objects.contains(&object.id));
+    }
+    if has_equation {
+        render::validate_equation_notes(sheet)?;
+        for topic in scene_sheet.topics.values_mut() {
+            if topic
+                .notes
+                .as_ref()
+                .is_some_and(thinoda_core::equations::has_equation)
+            {
+                topic.notes = None;
+            }
+        }
+    }
+    if has_hidden_connectors {
+        scene_sheet
+            .canvas
+            .objects
+            .retain(|object| scene_connector_visible(sheet, resolved, object));
+    }
+    render::svg_resolved(sheet, &scene_sheet, options, resolved, true)
+}
+
+fn scene_connector_visible(
+    sheet: &Sheet,
+    resolved: &ResolvedPresentationSlide,
+    object: &thinoda_core::CanvasObject,
+) -> bool {
+    let CanvasObjectKind::Connector(connector) = &object.kind else {
+        return true;
+    };
+    [connector.from, connector.to]
+        .into_iter()
+        .all(|endpoint| match endpoint {
+            Endpoint::Topic(id) => resolved.scene_topic_visible(sheet, id),
+            _ => true,
+        })
+}
+
+fn scene_sheet_without_hidden_connectors<'a>(
+    sheet: &'a Sheet,
+    resolved: &ResolvedPresentationSlide,
+) -> Cow<'a, Sheet> {
+    if sheet
+        .canvas
+        .objects
+        .iter()
+        .all(|object| scene_connector_visible(sheet, resolved, object))
+    {
+        return Cow::Borrowed(sheet);
+    }
+    let mut scene_sheet = sheet.clone();
+    scene_sheet
+        .canvas
+        .objects
+        .retain(|object| scene_connector_visible(sheet, resolved, object));
+    Cow::Owned(scene_sheet)
+}
+
+fn viewport_off_frame_objects(
+    sheet: &Sheet,
+    resolved: &ResolvedPresentationSlide,
+) -> HashSet<CanvasObjectId> {
+    if sheet.canvas.objects.is_empty() {
+        return HashSet::new();
+    }
+    // Keep endpoint targets even when their own paint is off-frame: the
+    // shared scene needs their original geometry to route visible connectors.
+    let mut referenced = HashSet::new();
+    for object in &sheet.canvas.objects {
+        if let CanvasObjectKind::Connector(connector) = &object.kind {
+            for endpoint in [connector.from, connector.to] {
+                if let Endpoint::Object(id) = endpoint {
+                    referenced.insert(id);
+                }
+            }
+        }
+    }
+    let objects: HashMap<_, _> = sheet
+        .canvas
+        .objects
+        .iter()
+        .map(|object| (object.id, object))
+        .collect();
+    let frame = resolved.frame.expand(10.0);
+    thinoda_core::build_scene(sheet, &resolved.layout)
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            let thinoda_core::SceneId::Object(id) = item.id else {
+                return None;
+            };
+            if referenced.contains(&id) {
+                return None;
+            }
+            let object = objects.get(&id)?;
+            // Text can extend beyond scene hit bounds; leave labelled objects
+            // to normal clipping rather than risk discarding visible text.
+            let margin = match &object.kind {
+                CanvasObjectKind::Shape { label, .. } if label.trim().is_empty() => {
+                    object.style.stroke_width / 2.0 + 1.0
+                }
+                CanvasObjectKind::Ink(_) => 1.0,
+                CanvasObjectKind::Connector(connector) if connector.label.trim().is_empty() => {
+                    7.0 + 2.0 * connector.width
+                }
+                _ => return None,
+            };
+            (!item.bounds.expand(margin).intersects(&frame)).then_some(id)
+        })
+        .collect()
 }
 
 /// Renders one resolved slide to a bounded PNG for preview textures.
@@ -130,7 +378,12 @@ pub fn render_presentation_slide_png(
     let resolved = resolve_slide(sheet, slide_index, options)?;
     let mut total_pixels = 0;
     image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
-    let svg = render::svg_resolved(sheet, options, &resolved)?;
+    let svg = svg_for_slide(
+        sheet,
+        &sheet.presentation.slides[slide_index],
+        options,
+        &resolved,
+    )?;
     render::raster_svg(&svg, options.scale, ImageFormat::Png)
 }
 
@@ -148,7 +401,7 @@ pub fn export_presentation_png_zip(
     for index in 0..sheet.presentation.slides.len() {
         let resolved = resolve_slide(sheet, index, options)?;
         image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
-        let svg = render::svg_resolved(sheet, options, &resolved)?;
+        let svg = svg_for_slide(sheet, &sheet.presentation.slides[index], options, &resolved)?;
         let png = render::raster_svg(&svg, options.scale, ImageFormat::Png)?;
         rendered.push((format!("slides/slide-{:03}.png", index + 1), png));
     }
@@ -163,10 +416,19 @@ pub fn export_presentation_png_zip(
     Ok(archive)
 }
 
-/// Exports live slide content as editable native PowerPoint shapes, text and connectors.
+struct PresentationPptxSlide {
+    shapes: String,
+    media: Vec<(String, Vec<u8>)>,
+    relationships: String,
+    background: String,
+}
+
+/// Exports branch and zone slides as editable native PowerPoint content.
 ///
 /// Each saved frame is fitted to the selected deck aspect ratio by extending its
-/// viewport, so its original content is neither stretched nor cropped.
+/// viewport, so its original content is neither stretched nor cropped. Viewport
+/// scenes are flattened to clipped images so that the added margins cannot reveal
+/// content outside the saved frame.
 pub fn export_presentation_pptx(
     sheet: &Sheet,
     options: &ExportOptions,
@@ -185,13 +447,42 @@ pub fn export_presentation_pptx(
 
     for (index, slide) in sheet.presentation.slides.iter().enumerate() {
         let mut resolved = resolve_slide(sheet, index, options)?;
-        resolved.frame = fit_frame(resolved.frame, target_ratio)?;
+        let fitted = fit_frame(resolved.frame, target_ratio)?;
         // Keep the existing side, area and aggregate complexity guards even
-        // though this path no longer allocates a slide-sized bitmap.
-        let scale = ((target_width - 0.1) / resolved.frame.size.x).clamp(0.1, 8.0);
-        image_dimensions(resolved.frame, scale, &mut total_pixels)?;
-        let native =
-            render::editable_slide(sheet, &resolved, options, index + 1, width_emu, height_emu)?;
+        // for the editable path, which does not allocate a slide-sized bitmap.
+        let scale = ((target_width - 0.1) / fitted.size.x).clamp(0.1, 8.0);
+        image_dimensions(fitted, scale, &mut total_pixels)?;
+        let native = if slide.source == PresentationSource::Viewport {
+            viewport_pptx_slide(
+                sheet,
+                slide,
+                &resolved,
+                options,
+                fitted,
+                scale,
+                index + 1,
+                width_emu,
+                height_emu,
+            )?
+        } else {
+            resolved.frame = fitted;
+            let scene_sheet = scene_sheet_without_hidden_connectors(sheet, &resolved);
+            let native = render::editable_slide(
+                sheet,
+                &scene_sheet,
+                &resolved,
+                options,
+                index + 1,
+                width_emu,
+                height_emu,
+            )?;
+            PresentationPptxSlide {
+                shapes: native.shapes,
+                media: native.media,
+                relationships: native.relationships,
+                background: native.background,
+            }
+        };
         native_bytes = native_bytes
             .saturating_add(native.shapes.len())
             .saturating_add(
@@ -274,6 +565,72 @@ pub fn export_presentation_pptx(
     Ok(archive)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn viewport_pptx_slide(
+    sheet: &Sheet,
+    slide: &PresentationSlide,
+    resolved: &ResolvedPresentationSlide,
+    options: &ExportOptions,
+    fitted: Rect,
+    scale: f32,
+    slide_number: usize,
+    width: u64,
+    height: u64,
+) -> Result<PresentationPptxSlide, IoError> {
+    let mut opaque_options = options.clone();
+    opaque_options.transparent = false;
+    let svg = svg_for_slide(sheet, slide, &opaque_options, resolved)?;
+    if svg.len() > MAX_PRESENTATION_ARCHIVE_BYTES {
+        return Err(IoError::PresentationLimit("slide source size"));
+    }
+    let png = render::raster_svg(&svg, scale, ImageFormat::Png)?;
+    let frame = resolved.frame;
+    let position = |start: f32, end: f32, origin: f32, span: f32, total: u64| {
+        let coordinate = |value: f32| {
+            ((f64::from(value) - f64::from(origin)) / f64::from(span) * total as f64)
+                .round()
+                .clamp(0.0, total as f64) as u64
+        };
+        let first = coordinate(start);
+        (first, coordinate(end).saturating_sub(first).max(1))
+    };
+    let (x, cx) = position(
+        frame.min.x,
+        frame.max().x,
+        fitted.min.x,
+        fitted.size.x,
+        width,
+    );
+    let (y, cy) = position(
+        frame.min.y,
+        frame.max().y,
+        fitted.min.y,
+        fitted.size.y,
+        height,
+    );
+    let filename = format!("slide{slide_number}-viewport.png");
+    let shapes = format!(
+        r#"<p:pic><p:nvPicPr><p:cNvPr id="2" name="Flattened viewport scene" descr="Clipped viewport scene rendered as an image"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#
+    );
+    let relationships = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{filename}"/></Relationships>"#
+    );
+    let color = Theme::for_settings(&sheet.theme).background(&sheet.theme, options.dark);
+    let background = format!(
+        r#"<a:solidFill><a:srgbClr val="{:02X}{:02X}{:02X}"><a:alpha val="{}"/></a:srgbClr></a:solidFill>"#,
+        color.r,
+        color.g,
+        color.b,
+        u32::from(color.a) * 100_000 / 255
+    );
+    Ok(PresentationPptxSlide {
+        shapes,
+        media: vec![(format!("ppt/media/{filename}"), png)],
+        relationships,
+        background,
+    })
+}
+
 /// Renders one saved slide using the same fitted frame and background as PowerPoint export.
 pub fn render_presentation_pptx_slide_png(
     sheet: &Sheet,
@@ -304,7 +661,6 @@ fn render_pptx_slide(
 ) -> Result<Vec<u8>, IoError> {
     let mut resolved = resolve_slide(sheet, slide_index, options)?;
     let frame = fit_frame(resolved.frame, target_ratio)?;
-    resolved.frame = frame;
     let scale = ((target_width - 0.1) / frame.size.x).clamp(0.1, 8.0);
     image_dimensions(frame, scale, total_pixels)?;
     let render_options = ExportOptions {
@@ -313,7 +669,37 @@ fn render_pptx_slide(
         transparent: false,
         ..options.clone()
     };
-    let svg = render::svg_resolved(sheet, &render_options, &resolved)?;
+    let slide = &sheet.presentation.slides[slide_index];
+    let svg = if slide.source == PresentationSource::Viewport {
+        let scene = svg_for_slide(sheet, slide, &render_options, &resolved)?;
+        let view = resolved.frame;
+        let bg = Theme::for_settings(&sheet.theme).background(&sheet.theme, options.dark);
+        // The nested SVG keeps its own viewport; the extra clip also prevents
+        // crossing geometry from appearing in the aspect-ratio margins.
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{:.2}" height="{:.2}" viewBox="{:.2} {:.2} {:.2} {:.2}"><rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}"/><defs><clipPath id="presentation-viewport-clip" clipPathUnits="userSpaceOnUse"><rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}"/></clipPath></defs><g clip-path="url(#presentation-viewport-clip)"><g transform="translate({:.2} {:.2})">{scene}</g></g></svg>"#,
+            frame.size.x,
+            frame.size.y,
+            frame.min.x,
+            frame.min.y,
+            frame.size.x,
+            frame.size.y,
+            frame.min.x,
+            frame.min.y,
+            frame.size.x,
+            frame.size.y,
+            bg.to_hex(),
+            view.min.x,
+            view.min.y,
+            view.size.x,
+            view.size.y,
+            view.min.x,
+            view.min.y
+        )
+    } else {
+        resolved.frame = frame;
+        svg_for_slide(sheet, slide, &render_options, &resolved)?
+    };
     render::raster_svg(&svg, scale, ImageFormat::Png)
 }
 
@@ -451,6 +837,9 @@ fn theme_xml() -> &'static str {
 }
 
 /// Exports resolved slides, in presentation order, as a multi-page PDF.
+///
+/// Viewport clipping is visual, not a redaction guarantee: intersecting paths,
+/// images, and some off-frame scene data may remain in PDF resources.
 pub fn export_presentation_pdf(sheet: &Sheet, options: &ExportOptions) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
@@ -469,7 +858,12 @@ pub fn export_presentation_pdf(sheet: &Sheet, options: &ExportOptions) -> Result
         }
         let mut opaque_options = options.clone();
         opaque_options.transparent = false;
-        let svg = render::svg_resolved(sheet, &opaque_options, &resolved)?;
+        let svg = svg_for_slide(
+            sheet,
+            &sheet.presentation.slides[index],
+            &opaque_options,
+            &resolved,
+        )?;
         source_bytes = source_bytes.saturating_add(svg.len());
         if source_bytes > MAX_PRESENTATION_ARCHIVE_BYTES {
             return Err(IoError::PresentationLimit("PDF source size"));

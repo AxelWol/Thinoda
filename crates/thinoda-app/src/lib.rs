@@ -3,11 +3,14 @@
 pub mod ai;
 pub mod app;
 mod attachments;
+mod board_clipboard;
+mod board_ui;
 pub mod brand;
 mod command_icons;
 mod command_ids;
 pub mod doc;
 mod equations;
+mod export_preflight;
 pub mod file_ops;
 pub mod files;
 mod fim;
@@ -16,6 +19,9 @@ mod gantt;
 mod help;
 pub mod i18n;
 mod images;
+#[cfg(test)]
+mod ink_host_tests;
+mod ink_ui;
 mod keymap_editor;
 pub mod keymaps;
 mod labels;
@@ -52,6 +58,8 @@ pub use app::{Startup, ThinodaApp, start_services};
 pub fn install_context(ctx: &egui::Context) {
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     thinoda_ui::fonts::install_fallbacks(ctx);
+    #[cfg(target_arch = "wasm32")]
+    board_clipboard::install_web_event_capture();
 }
 
 /// Whether any open document has unsaved changes, updated every frame. The web

@@ -441,12 +441,14 @@ locales, Light/Dark, accessibility checks and updated user docs.
 **Current implementation status:** The F0 core model and IO, F4 templates,
 export preflight, board alignment guides, zoom-to-selection, responsive toolbox,
 frame-identity clipping fix and pending-ink host safeguards have focused
-regression coverage. F1/F2 and F3 remain open for board-object styling and
-integration acceptance; F5 remains open for the realistic performance gate;
-F6 remains open for final scene/export acceptance. Local browser large-board
-storage and recovery, history accounting, and full native/web verification
-remain open. Cloud-provider code is merged upstream behind a default-off
-feature and stays disabled until publisher registrations are in place; see
+regression coverage. Board objects support Quick Styles, the existing Shape
+and Text controls, and the custom Fill-Color Picker; focused styling and
+undo coverage is in place. F1/F2 and F3 remain open for broader integration
+acceptance; F5 remains open for the realistic performance gate; F6 remains
+open for final scene/export acceptance. Local browser large-board storage and
+recovery, history accounting, and full native/web verification remain open.
+Cloud-provider code is merged upstream behind a default-off feature and stays
+disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
 
 ### History resource-accounting checkpoint: critique

@@ -272,13 +272,40 @@ impl ThinodaApp {
         deliver: bool,
         autosave: bool,
     ) -> Result<(), String> {
+        self.queue_save_with_consent(
+            index,
+            target,
+            backup,
+            deliver,
+            autosave,
+            crate::export_preflight::SaveConsent::default(),
+        )
+    }
+
+    pub(crate) fn queue_save_with_consent(
+        &mut self,
+        index: usize,
+        target: &Path,
+        backup: bool,
+        deliver: bool,
+        autosave: bool,
+        consent: crate::export_preflight::SaveConsent,
+    ) -> Result<(), String> {
         debug_assert!(self.file_ops.save.is_none());
         let doc = &mut self.docs[index];
         let format = doc.prepare_save(target)?;
         let workbook = doc.doc.workbook().clone();
         let path = target.to_path_buf();
-        let job: Job<crate::doc::WrittenWorkbook> =
-            Box::new(move || crate::doc::write_workbook(&workbook, format, &path, backup));
+        let job: Job<crate::doc::WrittenWorkbook> = Box::new(move || {
+            crate::doc::write_workbook(
+                &workbook,
+                format,
+                &path,
+                backup,
+                consent.board,
+                consent.mindmanager,
+            )
+        });
         self.file_ops.save = Some(Saving {
             key: doc.key.clone(),
             target: target.to_path_buf(),
@@ -410,6 +437,11 @@ impl ThinodaApp {
                     self.save_settings();
                     self.toasts
                         .success(format!("{} {}", t("Saved to"), save.target.display()));
+                    if index.is_some_and(|index| self.docs[index].has_unresolved_ink()) {
+                        self.toasts.warning(t(
+                            "Ink is not saved or included in crash recovery until it is finished.",
+                        ));
+                    }
                 }
                 if save.deliver {
                     self.deliver(&save.target);

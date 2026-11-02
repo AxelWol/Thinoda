@@ -2,10 +2,13 @@
 
 use crate::view::{MapView, ObjectSelection};
 use thinoda_core::{
-    Document, EditError, TopicId, clipboard,
+    Band, Document, EditError, TopicId, ZOrder, clipboard,
     geometry::Vec2,
     navigation::{Direction, navigate},
 };
+
+#[path = "board_actions.rs"]
+pub(crate) mod board_actions;
 
 /// A user-level command on the map.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +57,9 @@ pub enum Action {
     Redo,
     Copy,
     Cut,
-    /// Paste with the given OS clipboard text (if any).
+    /// Paste OS text. `None` uses an internal clipboard only when the host has
+    /// verified that it still owns the OS clipboard. Rich board data must be
+    /// passed separately to [`MapView::paste_encoded_board`].
     Paste(Option<String>),
 }
 
@@ -70,9 +75,57 @@ pub enum FloatingArrangement {
     DistributeVertical,
 }
 
+/// Host-drivable commands for the current board selection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoardAction {
+    /// Move selected floating topics/cards and canvas objects in sheet units.
+    Move(Vec2),
+    /// Resize one selected card, shape, ink object, or frame by this size delta.
+    Resize(Vec2),
+    /// Rotate selected board items in degrees about a shared selection pivot.
+    /// An individual connector cannot be rotated.
+    Rotate(f32),
+    /// Align or distribute selected floating topics/cards and canvas objects.
+    Arrange(FloatingArrangement),
+    /// Reorder selected canvas objects within their current paint bands.
+    ZOrder(ZOrder),
+    /// Move selected canvas objects behind or in front of the map band.
+    SetBand(Band),
+    Group,
+    Ungroup,
+    /// Lock or unlock selected floating cards, canvas objects, and complete groups.
+    Lock(bool),
+}
+
+impl BoardAction {
+    pub fn available(&self, doc: &Document, view: &MapView) -> bool {
+        board_actions::available(doc, view, *self)
+    }
+}
+
+/// Applies a board command as one undoable edit, when applicable.
+pub fn apply_board_action(
+    doc: &mut Document,
+    view: &mut MapView,
+    action: BoardAction,
+) -> Result<bool, EditError> {
+    if view.has_title_changes() {
+        view.try_commit_edit(doc)?;
+    }
+    view.try_commit_board_label(doc)?;
+    view.prune_selection(doc.sheet());
+    if !action.available(doc, view) {
+        return Ok(false);
+    }
+    board_actions::apply(doc, view, action)
+}
+
 impl Action {
     /// Shared contextual availability for commands surfaced by the host.
     pub fn available(&self, doc: &Document, view: &MapView) -> bool {
+        if let Some(available) = board_actions::shared_available(doc, view, self) {
+            return available;
+        }
         let sheet = doc.sheet();
         let valid =
             !view.selection.is_empty() && view.selection.iter().all(|id| sheet.contains(*id));
@@ -183,7 +236,13 @@ pub fn apply_action(
     if !matches!(action, Action::Undo | Action::Redo) && view.has_title_changes() {
         view.try_commit_edit(doc)?;
     }
+    if !matches!(action, Action::Undo | Action::Redo) {
+        view.try_commit_board_label(doc)?;
+    }
     view.prune_selection(doc.sheet());
+    if let Some(result) = board_actions::apply_shared(doc, view, &action) {
+        return result;
+    }
     if action.needs_selection()
         && view.selection.is_empty()
         && !(action == Action::Delete && view.selected_object.is_some())
@@ -397,6 +456,7 @@ pub fn apply_action(
         }
         Action::SelectAll => {
             view.selected_object = None;
+            view.board_selection.clear();
             let sheet = doc.sheet();
             view.selection = sheet
                 .all_ids_ordered()
@@ -410,12 +470,14 @@ pub fn apply_action(
                 view.reveal(root);
             } else {
                 view.selection.clear();
+                view.board_selection.clear();
                 view.selected_object = None;
                 return Ok(false);
             }
         }
         Action::SelectNone => {
             view.selection.clear();
+            view.board_selection.clear();
             view.selected_object = None;
             view.relationship_from = None;
         }
@@ -444,6 +506,7 @@ pub fn apply_action(
                 .filter(|id| sheet.is_visible(*id) && seen.insert(*id))
                 .collect();
             view.selected_object = None;
+            view.board_selection.clear();
             view.relationship_from = None;
         }
         Action::SortAscending | Action::SortDescending => {
@@ -609,6 +672,7 @@ pub fn apply_action(
                 return Ok(false);
             };
             view.clipboard_out = Some(payload.text.clone());
+            view.set_board_clipboard(None);
             view.clipboard = Some(payload);
             if action == Action::Cut {
                 let roots: Vec<TopicId> = sel
@@ -630,6 +694,7 @@ pub fn apply_action(
             let target = primary.unwrap_or(doc.sheet().root);
             let ids = doc.edit_sheet("Paste", |s| s.paste(target, &subtrees))?;
             view.selection = ids;
+            view.board_selection.clear();
         }
     }
     Ok(true)

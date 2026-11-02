@@ -54,13 +54,13 @@ impl ThinodaApp {
             ))
             || doc.inspector_edit.is_some()
             || doc.view.editing_topic().is_some()
+            || doc.view.editing_board_object().is_some()
         {
             return Err(t("The document changed. Try again."));
         }
-        if target
-            .topic
-            .is_none_or(|topic| doc.doc.sheet().topic(topic).is_none())
-        {
+        if target.topic.is_none_or(|topic| {
+            doc.doc.sheet().is_anchor(topic) || doc.doc.sheet().topic(topic).is_none()
+        }) {
             return Err(t("The topic no longer exists"));
         }
         Ok(())
@@ -240,6 +240,29 @@ mod tests {
                 model: "local-test".into(),
             },
         }
+    }
+
+    #[test]
+    fn ai_review_rejects_an_active_board_label_draft() {
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .add_canvas_object(thinoda_core::CanvasObject::shape(
+                thinoda_core::ShapeKind::Rectangle,
+                thinoda_core::Rect::from_center_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(120.0, 80.0),
+                ),
+            ))
+            .unwrap();
+        let review = result(&app);
+        let doc = app.doc_mut().unwrap();
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+
+        assert!(app.validate_ai_target(&review.target).is_err());
+        assert!(app.apply_ai(&review.target, &review.result).is_err());
+        assert_eq!(app.doc().unwrap().view.editing_board_object(), Some(id));
     }
 
     #[test]

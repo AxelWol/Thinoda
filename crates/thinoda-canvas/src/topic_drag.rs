@@ -286,12 +286,24 @@ pub(crate) fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<To
     }
 }
 
-fn alignment_guides(
+const MAX_GUIDE_REFERENCES: usize = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct DragGuides {
+    /// Vertical and horizontal edge/center alignment guides.
+    pub alignment: [Option<[Vec2; 2]>; 2],
+    /// Moving/reference bounds with matching width and height.
+    pub matching_size: [Option<[thinoda_core::Rect; 2]>; 2],
+    /// Three bounds in reading order whose adjacent gaps match.
+    pub equal_spacing: [Option<[thinoda_core::Rect; 3]>; 2],
+}
+
+fn drag_guides(
     layout: &Layout,
     members: &BTreeSet<TopicId>,
     delta: Vec2,
     tolerance: f32,
-) -> [Option<[Vec2; 2]>; 2] {
+) -> DragGuides {
     let moving = layout
         .order
         .iter()
@@ -299,28 +311,45 @@ fn alignment_guides(
         .filter_map(|id| layout.rect(*id))
         .reduce(|a, b| a.union(&b));
     let Some(moving) = moving.map(|rect| rect.translate(delta)) else {
-        return [None, None];
+        return DragGuides::default();
     };
+    drag_guides_for_bounds(
+        moving,
+        layout
+            .order
+            .iter()
+            .filter(|id| !members.contains(id))
+            .filter_map(|id| layout.rect(*id)),
+        tolerance,
+    )
+}
+
+pub(crate) fn drag_guides_for_bounds(
+    moving: thinoda_core::Rect,
+    references: impl IntoIterator<Item = thinoda_core::Rect>,
+    tolerance: f32,
+) -> DragGuides {
+    let tolerance = if tolerance.is_finite() {
+        tolerance.max(0.0)
+    } else {
+        0.0
+    };
+    let references: Vec<_> = references.into_iter().take(MAX_GUIDE_REFERENCES).collect();
     let coordinates = |rect: thinoda_core::Rect| [rect.min, rect.center(), rect.max()];
+    let mut guides = DragGuides::default();
     let mut nearest = [tolerance; 2];
-    let mut guides = [None, None];
-    for rect in layout
-        .order
-        .iter()
-        .filter(|id| !members.contains(id))
-        .filter_map(|id| layout.rect(*id))
-    {
-        for (source, reference) in coordinates(moving).into_iter().zip(coordinates(rect)) {
+    for rect in &references {
+        for (source, reference) in coordinates(moving).into_iter().zip(coordinates(*rect)) {
             let distances = [
                 (source.x - reference.x).abs(),
                 (source.y - reference.y).abs(),
             ];
             for axis in 0..2 {
                 if distances[axis] <= tolerance
-                    && (guides[axis].is_none() || distances[axis] < nearest[axis])
+                    && (guides.alignment[axis].is_none() || distances[axis] < nearest[axis])
                 {
                     nearest[axis] = distances[axis];
-                    guides[axis] = Some(if axis == 0 {
+                    guides.alignment[axis] = Some(if axis == 0 {
                         [
                             Vec2::new(reference.x, moving.min.y.min(rect.min.y)),
                             Vec2::new(reference.x, moving.max().y.max(rect.max().y)),
@@ -335,7 +364,245 @@ fn alignment_guides(
             }
         }
     }
+
+    for axis in 0..2 {
+        let moving_size = axis_size(moving, axis);
+        let mut best_size: Option<((f32, f32, usize), [thinoda_core::Rect; 2])> = None;
+        for (index, rect) in references.iter().enumerate() {
+            let difference = (moving_size - axis_size(*rect, axis)).abs();
+            if difference > tolerance {
+                continue;
+            }
+            let center_delta = moving.center() - rect.center();
+            let distance_squared =
+                center_delta.x * center_delta.x + center_delta.y * center_delta.y;
+            let score = (difference, distance_squared, index);
+            if best_size.is_none_or(|(best, _)| {
+                score.0 < best.0
+                    || (score.0 == best.0
+                        && (score.1 < best.1 || (score.1 == best.1 && score.2 < best.2)))
+            }) {
+                best_size = Some((score, [moving, *rect]));
+            }
+        }
+        guides.matching_size[axis] = best_size.map(|(_, bounds)| bounds);
+        guides.equal_spacing[axis] = equal_spacing_for_axis(moving, &references, axis, tolerance);
+    }
     guides
+}
+
+fn axis_size(rect: thinoda_core::Rect, axis: usize) -> f32 {
+    if axis == 0 { rect.size.x } else { rect.size.y }
+}
+
+fn axis_start(rect: thinoda_core::Rect, axis: usize) -> f32 {
+    if axis == 0 { rect.min.x } else { rect.min.y }
+}
+
+fn axis_end(rect: thinoda_core::Rect, axis: usize) -> f32 {
+    if axis == 0 {
+        rect.max().x
+    } else {
+        rect.max().y
+    }
+}
+
+fn axis_cross_start(rect: thinoda_core::Rect, axis: usize) -> f32 {
+    axis_start(rect, 1 - axis)
+}
+
+fn axis_cross_end(rect: thinoda_core::Rect, axis: usize) -> f32 {
+    axis_end(rect, 1 - axis)
+}
+
+fn equal_spacing_for_axis(
+    moving: thinoda_core::Rect,
+    references: &[thinoda_core::Rect],
+    axis: usize,
+    tolerance: f32,
+) -> Option<[thinoda_core::Rect; 3]> {
+    let moving_start = axis_start(moving, axis);
+    let moving_end = axis_end(moving, axis);
+    let moving_cross_start = axis_cross_start(moving, axis);
+    let moving_cross_end = axis_cross_end(moving, axis);
+    let cross_tolerance = tolerance;
+    let mut before: Vec<(f32, usize, thinoda_core::Rect)> = Vec::with_capacity(2);
+    let mut after: Vec<(f32, usize, thinoda_core::Rect)> = Vec::with_capacity(2);
+    for (index, rect) in references.iter().copied().enumerate() {
+        if axis_cross_start(rect, axis) > moving_cross_end + cross_tolerance
+            || axis_cross_end(rect, axis) < moving_cross_start - cross_tolerance
+        {
+            continue;
+        }
+        let start = axis_start(rect, axis);
+        let end = axis_end(rect, axis);
+        if end <= moving_start {
+            before.push((end, index, rect));
+            before.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            before.truncate(2);
+        } else if start >= moving_end {
+            after.push((start, index, rect));
+            after.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            after.truncate(2);
+        }
+    }
+
+    let mut best = None;
+    if let Some((_, _, nearest)) = before.first() {
+        consider_spacing(
+            [
+                before.get(1).map(|(_, _, rect)| *rect),
+                Some(*nearest),
+                Some(moving),
+            ],
+            axis,
+            tolerance,
+            &mut best,
+        );
+    }
+    if let Some((_, _, nearest)) = after.first() {
+        consider_spacing(
+            [
+                Some(moving),
+                Some(*nearest),
+                after.get(1).map(|(_, _, rect)| *rect),
+            ],
+            axis,
+            tolerance,
+            &mut best,
+        );
+    }
+    if let (Some((_, _, nearest_before)), Some((_, _, nearest_after))) =
+        (before.first(), after.first())
+    {
+        consider_spacing(
+            [Some(*nearest_before), Some(moving), Some(*nearest_after)],
+            axis,
+            tolerance,
+            &mut best,
+        );
+    }
+    best.map(|(_, bounds)| bounds)
+}
+
+fn consider_spacing(
+    candidate: [Option<thinoda_core::Rect>; 3],
+    axis: usize,
+    tolerance: f32,
+    best: &mut Option<(f32, [thinoda_core::Rect; 3])>,
+) {
+    let [Some(first), Some(middle), Some(last)] = candidate else {
+        return;
+    };
+    let first_gap = axis_start(middle, axis) - axis_end(first, axis);
+    let second_gap = axis_start(last, axis) - axis_end(middle, axis);
+    let difference = (first_gap - second_gap).abs();
+    if first_gap <= 0.0 || second_gap <= 0.0 || difference > tolerance {
+        return;
+    }
+    if best.is_none_or(|(best_difference, _)| difference < best_difference) {
+        *best = Some((difference, [first, middle, last]));
+    }
+}
+
+pub(crate) fn paint_drag_guides(painter: &Painter, xf: Xf, color: Color32, guides: DragGuides) {
+    let stroke = Stroke::new(1.0, color);
+    for guide in guides.alignment.into_iter().flatten() {
+        painter.line_segment(guide.map(|point| xf.pos(point)), stroke);
+    }
+
+    let zoom = xf.zoom.max(f32::EPSILON);
+    let offset = 6.0 / zoom;
+    let tick = 2.5 / zoom;
+    for axis in 0..2 {
+        if let Some([moving, reference]) = guides.matching_size[axis] {
+            for rect in [moving, reference] {
+                if axis == 0 {
+                    let y = rect.min.y - offset;
+                    painter.line_segment(
+                        [
+                            xf.pos(Vec2::new(rect.min.x, y)),
+                            xf.pos(Vec2::new(rect.max().x, y)),
+                        ],
+                        stroke,
+                    );
+                    for x in [rect.min.x, rect.max().x] {
+                        painter.line_segment(
+                            [
+                                xf.pos(Vec2::new(x, y - tick)),
+                                xf.pos(Vec2::new(x, y + tick)),
+                            ],
+                            stroke,
+                        );
+                    }
+                } else {
+                    let x = rect.min.x - offset;
+                    painter.line_segment(
+                        [
+                            xf.pos(Vec2::new(x, rect.min.y)),
+                            xf.pos(Vec2::new(x, rect.max().y)),
+                        ],
+                        stroke,
+                    );
+                    for y in [rect.min.y, rect.max().y] {
+                        painter.line_segment(
+                            [
+                                xf.pos(Vec2::new(x - tick, y)),
+                                xf.pos(Vec2::new(x + tick, y)),
+                            ],
+                            stroke,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some([first, middle, last]) = guides.equal_spacing[axis] {
+            let cross = axis_cross_start(middle, axis)
+                + (axis_cross_end(middle, axis) - axis_cross_start(middle, axis)) / 2.0;
+            let gaps = [
+                (axis_end(first, axis), axis_start(middle, axis)),
+                (axis_end(middle, axis), axis_start(last, axis)),
+            ];
+            for (start, end) in gaps {
+                if axis == 0 {
+                    painter.line_segment(
+                        [
+                            xf.pos(Vec2::new(start, cross)),
+                            xf.pos(Vec2::new(end, cross)),
+                        ],
+                        stroke,
+                    );
+                    for x in [start, end] {
+                        painter.line_segment(
+                            [
+                                xf.pos(Vec2::new(x, cross - tick)),
+                                xf.pos(Vec2::new(x, cross + tick)),
+                            ],
+                            stroke,
+                        );
+                    }
+                } else {
+                    painter.line_segment(
+                        [
+                            xf.pos(Vec2::new(cross, start)),
+                            xf.pos(Vec2::new(cross, end)),
+                        ],
+                        stroke,
+                    );
+                    for y in [start, end] {
+                        painter.line_segment(
+                            [
+                                xf.pos(Vec2::new(cross - tick, y)),
+                                xf.pos(Vec2::new(cross + tick, y)),
+                            ],
+                            stroke,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn paint(
@@ -368,15 +635,8 @@ pub(crate) fn paint(
     let target = target(sheet, layout, members, current);
     if matches!(target, Ok(None)) {
         if view.show_alignment_guides {
-            for guide in alignment_guides(layout, members, delta, 4.0 / xf.zoom)
-                .into_iter()
-                .flatten()
-            {
-                painter.line_segment(
-                    guide.map(|point| xf.pos(point)),
-                    Stroke::new(1.0, view.accent),
-                );
-            }
+            let guides = drag_guides(layout, members, delta, 4.0 / xf.zoom);
+            paint_drag_guides(painter, xf, view.accent, guides);
         }
         return;
     }
@@ -438,10 +698,10 @@ mod tests {
         let second_rect = layout.rect(second).unwrap();
         let moving = [a, b].into_iter().collect();
         let delta = Vec2::new(first_rect.center().x - group.center().x + 2.0, 0.0);
-        let guide = alignment_guides(&layout, &moving, delta, 4.0)[0].unwrap();
+        let guide = drag_guides(&layout, &moving, delta, 4.0).alignment[0].unwrap();
         assert_eq!(guide[0].x, first_rect.center().x, "Ties follow paint order");
         let delta = Vec2::new(second_rect.center().x - group.center().x - 0.5, 0.0);
-        let guide = alignment_guides(&layout, &moving, delta, 4.0)[0].unwrap();
+        let guide = drag_guides(&layout, &moving, delta, 4.0).alignment[0].unwrap();
         assert_eq!(guide[0].x, second_rect.center().x, "Nearest reference wins");
         assert_eq!(guide[0].y, group.min.y);
         assert_eq!(guide[1].y, second_rect.max().y);
@@ -462,32 +722,118 @@ mod tests {
         for zoom in [0.5, 1.0, 2.0] {
             let tolerance = 4.0 / zoom;
             let delta = Vec2::new(b.center().x - a.center().x + 3.9 / zoom, 0.0);
-            let guides = alignment_guides(&layout, &owned, delta, tolerance);
+            let guides = drag_guides(&layout, &owned, delta, tolerance).alignment;
             assert!(guides[0].is_some());
             assert!(guides[1].is_none());
             let delta = Vec2::new(b.center().x - a.center().x + 4.1 / zoom, 0.0);
-            assert!(alignment_guides(&layout, &owned, delta, tolerance)[0].is_none());
+            assert!(drag_guides(&layout, &owned, delta, tolerance).alignment[0].is_none());
             let delta = Vec2::new(0.0, b.min.y - a.min.y);
-            let horizontal = alignment_guides(&layout, &owned, delta, tolerance)[1].unwrap();
+            let horizontal = drag_guides(&layout, &owned, delta, tolerance).alignment[1].unwrap();
             assert_eq!(horizontal[0].y, b.min.y);
             assert_eq!(horizontal[1].y, b.min.y);
         }
         let all = layout.order.iter().copied().collect();
         assert_eq!(
-            alignment_guides(&layout, &all, Vec2::ZERO, 4.0),
+            drag_guides(&layout, &all, Vec2::ZERO, 4.0).alignment,
             [None, None]
         );
         assert_eq!(
-            alignment_guides(&layout, &BTreeSet::new(), Vec2::ZERO, 4.0),
+            drag_guides(&layout, &BTreeSet::new(), Vec2::ZERO, 4.0).alignment,
             [None, None]
         );
         // Hidden topics cannot contribute guides even if a layout map retains their rectangles.
         let mut hidden_only = layout.clone();
         hidden_only.order.retain(|id| *id == moving);
         assert_eq!(
-            alignment_guides(&hidden_only, &owned, Vec2::ZERO, 4.0),
+            drag_guides(&hidden_only, &owned, Vec2::ZERO, 4.0).alignment,
             [None, None]
         );
+        assert_eq!(
+            drag_guides(&hidden_only, &owned, Vec2::ZERO, 4.0),
+            DragGuides::default(),
+            "a moving group cannot match itself for size or spacing"
+        );
+    }
+
+    #[test]
+    fn matching_size_and_equal_spacing_use_zoom_scaled_tolerance() {
+        let moving = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 50.0));
+        for zoom in [0.5, 1.0, 2.0] {
+            let tolerance = 4.0 / zoom;
+            let difference = 3.9 / zoom;
+            let reference = thinoda_core::Rect::from_min_size(
+                Vec2::new(300.0, 100.0),
+                Vec2::new(100.0 + difference, 50.0 + difference),
+            );
+            let guides = drag_guides_for_bounds(moving, [reference], tolerance);
+            assert_eq!(guides.matching_size, [Some([moving, reference]); 2]);
+            let too_different = thinoda_core::Rect::from_min_size(
+                Vec2::new(300.0, 100.0),
+                Vec2::new(100.0 + 4.1 / zoom, 50.0 + 4.1 / zoom),
+            );
+            assert_eq!(
+                drag_guides_for_bounds(moving, [too_different], tolerance).matching_size,
+                [None, None]
+            );
+
+            let moving =
+                thinoda_core::Rect::from_min_size(Vec2::new(30.0, 0.0), Vec2::new(20.0, 20.0));
+            let left = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(20.0, 20.0));
+            let right = thinoda_core::Rect::from_min_size(
+                Vec2::new(60.0 + difference, 0.0),
+                Vec2::new(20.0, 20.0),
+            );
+            let guides = drag_guides_for_bounds(moving, [left, right], tolerance);
+            assert_eq!(guides.equal_spacing[0], Some([left, moving, right]));
+            let right = right.translate(Vec2::new(4.1 / zoom, 0.0));
+            assert_eq!(
+                drag_guides_for_bounds(moving, [left, right], tolerance).equal_spacing[0],
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn size_and_spacing_do_not_emit_false_guides_without_references() {
+        let moving = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 50.0));
+        assert_eq!(
+            drag_guides_for_bounds(moving, [], 4.0),
+            DragGuides::default()
+        );
+        let nearby_but_unequal =
+            thinoda_core::Rect::from_min_size(Vec2::new(105.0, 0.0), Vec2::new(80.0, 20.0));
+        let guides = drag_guides_for_bounds(moving, [nearby_but_unequal], 4.0);
+        assert_eq!(guides.matching_size, [None, None]);
+        assert_eq!(guides.equal_spacing, [None, None]);
+    }
+
+    #[test]
+    fn large_guide_reference_sets_have_a_deterministic_work_limit() {
+        use std::cell::Cell;
+
+        let moving = thinoda_core::Rect::from_min_size(Vec2::ZERO, Vec2::new(20.0, 20.0));
+        let consumed = Cell::new(0);
+        let references = (0..10_000).map(|index| {
+            consumed.set(consumed.get() + 1);
+            thinoda_core::Rect::from_min_size(
+                Vec2::new(500.0 + index as f32 * 25.0, 0.0),
+                Vec2::new(20.0, 20.0),
+            )
+        });
+        let first = drag_guides_for_bounds(moving, references, 4.0);
+        assert_eq!(consumed.get(), MAX_GUIDE_REFERENCES);
+
+        let second = drag_guides_for_bounds(
+            moving,
+            (0..10_000).map(|index| {
+                thinoda_core::Rect::from_min_size(
+                    Vec2::new(500.0 + index as f32 * 25.0, 0.0),
+                    Vec2::new(20.0, 20.0),
+                )
+            }),
+            4.0,
+        );
+        assert_eq!(first, second);
     }
 
     #[test]

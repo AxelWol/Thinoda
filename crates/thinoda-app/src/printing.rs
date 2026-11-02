@@ -354,7 +354,10 @@ impl ThinodaApp {
             return;
         }
         let Some(doc) = self.doc_mut() else { return };
-        doc.view.commit_edit(&mut doc.doc);
+        if let Err(error) = doc.commit_canvas_drafts() {
+            self.toasts.error(error);
+            return;
+        }
         let sheet = doc.doc.active_index();
         let title = doc.doc.sheet().title.clone();
         let workbook = Arc::new(doc.doc.workbook().clone());
@@ -533,38 +536,60 @@ impl ThinodaApp {
             }
         });
         if print || save {
-            let path = if save {
-                files::save_target(
-                    Some(t("Save print PDF…")),
-                    &[("PDF", &["pdf"])],
-                    "map-print.pdf",
-                    None,
-                    files::Target::Download,
-                )
+            let document = Arc::clone(editor.rendered.as_ref().expect("ready print document"));
+            if editor.gantt {
+                // This is a task chart rather than a board-scene export.
+                self.begin_print_output(ctx, document, editor.title.clone(), save);
             } else {
-                None
-            };
-            if print || path.is_some() {
-                let document = Arc::clone(editor.rendered.as_ref().expect("ready print document"));
-                let title = editor.title.clone();
-                let repaint = ctx.clone();
-                let (sender, receiver) = mpsc::channel();
-                self.printing.message = None;
-                self.printing.output = Some(receiver);
-                let _ = run_background("thinoda-print", move || {
-                    let result = if let Some(path) = path {
-                        save_pdf(&document, &path).map(|()| PreparedOutput::PdfSaved(path))
-                    } else {
-                        prepare_output(&document, title)
-                    };
-                    let _ = sender.send(result);
-                    repaint.request_repaint();
-                });
+                self.request_print_output(
+                    ctx,
+                    &editor.workbook,
+                    editor.sheet,
+                    document,
+                    editor.title.clone(),
+                    save,
+                );
             }
         }
         if self.printing.busy() || (!close && !(response.close_requested && activation_allowed)) {
             self.printing.editor = Some(editor);
         }
+    }
+
+    pub(crate) fn begin_print_output(
+        &mut self,
+        ctx: &Context,
+        document: Arc<PrintDocument>,
+        title: String,
+        save: bool,
+    ) {
+        let path = if save {
+            let Some(path) = files::save_target(
+                Some(t("Save print PDF…")),
+                &[("PDF", &["pdf"])],
+                "map-print.pdf",
+                None,
+                files::Target::Download,
+            ) else {
+                return;
+            };
+            Some(path)
+        } else {
+            None
+        };
+        let repaint = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.printing.message = None;
+        self.printing.output = Some(receiver);
+        let _ = run_background("thinoda-print", move || {
+            let result = if let Some(path) = path {
+                save_pdf(&document, &path).map(|()| PreparedOutput::PdfSaved(path))
+            } else {
+                prepare_output(&document, title)
+            };
+            let _ = sender.send(result);
+            repaint.request_repaint();
+        });
     }
 }
 

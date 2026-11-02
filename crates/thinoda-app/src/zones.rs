@@ -57,7 +57,10 @@ impl ThinodaApp {
             self.toasts.error(error);
             return;
         }
-        doc.view.commit_edit(&mut doc.doc);
+        if let Err(error) = doc.commit_canvas_drafts() {
+            self.toasts.error(error);
+            return;
+        }
         let (name, roots, frame) = if let Some(id) = id {
             let Some(zone) = doc.doc.sheet().zones.iter().find(|zone| zone.id == id) else {
                 self.toasts.warning(t("The document changed. Try again."));
@@ -221,17 +224,17 @@ impl ThinodaApp {
         if create || edit.is_some() {
             let active = self.active;
             self.active = index;
-            if self.docs[index].doc.active_index() != owner.sheet {
-                self.docs[index].view.reset();
-                self.docs[index].doc.set_active(owner.sheet);
+            if let Err(error) = self.docs[index].switch_sheet(owner.sheet) {
+                self.toasts.error(error);
+            } else {
+                self.begin_zone_editor(ctx, edit);
             }
-            self.begin_zone_editor(ctx, edit);
             self.active = active;
         }
         if reorder.is_some() || remove.is_some() {
             let doc = &mut self.docs[index];
             let result = doc.flush_inspector_edit(ctx).and_then(|()| {
-                doc.view.commit_edit(&mut doc.doc);
+                doc.commit_canvas_drafts()?;
                 if doc.doc.state_id() != revision {
                     return Err(t("The document changed. Try again.").into());
                 }

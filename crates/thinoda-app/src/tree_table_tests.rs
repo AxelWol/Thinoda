@@ -14,6 +14,24 @@ fn app() -> ThinodaApp {
     app
 }
 
+#[test]
+fn hidden_board_rows_use_content_roots_without_the_anchor() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let later = sheet.add_floating("Later", thinoda_core::Vec2::new(0.0, 100.0));
+    let first = sheet.add_floating("First", thinoda_core::Vec2::new(0.0, 0.0));
+    let child = sheet.add_child(first, None, "Child");
+    assert_eq!(
+        rows(
+            &sheet,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            TreeTableSort::Hierarchy
+        ),
+        vec![(first, 0), (child, 1), (later, 0)]
+    );
+}
+
 fn edit(app: &mut ThinodaApp, column: Column, value: &str) -> Result<(), String> {
     let topic = app.doc().unwrap().view.primary().unwrap();
     app.begin_table_cell(topic, column);

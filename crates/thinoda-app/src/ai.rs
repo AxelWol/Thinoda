@@ -334,14 +334,21 @@ impl ThinodaApp {
             self.ai.prompt_viewport = Some(self.current_viewport);
             return;
         }
-        if let Some(d) = self.doc_mut() {
-            d.view.commit_edit(&mut d.doc);
+        if let Some(d) = self.doc_mut()
+            && let Err(error) = d.commit_canvas_drafts()
+        {
+            self.toasts.error(error);
+            return;
         }
         let Some(d) = self.doc() else { return };
         let Some(id) = d.view.primary() else {
             self.toasts.warning(t("Select a topic first"));
             return;
         };
+        if d.doc.sheet().is_anchor(id) || !d.doc.sheet().contains(id) {
+            self.toasts.warning(t("Select a topic first"));
+            return;
+        }
         if cmd.transformation().is_some() {
             let source = match chat::context(d, chat::Scope::Selection) {
                 Ok(source) => source,
@@ -581,6 +588,7 @@ impl ThinodaApp {
             return Err(t("The topic no longer exists").to_owned());
         };
         let d = &mut self.docs[i];
+        d.ensure_no_pending_ink()?;
         let label = t(p.command.label());
         if r.kind == OutputKind::Sheet {
             let AiOutput::Outline(outline) = &r.output else {

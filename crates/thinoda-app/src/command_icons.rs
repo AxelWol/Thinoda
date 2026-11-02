@@ -2,11 +2,33 @@ use crate::{
     ai::AiCommand,
     app::{Cmd, FocusField},
 };
-use thinoda_canvas::{Action, FloatingArrangement};
+use thinoda_canvas::{Action, BoardTool, FloatingArrangement};
 use thinoda_ui::{
     icons as I,
     ribbon::{CommandIcon, IconTone as T},
 };
+
+pub(crate) fn board_tool_glyph(tool: BoardTool) -> CommandIcon {
+    let (symbol, badge) = match tool {
+        BoardTool::Select => (I::BOARD_SELECT, None),
+        BoardTool::Hand => (I::BOARD_HAND, None),
+        BoardTool::Sticky => (I::NOTE, None),
+        BoardTool::Text => (I::BOARD_TEXT, None),
+        BoardTool::Shape(_) => (I::BOARD_SHAPES, None),
+        BoardTool::Connector => (I::RELATIONSHIP, None),
+        BoardTool::Frame => (I::BOARD_FRAME, None),
+        BoardTool::Pen => (I::BOARD_PEN, None),
+        BoardTool::Highlighter => (I::BOARD_HIGHLIGHTER, None),
+        BoardTool::ObjectEraser => (I::BOARD_ERASER, Some(I::SELECT_ALL)),
+        BoardTool::PixelEraser => (I::BOARD_ERASER, None),
+        BoardTool::Lasso => (I::BOARD_LASSO, None),
+    };
+    CommandIcon {
+        symbol,
+        badge,
+        tone: T::Create,
+    }
+}
 
 pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
     let (symbol, badge, tone) = match command {
@@ -20,10 +42,80 @@ pub(crate) fn command_glyph(command: &Cmd) -> CommandIcon {
         Cmd::SaveSheetAs => (I::SAVE_AS, Some(I::SHEET), T::File),
         Cmd::Print => (I::PRINT, None, T::File),
         Cmd::TaskPlanning => (I::TASK_PLANNING, None, T::Create),
-        Cmd::LocalImage => (I::IMAGE, Some(I::ADD), T::Create),
+        Cmd::LocalImage | Cmd::BoardImage => (I::IMAGE, Some(I::ADD), T::Create),
         Cmd::Attachment => (I::NEW_FILE, Some(I::ADD), T::Create),
         Cmd::SaveAttachment => (I::SAVE_AS, None, T::File),
         Cmd::CreateZone => (I::ZONES, Some(I::ADD), T::Create),
+        Cmd::BoardTool(tool) => return board_tool_glyph(*tool),
+        Cmd::BoardAction(action) => match action {
+            thinoda_canvas::BoardAction::Move(_) => (I::MOVE_UP, None, T::Edit),
+            thinoda_canvas::BoardAction::Resize(_) => (I::BOARD_FRAME, Some(I::FORMAT), T::Edit),
+            thinoda_canvas::BoardAction::Group => (I::STACK, Some(I::ADD), T::Edit),
+            thinoda_canvas::BoardAction::Ungroup => (I::STACK, Some(I::REMOVE), T::Edit),
+            thinoda_canvas::BoardAction::Lock(true) => (I::VISIBLE, Some(I::CHECK), T::Edit),
+            thinoda_canvas::BoardAction::Lock(false) => (I::VISIBLE, Some(I::REMOVE), T::Edit),
+            thinoda_canvas::BoardAction::ZOrder(order) => (
+                I::STACK,
+                Some(match order {
+                    thinoda_core::ZOrder::Forward => I::ARROW_UP,
+                    thinoda_core::ZOrder::Backward => I::ARROW_DOWN,
+                    thinoda_core::ZOrder::Front => I::MAXIMIZE,
+                    thinoda_core::ZOrder::Back => I::MINIMIZE,
+                }),
+                T::Edit,
+            ),
+            thinoda_canvas::BoardAction::SetBand(band) => (
+                I::BOARD_FRAME,
+                Some(match band {
+                    thinoda_core::Band::Above => I::ARROW_UP,
+                    thinoda_core::Band::Below => I::ARROW_DOWN,
+                }),
+                T::Edit,
+            ),
+            thinoda_canvas::BoardAction::Rotate(degrees) => (
+                if *degrees < 0.0 { I::UNDO } else { I::REDO },
+                Some(if *degrees < 0.0 {
+                    I::ARROW_LEFT
+                } else {
+                    I::ARROW_RIGHT
+                }),
+                T::Edit,
+            ),
+            thinoda_canvas::BoardAction::Arrange(arrangement) => (
+                match arrangement {
+                    FloatingArrangement::Left => I::ALIGN_LEFT,
+                    FloatingArrangement::HorizontalCenter => I::ALIGN_CENTER,
+                    FloatingArrangement::Right => I::ALIGN_RIGHT,
+                    FloatingArrangement::Top => I::ALIGN_TOP,
+                    FloatingArrangement::VerticalCenter => I::ALIGN_MIDDLE,
+                    FloatingArrangement::Bottom => I::ALIGN_BOTTOM,
+                    FloatingArrangement::DistributeHorizontal => I::DISTRIBUTE_HORIZONTAL,
+                    FloatingArrangement::DistributeVertical => I::DISTRIBUTE_VERTICAL,
+                },
+                None,
+                T::Edit,
+            ),
+        },
+        Cmd::BoardRoot(mode) => (
+            I::ROOT,
+            Some(match mode {
+                thinoda_core::SheetRootMode::Central => I::ADD,
+                thinoda_core::SheetRootMode::Hidden => I::REMOVE,
+            }),
+            T::View,
+        ),
+        Cmd::BoardGrid(grid) => (
+            I::FORMAT,
+            match grid {
+                thinoda_core::GridKind::None => None,
+                thinoda_core::GridKind::Dots => Some(I::ADD),
+                thinoda_core::GridKind::Lines => Some(I::REMOVE),
+            },
+            T::View,
+        ),
+        Cmd::BoardSnap => (I::TUNE, None, T::View),
+        Cmd::BoardMinimap => (I::BOARD_MINIMAP, None, T::View),
+        Cmd::BoardZoomSelection => (I::ZOOM_RESET, Some(I::SELECT_ALL), T::View),
         Cmd::EditZone => (I::ZONES, Some(I::EDIT), T::Edit),
         Cmd::Zones => (I::ZONES, None, T::View),
         Cmd::Pitch => (I::PITCH, None, T::View),

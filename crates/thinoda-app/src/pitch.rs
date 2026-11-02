@@ -35,6 +35,8 @@ struct PitchEditor {
     owner: PitchOwner,
     sheet: Sheet,
     layout: Arc<thinoda_core::Layout>,
+    /// Camera snapshot from the map, in sheet coordinates.
+    viewport_frame: Rect,
     selected: usize,
     generation: u64,
     next_slide_id: Option<thinoda_core::SlideId>,
@@ -76,11 +78,14 @@ impl PitchState {
 impl ThinodaApp {
     pub(crate) fn begin_presentation_editor(&mut self, ctx: &Context) {
         let Some(doc) = self.doc_mut() else { return };
-        if let Err(error) = doc.flush_inspector_edit(ctx) {
+        if let Err(error) = doc
+            .flush_inspector_edit(ctx)
+            .and_then(|()| doc.commit_canvas_drafts())
+        {
             self.toasts.error(error);
             return;
         }
-        doc.view.commit_edit(&mut doc.doc);
+        let viewport_frame = current_view_frame(&doc.view);
         self.pitch.editor = Some(PitchEditor {
             owner: PitchOwner {
                 document: doc.key.clone(),
@@ -91,6 +96,7 @@ impl ThinodaApp {
             },
             sheet: doc.doc.sheet().clone(),
             layout: doc.view.layout_for(&doc.doc),
+            viewport_frame,
             selected: 0,
             generation: 0,
             next_slide_id: doc
@@ -122,12 +128,32 @@ impl ThinodaApp {
             || doc.doc.sheet().root != editor.owner.root
             || doc.inspector_edit.is_some()
             || doc.view.editing_topic().is_some()
+            || doc.view.editing_board_object().is_some()
         {
             return Err(t("The document changed. Try again.").into());
         }
         doc.doc
             .replace_presentation(editor.sheet.presentation.clone())
             .map_err(|error| error.to_string())
+    }
+
+    /// An editor snapshot must not silently omit a newer, uncommitted source edit.
+    fn presentation_snapshot_has_pending_edit(&self, owner: &PitchOwner) -> bool {
+        self.docs
+            .iter()
+            .find(|doc| doc.key == owner.document)
+            .is_some_and(|doc| {
+                doc.inspector_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.sheet_index == owner.sheet)
+                    || doc
+                        .fim_edit
+                        .as_ref()
+                        .is_some_and(|edit| edit.sheet == owner.sheet)
+                    || (doc.doc.active_index() == owner.sheet
+                        && (doc.view.editing_topic().is_some()
+                            || doc.view.editing_board_object().is_some()))
+            })
     }
 
     fn presentation_source_frame(
@@ -157,8 +183,7 @@ impl ThinodaApp {
                 .iter()
                 .find(|zone| zone.id == id)
                 .map(|zone| zone.frame),
-            // A viewport slide is framed by hand; it has no source geometry.
-            PresentationSource::Viewport => None,
+            PresentationSource::Viewport => Some(current_view_frame(&doc.view)),
         }
         .ok_or_else(|| t("Not possible here").to_string())
     }
@@ -202,13 +227,18 @@ impl ThinodaApp {
                 Some(thinoda_canvas::ObjectSelection::Zone(id)) => {
                     Some(PresentationSource::Zone(id))
                 }
-                _ => doc.view.primary().map(PresentationSource::Branch),
+                _ => doc
+                    .view
+                    .primary()
+                    .filter(|id| doc.doc.sheet().is_presentation_branch(*id))
+                    .map(PresentationSource::Branch),
             });
         let mut apply = false;
         let mut powerpoint = false;
         let mut cancel = false;
         let mut generate = false;
         let mut add = false;
+        let mut capture_view = false;
         let mut export = None;
         let labels = crate::i18n::dialog_labels();
         let response = thinoda_ui::Dialog::new(egui::Id::unique("presentation-editor"), t("Edit Presentation"))
@@ -221,12 +251,24 @@ impl ThinodaApp {
             .min_size(egui::vec2(280.0, 240.0))
             .scroll(false)
             .show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).max(40.0)).show(ui, |ui| {
+            // Reserve the actual wrapped footer before sizing the scroll area.
+            // Using the screen height here can place actions outside the
+            // dialog's interactive clip, even when they appear on-screen.
+            let body_height = (ui.available_height()
+                - presentation_footer_height(ui)
+                - ui.spacing().item_spacing.y)
+                .max(0.0);
+            egui::ScrollArea::vertical()
+                .min_scrolled_height(0.0)
+                .max_height(body_height)
+                .show(ui, |ui| {
                 ui.label(&editor.sheet.title);
                 ui.label(t("Generate replaces the slide draft. Apply saves one undoable change; Cancel keeps the saved presentation."));
                 ui.horizontal_wrapped(|ui| {
                     generate = ui.button(t("Generate Slides")).clicked() && touch;
                     add = ui.add_enabled(source.is_some(), egui::Button::new(t("Add Selected Branch or Zone"))).clicked() && touch;
+                    ui.label(t("View"));
+                    capture_view = ui.button(t("Capture")).clicked() && touch;
                 });
                 editor.workspace(ui, touch && !ime && !editor.composing);
                 if let Some(error) = &editor.error {
@@ -288,8 +330,36 @@ impl ThinodaApp {
                     Err(error) => editor.error = Some(error),
                 }
             }
+            if capture_view {
+                match editor.add_slide(
+                    t("View"),
+                    PresentationSource::Viewport,
+                    editor.viewport_frame,
+                ) {
+                    Ok(_) => {
+                        editor.selected = editor.sheet.presentation.slides.len() - 1;
+                        editor.generation += 1;
+                        editor.error = None;
+                    }
+                    Err(error) => editor.error = Some(error),
+                }
+            }
             if let Some(images) = export {
-                self.begin_pitch_export(ctx, editor.sheet.clone(), options, images);
+                if self.presentation_snapshot_has_pending_edit(&editor.owner) {
+                    self.toasts.warning(t("The document changed. Try again."));
+                } else {
+                    self.request_pitch_export(
+                        ctx,
+                        (
+                            &editor.owner.document,
+                            editor.owner.sheet,
+                            editor.owner.revision,
+                        ),
+                        editor.sheet.clone(),
+                        options,
+                        images,
+                    );
+                }
             }
             if apply || powerpoint {
                 match self.apply_presentation_draft(&editor) {
@@ -327,7 +397,7 @@ impl ThinodaApp {
         }
     }
 
-    fn begin_pitch_export(
+    pub(crate) fn begin_pitch_export(
         &mut self,
         ctx: &Context,
         sheet: Sheet,
@@ -405,4 +475,78 @@ impl ThinodaApp {
                 .error(format!("{}: {error}", t("Export failed"))),
         };
     }
+}
+
+/// Height of the wrapped action row at the dialog's current width and font size.
+fn presentation_footer_height(ui: &egui::Ui) -> f32 {
+    let width = ui.available_width().max(1.0);
+    let spacing = ui.spacing().item_spacing;
+    let padding = ui.spacing().button_padding * 2.0;
+    let mut height = 0.0;
+    let mut row_width = 0.0;
+    let mut row_height = 0.0_f32;
+    for label in ["Apply", "Cancel", "Apply and export PowerPoint"] {
+        let text = egui::WidgetText::from(t(label)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Wrap),
+            (width - padding.x).max(1.0),
+            egui::TextStyle::Button,
+        );
+        let size = (text.size() + padding).max(ui.spacing().interact_size);
+        let next_width = row_width + if row_width > 0.0 { spacing.x } else { 0.0 } + size.x;
+        if row_width > 0.0 && next_width > width {
+            height += row_height + spacing.y;
+            row_width = size.x;
+            row_height = size.y;
+        } else {
+            row_width = next_width;
+            row_height = row_height.max(size.y);
+        }
+    }
+    height + row_height
+}
+
+/// Converts the last painted canvas rectangle through the same camera as the map.
+fn current_view_frame(view: &thinoda_canvas::MapView) -> Rect {
+    let canvas = view.canvas_rect();
+    let transform = thinoda_canvas::Xf {
+        origin: canvas.center() + view.offset,
+        zoom: view.zoom,
+    };
+    let min = transform.sheet(canvas.min);
+    Rect::from_min_size(min, transform.sheet(canvas.max) - min)
+}
+
+/// Keep frame clips even when their labels are hidden by a slide's visibility
+/// settings, and do not reroute a connector to a deliberately hidden topic.
+fn presentation_paint_sheet(
+    sheet: &Sheet,
+    resolved: &thinoda_core::ResolvedPresentationSlide,
+) -> Sheet {
+    let mut paint_sheet = sheet.clone();
+    let visible_zones: std::collections::HashSet<_> =
+        resolved.zones.iter().map(|zone| zone.id).collect();
+    paint_sheet.zones.retain_mut(|zone| {
+        if visible_zones.contains(&zone.id) {
+            true
+        } else if zone.clip {
+            zone.name.clear();
+            zone.color = Some(thinoda_core::Color::rgba(0, 0, 0, 0));
+            true
+        } else {
+            false
+        }
+    });
+    paint_sheet.canvas.objects.retain(|object| {
+        let thinoda_core::CanvasObjectKind::Connector(connector) = &object.kind else {
+            return true;
+        };
+        [connector.from, connector.to]
+            .into_iter()
+            .all(|endpoint| match endpoint {
+                thinoda_core::Endpoint::Topic(id) => resolved.scene_topic_visible(sheet, id),
+                _ => true,
+            })
+    });
+    paint_sheet
 }

@@ -1,5 +1,5 @@
 use super::*;
-use egui_kittest::Harness;
+use egui_kittest::{Harness, kittest::Queryable};
 
 fn scheduled_app() -> (ThinodaApp, TopicId) {
     let mut app = ThinodaApp::headless();
@@ -112,6 +112,59 @@ fn stale_or_invalid_chart_edits_cannot_change_the_map() {
             .is_err()
     );
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+}
+
+#[test]
+fn chart_edit_preserves_a_pending_board_label_and_rejects_stale_task_change() {
+    let (mut app, topic) = scheduled_app();
+    let doc = app.doc_mut().unwrap();
+    let id = doc
+        .doc
+        .add_canvas_object(thinoda_core::CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Vec2::new(120.0, 80.0),
+            ),
+        ))
+        .unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(
+            |ui, app: &mut ThinodaApp| {
+                let doc = app.doc_mut().unwrap();
+                thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+            },
+            app,
+        );
+    h.run_steps(3);
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label("Board object label")
+        .type_text("Pending label");
+    h.run_steps(2);
+    let doc = h.state().doc().unwrap();
+    assert!(doc.view.has_board_label_changes());
+    let key = doc.key.clone();
+    let revision = doc.doc.state_id();
+    let mut task = doc.doc.sheet().scheduling.tasks[&topic].clone();
+    task.progress_percent = 90;
+    let ctx = h.ctx.clone();
+    assert!(
+        h.state_mut()
+            .apply_gantt_task(&ctx, &key, 0, revision, topic, task)
+            .is_err()
+    );
+    let doc = h.state().doc().unwrap();
+    assert_eq!(
+        doc.doc.sheet().canvas.object(id).unwrap().label(),
+        "Pending label"
+    );
+    assert_eq!(
+        doc.doc.sheet().scheduling.tasks[&topic].progress_percent,
+        30
+    );
 }
 
 #[test]

@@ -273,6 +273,7 @@ impl Drawing {
 }
 
 pub(crate) fn editable_slide(
+    source: &Sheet,
     sheet: &Sheet,
     resolved: &ResolvedPresentationSlide,
     options: &ExportOptions,
@@ -296,15 +297,18 @@ pub(crate) fn editable_slide(
     let grey = Color::rgb(0x77, 0x77, 0x77);
     let page = Theme::for_settings(&sheet.theme).background(&sheet.theme, options.dark);
     let scene = thinoda_core::build_scene(sheet, layout);
+    let has_board_semantics = source.uses_board_semantics();
     for zone in &resolved.zones {
         let id = draw.id();
         let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
+        let fill = Color::rgba(color.r, color.g, color.b, 20);
+        let title_color = super::frame_title_color(color, fill, page, has_board_semantics);
         draw.shape(
             id,
             &zone.name,
             zone.frame,
             "roundRect",
-            Some(Color::rgba(color.r, color.g, color.b, 20)),
+            Some(fill),
             color,
             1.0,
             false,
@@ -316,7 +320,7 @@ pub(crate) fn editable_slide(
             ),
             &zone.name,
             12.0,
-            color,
+            title_color,
         );
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
@@ -457,7 +461,7 @@ pub(crate) fn editable_slide(
             .card
             .as_ref()
             .filter(|card| topic.parent.is_none() && card.kind != CardKind::Image);
-        let card_fill = card.and_then(super::board::card_fill);
+        let card_fill = card.and_then(|card| super::board::card_fill(card, options.dark));
         let mut stroke = s.border_color.unwrap_or(s.line_color);
         let stroke_width = if s.border_width > 0.0 {
             s.border_width
@@ -485,7 +489,10 @@ pub(crate) fn editable_slide(
                 _ => Color::TRANSPARENT,
             };
             if let Some(fill) = card_fill {
-                text_color = Color::highest_contrast_on(fill.over(page));
+                text_color = topic
+                    .style
+                    .text_color
+                    .unwrap_or_else(|| Color::highest_contrast_on(fill.over(page)));
             }
         }
         draw.shape(

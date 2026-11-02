@@ -4,7 +4,7 @@ use crate::{
     app::{Cmd, EXPORT_MENU, FocusField, ThinodaApp},
     i18n::t,
 };
-use thinoda_canvas::Action;
+use thinoda_canvas::{Action, BoardAction};
 use thinoda_core::{Vec2, templates};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -224,6 +224,22 @@ impl ThinodaApp {
                 MenuEntry::Separator,
                 item("Work Calendar", Cmd::WorkCalendar),
                 item("Zones", Cmd::Zones),
+                submenu(
+                    "Board",
+                    Self::board_commands()
+                        .into_iter()
+                        .map(|(command, label)| item(label, command))
+                        .chain(Self::arrangement_commands().into_iter().filter_map(
+                            |(action, label)| match action {
+                                Action::AlignFloating(arrangement) => Some(item(
+                                    label,
+                                    Cmd::BoardAction(BoardAction::Arrange(arrangement)),
+                                )),
+                                _ => None,
+                            },
+                        ))
+                        .collect(),
+                ),
             ]),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),

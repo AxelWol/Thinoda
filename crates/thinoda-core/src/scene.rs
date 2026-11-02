@@ -232,8 +232,8 @@ fn object_item(
     })
 }
 
-/// Clipping inherited from the frame containing a floating topic tree.
-pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
+/// Clipping owner inherited from the frame containing a floating topic tree.
+pub fn topic_clip_zone(sheet: &Sheet, topic: TopicId) -> Option<(ZoneId, Rect)> {
     if !sheet.zones.iter().any(|zone| zone.clip) {
         return None;
     }
@@ -248,7 +248,7 @@ pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
             .iter()
             .find(|zone| zone.clip && zone.roots.contains(&id))
         {
-            return Some(zone.frame);
+            return Some((zone.id, zone.frame));
         }
         current = sheet
             .topic(id)
@@ -256,6 +256,11 @@ pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
             .or_else(|| sheet.summary_for_topic(id).map(|summary| summary.parent));
     }
     None
+}
+
+/// Rectangular clipping inherited from the frame containing a floating topic tree.
+pub fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<Rect> {
+    topic_clip_zone(sheet, topic).map(|(_, rect)| rect)
 }
 
 /// Clipping from the first frame containing the stored object rectangle's center.

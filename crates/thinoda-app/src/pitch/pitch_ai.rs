@@ -107,6 +107,7 @@ impl ThinodaApp {
                     && doc.doc.sheet().root == editor.owner.root
                     && doc.inspector_edit.is_none()
                     && doc.view.editing_topic().is_none()
+                    && doc.view.editing_board_object().is_none()
             })
     }
 

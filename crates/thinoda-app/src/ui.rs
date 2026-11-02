@@ -22,6 +22,7 @@ use crate::{
         SidebarFamily, ThinodaApp,
     },
     i18n::{self, t},
+    quick_styles::{StyleColor, StyleTargets},
 };
 
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
@@ -163,6 +164,30 @@ fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
         current = response;
     }
     false
+}
+
+fn nearest_clear_toolbar_rect(
+    desired: egui::Rect,
+    available: egui::Rect,
+    obstacles: &[egui::Rect],
+) -> Option<egui::Rect> {
+    let candidates = std::iter::once(desired.top()).chain(
+        obstacles
+            .iter()
+            .flat_map(|rect| [rect.top() - desired.height() - 6.0, rect.bottom() + 6.0]),
+    );
+    candidates
+        .filter_map(|top| {
+            let rect = egui::Rect::from_min_size(egui::pos2(desired.left(), top), desired.size());
+            (available.contains_rect(rect)
+                && obstacles.iter().all(|other| !rect.intersects(*other)))
+            .then_some(rect)
+        })
+        .min_by(|a, b| {
+            (a.top() - desired.top())
+                .abs()
+                .total_cmp(&(b.top() - desired.top()).abs())
+        })
 }
 
 fn menu_button(
@@ -530,6 +555,20 @@ pub fn from_color(c: Color) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
+fn style_color_row(
+    ui: &mut Ui,
+    label: &'static str,
+    selected: Option<Color>,
+    show_none: bool,
+) -> Option<Color> {
+    widgets::property_row(ui, t(label), |ui| {
+        if show_none {
+            ui.label(t("None"));
+        }
+        widgets::color_swatches(ui, &SWATCHES, selected.map(from_color)).map(to_color)
+    })
+}
+
 pub(crate) fn structure_label(s: Structure) -> &'static str {
     match s {
         Structure::MapClockwise => "Mind Map",
@@ -569,6 +608,7 @@ impl ThinodaApp {
         if !self.launch_frame(ui) {
             return;
         }
+        self.poll_clipboard(ui.ctx());
         let ctx = ui.ctx().clone();
         let viewport = if self.drawing_document_window {
             self.current_viewport
@@ -579,6 +619,7 @@ impl ThinodaApp {
         let previous_viewport = self.current_viewport;
         self.current_viewport = viewport;
         self.activate_document_window(viewport);
+        let visible_doc_before_chrome = self.doc().map(|doc| doc.key.clone());
         self.guard_table_draft(&ctx);
         self.prepare_keymap(&ctx);
         // Menus can dismiss an open popup before its own input field is drawn.
@@ -772,6 +813,25 @@ impl ThinodaApp {
             self.search.open = false;
             self.apply_search_filter();
         }
+        if visible_doc_before_chrome.as_ref() != self.doc().map(|doc| &doc.key)
+            && let Some(previous) = visible_doc_before_chrome
+            && let Some(doc) = self.docs.iter_mut().find(|doc| doc.key == previous)
+        {
+            doc.suspend_ink(&ctx);
+        }
+        if show_doc
+            && (self.mode != CenterMode::Map || self.task_table_visible())
+            && let Some(doc) = self.doc_mut()
+        {
+            doc.suspend_ink(&ctx);
+        }
+        for &index in &visible_documents {
+            if index != self.active
+                && let Some(doc) = self.docs.get_mut(index)
+            {
+                doc.suspend_ink(&ctx);
+            }
+        }
 
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -813,7 +873,7 @@ impl ThinodaApp {
                 }
             });
 
-        if show_doc
+        let board_toolbar = if show_doc
             && self.mode == CenterMode::Map
             && !self.task_table_visible()
             && !self.zen
@@ -821,7 +881,10 @@ impl ThinodaApp {
             && !self.dialogs.settings
         {
             self.editing_toolbar(&ctx, center.response.rect);
-        }
+            self.board_toolbar(&ctx, center.response.rect)
+        } else {
+            None
+        };
 
         if show_doc
             && self.mode == CenterMode::Map
@@ -831,11 +894,14 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
         {
-            self.topic_toolbar(&ctx);
+            self.topic_toolbar(&ctx, board_toolbar);
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
             self.search_bar(&ctx);
+        }
+        if show_doc && !self.any_modal_open() && !self.dialogs.settings {
+            self.ink_recovery_ui(&ctx);
         }
         self.update_search();
 
@@ -859,6 +925,7 @@ impl ThinodaApp {
         self.theme_editor_dialog(&ctx);
         self.guide_dialog(&ctx);
         self.shortcuts_dialog(&ctx);
+        let board_modal_was_open = self.dialogs.board_export.is_some();
         if !self.map_shot.active() {
             self.dialogs_ui(&ctx);
             self.ai_prompt_dialog(&ctx);
@@ -868,11 +935,15 @@ impl ThinodaApp {
             self.saved_prompt_dialog(&ctx);
         }
         self.map_shot_dialog(&ctx);
-        self.print_dialog(&ctx);
+        if !board_modal_was_open && self.dialogs.board_export.is_none() {
+            self.print_dialog(&ctx);
+        }
         self.planning_dialog(&ctx);
         self.zones_window(&ctx);
         self.zone_dialog(&ctx);
-        self.presentation_dialog(&ctx);
+        if !board_modal_was_open && self.dialogs.board_export.is_none() {
+            self.presentation_dialog(&ctx);
+        }
         self.legal_dialog(&ctx);
         if !self.map_shot.requested && !self.map_shot.capturing {
             self.toasts.show_with_modal(&ctx, self.any_modal_open());
@@ -884,7 +955,12 @@ impl ThinodaApp {
         if viewport == egui::ViewportId::ROOT && !self.drawing_document_window {
             self.draw_document_windows(&ctx);
             self.gantt_window(&ctx);
+            #[cfg(not(target_arch = "wasm32"))]
             self.pitch_window(&ctx);
+            #[cfg(target_arch = "wasm32")]
+            if !board_modal_was_open && self.dialogs.board_export.is_none() {
+                self.pitch_window(&ctx);
+            }
         } else {
             let returned_home = viewport != egui::ViewportId::ROOT
                 && self.active == self.docs.len()
@@ -983,6 +1059,7 @@ impl ThinodaApp {
             || self.dialogs.note_export.is_some()
             || self.dialogs.powerpoint_export
             || self.dialogs.mindmanager_save.is_some()
+            || self.dialogs.board_export.is_some()
             || !self.dialogs.imports.is_empty()
     }
 
@@ -1002,6 +1079,7 @@ impl ThinodaApp {
             || self.dialogs.legal.open
             || self.dialogs.symbol_export.is_some()
             || self.dialogs.note_export.is_some()
+            || self.dialogs.board_export.is_some()
         {
             return true;
         }
@@ -1385,33 +1463,19 @@ impl ThinodaApp {
 
     fn map(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        if self.palette.open
-            || self.planning.editing()
-            || self.zones.editing()
-            || self.pitch.blocks_map()
-            || self.map_shot.active()
-            || self.printing.active()
-            || self.label_editor.is_some()
-            || self.quick_style_dialog.is_some()
-            || self.theme_dialog.is_some()
-            || self.ai.prompt_editor.is_some()
-            || self.ai.prompt.is_some()
-            || self.dialogs.guide.open
-            || self.dialogs.shortcuts
-            || self.dialogs.legal.open
-            || self.conversion_modal_open()
-            || self.dialogs.symbol_export.is_some()
+        if self.palette.open || self.any_modal_open() || self.dialogs.settings || self.dialogs.about
         {
             if let Some(d) = self.docs.get_mut(self.active) {
+                d.suspend_ink(&ctx);
                 MapCanvas::show_snapshot(ui, &d.doc, &mut d.view);
             }
             return;
         }
-        let paste = std::mem::take(&mut self.paste_requested);
         let shortcuts = self.active_canvas_bindings(ctx.os());
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
+        crate::board_ui::configure_board_labels(&ctx, &d.key, &mut d.view);
         d.view.add_control_labels.child = t("Add child topic").into();
         d.view.add_control_labels.sibling = t("Add sibling topic").into();
         d.view.image_resize_label = t("Resize image").into();
@@ -1424,18 +1488,21 @@ impl ThinodaApp {
         .map(|label| t(label).to_string());
         d.view.show_add_controls = self.settings.show_topic_add_buttons;
         d.view.show_alignment_guides = self.settings.show_alignment_guides;
-        if paste {
-            // Menu "Paste": the OS text arrives as an event this frame and is handled by the canvas.
-            ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
-        }
+        d.view.host_handles_clipboard = true;
         let out = MapCanvas::show_with_shortcuts(ui, &mut d.doc, &mut d.view, &shortcuts);
-        if let Some(text) = d.view.clipboard_out.take() {
-            ctx.copy_text(text);
+        d.record_ink_output(&out.ink_outcomes, &out.ink_errors);
+        for action in out.clipboard_requests.iter().cloned() {
+            self.clipboard_action(&ctx, action);
         }
         if let Some(link) = &out.open_link {
             self.open_link(link);
         }
-        if let Some(error) = &out.error {
+        if let Some(error) = &out.error
+            && !out
+                .ink_errors
+                .iter()
+                .any(|ink| ink.to_string() == error.to_string())
+        {
             self.toasts
                 .warning(format!("{}: {error}", t("Not possible here")));
         }
@@ -1456,13 +1523,14 @@ impl ThinodaApp {
         }
     }
 
-    fn topic_toolbar(&mut self, ctx: &Context) {
+    fn topic_toolbar(&mut self, ctx: &Context, board_toolbar: Option<egui::Rect>) {
         if !self.settings.show_topic_toolbar {
             return;
         }
         let Some(d) = self.doc() else { return };
         if d.view.selection.len() != 1
             || d.view.editing_topic().is_some()
+            || d.view.editing_board_object().is_some()
             || d.view.relationship_from.is_some()
         {
             return;
@@ -1475,7 +1543,7 @@ impl ThinodaApp {
         let has_link = topic.is_some_and(|topic| topic.hyperlink.is_some());
         let todo = topic.is_some_and(|topic| topic.todo.is_some());
         let below = rect.top() - 52.0 < canvas.top();
-        let position = egui::pos2(
+        let mut position = egui::pos2(
             rect.center().x,
             if below {
                 rect.bottom() + 12.0
@@ -1483,8 +1551,83 @@ impl ThinodaApp {
                 rect.top() - 12.0
             },
         );
+        let toolbar_id = egui::Id::unique("thinoda_topic_toolbar");
+        let mut available = canvas.shrink(4.0);
+        let previous_size = ctx
+            .memory(|memory| memory.area_rect(toolbar_id))
+            .map(|rect| rect.size());
+        if board_toolbar.is_some() && previous_size.is_none() {
+            ctx.request_repaint();
+        }
+        if let (Some(board), Some(size)) = (board_toolbar, previous_size) {
+            let left = (position.x - size.x * 0.5).clamp(
+                available.left(),
+                (available.right() - size.x).max(available.left()),
+            );
+            let top = (if below {
+                position.y
+            } else {
+                position.y - size.y
+            })
+            .clamp(
+                available.top(),
+                (available.bottom() - size.y).max(available.top()),
+            );
+            let mut desired = egui::Rect::from_min_size(egui::pos2(left, top), size);
+            if board.expand(6.0).intersects(desired) {
+                let left = board.right() + 8.0;
+                if available.right() - left < size.x {
+                    return;
+                }
+                available.min.x = left;
+                desired =
+                    desired.translate(vec2((available.left() - desired.left()).max(0.0), 0.0));
+            }
+            if d.doc.sheet().uses_board_semantics() {
+                let origin = canvas.center() + d.view.offset;
+                let zoom = d.view.zoom;
+                let titles: Vec<_> = d
+                    .doc
+                    .sheet()
+                    .zones
+                    .iter()
+                    .filter(|zone| !zone.name.is_empty())
+                    .filter_map(|zone| {
+                        let min = origin + vec2(zone.frame.min.x, zone.frame.min.y) * zoom;
+                        let max = origin + vec2(zone.frame.max().x, zone.frame.max().y) * zoom;
+                        let frame = egui::Rect::from_min_max(min, max);
+                        let title = egui::Rect::from_min_max(
+                            frame.min,
+                            egui::pos2(frame.right(), (frame.top() + 24.0).min(frame.bottom())),
+                        );
+                        (title.intersects(available)
+                            && title.left() < desired.right()
+                            && desired.left() < title.right())
+                        .then_some(title)
+                    })
+                    .collect();
+                if titles.iter().any(|title| title.intersects(desired)) {
+                    let mut obstacles = titles;
+                    obstacles.push(rect.expand(2.0));
+                    obstacles.push(board.expand(6.0));
+                    if let Some(editing) = ctx.memory(|memory| {
+                        memory.area_rect(egui::Id::unique("thinoda_editing_toolbar"))
+                    }) {
+                        obstacles.push(editing.expand(4.0));
+                    }
+                    let Some(clear) = nearest_clear_toolbar_rect(desired, available, &obstacles)
+                    else {
+                        return;
+                    };
+                    position = egui::pos2(
+                        clear.center().x,
+                        if below { clear.top() } else { clear.bottom() },
+                    );
+                }
+            }
+        }
         let mut cmd = None;
-        egui::Area::new(egui::Id::unique("thinoda_topic_toolbar"))
+        egui::Area::new(toolbar_id)
             .order(egui::Order::Middle)
             .pivot(if below {
                 egui::Align2::CENTER_TOP
@@ -1492,7 +1635,7 @@ impl ThinodaApp {
                 egui::Align2::CENTER_BOTTOM
             })
             .fixed_pos(position)
-            .constrain_to(canvas.shrink(4.0))
+            .constrain_to(available)
             .movable(false)
             .show(ctx, |ui| {
                 widgets::card(ui).show(ui, |ui| {
@@ -2179,7 +2322,7 @@ impl ThinodaApp {
                                 walk(s, *c, depth + 1, out);
                             }
                         }
-                        for top in sheet.top_level_ids() {
+                        for top in sheet.content_top_level_ids() {
                             walk(&sheet, top, 0, &mut rows);
                         }
                         for (id, depth) in rows {
@@ -2434,6 +2577,7 @@ impl ThinodaApp {
         if ui.is_enabled()
             && !self.search.open
             && d.view.editing_topic().is_none()
+            && d.view.editing_board_object().is_none()
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(&ctx)
         {
@@ -2459,11 +2603,7 @@ impl ThinodaApp {
                 && let Some(cur) = d.view.primary()
             {
                 let sheet = d.doc.sheet();
-                let order: Vec<TopicId> = sheet
-                    .all_ids_ordered()
-                    .into_iter()
-                    .filter(|x| sheet.is_visible(*x))
-                    .collect();
+                let order = sheet.visible_topic_ids();
                 if let Some(i) = order.iter().position(|x| *x == cur) {
                     let j = if direction == thinoda_core::navigation::Direction::Up {
                         i.saturating_sub(1)
@@ -2476,22 +2616,39 @@ impl ThinodaApp {
                     });
                 }
             }
+            if topic_focus && action.is_none() {
+                action = ctx.input(|input| {
+                    input.events.iter().find_map(|event| match event {
+                        egui::Event::Copy => Some(Action::Copy),
+                        egui::Event::Cut => Some(Action::Cut),
+                        egui::Event::Paste(text) => Some(Action::Paste(Some(text.clone()))),
+                        _ => None,
+                    })
+                });
+            }
         }
         if let Some(a) = action {
-            match thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a) {
-                Ok(_) if topic_focus && d.view.editing_topic().is_none() => {
+            if matches!(a, Action::Copy | Action::Cut | Action::Paste(_)) {
+                self.clipboard_action(&ctx, a);
+                if topic_focus {
+                    let primary = self.doc().and_then(|doc| doc.view.primary());
                     ui.data_mut(|data| {
-                        data.insert_temp(outline_id.with("focus_topic"), d.view.primary());
+                        data.insert_temp(outline_id.with("focus_topic"), primary);
                     });
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    log::debug!("outline action failed: {error}");
-                    self.toasts.warning(t("Not possible here"));
+            } else {
+                match thinoda_canvas::apply_action(&mut d.doc, &mut d.view, a) {
+                    Ok(_) if topic_focus && d.view.editing_topic().is_none() => {
+                        ui.data_mut(|data| {
+                            data.insert_temp(outline_id.with("focus_topic"), d.view.primary());
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::debug!("outline action failed: {error}");
+                        self.toasts.warning(t("Not possible here"));
+                    }
                 }
-            }
-            if let Some(text) = d.view.clipboard_out.take() {
-                ctx.copy_text(text);
             }
         }
         if let Some(record) = fim_record {
@@ -2571,36 +2728,32 @@ impl ThinodaApp {
                     if r.gained_focus() || (changed && i == active_index) {
                         r.scroll_to_me(None);
                     }
-                    if touch_allowed && r.clicked() && i != d.doc.active_index() {
-                        d.view.commit_edit(&mut d.doc);
-                        d.doc.set_active(i);
-                        d.view.reset();
-                    }
-                    if touch_allowed && r.double_clicked() {
-                        if i != d.doc.active_index() {
-                            d.view.commit_edit(&mut d.doc);
-                            d.doc.set_active(i);
-                            d.view.reset();
+                    if touch_allowed && (r.clicked() || r.double_clicked()) {
+                        match d.switch_sheet(i) {
+                            Ok(_) if r.double_clicked() => cmd = Some(Cmd::RenameSheet),
+                            Ok(_) => {}
+                            Err(error) => {
+                                self.toasts
+                                    .error(format!("{}: {error}", t("Not possible here")));
+                            }
                         }
-                        cmd = Some(Cmd::RenameSheet);
                     }
                     let mut popup = egui::Popup::context_menu(&r);
                     if !touch_allowed {
                         popup = popup.open_memory(None);
                     }
                     popup.show(|ui| {
+                        if touch_allowed && let Err(error) = d.switch_sheet(i) {
+                            self.toasts
+                                .error(format!("{}: {error}", t("Not possible here")));
+                            ui.close();
+                            return;
+                        }
                         scroll_menu(ui, |ui| {
-                            if touch_allowed && i != d.doc.active_index() {
-                                d.view.commit_edit(&mut d.doc);
-                                d.doc.set_active(i);
-                                d.view.reset();
-                            }
                             if ui.button(t("Rename Sheet")).clicked() && touch_allowed {
-                                d.doc.set_active(i);
                                 cmd = Some(Cmd::RenameSheet);
                             }
                             if ui.button(t("Duplicate Sheet")).clicked() && touch_allowed {
-                                d.doc.set_active(i);
                                 cmd = Some(Cmd::DuplicateSheet);
                             }
                             ui.separator();
@@ -2620,39 +2773,52 @@ impl ThinodaApp {
                                 .clicked()
                                 && touch_allowed
                             {
-                                d.view.commit_edit(&mut d.doc);
-                                if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
-                                    d.doc
-                                        .move_sheet(i, i - 1)
-                                        .map_err(|error| error.to_string())
-                                }) {
-                                    self.toasts
-                                        .error(format!("{}: {e}", t("Not possible here")));
+                                match d
+                                    .commit_canvas_drafts()
+                                    .and_then(|()| d.flush_inspector_edit(ui.ctx()))
+                                    .and_then(|()| {
+                                        d.doc
+                                            .move_sheet(i, i - 1)
+                                            .map_err(|error| error.to_string())
+                                    }) {
+                                    Ok(()) => {
+                                        d.view.reset();
+                                        ui.close();
+                                    }
+                                    Err(error) => {
+                                        self.toasts
+                                            .error(format!("{}: {error}", t("Not possible here")));
+                                    }
                                 }
-                                d.view.reset();
                             }
                             if ui
                                 .add_enabled(i + 1 < n, egui::Button::new(t("Move Right")))
                                 .clicked()
                                 && touch_allowed
                             {
-                                d.view.commit_edit(&mut d.doc);
-                                if let Err(e) = d.flush_inspector_edit(ui.ctx()).and_then(|()| {
-                                    d.doc
-                                        .move_sheet(i, i + 1)
-                                        .map_err(|error| error.to_string())
-                                }) {
-                                    self.toasts
-                                        .error(format!("{}: {e}", t("Not possible here")));
+                                match d
+                                    .commit_canvas_drafts()
+                                    .and_then(|()| d.flush_inspector_edit(ui.ctx()))
+                                    .and_then(|()| {
+                                        d.doc
+                                            .move_sheet(i, i + 1)
+                                            .map_err(|error| error.to_string())
+                                    }) {
+                                    Ok(()) => {
+                                        d.view.reset();
+                                        ui.close();
+                                    }
+                                    Err(error) => {
+                                        self.toasts
+                                            .error(format!("{}: {error}", t("Not possible here")));
+                                    }
                                 }
-                                d.view.reset();
                             }
                             if ui
                                 .add_enabled(n > 1, egui::Button::new(t("Delete Sheet")))
                                 .clicked()
                                 && touch_allowed
                             {
-                                d.doc.set_active(i);
                                 cmd = Some(Cmd::DeleteSheet);
                             }
                         });
@@ -2780,17 +2946,16 @@ impl ThinodaApp {
                     );
                     let statistics = status_menu_button(
                     ui,
-                    format!("{}: {}", t("Topics"), sheet.topics.len()),
+                    format!("{}: {}", t("Topics"), sheet.topic_count()),
                     |ui| {
                         ui.strong(t("Current sheet"));
                         for (label, value) in [
-                            ("Topics", sheet.topics.len()),
+                            ("Topics", sheet.topic_count()),
                             ("Words", thinoda_core::search::word_count(sheet)),
                             (
                                 "Characters",
                                 sheet
-                                    .topics
-                                    .values()
+                                    .content_topics()
                                     .map(|topic| topic.title.chars().count())
                                     .sum(),
                             ),
@@ -3071,7 +3236,62 @@ impl ThinodaApp {
         }
     }
 
+    fn board_style_controls(&mut self, ui: &mut Ui) {
+        let Some(doc) = self.doc() else { return };
+        let sheet = doc.doc.sheet();
+        let Some(targets) = StyleTargets::from_view(sheet, &doc.view) else {
+            return;
+        };
+        if !targets.styleable_board && targets.topics.is_empty() {
+            return;
+        }
+        let fill = targets.common_color(sheet, doc.view.dark, StyleColor::Fill);
+        let border = targets.common_color(sheet, doc.view.dark, StyleColor::Border);
+        let text = targets.common_color(sheet, doc.view.dark, StyleColor::Text);
+        let fill_enabled = targets.supports_color(sheet, StyleColor::Fill);
+        let border_enabled = targets.supports_color(sheet, StyleColor::Border);
+        let text_enabled = targets.supports_color(sheet, StyleColor::Text);
+        let single = targets.topics.len() + targets.shapes.len() == 1;
+        if targets.locked {
+            widgets::caption(ui, t("Locked"));
+        }
+        let mut change = None;
+        widgets::section(ui, t("Shape"), true, |ui| {
+            ui.add_enabled_ui(fill_enabled, |ui| {
+                if let Some(color) = style_color_row(ui, "Fill", fill, single && fill.is_none()) {
+                    change = Some((StyleColor::Fill, color));
+                }
+            });
+            ui.add_enabled_ui(border_enabled, |ui| {
+                if let Some(color) =
+                    style_color_row(ui, "Border", border, single && border.is_none())
+                {
+                    change = Some((StyleColor::Border, color));
+                }
+            });
+        });
+        widgets::section(ui, t("Text"), true, |ui| {
+            ui.add_enabled_ui(text_enabled, |ui| {
+                if let Some(color) = style_color_row(ui, "Text Color", text, false) {
+                    change = Some((StyleColor::Text, color));
+                }
+            });
+        });
+        if let Some((field, color)) = change {
+            self.apply_style_color(field, color);
+        }
+    }
+
     fn style_tab(&mut self, ui: &mut Ui) {
+        if self
+            .doc()
+            .is_some_and(|doc| !doc.view.board_selection.is_empty())
+        {
+            self.quick_styles(ui);
+            self.board_style_controls(ui);
+            self.board_object_properties(ui);
+            return;
+        }
         if let Some(thinoda_canvas::ObjectSelection::Zone(id)) =
             self.doc().and_then(|doc| doc.view.selected_object)
         {
@@ -3089,13 +3309,26 @@ impl ThinodaApp {
             self.relationship_style(ui, id, touch_allowed);
             return;
         }
+        self.board_card_properties(ui);
         self.quick_styles(ui);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
-        let sel = d.view.selection.clone();
+        let targets = StyleTargets::from_view(d.doc.sheet(), &d.view);
+        let sel = targets
+            .as_ref()
+            .filter(|targets| targets.board)
+            .map_or_else(
+                || d.view.selection.clone(),
+                |targets| targets.topics.clone(),
+            );
+        if targets.as_ref().is_some_and(|targets| targets.locked) {
+            widgets::caption(ui, t("Locked"));
+        }
         let Some(&primary) = sel.last() else {
-            widgets::caption(ui, t("Select a topic to edit its style."));
+            if !targets.as_ref().is_some_and(|targets| targets.locked) {
+                widgets::caption(ui, t("Select a topic to edit its style."));
+            }
             return;
         };
         let sheet = d.doc.sheet();
@@ -3121,6 +3354,33 @@ impl ThinodaApp {
         let numbering = sheet.sibling_numbering(primary);
         let mut numbering_change: Option<Option<Numbering>> = None;
         let mut change: Option<StyleChange> = None;
+        let mut color_change = None;
+        let mut reset_style = false;
+        let has_cards = sel
+            .iter()
+            .any(|id| sheet.topic(*id).is_some_and(|topic| topic.card.is_some()));
+        let fill = targets
+            .as_ref()
+            .filter(|targets| targets.board)
+            .map_or(resolved.fill, |targets| {
+                targets.common_color(sheet, d.view.dark, StyleColor::Fill)
+            });
+        let text_color = targets
+            .as_ref()
+            .filter(|targets| targets.board)
+            .map_or(Some(resolved.text_color), |targets| {
+                targets.common_color(sheet, d.view.dark, StyleColor::Text)
+            });
+        let border_color = targets
+            .as_ref()
+            .filter(|targets| targets.board)
+            .map_or(resolved.border_color, |targets| {
+                targets.common_color(sheet, d.view.dark, StyleColor::Border)
+            });
+        let border_enabled = targets
+            .as_ref()
+            .filter(|targets| targets.board)
+            .is_none_or(|targets| targets.supports_color(sheet, StyleColor::Border));
         ui.label(RichText::new(&topic.title).strong());
         if sel.len() > 1 {
             widgets::caption(
@@ -3193,58 +3453,49 @@ impl ThinodaApp {
 
         widgets::section(ui, t("Shape"), true, |ui| {
             let mut shape = resolved.shape;
-            widgets::property_field(ui, t("Shape"), |ui| {
-                egui::ComboBox::from_id_salt("topic_shape")
-                    .selected_text(t(shape.label()))
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for s in TopicShape::ALL {
-                            ui.selectable_value(&mut shape, s, t(s.label()));
-                        }
-                    })
-                    .response
+            ui.add_enabled_ui(!has_cards, |ui| {
+                widgets::property_field(ui, t("Shape"), |ui| {
+                    egui::ComboBox::from_id_salt("topic_shape")
+                        .selected_text(t(shape.label()))
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            for s in TopicShape::ALL {
+                                ui.selectable_value(&mut shape, s, t(s.label()));
+                            }
+                        })
+                        .response
+                });
             });
             if touch_allowed && shape != resolved.shape {
                 change = Some(("Shape", Box::new(move |st| st.shape = Some(shape))));
             }
-            widgets::property_row(ui, t("Fill"), |ui| {
-                if resolved.fill.is_none() {
-                    ui.label(t("None"));
-                }
-                if let Some(c) =
-                    widgets::color_swatches(ui, &SWATCHES, resolved.fill.map(from_color))
+            if let Some(color) =
+                style_color_row(ui, "Fill", fill, !has_cards && resolved.fill.is_none())
+            {
+                color_change = Some((StyleColor::Fill, color));
+            }
+            ui.add_enabled_ui(border_enabled, |ui| {
+                if let Some(color) =
+                    style_color_row(ui, "Border", border_color, border_color.is_none())
                 {
-                    change = Some(("Fill", Box::new(move |st| st.fill = Some(to_color(c)))));
+                    color_change = Some((StyleColor::Border, color));
                 }
             });
-            widgets::property_row(ui, t("Border"), |ui| {
-                if resolved.border_color.is_none() {
-                    ui.label(t("None"));
-                }
-                if let Some(c) =
-                    widgets::color_swatches(ui, &SWATCHES, resolved.border_color.map(from_color))
-                {
-                    change = Some((
-                        "Border",
-                        Box::new(move |st| {
-                            st.border_color = Some(to_color(c));
-                            if st.border_width.is_none_or(|w| w <= 0.0) {
-                                st.border_width = Some(2.0);
-                            }
-                        }),
-                    ));
-                }
-            });
-            let mut bw = resolved.border_width;
-            widgets::property_field(ui, t("Width"), |ui| {
-                let (r, commit) =
-                    touch_numeric_value(ui, &mut bw, "border-width", numeric_owner, |ui, value| {
-                        ui.add(egui::Slider::new(value, 0.0..=8.0).step_by(0.5))
-                    });
-                if commit && (r.changed() || bw != resolved.border_width) {
-                    change = Some(("Border", Box::new(move |st| st.border_width = Some(bw))));
-                }
-                r
+            ui.add_enabled_ui(!has_cards, |ui| {
+                let mut bw = resolved.border_width;
+                widgets::property_field(ui, t("Width"), |ui| {
+                    let (r, commit) = touch_numeric_value(
+                        ui,
+                        &mut bw,
+                        "border-width",
+                        numeric_owner,
+                        |ui, value| ui.add(egui::Slider::new(value, 0.0..=8.0).step_by(0.5)),
+                    );
+                    if commit && (r.changed() || bw != resolved.border_width) {
+                        change = Some(("Border", Box::new(move |st| st.border_width = Some(bw))));
+                    }
+                    r
+                });
             });
         });
 
@@ -3304,16 +3555,9 @@ impl ThinodaApp {
                     }
                 }
             });
-            widgets::property_row(ui, t("Text Color"), |ui| {
-                if let Some(c) =
-                    widgets::color_swatches(ui, &SWATCHES, Some(from_color(resolved.text_color)))
-                {
-                    change = Some((
-                        "Text Color",
-                        Box::new(move |st| st.text_color = Some(to_color(c))),
-                    ));
-                }
-            });
+            if let Some(color) = style_color_row(ui, "Text Color", text_color, false) {
+                color_change = Some((StyleColor::Text, color));
+            }
         });
 
         widgets::section(ui, t("Numbering"), true, |ui| {
@@ -3417,8 +3661,11 @@ impl ThinodaApp {
             });
         });
 
-        if !topic.style.is_default() && ui.button(t("Reset Style")).clicked() && touch_allowed {
-            change = Some(("Reset Style", Box::new(|st| *st = TopicStyle::default())));
+        if (!topic.style.is_default() || topic.card.is_some_and(|card| card.color.is_some()))
+            && ui.button(t("Reset Style")).clicked()
+            && touch_allowed
+        {
+            reset_style = true;
         }
 
         let mut marker_action = None;
@@ -3448,6 +3695,12 @@ impl ThinodaApp {
                 self.toasts
                     .warning(format!("{}: {error}", t("Not possible here")));
             }
+        }
+        if let Some((field, color)) = color_change {
+            self.apply_style_color(field, color);
+        }
+        if reset_style {
+            self.reset_selection_style();
         }
         if let Some(command) = marker_action {
             self.exec(ui.ctx(), command);
@@ -4104,7 +4357,7 @@ impl ThinodaApp {
                                     close = true;
                                 }
                             });
-                            let n = self.search.hits.len();
+                            let n = self.search.result_count();
                             if !self.search.query.is_empty() || self.search.facets.active() {
                             widgets::caption(
                                 ui,
@@ -4116,10 +4369,10 @@ impl ThinodaApp {
                             );
                             }
                             if self.search.all_sheets
-                                && let Some(hit) = self.search.hits.get(self.search.current)
+                                && let Some(index) = self.search.current_sheet()
                                 && let Some(sheet) = self
                                     .doc()
-                                    .and_then(|d| d.doc.workbook().sheets.get(hit.sheet))
+                                    .and_then(|d| d.doc.workbook().sheets.get(index))
                             {
                                 let title = format!("{}: {}", t("Sheet"), sheet.title);
                                 ui.add(egui::Label::new(&title).truncate())
@@ -4163,7 +4416,10 @@ impl ThinodaApp {
                             if self.search.show_replace {
                                 ui.separator();
                                 ui.label(t("Replace with"));
-                                widgets::caption(ui, t("Replaces topic titles only."));
+                                widgets::caption(
+                                    ui,
+                                    t("Replaces topic titles, board labels and descriptions."),
+                                );
                                 ui.add(
                                     TextEdit::singleline(&mut self.search.replace)
                                         .hint_text(t("Replace"))
@@ -4195,6 +4451,9 @@ impl ThinodaApp {
     // ----- dialogs ------------------------------------------------------------------------------
 
     fn dialogs_ui(&mut self, ctx: &Context) {
+        if self.board_preflight_ui(ctx) {
+            return;
+        }
         if self.fim_dialogs(ctx) {
             return;
         }
@@ -4280,15 +4539,18 @@ impl ThinodaApp {
                 &i18n::dialog_labels(),
             ) {
                 let (key, path, sheet_only) = self.dialogs.mindmanager_save.take().unwrap();
+                let deliver = std::mem::take(&mut self.dialogs.mindmanager_save_deliver);
                 let index = self.docs.iter().position(|doc| doc.key == key);
                 let saved = if choice == 0 {
                     if let Some(index) = index {
                         self.active = index;
-                        if sheet_only {
-                            self.save_sheet_to_confirmed(&path)
-                        } else {
-                            self.save_active_to(&path, self.settings.backup_on_save)
-                        }
+                        self.request_save_preflight(
+                            &path,
+                            self.settings.backup_on_save,
+                            deliver,
+                            sheet_only,
+                            true,
+                        )
                     } else {
                         self.toasts.warning(t("Not possible here"));
                         false
@@ -4347,6 +4609,8 @@ impl ThinodaApp {
             .modal(true)
             .close_on_backdrop(true)
             .default_width(620.0)
+            .default_height(540.0)
+            .fit_content_height(true)
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new(t(
@@ -4401,7 +4665,8 @@ impl ThinodaApp {
                     );
                 }
                 ui.add_space(8.0);
-                ui.with_layout(
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), ui.spacing().interact_size.y.max(28.0)),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
                         let export_response = ui
@@ -4445,7 +4710,16 @@ impl ThinodaApp {
                 sheet.topic_count(),
                 t("showing the first 8 topics")
             ));
-            let mut preview = vec![(sheet.root, 0usize)];
+            let mut preview: Vec<_> = if sheet.is_anchor(sheet.root) {
+                sheet
+                    .content_top_level_ids()
+                    .into_iter()
+                    .rev()
+                    .map(|id| (id, 0usize))
+                    .collect()
+            } else {
+                vec![(sheet.root, 0usize)]
+            };
             for _ in 0..8 {
                 let Some((id, depth)) = preview.pop() else {
                     break;
@@ -4586,11 +4860,17 @@ impl ThinodaApp {
                         self.begin_save_all(ctx, Some(intent));
                     }
                     (intent @ (CloseIntent::Window | CloseIntent::Quit), 1) => {
-                        for d in &mut self.docs {
-                            d.doc.mark_saved();
+                        if let Some(index) =
+                            self.docs.iter().position(|doc| doc.has_unresolved_ink())
+                        {
+                            self.focus_pending_ink(ctx, index);
+                        } else {
+                            for d in &mut self.docs {
+                                d.doc.mark_saved();
+                            }
+                            self.approved_close = Some(intent);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                        self.approved_close = Some(intent);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     _ => {}
                 }

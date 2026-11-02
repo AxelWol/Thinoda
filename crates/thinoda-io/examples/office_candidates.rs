@@ -130,6 +130,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
     }
+    let mut board = Workbook::new(Sheet::new("Viewport board", ""));
+    let sheet = board.active_mut();
+    sheet.hide_central_topic()?;
+    let frame = thinoda_core::Rect::from_min_size(Vec2::new(0.0, 0.0), Vec2::new(800.0, 600.0));
+    let mut shape = thinoda_core::board::CanvasObject::shape(
+        thinoda_core::board::ShapeKind::Diamond,
+        thinoda_core::Rect::from_min_size(Vec2::new(250.0, 200.0), Vec2::new(160.0, 120.0)),
+    );
+    if let thinoda_core::board::CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+        *label = "Viewport shape".into();
+    }
+    shape.style.fill = Some(Color::rgb(190, 220, 245));
+    sheet.add_canvas_object(shape)?;
+    let card = sheet.add_floating("Viewport sticky", Vec2::new(80.0, 80.0));
+    sheet.topic_mut(card).unwrap().card = Some(thinoda_core::board::Card::new(
+        thinoda_core::board::CardKind::Sticky,
+        Vec2::new(140.0, 100.0),
+    ));
+    let text = sheet.add_floating("Viewport text", Vec2::new(500.0, 100.0));
+    sheet.topic_mut(text).unwrap().card = Some(thinoda_core::board::Card::new(
+        thinoda_core::board::CardKind::Text,
+        Vec2::new(140.0, 80.0),
+    ));
+    let frame_id = sheet.create_board_frame("Viewport frame", frame)?;
+    sheet
+        .zones
+        .iter_mut()
+        .find(|zone| zone.id == frame_id)
+        .unwrap()
+        .clip = true;
+    sheet.add_presentation_slide(
+        "Viewport board",
+        thinoda_core::PresentationSource::Viewport,
+        frame,
+    )?;
+    export_file(
+        &board,
+        &output.join("viewport-board.pptx"),
+        Format::PowerPoint,
+        &Default::default(),
+    )?;
     println!(
         "Generated Office validation fixtures in {}",
         output.display()

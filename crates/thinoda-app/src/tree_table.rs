@@ -88,7 +88,7 @@ fn rows(
     sort: TreeTableSort,
 ) -> Vec<(TopicId, usize)> {
     let mut stack: Vec<_> = sheet
-        .top_level_ids()
+        .content_top_level_ids()
         .into_iter()
         .rev()
         .map(|id| (id, 0))

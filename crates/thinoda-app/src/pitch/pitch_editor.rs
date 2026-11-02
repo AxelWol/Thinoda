@@ -28,6 +28,14 @@ impl PitchEditor {
             .last_mut()
             .expect("slide was added")
             .id = id;
+        if source == PresentationSource::Viewport {
+            self.sheet
+                .presentation
+                .slides
+                .last_mut()
+                .unwrap()
+                .auto_frame = false;
+        }
         Ok(id)
     }
 
@@ -237,7 +245,11 @@ impl PitchEditor {
                 .selected_text(source_title)
                 .show_ui(ui, |ui| {
                     for topic in &self.layout.order {
-                        if let Some(topic_data) = self.sheet.topic(*topic) {
+                        if let Some(topic_data) = self
+                            .sheet
+                            .topic(*topic)
+                            .filter(|_| self.sheet.is_presentation_branch(*topic))
+                        {
                             ui.selectable_value(
                                 &mut source,
                                 PresentationSource::Branch(*topic),
@@ -252,13 +264,17 @@ impl PitchEditor {
                             &zone.name,
                         );
                     }
+                    ui.selectable_value(&mut source, PresentationSource::Viewport, t("View"));
                 })
                 .response
                 .labelled_by(label.id);
             if source != current_source && touch {
                 let slide = &mut self.sheet.presentation.slides[self.selected];
                 slide.source = source;
-                slide.auto_frame = true;
+                slide.auto_frame = source != PresentationSource::Viewport;
+                if source == PresentationSource::Viewport {
+                    slide.frame = self.viewport_frame;
+                }
             }
         });
         let slide = &mut self.sheet.presentation.slides[self.selected];
@@ -280,26 +296,28 @@ impl PitchEditor {
                 slide.scope = scope;
             }
         });
-        let auto_frame = slide.auto_frame;
-        ui.horizontal_wrapped(|ui| {
-            let mut auto = auto_frame;
-            if ui.checkbox(&mut auto, t("Auto-fit content")).changed() && touch {
-                // Preserve the currently visible composition when switching to manual.
-                if !auto
-                    && let Ok(resolved) = thinoda_core::resolve_presentation_slide(
-                        &self.sheet,
-                        &self.sheet.presentation.slides[self.selected],
-                        &self.layout,
-                    )
-                {
-                    self.sheet.presentation.slides[self.selected].frame = resolved.frame;
+        if current_source != PresentationSource::Viewport {
+            let auto_frame = slide.auto_frame;
+            ui.horizontal_wrapped(|ui| {
+                let mut auto = auto_frame;
+                if ui.checkbox(&mut auto, t("Auto-fit content")).changed() && touch {
+                    // Preserve the currently visible composition when switching to manual.
+                    if !auto
+                        && let Ok(resolved) = thinoda_core::resolve_presentation_slide(
+                            &self.sheet,
+                            &self.sheet.presentation.slides[self.selected],
+                            &self.layout,
+                        )
+                    {
+                        self.sheet.presentation.slides[self.selected].frame = resolved.frame;
+                    }
+                    self.sheet.presentation.slides[self.selected].auto_frame = auto;
                 }
-                self.sheet.presentation.slides[self.selected].auto_frame = auto;
-            }
-            if ui.button(t("Fit Slide to Content")).clicked() && touch {
-                self.sheet.presentation.slides[self.selected].auto_frame = true;
-            }
-        });
+                if ui.button(t("Fit Slide to Content")).clicked() && touch {
+                    self.sheet.presentation.slides[self.selected].auto_frame = true;
+                }
+            });
+        }
         let slide = &mut self.sheet.presentation.slides[self.selected];
         let owner = Some(egui::Id::unique((
             &self.owner.document,
@@ -308,36 +326,39 @@ impl PitchEditor {
             self.owner.viewport,
             slide.id,
         )));
-        ui.add_enabled_ui(!slide.auto_frame, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (salt, text, value, minimum) in [
-                    ("slide-x", "X", &mut slide.frame.min.x, -f32::MAX),
-                    ("slide-y", "Y", &mut slide.frame.min.y, -f32::MAX),
-                    ("slide-width", "Width", &mut slide.frame.size.x, 1.0),
-                    ("slide-height", "Height", &mut slide.frame.size.y, 1.0),
-                ] {
-                    let label = ui.label(t(text));
-                    let mut staged = *value;
-                    let (_, commit) = crate::ui::touch_numeric_value(
-                        ui,
-                        &mut staged,
-                        salt,
-                        owner,
-                        |ui, value| {
-                            ui.add(
-                                egui::DragValue::new(value)
-                                    .max_decimals(1)
-                                    .range(minimum..=f32::MAX),
-                            )
-                            .labelled_by(label.id)
-                        },
-                    );
-                    if commit && touch {
-                        *value = staged;
+        ui.add_enabled_ui(
+            !slide.auto_frame || current_source == PresentationSource::Viewport,
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (salt, text, value, minimum) in [
+                        ("slide-x", "X", &mut slide.frame.min.x, -f32::MAX),
+                        ("slide-y", "Y", &mut slide.frame.min.y, -f32::MAX),
+                        ("slide-width", "Width", &mut slide.frame.size.x, 1.0),
+                        ("slide-height", "Height", &mut slide.frame.size.y, 1.0),
+                    ] {
+                        let label = ui.label(t(text));
+                        let mut staged = *value;
+                        let (_, commit) = crate::ui::touch_numeric_value(
+                            ui,
+                            &mut staged,
+                            salt,
+                            owner,
+                            |ui, value| {
+                                ui.add(
+                                    egui::DragValue::new(value)
+                                        .max_decimals(1)
+                                        .range(minimum..=f32::MAX),
+                                )
+                                .labelled_by(label.id)
+                            },
+                        );
+                        if commit && touch {
+                            *value = staged;
+                        }
                     }
-                }
-            });
-        });
+                });
+            },
+        );
         ui.horizontal_wrapped(|ui| {
             let mut limited = slide.max_depth.is_some();
             if ui.checkbox(&mut limited, t("Limit topic depth")).changed() && touch {

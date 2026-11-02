@@ -92,8 +92,7 @@ impl SlidePreview {
             zoom,
         };
         let crop = xf.rect(resolved.frame).intersect(inner);
-        let mut paint_sheet = sheet.clone();
-        paint_sheet.zones = resolved.zones;
+        let paint_sheet = presentation_paint_sheet(sheet, &resolved);
         thinoda_canvas::paint_map(
             &painter.with_clip_rect(crop),
             &paint_sheet,
@@ -106,32 +105,46 @@ impl SlidePreview {
         );
         let hit = response
             .hover_pos()
-            .filter(|pos| crop.contains(*pos))
-            .and_then(|pos| {
-                resolved.layout.order.iter().rev().copied().find(|id| {
-                    resolved
-                        .layout
-                        .rect(*id)
-                        .is_some_and(|rect| xf.rect(rect).contains(pos))
-                })
-            });
-        if let Some(topic) = hit.filter(|_| interactive) {
-            if let Some(rect) = resolved.layout.rect(topic) {
-                painter.rect_stroke(
-                    xf.rect(rect).intersect(crop),
-                    4.0,
-                    egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
-                    egui::StrokeKind::Inside,
-                );
-            }
+            .filter(|pos| interactive && crop.contains(*pos))
+            .and_then(|pos| preview_topic_at(&paint_sheet, &resolved.layout, xf.sheet(pos)));
+        if let Some((_, bounds)) = hit {
+            painter.rect_stroke(
+                xf.rect(bounds).intersect(crop),
+                4.0,
+                egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
+                egui::StrokeKind::Inside,
+            );
             response
                 .clone()
                 .on_hover_text(t("Click a topic to hide its subtree."));
         }
         if response.clicked() && widgets::touch_activation_allowed(ui.ctx()) {
-            if interactive { hit } else { Some(sheet.root) }
+            if interactive {
+                hit.map(|(topic, _)| topic)
+            } else {
+                Some(sheet.root)
+            }
         } else {
             None
         }
     }
+}
+
+/// Hit only topics, but use their actual rotation and any scene frame clip.
+fn preview_topic_at(
+    sheet: &Sheet,
+    layout: &thinoda_core::Layout,
+    point: thinoda_core::Vec2,
+) -> Option<(TopicId, Rect)> {
+    let mut scene = thinoda_core::build_scene(sheet, layout);
+    scene
+        .items
+        .retain(|item| matches!(item.id, thinoda_core::SceneId::Topic(_)));
+    let thinoda_core::SceneHit::Topic(topic) = scene.hit_test_tolerance(point, 0.0)? else {
+        return None;
+    };
+    let bounds = scene
+        .item(thinoda_core::SceneId::Topic(topic))?
+        .visible_bounds()?;
+    Some((topic, bounds))
 }

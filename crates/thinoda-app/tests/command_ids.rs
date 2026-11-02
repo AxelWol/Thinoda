@@ -98,6 +98,14 @@ fn stable_namespace_is_pinned_independently_of_palette_order() {
         appearance.dark appearance.light appearance.system
         arrange.bottom arrange.distribute-horizontal arrange.distribute-vertical
         arrange.horizontal-center arrange.left arrange.right arrange.top arrange.vertical-center
+        board.above-map board.align-bottom board.align-horizontal-center board.align-left board.align-right
+        board.align-top board.align-vertical-center board.back board.backward board.below-map board.distribute-horizontal
+        board.distribute-vertical board.forward board.front board.grid.dots board.grid.lines board.grid.none
+        board.group board.hide-central-topic board.image board.lock board.minimap board.rotate-clockwise
+        board.rotate-counterclockwise board.show-central-topic board.snap board.tool.connector board.tool.frame
+        board.tool.hand board.tool.highlighter board.tool.lasso board.tool.object-eraser board.tool.pen
+        board.tool.pixel-eraser board.tool.select board.tool.shape board.tool.sticky board.tool.text
+        board.ungroup board.unlock board.zoom-selection
         edit.command-palette edit.copy edit.cut edit.find edit.find-replace edit.paste edit.presentation edit.redo edit.settings edit.undo edit.zone
         export.csv export.excel export.fim-xdf2 export.fim-xdf3 export.freemind export.jpeg export.markdown export.mindmanager
         export.opml export.pdf export.png export.powerpoint export.svg export.text export.textbundle export.thinoda export.word export.xmind

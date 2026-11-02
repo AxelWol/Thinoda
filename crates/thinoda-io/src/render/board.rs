@@ -2,6 +2,7 @@
 //! editable PowerPoint renderers. Objects are reduced to absolute, already rotated
 //! primitives so both back ends draw identical geometry from the shared core scene.
 
+use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, Sheet, Vec2,
     board::{
@@ -10,8 +11,6 @@ use thinoda_core::{
     scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem},
 };
 
-/// Default sticky note fill when the card has no color.
-pub(crate) const STICKY_FILL: Color = Color::rgb(0xFF, 0xE6, 0x80);
 /// Multiplier applied to highlighter ink.
 pub(crate) const HIGHLIGHTER_ALPHA: f32 = 0.35;
 pub(crate) const LABEL_SIZE: f32 = 14.0;
@@ -94,20 +93,21 @@ pub(crate) fn band_items<'a>(
     scene: &'a Scene,
     band: SceneBand,
 ) -> impl Iterator<Item = (&'a SceneItem, &'a CanvasObject)> + 'a {
+    let objects: HashMap<_, _> = sheet
+        .canvas
+        .objects
+        .iter()
+        .map(|object| (object.id, object))
+        .collect();
     scene
         .items
         .iter()
         .filter(move |item| item.band == band)
-        .filter_map(|item| {
+        .filter_map(move |item| {
             let SceneId::Object(id) = item.id else {
                 return None;
             };
-            sheet
-                .canvas
-                .objects
-                .iter()
-                .find(|object| object.id == id)
-                .map(|object| (item, object))
+            objects.get(&id).copied().map(|object| (item, object))
         })
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn extra_bounds(sheet: &Sheet, scene: &Scene) -> Option<Rect> {
             SceneId::Topic(id) => sheet.topic(id).is_some_and(|t| t.card.is_some()),
             SceneId::Zone(_) => false,
         })
-        .map(|item| item.bounds)
+        .filter_map(SceneItem::visible_bounds)
         .reduce(|a, b| a.union(&b))
 }
 
@@ -173,7 +173,13 @@ pub(crate) fn object_prims(
                     rotation: object.rotation,
                     lines: wrap(label, rect.size.x, LABEL_SIZE),
                     size: LABEL_SIZE,
-                    color: faded(Color::highest_contrast_on(under), opacity),
+                    color: faded(
+                        object
+                            .style
+                            .text_color
+                            .unwrap_or_else(|| Color::highest_contrast_on(under)),
+                        opacity,
+                    ),
                     backdrop: None,
                 });
             }
@@ -294,11 +300,20 @@ pub(crate) fn midpoint(points: &[Vec2]) -> Vec2 {
     points.last().copied().unwrap_or(Vec2::ZERO)
 }
 
-/// Fill of a card box: sticky notes are yellow by default; `None` keeps the topic fill.
-pub(crate) fn card_fill(card: &Card) -> Option<Color> {
+/// Match the canvas defaults for sticky and text cards in each color mode.
+pub(crate) fn card_fill(card: &Card, dark: bool) -> Option<Color> {
     match card.kind {
-        CardKind::Sticky => Some(card.color.unwrap_or(STICKY_FILL)),
-        CardKind::Text | CardKind::Image => card.color,
+        CardKind::Sticky => Some(card.color.unwrap_or(if dark {
+            Color::rgb(0x9B, 0x7B, 0x24)
+        } else {
+            Color::rgb(0xFF, 0xF2, 0x9E)
+        })),
+        CardKind::Text => Some(card.color.unwrap_or(if dark {
+            Color::rgb(0x3E, 0x48, 0x58)
+        } else {
+            Color::rgb(0xF5, 0xF7, 0xFA)
+        })),
+        CardKind::Image => card.color,
     }
 }
 

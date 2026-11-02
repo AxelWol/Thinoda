@@ -188,15 +188,15 @@ pub fn command_button(
     )
 }
 
-/// A command button constrained to a specific available width.
-pub fn command_button_with_width(
+/// A command button constrained to a specific available size.
+pub fn command_button_with_size(
     ui: &mut Ui,
     icon: impl Into<CommandIcon>,
     label: &str,
     detail: Detail,
     selected: bool,
     tooltip: Option<&str>,
-    width: f32,
+    size: Vec2,
 ) -> (Response, bool) {
     button(
         ui,
@@ -206,7 +206,7 @@ pub fn command_button_with_width(
         selected,
         tooltip,
         ButtonLayout {
-            width: Some(width),
+            size: Some(size),
             ..Default::default()
         },
     )
@@ -236,7 +236,7 @@ pub fn menu_button(
 #[derive(Default)]
 struct ButtonLayout {
     dropdown: bool,
-    width: Option<f32>,
+    size: Option<Vec2>,
 }
 
 fn button(
@@ -258,8 +258,8 @@ fn button(
         Detail::CompactLabeled => vec2(ui.available_width().clamp(104.0, 240.0), 34.0),
         Detail::CompactIcon => vec2(34.0, 34.0),
     };
-    if let Some(width) = layout.width {
-        size.x = width.max(0.0);
+    if let Some(constrained) = layout.size {
+        size = constrained.max(Vec2::ZERO);
     }
     let dropdown = layout.dropdown;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -536,6 +536,36 @@ mod tests {
         for size in &sizes[1..] {
             assert!((*size - sizes[0]).abs() < 0.01, "{sizes:?}");
         }
+    }
+
+    #[test]
+    fn constrained_command_button_keeps_its_size_and_activation() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(180.0, 100.0))
+            .build_ui_state(
+                |ui, activated: &mut bool| {
+                    if command_button_with_size(
+                        ui,
+                        icons::OPEN,
+                        "Open",
+                        Detail::CompactLabeled,
+                        false,
+                        None,
+                        vec2(80.0, 22.0),
+                    )
+                    .1
+                    {
+                        *activated = true;
+                    }
+                },
+                false,
+            );
+        harness.run_steps(3);
+        let button = harness.get_by_role_and_label(Role::Button, "Open");
+        assert_eq!(button.rect().size(), vec2(80.0, 22.0));
+        button.click();
+        harness.run_steps(2);
+        assert!(*harness.state());
     }
 
     #[test]

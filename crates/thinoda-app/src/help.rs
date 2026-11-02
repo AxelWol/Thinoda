@@ -14,12 +14,21 @@ struct Page {
     paragraphs: &'static [&'static str],
 }
 
+pub(crate) const BOARD_INK_GUIDE: &str = "Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.";
+pub(crate) const BOARD_TOOLS_GUIDE: &str = "Object eraser removes whole ink strokes; Pixel eraser removes parts of strokes. Lasso selects topics and objects. Image card opens a local PNG/JPEG picker.";
+pub(crate) const BOARD_DUPLICATION_GUIDE: &str = "On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.";
+
 const PAGES: &[Page] = &[
     Page {
         title: "Quick Start",
         paragraphs: &[
             "Create a blank map with Ctrl+N, or open Home, select a template and choose Create. Cancel returns without creating a document.",
             "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
+            "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
+            BOARD_INK_GUIDE,
+            BOARD_TOOLS_GUIDE,
+            BOARD_DUPLICATION_GUIDE,
+            "Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.",
             "Select a topic. Tab adds a child; Enter adds a sibling. Space or F2 edits its title. Escape cancels an edit or clears selection.",
             "Use the Style sidebar for topic appearance and the Map sidebar for layout and theme. Select a topic to see its current properties.",
             "Data is between Style and Map. It groups images, attachments, hyperlinks, labels, notes, notes equations and Task Planning in Map and Outliner.",
@@ -62,6 +71,7 @@ const PAGES: &[Page] = &[
         paragraphs: &[
             "Topic styles override map and theme defaults. Reset Style removes explicit topic overrides. Copy/Paste Style transfers appearance, not text or hierarchy.",
             "Quick Styles offers original presets and named local styles captured from resolved appearance. Applying a style to several selected topics is one undo step.",
+            "Quick Styles and Shape/Text colors work on cards and shapes. For shapes, presets change fill, border and label colors without changing geometry. Locked or unsupported items are skipped; the custom color picker remains available. Each change is one undo step.",
             "Map > Custom Themes opens a staged editor. Apply Theme embeds the theme in the sheet; Save to Library stores a separate local copy without changing the map.",
             "Custom themes provide palette, light/dark backgrounds, fonts and role defaults. Explicit map and topic overrides take precedence. Removing a library theme does not change existing maps.",
             "Select a built-in theme to remove custom defaults. Optional recent-theme reuse affects new blank maps, not named templates. Missing local fonts keep their names and show a warning.",
@@ -90,6 +100,8 @@ const PAGES: &[Page] = &[
         title: "Import and Export",
         paragraphs: &[
             "The Open and Export menus list supported formats. Native and unchanged Thinoda-exported XMind files preserve Thinoda-specific data. Other applications may not understand those extensions.",
+            "Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.",
+            "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
             "Public XMind export materializes supported topic styles. Editable custom-theme registries, native curve interchange and exact XMind visual parity are not verified.",
             "Map Shot (F7) captures the visible GPU-rendered canvas, with a crop preview and PNG or clipboard output. Export renders the complete sheet, including offscreen topics.",
             "Print (Ctrl+P) previews the current sheet on one page, including offscreen topics. Set paper, orientation, margins, source resolution and colors, then open the native OS printer dialog or save a PDF. Choose a printer and its driver settings there. The whole preview page fits proportionally inside the selected printable area; OS paper changes scale it without reflow. Submitted means accepted by the OS, not physically printed. Native dialogs use the OS language and appearance.",
@@ -107,6 +119,13 @@ const PAGES: &[Page] = &[
         ],
     },
 ];
+
+#[cfg(test)]
+pub(crate) fn translation_keys() -> impl Iterator<Item = &'static str> {
+    PAGES
+        .iter()
+        .flat_map(|page| std::iter::once(page.title).chain(page.paragraphs.iter().copied()))
+}
 
 impl ThinodaApp {
     pub(crate) fn open_guide(&mut self, quick_start: bool) {

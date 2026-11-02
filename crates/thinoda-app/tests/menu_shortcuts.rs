@@ -271,6 +271,15 @@ fn clipboard_reference_metadata_keeps_event_driven_copy_cut_paste_and_undo() {
     let root = app.doc().unwrap().doc.sheet().root;
     let child = app.doc().unwrap().doc.sheet().children(root)[0];
     app.doc_mut().unwrap().view.select_only(child);
+    let copied = app
+        .doc()
+        .unwrap()
+        .doc
+        .sheet()
+        .topic(child)
+        .unwrap()
+        .title
+        .clone();
     let before = app.doc().unwrap().doc.workbook().clone();
     let mut output = ctx.run_ui(Default::default(), |_| {});
     output.textures_delta.clear();
@@ -294,27 +303,15 @@ fn clipboard_reference_metadata_keeps_event_driven_copy_cut_paste_and_undo() {
         );
     }
     app.exec(&ctx, Cmd::Canvas(Action::Copy));
-    let copied = ctx
-        .output(|output| {
-            output.commands.iter().find_map(|command| match command {
-                egui::OutputCommand::CopyText(text) => Some(text.clone()),
-                _ => None,
-            })
-        })
-        .unwrap();
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     app.exec(&ctx, Cmd::Canvas(Action::Cut));
     assert!(!app.doc().unwrap().doc.sheet().contains(child));
     app.exec(&ctx, Cmd::Canvas(Action::Undo));
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     app.doc_mut().unwrap().view.select_only(root);
-    let mut output = ctx.run_ui(Default::default(), |ui| app.exec(ui.ctx(), Cmd::MenuPaste));
-    assert!(
-        output.viewport_output[&egui::ViewportId::ROOT]
-            .commands
-            .contains(&egui::ViewportCommand::RequestPaste)
-    );
-    output.textures_delta.clear();
+    ctx.run_ui(Default::default(), |ui| app.exec(ui.ctx(), Cmd::MenuPaste));
+    assert_ne!(app.doc().unwrap().doc.workbook(), &before);
+    app.exec(&ctx, Cmd::Canvas(Action::Undo));
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     let input = egui::RawInput {
         events: vec![Event::Paste(copied)],

@@ -343,16 +343,29 @@ those system-owned controls. WinGet publishing remains paused.
   Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
   Kanban Board, Business Model Canvas, Flowchart (shapes and connectors) and SWOT Board.
   Frames, sticky/text cards and shapes are created in the current UI language.
+- Freeform boards combine independent topic trees with cards, shapes, connectors,
+  frames and ink. Use **Board > Hide central topic** to turn a map into a
+  rootless board, or **Show central topic** to bring it back; existing content
+  is retained. The floating toolbox starts as icons with tooltips; use its top
+  arrow to expand action labels or collapse them again. Pen and highlighter
+  expose color, width, opacity and stroke type controls, while erasers expose
+  their radius. Board commands also provide grid, snapping, grouping, locking,
+  arrangement and a minimap. Native files use version 6 when board features are
+  present; other formats may show an itemized warning before exporting content
+  they cannot retain. Frame clipping is visual, not secure redaction.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.
 - Style > Quick Styles previews four original presets and named styles saved from
-  a topic's resolved appearance. Saved colors and typography stay fixed across
-  themes; content and hierarchy are never copied. Apply to multiple selected
-  topics in one undo step, or use the command palette. Save from Style, Edit or
-  the topic context menu; Remove requires confirmation. The local profile holds
-  up to 32 unique names (1-80 characters); duplicate names are rejected, not
-  silently replaced. Reset Style restores automatic theme inheritance.
+  one topic or card's resolved appearance. Saved colors and typography stay fixed
+  across themes; content and hierarchy are never copied. Apply to selected
+  topics, cards and shapes in one undo step, or use the command palette. The
+  existing Shape/Text color controls also work with supported board objects;
+  locked and unsupported items are skipped, and the custom fill-color picker
+  remains available. Save from Style, Edit or the topic context menu; Remove
+  requires confirmation. The local profile holds up to 32 unique names (1-80
+  characters); duplicate names are rejected, not silently replaced. Reset Style
+  restores automatic theme inheritance.
 - Map > Custom Themes offers a staged editor with actual-renderer previews, a
   built-in base, 1-16 palette colors, light/dark backgrounds, fonts and defaults
   for central, main, sub, floating and Summary topics. Apply Theme changes the

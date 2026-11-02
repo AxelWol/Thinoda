@@ -694,3 +694,28 @@ fn rigid_rotation_rejects_out_of_range_members_without_partial_mutation() {
         assert_eq!(sheet, before, "{kind} must not leave partial edits");
     }
 }
+
+#[test]
+fn tiny_negative_rotation_is_not_discarded_before_its_inverse() {
+    let mut sheet = Sheet::new("Board", "Root");
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_center_size(Vec2::new(500_000.0, 200_000.0), Vec2::new(80.0, 40.0)),
+    );
+    object.rotation = 30.0;
+    let object = sheet.add_canvas_object(object).unwrap();
+    let before = sheet.canvas.object(object).unwrap().clone();
+    let members = [BoardMember::Object(object)];
+
+    sheet
+        .rotate_board_members(&members, Vec2::ZERO, -0.000_01)
+        .unwrap();
+    assert_ne!(sheet.canvas.object(object).unwrap().rect, before.rect);
+    sheet
+        .rotate_board_members(&members, Vec2::ZERO, 0.000_01)
+        .unwrap();
+    let after = sheet.canvas.object(object).unwrap();
+    assert!((after.rect.min.x - before.rect.min.x).abs() <= 0.125);
+    assert!((after.rect.min.y - before.rect.min.y).abs() <= 0.125);
+    assert_eq!(after.rotation, before.rotation);
+}

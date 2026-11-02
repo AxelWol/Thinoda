@@ -75,8 +75,9 @@ fn date_pickers_follow_work_calendar_in_every_language_and_appearance() {
             }
             h.get_by_label("2026-10-31").click();
             h.run_steps(2);
-            h.get_by_role_and_label(egui::Role::TextInput, t("Due date"))
-                .type_text("2026-10-31");
+            let due_date = h.get_by_role_and_label(egui::Role::TextInput, t("Due date"));
+            due_date.click();
+            due_date.type_text("2026-10-31");
             h.run_steps(2);
             h.query_all_by_role_and_label(egui::Role::Button, t("Open calendar"))
                 .nth(1)

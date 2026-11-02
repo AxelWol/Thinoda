@@ -3,8 +3,8 @@
 //! without a versioned, explicit mapping.
 
 use crate::app::{Cmd, FocusField, ThinodaApp};
-use thinoda_canvas::{Action, FloatingArrangement};
-use thinoda_core::{Vec2, navigation::Direction};
+use thinoda_canvas::{Action, BoardAction, BoardTool, FloatingArrangement};
+use thinoda_core::{Band, GridKind, ShapeKind, SheetRootMode, Vec2, ZOrder, navigation::Direction};
 use thinoda_io::Format;
 use thinoda_platform::settings::ThemeMode;
 
@@ -82,6 +82,59 @@ impl Cmd {
             Self::EditField(FocusField::Hyperlink) => "insert.hyperlink",
             Self::EditField(FocusField::Notes) => "insert.notes",
             Self::AiChat => "ai.chat",
+            Self::BoardTool(tool) => match tool {
+                BoardTool::Select => "board.tool.select",
+                BoardTool::Hand => "board.tool.hand",
+                BoardTool::Sticky => "board.tool.sticky",
+                BoardTool::Text => "board.tool.text",
+                BoardTool::Shape(ShapeKind::Rectangle) => "board.tool.shape",
+                BoardTool::Shape(_) => return None,
+                BoardTool::Connector => "board.tool.connector",
+                BoardTool::Frame => "board.tool.frame",
+                BoardTool::Pen => "board.tool.pen",
+                BoardTool::Highlighter => "board.tool.highlighter",
+                BoardTool::ObjectEraser => "board.tool.object-eraser",
+                BoardTool::PixelEraser => "board.tool.pixel-eraser",
+                BoardTool::Lasso => "board.tool.lasso",
+            },
+            Self::BoardAction(action) => match action {
+                BoardAction::Group => "board.group",
+                BoardAction::Ungroup => "board.ungroup",
+                BoardAction::Lock(true) => "board.lock",
+                BoardAction::Lock(false) => "board.unlock",
+                BoardAction::ZOrder(ZOrder::Forward) => "board.forward",
+                BoardAction::ZOrder(ZOrder::Backward) => "board.backward",
+                BoardAction::ZOrder(ZOrder::Front) => "board.front",
+                BoardAction::ZOrder(ZOrder::Back) => "board.back",
+                BoardAction::SetBand(Band::Above) => "board.above-map",
+                BoardAction::SetBand(Band::Below) => "board.below-map",
+                BoardAction::Arrange(arrangement) => match arrangement {
+                    FloatingArrangement::Left => "board.align-left",
+                    FloatingArrangement::HorizontalCenter => "board.align-horizontal-center",
+                    FloatingArrangement::Right => "board.align-right",
+                    FloatingArrangement::Top => "board.align-top",
+                    FloatingArrangement::VerticalCenter => "board.align-vertical-center",
+                    FloatingArrangement::Bottom => "board.align-bottom",
+                    FloatingArrangement::DistributeHorizontal => "board.distribute-horizontal",
+                    FloatingArrangement::DistributeVertical => "board.distribute-vertical",
+                },
+                BoardAction::Rotate(degrees) if *degrees == 15.0 => "board.rotate-clockwise",
+                BoardAction::Rotate(degrees) if *degrees == -15.0 => {
+                    "board.rotate-counterclockwise"
+                }
+                BoardAction::Move(_) | BoardAction::Resize(_) | BoardAction::Rotate(_) => {
+                    return None;
+                }
+            },
+            Self::BoardRoot(SheetRootMode::Central) => "board.show-central-topic",
+            Self::BoardRoot(SheetRootMode::Hidden) => "board.hide-central-topic",
+            Self::BoardGrid(GridKind::None) => "board.grid.none",
+            Self::BoardGrid(GridKind::Dots) => "board.grid.dots",
+            Self::BoardGrid(GridKind::Lines) => "board.grid.lines",
+            Self::BoardSnap => "board.snap",
+            Self::BoardMinimap => "board.minimap",
+            Self::BoardImage => "board.image",
+            Self::BoardZoomSelection => "board.zoom-selection",
             Self::Ai(action) => match action {
                 crate::ai::AiCommand::Brainstorm => "ai.brainstorm",
                 crate::ai::AiCommand::Breakdown => "ai.breakdown",

@@ -95,3 +95,43 @@ fn missing_preview_source_is_explicit_and_never_falls_back_to_full_map() {
     h.get_by_label("Slide source is unavailable.");
     assert!(h.state().hit.is_none());
 }
+
+#[test]
+fn preview_hit_tests_rotated_cards_and_respects_frame_clipping() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let mut card = thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(160.0, 80.0));
+    card.rotation = 30.0;
+    let topic = sheet
+        .add_card("Rotated", Vec2::new(200.0, 200.0), card)
+        .unwrap();
+    let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+    let rect = layout.rect(topic).unwrap();
+    let rotated = thinoda_core::board::rotate_around(
+        Vec2::new(rect.max().x - 3.0, rect.min.y + 3.0),
+        rect.center(),
+        30.0,
+    );
+    assert!(!rect.contains(rotated));
+    assert_eq!(
+        preview_topic_at(&sheet, &layout, rotated).map(|(id, _)| id),
+        Some(topic)
+    );
+
+    sheet
+        .create_zone(
+            "Clip",
+            vec![topic],
+            Rect::from_min_size(
+                Vec2::new(rect.min.x - 10.0, rect.min.y - 60.0),
+                Vec2::new(100.0, 200.0),
+            ),
+        )
+        .unwrap();
+    sheet.zones[0].clip = true;
+    assert!(preview_topic_at(&sheet, &layout, rotated).is_none());
+    assert_eq!(
+        preview_topic_at(&sheet, &layout, rect.center()).map(|(id, _)| id),
+        Some(topic)
+    );
+}

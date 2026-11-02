@@ -1,0 +1,317 @@
+use super::*;
+use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+fn shape() -> CanvasObject {
+    CanvasObject::shape(
+        ShapeKind::Rectangle,
+        Rect::from_min_size(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+    )
+}
+
+#[test]
+fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
+    let losses = vec![
+        ExportLoss::ShapesDropped(2),
+        ExportLoss::InkDropped(3),
+        ExportLoss::ConnectorsDropped(4),
+        ExportLoss::CardsConvertedToTopics(5),
+        ExportLoss::RotationDropped(6),
+        ExportLoss::ViewportSlidesDropped(7),
+        ExportLoss::ZonesDropped(8),
+        ExportLoss::ZoneClipDropped(9),
+        ExportLoss::FloatingTopicsDropped(10),
+        ExportLoss::SummaryTreesDropped(11),
+        ExportLoss::RelationshipsDropped(12),
+        ExportLoss::BoundariesDropped(13),
+        ExportLoss::CardsDropped(14),
+        ExportLoss::BoardSettingsDropped,
+        ExportLoss::SynthesizedRoot {
+            sheet: 2,
+            title: "title {sheet}\nnext".into(),
+        },
+    ];
+    let report = LossReport {
+        losses: losses.clone(),
+        ..Default::default()
+    };
+    let lines = loss_lines(&report, Format::Markdown);
+    assert_eq!(lines.len(), losses.len());
+    for (line, count) in lines.iter().take(13).zip(2..=14) {
+        assert!(line.starts_with(&format!("{count} — ")), "{line}");
+    }
+    for (count, label) in [
+        (11, "Summary topic trees omitted"),
+        (12, "Relationships omitted"),
+        (13, "Boundaries omitted"),
+        (14, "Cards omitted"),
+    ] {
+        assert!(lines.contains(&format!("{count} — {}", t(label))));
+    }
+    let root = lines.last().unwrap();
+    assert!(root.contains("3"));
+    assert!(root.contains("title {sheet}\\nnext"), "{root}");
+    let fim = loss_lines(&report, Format::FimXdf3);
+    assert!(fim[3].contains(t("Card presentation omitted")));
+    assert!(
+        fim.last().unwrap().contains(
+            t("Sheet {sheet}: hidden root mode omitted.")
+                .replace("{sheet}", "3")
+                .as_str()
+        )
+    );
+    assert!(!fim.last().unwrap().contains("title {sheet}"));
+}
+
+#[test]
+fn each_omitted_annotation_independently_requires_consent() {
+    for label in [
+        "Summary topic trees omitted",
+        "Relationships omitted",
+        "Boundaries omitted",
+    ] {
+        let mut sheet = Sheet::new("Map", "Root");
+        let first = sheet.add_child(sheet.root, None, "First");
+        let second = sheet.add_child(sheet.root, None, "Second");
+        match label {
+            "Summary topic trees omitted" => {
+                let summary = sheet.add_summary(&[first, second], "Summary").unwrap();
+                sheet.add_child(summary, None, "Summary detail");
+            }
+            "Relationships omitted" => {
+                sheet.add_relationship(first, second).unwrap();
+            }
+            "Boundaries omitted" => {
+                sheet.add_boundary(&[first, second]).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let book = Workbook::new(sheet);
+        book.validate().unwrap();
+        let options = ExportOptions::default();
+        let message = require_board_consent(&book, Format::Markdown, &options, false).unwrap_err();
+        assert!(message.contains(&format!("1 — {}", t(label))), "{message}");
+        assert!(require_board_consent(&book, Format::Markdown, &options, true).is_ok());
+        assert!(require_board_consent(&book, Format::XMind, &options, false).is_ok());
+        assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    }
+}
+
+#[test]
+fn powerpoint_reports_flattened_viewport_slides_even_without_other_losses() {
+    let mut sheet = Sheet::new("Presentation", "Root");
+    let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+    sheet
+        .add_presentation_slide("View 1", PresentationSource::Viewport, frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("View 2", PresentationSource::Viewport, frame)
+        .unwrap();
+    let workbook = Workbook::new(sheet);
+    let report = export_loss_report(&workbook, Format::PowerPoint, &ExportOptions::default());
+    assert!(report.losses.is_empty());
+    assert_eq!(report.flattened_viewport_slides, 2);
+    assert_eq!(
+        loss_lines(&report, Format::PowerPoint),
+        vec![format!(
+            "2 — {}",
+            t("Viewport slides flattened to non-editable images")
+        )]
+    );
+    assert!(
+        export_loss_report(&workbook, Format::Pdf, &ExportOptions::default()).is_empty(),
+        "PDF has no editable-slide promise"
+    );
+}
+
+#[test]
+fn clipping_warns_for_powerpoint_but_not_other_visual_formats() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let frame = sheet
+        .create_board_frame(
+            "Frame",
+            Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+        )
+        .unwrap();
+    sheet
+        .zones
+        .iter_mut()
+        .find(|zone| zone.id == frame)
+        .unwrap()
+        .clip = true;
+    let mut workbook = Workbook::new(sheet);
+
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert!(
+            export_loss_report(&workbook, format, &ExportOptions::default()).is_empty(),
+            "clipping is preserved in {format:?}"
+        );
+    }
+    let report = export_loss_report(&workbook, Format::PowerPoint, &ExportOptions::default());
+    assert_eq!(report.losses, vec![ExportLoss::ZoneClipDropped(1)]);
+    assert_eq!(
+        loss_lines(&report, Format::PowerPoint),
+        vec![format!("1 — {}", t("Zone clipping not fully applied"))]
+    );
+
+    let frame = Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0));
+    workbook
+        .active_mut()
+        .add_presentation_slide("View", PresentationSource::Viewport, frame)
+        .unwrap();
+    let report = export_loss_report(&workbook, Format::PowerPoint, &ExportOptions::default());
+    assert!(report.losses.is_empty(), "viewport clipping is preserved");
+    assert_eq!(report.flattened_viewport_slides, 1);
+
+    let root = workbook.active().root;
+    let branch = workbook.active_mut().add_child(root, None, "Branch");
+    workbook
+        .active_mut()
+        .add_presentation_slide("Branch", PresentationSource::Branch(branch), frame)
+        .unwrap();
+    let report = export_loss_report(&workbook, Format::PowerPoint, &ExportOptions::default());
+    assert_eq!(report.losses, vec![ExportLoss::ZoneClipDropped(1)]);
+    assert_eq!(report.flattened_viewport_slides, 1);
+}
+
+#[test]
+fn floating_loss_counts_root_trees_not_their_descendants() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let floating = sheet.add_floating("Floating root", Vec2::new(10.0, 20.0));
+    let child = sheet.add_child(floating, None, "Child");
+    sheet.add_child(child, None, "Grandchild");
+    let report = export_loss_report(
+        &Workbook::new(sheet),
+        Format::Markdown,
+        &ExportOptions::default(),
+    );
+    assert!(
+        report
+            .losses
+            .contains(&ExportLoss::FloatingTopicsDropped(1))
+    );
+    assert!(
+        loss_lines(&report, Format::Markdown)
+            .contains(&format!("1 — {}", t("Floating root trees omitted")))
+    );
+}
+
+#[test]
+fn presentation_preflight_analyzes_the_draft_and_rejects_stale_owner() {
+    for (images, format) in [(false, Format::Pdf), (true, Format::Png)] {
+        let mut app = ThinodaApp::headless();
+        let ctx = Context::default();
+        let doc = app.doc().unwrap();
+        let key = doc.key.clone();
+        let sheet_index = doc.doc.active_index();
+        let revision = doc.doc.state_id();
+        let mut draft = doc.doc.sheet().clone();
+        draft.board.snap = !draft.board.snap;
+        assert!(
+            thinoda_io::export_losses(doc.doc.workbook(), format, &ExportOptions::default())
+                .is_empty()
+        );
+        app.request_pitch_export(
+            &ctx,
+            (&key, sheet_index, revision),
+            draft,
+            ExportOptions {
+                sheet: Some(999),
+                ..Default::default()
+            },
+            images,
+        );
+        let pending = app.dialogs.board_export.as_ref().unwrap();
+        assert_eq!(pending.format, format);
+        assert_eq!(
+            pending.losses.losses,
+            vec![ExportLoss::BoardSettingsDropped]
+        );
+        assert!(matches!(pending.action, Action::Presentation { .. }));
+        app.doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Change", |sheet| sheet.set_title(sheet.root, "Changed"))
+            .unwrap();
+        assert!(app.board_preflight_ui(&ctx));
+        assert!(app.dialogs.board_export.is_none());
+    }
+}
+
+#[test]
+fn presentation_player_can_export_a_non_active_sheet_and_close_cancels() {
+    let mut workbook = Workbook::default();
+    let mut player_sheet = Sheet::new("Presentation", "Root");
+    player_sheet.board.snap = !player_sheet.board.snap;
+    workbook.sheets.push(player_sheet.clone());
+    let mut app = ThinodaApp::headless();
+    app.docs.clear();
+    app.new_doc(workbook);
+    let doc = app.doc().unwrap();
+    let key = doc.key.clone();
+    let revision = doc.doc.state_id();
+    assert_eq!(doc.doc.active_index(), 0);
+
+    let ctx = Context::default();
+    app.request_pitch_export(
+        &ctx,
+        (&key, 1, revision),
+        player_sheet,
+        ExportOptions::default(),
+        false,
+    );
+    let pending = app.dialogs.board_export.as_ref().unwrap();
+    assert!(app.board_preflight_valid(pending, true));
+    app.cancel_board_preflight_viewport(&ctx);
+    assert!(app.dialogs.board_export.is_none());
+}
+
+#[test]
+fn print_preflight_uses_the_rendered_snapshot_and_cancel_starts_no_output() {
+    let mut app = ThinodaApp::headless();
+    let ctx = Context::default();
+    let mut snapshot = Workbook::default();
+    snapshot.active_mut().board.snap = !snapshot.active().board.snap;
+    let document = Arc::new(PrintDocument {
+        settings: Default::default(),
+        image: image::RgbImage::new(1, 1),
+    });
+    app.request_print_output(&ctx, &snapshot, 0, document, "Board".into(), true);
+    let pending = app.dialogs.board_export.take().unwrap();
+    assert_eq!(
+        pending.losses.losses,
+        vec![ExportLoss::BoardSettingsDropped]
+    );
+    assert!(matches!(pending.action, Action::Print { .. }));
+    app.finish_board_preflight(&ctx, pending, false);
+    assert!(!app.printing.active());
+}
+
+#[test]
+fn xmind_autosave_never_writes_board_loss_in_inline_or_background_mode() {
+    use crate::file_ops::FileWorkMode;
+
+    for mode in [FileWorkMode::Inline, FileWorkMode::Background] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("auto.xmind");
+        let mut app = ThinodaApp::headless();
+        app.set_file_work_mode(mode);
+        app.settings.autosave = true;
+        app.settings.autosave_interval_secs = 5;
+        app.doc_mut().unwrap().save_to(&path, false).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Shape", |sheet| {
+                sheet.add_canvas_object(shape()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        doc.tick();
+        doc.backdate_change(6);
+        app.housekeeping(&Context::default());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(app.doc().unwrap().is_dirty());
+        assert!(!app.file_ops.saving());
+        assert!(app.toasts.texts().next().is_some());
+    }
+}

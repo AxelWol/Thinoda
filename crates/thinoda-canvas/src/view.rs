@@ -7,26 +7,140 @@ use egui::{
     Response, Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2 as EVec2, pos2, vec2,
 };
 use thinoda_core::{
-    ApproxMeasure, BoundaryId, Document, Layout, RelationshipId, Sheet, SummaryId, TopicId,
-    clipboard::ClipboardPayload,
+    ApproxMeasure, BoundaryId, CanvasObjectId, Document, Layout, RelationshipId, ShapeKind, Sheet,
+    SummaryId, TopicId,
+    clipboard::{BoardClipboardPayload, ClipboardPayload},
     geometry::Vec2,
     layout::{Dir, Icon, cubic as bezier},
     layout_sheet,
     navigation::Direction,
-    scene::{SceneHit, build_scene},
+    scene::{Scene, SceneHit, SceneId, build_scene, topic_clip_rect},
 };
 
 use crate::{
     actions::{Action, apply_action},
+    ink_controller::{InkController, InkControllerError, InkMode, InkOutcome, InkSettings},
+    ink_input::{InkSample, StrokeFinishOptions},
     measure::EguiMeasure,
+    minimap::{
+        DEFAULT_MINIMAP_SIZE, MinimapCamera, MinimapLabels, MinimapScene, MinimapState,
+        bottom_right_rect, show_minimap,
+    },
     render::{PaintOptions, Xf, brace_path, color32, paint_map, sheet_background},
 };
 
 pub const MIN_ZOOM: f32 = 0.1;
 pub const MAX_ZOOM: f32 = 5.0;
 
+// The compact board toolbox occupies roughly 62 screen points from the left
+// edge (outer offset, buttons, and frame). Keep this in sync with the host's
+// default collapsed toolbox; the regular fit padding is applied separately.
+const BOARD_TOOLBOX_SAFE_INSET: f32 = 64.0;
+
 #[path = "image_resize.rs"]
 mod image_resize;
+
+#[path = "board_input.rs"]
+pub(crate) mod board_input;
+
+#[path = "ink_view.rs"]
+mod ink_view;
+
+#[cfg(test)]
+#[path = "ink_view_tests.rs"]
+mod ink_view_tests;
+
+#[cfg(test)]
+#[path = "minimap_view_tests.rs"]
+mod minimap_view_tests;
+
+/// Active freeform tool. Hosts may change it with [`MapView::set_board_tool`].
+///
+/// The default, `Select`, preserves the normal mind-map interaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoardTool {
+    #[default]
+    Select,
+    Hand,
+    Sticky,
+    Text,
+    Shape(ShapeKind),
+    Connector,
+    Frame,
+    Pen,
+    Highlighter,
+    ObjectEraser,
+    PixelEraser,
+    Lasso,
+}
+
+impl BoardTool {
+    fn ink_mode(self) -> Option<InkMode> {
+        match self {
+            Self::Pen => Some(InkMode::Pen),
+            Self::Highlighter => Some(InkMode::Highlighter),
+            Self::ObjectEraser => Some(InkMode::ObjectEraser),
+            Self::PixelEraser => Some(InkMode::PixelEraser),
+            Self::Lasso => Some(InkMode::Lasso),
+            _ => None,
+        }
+    }
+}
+
+/// Localizable names used by the board's accessible objects and controls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardLabels {
+    pub sticky: String,
+    pub text: String,
+    /// Generic fallback when a shape has no entry in `shape_names`.
+    pub shape: String,
+    /// Localized, human-readable names keyed by the core shape kind.
+    pub shape_names: std::collections::HashMap<ShapeKind, String>,
+    pub connector: String,
+    pub ink: String,
+    pub frame: String,
+    pub new_frame: String,
+    pub selected: String,
+    pub locked: String,
+    pub from: String,
+    pub to: String,
+    pub free_point: String,
+    pub resize: String,
+    pub rotate: String,
+    pub label_editor: String,
+}
+
+impl Default for BoardLabels {
+    fn default() -> Self {
+        Self {
+            sticky: "Sticky note".into(),
+            text: "Text card".into(),
+            shape: "Shape".into(),
+            shape_names: ShapeKind::ALL
+                .into_iter()
+                .map(|shape| {
+                    let mut name = shape.id().replace('-', " ");
+                    if let Some(first) = name.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    (shape, name)
+                })
+                .collect(),
+            connector: "Connector".into(),
+            ink: "Ink stroke".into(),
+            frame: "Frame".into(),
+            new_frame: "Frame".into(),
+            selected: "Selected".into(),
+            locked: "Locked".into(),
+            from: "From".into(),
+            to: "To".into(),
+            free_point: "Free point".into(),
+            resize: "Resize board item".into(),
+            rotate: "Rotate board item".into(),
+            label_editor: "Board object label".into(),
+        }
+    }
+}
 
 /// Call before handling focused-editor shortcuts so IME candidate keys stay in composition.
 pub fn protect_ime_candidate_keys(ctx: &egui::Context, editor_id: Id, composing: &mut bool) {
@@ -168,11 +282,23 @@ struct LayoutCache {
     layout: Arc<Layout>,
 }
 
+struct MinimapCache {
+    layout: Arc<Layout>,
+    scene: MinimapScene,
+}
+
 /// View state of a canvas (camera, selection, editing). Not part of the document.
 pub struct MapView {
     pub offset: EVec2,
     pub zoom: f32,
     pub selection: Vec<TopicId>,
+    /// Selected free canvas objects. Floating cards remain in [`Self::selection`].
+    pub board_selection: Vec<CanvasObjectId>,
+    /// Current host-selected board tool.
+    pub board_tool: BoardTool,
+    /// Settings for subsequently started ink gestures.
+    pub ink_settings: InkSettings,
+    pub board_labels: BoardLabels,
     pub selected_object: Option<ObjectSelection>,
     pub context_marker: Option<(TopicId, usize)>,
     /// Source topic while the user is picking the target of a new relationship.
@@ -187,10 +313,19 @@ pub struct MapView {
     pub show_add_controls: bool,
     /// View-only alignment feedback during free-placement topic drags.
     pub show_alignment_guides: bool,
+    /// Show the interactive board overview. Off by default until the host exposes a toggle.
+    pub show_minimap: bool,
+    /// Host-localizable accessible name, tooltip, and offscreen-viewport description.
+    pub minimap_labels: MinimapLabels,
     /// Internal clipboard (keeps full fidelity when pasting inside Thinoda).
     pub clipboard: Option<ClipboardPayload>,
+    /// Internal board clipboard, retained when switching sheets.
+    pub(crate) board_clipboard: Option<BoardClipboardPayload>,
     /// Text the host should place on the OS clipboard.
     pub clipboard_out: Option<String>,
+    /// Ask the host to handle canvas copy/cut/paste rather than writing plain
+    /// text directly. Requests are returned in [`CanvasOutput::clipboard_requests`].
+    pub host_handles_clipboard: bool,
     /// Topics shown un-dimmed (search/filter); `None` shows everything.
     pub filter: Option<Vec<TopicId>>,
     pub dark: bool,
@@ -199,11 +334,17 @@ pub struct MapView {
     title_error: Option<String>,
     drag: Drag,
     image_resize: Option<image_resize::Gesture>,
+    board_input: board_input::State,
+    ink_controller: InkController,
+    ink_events_frame: Option<(egui::ViewportId, u64)>,
     // Some(false) keeps an unowned/canceled multitouch sequence blocked until all fingers lift.
     touch_navigation: Option<bool>,
     cache: Option<LayoutCache>,
+    minimap_cache: Option<MinimapCache>,
+    minimap_state: MinimapState,
     pending_fit: bool,
     pending_reveal: Option<TopicId>,
+    pending_board_reveal: Option<CanvasObjectId>,
     initialized: bool,
     explicit_initial_zoom: bool,
     canvas_rect: Rect,
@@ -215,6 +356,10 @@ impl Default for MapView {
             offset: EVec2::ZERO,
             zoom: 1.0,
             selection: Vec::new(),
+            board_selection: Vec::new(),
+            board_tool: BoardTool::Select,
+            ink_settings: InkSettings::default(),
+            board_labels: BoardLabels::default(),
             selected_object: None,
             context_marker: None,
             relationship_from: None,
@@ -231,8 +376,12 @@ impl Default for MapView {
             image_resize_label: "Resize image".into(),
             show_add_controls: true,
             show_alignment_guides: false,
+            show_minimap: false,
+            minimap_labels: MinimapLabels::default(),
             clipboard: None,
+            board_clipboard: None,
             clipboard_out: None,
+            host_handles_clipboard: false,
             filter: None,
             dark: false,
             accent: Color32::from_rgb(0x2E, 0x7C, 0xF6),
@@ -240,10 +389,16 @@ impl Default for MapView {
             title_error: None,
             drag: Drag::None,
             image_resize: None,
+            board_input: board_input::State::default(),
+            ink_controller: InkController::default(),
+            ink_events_frame: None,
             touch_navigation: None,
             cache: None,
+            minimap_cache: None,
+            minimap_state: MinimapState::default(),
             pending_fit: false,
             pending_reveal: None,
+            pending_board_reveal: None,
             initialized: false,
             explicit_initial_zoom: false,
             canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
@@ -252,19 +407,167 @@ impl Default for MapView {
 }
 
 impl MapView {
+    fn minimap_rect(&self, canvas_rect: Rect, clip_rect: Rect) -> Option<Rect> {
+        self.show_minimap
+            .then(|| {
+                bottom_right_rect(canvas_rect.intersect(clip_rect), DEFAULT_MINIMAP_SIZE, 12.0)
+            })
+            .flatten()
+    }
+
+    /// Changes minimap visibility without allowing an in-progress gesture to leak to the canvas.
+    pub fn set_minimap_visible(&mut self, visible: bool) {
+        self.show_minimap = visible;
+        if !visible {
+            self.minimap_state.cancel();
+        }
+    }
+
+    /// Preflight for tools that process pointer, touch, scroll, or zoom input before
+    /// [`MapCanvas::show`]. Call with the same `Ui` immediately before showing the canvas.
+    pub fn minimap_blocks_pointer(&self, ui: &Ui) -> bool {
+        self.minimap_rect(ui.available_rect_before_wrap(), ui.clip_rect())
+            .map_or_else(
+                || self.minimap_state.has_pointer_capture(),
+                |rect| self.minimap_state.blocks_canvas_pointer(ui.ctx(), rect),
+            )
+    }
+
+    /// Preflight for tools that process keyboard input before [`MapCanvas::show`].
+    pub fn minimap_blocks_keyboard(&self, ui: &Ui) -> bool {
+        self.minimap_rect(ui.available_rect_before_wrap(), ui.clip_rect())
+            .is_some()
+            && ui.ctx().memory(|memory| {
+                memory.has_focus(MapCanvas::id().with("minimap"))
+                    || memory.has_focus(MapCanvas::id().with("minimap-tab-proxy"))
+            })
+    }
+
+    /// Selects a board tool and cancels any in-progress board gesture.
+    pub fn set_board_tool(&mut self, tool: BoardTool) {
+        if self.board_tool != tool {
+            self.board_input.cancel_gesture();
+            self.board_tool = tool;
+        }
+    }
+
+    /// Whether a held or failed ink gesture is retained outside the document.
+    pub fn has_pending_ink_gesture(&self) -> bool {
+        self.ink_controller.has_pending_gesture()
+    }
+
+    /// Whether a pending gesture has been released and can be retried or canceled.
+    pub fn has_released_ink_gesture(&self) -> bool {
+        self.ink_controller.has_released_gesture()
+    }
+
+    /// The tool that started the retained gesture, even if the active tool changed.
+    pub fn pending_ink_mode(&self) -> Option<InkMode> {
+        self.ink_controller.pending_mode()
+    }
+
+    /// Settings captured for the retained gesture.
+    pub fn pending_ink_settings(&self) -> Option<InkSettings> {
+        self.ink_controller.pending_settings()
+    }
+
+    /// Original accepted samples, available until a successful commit or cancellation.
+    pub fn pending_ink_samples(&self) -> &[InkSample] {
+        self.ink_controller.pending_samples()
+    }
+
+    /// Whether a rejected sample prevents retrying the retained gesture.
+    pub fn pending_ink_has_rejected_input(&self) -> bool {
+        self.ink_controller.pending_has_rejected_input()
+    }
+
+    /// Release pointer ownership without discarding the buffered gesture.
+    /// Prefer [`Self::suspend_ink`] when viewport events are available.
+    pub fn interrupt_ink(&mut self) -> bool {
+        self.ink_controller.interrupt()
+    }
+
+    /// Whether a hidden canvas still needs to observe pointer releases.
+    pub fn needs_ink_input_tracking(&self) -> bool {
+        self.ink_controller.needs_input_tracking()
+    }
+
+    /// Suspend input when the host hides this canvas, preserving owned events
+    /// not yet routed to it and observing releases while it stays hidden.
+    pub fn suspend_ink(
+        &mut self,
+        doc: &Document,
+        ctx: &egui::Context,
+    ) -> crate::ink_controller::InkFrameOutput {
+        let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
+        let events = if self.ink_events_frame == Some(frame) {
+            Vec::new()
+        } else {
+            ctx.input(|input| input.events.clone())
+        };
+        self.ink_events_frame = Some(frame);
+        let transform = self.xf();
+        self.ink_controller.suspend(doc, transform, &events)
+    }
+
+    /// Explicitly discard the pending gesture and suppress its held pointer until release.
+    pub fn cancel_ink(&mut self) -> bool {
+        self.ink_controller.cancel()
+    }
+
+    /// Retry a released ink, eraser, or lasso gesture against the current scene.
+    pub fn retry_ink(&mut self, doc: &mut Document) -> Result<InkOutcome, InkControllerError> {
+        let layout = self.layout_for(doc);
+        let scene = build_scene(doc.sheet(), &layout);
+        let outcome = self.ink_controller.retry(doc, &scene)?;
+        ink_view::apply_outcome(self, doc.sheet(), &outcome);
+        Ok(outcome)
+    }
+
+    /// Retry a released pen/highlighter gesture with different finish options.
+    pub fn retry_ink_with_finish_options(
+        &mut self,
+        doc: &mut Document,
+        options: StrokeFinishOptions,
+    ) -> Result<InkOutcome, InkControllerError> {
+        let layout = self.layout_for(doc);
+        let scene = build_scene(doc.sheet(), &layout);
+        let outcome = self
+            .ink_controller
+            .retry_with_finish_options(doc, &scene, options)?;
+        ink_view::apply_outcome(self, doc.sheet(), &outcome);
+        Ok(outcome)
+    }
+
     pub fn select_only(&mut self, id: TopicId) {
+        self.pending_board_reveal = None;
         if self.selection != [id] {
             self.pending_reveal = Some(id);
         }
         self.selection = vec![id];
+        self.board_selection.clear();
         self.selected_object = None;
+    }
+
+    /// Selects one canvas object and schedules its visible geometry for reveal.
+    ///
+    /// Call after switching sheets (and resetting the view). The reveal is
+    /// resolved against the new sheet's scene on a subsequent canvas frame.
+    pub fn select_board_object(&mut self, id: CanvasObjectId) {
+        self.selection.clear();
+        self.board_selection = vec![id];
+        self.selected_object = None;
+        self.relationship_from = None;
+        self.reveal_board_object(id);
     }
 
     pub fn select_object(&mut self, object: ObjectSelection) {
         self.selection.clear();
+        self.board_selection.clear();
         self.selected_object = Some(object);
         self.relationship_from = None;
         self.pending_reveal = None;
+        self.pending_board_reveal = None;
     }
 
     pub fn toggle_selected(&mut self, id: TopicId) {
@@ -405,6 +708,8 @@ impl MapView {
         self.selection.retain(|id| {
             !sheet.is_anchor(*id) && sheet.topic(*id).is_some() && sheet.is_visible(*id)
         });
+        self.board_selection
+            .retain(|id| sheet.canvas.object(*id).is_some());
         if self
             .selected_object
             .is_some_and(|object| !object.exists(sheet))
@@ -413,6 +718,12 @@ impl MapView {
         }
         if self.pending_reveal.is_some_and(|id| sheet.is_anchor(id)) {
             self.pending_reveal = None;
+        }
+        if self
+            .pending_board_reveal
+            .is_some_and(|id| sheet.canvas.object(id).is_none())
+        {
+            self.pending_board_reveal = None;
         }
         if self.relationship_from.is_some_and(|id| sheet.is_anchor(id)) {
             self.relationship_from = None;
@@ -427,13 +738,20 @@ impl MapView {
     /// Resets per-sheet state (call when switching sheets or documents).
     pub fn reset(&mut self) {
         self.selection.clear();
+        self.board_selection.clear();
         self.selected_object = None;
         self.relationship_from = None;
         self.relationship_drag = None;
         self.image_resize = None;
+        self.board_input = board_input::State::default();
+        self.board_tool = BoardTool::Select;
         self.editing = None;
         self.drag = Drag::None;
         self.cache = None;
+        self.minimap_cache = None;
+        self.minimap_state.cancel();
+        self.pending_reveal = None;
+        self.pending_board_reveal = None;
         self.initialized = false;
         self.explicit_initial_zoom = false;
         self.zoom = 1.0;
@@ -443,7 +761,7 @@ impl MapView {
     // ----- editing -------------------------------------------------------------------------
 
     pub fn begin_edit(&mut self, sheet: &Sheet, id: TopicId, select_all: bool) {
-        if sheet.is_anchor(id) {
+        if sheet.is_anchor(id) || !board_input::topic_is_unlocked(sheet, id) {
             return;
         }
         if self.title_error.is_some() && self.has_title_changes() {
@@ -465,17 +783,38 @@ impl MapView {
 
     /// Starts editing with `text` replacing the title (type-to-edit).
     pub fn begin_edit_with(&mut self, sheet: &Sheet, id: TopicId, text: &str) {
-        if self.title_error.is_some() && self.has_title_changes() {
+        if (self.title_error.is_some() && self.has_title_changes())
+            || sheet.is_anchor(id)
+            || sheet.topic(id).is_none()
+            || !board_input::topic_is_unlocked(sheet, id)
+        {
             return;
         }
         self.begin_edit(sheet, id, false);
-        if let Some(e) = &mut self.editing {
+        if let Some(e) = &mut self.editing
+            && e.topic == id
+        {
             e.text = text.to_string();
         }
     }
 
     pub fn editing_topic(&self) -> Option<TopicId> {
         self.editing.as_ref().map(|e| e.topic)
+    }
+
+    /// Begin editing the text label of an unlocked shape or connector.
+    pub fn begin_board_label(&mut self, doc: &Document, id: CanvasObjectId) -> bool {
+        board_input::begin_label(self, doc, id)
+    }
+
+    /// Object whose label is currently being edited, if any.
+    pub fn editing_board_object(&self) -> Option<CanvasObjectId> {
+        self.board_input.label.as_ref().map(|edit| edit.id)
+    }
+
+    /// Commit the object-label draft; validation failures keep the draft intact.
+    pub fn try_commit_board_label(&mut self, doc: &mut Document) -> thinoda_core::EditResult<bool> {
+        board_input::commit_label(self, doc)
     }
 
     pub fn editing_text(&self) -> Option<&str> {
@@ -527,6 +866,11 @@ impl MapView {
             return Ok(false);
         };
         self.pending_reveal = Some(e.topic);
+        if !board_input::topic_is_unlocked(doc.sheet(), e.topic) {
+            return Err(thinoda_core::EditError::Invalid(
+                "Card or group is locked; title draft retained".into(),
+            ));
+        }
         if e.text == e.original {
             self.editing = None;
             return Ok(false);
@@ -547,6 +891,7 @@ impl MapView {
 
     pub fn cancel_edit(&mut self) {
         self.editing = None;
+        self.board_input.label = None;
         self.title_error = None;
     }
 
@@ -586,6 +931,17 @@ impl MapView {
     /// Scrolls so that `id` is visible on the next frame.
     pub fn reveal(&mut self, id: TopicId) {
         self.pending_reveal = Some(id);
+        self.pending_board_reveal = None;
+    }
+
+    /// Scrolls to a canvas object's visible scene bounds on a subsequent frame.
+    ///
+    /// Connector bounds use resolved endpoints rather than the stored object
+    /// rectangle, and frame clipping is respected. Missing or wholly clipped
+    /// objects do not move the camera. Selection is unchanged.
+    pub fn reveal_board_object(&mut self, id: CanvasObjectId) {
+        self.pending_reveal = None;
+        self.pending_board_reveal = Some(id);
     }
 
     pub fn zoom_percent(&self) -> u32 {
@@ -668,18 +1024,33 @@ impl MapView {
         layout
     }
 
-    fn fit(&mut self, layout: &Layout) {
-        let b = layout.bounds;
+    /// Camera viewport after reserving the default compact board toolbox.
+    /// Plain mind maps retain their original full-width viewport.
+    fn fit_viewport(&self, sheet: &Sheet) -> Rect {
+        let mut viewport = self.canvas_rect;
+        if sheet.uses_board_semantics() {
+            // Leave a non-negative width even in very narrow windows.
+            viewport.min.x += BOARD_TOOLBOX_SAFE_INSET.min(viewport.width().max(0.0));
+        }
+        viewport
+    }
+
+    fn fit(&mut self, sheet: &Sheet, layout: &Layout) {
+        let b = fit_bounds(sheet, layout);
         if b.size.x <= 0.0 || b.size.y <= 0.0 {
             return;
         }
-        let avail = self.canvas_rect.size() - vec2(80.0, 80.0);
+        let viewport = self.fit_viewport(sheet);
+        let avail = viewport.size() - vec2(80.0, 80.0);
         let z = (avail.x / b.size.x)
             .min(avail.y / b.size.y)
             .clamp(MIN_ZOOM, 1.0);
         self.zoom = z;
         let c = b.center();
         self.offset = vec2(-c.x * z, -c.y * z);
+        if viewport != self.canvas_rect {
+            self.offset += viewport.center() - self.canvas_rect.center();
+        }
     }
 
     fn do_reveal(&mut self, sheet: &Sheet, layout: &Layout, id: TopicId) {
@@ -708,12 +1079,59 @@ impl MapView {
         }
         self.offset += d;
     }
+
+    fn do_reveal_board_object(&mut self, scene: &Scene, id: CanvasObjectId) {
+        let Some(bounds) = scene
+            .item(SceneId::Object(id))
+            .and_then(|item| item.visible_bounds())
+        else {
+            return;
+        };
+        let r = self.xf().rect(bounds);
+        let area = self.canvas_rect.shrink(40.0);
+        if !area.is_positive() {
+            return;
+        }
+        let reveal_axis = |min: f32, max: f32, area_min: f32, area_max: f32| {
+            if max - min <= area_max - area_min {
+                if min < area_min {
+                    area_min - min
+                } else if max > area_max {
+                    area_max - max
+                } else {
+                    0.0
+                }
+            } else if min >= area_max {
+                area_min - min
+            } else if max <= area_min {
+                area_max - max
+            } else {
+                0.0
+            }
+        };
+        self.offset += vec2(
+            reveal_axis(r.left(), r.right(), area.left(), area.right()),
+            reveal_axis(r.top(), r.bottom(), area.top(), area.bottom()),
+        );
+    }
+}
+
+/// Keep layout-only extents (relationships, boundaries, etc.) as well as rotated
+/// and free-object scene geometry.
+fn fit_bounds(sheet: &Sheet, layout: &Layout) -> thinoda_core::Rect {
+    build_scene(sheet, layout)
+        .bounds()
+        .map_or(layout.bounds, |bounds| bounds.union(&layout.bounds))
 }
 
 /// Result of showing the canvas for one frame.
 pub struct CanvasOutput {
     pub response: Response,
     context_menu_allowed: bool,
+    /// Do not forward pointer, touch, scroll, or zoom input to canvas tools this frame.
+    pub minimap_blocks_pointer: bool,
+    /// Do not forward keyboard input to canvas tools while the minimap has focus.
+    pub minimap_blocks_keyboard: bool,
     /// Hyperlink the user clicked (host decides how to open it).
     pub open_link: Option<String>,
     /// Topic the context menu refers to (if the user right-clicked a topic).
@@ -721,6 +1139,13 @@ pub struct CanvasOutput {
     pub selection_changed: bool,
     /// Last edit error (e.g. trying to delete the central topic).
     pub error: Option<thinoda_core::EditError>,
+    /// Structured ink errors, including any rejected input samples.
+    pub ink_errors: Vec<InkControllerError>,
+    /// Completed or explicitly canceled ink gestures in this frame.
+    pub ink_outcomes: Vec<InkOutcome>,
+    /// Copy, cut and paste requests for hosts that enabled
+    /// [`MapView::host_handles_clipboard`], in input order.
+    pub clipboard_requests: Vec<Action>,
 }
 
 impl CanvasOutput {
@@ -754,8 +1179,11 @@ impl AddHandle {
 fn add_handles(view: &MapView, sheet: &Sheet, layout: &Layout) -> Vec<AddHandle> {
     if !view.show_add_controls
         || view.selection.len() != 1
+        || !view.board_selection.is_empty()
         || view.selected_object.is_some()
         || view.editing.is_some()
+        || view.editing_board_object().is_some()
+        || view.board_tool != BoardTool::Select
         || view.relationship_from.is_some()
         || view.image_resize.is_some()
         || !matches!(view.drag, Drag::None)
@@ -824,6 +1252,12 @@ impl MapCanvas {
         view.drag = Drag::None;
         view.relationship_drag = None;
         view.image_resize = None;
+        view.minimap_state.cancel();
+        view.minimap_state.finish_frame(ui.ctx());
+        ui.memory_mut(|memory| {
+            memory.surrender_focus(Self::id().with("minimap"));
+            memory.ignore_focus(Self::id().with("minimap-tab-proxy"));
+        });
         let rect = ui.available_rect_before_wrap();
         ui.advance_cursor_after_rect(rect);
         view.canvas_rect = rect;
@@ -857,28 +1291,131 @@ impl MapCanvas {
     ) -> CanvasOutput {
         let id = Self::id();
         let rect = ui.available_rect_before_wrap();
+        let ctx = ui.ctx().clone();
+        board_input::begin_focus_exit(&ctx, view);
         let response = ui.interact(rect, id, Sense::click_and_drag() | Sense::FOCUSABLE);
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Mind map canvas"));
         ui.advance_cursor_after_rect(rect);
-        let ctx = ui.ctx().clone();
         view.canvas_rect = rect;
         view.prune_selection(doc.sheet());
         let before_sel = view.selection.clone();
+        let before_board_selection = view.board_selection.clone();
         let before_object = view.selected_object;
         let mut out = CanvasOutput {
             response: response.clone(),
             context_menu_allowed: true,
+            minimap_blocks_pointer: false,
+            minimap_blocks_keyboard: false,
             open_link: None,
             context_topic: None,
             selection_changed: false,
             error: None,
+            ink_errors: Vec::new(),
+            ink_outcomes: Vec::new(),
+            clipboard_requests: Vec::new(),
         };
 
-        if response.clicked() || response.drag_started() || response.secondary_clicked() {
+        let mut layout = view.layout_with(&ctx, doc);
+        if !view.initialized {
+            view.initialized = true;
+            let b = fit_bounds(doc.sheet(), &layout);
+            let viewport = view.fit_viewport(doc.sheet());
+            if !view.explicit_initial_zoom
+                && (b.size.x * view.zoom > viewport.width()
+                    || b.size.y * view.zoom > viewport.height())
+            {
+                view.fit(doc.sheet(), &layout);
+            } else {
+                let c = b.center();
+                view.offset = vec2(-c.x, -c.y) * view.zoom;
+                if viewport != rect {
+                    view.offset += viewport.center() - rect.center();
+                }
+            }
+        }
+        if std::mem::take(&mut view.pending_fit) {
+            view.fit(doc.sheet(), &layout);
+        }
+        if let Some(r) = view.pending_reveal.take() {
+            view.do_reveal(doc.sheet(), &layout, r);
+        }
+        let scene = build_scene(doc.sheet(), &layout);
+        if matches!(view.drag, Drag::None)
+            && !view.board_input.is_active()
+            && let Some(id) = view.pending_board_reveal.take()
+        {
+            view.do_reveal_board_object(&scene, id);
+        }
+
+        let minimap_rect = view.minimap_rect(rect, ui.clip_rect());
+        let (minimap_blocks_pointer, mut minimap_blocks_keyboard) =
+            if let Some(minimap_rect) = minimap_rect {
+                if view
+                    .minimap_cache
+                    .as_ref()
+                    .is_none_or(|cache| !Arc::ptr_eq(&cache.layout, &layout))
+                {
+                    view.minimap_cache = Some(MinimapCache {
+                        layout: layout.clone(),
+                        scene: MinimapScene::from_scene(&scene),
+                    });
+                }
+                let camera = MinimapCamera {
+                    canvas_rect: rect,
+                    offset: view.offset,
+                    zoom: view.zoom,
+                };
+                let enabled = ui.is_enabled() && !egui::Popup::is_any_open(&ctx);
+                let output = egui::Area::new(id.with("minimap-area"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(minimap_rect.min)
+                    .movable(false)
+                    .show(&ctx, |overlay| {
+                        overlay.set_min_size(minimap_rect.size());
+                        overlay
+                            .add_enabled_ui(enabled, |overlay| {
+                                show_minimap(
+                                    overlay,
+                                    id.with("minimap"),
+                                    minimap_rect,
+                                    &view.minimap_cache.as_ref().unwrap().scene,
+                                    camera,
+                                    &mut view.minimap_state,
+                                    &view.minimap_labels,
+                                )
+                            })
+                            .inner
+                    })
+                    .inner;
+                if let Some(offset) = output.offset {
+                    view.offset = offset;
+                }
+                (output.blocks_canvas_pointer, output.blocks_canvas_keyboard)
+            } else {
+                view.minimap_state.cancel();
+                let blocked = view.minimap_state.has_pointer_capture();
+                view.minimap_state.finish_frame(&ctx);
+                ctx.memory_mut(|memory| {
+                    memory.surrender_focus(id.with("minimap"));
+                    memory.ignore_focus(id.with("minimap-tab-proxy"));
+                });
+                (blocked, false)
+            };
+        out.minimap_blocks_pointer = minimap_blocks_pointer;
+        out.minimap_blocks_keyboard = minimap_blocks_keyboard;
+
+        if !minimap_blocks_pointer
+            && (response.clicked() || response.drag_started() || response.secondary_clicked())
+        {
             response.request_focus();
         }
-        if ctx.memory(|m| m.focused()).is_none() && view.editing.is_none() {
+        if !minimap_blocks_pointer
+            && !minimap_blocks_keyboard
+            && ctx.memory(|m| m.focused()).is_none()
+            && view.editing.is_none()
+            && view.editing_board_object().is_none()
+        {
             ctx.memory_mut(|m| m.request_focus(id));
         }
         if response.has_focus() {
@@ -895,29 +1432,10 @@ impl MapCanvas {
             });
         }
 
-        let mut layout = view.layout_with(&ctx, doc);
-        if !view.initialized {
-            view.initialized = true;
-            let b = layout.bounds;
-            if !view.explicit_initial_zoom
-                && (b.size.x * view.zoom > rect.width() || b.size.y * view.zoom > rect.height())
-            {
-                view.fit(&layout);
-            } else {
-                let c = b.center();
-                view.offset = vec2(-c.x, -c.y) * view.zoom;
-            }
-        }
-        if std::mem::take(&mut view.pending_fit) {
-            view.fit(&layout);
-        }
-        if let Some(r) = view.pending_reveal.take() {
-            view.do_reveal(doc.sheet(), &layout, r);
-        }
-        let scene = build_scene(doc.sheet(), &layout);
-
         // ---- pointer -------------------------------------------------------------------
-        let pointer = response.hover_pos().or_else(|| ctx.pointer_latest_pos());
+        let pointer = (!minimap_blocks_pointer)
+            .then(|| response.hover_pos().or_else(|| ctx.pointer_latest_pos()))
+            .flatten();
         let hovered = pointer
             .filter(|p| rect.contains(*p))
             .and_then(|p| scene.hit_test(view.xf().sheet(p)))
@@ -941,7 +1459,7 @@ impl MapCanvas {
                 }),
             )
         });
-        if touch_canceled {
+        if touch_canceled || (minimap_blocks_pointer && any_touches) {
             view.touch_navigation = Some(false);
         }
         if let Some(touch) = multi_touch {
@@ -950,14 +1468,53 @@ impl MapCanvas {
                     && response.contains_pointer()
                     && rect.contains(touch.start_pos)
                     && touch.num_touches == 2
+                    && !minimap_blocks_pointer
                     && !egui::Popup::is_any_open(&ctx)
             });
         }
         let touch_navigation = view.touch_navigation.is_some();
-        out.context_menu_allowed = !touch_navigation && ui.is_enabled();
-        if touch_navigation {
+        out.context_menu_allowed = !touch_navigation && !minimap_blocks_pointer && ui.is_enabled();
+        if touch_navigation || minimap_blocks_pointer {
             view.drag = Drag::None;
             view.relationship_drag = None;
+        }
+        if !touch_navigation
+            && !minimap_blocks_pointer
+            && ui.is_enabled()
+            && response.hovered()
+            && view.relationship_drag.is_none()
+            && view.image_resize.is_none()
+            && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
+            && !view.board_input.is_active()
+            && !view.ink_controller.has_pending_gesture()
+        {
+            let (scroll, zoom_delta, pos) =
+                ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
+            if zoom_delta != 1.0 {
+                view.zoom_by(zoom_delta, pos);
+            }
+            if scroll != EVec2::ZERO {
+                view.offset += scroll;
+            }
+        }
+
+        let space =
+            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
+        let ink_captured = ink_view::interact(
+            ui,
+            doc,
+            view,
+            &scene,
+            &response,
+            ink_view::Routing {
+                minimap_pointer: minimap_blocks_pointer,
+                minimap_keyboard: minimap_blocks_keyboard,
+                touch_navigation,
+                space,
+            },
+            &mut out,
+        );
+        if touch_navigation {
             if !ui.is_enabled()
                 || egui::Popup::is_any_open(&ctx)
                 || multi_touch.is_some_and(|touch| touch.num_touches != 2)
@@ -974,32 +1531,51 @@ impl MapCanvas {
                 view.offset += touch.translation_delta;
             }
         }
-        if !touch_navigation
+        let ink_tool = view.board_tool.ink_mode().is_some();
+        let mut board_pointer = board_input::interact(
+            ui,
+            doc,
+            view,
+            &layout,
+            &scene,
+            &response,
+            pointer,
+            !space
+                && !touch_navigation
+                && !minimap_blocks_pointer
+                && !ink_tool
+                && !ink_captured
+                && ui.is_enabled()
+                && !egui::Popup::is_any_open(&ctx),
+            &mut out,
+        );
+        board_pointer |= ink_tool || ink_captured;
+        out.context_menu_allowed &= !ink_tool && !ink_captured;
+        if ink_tool
+            && !ink_captured
+            && !touch_navigation
+            && !minimap_blocks_pointer
             && ui.is_enabled()
-            && response.hovered()
-            && view.relationship_drag.is_none()
-            && view.image_resize.is_none()
-            && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
+            && !egui::Popup::is_any_open(&ctx)
+            && response.drag_started()
+            && (space
+                || response.dragged_by(PointerButton::Middle)
+                || response.dragged_by(PointerButton::Secondary))
         {
-            let (scroll, zoom_delta, pos) =
-                ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
-            if zoom_delta != 1.0 {
-                view.zoom_by(zoom_delta, pos);
-            }
-            if scroll != EVec2::ZERO {
-                view.offset += scroll;
-            }
+            view.drag = Drag::Pan;
         }
-
-        let space =
-            ctx.input(|i| i.key_down(Key::Space)) && view.editing.is_none() && response.has_focus();
         let image_handle = image_resize::interact(
             ui,
             doc,
             view,
             &layout,
             &mut out.error,
-            !space && !touch_navigation,
+            !space
+                && !touch_navigation
+                && !minimap_blocks_pointer
+                && !board_pointer
+                && view.board_tool == BoardTool::Select
+                && view.board_selection.is_empty(),
         );
         let relationship_handle = crate::relationship_editing::interact(
             ui,
@@ -1007,10 +1583,16 @@ impl MapCanvas {
             view,
             &mut layout,
             &mut out.error,
-            !space && !touch_navigation && !image_handle,
+            !space
+                && !touch_navigation
+                && !minimap_blocks_pointer
+                && !image_handle
+                && !board_pointer,
         );
         let handles = if space
             || touch_navigation
+            || minimap_blocks_pointer
+            || board_pointer
             || matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
         {
             Vec::new()
@@ -1046,7 +1628,9 @@ impl MapCanvas {
                 .on_hover_text(&handle.label)
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
         }
-        if !touch_navigation
+        if !board_pointer
+            && !touch_navigation
+            && !minimap_blocks_pointer
             && response.drag_started()
             && (!press_on_handle
                 || response.dragged_by(PointerButton::Middle)
@@ -1062,7 +1646,11 @@ impl MapCanvas {
                 view.drag = Drag::Pan;
             } else if let Some(t) = scene_topic_hit(&scene, sp) {
                 if !view.selection.contains(&t) {
-                    view.select_only(t);
+                    if doc.sheet().board_member_for_topic(t).is_some() {
+                        board_input::select_hit(view, doc.sheet(), SceneHit::Topic(t), false);
+                    } else {
+                        view.select_only(t);
+                    }
                 }
                 view.commit_edit(doc);
                 let ids = crate::topic_drag::roots(doc.sheet(), &view.selection);
@@ -1084,7 +1672,7 @@ impl MapCanvas {
                 view.drag = Drag::None;
             } else if let Some(ObjectSelection::Zone(id)) =
                 hit_zone(doc.sheet(), sp, 6.0 / view.zoom)
-                    .filter(|_| hit_object(&layout, sp, 6.0 / view.zoom).is_none())
+                    .filter(|_| hit_object(doc.sheet(), &layout, sp, 6.0 / view.zoom).is_none())
             {
                 view.commit_edit(doc);
                 let zone = doc
@@ -1142,7 +1730,7 @@ impl MapCanvas {
         {
             crate::topic_drag::edge_pan(&ctx, view, pointer);
         }
-        if response.dragged() || response.drag_stopped() {
+        if !minimap_blocks_pointer && (response.dragged() || response.drag_stopped()) {
             let delta = response.drag_delta();
             let xf = view.xf();
             match &mut view.drag {
@@ -1159,7 +1747,9 @@ impl MapCanvas {
         // ---- clicks --------------------------------------------------------------------
         let editing_before_click = view.editing.is_some();
         let mods = ctx.input(|i| i.modifiers);
-        if !touch_navigation
+        if !board_pointer
+            && !touch_navigation
+            && !minimap_blocks_pointer
             && response.clicked()
             && !over_handle
             && !press_on_handle
@@ -1195,7 +1785,14 @@ impl MapCanvas {
                     if view.editing_topic() != Some(t) {
                         view.commit_edit(doc);
                     }
-                    if mods.command || mods.shift {
+                    if doc.sheet().board_member_for_topic(t).is_some() {
+                        board_input::select_hit(
+                            view,
+                            doc.sheet(),
+                            SceneHit::Topic(t),
+                            mods.command || mods.shift,
+                        );
+                    } else if mods.command || mods.shift {
                         view.toggle_selected(t);
                     } else {
                         view.select_only(t);
@@ -1204,7 +1801,7 @@ impl MapCanvas {
             } else if matches!(scene.hit_test(sp), Some(SceneHit::Object(_))) {
                 // Board objects are rendered and occlude the map; object editing is a
                 // later interaction slice and must not fall through to a topic below.
-            } else if let Some(object) = hit_object(&layout, sp, 6.0 / view.zoom)
+            } else if let Some(object) = hit_object(doc.sheet(), &layout, sp, 6.0 / view.zoom)
                 .or_else(|| hit_zone(doc.sheet(), sp, 6.0 / view.zoom))
             {
                 view.commit_edit(doc);
@@ -1226,11 +1823,14 @@ impl MapCanvas {
                     }
                 } else if !(mods.command || mods.shift) {
                     view.selection.clear();
+                    view.board_selection.clear();
                     view.selected_object = None;
                 }
             }
         }
-        if !touch_navigation
+        if !board_pointer
+            && !touch_navigation
+            && !minimap_blocks_pointer
             && response.double_clicked()
             && !editing_before_click
             && !over_handle
@@ -1239,17 +1839,23 @@ impl MapCanvas {
         {
             let sp = view.xf().sheet(p);
             if let Some(t) = scene_topic_hit(&scene, sp) {
-                view.select_only(t);
+                if doc.sheet().board_member_for_topic(t).is_some() {
+                    board_input::select_hit(view, doc.sheet(), SceneHit::Topic(t), false);
+                } else {
+                    view.select_only(t);
+                }
                 view.begin_edit(doc.sheet(), t, true);
             } else if scene.hit_test(sp).is_none()
                 && layout.hit_badge(sp).is_none()
-                && hit_object(&layout, sp, 6.0 / view.zoom).is_none()
+                && hit_object(doc.sheet(), &layout, sp, 6.0 / view.zoom).is_none()
                 && hit_zone(doc.sheet(), sp, 6.0 / view.zoom).is_none()
             {
                 run(doc, view, Action::InsertFloating(sp), &mut out);
             }
         }
-        if !touch_navigation
+        if !board_pointer
+            && !touch_navigation
+            && !minimap_blocks_pointer
             && response.secondary_clicked()
             && !over_handle
             && let Some(p) = response.interact_pointer_pos()
@@ -1266,23 +1872,30 @@ impl MapCanvas {
                         .map(|index| (t, index))
                 });
                 if !view.selection.contains(&t) {
-                    view.select_only(t);
+                    if doc.sheet().board_member_for_topic(t).is_some() {
+                        board_input::select_hit(view, doc.sheet(), SceneHit::Topic(t), false);
+                    } else {
+                        view.select_only(t);
+                    }
+                } else if doc.sheet().board_member_for_topic(t).is_some() {
+                    board_input::expand_selection(view, doc.sheet());
                 }
                 out.context_topic = Some(t);
             } else if matches!(scene.hit_test(point), Some(SceneHit::Object(_))) {
                 // Keep board-object clicks from activating a topic obscured beneath them.
-            } else if let Some(object) = hit_object(&layout, point, 6.0 / view.zoom)
+            } else if let Some(object) = hit_object(doc.sheet(), &layout, point, 6.0 / view.zoom)
                 .or_else(|| hit_zone(doc.sheet(), point, 6.0 / view.zoom))
             {
                 view.select_object(object);
             } else {
                 view.selection.clear();
+                view.board_selection.clear();
                 view.selected_object = None;
             }
         }
 
         // ---- drag end ------------------------------------------------------------------
-        if response.drag_stopped() {
+        if !minimap_blocks_pointer && response.drag_stopped() {
             match std::mem::replace(&mut view.drag, Drag::None) {
                 Drag::Rubber { start, additive } => {
                     view.selected_object = None;
@@ -1293,15 +1906,26 @@ impl MapCanvas {
                         Vec2::new(a.x.min(b.x), a.y.min(b.y)),
                         Vec2::new((a.x - b.x).abs(), (a.y - b.y).abs()),
                     );
-                    let hits = layout.topics_in(&area);
                     if !additive {
                         view.selection.clear();
+                        view.board_selection.clear();
                     }
-                    for h in hits {
-                        if !view.selection.contains(&h) {
-                            view.selection.push(h);
+                    for hit in scene.objects_in(area) {
+                        match hit {
+                            SceneHit::Topic(id) if !view.selection.contains(&id) => {
+                                view.selection.push(id);
+                            }
+                            SceneHit::Object(id) => {
+                                for member in doc.sheet().canvas.expand_to_groups(&[id]) {
+                                    if !view.board_selection.contains(&member) {
+                                        view.board_selection.push(member);
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
+                    board_input::expand_selection(view, doc.sheet());
                 }
                 Drag::Topics {
                     ids, grab, current, ..
@@ -1357,15 +1981,89 @@ impl MapCanvas {
             view.touch_navigation = None;
         }
 
+        if doc.state_id() != view.cache.as_ref().map_or(0, |cache| cache.key.0) {
+            layout = view.layout_with(&ctx, doc);
+        }
+        let keyboard_scene = build_scene(doc.sheet(), &layout);
+        let board_focused = board_input::accessibility(ui, view, doc.sheet(), &keyboard_scene);
+
+        let next_minimap = minimap_rect
+            .filter(|_| {
+                ui.is_enabled()
+                    && !egui::Popup::is_any_open(&ctx)
+                    && view.zoom.is_finite()
+                    && view.zoom > 0.0
+            })
+            .map(|_| id.with("minimap"));
+        if let Some(minimap_id) = next_minimap {
+            // Foreground areas are outside the canvas' sibling Tab order.
+            // This focus-only proxy bridges that order without a duplicate a11y node.
+            let proxy_id = id.with("minimap-tab-proxy");
+            if ctx.memory(|memory| memory.has_focus(proxy_id)) {
+                ctx.memory_mut(|memory| memory.request_focus(minimap_id));
+                minimap_blocks_keyboard = true;
+                out.minimap_blocks_keyboard = true;
+            }
+            if minimap_blocks_keyboard {
+                ctx.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(
+                        minimap_id,
+                        EventFilter {
+                            tab: true,
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: true,
+                        },
+                    );
+                });
+                if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+                    ctx.memory_mut(|memory| memory.request_focus(id));
+                }
+            }
+            let direction = minimap_blocks_keyboard
+                .then(|| {
+                    ctx.input_mut(|input| {
+                        if input.consume_key(Modifiers::SHIFT, Key::Tab) {
+                            Some(egui::FocusDirection::Previous)
+                        } else if input.consume_key(Modifiers::NONE, Key::Tab) {
+                            Some(egui::FocusDirection::Next)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .flatten();
+            ctx.memory_mut(|memory| {
+                if let Some(direction) = direction {
+                    memory.request_focus(proxy_id);
+                    memory.move_focus(direction);
+                }
+                memory.interested_in_focus(proxy_id, ui.layer_id());
+            });
+        }
+
         // ---- keyboard ------------------------------------------------------------------
         if let Some(action) = handle_action {
             run(doc, view, action, &mut out);
         }
-        if view.editing.is_none()
+        let canvas_keyboard = view.editing.is_none()
+            && view.editing_board_object().is_none()
+            && !minimap_blocks_keyboard
             && view.image_resize.is_none()
             && !egui::Popup::is_any_open(&ctx)
             && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. })
-            && (response.has_focus() || ctx.memory(|m| m.focused()).is_none())
+            && !view.board_input.is_active()
+            && (response.has_focus()
+                || board_focused
+                || view.board_input.has_control_focus()
+                || ctx.memory(|m| m.focused()).is_none());
+        let ink_cancel = canvas_keyboard && ink_view::cancel_on_escape(ui, view, &mut out);
+        let ink_retry = canvas_keyboard && ink_view::retry_on_enter(ui, doc, view, &mut out);
+        if canvas_keyboard
+            && !ink_captured
+            && !ink_cancel
+            && !ink_retry
+            && !board_input::keyboard(ui, doc, view, &layout, &keyboard_scene, &mut out)
         {
             handle_keys(&ctx, doc, view, &mut out, shortcuts);
         }
@@ -1375,6 +2073,7 @@ impl MapCanvas {
         }
         if let Some(r) = view.pending_reveal.take()
             && matches!(view.drag, Drag::None)
+            && !view.board_input.is_active()
         {
             view.do_reveal(doc.sheet(), &layout, r);
         }
@@ -1413,6 +2112,9 @@ impl MapCanvas {
             show_grid: true,
         };
         paint_map(&painter, sheet, &layout, xf, &opts);
+        let paint_scene = build_scene(sheet, &layout);
+        board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
+        view.ink_controller.paint_preview(&painter, xf, view.accent);
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
         crate::relationship_editing::paint_target(&painter, view, &layout);
         if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {
@@ -1528,13 +2230,14 @@ impl MapCanvas {
 
         // ---- inline editor ---------------------------------------------------------------
         show_editor(ui, doc, view, &layout, &mut out);
+        board_input::show_label_editor(ui, doc, view, &paint_scene, &mut out);
 
-        if response.hovered() {
+        if response.hovered() && !minimap_blocks_pointer {
             let sheet = doc.sheet();
             let zone_hover = pointer.and_then(|point| {
                 let point = xf.sheet(point);
                 if layout.hit_test(point).is_some()
-                    || hit_object(&layout, point, 6.0 / view.zoom).is_some()
+                    || hit_object(sheet, &layout, point, 6.0 / view.zoom).is_some()
                 {
                     return None;
                 }
@@ -1559,7 +2262,8 @@ impl MapCanvas {
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
                 Drag::Zone { resize: true, .. } => egui::CursorIcon::ResizeNwSe,
                 Drag::Zone { .. } => egui::CursorIcon::Grabbing,
-                _ if space => egui::CursorIcon::Grab,
+                _ if space || view.board_tool == BoardTool::Hand => egui::CursorIcon::Grab,
+                _ if view.board_tool != BoardTool::Select => egui::CursorIcon::Crosshair,
                 _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
                 _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
                 _ if image_handle => egui::CursorIcon::ResizeNwSe,
@@ -1569,8 +2273,10 @@ impl MapCanvas {
             ctx.set_cursor_icon(icon);
         }
 
-        out.selection_changed =
-            before_sel != view.selection || before_object != view.selected_object;
+        out.selection_changed = before_sel != view.selection
+            || before_board_selection != view.board_selection
+            || before_object != view.selected_object;
+        board_input::end_focus_exit(&ctx, view, next_minimap);
         out
     }
 }
@@ -1662,7 +2368,13 @@ fn handle_keys(
 ) {
     for (shortcut, action) in shortcuts {
         if ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
-            run(doc, view, action.clone(), out);
+            if view.host_handles_clipboard
+                && matches!(action, Action::Copy | Action::Cut | Action::Paste(_))
+            {
+                out.clipboard_requests.push(action.clone());
+            } else {
+                run(doc, view, action.clone(), out);
+            }
             return;
         }
     }
@@ -1677,18 +2389,33 @@ fn handle_keys(
     for ev in events {
         match ev {
             egui::Event::Copy => {
-                run(doc, view, Action::Copy, out);
-                if let Some(t) = view.clipboard_out.take() {
-                    ctx.copy_text(t);
+                if view.host_handles_clipboard {
+                    out.clipboard_requests.push(Action::Copy);
+                } else {
+                    run(doc, view, Action::Copy, out);
+                    if let Some(t) = view.clipboard_out.take() {
+                        ctx.copy_text(t);
+                    }
                 }
             }
             egui::Event::Cut => {
-                run(doc, view, Action::Cut, out);
-                if let Some(t) = view.clipboard_out.take() {
-                    ctx.copy_text(t);
+                if view.host_handles_clipboard {
+                    out.clipboard_requests.push(Action::Cut);
+                } else {
+                    run(doc, view, Action::Cut, out);
+                    if let Some(t) = view.clipboard_out.take() {
+                        ctx.copy_text(t);
+                    }
                 }
             }
-            egui::Event::Paste(text) => run(doc, view, Action::Paste(Some(text)), out),
+            egui::Event::Paste(text) => {
+                let action = Action::Paste(Some(text));
+                if view.host_handles_clipboard {
+                    out.clipboard_requests.push(action);
+                } else {
+                    run(doc, view, action, out);
+                }
+            }
             egui::Event::Text(text) => {
                 let ok = !text.trim().is_empty()
                     && !ctx.input(|i| i.modifiers.command || i.modifiers.alt);
@@ -1729,15 +2456,21 @@ fn show_editor(
     let color = color32(style.text_color);
     let edit_id = MapCanvas::id().with("edit");
 
-    view.protect_title_ime(ui.ctx(), edit_id);
+    if !out.minimap_blocks_keyboard {
+        view.protect_title_ime(ui.ctx(), edit_id);
+    }
     // Enter commits, Shift+Enter inserts a line break, Tab commits and adds a child.
-    let (enter, tab, esc) = ui.input_mut(|i| {
-        (
-            i.consume_key(Modifiers::NONE, Key::Enter),
-            i.consume_key(Modifiers::NONE, Key::Tab),
-            i.consume_key(Modifiers::NONE, Key::Escape),
-        )
-    });
+    let (enter, tab, esc) = if out.minimap_blocks_keyboard {
+        (false, false, false)
+    } else {
+        ui.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::Enter),
+                i.consume_key(Modifiers::NONE, Key::Tab),
+                i.consume_key(Modifiers::NONE, Key::Escape),
+            )
+        })
+    };
     if enter || tab || esc {
         view.commit_edit(doc);
         ui.memory_mut(|m| m.request_focus(MapCanvas::id()));
@@ -1775,7 +2508,7 @@ fn show_editor(
     output.response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, "Topic title")
     });
-    if !edit.focus_requested {
+    if !edit.focus_requested && !out.minimap_blocks_keyboard {
         edit.focus_requested = true;
         ui.memory_mut(|m| m.request_focus(edit_id));
         if edit.select_all {
@@ -1855,8 +2588,13 @@ fn drop_topics(
     }
 }
 
-fn hit_relationship(layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId> {
+fn hit_relationship(sheet: &Sheet, layout: &Layout, p: Vec2, tol: f32) -> Option<RelationshipId> {
     layout.relationships.iter().rev().find_map(|r| {
+        let relationship = sheet.relationships.iter().find(|item| item.id == r.id)?;
+        let clip = crate::render::relationship_clip_rect(sheet, relationship.from, relationship.to);
+        if clip.is_some_and(|clip| !clip.contains(p)) {
+            return None;
+        }
         let mut prev = r.start;
         for i in 1..=crate::render::RELATIONSHIP_SEGMENTS {
             let q = bezier(
@@ -1882,11 +2620,14 @@ fn scene_topic_hit(scene: &thinoda_core::Scene, point: Vec2) -> Option<TopicId> 
     }
 }
 
-fn hit_object(layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
-    if let Some(id) = hit_relationship(layout, p, tol) {
+fn hit_object(sheet: &Sheet, layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
+    if let Some(id) = hit_relationship(sheet, layout, p, tol) {
         return Some(ObjectSelection::Relationship(id));
     }
     for summary in layout.summaries.iter().rev() {
+        if topic_clip_rect(sheet, summary.topic).is_some_and(|clip| !clip.contains(p)) {
+            continue;
+        }
         let points = brace_path(summary.start, summary.end, summary.tip, summary.dir);
         let brace_hit = points
             .windows(2)
@@ -1910,6 +2651,13 @@ fn hit_object(layout: &Layout, p: Vec2, tol: f32) -> Option<ObjectSelection> {
         .boundaries
         .iter()
         .filter(|boundary| {
+            let Some(model_boundary) = sheet.boundaries.iter().find(|item| item.id == boundary.id)
+            else {
+                return false;
+            };
+            if topic_clip_rect(sheet, model_boundary.parent).is_some_and(|clip| !clip.contains(p)) {
+                return false;
+            }
             let rect = boundary.rect;
             let max = rect.max();
             let points = [
@@ -1985,6 +2733,10 @@ mod relationship_creation_tests;
 #[cfg(test)]
 #[path = "scene_hit_tests.rs"]
 mod scene_hit_tests;
+
+#[cfg(test)]
+#[path = "board_tests.rs"]
+mod board_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2726,7 +3478,10 @@ mod tests {
                         ),
                     };
                     assert!(layout.hit_test(p).is_none());
-                    assert_eq!(hit_object(&layout, p, 6.0 / zoom), Some(object));
+                    assert_eq!(
+                        hit_object(state.doc.sheet(), &layout, p, 6.0 / zoom),
+                        Some(object)
+                    );
                     state.view.xf().pos(p)
                 };
                 assert!(h.state().view.canvas_rect().contains(pos));
@@ -2780,10 +3535,10 @@ mod tests {
             .unwrap()
             .rect = inner_rect.expand(20.0);
         assert_eq!(
-            hit_object(&layout, inner_rect.top_center(), 0.1),
+            hit_object(&sheet, &layout, inner_rect.top_center(), 0.1),
             Some(ObjectSelection::Boundary(inner))
         );
-        assert_eq!(hit_object(&layout, inner_rect.center(), 0.1), None);
+        assert_eq!(hit_object(&sheet, &layout, inner_rect.center(), 0.1), None);
         let outer_rect = layout
             .boundaries
             .iter()
@@ -2791,7 +3546,7 @@ mod tests {
             .unwrap()
             .rect;
         assert_eq!(
-            hit_object(&layout, outer_rect.left_center(), 0.1),
+            hit_object(&sheet, &layout, outer_rect.left_center(), 0.1),
             Some(ObjectSelection::Boundary(outer))
         );
         layout
@@ -2801,8 +3556,137 @@ mod tests {
             .unwrap()
             .rect = thinoda_core::Rect::from_min_size(inner_rect.min, inner_rect.size * 2.0);
         assert_eq!(
-            hit_object(&layout, inner_rect.top_center(), 0.1),
+            hit_object(&sheet, &layout, inner_rect.top_center(), 0.1),
             Some(ObjectSelection::Boundary(inner))
+        );
+    }
+
+    #[test]
+    fn decoration_hit_tests_respect_topic_frame_clips() {
+        let mut sheet = Sheet::new("S", "Root");
+        let root = sheet.root;
+        let a = sheet.add_child(root, None, "A");
+        let aa = sheet.add_child(a, None, "AA");
+        let b = sheet.add_child(root, None, "B");
+        let boundary = sheet.add_boundary(&[root]).unwrap();
+        let summary_topic = sheet.add_summary(&[a, b], "Conclusion").unwrap();
+        let summary_id = sheet.summaries[0].id;
+        let same_frame = sheet.add_relationship(a, aa).unwrap();
+        let cross_frame = sheet.add_relationship(a, b).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+
+        let boundary_point = layout
+            .boundaries
+            .iter()
+            .find(|item| item.id == boundary)
+            .unwrap()
+            .rect
+            .top_center();
+        let summary_layout = layout
+            .summaries
+            .iter()
+            .find(|item| item.id == summary_id)
+            .unwrap();
+        let same_layout = layout
+            .relationships
+            .iter()
+            .find(|item| item.id == same_frame)
+            .unwrap();
+        let cross_layout = layout
+            .relationships
+            .iter()
+            .find(|item| item.id == cross_frame)
+            .unwrap();
+        let same_point = same_layout.mid;
+        let cross_point = cross_layout.mid;
+        let small_frame =
+            |point: Vec2| thinoda_core::Rect::from_center_size(point, Vec2::new(2.0, 2.0));
+        sheet.zones = vec![
+            thinoda_core::Zone {
+                id: thinoda_core::ZoneId(1),
+                name: "Root clip".into(),
+                frame: small_frame(boundary_point),
+                roots: vec![root],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            thinoda_core::Zone {
+                id: thinoda_core::ZoneId(2),
+                name: "A clip".into(),
+                frame: small_frame(same_point),
+                roots: vec![a],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            thinoda_core::Zone {
+                id: thinoda_core::ZoneId(3),
+                name: "B clip".into(),
+                frame: small_frame(cross_point + Vec2::new(200.0, 200.0)),
+                roots: vec![b],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            thinoda_core::Zone {
+                id: thinoda_core::ZoneId(4),
+                name: "Summary clip".into(),
+                frame: small_frame(summary_layout.tip),
+                roots: vec![summary_topic],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+        ];
+
+        assert_eq!(
+            hit_object(&sheet, &layout, boundary_point, 0.1),
+            Some(ObjectSelection::Boundary(boundary))
+        );
+        let boundary_outside = layout
+            .boundaries
+            .iter()
+            .find(|item| item.id == boundary)
+            .unwrap()
+            .rect
+            .left_center();
+        assert!(
+            !topic_clip_rect(&sheet, root)
+                .unwrap()
+                .contains(boundary_outside)
+        );
+        assert_eq!(hit_object(&sheet, &layout, boundary_outside, 0.1), None);
+
+        assert_eq!(
+            hit_object(&sheet, &layout, summary_layout.tip, 0.1),
+            Some(ObjectSelection::Summary(summary_id))
+        );
+        assert!(
+            !topic_clip_rect(&sheet, summary_topic)
+                .unwrap()
+                .contains(summary_layout.start)
+        );
+        assert_eq!(hit_object(&sheet, &layout, summary_layout.start, 0.1), None);
+
+        assert_eq!(
+            hit_relationship(&sheet, &layout, same_point, 1.0),
+            Some(same_frame)
+        );
+        let same_outside = bezier(
+            same_layout.start,
+            same_layout.c1,
+            same_layout.c2,
+            same_layout.end,
+            0.1,
+        );
+        assert!(!topic_clip_rect(&sheet, a).unwrap().contains(same_outside));
+        assert_eq!(hit_relationship(&sheet, &layout, same_outside, 0.1), None);
+
+        assert_ne!(topic_clip_rect(&sheet, a), topic_clip_rect(&sheet, b));
+        assert_eq!(
+            hit_relationship(&sheet, &layout, cross_point, 1.0),
+            Some(cross_frame)
         );
     }
 
@@ -2876,6 +3760,132 @@ mod tests {
             h.state_mut().view.set_initial_zoom(2.5);
             h.run();
             assert_eq!(h.state().view.zoom, 2.5);
+        }
+    }
+
+    #[test]
+    fn board_initial_and_explicit_fit_keep_kanban_clear_of_compact_toolbox() {
+        for size in [vec2(900.0, 600.0), vec2(1200.0, 900.0)] {
+            let doc = Document::new(thinoda_core::templates::instantiate("kanban-board"));
+            let original = doc.workbook().clone();
+            let original_state = doc.state_id();
+            let mut h = Harness::builder().with_size(size).build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State {
+                    doc,
+                    view: MapView::default(),
+                },
+            );
+            h.run();
+
+            for explicit_fit in [false, true] {
+                if explicit_fit {
+                    let state = h.state_mut();
+                    state.view.set_zoom(2.0);
+                    state.view.request_fit();
+                    h.run();
+                }
+                let state = h.state();
+                let sheet = state.doc.sheet();
+                assert!(sheet.uses_board_semantics());
+                let frame = sheet
+                    .zones
+                    .iter()
+                    .min_by(|a, b| a.frame.min.x.total_cmp(&b.frame.min.x))
+                    .unwrap();
+                let frame_rect = state.view.xf().rect(frame.frame);
+                let canvas = state.view.canvas_rect;
+                let safe_left = canvas.left() + BOARD_TOOLBOX_SAFE_INSET;
+                assert!(
+                    frame_rect.left() >= safe_left - 0.1,
+                    "frame title overlaps compact toolbox: {frame_rect:?}, {canvas:?}"
+                );
+                let layout = &state.view.cache.as_ref().unwrap().layout;
+                let bounds = state.view.xf().rect(fit_bounds(sheet, layout));
+                assert!(bounds.left() >= safe_left - 0.1, "{bounds:?}");
+                assert!(bounds.right() <= canvas.right() + 0.1, "{bounds:?}");
+                assert_eq!(state.doc.workbook(), &original);
+                assert_eq!(state.doc.state_id(), original_state);
+            }
+        }
+    }
+
+    #[test]
+    fn board_initial_explicit_zoom_centers_in_safe_viewport_without_refitting() {
+        let doc = Document::new(thinoda_core::templates::instantiate("kanban-board"));
+        let original = doc.workbook().clone();
+        let mut view = MapView::default();
+        view.set_initial_zoom(2.5);
+        let mut h = Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                },
+                State { doc, view },
+            );
+        h.run();
+        let state = h.state();
+        let layout = &state.view.cache.as_ref().unwrap().layout;
+        let bounds = fit_bounds(state.doc.sheet(), layout);
+        let screen_center = state.view.xf().pos(bounds.center());
+        assert_eq!(state.view.zoom, 2.5);
+        assert!(screen_center.distance(state.view.fit_viewport(state.doc.sheet()).center()) < 0.01);
+        assert_eq!(state.doc.workbook(), &original);
+    }
+
+    #[test]
+    fn plain_map_initial_and_explicit_fit_keep_original_camera_math() {
+        for wide in [false, true] {
+            let mut doc = Document::new(Workbook::default());
+            if wide {
+                doc.edit_sheet("Wide map", |sheet| {
+                    for i in 0..30 {
+                        sheet.insert_child(sheet.root, &format!("Branch {i}"))?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            }
+            assert!(!doc.sheet().uses_board_semantics());
+            let original = doc.workbook().clone();
+            let mut h = Harness::builder()
+                .with_size(vec2(900.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                    },
+                    State {
+                        doc,
+                        view: MapView::default(),
+                    },
+                );
+            h.run();
+            for explicit_fit in [false, true] {
+                if explicit_fit {
+                    h.state_mut().view.request_fit();
+                    h.run();
+                }
+                let state = h.state();
+                let rect = state.view.canvas_rect;
+                let layout = &state.view.cache.as_ref().unwrap().layout;
+                let bounds = fit_bounds(state.doc.sheet(), layout);
+                let overflow = bounds.size.x > rect.width() || bounds.size.y > rect.height();
+                let expected_zoom = if explicit_fit || overflow {
+                    ((rect.width() - 80.0) / bounds.size.x)
+                        .min((rect.height() - 80.0) / bounds.size.y)
+                        .clamp(MIN_ZOOM, 1.0)
+                } else {
+                    1.0
+                };
+                let center = bounds.center();
+                let expected_offset = vec2(-center.x * expected_zoom, -center.y * expected_zoom);
+                assert!((state.view.zoom - expected_zoom).abs() < 0.0001);
+                assert!((state.view.offset - expected_offset).length() < 0.01);
+                assert_eq!(state.doc.workbook(), &original);
+            }
         }
     }
 
@@ -3458,7 +4468,13 @@ mod tests {
             .unwrap();
         let layout = layout_sheet(doc.sheet(), &ApproxMeasure, false);
         let r = &layout.relationships[0];
-        assert_eq!(hit_relationship(&layout, r.mid, 6.0), Some(r.id));
-        assert_eq!(hit_relationship(&layout, Vec2::new(1e5, 1e5), 6.0), None);
+        assert_eq!(
+            hit_relationship(doc.sheet(), &layout, r.mid, 6.0),
+            Some(r.id)
+        );
+        assert_eq!(
+            hit_relationship(doc.sheet(), &layout, Vec2::new(1e5, 1e5), 6.0),
+            None
+        );
     }
 }

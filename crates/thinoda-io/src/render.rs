@@ -1,10 +1,10 @@
 use crate::{ExportOptions, IoError};
-use std::io::Cursor;
+use std::{collections::HashMap, io::Cursor};
 use thinoda_core::{
     Rect, Sheet, TopicId, Workbook,
     equations::{self as math, Layout as EquationLayout, Primitive as EquationPrimitive},
     geometry::{Color, Vec2},
-    layout::{ConnectorKind, layout_sheet},
+    layout::{ConnectorKind, Dir, layout_sheet},
     model::TopicShape,
     theme::Theme,
 };
@@ -24,6 +24,17 @@ fn esc(s: &str) -> String {
 fn col(c: Color) -> String {
     c.to_hex()
 }
+
+/// Choose a board frame title against the existing export fill and theme.
+/// Transparent exports cannot guarantee contrast on an unknown final backdrop.
+fn frame_title_color(tint: Color, fill: Color, background: Color, board: bool) -> Color {
+    if board {
+        Color::highest_contrast_on(fill.over(background))
+    } else {
+        tint
+    }
+}
+
 fn xy(p: Vec2) -> String {
     format!("{:.2},{:.2}", p.x, p.y)
 }
@@ -166,19 +177,38 @@ pub(crate) fn extend_equation_frame(
     ))
 }
 
+/// A filtered paint sheet must retain the original sheet's export semantics.
 pub(crate) fn svg_resolved(
-    s: &Sheet,
+    source: &Sheet,
+    paint_sheet: &Sheet,
     o: &ExportOptions,
     resolved: &thinoda_core::ResolvedPresentationSlide,
+    clip_scene: bool,
 ) -> Result<String, IoError> {
     svg_layout_with_fonts(
-        s,
+        paint_sheet,
         o,
         crate::fonts::database(),
         Some(resolved.frame),
         &resolved.layout,
         &resolved.zones,
+        SvgSceneOptions::new(source, clip_scene),
     )
+}
+
+#[derive(Clone, Copy)]
+struct SvgSceneOptions {
+    clip_scene: bool,
+    has_board_semantics: bool,
+}
+
+impl SvgSceneOptions {
+    fn new(source: &Sheet, clip_scene: bool) -> Self {
+        Self {
+            clip_scene,
+            has_board_semantics: source.uses_board_semantics(),
+        }
+    }
 }
 
 pub(crate) fn branch_frames(
@@ -187,23 +217,51 @@ pub(crate) fn branch_frames(
     dark: bool,
 ) -> Result<Vec<Rect>, IoError> {
     for root in roots {
-        if sheet.main_branch_of(*root).is_none() {
+        if !sheet.is_presentation_branch(*root) {
             return Err(IoError::Invalid(format!(
-                "topic {root} is not in the central topic tree"
+                "topic {root} is not a presentation branch"
             )));
         }
     }
     let text = text::ExportText::new(sheet, dark, crate::fonts::database())?;
     let layout = layout_sheet(sheet, &text, dark);
+    let scene = thinoda_core::build_scene(sheet, &layout);
+    let topic_bounds: HashMap<_, _> = scene
+        .items
+        .iter()
+        .filter_map(|item| match item.id {
+            thinoda_core::SceneId::Topic(id) => item.visible_bounds().map(|bounds| (id, bounds)),
+            _ => None,
+        })
+        .collect();
+    let relationship_sources: HashMap<_, _> = if sheet.zones.iter().any(|zone| zone.clip) {
+        sheet
+            .relationships
+            .iter()
+            .map(|relationship| (relationship.id, relationship))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     roots
         .iter()
         .map(|root| {
             let owned: std::collections::HashSet<_> =
                 sheet.owned_subtree_ids(*root).into_iter().collect();
+            let root_clip = thinoda_core::scene::topic_clip_rect(sheet, *root);
             let mut bounds = owned
                 .iter()
-                .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
+                .filter_map(|id| topic_bounds.get(id).copied())
                 .reduce(|bounds, rect| bounds.union(&rect))
+                // A completely clipped tree uses its frame rather than the
+                // potentially distant, invisible topic geometry as a fallback.
+                .or(root_clip)
+                .or_else(|| {
+                    owned
+                        .iter()
+                        .filter_map(|id| layout.topics.get(id).map(|topic| topic.rect))
+                        .reduce(|bounds, rect| bounds.union(&rect))
+                })
                 .ok_or_else(|| IoError::Invalid(format!("branch {root} has no visible topics")))?;
             for summary in &layout.summaries {
                 if owned.contains(&summary.topic)
@@ -212,16 +270,102 @@ pub(crate) fn branch_frames(
                         .iter()
                         .any(|source| source.id == summary.id && owned.contains(&source.parent))
                 {
-                    bounds = bounds.union(&summary.range_rect);
+                    let clip = thinoda_core::scene::topic_clip_rect(sheet, summary.topic);
+                    if let Some(rect) = thinoda_core::presentation::clip_presentation_bounds(
+                        summary.range_rect,
+                        clip,
+                    ) {
+                        bounds = bounds.union(&rect);
+                    }
                 }
             }
             for boundary in &layout.boundaries {
-                if sheet
+                if let Some(source) = sheet
                     .boundaries
                     .iter()
-                    .any(|source| source.id == boundary.id && owned.contains(&source.parent))
+                    .find(|source| source.id == boundary.id && owned.contains(&source.parent))
                 {
-                    bounds = bounds.union(&boundary.rect);
+                    let clip = thinoda_core::scene::topic_clip_rect(sheet, source.parent);
+                    let rect = if clip.is_some() {
+                        boundary.rect.expand(1.0)
+                    } else {
+                        boundary.rect
+                    };
+                    if let Some(rect) =
+                        thinoda_core::presentation::clip_presentation_bounds(rect, clip)
+                    {
+                        bounds = bounds.union(&rect);
+                    }
+                    if let Some(clip) = clip
+                        && source
+                            .title
+                            .as_deref()
+                            .is_some_and(|title| !title.is_empty())
+                    {
+                        bounds = bounds.union(&clip);
+                    }
+                }
+            }
+            // Valid frame membership is attached to floating roots, so every
+            // topic and summary owned by this branch inherits the same clip.
+            // Additional connector geometry is considered only for clipped
+            // branches, preserving the historical no-clip generated frame.
+            if let Some(clip) = root_clip {
+                let mut include_points = |points: &[Vec2], margin: f32| {
+                    if let Some(rect) =
+                        thinoda_core::board::points_bounds(points).and_then(|rect| {
+                            thinoda_core::presentation::clip_presentation_bounds(
+                                rect.expand(margin),
+                                Some(clip),
+                            )
+                        })
+                    {
+                        bounds = bounds.union(&rect);
+                    }
+                };
+                for connector in &layout.connectors {
+                    if owned.contains(&connector.parent) && owned.contains(&connector.child) {
+                        include_points(
+                            &[connector.start, connector.end],
+                            connector.width.max(0.0) / 2.0,
+                        );
+                    }
+                }
+                for summary in &layout.summaries {
+                    if !owned.contains(&summary.topic) {
+                        continue;
+                    }
+                    include_points(&[summary.start, summary.tip], 1.0);
+                    include_points(&[summary.end, summary.tip], 1.0);
+                    if let Some(topic) = layout.rect(summary.topic) {
+                        let end = match summary.dir {
+                            Dir::Right => topic.left_center(),
+                            Dir::Left => topic.right_center(),
+                            Dir::Down => topic.top_center(),
+                            Dir::Up => topic.bottom_center(),
+                        };
+                        include_points(&[summary.tip, end], 1.0);
+                    }
+                }
+                for relationship in &layout.relationships {
+                    let Some(source) = relationship_sources.get(&relationship.id) else {
+                        continue;
+                    };
+                    if owned.contains(&source.from) && owned.contains(&source.to) {
+                        include_points(
+                            &[
+                                relationship.start,
+                                relationship.c1,
+                                relationship.c2,
+                                relationship.end,
+                            ],
+                            10.0, // Conservative room for canvas and SVG arrowheads.
+                        );
+                        // Relationship label extents are not measured by Layout.
+                        if !source.title.is_empty() {
+                            include_points(&[clip.min, clip.max()], 0.0);
+                        }
+                    }
                 }
             }
             Ok(bounds.expand(80.0))
@@ -237,7 +381,15 @@ fn svg_sheet_with_fonts(
 ) -> Result<String, IoError> {
     let text = text::ExportText::new(s, o.dark, fontdb.clone())?;
     let layout = layout_sheet(s, &text, o.dark);
-    svg_layout_with_fonts(s, o, fontdb, frame, &layout, &s.zones)
+    svg_layout_with_fonts(
+        s,
+        o,
+        fontdb,
+        frame,
+        &layout,
+        &s.zones,
+        SvgSceneOptions::new(s, false),
+    )
 }
 
 fn svg_layout_with_fonts(
@@ -247,6 +399,7 @@ fn svg_layout_with_fonts(
     frame: Option<Rect>,
     layout: &thinoda_core::Layout,
     zones: &[thinoda_core::Zone],
+    scene_options: SvgSceneOptions,
 ) -> Result<String, IoError> {
     validate_equation_notes(s)?;
     let mut image_dimensions = thinoda_core::images::validate_visual(s).map_err(|error| {
@@ -257,18 +410,52 @@ fn svg_layout_with_fonts(
             s.topic(*id).and_then(|topic| topic.image.as_deref()) == Some(reference.as_str())
         })
     });
-    let text = text::ExportText::new(s, o.dark, fontdb)?;
+    let text = text::ExportText::new(s, o.dark, fontdb.clone())?;
     let pad = o.padding.max(0.0);
     let scene = thinoda_core::build_scene(s, layout);
+    // Viewports already opt in, but ordinary exports and legacy presentation
+    // sources must also honor any clipping frames on the sheet.
+    let has_clipped_frames = s.zones.iter().any(|zone| zone.clip);
+    // Keep the historical SVG byte-for-byte for source sheets without board
+    // features, even when a presentation has filtered its paint sheet.
+    let has_board_semantics = scene_options.has_board_semantics;
+    let clip_scene = scene_options.clip_scene || has_clipped_frames;
+    let topic_clips: HashMap<_, _> = if clip_scene {
+        scene
+            .items
+            .iter()
+            .filter_map(|item| match item.id {
+                thinoda_core::SceneId::Topic(id) => Some((id, item.clip)),
+                _ => None,
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    // Decorations are not SceneItems. Map edges inherit the child's clip,
+    // boundaries the parent's, and summaries the summary topic's. Relationships
+    // inherit a clip only when both endpoints belong to the same clipped zone.
+    // Look up owners omitted from a filtered presentation layout in the full
+    // sheet as well.
+    let topic_clip = |id| {
+        clip_scene
+            .then(|| {
+                topic_clips
+                    .get(&id)
+                    .copied()
+                    .unwrap_or_else(|| thinoda_core::scene::topic_clip_rect(s, id))
+            })
+            .flatten()
+    };
     // Canvas objects and rotated cards extend the export; the grid never does.
     let content = match board::extra_bounds(s, &scene) {
-        Some(extra) if layout.order.is_empty() => extra,
+        Some(extra) if layout.order.is_empty() && !has_clipped_frames => extra,
         Some(extra) => layout.bounds.union(&extra),
         None => layout.bounds,
     };
     let base_frame = frame.unwrap_or_else(|| content.expand(pad));
     let appendix = equation_appendix(s, layout)?;
-    let b = if frame.is_none() {
+    let mut b = if frame.is_none() {
         appendix.as_ref().map_or(base_frame, |appendix| {
             let width = base_frame.size.x.max(appendix.width);
             Rect::from_min_size(
@@ -279,14 +466,35 @@ fn svg_layout_with_fonts(
     } else {
         base_frame
     };
-    let max = b.max();
-    let width = max.x - b.min.x;
-    let height = max.y - b.min.y;
     let bg = Theme::for_settings(&s.theme).background(&s.theme, o.dark);
-    let mut out = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{width:.2}\" height=\"{height:.2}\" viewBox=\"{:.2} {:.2} {width:.2} {height:.2}\">",
-        b.min.x, b.min.y
-    );
+    let opening_tag = |bounds: Rect| {
+        let max = bounds.max();
+        let width = max.x - bounds.min.x;
+        let height = max.y - bounds.min.y;
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{width:.2}\" height=\"{height:.2}\" viewBox=\"{:.2} {:.2} {width:.2} {height:.2}\">",
+            bounds.min.x, bounds.min.y
+        )
+    };
+    let measure_visible_bounds = has_clipped_frames && frame.is_none();
+    let background = |bounds: Rect| {
+        let max = bounds.max();
+        let width = max.x - bounds.min.x;
+        let height = max.y - bounds.min.y;
+        let id = if measure_visible_bounds {
+            " id=\"scene-export-background\""
+        } else {
+            ""
+        };
+        format!(
+            "<rect{id} x=\"{:.2}\" y=\"{:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{}\"/>",
+            bounds.min.x,
+            bounds.min.y,
+            col(bg)
+        )
+    };
+    let opening = opening_tag(b);
+    let mut out = opening.clone();
     out.push_str("<defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"6\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L0,6 L7,3 z\" fill=\"#777777\"/></marker></defs>");
     // Embed each referenced blob once, even when thousands of topics share it.
     out.push_str("<defs>");
@@ -308,12 +516,13 @@ fn svg_layout_with_fonts(
     }
     out.push_str("</defs>");
     if !o.transparent {
-        out.push_str(&format!("<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{}\"/>",b.min.x,b.min.y,col(bg)));
+        out.push_str(&background(b));
     }
     for zone in zones {
         let r = zone.frame;
         let color = zone.color.unwrap_or(Color::rgb(0x5D, 0x7A, 0x91));
         let fill = Color::rgba(color.r, color.g, color.b, 20);
+        let title_color = frame_title_color(color, fill, bg, scene_options.has_board_semantics);
         out.push_str(&format!(
             "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/>",
             r.min.x,
@@ -327,26 +536,31 @@ fn svg_layout_with_fonts(
             "<text x=\"{:.2}\" y=\"{:.2}\" fill=\"{}\" font-size=\"12\">{}</text>",
             r.min.x + 8.0,
             r.min.y + 17.0,
-            col(color),
+            col(title_color),
             esc(&zone.name)
         ));
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::BelowMap) {
+        let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(item, object, bg, o.dark));
+        if clipped {
+            out.push_str("</g>");
+        }
     }
     for boundary in &layout.boundaries {
         let r = boundary.rect;
-        let title = s
-            .boundaries
-            .iter()
-            .find(|x| x.id == boundary.id)
-            .and_then(|x| x.title.as_deref())
+        let source = s.boundaries.iter().find(|source| source.id == boundary.id);
+        let clipped = open_scene_clip(
+            &mut out,
+            source.and_then(|source| topic_clip(source.parent)),
+            "boundary",
+            boundary.id.0,
+        );
+        let title = source
+            .and_then(|source| source.title.as_deref())
             .unwrap_or("");
-        let color = s
-            .boundaries
-            .iter()
-            .find(|x| x.id == boundary.id)
-            .and_then(|b| b.color)
+        let color = source
+            .and_then(|source| source.color)
             .unwrap_or(Color::rgb(0x8A, 0x9B, 0xB0));
         let fill = Color::rgba(
             color.r,
@@ -363,8 +577,12 @@ fn svg_layout_with_fonts(
                 esc(title)
             ));
         }
+        if clipped {
+            out.push_str("</g>");
+        }
     }
     for c in &layout.connectors {
+        let clipped = open_scene_clip(&mut out, topic_clip(c.child), "map-edge", c.child.0);
         let d = match c.kind {
             ConnectorKind::Straight => format!("M {} L {}", xy(c.start), xy(c.end)),
             ConnectorKind::Elbow
@@ -413,14 +631,35 @@ fn svg_layout_with_fonts(
             }
         };
         out.push_str(&format!("<path d=\"{d}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{:.2}\" stroke-linecap=\"round\"/>",col(c.color),c.width));
+        if clipped {
+            out.push_str("</g>");
+        }
     }
+    let mut relationship_clip_zones = HashMap::new();
     for r in &layout.relationships {
-        let title = s
-            .relationships
-            .iter()
-            .find(|x| x.id == r.id)
-            .map(|x| x.title.as_str())
-            .unwrap_or("");
+        let source = s.relationships.iter().find(|source| source.id == r.id);
+        // Distinct frames can have identical rectangles; compare their stable
+        // identities rather than clipping an unrelated cross-frame link.
+        let clip = if has_clipped_frames {
+            source.and_then(|source| {
+                let from = *relationship_clip_zones
+                    .entry(source.from)
+                    .or_insert_with(|| thinoda_core::scene::topic_clip_zone(s, source.from));
+                let to = *relationship_clip_zones
+                    .entry(source.to)
+                    .or_insert_with(|| thinoda_core::scene::topic_clip_zone(s, source.to));
+                match (from, to) {
+                    (Some((from_zone, rect)), Some((to_zone, _))) if from_zone == to_zone => {
+                        Some(rect)
+                    }
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
+        let clipped = open_scene_clip(&mut out, clip, "relationship", r.id.0);
+        let title = source.map(|source| source.title.as_str()).unwrap_or("");
         out.push_str(&format!("<path d=\"M {} C {} {} {}\" fill=\"none\" stroke=\"#777777\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/>",xy(r.start),xy(r.c1),xy(r.c2),xy(r.end)));
         if !title.is_empty() {
             out.push_str(&format!(
@@ -430,8 +669,12 @@ fn svg_layout_with_fonts(
                 esc(title)
             ));
         }
+        if clipped {
+            out.push_str("</g>");
+        }
     }
     for summary in &layout.summaries {
+        let clipped = open_scene_clip(&mut out, topic_clip(summary.topic), "summary", summary.id.0);
         out.push_str(&format!(
             "<path d=\"M {} L {} L {} L {}\" fill=\"none\" stroke=\"#777777\" stroke-width=\"2\"/>",
             xy(summary.start),
@@ -439,20 +682,39 @@ fn svg_layout_with_fonts(
             xy(summary.end),
             xy(summary.tip)
         ));
+        if has_board_semantics && let Some(topic) = layout.rect(summary.topic) {
+            let end = match summary.dir {
+                Dir::Right => topic.left_center(),
+                Dir::Left => topic.right_center(),
+                Dir::Down => topic.top_center(),
+                Dir::Up => topic.bottom_center(),
+            };
+            out.push_str(&format!(
+                "<path class=\"summary-connector\" d=\"M {} L {}\" fill=\"none\" stroke=\"#777777\" stroke-width=\"2\"/>",
+                xy(summary.tip),
+                xy(end)
+            ));
+        }
+        if clipped {
+            out.push_str("</g>");
+        }
     }
     for id in &layout.order {
         let Some(tl) = layout.topics.get(id) else {
             continue;
         };
+        let clipped = open_scene_clip(&mut out, topic_clip(*id), "topic", id.0);
         let r = tl.rect;
         let style = &tl.style;
         let card = s
             .topic(*id)
             .filter(|topic| topic.parent.is_none())
             .and_then(|topic| topic.card.as_ref());
-        let card_fill = card.and_then(board::card_fill);
+        let card_fill = card.and_then(|card| board::card_fill(card, o.dark));
         let text_color = card_fill.map_or(style.text_color, |fill| {
-            Color::highest_contrast_on(fill.over(bg))
+            s.topic(*id)
+                .and_then(|topic| topic.style.text_color)
+                .unwrap_or_else(|| Color::highest_contrast_on(fill.over(bg)))
         });
         if let Some(card) = card.filter(|card| card.rotation != 0.0) {
             out.push_str(&format!(
@@ -607,9 +869,48 @@ fn svg_layout_with_fonts(
         if card.is_some_and(|card| card.rotation != 0.0) {
             out.push_str("</g>");
         }
+        if clipped {
+            out.push_str("</g>");
+        }
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::AboveMap) {
+        let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
         out.push_str(&board_object_svg(item, object, bg, o.dark));
+        if clipped {
+            out.push_str("</g>");
+        }
+    }
+    if measure_visible_bounds && out.contains("<clipPath id=\"scene-clip-") {
+        // The layout's raw topic/decorations bounds can be arbitrarily far outside
+        // their owning clips. Besides whitespace, that can make raster exports
+        // truncate genuinely visible content at their size limit. Measure the
+        // actual un-clipped SVG nodes (including text and rotated shapes); each
+        // skipped clip group is bounded by the corresponding zone frame.
+        let source = format!("{out}</svg>");
+        let visible = zones.iter().fold(
+            visible_svg_bounds(&source, b.min, fontdb)?,
+            |bounds, zone| Some(bounds.map_or(zone.frame, |bounds| bounds.union(&zone.frame))),
+        );
+        if let Some(visible) = visible {
+            let base_frame = visible.expand(pad);
+            let corrected = appendix.as_ref().map_or(base_frame, |appendix| {
+                let width = base_frame.size.x.max(appendix.width);
+                Rect::from_min_size(
+                    Vec2::new(base_frame.center().x - width / 2.0, base_frame.min.y),
+                    Vec2::new(width, base_frame.size.y + appendix.height),
+                )
+            });
+            let old_background = background(b);
+            let new_background = background(corrected);
+            out.replace_range(..opening.len(), &opening_tag(corrected));
+            if !o.transparent {
+                let start = out
+                    .find(&old_background)
+                    .ok_or_else(|| IoError::Invalid("SVG bounds: background is missing".into()))?;
+                out.replace_range(start..start + old_background.len(), &new_background);
+            }
+            b = corrected;
+        }
     }
     if let Some(appendix) = &appendix {
         let start_y = b.max().y - appendix.height;
@@ -672,6 +973,70 @@ fn svg_layout_with_fonts(
     }
     out.push_str("</svg>");
     Ok(out)
+}
+
+/// Bounds actual SVG paint not already constrained by a frame. The root SVG uses
+/// equal viewport/viewBox dimensions, so absolute SVG coordinates are translated
+/// back to sheet coordinates by its rounded viewBox origin.
+fn visible_svg_bounds(
+    source: &str,
+    origin: Vec2,
+    fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
+) -> Result<Option<Rect>, IoError> {
+    use resvg::usvg::{Node, Options, Tree};
+
+    fn include(node: &Node, bounds: &mut Option<Rect>) {
+        if node.id() == "scene-export-background" {
+            return;
+        }
+        if let Node::Group(group) = node {
+            if group
+                .clip_path()
+                .is_some_and(|clip| clip.id().starts_with("scene-clip-"))
+            {
+                return;
+            }
+            for child in group.children() {
+                include(child, bounds);
+            }
+            return;
+        }
+        let rect = node.abs_stroke_bounding_box();
+        let rect = Rect::from_min_size(
+            Vec2::new(rect.x(), rect.y()),
+            Vec2::new(rect.width(), rect.height()),
+        );
+        *bounds = Some(bounds.map_or(rect, |existing| existing.union(&rect)));
+    }
+
+    let tree = Tree::from_str(
+        source,
+        &Options {
+            fontdb,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| IoError::Invalid(format!("SVG bounds: {error}")))?;
+    let mut bounds = None;
+    for node in tree.root().children() {
+        include(node, &mut bounds);
+    }
+    let rounded = |n: f32| format!("{n:.2}").parse::<f32>().unwrap_or(n);
+    let offset = Vec2::new(rounded(origin.x), rounded(origin.y));
+    Ok(bounds.map(|bounds| bounds.translate(offset)))
+}
+
+/// Opens a scene-item clip in sheet coordinates. This is a visual clip, not
+/// redaction: the SVG can still contain the original geometry and resources.
+fn open_scene_clip(out: &mut String, clip: Option<Rect>, kind: &str, id: u64) -> bool {
+    let Some(rect) = clip else {
+        return false;
+    };
+    out.push_str(&format!(
+        "<defs><clipPath id=\"scene-clip-{kind}-{id}\" clipPathUnits=\"userSpaceOnUse\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath></defs><g clip-path=\"url(#scene-clip-{kind}-{id})\">",
+        rect.min.x, rect.min.y, rect.size.x, rect.size.y
+    ));
+    true
 }
 
 fn board_object_svg(
@@ -1079,6 +1444,559 @@ mod tests {
         let w = Workbook::new(thinoda_core::Sheet::new("S", "<root>"));
         let xml = svg(&w, &ExportOptions::default()).unwrap();
         assert!(xml.contains("&lt;root&gt;"));
+    }
+
+    #[test]
+    fn plain_map_with_summary_matches_prior_svg_bytes() {
+        let mut sheet = Sheet::new("Legacy", "Root");
+        let first = sheet.add_child(sheet.root, None, "First");
+        let second = sheet.add_child(sheet.root, None, "Second");
+        sheet.add_summary(&[first, second], "Summary").unwrap();
+        assert!(!crate::board_export::uses_board_semantics(&sheet));
+
+        // Captured from the pre-change renderer at 65eacfcb with only embedded
+        // fallback fonts; this is a complete SVG, not a comparison of two
+        // paths through the current renderer.
+        let expected = concat!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="561.00" height="122.00" viewBox="-228.00 -61.00 561.00 122.00">"##,
+            r##"<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#777777"/></marker></defs><defs></defs>"##,
+            r##"<rect x="-228.00" y="-61.00" width="561.00" height="122.00" fill="#FFFFFF"/>"##,
+            r##"<path d="M 57.00,0.00 C 85.00,0.00 85.00,0.00 113.00,0.00" fill="none" stroke="#FF6B6B" stroke-width="3.00" stroke-linecap="round"/>"##,
+            r##"<path d="M -57.00,0.00 C -85.00,0.00 -85.00,0.00 -113.00,0.00" fill="none" stroke="#FFA26B" stroke-width="3.00" stroke-linecap="round"/>"##,
+            r##"<path d="M 189.00,-22.50 L 203.00,0.00 L 189.00,22.50 L 203.00,0.00" fill="none" stroke="#777777" stroke-width="2"/>"##,
+            r##"<rect x="-57.00" y="-37.00" width="114.00" height="74.00" rx="6" fill="#2E3440" stroke="#2E3440" stroke-width="2.00"/>"##,
+            r##"<text id="topic-1-line-0" x="-33.00" y="10.71" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="30.00" font-weight="bold" fill="#FFFFFF" textLength="65.07" lengthAdjust="spacingAndGlyphs">Root</text>"##,
+            r##"<rect x="113.00" y="-22.50" width="68.00" height="45.00" rx="6" fill="#FF6B6B" stroke="#FF6B6B" stroke-width="2.00"/>"##,
+            r##"<text id="topic-2-line-0" x="129.00" y="6.53" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18.00" font-weight="normal" fill="#FFFFFF" textLength="35.03" lengthAdjust="spacingAndGlyphs">First</text>"##,
+            r##"<rect x="-204.00" y="-22.50" width="91.00" height="45.00" rx="6" fill="#FFA26B" stroke="#FFA26B" stroke-width="2.00"/>"##,
+            r##"<text id="topic-3-line-0" x="-188.00" y="6.53" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18.00" font-weight="normal" fill="#1F2328" textLength="58.66" lengthAdjust="spacingAndGlyphs">Second</text>"##,
+            r##"<rect x="213.00" y="-20.00" width="96.00" height="40.00" rx="6" fill="#FFD3D3" stroke="#FF6B6B" stroke-width="2.00"/>"##,
+            r##"<text id="topic-4-line-0" x="227.00" y="5.91" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16.00" font-weight="normal" fill="#1F2328" textLength="67.04" lengthAdjust="spacingAndGlyphs">Summary</text></svg>"##,
+        );
+        let fontdb = Arc::new(crate::fonts::build(false));
+        let actual =
+            svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb.clone(), None).unwrap();
+        assert_eq!(actual, expected);
+
+        // A board setting changes no other paint, but enables the additional
+        // summary connector even when there are no clipping frames.
+        sheet.board.snap = !sheet.board.snap;
+        assert!(crate::board_export::uses_board_semantics(&sheet));
+        let board = svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb, None).unwrap();
+        let connector = r##"<path class="summary-connector" d="M 203.00,0.00 L 213.00,0.00" fill="none" stroke="#777777" stroke-width="2"/>"##;
+        assert!(board.contains(connector));
+        assert_eq!(board.replacen(connector, "", 1), expected);
+    }
+
+    #[test]
+    fn plain_map_with_legacy_zone_matches_prior_svg_bytes() {
+        let mut sheet = Sheet::new("Legacy zones", "Root");
+        let floating = sheet.add_floating("Floating", Vec2::new(220.0, 80.0));
+        sheet
+            .create_zone(
+                "Legacy frame",
+                vec![floating],
+                Rect::from_min_size(Vec2::new(190.0, 40.0), Vec2::new(180.0, 120.0)),
+            )
+            .unwrap();
+        assert!(!sheet.uses_board_semantics());
+        let fontdb = Arc::new(crate::fonts::build(false));
+        let actual = svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb, None).unwrap();
+
+        // Captured before the board-title contrast change with only embedded
+        // fallback fonts. Check the complete legacy output, including its tint.
+        let expected = concat!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="475.00" height="245.00" viewBox="-81.00 -61.00 475.00 245.00">"##,
+            r##"<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#777777"/></marker></defs><defs></defs>"##,
+            r##"<rect x="-81.00" y="-61.00" width="475.00" height="245.00" fill="#FFFFFF"/>"##,
+            r##"<rect x="190.00" y="40.00" width="180.00" height="120.00" rx="4" fill="#5D7A9114" stroke="#5D7A91"/>"##,
+            r##"<text x="198.00" y="57.00" fill="#5D7A91" font-size="12">Legacy frame</text>"##,
+            r##"<rect x="-57.00" y="-37.00" width="114.00" height="74.00" rx="6" fill="#2E3440" stroke="#2E3440" stroke-width="2.00"/>"##,
+            r##"<text id="topic-1-line-0" x="-33.00" y="10.71" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="30.00" font-weight="bold" fill="#FFFFFF" textLength="65.07" lengthAdjust="spacingAndGlyphs">Root</text>"##,
+            r##"<rect x="176.50" y="60.00" width="87.00" height="40.00" rx="6" fill="#FFD3D3" stroke="#FF6B6B" stroke-width="2.00"/>"##,
+            r##"<text id="topic-2-line-0" x="190.50" y="85.91" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16.00" font-weight="normal" fill="#1F2328" textLength="58.11" lengthAdjust="spacingAndGlyphs">Floating</text></svg>"##,
+        );
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn clipping_opt_in_preserves_bytes_without_clipped_frames() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, Card, CardKind, Endpoint, ShapeKind, board::Band,
+        };
+
+        let mut sheet = Sheet::new("Legacy", "Root");
+        let branch = sheet.add_child(sheet.root, None, "Branch");
+        let first = sheet.add_child(branch, None, "First");
+        let second = sheet.add_child(branch, None, "Second");
+        sheet.add_boundary(&[first, second]).unwrap();
+        sheet.add_summary(&[first, second], "Summary").unwrap();
+        sheet.add_relationship(first, second).unwrap();
+        let mut card = Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0));
+        card.rotation = 15.0;
+        let floating = sheet
+            .add_card("Card", Vec2::new(500.0, 100.0), card)
+            .unwrap();
+        sheet
+            .create_zone(
+                "Unclipped frame",
+                vec![floating],
+                Rect::from_min_size(Vec2::new(450.0, 30.0), Vec2::new(100.0, 140.0)),
+            )
+            .unwrap();
+        let mut object = CanvasObject::shape(
+            ShapeKind::Diamond,
+            Rect::from_min_size(Vec2::new(520.0, 60.0), Vec2::new(60.0, 40.0)),
+        );
+        object.band = Band::Below;
+        let object = sheet.add_canvas_object(object).unwrap();
+        sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(floating),
+                Endpoint::Object(object),
+            )))
+            .unwrap();
+        sheet.validate().unwrap();
+
+        let opts = ExportOptions::default();
+        let fontdb = Arc::new(crate::fonts::build(false));
+        let text = text::ExportText::new(&sheet, opts.dark, fontdb.clone()).unwrap();
+        let layout = layout_sheet(&sheet, &text, opts.dark);
+        for frame in [
+            None,
+            Some(Rect::from_min_size(
+                Vec2::new(-200.0, -200.0),
+                Vec2::new(800.0, 600.0),
+            )),
+        ] {
+            let without_clipping = svg_layout_with_fonts(
+                &sheet,
+                &opts,
+                fontdb.clone(),
+                frame,
+                &layout,
+                &sheet.zones,
+                SvgSceneOptions::new(&sheet, false),
+            )
+            .unwrap();
+            let with_clipping = svg_layout_with_fonts(
+                &sheet,
+                &opts,
+                fontdb.clone(),
+                frame,
+                &layout,
+                &sheet.zones,
+                SvgSceneOptions::new(&sheet, true),
+            )
+            .unwrap();
+            // Compare the current paths, not a historical renderer fixture.
+            assert_eq!(without_clipping, with_clipping);
+            if frame.is_none() {
+                assert_eq!(
+                    without_clipping,
+                    svg_sheet_with_fonts(&sheet, &opts, fontdb.clone(), None).unwrap()
+                );
+                for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
+                    assert_eq!(
+                        raster_svg(&without_clipping, opts.scale, format).unwrap(),
+                        raster_svg(&with_clipping, opts.scale, format).unwrap()
+                    );
+                }
+                // Identical SVG is the stable PDF input: svg2pdf may serialize
+                // resource dictionaries in different orders on repeated calls.
+                assert!(pdf_svg(&without_clipping).unwrap().starts_with(b"%PDF-"));
+                let settings = crate::print::PrintSettings::default();
+                assert_eq!(
+                    crate::print::render_print_svg(&without_clipping, settings)
+                        .unwrap()
+                        .image,
+                    crate::print::render_print_svg(&with_clipping, settings)
+                        .unwrap()
+                        .image
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn summary_topic_connectors_follow_direction_and_frame_clipping() {
+        use thinoda_core::{
+            SheetRootMode,
+            layout::{Dir, Layout, SummaryLayout},
+        };
+
+        let rect = |x, y, w, h| Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h));
+        let mut sheet = Sheet::new("Summary", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(40.0, 40.0));
+        let first = sheet.add_child(root, None, "First");
+        let second = sheet.add_child(root, None, "Second");
+        let topic = sheet.add_summary(&[first, second], "Summary").unwrap();
+        let summary_id = sheet.summaries[0].id;
+        let zone = sheet
+            .create_zone("Frame", vec![root], rect(0.0, 0.0, 100.0, 100.0))
+            .unwrap();
+        sheet.zones.iter_mut().find(|z| z.id == zone).unwrap().clip = true;
+        let mut unclipped_sheet = sheet.clone();
+        unclipped_sheet.zones[0].clip = false;
+
+        let options = ExportOptions {
+            transparent: true,
+            ..Default::default()
+        };
+        let frame = rect(-60.0, -60.0, 260.0, 260.0);
+        let fontdb = Arc::new(crate::fonts::build(false));
+        let text = text::ExportText::new(&sheet, options.dark, fontdb.clone()).unwrap();
+        let topic_layout = layout_sheet(&sheet, &text, options.dark).topics[&topic].clone();
+        let render = |source: &Sheet, layout: &Layout| {
+            let svg = svg_layout_with_fonts(
+                source,
+                &options,
+                fontdb.clone(),
+                Some(frame),
+                layout,
+                &source.zones,
+                SvgSceneOptions::new(source, true),
+            )
+            .unwrap();
+            let image =
+                image::load_from_memory(&raster_svg(&svg, 1.0, image::ImageFormat::Png).unwrap())
+                    .unwrap()
+                    .to_rgba8();
+            (svg, image)
+        };
+        let (_, baseline) = render(&sheet, &Layout::default());
+        let pixel = |image: &image::RgbaImage, point: Vec2| {
+            *image.get_pixel(
+                (point.x - frame.min.x) as u32,
+                (point.y - frame.min.y) as u32,
+            )
+        };
+        let cases = [
+            (
+                Dir::Right,
+                rect(120.0, 50.0, 20.0, 20.0),
+                Vec2::new(70.0, 60.0),
+                Vec2::new(120.0, 60.0),
+                Vec2::new(80.0, 60.0),
+                Vec2::new(110.0, 60.0),
+            ),
+            (
+                Dir::Left,
+                rect(-40.0, 50.0, 20.0, 20.0),
+                Vec2::new(30.0, 60.0),
+                Vec2::new(-20.0, 60.0),
+                Vec2::new(10.0, 60.0),
+                Vec2::new(-10.0, 60.0),
+            ),
+            (
+                Dir::Down,
+                rect(50.0, 120.0, 20.0, 20.0),
+                Vec2::new(60.0, 70.0),
+                Vec2::new(60.0, 120.0),
+                Vec2::new(60.0, 80.0),
+                Vec2::new(60.0, 110.0),
+            ),
+            (
+                Dir::Up,
+                rect(50.0, -40.0, 20.0, 20.0),
+                Vec2::new(60.0, 30.0),
+                Vec2::new(60.0, -20.0),
+                Vec2::new(60.0, 10.0),
+                Vec2::new(60.0, -10.0),
+            ),
+        ];
+        let mut layout = Layout::default();
+        layout.topics.insert(topic, topic_layout);
+        for (dir, topic_rect, tip, end, inside, outside) in cases {
+            layout.topics.get_mut(&topic).unwrap().rect = topic_rect;
+            layout.summaries = vec![SummaryLayout {
+                id: summary_id,
+                topic,
+                dir,
+                range_rect: rect(0.0, 0.0, 1.0, 1.0),
+                start: tip,
+                end: tip,
+                tip,
+            }];
+            let (svg, clipped) = render(&sheet, &layout);
+            let expected = format!(
+                "<path class=\"summary-connector\" d=\"M {} L {}\"",
+                xy(tip),
+                xy(end)
+            );
+            let group = format!(
+                "<g clip-path=\"url(#scene-clip-summary-{})\">",
+                summary_id.0
+            );
+            let body = svg
+                .split_once(&group)
+                .unwrap()
+                .1
+                .split_once("</g>")
+                .unwrap()
+                .0;
+            assert!(body.contains(&expected), "{dir:?}: missing connector");
+            assert_ne!(pixel(&clipped, inside), pixel(&baseline, inside), "{dir:?}");
+            assert_eq!(
+                pixel(&clipped, outside),
+                pixel(&baseline, outside),
+                "{dir:?}"
+            );
+
+            let (svg, unclipped) = render(&unclipped_sheet, &layout);
+            assert!(svg.contains(&expected));
+            assert_ne!(
+                pixel(&unclipped, outside),
+                pixel(&baseline, outside),
+                "{dir:?}: un-clipped connector disappeared"
+            );
+        }
+
+        layout.topics.get_mut(&topic).unwrap().rect = rect(170.0, 50.0, 20.0, 20.0);
+        layout.summaries[0].dir = Dir::Right;
+        layout.summaries[0].tip = Vec2::new(120.0, 60.0);
+        layout.summaries[0].start = layout.summaries[0].tip;
+        layout.summaries[0].end = layout.summaries[0].tip;
+        let outside = Vec2::new(150.0, 60.0);
+        let (_, clipped) = render(&sheet, &layout);
+        let (_, unclipped) = render(&unclipped_sheet, &layout);
+        assert_eq!(pixel(&clipped, outside), pixel(&baseline, outside));
+        assert_ne!(pixel(&unclipped, outside), pixel(&baseline, outside));
+
+        layout.topics.clear();
+        let (svg, _) = render(&sheet, &layout);
+        assert!(!svg.contains("class=\"summary-connector\""));
+        let summary = &layout.summaries[0];
+        assert!(svg.contains(&format!(
+            "<path d=\"M {} L {} L {} L {}\"",
+            xy(summary.start),
+            xy(summary.tip),
+            xy(summary.end),
+            xy(summary.tip)
+        )));
+    }
+
+    #[test]
+    fn decoration_clips_follow_topic_ownership_and_preserve_cross_frame_links() {
+        use thinoda_core::{
+            SheetRootMode,
+            layout::{BoundaryLayout, Connector, Dir, Layout, RelationshipLayout, SummaryLayout},
+        };
+
+        let rect = |x, y, w, h| Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h));
+        let mut sheet = Sheet::new("Decorations", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(40.0, 40.0));
+        let first = sheet.add_child(root, None, "First");
+        let second = sheet.add_child(root, None, "Second");
+        let summary = sheet.add_summary(&[first, second], "Summary").unwrap();
+        let hidden_summary = sheet.add_summary(&[first, second], "Hidden").unwrap();
+        let summary_id = sheet.summaries[0].id;
+        let hidden_summary_id = sheet.summaries[1].id;
+        let boundary = sheet.add_boundary(&[first, second]).unwrap();
+        let hidden_boundary = sheet.add_boundary(&[root]).unwrap();
+        sheet.boundaries[0].color = Some(Color::rgb(235, 30, 20));
+        sheet.boundaries[1].color = Some(Color::rgb(235, 30, 20));
+
+        let other = sheet.add_floating("Other frame", Vec2::new(260.0, 40.0));
+        let same_rect = sheet.add_floating("Same rectangle", Vec2::new(50.0, 40.0));
+        let free = sheet.add_floating("Free", Vec2::new(150.0, 40.0));
+        let free_other = sheet.add_floating("Free other", Vec2::new(180.0, 40.0));
+        for (root, frame) in [
+            (root, rect(0.0, 0.0, 100.0, 250.0)),
+            (other, rect(220.0, 0.0, 100.0, 250.0)),
+            (same_rect, rect(0.0, 0.0, 100.0, 250.0)),
+        ] {
+            let zone = sheet.create_zone("Frame", vec![root], frame).unwrap();
+            sheet.zones.iter_mut().find(|z| z.id == zone).unwrap().clip = true;
+        }
+        let same = sheet.add_relationship(first, second).unwrap();
+        let same_rect_link = sheet.add_relationship(first, same_rect).unwrap();
+        let fully_clipped = sheet.add_relationship(first, second).unwrap();
+        let cross = sheet.add_relationship(first, other).unwrap();
+        let mixed = sheet.add_relationship(first, free).unwrap();
+        let unowned = sheet.add_relationship(free, free_other).unwrap();
+        sheet.set_relationship_title(same, "Clipped label").unwrap();
+        sheet.validate().unwrap();
+
+        // Isolated, known geometry exercises actual SVG-to-pixel behavior rather
+        // than relying on SVG markup or on font-dependent automatic positions.
+        let mut layout = Layout::default();
+        for (child, x0, x1, y) in [(first, 70.0, 140.0, 30.0), (second, 140.0, 180.0, 40.0)] {
+            layout.connectors.push(Connector {
+                parent: root,
+                child,
+                kind: ConnectorKind::Straight,
+                vertical: false,
+                start: Vec2::new(x0, y),
+                end: Vec2::new(x1, y),
+                color: Color::rgb(20, 200, 30),
+                width: 6.0,
+            });
+        }
+        layout.boundaries.extend([
+            BoundaryLayout {
+                id: boundary,
+                rect: rect(80.0, 50.0, 60.0, 20.0),
+            },
+            BoundaryLayout {
+                id: hidden_boundary,
+                rect: rect(140.0, 75.0, 40.0, 15.0),
+            },
+        ]);
+        for (id, topic, x0, x1, y) in [
+            (summary_id, summary, 70.0, 140.0, 100.0),
+            (hidden_summary_id, hidden_summary, 140.0, 180.0, 110.0),
+        ] {
+            layout.summaries.push(SummaryLayout {
+                id,
+                topic,
+                dir: Dir::Right,
+                range_rect: rect(x0, y - 1.0, x1 - x0, 2.0),
+                start: Vec2::new(x0, y),
+                end: Vec2::new(x0, y),
+                tip: Vec2::new(x1, y),
+            });
+        }
+        for (id, x0, x1, y) in [
+            (same, 70.0, 140.0, 130.0),
+            (same_rect_link, 70.0, 140.0, 150.0),
+            (fully_clipped, 140.0, 180.0, 165.0),
+            (cross, 70.0, 260.0, 185.0),
+            (mixed, 70.0, 200.0, 215.0),
+            (unowned, 120.0, 200.0, 275.0),
+        ] {
+            let dx = x1 - x0;
+            layout.relationships.push(RelationshipLayout {
+                id,
+                start: Vec2::new(x0, y),
+                c1: Vec2::new(x0 + dx / 3.0, y),
+                c2: Vec2::new(x0 + dx * 2.0 / 3.0, y),
+                end: Vec2::new(x1, y),
+                mid: Vec2::new((x0 + x1) / 2.0, y),
+            });
+        }
+        let options = ExportOptions {
+            transparent: true,
+            ..Default::default()
+        };
+        let frame = Some(rect(0.0, 0.0, 400.0, 300.0));
+        let fontdb = Arc::new(crate::fonts::build(false));
+        let render = |source: &Sheet| {
+            svg_layout_with_fonts(
+                source,
+                &options,
+                fontdb.clone(),
+                frame,
+                &layout,
+                &source.zones,
+                SvgSceneOptions::new(source, true),
+            )
+            .unwrap()
+        };
+        let clipped_svg = render(&sheet);
+        for (kind, id) in [
+            ("map-edge", first.0),
+            ("map-edge", second.0),
+            ("boundary", boundary.0),
+            ("boundary", hidden_boundary.0),
+            ("summary", summary_id.0),
+            ("summary", hidden_summary_id.0),
+            ("relationship", same.0),
+            ("relationship", fully_clipped.0),
+        ] {
+            assert!(clipped_svg.contains(&format!("scene-clip-{kind}-{id}")));
+        }
+        for id in [same_rect_link, cross, mixed, unowned] {
+            assert!(!clipped_svg.contains(&format!("scene-clip-relationship-{}", id.0)));
+        }
+        let clipped = image::load_from_memory(
+            &raster_svg(&clipped_svg, 1.0, image::ImageFormat::Png).unwrap(),
+        )
+        .unwrap()
+        .to_rgba8();
+        let mut unclipped_sheet = sheet.clone();
+        for zone in &mut unclipped_sheet.zones {
+            zone.clip = false;
+        }
+        let unclipped = image::load_from_memory(
+            &raster_svg(&render(&unclipped_sheet), 1.0, image::ImageFormat::Png).unwrap(),
+        )
+        .unwrap()
+        .to_rgba8();
+        let empty_svg = svg_layout_with_fonts(
+            &sheet,
+            &options,
+            fontdb,
+            frame,
+            &Layout::default(),
+            &sheet.zones,
+            SvgSceneOptions::new(&sheet, true),
+        )
+        .unwrap();
+        let empty =
+            image::load_from_memory(&raster_svg(&empty_svg, 1.0, image::ImageFormat::Png).unwrap())
+                .unwrap()
+                .to_rgba8();
+        let differences = |x0: u32, x1: u32, y0: u32, y1: u32| {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|(x, y)| clipped.get_pixel(*x, *y) != unclipped.get_pixel(*x, *y))
+                .count()
+        };
+        let visible_differences = |x0: u32, x1: u32, y0: u32, y1: u32| {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|(x, y)| {
+                    clipped
+                        .get_pixel(*x, *y)
+                        .0
+                        .iter()
+                        .zip(unclipped.get_pixel(*x, *y).0)
+                        .any(|(a, b)| a.abs_diff(b) > 2)
+                })
+                .count()
+        };
+        let painted = |x0: u32, x1: u32, y0: u32, y1: u32| {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|(x, y)| clipped.get_pixel(*x, *y) != empty.get_pixel(*x, *y))
+                .count()
+        };
+        for (name, y0, y1) in [
+            ("map edge", 26, 34),
+            ("boundary", 52, 68),
+            ("summary", 97, 103),
+            ("relationship", 127, 133),
+        ] {
+            // resvg may round translucent clip-group compositing by 1–2 units.
+            assert_eq!(
+                visible_differences(75, 95, y0, y1),
+                0,
+                "{name} inside frame"
+            );
+            assert!(painted(75, 95, y0, y1) > 0, "{name} disappeared");
+            assert!(differences(105, 135, y0, y1) > 0, "{name} outside frame");
+        }
+        for (name, y0, y1) in [
+            ("fully clipped edge", 36, 44),
+            ("fully clipped boundary", 76, 89),
+            ("fully clipped summary", 107, 113),
+            ("fully clipped relationship", 162, 168),
+        ] {
+            assert!(differences(145, 178, y0, y1) > 0, "{name}");
+            assert_eq!(painted(145, 178, y0, y1), 0, "{name} leaked pixels");
+        }
+        for (name, y0, y1) in [
+            ("distinct coincident frames", 147, 153),
+            ("cross-frame relationship", 182, 188),
+            ("clipped-to-unclipped relationship", 212, 218),
+            ("unowned relationship", 272, 278),
+        ] {
+            assert_eq!(differences(120, 180, y0, y1), 0, "{name} was cropped");
+            assert!(painted(120, 180, y0, y1) > 0, "{name} disappeared");
+        }
     }
 
     fn assert_title_fits(

@@ -39,6 +39,112 @@ fn wait(app: &mut ThinodaApp) {
     }
 }
 
+fn fixture_with_board_label() -> (
+    ThinodaApp,
+    thinoda_ai::mock::MockServer,
+    thinoda_core::CanvasObjectId,
+) {
+    let (mut app, server) = fixture(REPLY);
+    app.pitch.editor = None;
+    let doc = app.doc_mut().unwrap();
+    let id = doc
+        .doc
+        .add_canvas_object(thinoda_core::CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            Rect::from_min_size(
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Vec2::new(120.0, 80.0),
+            ),
+        ))
+        .unwrap();
+    app.begin_presentation_editor(&Context::default());
+    app.pitch.editor.as_mut().unwrap().ai.instruction = "Arrange the slides".into();
+    (app, server, id)
+}
+
+#[test]
+fn pitch_ai_board_label_editor_invalidates_dispatch_pending_and_proposal() {
+    for phase in ["dispatch", "pending", "proposal"] {
+        let (mut app, server, id) = fixture_with_board_label();
+        if phase != "dispatch" {
+            start(&mut app);
+        }
+        if phase == "proposal" {
+            wait(&mut app);
+            assert!(app.pitch.editor.as_ref().unwrap().ai.proposal.is_some());
+        }
+        let before = app.doc().unwrap().doc.workbook().clone();
+        let presentation = app
+            .pitch
+            .editor
+            .as_ref()
+            .unwrap()
+            .sheet
+            .presentation
+            .clone();
+        let doc = app.doc_mut().unwrap();
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+
+        if phase == "dispatch" {
+            let mut editor = app.pitch.editor.take().unwrap();
+            assert!(app.start_pitch_ai(&mut editor).is_err());
+            assert!(app.apply_presentation_draft(&editor).is_err());
+            assert!(server.requests.lock().unwrap().is_empty());
+            app.pitch.editor = Some(editor);
+        } else {
+            if phase == "proposal" {
+                let mut editor = app.pitch.editor.take().unwrap();
+                assert!(app.use_pitch_ai(&mut editor).is_err());
+                assert!(editor.ai.proposal.is_some());
+                assert!(app.apply_presentation_draft(&editor).is_err());
+                app.pitch.editor = Some(editor);
+            }
+            app.poll_pitch_ai(&Context::default());
+            let editor = app.pitch.editor.as_ref().unwrap();
+            assert!(editor.ai.pending.is_none(), "{phase}");
+            assert!(editor.ai.proposal.is_none(), "{phase}");
+            assert!(editor.error.is_some(), "{phase}");
+        }
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before, "{phase}");
+        assert_eq!(doc.view.editing_board_object(), Some(id), "{phase}");
+        assert_eq!(
+            app.pitch.editor.as_ref().unwrap().sheet.presentation,
+            presentation,
+            "{phase}"
+        );
+    }
+}
+
+#[test]
+fn pitch_ai_keeps_a_changed_board_label_draft_when_dispatch_is_rejected() {
+    let delta = serde_json::json!({"choices":[{"delta":{"content":REPLY}}]}).to_string();
+    let server = thinoda_ai::mock::MockServer::start_sse(&["mock-chat"], &[&delta]);
+    let (mut h, id) = super::super::tests::label_harness(false, "Original label");
+    h.state_mut().settings.ai.base_url = server.base_url.clone();
+    let ctx = h.ctx.clone();
+    h.state_mut().begin_presentation_editor(&ctx);
+    let mut editor = h.state_mut().pitch.editor.take().unwrap();
+    editor.ai.instruction = "Arrange the slides".into();
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label(t("Board object label"))
+        .type_text("Pending label");
+    h.run_steps(2);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+
+    assert!(h.state().start_pitch_ai(&mut editor).is_err());
+    assert!(h.state_mut().apply_presentation_draft(&editor).is_err());
+    assert!(server.requests.lock().unwrap().is_empty());
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.workbook(), &before);
+    assert_eq!(
+        doc.view.board_label_draft(),
+        Some((id, "Original label", "Pending label"))
+    );
+}
+
 #[test]
 fn pitch_suggestions_preserve_real_frames_and_wait_for_review_then_one_undoable_apply() {
     let (mut app, server) = fixture(REPLY);

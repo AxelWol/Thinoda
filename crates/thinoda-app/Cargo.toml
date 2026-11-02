@@ -45,8 +45,13 @@ raw-window-handle = "0.6"
 pulldown-cmark.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { version = "3.7", default-features = false }
 env_logger.workspace = true
 ureq.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Rich board clipboard must work on a pure Wayland session, not only XWayland.
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 
 # Browser build (`crates/thinoda-web`): async file pickers and downloads.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -55,7 +60,7 @@ uuid = { workspace = true, features = ["js"] }
 wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["Window", "Request", "RequestInit", "RequestRedirect", "RequestCredentials", "RequestMode", "Response", "Headers", "AbortController", "AbortSignal", "ReadableStream", "ReadableStreamDefaultReader"] }
+web-sys = { workspace = true, features = ["Window", "Document", "Event", "EventTarget", "Navigator", "Clipboard", "ClipboardEvent", "ClipboardItem", "DataTransfer", "Blob", "BlobPropertyBag", "Request", "RequestInit", "RequestRedirect", "RequestCredentials", "RequestMode", "Response", "Headers", "AbortController", "AbortSignal", "ReadableStream", "ReadableStreamDefaultReader"] }
 
 [dev-dependencies]
 egui_kittest.workspace = true

@@ -3,11 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::Cursor};
 use thinoda_core::{
     Workbook,
-    resources::{MAX_RESOURCE_BYTES, MAX_WORKBOOK_RESOURCE_BYTES, Resource},
+    resources::{
+        MAX_RESOURCE_BYTES, MAX_RESOURCES, MAX_SHEET_RESOURCE_BYTES, MAX_WORKBOOK_RESOURCE_BYTES,
+        Resource,
+    },
 };
 use zip::ZipArchive;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     sheet: usize,
     id: String,
@@ -101,12 +104,12 @@ pub(crate) fn hydrate(
     {
         return Err(IoError::Invalid("invalid native resource manifest".into()));
     }
-    if archive.len() > thinoda_core::resources::MAX_RESOURCES + 2 {
+    if archive.len() > MAX_RESOURCES + 2 {
         return Err(IoError::Invalid(
             "native resource archive contains too many entries".into(),
         ));
     }
-    if manifest.resources.len() > thinoda_core::resources::MAX_RESOURCES {
+    if manifest.resources.len() > MAX_RESOURCES {
         return Err(IoError::Invalid(
             "workbook embedded resources exceed 128 entries".into(),
         ));
@@ -128,6 +131,19 @@ pub(crate) fn hydrate(
     }
     names.remove("manifest.json");
     names.remove("content.json");
+
+    // The stores are known to be empty. Validate and populate private copies so
+    // an error cannot leave a partially hydrated workbook. Each new resource is
+    // verified below before insertion, without rehashing all preceding entries.
+    let mut stores: Vec<_> = book
+        .sheets
+        .iter()
+        .map(|sheet| sheet.resources.clone())
+        .collect();
+    for store in &stores {
+        store.validate().map_err(IoError::Invalid)?;
+    }
+    let mut sheet_totals = vec![0usize; stores.len()];
     let mut total = 0usize;
     for entry in manifest.resources {
         if entry.id.len() != 64
@@ -149,11 +165,10 @@ pub(crate) fn hydrate(
                 "workbook embedded resources exceed 64 MiB".into(),
             ));
         }
-        let sheet = book
-            .sheets
+        let store = stores
             .get_mut(entry.sheet)
             .ok_or_else(|| IoError::Invalid("embedded resource sheet does not exist".into()))?;
-        if sheet.resources.entries.contains_key(&entry.id) {
+        if store.entries.contains_key(&entry.id) {
             return Err(IoError::Invalid(
                 "duplicate embedded resource manifest entry".into(),
             ));
@@ -169,12 +184,26 @@ pub(crate) fn hydrate(
         if resource.id() != entry.id {
             return Err(IoError::Invalid("embedded resource digest mismatch".into()));
         }
-        sheet.resources.insert(resource).map_err(IoError::Invalid)?;
+        let sheet_total = sheet_totals[entry.sheet].saturating_add(resource.bytes().len());
+        if store.entries.len() >= MAX_RESOURCES || sheet_total > MAX_SHEET_RESOURCE_BYTES {
+            return Err(IoError::Invalid(
+                "sheet embedded resources exceed 128 entries or 32 MiB".into(),
+            ));
+        }
+        store.entries.insert(entry.id, resource);
+        sheet_totals[entry.sheet] = sheet_total;
     }
     if !names.is_empty() {
         return Err(IoError::Invalid(
             "unlisted native resource archive entries".into(),
         ));
     }
+    for (sheet, resources) in book.sheets.iter_mut().zip(stores) {
+        sheet.resources = resources;
+    }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "native_resources_tests.rs"]
+mod tests;

@@ -89,11 +89,13 @@ impl ThinodaApp {
     }
 
     fn fim_owner(&self) -> Option<Owner> {
-        self.doc().map(|doc| Owner {
-            key: doc.key.clone(),
-            sheet: doc.doc.active_index(),
-            state: doc.doc.state_id(),
-        })
+        self.doc()
+            .filter(|doc| !doc.has_unresolved_ink())
+            .map(|doc| Owner {
+                key: doc.key.clone(),
+                sheet: doc.doc.active_index(),
+                state: doc.doc.state_id(),
+            })
     }
 
     pub(crate) fn poll_fim(&mut self, ctx: &Context) {
@@ -280,10 +282,8 @@ impl ThinodaApp {
         }
         let Some(doc) = self.doc_mut() else { return };
         if let Err(error) = doc
-            .view
-            .try_commit_edit(&mut doc.doc)
-            .map_err(|error| error.to_string())
-            .and_then(|_| doc.flush_inspector_edit(ctx))
+            .commit_canvas_drafts()
+            .and_then(|()| doc.flush_inspector_edit(ctx))
         {
             self.fim.error = Some(error);
             return;
@@ -364,10 +364,8 @@ impl ThinodaApp {
         let ctx = self.fim_context();
         let Some(doc) = self.doc_mut() else { return };
         if let Err(error) = doc
-            .view
-            .try_commit_edit(&mut doc.doc)
-            .map_err(|error| error.to_string())
-            .and_then(|_| doc.commit_inspector_edit())
+            .commit_canvas_drafts()
+            .and_then(|()| doc.commit_inspector_edit())
         {
             self.fim.error = Some(error);
             return;
@@ -593,10 +591,13 @@ impl ThinodaApp {
                     )
                     .clicked()
                 {
-                    self.export_fim(match dialect {
-                        Dialect::Xdf2 => Format::FimXdf2,
-                        Dialect::Xdf3 => Format::FimXdf3,
-                    });
+                    self.export(
+                        match dialect {
+                            Dialect::Xdf2 => Format::FimXdf2,
+                            Dialect::Xdf3 => Format::FimXdf3,
+                        },
+                        false,
+                    );
                 }
             });
             widgets::caption(ui, t("Validation does not certify the document."));

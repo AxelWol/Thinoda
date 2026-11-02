@@ -12,7 +12,8 @@ use thinoda_core::{
 };
 use thinoda_io::{
     ExportLoss, ExportOptions, Format, IoError, export_bytes, export_bytes_with_consent,
-    export_losses, import_bytes, outline_sheet, required_native_version, uses_board_semantics,
+    export_losses, import_bytes, outline_sheet, render_presentation_slide_svg,
+    required_native_version, uses_board_semantics,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -149,6 +150,90 @@ fn board_workbooks_write_native_v6_and_round_trip() {
 }
 
 #[test]
+fn legacy_v6_hidden_anchor_title_round_trips_without_becoming_board_content() {
+    let wb = board();
+    let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();
+    assert_eq!(manifest_version(&bytes), 6);
+    let content = entry(&bytes, "content.json");
+    assert!(String::from_utf8_lossy(&content).contains(ANCHOR));
+    assert_eq!(import_bytes(Format::Thinoda, &content).unwrap(), wb);
+    let mut restored = import_bytes(Format::Thinoda, &bytes).unwrap();
+    assert_eq!(restored, wb);
+    assert_eq!(restored.active().root_topic().title, ANCHOR);
+    assert!(
+        !restored
+            .active()
+            .content_topics()
+            .any(|topic| topic.title == ANCHOR)
+    );
+
+    let mut empty_anchor = restored.clone();
+    let root = empty_anchor.active().root;
+    empty_anchor
+        .active_mut()
+        .topic_mut(root)
+        .unwrap()
+        .title
+        .clear();
+    for format in [Format::Svg, Format::Png, Format::Jpeg] {
+        assert_eq!(
+            export(&restored, format),
+            export(&empty_anchor, format),
+            "{format:?} changed when only the hidden title changed"
+        );
+    }
+    let pptx = export(&restored, Format::PowerPoint);
+    let empty_pptx = export(&empty_anchor, Format::PowerPoint);
+    assert_eq!(
+        entry(&pptx, "ppt/media/slide1-viewport.png"),
+        entry(&empty_pptx, "ppt/media/slide1-viewport.png")
+    );
+    assert!(!all_text(&pptx).contains(ANCHOR));
+    assert!(!all_text(&export(&restored, Format::Markdown)).contains(ANCHOR));
+
+    let branch = restored.active().floating[0];
+    let frame = Rect::from_min_size(Vec2::new(-300.0, -200.0), Vec2::new(800.0, 600.0));
+    let sheet = restored.active_mut();
+    let zone = sheet.create_zone("Ideas", vec![branch], frame).unwrap();
+    for source in [
+        PresentationSource::Branch(branch),
+        PresentationSource::Zone(zone),
+    ] {
+        sheet
+            .add_presentation_slide("Slide", source, frame)
+            .unwrap();
+    }
+    let mut empty_anchor = restored.clone();
+    let root = empty_anchor.active().root;
+    empty_anchor
+        .active_mut()
+        .topic_mut(root)
+        .unwrap()
+        .title
+        .clear();
+    let options = ExportOptions::default();
+    for index in 0..3 {
+        let svg = render_presentation_slide_svg(restored.active(), index, &options).unwrap();
+        assert!(!svg.contains(ANCHOR), "slide {index}");
+        assert_eq!(
+            svg,
+            render_presentation_slide_svg(empty_anchor.active(), index, &options).unwrap(),
+            "slide {index} changed when only the hidden title changed"
+        );
+    }
+    let mixed_pptx = export(&restored, Format::PowerPoint);
+    for index in [2, 3] {
+        let slide =
+            String::from_utf8(entry(&mixed_pptx, &format!("ppt/slides/slide{index}.xml"))).unwrap();
+        assert!(slide.contains("Idea"), "editable slide {index}");
+        assert!(!slide.contains(ANCHOR), "editable slide {index}");
+    }
+
+    restored.active_mut().show_central_topic();
+    assert_eq!(restored.active().root_topic().title, ANCHOR);
+}
+
+#[test]
 fn each_board_semantic_alone_requires_v6() {
     let mutations: Vec<SheetMutation> = vec![
         Box::new(|s| {
@@ -182,6 +267,13 @@ fn each_board_semantic_alone_requires_v6() {
             s.zones.iter_mut().find(|z| z.id == zone).unwrap().clip = true;
         }),
         Box::new(|s| {
+            s.create_board_frame(
+                "Empty frame",
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+            )
+            .unwrap();
+        }),
+        Box::new(|s| {
             s.add_presentation_slide(
                 "View",
                 PresentationSource::Viewport,
@@ -193,8 +285,10 @@ fn each_board_semantic_alone_requires_v6() {
     for (index, mutate) in mutations.iter().enumerate() {
         let mut wb = central();
         assert!(!uses_board_semantics(&wb.sheets[0]));
+        assert!(!wb.sheets[0].uses_board_semantics());
         mutate(&mut wb.sheets[0]);
         assert!(uses_board_semantics(&wb.sheets[0]), "mutation {index}");
+        assert!(wb.sheets[0].uses_board_semantics(), "mutation {index}");
         assert_eq!(required_native_version(&wb), 6, "mutation {index}");
         let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();
         assert_eq!(manifest_version(&bytes), 6, "mutation {index}");
@@ -393,16 +487,18 @@ fn export_losses_itemise_board_content_per_format() {
     // Central sheets with floating topics lose them in single-outline formats only.
     let mut central_board = board();
     central_board.sheets[0].root_mode = SheetRootMode::Central;
+    let mut central_outline = expected(true);
+    central_outline[3] = ExportLoss::CardsDropped(1);
     assert_eq!(
         export_losses(&central_board, Format::Opml, &o),
-        expected(true)
+        central_outline
     );
     assert_eq!(
         export_losses(&central_board, Format::XMind, &o),
         expected(false)
     );
 
-    // Visual formats lose zone clipping and editor settings only.
+    // SVG-backed formats preserve visual clipping; editable PowerPoint does not.
     let mut clipped = central();
     let zone = add_zone(
         &mut clipped.sheets[0],
@@ -415,8 +511,15 @@ fn export_losses_itemise_board_content_per_format() {
         .unwrap()
         .clip = true;
     clipped.sheets[0].board.snap = !clipped.sheets[0].board.snap;
+    for format in [Format::Svg, Format::Png, Format::Jpeg, Format::Pdf] {
+        assert_eq!(
+            export_losses(&clipped, format, &o),
+            vec![ExportLoss::BoardSettingsDropped],
+            "{format:?}"
+        );
+    }
     assert_eq!(
-        export_losses(&clipped, Format::Png, &o),
+        export_losses(&clipped, Format::PowerPoint, &o),
         vec![
             ExportLoss::ZoneClipDropped(1),
             ExportLoss::BoardSettingsDropped
@@ -575,7 +678,7 @@ fn svg_paints_the_board_scene() {
     assert!(svg.contains("#FADC0059"), "highlighter alpha");
     assert!(svg.contains("Connlabel"));
     assert!(svg.contains("class=\"card\""));
-    assert!(svg.contains("#FFE680"), "default sticky fill");
+    assert!(svg.contains("#FFF29E"), "default sticky fill");
     assert!(svg.contains("rotate(8.00"), "card rotation");
     assert!(svg.contains("Sticky note"));
     assert!(svg.contains(&format!("id=\"object-{}\"", far.0)));
@@ -630,8 +733,15 @@ fn raster_pdf_and_powerpoint_render_boards() {
     let pptx = export(&wb, Format::PowerPoint);
     let text = all_text(&pptx);
     assert!(
-        text.contains("Canvas object"),
-        "board objects missing in pptx"
+        text.contains("Flattened viewport scene"),
+        "viewport picture missing in pptx"
+    );
+    let image = image::load_from_memory(&entry(&pptx, "ppt/media/slide1-viewport.png"))
+        .unwrap()
+        .to_rgb8();
+    assert!(
+        image.pixels().any(|pixel| pixel.0 == [0x33, 0x99, 0xFF]),
+        "board shape missing from the viewport picture"
     );
     assert!(!text.contains(ANCHOR));
 }

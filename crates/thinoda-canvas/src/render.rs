@@ -7,14 +7,17 @@ use egui::{
     text::{LayoutJob, TextFormat},
     vec2,
 };
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
     ShapeKind, Sheet, TextAlign, TopicId, TopicShape,
     board::{rotate_around, rotated_corners, shape_label_rect},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
-    scene::{Scene, SceneGeometry, build_scene},
+    scene::{Scene, SceneGeometry, build_scene, topic_clip_rect, topic_clip_zone},
     theme::Theme,
 };
 
@@ -73,6 +76,26 @@ pub struct PaintOptions<'a> {
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
     color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
+}
+
+fn core_color32(color: Color32) -> Color {
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    Color::rgba(r, g, b, a)
+}
+
+fn zone_title_color(
+    sheet: &Sheet,
+    background: Color32,
+    tint: Color32,
+    fill_opacity: f32,
+) -> Color32 {
+    if !sheet.uses_board_semantics() {
+        return tint;
+    }
+
+    let background = core_color32(background);
+    let tint = core_color32(tint.gamma_multiply(fill_opacity.clamp(0.0, 1.0)));
+    color32(Color::highest_contrast_on(tint.over(background)))
 }
 
 /// Fits a noninteractive sample into a thumbnail, without changing any canvas camera.
@@ -145,12 +168,13 @@ pub fn paint_map(
                 Stroke::new(if selected { 2.0 } else { 1.0 }, color),
                 StrokeKind::Inside,
             );
+            let title_color = zone_title_color(sheet, bg, color, fill_opacity);
             painter.with_clip_rect(rect.shrink(4.0)).text(
                 rect.left_top() + vec2(8.0, 6.0),
                 egui::Align2::LEFT_TOP,
                 &zone.name,
                 FontId::proportional(12.0),
-                color,
+                title_color,
             );
             if selected {
                 painter.rect_filled(
@@ -175,6 +199,10 @@ pub fn paint_map(
     // Boundaries.
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
+        let clipped = bd
+            .and_then(|boundary| topic_clip_rect(sheet, boundary.parent))
+            .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
         let selected = opts.selected_object == Some(ObjectSelection::Boundary(b.id));
         let mut color = if selected {
             opts.accent
@@ -213,6 +241,9 @@ pub fn paint_map(
 
     // Branch connectors.
     for c in &layout.connectors {
+        let clipped =
+            topic_clip_rect(sheet, c.child).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
         let mut color = color32(c.color);
         if dim(c.child) {
             color = color.gamma_multiply(0.25);
@@ -235,6 +266,9 @@ pub fn paint_map(
 
     // Summaries (brace + connector to summary topic).
     for s in &layout.summaries {
+        let clipped =
+            topic_clip_rect(sheet, s.topic).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
         let selected = opts.selection.contains(&s.topic)
             || opts.selected_object == Some(ObjectSelection::Summary(s.id));
         let mut color = layout
@@ -298,6 +332,12 @@ pub fn paint_map(
     // Relationships (on top of topics, like XMind).
     for r in &layout.relationships {
         let rel = sheet.relationships.iter().find(|x| x.id == r.id);
+        let clipped = rel
+            .and_then(|relationship| {
+                relationship_clip_rect(sheet, relationship.from, relationship.to)
+            })
+            .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
         let mut color = rel
             .and_then(|x| x.color)
             .map(color32)
@@ -381,8 +421,14 @@ pub fn paint_map(
     // Selection and badges.
     for id in opts.selection {
         if let Some(t) = layout.topics.get(id) {
-            let r = xf.rect(t.rect).expand(3.0 * z.max(0.6));
-            painter.rect_stroke(
+            let item = scene.item(SceneId::Topic(*id));
+            let r = xf
+                .rect(item.map_or(t.rect, |item| item.bounds))
+                .expand(3.0 * z.max(0.6));
+            let clipped = item
+                .and_then(|item| item.clip)
+                .map(|r| painter.with_clip_rect(xf.rect(r)));
+            clipped.as_ref().unwrap_or(painter).rect_stroke(
                 r,
                 CornerRadius::same((8.0 * z).min(255.0) as u8),
                 Stroke::new(2.0, opts.accent),
@@ -393,8 +439,14 @@ pub fn paint_map(
     if let Some(h) = opts.hovered.filter(|h| !opts.selection.contains(h))
         && let Some(t) = layout.topics.get(&h)
     {
-        let r = xf.rect(t.rect).expand(3.0 * z.max(0.6));
-        painter.rect_stroke(
+        let item = scene.item(SceneId::Topic(h));
+        let r = xf
+            .rect(item.map_or(t.rect, |item| item.bounds))
+            .expand(3.0 * z.max(0.6));
+        let clipped = item
+            .and_then(|item| item.clip)
+            .map(|r| painter.with_clip_rect(xf.rect(r)));
+        clipped.as_ref().unwrap_or(painter).rect_stroke(
             r,
             CornerRadius::same((8.0 * z).min(255.0) as u8),
             Stroke::new(1.5, opts.accent.gamma_multiply(0.5)),
@@ -415,6 +467,16 @@ pub fn paint_map(
             paint_badge(painter, t, xf, opts.accent, bg);
         }
     }
+}
+
+pub(crate) fn relationship_clip_rect(
+    sheet: &Sheet,
+    from: TopicId,
+    to: TopicId,
+) -> Option<thinoda_core::Rect> {
+    let (from_zone, from_rect) = topic_clip_zone(sheet, from)?;
+    let (to_zone, _) = topic_clip_zone(sheet, to)?;
+    (from_zone == to_zone).then_some(from_rect)
 }
 
 fn paint_grid(painter: &Painter, sheet: &Sheet, xf: Xf, dark: bool) {
@@ -489,6 +551,13 @@ fn paint_objects_in_band(
     xf: Xf,
     opts: &PaintOptions<'_>,
 ) {
+    let viewport = sheet_viewport(painter.clip_rect(), xf);
+    let ctx = painter.ctx();
+    let cache_id = ink_cache_id();
+    let mut ink_cache = ctx
+        .data_mut(|data| data.remove_temp::<InkGeometryCache>(cache_id))
+        .unwrap_or_default();
+    let ink_tessellation = ink_tessellation_config(ctx);
     for item in scene.items.iter().filter(|item| item.band == band) {
         let SceneId::Object(id) = item.id else {
             continue;
@@ -496,7 +565,13 @@ fn paint_objects_in_band(
         let Some(object) = objects.get(&id) else {
             continue;
         };
-        let clipped = object_clip_rect(sheet, object).map(|r| painter.with_clip_rect(xf.rect(r)));
+        if viewport.is_some_and(|viewport| {
+            !object_visible_bounds(object, item, xf.zoom)
+                .is_some_and(|bounds| rects_intersect_inclusive(bounds, viewport))
+        }) {
+            continue;
+        }
+        let clipped = item.clip.map(|r| painter.with_clip_rect(xf.rect(r)));
         paint_canvas_object(
             clipped.as_ref().unwrap_or(painter),
             sheet,
@@ -504,31 +579,315 @@ fn paint_objects_in_band(
             item,
             xf,
             opts,
+            &mut ink_cache,
+            ink_tessellation,
         );
     }
+    ctx.data_mut(|data| data.insert_temp(cache_id, ink_cache));
 }
 
-fn object_clip_rect(sheet: &Sheet, object: &CanvasObject) -> Option<thinoda_core::Rect> {
-    sheet
-        .zones
-        .iter()
-        .find(|zone| zone.clip && zone.frame.contains(object.rect.center()))
-        .map(|zone| zone.frame)
-}
-
-fn topic_clip_rect(sheet: &Sheet, topic: TopicId) -> Option<thinoda_core::Rect> {
-    let mut current = Some(topic);
-    while let Some(id) = current {
-        if let Some(zone) = sheet
-            .zones
-            .iter()
-            .find(|zone| zone.clip && zone.roots.contains(&id))
-        {
-            return Some(zone.frame);
-        }
-        current = sheet.topic(id).and_then(|topic| topic.parent);
+fn sheet_viewport(screen: Rect, xf: Xf) -> Option<thinoda_core::Rect> {
+    if !xf.zoom.is_finite() || xf.zoom <= 0.0 {
+        return None;
     }
-    None
+    let min = xf.sheet(screen.min);
+    let max = xf.sheet(screen.max);
+    Some(thinoda_core::Rect::from_min_size(min, max - min))
+}
+
+fn object_visible_bounds(
+    object: &CanvasObject,
+    item: &thinoda_core::SceneItem,
+    zoom: f32,
+) -> Option<thinoda_core::Rect> {
+    let geometry_margin = match &object.kind {
+        CanvasObjectKind::Shape { .. } => object
+            .style
+            .stroke
+            .map(|_| object.style.stroke_width.max(0.0) / 2.0)
+            .unwrap_or_else(|| {
+                if object.style.fill.is_none() {
+                    1.0
+                } else {
+                    0.0
+                }
+            }),
+        CanvasObjectKind::Ink(_) => 0.0,
+        CanvasObjectKind::Connector(connector) => {
+            let zoom_scale = (1.0 / zoom.max(f32::EPSILON)).max(1.0);
+            let arrow_margin = if connector.arrow_start || connector.arrow_end {
+                12.0 * zoom_scale
+            } else {
+                0.0
+            };
+            let label_margin = if connector.label.is_empty() {
+                0.0
+            } else {
+                connector.label.chars().count() as f32 * 12.0 * zoom_scale + 8.0 * zoom_scale
+            };
+            arrow_margin.max(label_margin)
+        }
+    };
+    let mut bounds = item
+        .bounds
+        .expand(geometry_margin + 1.0 / zoom.max(f32::EPSILON));
+    if let Some(clip) = item.clip {
+        bounds = intersect_rect(bounds, clip)?;
+    }
+    Some(bounds)
+}
+
+fn intersect_rect(a: thinoda_core::Rect, b: thinoda_core::Rect) -> Option<thinoda_core::Rect> {
+    let a_max = a.max();
+    let b_max = b.max();
+    let min = Vec2::new(a.min.x.max(b.min.x), a.min.y.max(b.min.y));
+    let max = Vec2::new(a_max.x.min(b_max.x), a_max.y.min(b_max.y));
+    (max.x >= min.x && max.y >= min.y).then(|| thinoda_core::Rect::from_min_size(min, max - min))
+}
+
+fn rects_intersect_inclusive(a: thinoda_core::Rect, b: thinoda_core::Rect) -> bool {
+    let a_max = a.max();
+    let b_max = b.max();
+    a.min.x <= b_max.x && a_max.x >= b.min.x && a.min.y <= b_max.y && a_max.y >= b.min.y
+}
+
+const MAX_INK_CACHE_ENTRIES: usize = 8_192;
+const MAX_INK_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_INK_CACHE_CONTAINER_RESERVE_BYTES: usize = 4 * 1024 * 1024;
+const INK_CACHE_ENTRY_OVERHEAD_BYTES: usize = 256;
+const MAX_CACHED_STROKE_POINTS: usize = 8_192;
+
+fn ink_cache_id() -> egui::Id {
+    static ID: OnceLock<egui::Id> = OnceLock::new();
+    *ID.get_or_init(|| egui::Id::unique("canvas-ink-geometry-cache"))
+}
+
+#[derive(Clone, Copy)]
+struct InkTessellationConfig {
+    pixels_per_point: f32,
+    options: egui::epaint::TessellationOptions,
+}
+
+fn ink_tessellation_config(ctx: &egui::Context) -> InkTessellationConfig {
+    InkTessellationConfig {
+        pixels_per_point: ctx.pixels_per_point(),
+        options: ctx.tessellation_options(|options| *options),
+    }
+}
+
+#[derive(Clone)]
+struct InkGeometryEntry {
+    object: CanvasObjectId,
+    token: u64,
+    source_points: Arc<[Vec2]>,
+    mesh: Arc<egui::Mesh>,
+    center: Vec2,
+    rotation_bits: u32,
+    zoom_bits: u32,
+    origin_bits: [u32; 2],
+    clip_rect: Rect,
+    stroke_width_bits: u32,
+    color: Color32,
+    pixels_per_point_bits: u32,
+    tessellation_options: egui::epaint::TessellationOptions,
+}
+
+// The cache stores final screen-space stroke meshes so paint and final tessellation only
+// submit existing triangles. Screen origin is part of the key because line snapping can
+// depend on the pan offset.
+#[derive(Clone, Default)]
+struct InkGeometryCache {
+    entries: HashMap<CanvasObjectId, InkGeometryEntry>,
+    insertion_order: std::collections::VecDeque<(CanvasObjectId, u64)>,
+    next_token: u64,
+    allocated_bytes: usize,
+}
+
+impl InkGeometryEntry {
+    fn allocation_cost(&self) -> usize {
+        INK_CACHE_ENTRY_OVERHEAD_BYTES
+            .saturating_add(
+                self.source_points
+                    .len()
+                    .saturating_mul(core::mem::size_of::<Vec2>()),
+            )
+            .saturating_add(
+                self.mesh
+                    .vertices
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<egui::epaint::Vertex>()),
+            )
+            .saturating_add(
+                self.mesh
+                    .indices
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<u32>()),
+            )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn matches(
+        &self,
+        object: CanvasObjectId,
+        source_points: &[Vec2],
+        center: Vec2,
+        rotation: f32,
+        xf: Xf,
+        clip_rect: Rect,
+        stroke_width: f32,
+        color: Color32,
+        tessellation: InkTessellationConfig,
+    ) -> bool {
+        self.object == object
+            && self.source_points.as_ref() == source_points
+            && self.center == center
+            && self.rotation_bits == rotation.to_bits()
+            && self.zoom_bits == xf.zoom.to_bits()
+            && self.origin_bits == [xf.origin.x.to_bits(), xf.origin.y.to_bits()]
+            && self.clip_rect == clip_rect
+            && self.stroke_width_bits == stroke_width.to_bits()
+            && self.color == color
+            && self.pixels_per_point_bits == tessellation.pixels_per_point.to_bits()
+            && self.tessellation_options == tessellation.options
+    }
+}
+
+impl InkGeometryCache {
+    fn remove(&mut self, object: CanvasObjectId) {
+        if let Some(entry) = self.entries.remove(&object) {
+            self.allocated_bytes = self.allocated_bytes.saturating_sub(entry.allocation_cost());
+        }
+        if self.insertion_order.len() >= MAX_INK_CACHE_ENTRIES * 2 {
+            let entries = &self.entries;
+            self.insertion_order.retain(|(queued_object, token)| {
+                entries
+                    .get(queued_object)
+                    .is_some_and(|entry| entry.token == *token)
+            });
+        }
+    }
+
+    fn insert(&mut self, entry: InkGeometryEntry) -> bool {
+        self.insert_with_limits(
+            entry,
+            MAX_INK_CACHE_ENTRIES,
+            MAX_INK_CACHE_BYTES.saturating_sub(MAX_INK_CACHE_CONTAINER_RESERVE_BYTES),
+        )
+    }
+
+    fn insert_with_limits(
+        &mut self,
+        entry: InkGeometryEntry,
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> bool {
+        let object = entry.object;
+        self.remove(object);
+        if entry.source_points.is_empty()
+            || entry.source_points.len() > MAX_CACHED_STROKE_POINTS
+            || max_entries == 0
+        {
+            return false;
+        }
+        let allocation_cost = entry.allocation_cost();
+        if allocation_cost > max_bytes {
+            return false;
+        }
+        while self.entries.len() >= max_entries
+            || self.allocated_bytes.saturating_add(allocation_cost) > max_bytes
+        {
+            let Some((evicted_object, token)) = self.insertion_order.pop_front() else {
+                return false;
+            };
+            if self
+                .entries
+                .get(&evicted_object)
+                .is_some_and(|entry| entry.token == token)
+                && let Some(entry) = self.entries.remove(&evicted_object)
+            {
+                self.allocated_bytes = self.allocated_bytes.saturating_sub(entry.allocation_cost());
+            }
+        }
+        let token = self.next_token;
+        self.next_token = self.next_token.wrapping_add(1);
+        self.allocated_bytes += allocation_cost;
+        self.entries
+            .insert(object, InkGeometryEntry { token, ..entry });
+        self.insertion_order.push_back((object, token));
+        true
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ink_tessellated_mesh(
+    painter: &Painter,
+    cache: &mut InkGeometryCache,
+    object: CanvasObjectId,
+    source_points: &[Vec2],
+    center: Vec2,
+    rotation: f32,
+    xf: Xf,
+    stroke_width: f32,
+    color: Color32,
+    tessellation: InkTessellationConfig,
+) -> Option<Arc<egui::Mesh>> {
+    let clip_rect = painter.clip_rect();
+
+    if let Some(entry) = cache.entries.get(&object)
+        && entry.matches(
+            object,
+            source_points,
+            center,
+            rotation,
+            xf,
+            clip_rect,
+            stroke_width,
+            color,
+            tessellation,
+        )
+    {
+        return Some(Arc::clone(&entry.mesh));
+    }
+
+    let points: Vec<Pos2> = source_points
+        .iter()
+        .map(|point| xf.pos(rotate_around(*point, center, rotation)))
+        .collect();
+    let mut tessellator = egui::epaint::Tessellator::new(
+        tessellation.pixels_per_point,
+        tessellation.options,
+        [0, 0],
+        Vec::new(),
+    );
+    tessellator.set_clip_rect(clip_rect);
+    let mut mesh = egui::Mesh::default();
+    tessellator.tessellate_shape(
+        Shape::line(points, Stroke::new(stroke_width, color)),
+        &mut mesh,
+    );
+    if mesh.is_empty() {
+        cache.remove(object);
+        return None;
+    }
+
+    let mesh = Arc::new(mesh);
+    let entry = InkGeometryEntry {
+        object,
+        token: 0,
+        source_points: Arc::from(source_points),
+        mesh: Arc::clone(&mesh),
+        center,
+        rotation_bits: rotation.to_bits(),
+        zoom_bits: xf.zoom.to_bits(),
+        origin_bits: [xf.origin.x.to_bits(), xf.origin.y.to_bits()],
+        clip_rect,
+        stroke_width_bits: stroke_width.to_bits(),
+        color,
+        pixels_per_point_bits: tessellation.pixels_per_point.to_bits(),
+        tessellation_options: tessellation.options,
+    };
+    cache.insert(entry);
+    Some(mesh)
 }
 
 fn opacity_color(color: Color32, opacity: f32) -> Color32 {
@@ -591,6 +950,7 @@ fn shape_fill(kind: ShapeKind) -> &'static ShapeFill {
         .expect("every shape has a fill")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_canvas_object(
     painter: &Painter,
     sheet: &Sheet,
@@ -598,6 +958,8 @@ fn paint_canvas_object(
     item: &thinoda_core::SceneItem,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    ink_cache: &mut InkGeometryCache,
+    ink_tessellation: InkTessellationConfig,
 ) {
     let z = xf.zoom;
     match (&object.kind, &item.geometry) {
@@ -654,12 +1016,17 @@ fn paint_canvas_object(
             if !label.is_empty() {
                 let text_rect = shape_label_rect(*shape, object.rect);
                 let font = FontId::proportional((12.0 * z).max(7.0));
+                let text_color = object.style.text_color.map(color32).unwrap_or_else(|| {
+                    let page = core_color32(sheet_background(sheet, opts.dark));
+                    let background = object.style.fill.map_or(page, |fill| fill.over(page));
+                    color32(Color::highest_contrast_on(background))
+                });
                 painter.text(
                     xf.pos(text_rect.center()),
                     egui::Align2::CENTER_CENTER,
                     label,
                     font,
-                    opacity_color(stroke_color, object.style.opacity),
+                    opacity_color(text_color, object.style.opacity),
                 );
             }
         }
@@ -679,17 +1046,31 @@ fn paint_canvas_object(
                     1.0
                 };
             let color = opacity_color(color32(ink.color), opacity);
-            let points: Vec<Pos2> = points
-                .iter()
-                .map(|point| xf.pos(rotate_around(*point, *center, *rotation)))
-                .collect();
+            let stroke_width = (ink.width * z).max(0.5);
             if points.len() == 1 {
-                painter.circle_filled(points[0], (ink.width * z / 2.0).max(0.5), color);
+                let point = xf.pos(rotate_around(points[0], *center, *rotation));
+                painter.circle_filled(point, (ink.width * z / 2.0).max(0.5), color);
             } else if points.len() > 1 {
-                painter.add(Shape::line(
+                if let Some(mesh) = ink_tessellated_mesh(
+                    painter,
+                    ink_cache,
+                    object.id,
                     points,
-                    Stroke::new((ink.width * z).max(0.5), color),
-                ));
+                    *center,
+                    *rotation,
+                    xf,
+                    stroke_width,
+                    color,
+                    ink_tessellation,
+                ) {
+                    painter.add(Shape::from(mesh));
+                } else {
+                    let points = points
+                        .iter()
+                        .map(|point| xf.pos(rotate_around(*point, *center, *rotation)))
+                        .collect();
+                    painter.add(Shape::line(points, Stroke::new(stroke_width, color)));
+                }
             }
         }
         (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, .. }) => {
@@ -847,7 +1228,8 @@ fn paint_topic(
     let border = st.border_color.map(color32).map(a);
     let bw = (st.border_width * z).max(if border.is_some() { 0.5 } else { 0.0 });
     let stroke = border.map(|c| Stroke::new(bw, c)).unwrap_or(Stroke::NONE);
-    if let Some(card) = topic.and_then(|topic| topic.card.as_ref()) {
+    let card = topic.and_then(|topic| topic.card.as_ref());
+    let card_fill = card.map(|card| {
         let fallback = match card.kind {
             CardKind::Sticky => {
                 if dark {
@@ -871,7 +1253,9 @@ fn paint_topic(
                 }
             }
         };
-        let card_fill = card.color.map(color32).unwrap_or(fallback);
+        card.color.map(color32).unwrap_or(fallback)
+    });
+    if let (Some(card), Some(card_fill)) = (card, card_fill) {
         let corners = rotated_corners(t.rect, card.rotation)
             .into_iter()
             .map(|point| xf.pos(point))
@@ -950,7 +1334,16 @@ fn paint_topic(
         }
     }
 
-    let text_color = a(color32(st.text_color));
+    let text_color = if let Some(card_fill) = card_fill {
+        let explicit = topic.and_then(|topic| topic.style.text_color);
+        let color = explicit.map(color32).unwrap_or_else(|| {
+            let under = core_color32(card_fill).over(core_color32(bg));
+            color32(Color::highest_contrast_on(under))
+        });
+        a(color)
+    } else {
+        a(color32(st.text_color))
+    };
     // Visible fallback for legacy/malformed images. Successful textures replace it.
     if let Some(ir) = t.image_rect {
         let ir = xf.rect(ir);
@@ -1403,6 +1796,811 @@ mod tests {
     }
 
     #[test]
+    fn kanban_zone_titles_have_contrast_in_both_themes_without_changing_tint_or_clip() {
+        use thinoda_core::{ApproxMeasure, templates};
+
+        let workbook = templates::instantiate("kanban-board");
+        let sheet = workbook.active();
+        let layout = thinoda_core::layout_sheet(sheet, &ApproxMeasure, false);
+        let zone = sheet
+            .zones
+            .iter()
+            .find(|zone| zone.name == "Done")
+            .expect("Kanban template has a Done frame");
+        let zone_color = color32(zone.color.expect("template frame has a custom tint"));
+        let zone_rect = Xf {
+            origin: Pos2::ZERO,
+            zoom: 1.0,
+        }
+        .rect(zone.frame);
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+
+        for dark in [false, true] {
+            let background = sheet_background(sheet, dark);
+            let fill_opacity = 0.16;
+            let label_color = zone_title_color(sheet, background, zone_color, fill_opacity);
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: Pos2::ZERO,
+                            zoom: 1.0,
+                        },
+                        &PaintOptions {
+                            dark,
+                            ..Default::default()
+                        },
+                    );
+                },
+            );
+            output.textures_delta.clear();
+
+            let title = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) if text.galley.job.text == "Done" => Some((clipped, text)),
+                    _ => None,
+                })
+                .expect("Done frame title is painted");
+            assert_eq!(title.1.fallback_color, label_color);
+            assert_eq!(title.0.clip_rect, zone_rect.shrink(4.0));
+            let composited_fill = core_color32(zone_color.gamma_multiply(fill_opacity))
+                .over(core_color32(background));
+            assert!(
+                core_color32(label_color).contrast_on(composited_fill) >= 4.5,
+                "frame title should meet WCAG AA text contrast"
+            );
+
+            let frame = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Rect(rect) if rect.rect == zone_rect => Some(rect),
+                    _ => None,
+                })
+                .expect("Done frame background is painted");
+            assert_eq!(frame.fill, zone_color.gamma_multiply(fill_opacity));
+            assert_eq!(frame.stroke.color, zone_color);
+            let tint = zone.color.expect("template frame has a custom tint");
+            let previous_tint = Color::rgba(tint.r, tint.g, tint.b, 0x30);
+            assert!(
+                tint.contrast_on(core_color32(background))
+                    > previous_tint.contrast_on(core_color32(background)),
+                "default frame outline should be more visible in {dark} theme"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_zone_titles_keep_the_original_tint_color() {
+        let sheet = Sheet::new("Map", "Root");
+        let tint = Color32::from_rgb(90, 110, 125);
+        assert!(!sheet.uses_board_semantics());
+        assert_eq!(zone_title_color(&sheet, Color32::WHITE, tint, 0.16), tint);
+    }
+
+    #[test]
+    fn shape_labels_honor_explicit_text_color_and_use_export_contrast_fallback() {
+        let mut sheet = Sheet::new("S", "Root");
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(100.0, 60.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "label".to_owned();
+        }
+        let fill = Color::rgb(20, 30, 40);
+        let explicit = Color::rgba(30, 90, 200, 192);
+        shape.style.fill = Some(fill);
+        shape.style.text_color = Some(explicit);
+        shape.style.opacity = 0.5;
+        sheet.canvas.objects.push(shape);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let paint = |sheet: &Sheet| {
+            ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(300.0, 250.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                    );
+                },
+            )
+        };
+        let label_color = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) if text.galley.job.text == "label" => {
+                        Some(text.fallback_color)
+                    }
+                    _ => None,
+                })
+                .expect("shape label should be painted")
+        };
+
+        let mut explicit_output = paint(&sheet);
+        assert_eq!(
+            label_color(&explicit_output),
+            opacity_color(color32(explicit), 0.5)
+        );
+        explicit_output.textures_delta.clear();
+
+        sheet.canvas.objects[0].style.text_color = None;
+        let mut fallback_output = paint(&sheet);
+        let under = fill.over(core_color32(sheet_background(&sheet, false)));
+        let expected = opacity_color(color32(Color::highest_contrast_on(under)), 0.5);
+        assert_eq!(label_color(&fallback_output), expected);
+        fallback_output.textures_delta.clear();
+    }
+
+    #[test]
+    fn card_title_auto_color_uses_card_fill_and_explicit_color_wins() {
+        let mut sheet = Sheet::new("S", "Card title");
+        let card_color = Color::rgb(18, 30, 52);
+        let card = sheet.root;
+        {
+            let topic = sheet.topic_mut(card).unwrap();
+            topic.style.fill = Some(Color::rgb(250, 250, 250));
+            topic.style.text_color = None;
+            topic.card = Some(thinoda_core::Card {
+                kind: CardKind::Sticky,
+                size: Vec2::new(150.0, 90.0),
+                rotation: 0.0,
+                color: Some(card_color),
+            });
+        }
+
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let label_color = |sheet: &Sheet| {
+            let layout = thinoda_core::layout_sheet(sheet, &thinoda_core::ApproxMeasure, false);
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(300.0, 250.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                    );
+                },
+            );
+            let color = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) if text.galley.job.text == "Card title" => {
+                        Some(text.fallback_color)
+                    }
+                    _ => None,
+                })
+                .expect("card title should be painted");
+            output.textures_delta.clear();
+            color
+        };
+
+        let under = card_color.over(core_color32(sheet_background(&sheet, false)));
+        assert_eq!(
+            label_color(&sheet),
+            color32(Color::highest_contrast_on(under))
+        );
+
+        let explicit = Color::rgb(170, 35, 95);
+        sheet.topic_mut(card).unwrap().style.text_color = Some(explicit);
+        assert_eq!(label_color(&sheet), color32(explicit));
+    }
+
+    #[test]
+    fn ink_mesh_cache_reuses_and_invalidates_projected_meshes() {
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
+        let mut cache = InkGeometryCache::default();
+        let object = CanvasObjectId(501);
+        let source = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
+        let center = Vec2::ZERO;
+        let color = Color32::from_rgba_unmultiplied(190, 45, 80, 72);
+        let xf = Xf {
+            origin: pos2(20.0, 30.0),
+            zoom: 1.0,
+        };
+        let make_mesh = |cache: &mut InkGeometryCache,
+                         source: &[Vec2],
+                         rotation: f32,
+                         xf: Xf,
+                         stroke_width: f32,
+                         color: Color32,
+                         clip_rect: Rect| {
+            let mut mesh = None;
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let painter = ctx
+                        .layer_painter(egui::LayerId::background())
+                        .with_clip_rect(clip_rect);
+                    mesh = ink_tessellated_mesh(
+                        &painter,
+                        cache,
+                        object,
+                        source,
+                        center,
+                        rotation,
+                        xf,
+                        stroke_width,
+                        color,
+                        ink_tessellation_config(ctx),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            mesh.expect("line should tessellate")
+        };
+        let first = make_mesh(&mut cache, &source, 0.0, xf, 3.0, color, screen);
+        let reused = make_mesh(&mut cache, &source, 0.0, xf, 3.0, color, screen);
+        assert!(Arc::ptr_eq(&first, &reused));
+        assert!(!first.indices.is_empty());
+        assert!(first.is_valid());
+        let expected_points: Vec<_> = source
+            .iter()
+            .map(|point| xf.pos(rotate_around(*point, center, 0.0)))
+            .collect();
+        let tessellation = ink_tessellation_config(&ctx);
+        let mut reference_tessellator = egui::epaint::Tessellator::new(
+            tessellation.pixels_per_point,
+            tessellation.options,
+            [0, 0],
+            Vec::new(),
+        );
+        reference_tessellator.set_clip_rect(screen);
+        let mut reference = egui::Mesh::default();
+        reference_tessellator.tessellate_shape(
+            Shape::line(expected_points, Stroke::new(3.0, color)),
+            &mut reference,
+        );
+        assert_eq!(&*first, &reference);
+
+        let clip_rect = Rect::from_min_max(pos2(20.0, 25.0), pos2(26.0, 35.0));
+        let clipped = make_mesh(&mut cache, &source, 0.0, xf, 3.0, color, clip_rect);
+        assert!(!Arc::ptr_eq(&first, &clipped));
+
+        let zoomed_xf = Xf { zoom: 2.0, ..xf };
+        let zoomed = make_mesh(&mut cache, &source, 0.0, zoomed_xf, 6.0, color, screen);
+        assert!(!Arc::ptr_eq(&first, &zoomed));
+
+        let rotated = make_mesh(&mut cache, &source, 90.0, zoomed_xf, 6.0, color, screen);
+        assert!(!Arc::ptr_eq(&zoomed, &rotated));
+
+        let changed = [Vec2::ZERO, Vec2::new(12.0, 0.0)];
+        let updated = make_mesh(&mut cache, &changed, 90.0, zoomed_xf, 6.0, color, screen);
+        assert!(!Arc::ptr_eq(&rotated, &updated));
+        let recolored = make_mesh(
+            &mut cache,
+            &changed,
+            90.0,
+            zoomed_xf,
+            6.0,
+            Color32::RED,
+            screen,
+        );
+        assert!(!Arc::ptr_eq(&updated, &recolored));
+        let resized = make_mesh(
+            &mut cache,
+            &changed,
+            90.0,
+            zoomed_xf,
+            7.0,
+            Color32::RED,
+            screen,
+        );
+        assert!(!Arc::ptr_eq(&recolored, &resized));
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(
+            cache.allocated_bytes,
+            cache
+                .entries
+                .get(&object)
+                .expect("latest mesh should be cached")
+                .allocation_cost()
+        );
+    }
+
+    #[test]
+    fn ink_mesh_cache_preserves_pan_and_highlighter_alpha() {
+        use thinoda_core::{Band, InkStroke, InkTool};
+
+        let mut sheet = Sheet::new("S", "Root");
+        let ink_color = Color::rgb(190, 45, 80);
+        let mut ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Highlighter,
+            ink_color,
+            7.0,
+            vec![
+                Vec2::new(40.0, 30.0),
+                Vec2::new(55.0, 42.0),
+                Vec2::new(72.0, 36.0),
+            ],
+        ));
+        ink.id = CanvasObjectId(502);
+        ink.band = Band::Above;
+        ink.rotation = 27.0;
+        sheet.canvas.objects.push(ink);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+
+        let render = |xf| {
+            ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        xf,
+                        &PaintOptions::default(),
+                    );
+                },
+            )
+        };
+        let output_mesh = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Mesh(mesh) => Some(Arc::clone(mesh)),
+                    _ => None,
+                })
+                .expect("ink mesh should be painted")
+        };
+        let cached_mesh = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<InkGeometryCache>(ink_cache_id())
+                    .expect("ink geometry cache should be stored")
+                    .entries
+                    .get(&CanvasObjectId(502))
+                    .expect("ink entry should be cached")
+                    .mesh
+                    .clone()
+            })
+        };
+
+        let first_xf = Xf {
+            origin: pos2(200.0, 150.0),
+            zoom: 1.0,
+        };
+        let mut first_output = render(first_xf);
+        let first_mesh = output_mesh(&first_output);
+        first_output.textures_delta.clear();
+        let first_cached = cached_mesh(&ctx);
+        assert!(Arc::ptr_eq(&first_mesh, &first_cached));
+        let highlighter_color = opacity_color(color32(ink_color), 0.28);
+        assert!(
+            first_mesh
+                .vertices
+                .iter()
+                .any(|vertex| vertex.color == highlighter_color),
+            "highlighter opacity should be baked into the cached mesh"
+        );
+
+        let mut reused_output = render(first_xf);
+        let reused_mesh = output_mesh(&reused_output);
+        reused_output.textures_delta.clear();
+        assert!(Arc::ptr_eq(&first_mesh, &reused_mesh));
+
+        let pan = vec2(13.0, -9.0);
+        let panned_xf = Xf {
+            origin: first_xf.origin + pan,
+            zoom: first_xf.zoom,
+        };
+        let mut panned_output = render(panned_xf);
+        let panned_mesh = output_mesh(&panned_output);
+        panned_output.textures_delta.clear();
+        assert!(!Arc::ptr_eq(&first_cached, &cached_mesh(&ctx)));
+        assert_eq!(first_mesh.vertices.len(), panned_mesh.vertices.len());
+        for (first, panned) in first_mesh.vertices.iter().zip(&panned_mesh.vertices) {
+            assert!((panned.pos - first.pos - pan).length() < 1e-4);
+        }
+
+        let zoomed_xf = Xf {
+            origin: panned_xf.origin,
+            zoom: 2.0,
+        };
+        let mut zoomed_output = render(zoomed_xf);
+        let zoomed_mesh = output_mesh(&zoomed_output);
+        zoomed_output.textures_delta.clear();
+        assert!(!Arc::ptr_eq(&panned_mesh, &zoomed_mesh));
+        assert!(zoomed_mesh.is_valid());
+
+        ctx.set_pixels_per_point(2.0);
+        let mut dpi_output = render(zoomed_xf);
+        let dpi_mesh = output_mesh(&dpi_output);
+        dpi_output.textures_delta.clear();
+        assert!(!Arc::ptr_eq(&zoomed_mesh, &dpi_mesh));
+
+        ctx.tessellation_options_mut(|options| options.feathering = !options.feathering);
+        let mut options_output = render(zoomed_xf);
+        let options_mesh = output_mesh(&options_output);
+        options_output.textures_delta.clear();
+        assert!(!Arc::ptr_eq(&dpi_mesh, &options_mesh));
+    }
+
+    #[test]
+    fn ink_mesh_cache_evicts_within_strict_entry_and_byte_budgets() {
+        fn entry(object: u64) -> InkGeometryEntry {
+            let mesh = egui::Mesh {
+                vertices: vec![
+                    egui::epaint::Vertex::untextured(Pos2::ZERO, Color32::WHITE),
+                    egui::epaint::Vertex::untextured(pos2(1.0, 0.0), Color32::WHITE),
+                    egui::epaint::Vertex::untextured(pos2(1.0, 1.0), Color32::WHITE),
+                ],
+                indices: vec![0, 1, 2],
+                ..Default::default()
+            };
+            InkGeometryEntry {
+                object: CanvasObjectId(object),
+                token: 0,
+                source_points: Arc::from(vec![Vec2::ZERO, Vec2::new(1.0, 0.0)]),
+                mesh: Arc::new(mesh),
+                center: Vec2::ZERO,
+                rotation_bits: 0.0_f32.to_bits(),
+                zoom_bits: 1.0_f32.to_bits(),
+                origin_bits: [0.0_f32.to_bits(); 2],
+                clip_rect: Rect::EVERYTHING,
+                stroke_width_bits: 1.0_f32.to_bits(),
+                color: Color32::WHITE,
+                pixels_per_point_bits: 1.0_f32.to_bits(),
+                tessellation_options: egui::epaint::TessellationOptions::default(),
+            }
+        }
+
+        let mut cache = InkGeometryCache::default();
+        let first = entry(1);
+        let second = entry(2);
+        let third = entry(3);
+        let byte_limit = first.allocation_cost() + second.allocation_cost();
+        assert!(cache.insert_with_limits(first.clone(), 3, byte_limit));
+        assert!(cache.insert_with_limits(second.clone(), 3, byte_limit));
+        assert!(cache.insert_with_limits(third, 3, byte_limit));
+        assert!(!cache.entries.contains_key(&CanvasObjectId(1)));
+        assert!(cache.entries.contains_key(&CanvasObjectId(2)));
+        assert!(cache.entries.contains_key(&CanvasObjectId(3)));
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.allocated_bytes <= byte_limit);
+        assert_eq!(cache.insertion_order.len(), cache.entries.len());
+
+        let mut entry_limited = InkGeometryCache::default();
+        let entry_limit =
+            first.allocation_cost() + second.allocation_cost() + entry(6).allocation_cost();
+        assert!(entry_limited.insert_with_limits(first, 2, entry_limit));
+        assert!(entry_limited.insert_with_limits(second, 2, entry_limit));
+        assert!(entry_limited.insert_with_limits(entry(6), 2, entry_limit));
+        assert!(!entry_limited.entries.contains_key(&CanvasObjectId(1)));
+        assert_eq!(entry_limited.entries.len(), 2);
+
+        let mut oversized = entry(4);
+        oversized.source_points = Arc::from(vec![Vec2::ZERO; MAX_CACHED_STROKE_POINTS + 1]);
+        assert!(!cache.insert_with_limits(oversized, 3, byte_limit));
+        assert!(!cache.entries.contains_key(&CanvasObjectId(4)));
+
+        let too_small = entry(5);
+        let too_small_limit = too_small.allocation_cost() - 1;
+        assert!(!cache.insert_with_limits(too_small, 3, too_small_limit));
+        assert!(!cache.entries.contains_key(&CanvasObjectId(5)));
+        assert!(cache.allocated_bytes <= byte_limit);
+    }
+
+    #[test]
+    fn board_object_culling_keeps_visible_and_edge_geometry_only() {
+        use thinoda_core::{Band, CanvasConnector, Endpoint, InkStroke, InkTool, Zone, ZoneId};
+
+        let mut sheet = Sheet::new("S", "Root");
+        let mut visible = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(20.0, 20.0)),
+        );
+        visible.id = CanvasObjectId(601);
+        visible.band = Band::Above;
+        visible.style.fill = Some(Color::rgb(10, 200, 30));
+
+        let mut edge = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(105.0, 0.0), Vec2::new(20.0, 20.0)),
+        );
+        edge.id = CanvasObjectId(602);
+        edge.band = Band::Above;
+        edge.style.fill = Some(Color::rgb(20, 70, 220));
+
+        let mut offscreen = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(200.0, 0.0), Vec2::new(20.0, 20.0)),
+        );
+        offscreen.id = CanvasObjectId(603);
+        offscreen.band = Band::Above;
+        offscreen.style.fill = Some(Color::rgb(230, 20, 200));
+
+        let mut frame_clipped = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(145.0, 0.0), Vec2::new(100.0, 40.0)),
+        );
+        frame_clipped.id = CanvasObjectId(604);
+        frame_clipped.band = Band::Above;
+        frame_clipped.style.fill = Some(Color::rgb(220, 130, 10));
+
+        let mut visible_ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(200, 10, 20),
+            4.0,
+            vec![Vec2::new(-20.0, 30.0), Vec2::new(20.0, 30.0)],
+        ));
+        visible_ink.id = CanvasObjectId(605);
+        visible_ink.band = Band::Above;
+
+        let mut edge_ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(10, 180, 200),
+            4.0,
+            vec![Vec2::new(95.0, 50.0), Vec2::new(115.0, 50.0)],
+        ));
+        edge_ink.id = CanvasObjectId(606);
+        edge_ink.band = Band::Above;
+
+        let mut offscreen_ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(160, 30, 40),
+            4.0,
+            vec![Vec2::new(200.0, 60.0), Vec2::new(220.0, 60.0)],
+        ));
+        offscreen_ink.id = CanvasObjectId(607);
+        offscreen_ink.band = Band::Above;
+
+        let mut clipped_ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(90, 40, 210),
+            4.0,
+            vec![Vec2::new(90.0, 80.0), Vec2::new(200.0, 80.0)],
+        ));
+        clipped_ink.id = CanvasObjectId(608);
+        clipped_ink.band = Band::Above;
+
+        let mut visible_connector = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-30.0, 100.0)),
+            Endpoint::Point(Vec2::new(30.0, 100.0)),
+        ));
+        visible_connector.id = CanvasObjectId(609);
+        visible_connector.band = Band::Above;
+        if let CanvasObjectKind::Connector(connector) = &mut visible_connector.kind {
+            connector.color = Some(Color::rgb(40, 140, 180));
+        }
+
+        let mut edge_connector = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-110.0, 20.0)),
+            Endpoint::Point(Vec2::new(-80.0, 20.0)),
+        ));
+        edge_connector.id = CanvasObjectId(610);
+        edge_connector.band = Band::Above;
+        if let CanvasObjectKind::Connector(connector) = &mut edge_connector.kind {
+            connector.color = Some(Color::rgb(120, 80, 190));
+        }
+
+        let mut offscreen_connector = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(200.0, 140.0)),
+            Endpoint::Point(Vec2::new(220.0, 140.0)),
+        ));
+        offscreen_connector.id = CanvasObjectId(611);
+        offscreen_connector.band = Band::Above;
+        if let CanvasObjectKind::Connector(connector) = &mut offscreen_connector.kind {
+            connector.color = Some(Color::rgb(140, 110, 30));
+        }
+
+        let mut clipped_connector = CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(90.0, 90.0)),
+            Endpoint::Point(Vec2::new(200.0, 90.0)),
+        ));
+        clipped_connector.id = CanvasObjectId(612);
+        clipped_connector.band = Band::Above;
+        if let CanvasObjectKind::Connector(connector) = &mut clipped_connector.kind {
+            connector.color = Some(Color::rgb(110, 170, 45));
+        }
+
+        sheet.canvas.objects.extend([
+            visible,
+            edge,
+            offscreen,
+            frame_clipped,
+            visible_ink,
+            edge_ink,
+            offscreen_ink,
+            clipped_ink,
+            visible_connector,
+            edge_connector,
+            offscreen_connector,
+            clipped_connector,
+        ]);
+        sheet.zones.push(Zone {
+            id: ZoneId(1),
+            name: "Offscreen clip".into(),
+            frame: thinoda_core::Rect::from_center_size(
+                Vec2::new(145.0, 40.0),
+                Vec2::new(30.0, 200.0),
+            ),
+            roots: vec![],
+            keep_empty: true,
+            color: None,
+            clip: true,
+        });
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    Xf {
+                        origin: pos2(100.0, 100.0),
+                        zoom: 1.0,
+                    },
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let has_fill = |color| {
+            output.shapes.iter().any(|shape| match &shape.shape {
+                Shape::Path(path) => path.fill == color32(color),
+                _ => false,
+            })
+        };
+        let has_stroke = |color| {
+            output.shapes.iter().any(|shape| match &shape.shape {
+                Shape::LineSegment { stroke, .. } => stroke.color == color32(color),
+                Shape::Path(path) => matches!(
+                    path.stroke.color,
+                    egui::epaint::ColorMode::Solid(actual) if actual == color32(color)
+                ),
+                Shape::Mesh(mesh) => mesh
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.color == color32(color)),
+                _ => false,
+            })
+        };
+        assert!(has_fill(Color::rgb(10, 200, 30)));
+        assert!(
+            has_fill(Color::rgb(20, 70, 220)),
+            "partially visible edge shape"
+        );
+        assert!(!has_fill(Color::rgb(230, 20, 200)), "offscreen shape");
+        assert!(!has_fill(Color::rgb(220, 130, 10)), "frame-clipped shape");
+        assert!(has_stroke(Color::rgb(200, 10, 20)));
+        assert!(
+            has_stroke(Color::rgb(10, 180, 200)),
+            "partially visible edge ink"
+        );
+        assert!(!has_stroke(Color::rgb(160, 30, 40)), "offscreen ink");
+        assert!(!has_stroke(Color::rgb(90, 40, 210)), "frame-clipped ink");
+        assert!(has_stroke(Color::rgb(40, 140, 180)));
+        assert!(
+            has_stroke(Color::rgb(120, 80, 190)),
+            "partially visible edge connector"
+        );
+        assert!(!has_stroke(Color::rgb(140, 110, 30)), "offscreen connector");
+        assert!(
+            !has_stroke(Color::rgb(110, 170, 45)),
+            "frame-clipped connector"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual native paint_map CPU measurement"]
+    fn measure_ink_render_cpu_for_1000_and_10000_strokes() {
+        use std::time::Instant;
+        use thinoda_core::{Band, InkStroke, InkTool};
+
+        for stroke_count in [1_000, 10_000] {
+            let mut sheet = Sheet::new("Benchmark", "Root");
+            for index in 0..stroke_count {
+                let column = (index % 100) as f32;
+                let row = (index / 100) as f32;
+                let x = -350.0 + column * 7.0;
+                let y = -250.0 + row * 5.0;
+                let points = (0..16)
+                    .map(|point| {
+                        Vec2::new(x + point as f32, y + if point % 2 == 0 { 0.0 } else { 2.0 })
+                    })
+                    .collect();
+                let mut stroke = CanvasObject::ink(InkStroke::new(
+                    InkTool::Pen,
+                    Color::rgb(40, 100, 220),
+                    2.0,
+                    points,
+                ));
+                stroke.id = CanvasObjectId(index as u64 + 1);
+                stroke.band = Band::Above;
+                sheet.canvas.objects.push(stroke);
+            }
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let ctx = egui::Context::default();
+            let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+            let mut paint_samples = Vec::new();
+            let mut tessellation_samples = Vec::new();
+            for _ in 0..4 {
+                let start = Instant::now();
+                let mut output = ctx.run_pass(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        paint_map(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            &sheet,
+                            &layout,
+                            Xf {
+                                origin: pos2(400.0, 300.0),
+                                zoom: 1.0,
+                            },
+                            &PaintOptions::default(),
+                        );
+                    },
+                );
+                paint_samples.push(start.elapsed());
+                let tessellation_start = Instant::now();
+                let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+                tessellation_samples.push(tessellation_start.elapsed());
+                std::hint::black_box(primitives);
+                output.textures_delta.clear();
+            }
+            eprintln!(
+                "native strokes={stroke_count}: paint cold={:?}, paint warm={:?}; tessellation cold={:?}, tessellation warm={:?}",
+                paint_samples[0],
+                &paint_samples[1..],
+                tessellation_samples[0],
+                &tessellation_samples[1..]
+            );
+        }
+    }
+
+    #[test]
     fn shape_triangulations_cover_their_outlines_without_filling_notches() {
         fn cross(a: Vec2, b: Vec2, c: Vec2) -> f64 {
             f64::from(b.x - a.x) * f64::from(c.y - a.y)
@@ -1634,6 +2832,195 @@ mod tests {
     }
 
     #[test]
+    fn map_decorations_use_their_owning_topic_frame_clips() {
+        use thinoda_core::{Zone, ZoneId};
+
+        let mut sheet = Sheet::new("S", "Root");
+        let root = sheet.root;
+        let a = sheet.add_child(root, None, "A");
+        let aa = sheet.add_child(a, None, "AA");
+        let b = sheet.add_child(root, None, "B");
+        let boundary = sheet.add_boundary(&[root]).unwrap();
+        let summary_topic = sheet.add_summary(&[a, b], "Conclusion").unwrap();
+        let summary_id = sheet.summaries[0].id;
+        let same_frame = sheet.add_relationship(a, aa).unwrap();
+        let cross_frame = sheet.add_relationship(a, b).unwrap();
+        let mut layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+
+        let root_clip = layout.bounds.expand(20.0);
+        let a_clip = layout.rect(a).unwrap().expand(20.0);
+        let b_clip = layout.rect(b).unwrap().expand(20.0);
+        let summary_clip = layout.rect(summary_topic).unwrap().expand(20.0);
+        sheet.zones = vec![
+            Zone {
+                id: ZoneId(1),
+                name: "Root clip".into(),
+                frame: root_clip,
+                roots: vec![root],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            Zone {
+                id: ZoneId(2),
+                name: "A clip".into(),
+                frame: a_clip,
+                roots: vec![a],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            Zone {
+                id: ZoneId(3),
+                name: "B clip".into(),
+                frame: b_clip,
+                roots: vec![b],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+            Zone {
+                id: ZoneId(4),
+                name: "Summary clip".into(),
+                frame: summary_clip,
+                roots: vec![summary_topic],
+                keep_empty: false,
+                color: None,
+                clip: true,
+            },
+        ];
+
+        let boundary_color = Color::rgb(235, 25, 30);
+        sheet
+            .boundaries
+            .iter_mut()
+            .find(|item| item.id == boundary)
+            .unwrap()
+            .color = Some(boundary_color);
+        let branch_color = Color::rgb(15, 195, 55);
+        layout
+            .connectors
+            .iter_mut()
+            .find(|connector| connector.child == aa)
+            .unwrap()
+            .color = branch_color;
+        let same_color = Color::rgb(25, 60, 235);
+        let cross_color = Color::rgb(235, 130, 20);
+        sheet
+            .relationships
+            .iter_mut()
+            .find(|item| item.id == same_frame)
+            .unwrap()
+            .color = Some(same_color);
+        sheet
+            .relationships
+            .iter_mut()
+            .find(|item| item.id == cross_frame)
+            .unwrap()
+            .color = Some(cross_color);
+        let accent = Color32::from_rgb(180, 30, 200);
+        let xf = Xf {
+            origin: pos2(
+                500.0 - layout.bounds.center().x,
+                500.0 - layout.bounds.center().y,
+            ),
+            zoom: 1.0,
+        };
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    &sheet,
+                    &layout,
+                    xf,
+                    &PaintOptions {
+                        selected_object: Some(ObjectSelection::Summary(summary_id)),
+                        accent,
+                        ..Default::default()
+                    },
+                );
+            },
+        );
+
+        fn stroke_color(shape: &egui::epaint::ClippedShape) -> Option<Color32> {
+            match &shape.shape {
+                Shape::LineSegment { stroke, .. } => Some(stroke.color),
+                Shape::Path(path) => match path.stroke.color {
+                    egui::epaint::ColorMode::Solid(color) => Some(color),
+                    egui::epaint::ColorMode::UV(_) => None,
+                },
+                Shape::Mesh(mesh) => mesh
+                    .vertices
+                    .iter()
+                    .map(|vertex| vertex.color)
+                    .max_by_key(Color32::a),
+                _ => None,
+            }
+        }
+        let assert_clip = |color: Color32, clip: Rect| {
+            let matching = output
+                .shapes
+                .iter()
+                .filter(|shape| stroke_color(shape) == Some(color))
+                .collect::<Vec<_>>();
+            assert!(!matching.is_empty(), "no stroke painted with {color:?}");
+            assert!(
+                matching.iter().all(|shape| shape.clip_rect == clip),
+                "stroke {color:?} did not use expected clip {clip:?}"
+            );
+        };
+        assert_clip(color32(boundary_color), xf.rect(root_clip));
+        assert_clip(color32(branch_color), xf.rect(a_clip));
+        assert_clip(accent, xf.rect(summary_clip));
+        assert_clip(color32(same_color), xf.rect(a_clip));
+        assert_clip(color32(cross_color), screen);
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn relationships_between_identically_framed_zones_are_not_clipped_together() {
+        let mut sheet = Sheet::new("S", "Root");
+        let from = sheet.add_floating("From", Vec2::new(0.0, 0.0));
+        let to = sheet.add_floating("To", Vec2::new(100.0, 0.0));
+        let frame =
+            thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(300.0, 200.0));
+        let from_zone = sheet.create_zone("From frame", vec![from], frame).unwrap();
+        let to_zone = sheet.create_zone("To frame", vec![to], frame).unwrap();
+        for zone in &mut sheet.zones {
+            zone.clip = true;
+        }
+
+        assert_ne!(from_zone, to_zone);
+        assert_eq!(topic_clip_zone(&sheet, from), Some((from_zone, frame)));
+        assert_eq!(topic_clip_zone(&sheet, to), Some((to_zone, frame)));
+        assert_eq!(topic_clip_rect(&sheet, from), Some(frame));
+        assert_eq!(relationship_clip_rect(&sheet, from, to), None);
+    }
+
+    #[test]
+    fn relationships_within_a_shared_zone_keep_the_clip() {
+        let mut sheet = Sheet::new("S", "Root");
+        let from = sheet.add_floating("From", Vec2::new(0.0, 0.0));
+        let to = sheet.add_floating("To", Vec2::new(100.0, 0.0));
+        let frame =
+            thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(300.0, 200.0));
+        let shared_zone = sheet
+            .create_zone("Shared frame", vec![from, to], frame)
+            .unwrap();
+        sheet.zones[0].clip = true;
+
+        assert_eq!(topic_clip_zone(&sheet, from), Some((shared_zone, frame)));
+        assert_eq!(topic_clip_zone(&sheet, to), Some((shared_zone, frame)));
+        assert_eq!(relationship_clip_rect(&sheet, from, to), Some(frame));
+    }
+
+    #[test]
     fn xf_roundtrip() {
         let xf = Xf {
             origin: pos2(100.0, 50.0),
@@ -1794,6 +3181,7 @@ mod tests {
             name: "Colored zone".into(),
             frame: thinoda_core::Rect::from_center_size(center, Vec2::new(70.0, 55.0)),
             roots: vec![sheet.root],
+            keep_empty: false,
             color: Some(Color::rgb(50, 210, 130)),
             clip: true,
         };
@@ -1874,6 +3262,9 @@ mod tests {
                     egui::epaint::ColorMode::Solid(color)
                         if color == opacity_color(color32(Color::rgb(20, 180, 90)), 0.28)
                 ),
+                Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| {
+                    vertex.color == opacity_color(color32(Color::rgb(20, 180, 90)), 0.28)
+                }),
                 Shape::LineSegment { stroke, .. } => {
                     stroke.color == opacity_color(color32(Color::rgb(20, 180, 90)), 0.28)
                 }

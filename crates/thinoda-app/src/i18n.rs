@@ -253,6 +253,208 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 
 /// English → German.
 const DE: &[(&str, &str)] = &[
+    // Pending freehand input and recovery.
+    ("Pending ink gesture", "Ausstehende Freihandgeste"),
+    (
+        "Ink is not saved or included in crash recovery until it is finished.",
+        "Die Freihandeingabe wird nicht gespeichert und nicht in die Wiederherstellung nach einem Absturz aufgenommen, bis die Geste abgeschlossen ist.",
+    ),
+    (
+        "Finish the pending ink gesture before continuing. Retry it or discard it.",
+        "Schließen Sie die ausstehende Freihandgeste ab, bevor Sie fortfahren. Versuchen Sie es erneut oder verwerfen Sie sie.",
+    ),
+    (
+        "Resolve pending ink before continuing. Retry, copy, or discard it.",
+        "Die ausstehende Freihandgeste muss bearbeitet werden, bevor Sie fortfahren können. Versuchen Sie es erneut, kopieren Sie die Messwerte oder verwerfen Sie die Geste.",
+    ),
+    (
+        "The pointer is still down. Release it before retrying.",
+        "Die Zeigereingabe ist noch aktiv. Lassen Sie die Maustaste, den Stift oder den Finger los, bevor Sie es erneut versuchen.",
+    ),
+    (
+        "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it.",
+        "Ein Teil der Freihandeingabe wurde abgelehnt. Diese Geste kann nicht erneut ausgeführt werden; kopieren Sie ihre Messwerte oder verwerfen Sie sie.",
+    ),
+    (
+        "The ink gesture could not be completed. Retry it or discard it.",
+        "Die Freihandgeste konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder verwerfen Sie sie.",
+    ),
+    (
+        "The ink gesture was interrupted. Retry it or discard it.",
+        "Die Freihandgeste wurde unterbrochen. Versuchen Sie es erneut oder verwerfen Sie sie.",
+    ),
+    ("Ink input details", "Details zur Freihandeingabe"),
+    ("Ink settings", "Einstellungen der Freihandeingabe"),
+    ("Retry ink", "Freihandgeste erneut versuchen"),
+    ("Discard ink", "Freihandgeste verwerfen"),
+    ("Copy ink samples", "Freihand-Messwerte kopieren"),
+    ("Dismiss ink feedback", "Freihandmeldung ausblenden"),
+    ("Ink samples copied", "Freihand-Messwerte kopiert"),
+    ("Accepted samples", "Akzeptierte Messwerte"),
+    ("Rejected input", "Abgelehnte Eingabe"),
+    ("Sample position", "Position des Messwerts"),
+    ("Pressure", "Druck"),
+    ("No pressure", "Kein Druck"),
+    ("Simplification tolerance", "Vereinfachungstoleranz"),
+    (
+        "Additional rejected input details could not be retained.",
+        "Weitere Details zur abgelehnten Eingabe konnten nicht aufbewahrt werden.",
+    ),
+    (
+        "The document changed during the gesture. Copy its samples or discard it.",
+        "Das Dokument wurde während der Geste geändert. Kopieren Sie die Messwerte oder verwerfen Sie die Geste.",
+    ),
+    (
+        "The canvas changed during the gesture. Copy its samples or discard it.",
+        "Die Zeichenfläche wurde während der Geste geändert. Kopieren Sie die Messwerte oder verwerfen Sie die Geste.",
+    ),
+    (
+        "Ink could not be applied to a locked object. Copy the samples or discard the gesture.",
+        "Die Freihandeingabe konnte nicht auf ein gesperrtes Objekt angewendet werden. Kopieren Sie die Messwerte oder verwerfen Sie die Geste.",
+    ),
+    (
+        "This operation would change frame clipping. Copy the samples or discard the gesture.",
+        "Dieser Vorgang würde die Beschneidung durch den Rahmen ändern. Kopieren Sie die Messwerte oder verwerfen Sie die Geste.",
+    ),
+    (
+        "Adjust ink simplification and retry, or copy the samples and discard the gesture.",
+        "Passen Sie die Vereinfachung der Freihandeingabe an und versuchen Sie es erneut, oder kopieren Sie die Messwerte und verwerfen Sie die Geste.",
+    ),
+    (
+        "Finish the active text editor before drawing again.",
+        "Beenden Sie die aktive Textbearbeitung, bevor Sie erneut zeichnen.",
+    ),
+    // Offline board guide.
+    (
+        "Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.",
+        "Mit Stift und Textmarker zeichnen Sie freihändig. Stellen Sie Tintenfarbe, Strichbreite und Deckkraft oder zum Radieren den Radius des Radierers ein; die Einstellungen werden zu Beginn jeder Geste übernommen.",
+    ),
+    (
+        "Object eraser removes whole ink strokes; Pixel eraser removes parts of strokes. Lasso selects topics and objects. Image card opens a local PNG/JPEG picker.",
+        "Objektradierer entfernt ganze Freihandstriche; Pixelradierer entfernt Teile davon. Lasso wählt Themen und Objekte aus. Bildkarte öffnet eine lokale Dateiauswahl für PNG/JPEG.",
+    ),
+    (
+        "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
+        "Verwenden Sie die Board-Werkzeugleiste, um Haftnotizen, Textkarten, Formen, Verbindungslinien und Rahmen hinzuzufügen. Mit dem Auswahlwerkzeug verschieben Sie Elemente, mit dem Handwerkzeug die Ansicht. Das Menü Board bietet Gruppierung, Sperren, Raster und Minimap.",
+    ),
+    (
+        "Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.",
+        "Board > Zentrales Thema ausblenden verschiebt vorhandene Inhalte des zentralen Themas in ein freies Thema. Board > Zentrales Thema einblenden zeigt das zentrale Thema wieder an; freie Themen bleiben getrennt. FIM-Blätter zeigen immer ein zentrales Thema.",
+    ),
+    (
+        "Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.",
+        "Speichern Sie Boards als .thinoda, um Karten, Formen, Verbindungslinien, Rahmen und Board-Einstellungen zu erhalten. Andere Formate können Board-Inhalte verändern oder auslassen; beachten Sie die Exportwarnungen.",
+    ),
+    (
+        "Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.",
+        "Das Beschneiden durch Rahmen wirkt nur visuell und ist keine sichere Schwärzung. Inhalte außerhalb eines Rahmens können in gespeicherten Dateien oder Exporten erhalten bleiben; manche Exportformate wenden die Beschneidung nicht an.",
+    ),
+    // Freeform board tools, properties, and accessible labels.
+    ("Board", "Board"),
+    ("Above map", "Über der Mindmap"),
+    ("Below map", "Unter der Mindmap"),
+    ("Select tool", "Auswahlwerkzeug"),
+    ("Hand tool", "Handwerkzeug"),
+    ("Sticky note", "Haftnotiz"),
+    ("Text card", "Textkarte"),
+    ("Image card", "Bildkarte"),
+    ("Shape tool", "Formenwerkzeug"),
+    ("Shape library", "Formenbibliothek"),
+    ("Search shapes", "Formen suchen"),
+    ("Connector", "Verbindungslinie"),
+    ("Connector tool", "Verbindungswerkzeug"),
+    ("Frame", "Rahmen"),
+    ("Frame tool", "Rahmenwerkzeug"),
+    ("Pen", "Stift"),
+    ("Highlighter", "Textmarker"),
+    ("Object eraser", "Objektradierer"),
+    ("Pixel eraser", "Pixelradierer"),
+    ("Lasso", "Lasso"),
+    ("Stroke type", "Strichart"),
+    ("Ink color", "Tintenfarbe"),
+    ("Ink width", "Strichbreite"),
+    ("Eraser radius", "Radius des Radierers"),
+    ("Collapse board toolbar", "Board-Werkzeugleiste einklappen"),
+    ("Expand board toolbar", "Board-Werkzeugleiste ausklappen"),
+    ("Hide central topic", "Zentrales Thema ausblenden"),
+    ("Show central topic", "Zentrales Thema einblenden"),
+    ("No grid", "Kein Raster"),
+    ("Dot grid", "Punktraster"),
+    ("Line grid", "Linienraster"),
+    ("Snap to grid", "Am Raster einrasten"),
+    ("Zoom to selection", "Auf Auswahl zoomen"),
+    ("Board minimap", "Board-Minimap"),
+    (
+        "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
+        "Board-Minimap. Klicken oder ziehen, um die Ansicht zu verschieben; die Pfeiltasten bewegen die Ansicht; die Umschalttaste vergrößert die Schritte.",
+    ),
+    (
+        "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",
+        "Klicken oder ziehen, um die Ansicht zu verschieben. Die Pfeiltasten bewegen die Ansicht; die Umschalttaste vergrößert die Schritte.",
+    ),
+    (
+        "The current view is outside the minimap.",
+        "Die aktuelle Ansicht liegt außerhalb der Minimap.",
+    ),
+    ("Group board selection", "Board-Auswahl gruppieren"),
+    (
+        "Ungroup board selection",
+        "Gruppierung der Board-Auswahl aufheben",
+    ),
+    ("Lock board selection", "Board-Auswahl sperren"),
+    ("Unlock board selection", "Board-Auswahl entsperren"),
+    ("Bring forward", "Eine Ebene nach vorne"),
+    ("Send backward", "Eine Ebene nach hinten"),
+    ("Bring to front", "In den Vordergrund"),
+    ("Send to back", "In den Hintergrund"),
+    ("Rotate left", "Nach links drehen"),
+    ("Rotate right", "Nach rechts drehen"),
+    ("Triangle", "Dreieck"),
+    ("Right triangle", "Rechtwinkliges Dreieck"),
+    ("Parallelogram", "Parallelogramm"),
+    ("Trapezoid", "Trapez"),
+    ("Pentagon", "Fünfeck"),
+    ("Hexagon", "Sechseck"),
+    ("Octagon", "Achteck"),
+    ("Arrow", "Pfeil"),
+    ("Double arrow", "Doppelpfeil"),
+    ("Chevron", "Winkel"),
+    ("Callout", "Sprechblase"),
+    ("Cylinder", "Zylinder"),
+    ("Document", "Dokument"),
+    ("Process", "Prozess"),
+    ("Predefined process", "Vordefinierter Prozess"),
+    ("Terminator", "Start/Ende"),
+    ("Manual input", "Manuelle Eingabe"),
+    ("Preparation", "Vorbereitung"),
+    ("Delay", "Verzögerung"),
+    ("Off-page connector", "Seitenübergreifender Verbinder"),
+    ("Ink stroke", "Freihandstrich"),
+    ("Selected", "Ausgewählt"),
+    ("Locked", "Gesperrt"),
+    ("From", "Von"),
+    ("To", "Nach"),
+    ("Free point", "Freier Punkt"),
+    ("Resize board item", "Größe des Board-Elements ändern"),
+    ("Rotate board item", "Board-Element drehen"),
+    ("Board object label", "Beschriftung des Board-Objekts"),
+    (
+        "Select one board object to edit its properties.",
+        "Wählen Sie ein Board-Objekt aus, um seine Eigenschaften zu bearbeiten.",
+    ),
+    ("Description", "Beschreibung"),
+    ("Opacity", "Deckkraft"),
+    ("Stroke", "Strich"),
+    ("Connector route", "Verlauf der Verbindungslinie"),
+    ("Arrow at start", "Pfeil am Anfang"),
+    ("Arrow at end", "Pfeil am Ende"),
+    ("Card", "Karte"),
+    ("Rotation", "Drehung"),
+    ("Custom color", "Benutzerdefinierte Farbe"),
+    (
+        "Replaces topic titles, board labels and descriptions.",
+        "Ersetzt Thementitel, Board-Beschriftungen und Beschreibungen.",
+    ),
     ("Previous", "Zurück"),
     ("Next", "Weiter"),
     ("Append", "Am Ende einfügen"),
@@ -1135,6 +1337,10 @@ const DE: &[(&str, &str)] = &[
         "Ein Thema auf ein übergeordnetes Thema oder einen Einfügeplatz zwischen Geschwistern ziehen, um den Zweig zu verschieben. Die Vorschau zeigt das Ziel; Escape bricht das Ziehen ab.",
     ),
     (
+        "On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.",
+        "Auf Boards duplizieren Alt+Ziehen oder Alt+Pfeiltaste bewegliche Elemente (Umschalt vergrößert die Pfeilschritte). Strg+Alt+Links/Rechts dreht um 1° (Umschalt: 15°); unter macOS Command+Option verwenden. Gesperrte Elemente und Gruppen lassen sich mit diesen Gesten nicht duplizieren.",
+    ),
+    (
         "Relationships connect topics. Boundaries group siblings; summaries attach a separate summary topic to a sibling range. Select their line or outline to edit or delete the object.",
         "Beziehungen verbinden Themen. Umrandungen gruppieren Geschwister; Zusammenfassungen verknüpfen einen Geschwisterbereich mit einem eigenen Thema. Linie oder Umriss auswählen, um das Objekt zu bearbeiten oder zu löschen.",
     ),
@@ -1153,6 +1359,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Quick Styles offers original presets and named local styles captured from resolved appearance. Applying a style to several selected topics is one undo step.",
         "Schnellstile bieten eigene Vorlagen und benannte lokale Stile aus dem aufgelösten Aussehen. Ein Stil für mehrere ausgewählte Themen wird in einem Schritt rückgängig gemacht.",
+    ),
+    (
+        "Quick Styles and Shape/Text colors work on cards and shapes. For shapes, presets change fill, border and label colors without changing geometry. Locked or unsupported items are skipped; the custom color picker remains available. Each change is one undo step.",
+        "Schnellstile und die Farben unter Form/Text funktionieren für Karten und Formen. Bei Formen ändern Vorlagen Füllung, Rand und Beschriftungsfarbe, ohne die Geometrie zu ändern. Gesperrte oder nicht unterstützte Elemente werden übersprungen; die eigene Farbauswahl bleibt verfügbar. Jede Änderung ist ein Rückgängig-Schritt.",
     ),
     (
         "Map > Custom Themes opens a staged editor. Apply Theme embeds the theme in the sheet; Save to Library stores a separate local copy without changing the map.",
@@ -1435,6 +1645,71 @@ const DE: &[(&str, &str)] = &[
     ("None", "Keine"),
     ("Bold", "Fett"),
     ("Bold notes", "Notiztext fett"),
+    ("Board export changes", "Änderungen beim Board-Export"),
+    (
+        "The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.",
+        "Das gewählte Format verändert Board-Inhalte oder lässt sie weg. Das Board im Arbeitsspeicher bleibt unverändert; speichern Sie es als Thinoda, um es zu erhalten.",
+    ),
+    ("Shapes omitted", "Ausgelassene Formen"),
+    (
+        "Card presentation omitted",
+        "Ausgelassene Kartendarstellung",
+    ),
+    (
+        "Sheet {sheet}: hidden root mode omitted.",
+        "Blatt {sheet}: Der Modus mit verborgenem Wurzelthema entfällt.",
+    ),
+    (
+        "Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it.",
+        "Automatisches Speichern übersprungen, weil dieses Format Board-Inhalte nicht erhalten kann. Speichern Sie als Thinoda, um sie zu bewahren.",
+    ),
+    (
+        "Use --allow-lossy only if you accept these changes.",
+        "Verwenden Sie --allow-lossy nur, wenn Sie diese Änderungen akzeptieren.",
+    ),
+    ("Ink strokes omitted", "Ausgelassene Freihandstriche"),
+    ("Connectors omitted", "Ausgelassene Verbindungslinien"),
+    (
+        "Cards converted to ordinary topics",
+        "In normale Themen umgewandelte Karten",
+    ),
+    ("Card rotations omitted", "Ausgelassene Kartendrehungen"),
+    (
+        "Viewport slides omitted",
+        "Ausgelassene Folien mit Ansichtsausschnitt",
+    ),
+    ("Zones omitted", "Ausgelassene Zonen"),
+    (
+        "Zone clipping not fully applied",
+        "Zonenbeschneidung nicht vollständig angewendet",
+    ),
+    (
+        "Viewport slides flattened to non-editable images",
+        "Ansichtsausschnitt-Folien in nicht bearbeitbare Bilder umgewandelt",
+    ),
+    (
+        "XMind stores a Thinoda-only copy of the complete board. Other apps may not display it and may discard it when saving. This export is not redacted.",
+        "XMind speichert eine nur für Thinoda lesbare Kopie des vollständigen Boards. Andere Apps zeigen sie möglicherweise nicht an oder entfernen sie beim Speichern. Dieser Export ist nicht bereinigt.",
+    ),
+    (
+        "Floating root trees omitted",
+        "Ausgelassene freie Themenbäume",
+    ),
+    ("Cards omitted", "Ausgelassene Karten"),
+    (
+        "Summary topic trees omitted",
+        "Ausgelassene Themenbäume von Zusammenfassungen",
+    ),
+    ("Relationships omitted", "Ausgelassene Beziehungen"),
+    ("Boundaries omitted", "Ausgelassene Umrandungen"),
+    (
+        "Board grid and snapping settings omitted",
+        "Ausgelassene Einstellungen für Board-Raster und Einrasten",
+    ),
+    (
+        "Sheet {sheet}: a root named “{title}” will be created.",
+        "Blatt {sheet}: Ein Wurzelthema namens „{title}“ wird erstellt.",
+    ),
     ("Export note source", "Notizquelle exportieren"),
     (
         "This format cannot preserve note formatting. Use Export with confirmation, or save as Thinoda.",
@@ -1812,6 +2087,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Semantic indexing requires nonempty titles of at most 16 KiB each.",
         "Die semantische Indexierung erfordert nichtleere Titel mit jeweils höchstens 16 KiB.",
+    ),
+    (
+        "Add at least one topic before indexing.",
+        "Füge vor der Indexierung mindestens ein Thema hinzu.",
     ),
     (
         "The embedding model returned an unusable vector.",
@@ -2271,6 +2550,10 @@ const DE: &[(&str, &str)] = &[
         "Ersetzt nur das Aussehen. Stil zurücksetzen stellt die Designvererbung wieder her.",
     ),
     (
+        "Changes apply to unlocked selected items that support each setting.",
+        "Änderungen gelten für entsperrte ausgewählte Elemente, die die jeweilige Einstellung unterstützen.",
+    ),
+    (
         "Saves fixed colors and typography, without topic content.",
         "Speichert feste Farben und Schrift, ohne Themeninhalt.",
     ),
@@ -2506,7 +2789,7 @@ const DE: &[(&str, &str)] = &[
     ("General", "Allgemein"),
     ("Appearance", "Darstellung"),
     ("Files", "Dateien"),
-    ("Cloud", "Cloud"),
+    ("Cloud", "Wolke"),
     ("System", "System"),
     ("Light", "Hell"),
     ("Dark", "Dunkel"),
@@ -2604,6 +2887,191 @@ mod tests {
     }
 
     #[test]
+    fn freeform_board_labels_exist_in_every_catalog() {
+        let shape_names = thinoda_core::ShapeKind::ALL
+            .into_iter()
+            .map(crate::board_ui::shape_name);
+        let command_names = crate::app::ThinodaApp::board_commands()
+            .into_iter()
+            .map(|(_, label)| label);
+        let other_labels = [
+            "Board",
+            "Replaces topic titles, board labels and descriptions.",
+            "Zoom to selection",
+            "Shape",
+            "Shape library",
+            "Search shapes",
+            "Connector",
+            "Ink stroke",
+            "Frame",
+            "Selected",
+            "Locked",
+            "From",
+            "To",
+            "Free point",
+            "Resize board item",
+            "Rotate board item",
+            "Board object label",
+            "Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.",
+            "Click or drag to pan. Arrow keys move the view; Shift makes larger steps.",
+            "The current view is outside the minimap.",
+            "Select one board object to edit its properties.",
+            "Description",
+            "Opacity",
+            "Fill",
+            "Stroke",
+            "Connector route",
+            "Straight",
+            "Elbow",
+            "Curve",
+            "Arrow at start",
+            "Arrow at end",
+            "Card",
+            "Width",
+            "Height",
+            "Rotation",
+            "Custom color",
+            "Image card",
+            "Pen",
+            "Highlighter",
+            "Object eraser",
+            "Pixel eraser",
+            "Lasso",
+            "Stroke type",
+            "Ink color",
+            "Ink width",
+            "Eraser radius",
+            "Collapse board toolbar",
+            "Expand board toolbar",
+        ];
+
+        for key in shape_names.chain(command_names).chain(other_labels) {
+            for language in Lang::ALL {
+                let present = match language {
+                    Lang::En => true,
+                    Lang::De => german().contains_key(key),
+                    Lang::PtBr => brazilian().contains_key(key),
+                    _ => additional().contains_key(key),
+                };
+                assert!(present, "Missing {language:?} board translation: {key}");
+                assert!(
+                    !t_in(language, key).trim().is_empty(),
+                    "Empty {language:?} board translation: {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pending_ink_feedback_exists_in_every_catalog() {
+        let keys = [
+            "Pending ink gesture",
+            "Ink is not saved or included in crash recovery until it is finished.",
+            "Finish the pending ink gesture before continuing. Retry it or discard it.",
+            "Resolve pending ink before continuing. Retry, copy, or discard it.",
+            "The pointer is still down. Release it before retrying.",
+            "Some ink input was rejected. This gesture cannot be retried; copy its samples or discard it.",
+            "The ink gesture could not be completed. Retry it or discard it.",
+            "The ink gesture was interrupted. Retry it or discard it.",
+            "Ink input details",
+            "Ink settings",
+            "Retry ink",
+            "Discard ink",
+            "Copy ink samples",
+            "Dismiss ink feedback",
+            "Ink samples copied",
+            "Accepted samples",
+            "Rejected input",
+            "Sample position",
+            "Pressure",
+            "No pressure",
+            "Simplification tolerance",
+            "Additional rejected input details could not be retained.",
+            "The document changed during the gesture. Copy its samples or discard it.",
+            "The canvas changed during the gesture. Copy its samples or discard it.",
+            "Ink could not be applied to a locked object. Copy the samples or discard the gesture.",
+            "This operation would change frame clipping. Copy the samples or discard the gesture.",
+            "Adjust ink simplification and retry, or copy the samples and discard the gesture.",
+            "Finish the active text editor before drawing again.",
+        ];
+        for key in keys {
+            for language in Lang::ALL {
+                let present = match language {
+                    Lang::En => true,
+                    Lang::De => german().contains_key(key),
+                    Lang::PtBr => brazilian().contains_key(key),
+                    _ => additional().contains_key(key),
+                };
+                assert!(present, "Missing {language:?} ink translation: {key}");
+                assert!(
+                    !t_in(language, key).trim().is_empty(),
+                    "Empty {language:?} ink translation: {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn board_tool_guide_contains_localized_control_names() {
+        let paragraphs: [(&str, &[&str]); 2] = [
+            (
+                crate::help::BOARD_INK_GUIDE,
+                &[
+                    "Pen",
+                    "Highlighter",
+                    "Ink color",
+                    "Ink width",
+                    "Opacity",
+                    "Eraser radius",
+                ],
+            ),
+            (
+                crate::help::BOARD_TOOLS_GUIDE,
+                &["Object eraser", "Pixel eraser", "Lasso", "Image card"],
+            ),
+        ];
+        for (paragraph, labels) in paragraphs {
+            assert!(
+                crate::help::translation_keys().any(|key| key == paragraph),
+                "Board guidance is missing from the guide: {paragraph}"
+            );
+            for language in Lang::ALL {
+                let present = match language {
+                    Lang::En => true,
+                    Lang::De => german().contains_key(paragraph),
+                    Lang::PtBr => brazilian().contains_key(paragraph),
+                    _ => additional().contains_key(paragraph),
+                };
+                assert!(
+                    present,
+                    "Missing {language:?} guide translation: {paragraph}"
+                );
+                let text = t_in(language, paragraph);
+                assert!(
+                    !text.trim().is_empty(),
+                    "Empty {language:?} guide translation: {paragraph}"
+                );
+                for &label in labels {
+                    let translated_label = t_in(language, label);
+                    assert!(
+                        text.contains(translated_label),
+                        "{language:?} guide omits {label}: {translated_label}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn board_duplication_guide_is_localized() {
+        let key = crate::help::BOARD_DUPLICATION_GUIDE;
+        assert!(crate::help::translation_keys().any(|entry| entry == key));
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+        }
+    }
+
+    #[test]
     fn locale_subtags_and_explicit_preferences() {
         for (locale, expected) in [
             ("en-US", Lang::En),
@@ -2668,12 +3136,29 @@ mod tests {
             keys.push(template.name);
             keys.push(template.category.label());
         }
+        let outline_export_losses = [
+            "Cards omitted",
+            "Summary topic trees omitted",
+            "Relationships omitted",
+            "Boundaries omitted",
+        ];
+        for key in outline_export_losses {
+            assert!(
+                include_str!("pt-BR.txt")
+                    .lines()
+                    .filter_map(|line| line.split_once('|'))
+                    .any(|(entry, text)| entry == key && !text.trim().is_empty()),
+                "Missing explicit Brazilian Portuguese translation: {key}"
+            );
+        }
+        keys.extend(outline_export_losses);
         keys.extend(thinoda_core::templates::board_strings());
+        keys.extend(crate::help::translation_keys());
         let kanban = thinoda_core::templates::instantiate_localized("kanban-board", &|s| {
             t_in(Lang::De, s).to_owned()
         });
         let sheet = kanban.active();
-        assert_eq!(sheet.topic(sheet.root).unwrap().title, "Kanban-Board");
+        assert!(sheet.root_topic().title.is_empty());
         assert_eq!(sheet.zones[0].name, "Zu erledigen");
         kanban.validate().unwrap();
         keys.extend(
@@ -2755,6 +3240,7 @@ mod tests {
             include_str!("updates.rs"),
             include_str!("ui.rs"),
             include_str!("app.rs"),
+            include_str!("board_ui.rs"),
             include_str!("ai.rs"),
             include_str!("ai/review.rs"),
             include_str!("ai/chat.rs"),

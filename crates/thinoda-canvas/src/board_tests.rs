@@ -1,0 +1,3223 @@
+use super::*;
+use crate::actions::{BoardAction, apply_board_action, board_actions};
+use egui_kittest::{Harness, kittest::Queryable};
+use thinoda_core::{
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, Endpoint, SceneId,
+    ShapeKind, SheetRootMode, Workbook, ZOrder, board::BoardMember,
+};
+
+struct State {
+    doc: Document,
+    view: MapView,
+    errors: Vec<thinoda_core::EditError>,
+    clipboard_requests: Vec<Action>,
+}
+
+fn board() -> Sheet {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    sheet
+}
+
+fn harness(sheet: Sheet) -> Harness<'static, State> {
+    let view = MapView {
+        show_add_controls: false,
+        ..Default::default()
+    };
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.mark_saved();
+    let mut harness = Harness::builder()
+        .with_size(vec2(1200.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, state: &mut State| {
+                let out = MapCanvas::show(ui, &mut state.doc, &mut state.view);
+                if let Some(error) = out.error {
+                    state.errors.push(error);
+                }
+                state.clipboard_requests.extend(out.clipboard_requests);
+            },
+            State {
+                doc,
+                view,
+                errors: Vec::new(),
+                clipboard_requests: Vec::new(),
+            },
+        );
+    harness.run_steps(3);
+    harness.state_mut().view.set_zoom(1.0);
+    harness.run_steps(2);
+    harness
+}
+
+fn point(h: &Harness<'_, State>, p: Vec2) -> Pos2 {
+    h.state().view.xf().pos(p)
+}
+
+fn set_tool(h: &mut Harness<'_, State>, tool: BoardTool) {
+    h.state_mut().view.set_board_tool(tool);
+    h.run_steps(2);
+}
+
+fn drag(h: &mut Harness<'_, State>, start: Pos2, end: Pos2) {
+    h.hover_at(start);
+    h.drag_at(start);
+    h.run_steps(1);
+    h.hover_at(start + (end - start) * 0.5);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(2);
+}
+
+fn finish_drag(h: &mut Harness<'_, State>, end: Pos2) {
+    h.drop_at(end);
+    h.run_steps(3);
+}
+
+fn begin_alt_drag(h: &mut Harness<'_, State>, start: Pos2, end: Pos2) {
+    h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+    h.hover_at(start);
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::ALT,
+    });
+    h.run_steps(1);
+    h.hover_at(start + (end - start) * 0.5);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(2);
+}
+
+fn finish_alt_drag(h: &mut Harness<'_, State>, end: Pos2, modifiers: Modifiers) {
+    h.event(egui::Event::PointerButton {
+        pos: end,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(3);
+}
+
+fn click(h: &mut Harness<'_, State>, point: Pos2, modifiers: Modifiers) {
+    h.event(egui::Event::ModifiersChanged(modifiers));
+    h.hover_at(point);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: point,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+        h.run_steps(1);
+    }
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(1);
+}
+
+fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
+    let mut object = CanvasObject::shape(
+        ShapeKind::Rectangle,
+        thinoda_core::Rect::from_center_size(Vec2::new(x, y), Vec2::new(120.0, 80.0)),
+    );
+    if let CanvasObjectKind::Shape { label: text, .. } = &mut object.kind {
+        *text = label.into();
+    }
+    sheet.add_canvas_object(object).unwrap()
+}
+
+#[test]
+fn board_duplication_transaction_remaps_mixed_groups_and_skips_locked_items() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 0.0, 0.0, "Grouped shape");
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(card),
+            Endpoint::Object(object),
+        )))
+        .unwrap();
+    let group = sheet
+        .group_board_members(&[
+            BoardMember::Card(card),
+            BoardMember::Object(object),
+            BoardMember::Object(connector),
+        ])
+        .unwrap();
+    let locked = shape(&mut sheet, 350.0, 0.0, "Locked");
+    sheet
+        .set_board_members_locked(&[BoardMember::Object(locked)], true)
+        .unwrap();
+    let locked_card = sheet
+        .add_card(
+            "Locked group card",
+            Vec2::new(500.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let locked_group_object = shape(&mut sheet, 500.0, 180.0, "Locked group member");
+    sheet
+        .group_board_members(&[
+            BoardMember::Card(locked_card),
+            BoardMember::Object(locked_group_object),
+        ])
+        .unwrap();
+    sheet
+        .set_board_members_locked(&[BoardMember::Card(locked_card)], true)
+        .unwrap();
+    let standalone = shape(&mut sheet, 200.0, 200.0, "Standalone");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.selection = vec![card];
+        state.view.board_selection = vec![locked, locked_group_object, standalone];
+        let layout = state.view.layout_for(&state.doc);
+        let payload =
+            thinoda_core::clipboard::copy_board_selection(state.doc.sheet(), &layout, &[card], &[])
+                .unwrap()
+                .unwrap();
+        state.view.set_board_clipboard(Some(payload));
+    }
+    let before = h.state().doc.workbook().clone();
+    let clipboard = h.state().view.board_clipboard().cloned();
+    let delta = Vec2::new(60.0, 40.0);
+    {
+        let state = h.state_mut();
+        assert!(
+            board_actions::duplicate_selection(&mut state.doc, &mut state.view, delta).unwrap()
+        );
+    }
+    assert_eq!(h.state().view.board_clipboard(), clipboard.as_ref());
+    let sheet = h.state().doc.sheet();
+    let copied_card = h.state().view.selection[0];
+    assert_ne!(copied_card, card);
+    assert_eq!(
+        sheet.topic(copied_card).unwrap().position,
+        Some(Vec2::new(-140.0, 40.0))
+    );
+    let copied_objects = &h.state().view.board_selection;
+    assert_eq!(copied_objects.len(), 3);
+    let copied_shape = copied_objects
+        .iter()
+        .copied()
+        .find(|id| sheet.canvas.object(*id).unwrap().label() == "Grouped shape")
+        .unwrap();
+    let copied_standalone = copied_objects
+        .iter()
+        .copied()
+        .find(|id| sheet.canvas.object(*id).unwrap().label() == "Standalone")
+        .unwrap();
+    let copied_connector = copied_objects
+        .iter()
+        .copied()
+        .find(|id| sheet.canvas.object(*id).unwrap().is_connector())
+        .unwrap();
+    assert_ne!(copied_shape, object);
+    assert_ne!(copied_standalone, standalone);
+    assert_eq!(
+        sheet.canvas.object(copied_shape).unwrap().rect.center(),
+        Vec2::new(60.0, 40.0)
+    );
+    assert_eq!(
+        sheet
+            .canvas
+            .object(copied_standalone)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(260.0, 240.0)
+    );
+    let copied_group = sheet.canvas.object(copied_shape).unwrap().group.unwrap();
+    assert_ne!(copied_group, group);
+    assert_eq!(
+        sheet.board_member_group(BoardMember::Card(copied_card)),
+        Some(copied_group)
+    );
+    assert_eq!(
+        sheet.canvas.object(copied_connector).unwrap().group,
+        Some(copied_group)
+    );
+    let CanvasObjectKind::Connector(copied_line) =
+        &sheet.canvas.object(copied_connector).unwrap().kind
+    else {
+        panic!("expected copied connector");
+    };
+    assert_eq!(copied_line.from, Endpoint::Topic(copied_card));
+    assert_eq!(copied_line.to, Endpoint::Object(copied_shape));
+    assert_eq!(
+        sheet.canvas.object(locked),
+        before.sheets[0].canvas.object(locked)
+    );
+    assert_eq!(
+        sheet.topic(locked_card),
+        before.sheets[0].topic(locked_card)
+    );
+    assert_eq!(
+        sheet.canvas.object(locked_group_object),
+        before.sheets[0].canvas.object(locked_group_object)
+    );
+    sheet.validate().unwrap();
+    let after = h.state().doc.workbook().clone();
+    assert_eq!(h.state().doc.undo_label(), Some("Duplicate board items"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &after);
+}
+
+#[test]
+fn board_duplication_transaction_copies_empty_frame_in_one_edit() {
+    let mut sheet = board();
+    let rect =
+        thinoda_core::Rect::from_min_size(Vec2::new(-200.0, -100.0), Vec2::new(400.0, 200.0));
+    let frame = sheet.create_board_frame("Empty frame", rect).unwrap();
+    let mut h = harness(sheet);
+    h.state_mut()
+        .view
+        .select_object(ObjectSelection::Zone(frame));
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(
+            board_actions::duplicate_selection(
+                &mut state.doc,
+                &mut state.view,
+                Vec2::new(30.0, 40.0)
+            )
+            .unwrap()
+        );
+    }
+    let ObjectSelection::Zone(copy) = h.state().view.selected_object.unwrap() else {
+        panic!("expected copied frame selection");
+    };
+    let copied = h
+        .state()
+        .doc
+        .sheet()
+        .zones
+        .iter()
+        .find(|zone| zone.id == copy)
+        .unwrap();
+    assert_ne!(copy, frame);
+    assert!(copied.roots.is_empty() && copied.keep_empty);
+    assert_eq!(copied.frame, rect.translate(Vec2::new(30.0, 40.0)));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+}
+
+#[test]
+fn board_duplication_transaction_is_atomic_for_locks_and_invalid_coordinates() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, -200.0, 0.0, "Locked group");
+    let second = shape(&mut sheet, 0.0, 0.0, "Group member");
+    sheet
+        .group_board_members(&[BoardMember::Object(first), BoardMember::Object(second)])
+        .unwrap();
+    sheet
+        .set_board_members_locked(&[BoardMember::Object(first)], true)
+        .unwrap();
+    let near_edge = shape(&mut sheet, 999_930.0, 0.0, "Edge");
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![second];
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(
+            !board_actions::duplicate_selection(
+                &mut state.doc,
+                &mut state.view,
+                Vec2::new(10.0, 0.0)
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(h.state().view.board_selection, vec![second]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+
+    h.state_mut().view.board_selection = vec![near_edge];
+    {
+        let state = h.state_mut();
+        assert!(
+            board_actions::duplicate_selection(
+                &mut state.doc,
+                &mut state.view,
+                Vec2::new(40.0, 0.0)
+            )
+            .is_err()
+        );
+        assert!(
+            board_actions::duplicate_selection(
+                &mut state.doc,
+                &mut state.view,
+                Vec2::new(f32::NAN, 0.0)
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(h.state().view.board_selection, vec![near_edge]);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+}
+
+#[test]
+fn board_duplication_transaction_copies_frames_and_rejects_locked_contents() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Framed card",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 160.0, 0.0, "Grouped shape");
+    sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+        .unwrap();
+    let rect =
+        thinoda_core::Rect::from_min_size(Vec2::new(-150.0, -120.0), Vec2::new(400.0, 240.0));
+    let frame = sheet.create_board_frame("Frame", rect).unwrap();
+    sheet.set_zone_roots(frame, vec![card]).unwrap();
+    sheet.zones[0].color = Some(thinoda_core::Color::rgb(10, 20, 30));
+    sheet.zones[0].clip = true;
+    let mut h = harness(sheet);
+    h.state_mut()
+        .view
+        .select_object(ObjectSelection::Zone(frame));
+    let before = h.state().doc.workbook().clone();
+    let delta = Vec2::new(80.0, 40.0);
+    {
+        let state = h.state_mut();
+        assert!(
+            board_actions::duplicate_selection(&mut state.doc, &mut state.view, delta).unwrap()
+        );
+    }
+    let sheet = h.state().doc.sheet();
+    let ObjectSelection::Zone(copied_id) = h.state().view.selected_object.unwrap() else {
+        panic!("expected copied frame selection");
+    };
+    let copied = sheet
+        .zones
+        .iter()
+        .find(|zone| zone.id == copied_id)
+        .unwrap();
+    assert_ne!(copied.id, frame);
+    assert_eq!(copied.frame, rect.translate(delta));
+    assert_eq!(copied.name, "Frame");
+    assert_eq!(copied.color, sheet.zones[0].color);
+    assert!(copied.clip && copied.keep_empty);
+    assert_eq!(copied.roots.len(), 1);
+    assert_ne!(copied.roots[0], card);
+    assert_eq!(sheet.topic(copied.roots[0]).unwrap().position, Some(delta));
+    let copied_group = sheet
+        .board_member_group(BoardMember::Card(copied.roots[0]))
+        .unwrap();
+    assert!(sheet.canvas.objects.iter().any(|item| {
+        item.id != object
+            && item.group == Some(copied_group)
+            && item.rect.center() == Vec2::new(240.0, 40.0)
+    }));
+    sheet.validate().unwrap();
+    assert_eq!(h.state().doc.undo_label(), Some("Duplicate board frame"));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+
+    {
+        let state = h.state_mut();
+        state
+            .doc
+            .edit_sheet("Lock", |sheet| {
+                sheet
+                    .set_board_members_locked(&[BoardMember::Object(object)], true)
+                    .map_err(thinoda_core::EditError::Invalid)
+            })
+            .unwrap();
+        state.view.select_object(ObjectSelection::Zone(frame));
+    }
+    let locked = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        let error =
+            board_actions::duplicate_selection(&mut state.doc, &mut state.view, delta).unwrap_err();
+        assert!(error.to_string().contains("locked"));
+    }
+    assert_eq!(h.state().doc.workbook(), &locked);
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(frame))
+    );
+}
+
+#[test]
+fn board_alt_drag_copies_mixed_group_on_release_and_undoes_once() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let line = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(card),
+            Endpoint::Object(object),
+        )))
+        .unwrap();
+    sheet
+        .group_board_members(&[
+            BoardMember::Card(card),
+            BoardMember::Object(object),
+            BoardMember::Object(line),
+        ])
+        .unwrap();
+    let mut h = harness(sheet);
+    let start = point(&h, Vec2::ZERO);
+    click(&mut h, start, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    let end = start + vec2(80.0, 55.0);
+    begin_alt_drag(&mut h, start, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    // The operation is latched at drag start, even if Alt is released first.
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(1);
+    finish_alt_drag(&mut h, end, Modifiers::NONE);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    let sheet = h.state().doc.sheet();
+    assert_eq!(
+        sheet.canvas.object(object),
+        before.sheets[0].canvas.object(object)
+    );
+    assert_eq!(sheet.topic(card), before.sheets[0].topic(card));
+    assert_eq!(h.state().view.selection.len(), 1);
+    assert_eq!(h.state().view.board_selection.len(), 2);
+    let copied_card = h.state().view.selection[0];
+    let copied_shape = h
+        .state()
+        .view
+        .board_selection
+        .iter()
+        .copied()
+        .find(|id| sheet.canvas.object(*id).unwrap().label() == "Shape")
+        .unwrap();
+    let copied_line = h
+        .state()
+        .view
+        .board_selection
+        .iter()
+        .copied()
+        .find(|id| sheet.canvas.object(*id).unwrap().is_connector())
+        .unwrap();
+    assert_eq!(
+        sheet.topic(copied_card).unwrap().position,
+        Some(Vec2::new(-120.0, 55.0))
+    );
+    assert_eq!(
+        sheet.canvas.object(copied_shape).unwrap().rect.center(),
+        Vec2::new(80.0, 55.0)
+    );
+    let CanvasObjectKind::Connector(copied) = &sheet.canvas.object(copied_line).unwrap().kind
+    else {
+        panic!("expected copied connector");
+    };
+    assert_eq!(copied.from, Endpoint::Topic(copied_card));
+    assert_eq!(copied.to, Endpoint::Object(copied_shape));
+    let after = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &after);
+}
+
+#[test]
+fn board_alt_arrow_duplicates_in_each_direction_and_focuses_the_copy() {
+    for (modifiers, key, delta) in [
+        (Modifiers::ALT, Key::ArrowLeft, Vec2::new(-10.0, 0.0)),
+        (Modifiers::ALT, Key::ArrowRight, Vec2::new(10.0, 0.0)),
+        (Modifiers::ALT, Key::ArrowUp, Vec2::new(0.0, -10.0)),
+        (Modifiers::ALT, Key::ArrowDown, Vec2::new(0.0, 10.0)),
+        (
+            Modifiers::ALT.plus(Modifiers::SHIFT),
+            Key::ArrowRight,
+            Vec2::new(40.0, 0.0),
+        ),
+    ] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "Keyboard copy");
+        let mut h = harness(sheet);
+        h.get_by_label("Rectangle: Keyboard copy").focus();
+        h.run_steps(2);
+        let before = h.state().doc.workbook().clone();
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(3);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        assert_eq!(h.state().view.board_selection.len(), 1);
+        let copied = h.state().view.board_selection[0];
+        assert_ne!(copied, id);
+        assert_eq!(
+            h.state()
+                .doc
+                .sheet()
+                .canvas
+                .object(copied)
+                .unwrap()
+                .rect
+                .center(),
+            delta
+        );
+        assert_eq!(
+            h.state()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .rect
+                .center(),
+            Vec2::ZERO
+        );
+        assert!(
+            h.get_by_label("Rectangle: Keyboard copy, Selected")
+                .is_focused()
+        );
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(!h.state().doc.can_undo());
+    }
+}
+
+#[test]
+fn board_alt_arrow_repeats_without_collapsing_a_mixed_group_selection() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Group card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 0.0, 0.0, "Group shape");
+    let line = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(card),
+            Endpoint::Object(object),
+        )))
+        .unwrap();
+    sheet
+        .group_board_members(&[
+            BoardMember::Card(card),
+            BoardMember::Object(object),
+            BoardMember::Object(line),
+        ])
+        .unwrap();
+    let mut h = harness(sheet);
+    let shape_point = point(&h, Vec2::ZERO);
+    click(&mut h, shape_point, Modifiers::NONE);
+    let original = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(h.state().view.selection.len(), 1);
+    assert_eq!(h.state().view.board_selection.len(), 2);
+    let first_card = h.state().view.selection[0];
+    let first_group = h.state().view.board_selection.clone();
+    let first = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(h.state().view.selection.len(), 1);
+    assert_eq!(h.state().view.board_selection.len(), 2);
+    let second_card = h.state().view.selection[0];
+    assert_ne!(second_card, first_card);
+    assert!(
+        h.state()
+            .view
+            .board_selection
+            .iter()
+            .all(|id| !first_group.contains(id))
+    );
+    assert_eq!(
+        h.state().doc.sheet().topic(second_card).unwrap().position,
+        Some(Vec2::new(-200.0, 20.0))
+    );
+    let second = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &first);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &original);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state_mut().doc.redo());
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.workbook(), &second);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn board_alt_arrow_from_focused_handles_copies_instead_of_editing() {
+    for label in ["Resize board item", "Rotate board item"] {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "Handle");
+        let mut h = harness(sheet);
+        let start = point(&h, Vec2::ZERO);
+        click(&mut h, start, Modifiers::NONE);
+        h.get_by_label(label).focus();
+        h.run_steps(2);
+        let original = h.state().doc.sheet().canvas.object(id).unwrap().clone();
+        h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+        h.run_steps(3);
+        assert_eq!(h.state().doc.sheet().canvas.object(id), Some(&original));
+        let copied = h.state().view.board_selection[0];
+        assert_ne!(copied, id);
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(copied).unwrap().rect,
+            original.rect.translate(Vec2::new(10.0, 0.0))
+        );
+        assert!(h.get_by_label("Rectangle: Handle, Selected").is_focused());
+    }
+}
+
+#[test]
+fn board_alt_arrow_from_focused_connector_endpoint_copies_without_retargeting() {
+    let mut sheet = board();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-80.0, 0.0)),
+            Endpoint::Point(Vec2::new(80.0, 0.0)),
+        )))
+        .unwrap();
+    let mut h = harness(sheet);
+    let midpoint = point(&h, Vec2::ZERO);
+    click(&mut h, midpoint, Modifiers::NONE);
+    h.get_by_label("Connector From").focus();
+    h.run_steps(2);
+    let original = h.state().doc.sheet().canvas.object(id).unwrap().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.sheet().canvas.object(id), Some(&original));
+    let copied = h.state().view.board_selection[0];
+    assert_ne!(copied, id);
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(copied).unwrap().kind
+    else {
+        panic!("expected copied connector");
+    };
+    assert_eq!(connector.from, Endpoint::Point(Vec2::new(-80.0, 10.0)));
+    assert_eq!(connector.to, Endpoint::Point(Vec2::new(80.0, 10.0)));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn board_alt_gestures_respect_locks_and_cancel_without_an_edit() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, -200.0, 0.0, "Locked");
+    let second = shape(&mut sheet, 0.0, 0.0, "Grouped");
+    sheet
+        .group_board_members(&[BoardMember::Object(first), BoardMember::Object(second)])
+        .unwrap();
+    sheet
+        .set_board_members_locked(&[BoardMember::Object(first)], true)
+        .unwrap();
+    let mut h = harness(sheet);
+    let start = point(&h, Vec2::ZERO);
+    let end = start + vec2(70.0, 30.0);
+    click(&mut h, start, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(2);
+    begin_alt_drag(&mut h, start, end);
+    finish_alt_drag(&mut h, end, Modifiers::ALT);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+
+    {
+        let state = h.state_mut();
+        apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(false)).unwrap();
+    }
+    let unlocked = h.state().doc.workbook().clone();
+    begin_alt_drag(&mut h, start, end);
+    h.key_press(Key::Escape);
+    h.run_steps(1);
+    finish_alt_drag(&mut h, end, Modifiers::ALT);
+    assert_eq!(h.state().doc.workbook(), &unlocked);
+    assert_eq!(h.state().doc.undo_label(), Some("Unlock"));
+}
+
+#[test]
+fn board_alt_drag_cancels_when_selection_camera_tool_or_pointer_changes() {
+    for change in 0..5 {
+        let mut sheet = board();
+        let id = shape(&mut sheet, 0.0, 0.0, "Source");
+        let other = shape(&mut sheet, 300.0, 0.0, "Other");
+        let mut h = harness(sheet);
+        let start = point(&h, Vec2::ZERO);
+        let end = start + vec2(70.0, 30.0);
+        click(&mut h, start, Modifiers::NONE);
+        let before = h.state().doc.workbook().clone();
+        begin_alt_drag(&mut h, start, end);
+        match change {
+            0 => h.state_mut().view.board_selection = vec![other],
+            1 => h.state_mut().view.offset += vec2(10.0, 0.0),
+            2 => h.state_mut().view.set_board_tool(BoardTool::Hand),
+            3 => h.event(egui::Event::PointerGone),
+            _ => h
+                .state_mut()
+                .doc
+                .update_canvas_object("Concurrent label change", other, |object| {
+                    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                        *label = "Changed".into();
+                    }
+                })
+                .unwrap(),
+        }
+        let expected = h.state().doc.workbook().clone();
+        h.run_steps(1);
+        finish_alt_drag(&mut h, end, Modifiers::ALT);
+        assert_eq!(
+            h.state().doc.workbook(),
+            &expected,
+            "unexpected document change for cancellation case {change}"
+        );
+        assert_eq!(h.state().doc.sheet().canvas.objects.len(), 2);
+        assert!(h.state().doc.sheet().canvas.object(id).is_some());
+        if change == 4 {
+            assert_eq!(h.state().doc.undo_label(), Some("Concurrent label change"));
+            assert!(h.state_mut().doc.undo());
+            assert_eq!(h.state().doc.workbook(), &before);
+        }
+        assert!(!h.state().doc.can_undo());
+    }
+}
+
+#[test]
+fn board_alt_drag_cancels_if_the_selected_frame_changes_mid_gesture() {
+    let mut sheet = board();
+    let first = sheet
+        .create_board_frame(
+            "First",
+            thinoda_core::Rect::from_min_size(Vec2::new(-250.0, -100.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    let second = sheet
+        .create_board_frame(
+            "Second",
+            thinoda_core::Rect::from_min_size(Vec2::new(50.0, -100.0), Vec2::new(200.0, 200.0)),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-150.0, -100.0));
+    let end = start + vec2(60.0, 40.0);
+    begin_alt_drag(&mut h, start, end);
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(first))
+    );
+    h.state_mut()
+        .view
+        .select_object(ObjectSelection::Zone(second));
+    h.run_steps(1);
+    finish_alt_drag(&mut h, end, Modifiers::ALT);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(second))
+    );
+    assert!(!h.state().doc.can_undo());
+}
+
+#[test]
+fn board_alt_duplication_preserves_retained_pending_ink() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 200.0, 0.0, "Source");
+    let mut h = harness(sheet);
+    h.state_mut().view.ink_settings.finish.tolerance = -1.0;
+    set_tool(&mut h, BoardTool::Pen);
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = start + vec2(80.0, 0.0);
+    drag(&mut h, start, end);
+    finish_drag(&mut h, end);
+    assert!(h.state().view.has_released_ink_gesture());
+    let samples = h.state().view.pending_ink_samples().to_vec();
+    assert!(samples.len() >= 2);
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        state.view.set_board_tool(BoardTool::Select);
+        state.view.board_selection = vec![id];
+        let error = board_actions::duplicate_selection(
+            &mut state.doc,
+            &mut state.view,
+            Vec2::new(10.0, 0.0),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("pending ink"));
+    }
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.pending_ink_samples(), samples);
+    assert!(h.state().view.has_released_ink_gesture());
+    assert!(!h.state().doc.can_undo());
+}
+
+#[test]
+fn board_alt_arrow_reports_coordinate_errors_without_losing_redo_or_selection() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 999_940.0, 0.0, "Edge");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state
+            .doc
+            .update_canvas_object("Change label", id, |object| {
+                if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                    *label = "Changed".into();
+                }
+            })
+            .unwrap();
+        assert!(state.doc.undo());
+        state.view.board_selection = vec![id];
+    }
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+    h.run_steps(1);
+    let before = h.state().doc.workbook().clone();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.board_selection, vec![id]);
+    assert!(h.state().doc.can_redo());
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("range")
+                || error.to_string().contains("coordinate")
+                || error.to_string().contains("invalid")),
+        "{:?}",
+        h.state().errors
+    );
+}
+
+#[test]
+fn board_alt_drag_and_arrow_duplicate_a_persistent_empty_frame() {
+    let mut sheet = board();
+    let rect =
+        thinoda_core::Rect::from_min_size(Vec2::new(-200.0, -100.0), Vec2::new(400.0, 200.0));
+    let frame = sheet.create_board_frame("Empty", rect).unwrap();
+    let mut h = harness(sheet);
+    let start = point(&h, rect.min + Vec2::new(100.0, 0.0));
+    let end = start + vec2(60.0, 40.0);
+    let before = h.state().doc.workbook().clone();
+    begin_alt_drag(&mut h, start, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_alt_drag(&mut h, end, Modifiers::ALT);
+    let ObjectSelection::Zone(copied) = h.state().view.selected_object.unwrap() else {
+        panic!("expected copied frame");
+    };
+    assert_ne!(copied, frame);
+    assert_eq!(
+        h.state().doc.sheet().zones[1].frame,
+        rect.translate(Vec2::new(60.0, 40.0))
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state().doc.can_undo());
+
+    h.state_mut()
+        .view
+        .select_object(ObjectSelection::Zone(frame));
+    h.ctx
+        .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc.sheet().zones[1].frame,
+        rect.translate(Vec2::new(0.0, 10.0))
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn board_alt_shortcuts_leave_legacy_tree_reordering_unchanged() {
+    for hidden in [false, true] {
+        let mut sheet = Sheet::new("Map", "Root");
+        let parent = if hidden {
+            sheet.root_mode = SheetRootMode::Hidden;
+            sheet.add_floating("Tree", Vec2::ZERO)
+        } else {
+            sheet.root
+        };
+        let first = sheet.add_child(parent, None, "First");
+        let second = sheet.add_child(parent, None, "Second");
+        let mut h = harness(sheet);
+        h.state_mut().view.select_only(second);
+        h.ctx
+            .memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::ALT, Key::ArrowUp);
+        h.run_steps(2);
+        assert_eq!(h.state().doc.sheet().children(parent), &[second, first]);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.sheet().children(parent), &[first, second]);
+        assert!(!h.state().doc.can_undo());
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+fn touch(h: &mut Harness<'_, State>, phase: egui::TouchPhase, position: Pos2) {
+    h.event(egui::Event::PointerMoved(position));
+    h.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase,
+        pos: position,
+        force: None,
+    });
+    if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::End) {
+        h.event(egui::Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed: phase == egui::TouchPhase::Start,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    h.run_steps(1);
+}
+
+fn connector<'a>(h: &'a Harness<'_, State>, id: CanvasObjectId) -> &'a CanvasConnector {
+    let CanvasObjectKind::Connector(connector) =
+        &h.state().doc.sheet().canvas.object(id).unwrap().kind
+    else {
+        panic!("expected connector");
+    };
+    connector
+}
+
+#[test]
+fn mouse_shape_creation_and_drag_are_each_single_undoable_edits() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Diamond));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(-40.0, 20.0));
+    drag(&mut h, start, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    let object = &h.state().doc.sheet().canvas.objects[0];
+    assert!(matches!(
+        object.kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Diamond,
+            ..
+        }
+    ));
+    assert_eq!(
+        object.rect,
+        thinoda_core::Rect::from_min_size(Vec2::new(-200.0, -100.0), Vec2::new(160.0, 120.0))
+    );
+    let id = object.id;
+    let created = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state_mut().doc.undo());
+    assert!(h.state_mut().doc.redo());
+    h.run_steps(2);
+    set_tool(&mut h, BoardTool::Select);
+    let center = point(&h, Vec2::new(-120.0, -40.0));
+    let end = center + vec2(70.0, 35.0);
+    drag(&mut h, center, end);
+    assert_eq!(h.state().doc.workbook(), &created);
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().rect.min,
+        Vec2::new(-130.0, -65.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &created);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn touch_creates_and_moves_a_card_without_reparenting() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Sticky);
+    let start = point(&h, Vec2::new(-180.0, -110.0));
+    let end = point(&h, Vec2::new(0.0, 40.0));
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, start + vec2(90.0, 75.0));
+    touch(&mut h, egui::TouchPhase::Move, end);
+    assert!(h.state().doc.sheet().floating.is_empty());
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(3);
+    let card = h.state().doc.sheet().floating[0];
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .topic(card)
+            .unwrap()
+            .card
+            .unwrap()
+            .kind,
+        CardKind::Sticky
+    );
+    assert!(!h.state().doc.sheet().is_anchor(card));
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    set_tool(&mut h, BoardTool::Select);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-90.0, -35.0));
+    let end = start + vec2(50.0, 30.0);
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, start + vec2(25.0, 15.0));
+    touch(&mut h, egui::TouchPhase::Move, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc.sheet().topic(card).unwrap().position,
+        Some(Vec2::new(-40.0, -5.0))
+    );
+    assert_eq!(h.state().doc.sheet().parent(card), None);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn frame_tool_uses_persistent_empty_zone_and_localized_name() {
+    let mut h = harness(board());
+    h.state_mut().view.board_labels.new_frame = "Area".into();
+    set_tool(&mut h, BoardTool::Frame);
+    let start = point(&h, Vec2::new(-250.0, -180.0));
+    let end = point(&h, Vec2::new(200.0, 160.0));
+    drag(&mut h, start, end);
+    finish_drag(&mut h, end);
+    let frame = &h.state().doc.sheet().zones[0];
+    assert_eq!(frame.name, "Area");
+    assert!(frame.keep_empty && frame.roots.is_empty());
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(frame.id))
+    );
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state().doc.sheet().zones.is_empty());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn scene_selection_multiselect_lock_z_order_and_undo() {
+    let mut sheet = board();
+    let bottom = shape(&mut sheet, -100.0, 0.0, "Bottom");
+    let top = shape(&mut sheet, -100.0, 0.0, "Top");
+    let other = shape(&mut sheet, 130.0, 0.0, "Other");
+    let mut h = harness(sheet);
+    let overlap = point(&h, Vec2::new(-100.0, 0.0));
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![top]);
+
+    {
+        let state = h.state_mut();
+        apply_board_action(
+            &mut state.doc,
+            &mut state.view,
+            BoardAction::ZOrder(ZOrder::Back),
+        )
+        .unwrap();
+    }
+    h.run_steps(2);
+    click(&mut h, overlap, Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![bottom]);
+
+    h.state_mut().view.board_selection = vec![bottom, other];
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(true)).unwrap();
+    }
+    let locked = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(
+            !apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::Move(Vec2::new(20.0, 0.0))
+            )
+            .unwrap()
+        );
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Delete).unwrap());
+    }
+    assert_eq!(h.state().doc.workbook(), &locked);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn connector_creation_and_endpoint_edits_are_undoable() {
+    let mut sheet = board();
+    let left = shape(&mut sheet, -300.0, 0.0, "Left");
+    let right = shape(&mut sheet, 80.0, 0.0, "Right");
+    let target = shape(&mut sheet, 300.0, 120.0, "Target");
+    let mut h = harness(sheet);
+    set_tool(&mut h, BoardTool::Connector);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-300.0, 0.0));
+    let end = point(&h, Vec2::new(80.0, 0.0));
+    drag(&mut h, start, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    let id = h.state().view.board_selection[0];
+    assert_eq!(connector(&h, id).from, Endpoint::Object(left));
+    assert_eq!(connector(&h, id).to, Endpoint::Object(right));
+    let created = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    h.run_steps(2);
+    set_tool(&mut h, BoardTool::Select);
+
+    let handle = h.get_by_label("Connector To").rect().center();
+    let destination = point(&h, Vec2::new(300.0, 120.0));
+    drag(&mut h, handle, destination);
+    assert_eq!(h.state().doc.workbook(), &created);
+    finish_drag(&mut h, destination);
+    assert_eq!(connector(&h, id).to, Endpoint::Object(target));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &created);
+    h.run_steps(2);
+
+    h.get_by_label("Connector, From: Left, To: Right, Selected")
+        .focus();
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Connector From").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Connector To").is_focused());
+    h.key_press(Key::ArrowDown);
+    h.run_steps(2);
+    assert!(matches!(connector(&h, id).to, Endpoint::Point(_)));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &created);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn mixed_card_object_selection_moves_together_with_one_undo() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Note",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 150.0, 0.0, "Box");
+    let mut h = harness(sheet);
+    let card_point = point(&h, Vec2::new(-200.0, 0.0));
+    click(&mut h, card_point, Modifiers::NONE);
+    let object_point = point(&h, Vec2::new(150.0, 0.0));
+    click(&mut h, object_point, Modifiers::SHIFT);
+    assert_eq!(h.state().view.selection, vec![card]);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    let before = h.state().doc.workbook().clone();
+
+    let end = object_point + vec2(45.0, 25.0);
+    drag(&mut h, object_point, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().topic(card).unwrap().position,
+        Some(Vec2::new(-155.0, 25.0))
+    );
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(object)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(195.0, 25.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn mixed_group_click_toggle_drag_and_rubber_selection() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Grouped card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 130.0, 0.0, "Grouped shape");
+    let other = sheet.add_floating("Other", Vec2::new(-400.0, 200.0));
+    sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+        .unwrap();
+    let mut h = harness(sheet);
+    let card_point = point(&h, Vec2::new(-200.0, 0.0));
+    let object_point = point(&h, Vec2::new(130.0, 0.0));
+    let other_point = point(&h, Vec2::new(-400.0, 200.0));
+
+    click(&mut h, card_point, Modifiers::NONE);
+    assert_eq!(h.state().view.selection, vec![card]);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    click(&mut h, object_point, Modifiers::SHIFT);
+    assert!(h.state().view.selection.is_empty());
+    assert!(h.state().view.board_selection.is_empty());
+    click(&mut h, other_point, Modifiers::NONE);
+    click(&mut h, object_point, Modifiers::SHIFT);
+    assert!(h.state().view.selection.contains(&other));
+    assert!(h.state().view.selection.contains(&card));
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    click(&mut h, card_point, Modifiers::SHIFT);
+    assert_eq!(h.state().view.selection, vec![other]);
+    assert!(h.state().view.board_selection.is_empty());
+
+    click(&mut h, card_point, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    let end = card_point + vec2(45.0, 25.0);
+    drag(&mut h, card_point, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().topic(card).unwrap().position,
+        Some(Vec2::new(-155.0, 25.0))
+    );
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(object)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(175.0, 25.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    h.run_steps(2);
+
+    let start = point(&h, Vec2::new(-275.0, -70.0));
+    let end = point(&h, Vec2::new(-125.0, 70.0));
+    drag(&mut h, start, end);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().view.selection, vec![card]);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn mixed_group_commands_are_atomic_and_arrange_groups_as_units() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(80.0, 20.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 250.0, 80.0, "Shape");
+    let other = shape(&mut sheet, -350.0, 160.0, "Other");
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![card];
+    h.state_mut().view.board_selection = vec![object];
+    let before_group = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(BoardAction::Group.available(&state.doc, &state.view));
+        assert!(apply_board_action(&mut state.doc, &mut state.view, BoardAction::Group).unwrap());
+    }
+    let group = h
+        .state()
+        .doc
+        .sheet()
+        .board_member_group(BoardMember::Card(card))
+        .unwrap();
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .board_member_group(BoardMember::Object(object)),
+        Some(group)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before_group);
+    assert!(h.state_mut().doc.redo());
+    h.state_mut().view.board_selection.clear();
+    let grouped = h.state().doc.workbook().clone();
+
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::Move(Vec2::new(30.0, -20.0))
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(
+        h.state().doc.sheet().topic(card).unwrap().position,
+        Some(Vec2::new(110.0, 0.0))
+    );
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(object)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(280.0, 60.0)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &grouped);
+
+    h.state_mut().view.board_selection = vec![other];
+    let before = h.state().doc.workbook().clone();
+    let card_before = h.state().doc.sheet().topic(card).unwrap().position.unwrap();
+    let shape_before = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(object)
+        .unwrap()
+        .rect
+        .center();
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::Arrange(crate::FloatingArrangement::Left)
+            )
+            .unwrap()
+        );
+    }
+    let card_after = h.state().doc.sheet().topic(card).unwrap().position.unwrap();
+    let shape_after = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(object)
+        .unwrap()
+        .rect
+        .center();
+    assert_ne!(card_after, card_before);
+    assert_eq!(card_after - card_before, shape_after - shape_before);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    {
+        let state = h.state_mut();
+        let action = Action::AlignFloating(crate::FloatingArrangement::Left);
+        assert!(action.available(&state.doc, &state.view));
+        assert!(apply_action(&mut state.doc, &mut state.view, action).unwrap());
+        let card_after = state.doc.sheet().topic(card).unwrap().position.unwrap();
+        let shape_after = state
+            .doc
+            .sheet()
+            .canvas
+            .object(object)
+            .unwrap()
+            .rect
+            .center();
+        assert_eq!(card_after - card_before, shape_after - shape_before);
+        assert!(state.doc.undo());
+        assert_eq!(state.doc.workbook(), &before);
+    }
+
+    h.state_mut().view.board_selection.clear();
+    {
+        let state = h.state_mut();
+        assert!(apply_board_action(&mut state.doc, &mut state.view, BoardAction::Ungroup).unwrap());
+    }
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .board_member_group(BoardMember::Card(card)),
+        None
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    {
+        let state = h.state_mut();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Delete).unwrap());
+    }
+    assert!(!h.state().doc.sheet().contains(card));
+    assert!(h.state().doc.sheet().canvas.object(object).is_none());
+    assert!(h.state().doc.sheet().canvas.object(other).is_some());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn partially_locked_mixed_group_blocks_edits_and_can_be_unlocked_together() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 130.0, 0.0, "Shape");
+    let group = sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+        .unwrap();
+    sheet
+        .set_board_members_locked(&[BoardMember::Object(object)], true)
+        .unwrap();
+    let mut h = harness(sheet);
+    let card_point = point(&h, Vec2::new(-200.0, 0.0));
+    click(&mut h, card_point, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    assert_eq!(h.state().view.selection, vec![card]);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    assert!(
+        h.query_by_label("Sticky note: Card, Selected, Locked")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("Rectangle: Shape, Selected, Locked")
+            .is_some()
+    );
+    {
+        let state = h.state_mut();
+        assert!(!BoardAction::Move(Vec2::new(10.0, 0.0)).available(&state.doc, &state.view));
+        assert!(!BoardAction::Ungroup.available(&state.doc, &state.view));
+        assert!(!Action::Delete.available(&state.doc, &state.view));
+        assert!(!Action::Cut.available(&state.doc, &state.view));
+        assert!(!state.view.begin_board_label(&state.doc, object));
+        state.view.begin_edit(state.doc.sheet(), card, true);
+        assert_eq!(state.view.editing_topic(), None);
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Delete).unwrap());
+    }
+    h.key_press(Key::ArrowRight);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.key_press_modifiers(Modifiers::COMMAND, Key::L);
+    h.run_steps(2);
+    let sheet = h.state().doc.sheet();
+    assert!(!sheet.is_board_member_locked(BoardMember::Card(card)));
+    assert!(!sheet.is_board_member_locked(BoardMember::Object(object)));
+    assert!(!sheet.canvas.group(group).unwrap().locked);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_moves_deletes_and_undoes_shapes_but_respects_locks() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Keyboard");
+    let mut h = harness(sheet);
+    let center = point(&h, Vec2::ZERO);
+    click(&mut h, center, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowDown);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(id)
+            .unwrap()
+            .rect
+            .center(),
+        Vec2::new(1.0, 10.0)
+    );
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert!(h.state().doc.sheet().canvas.object(id).is_none());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert!(h.state().doc.sheet().canvas.object(id).is_some());
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.state_mut().view.board_selection = vec![id];
+    {
+        let state = h.state_mut();
+        apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(true)).unwrap();
+    }
+    let locked = h.state().doc.workbook().clone();
+    h.run_steps(2);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+    h.key_press(Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &locked);
+    assert!(!Action::StartEdit.available(&h.state().doc, &h.state().view));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn shape_accessibility_and_keyboard_label_editing() {
+    let mut sheet = board();
+    let anchor = sheet.root;
+    let id = shape(&mut sheet, 0.0, 0.0, "Original");
+    let mut h = harness(sheet);
+    assert!(h.query_by_label("Rectangle: Original").is_some());
+    assert!(
+        h.query_by_label(&h.state().doc.sheet().topic(anchor).unwrap().title)
+            .is_none()
+    );
+    h.get_by_label("Rectangle: Original").focus();
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![id]);
+    assert!(Action::StartEdit.available(&h.state().doc, &h.state().view));
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(id));
+    h.get_by_label("Board object label").type_text("Updated");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "Updated"
+    );
+    assert!(h.query_by_label("Rectangle: Updated, Selected").is_some());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "Original"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn escape_and_touch_cancel_discard_in_progress_gestures() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Move");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::ZERO);
+    let end = start + vec2(75.0, 40.0);
+    drag(&mut h, start, end);
+    h.key_press(Key::Escape);
+    h.run_steps(1);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().doc.sheet().canvas.object(id).is_some());
+
+    set_tool(&mut h, BoardTool::Text);
+    let start = point(&h, Vec2::new(-200.0, -180.0));
+    let end = start + vec2(150.0, 100.0);
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, end);
+    touch(&mut h, egui::TouchPhase::Cancel, end);
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn groups_lock_unlock_band_and_arrange_as_units() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, -200.0, -100.0, "First");
+    let second = shape(&mut sheet, -40.0, 0.0, "Second");
+    let third = shape(&mut sheet, 250.0, 180.0, "Third");
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![first, second];
+    {
+        let state = h.state_mut();
+        assert!(apply_board_action(&mut state.doc, &mut state.view, BoardAction::Group).unwrap());
+    }
+    let group = h.state().doc.sheet().canvas.object(first).unwrap().group;
+    assert!(group.is_some());
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(second).unwrap().group,
+        group
+    );
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(true)).unwrap()
+        );
+    }
+    let locked = h.state().doc.workbook().clone();
+    assert!(h.state().doc.sheet().canvas.is_locked(first));
+    assert!(h.state().doc.sheet().canvas.is_locked(second));
+    {
+        let state = h.state_mut();
+        assert!(!BoardAction::Rotate(15.0).available(&state.doc, &state.view));
+        assert!(
+            !apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::ZOrder(ZOrder::Front)
+            )
+            .unwrap()
+        );
+        assert!(
+            !apply_board_action(&mut state.doc, &mut state.view, BoardAction::Ungroup).unwrap()
+        );
+    }
+    assert_eq!(h.state().doc.workbook(), &locked);
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(false)).unwrap()
+        );
+        assert!(
+            apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::SetBand(Band::Below)
+            )
+            .unwrap()
+        );
+    }
+    for id in [first, second] {
+        assert_eq!(
+            h.state().doc.sheet().canvas.object(id).unwrap().band,
+            Band::Below
+        );
+        assert!(!h.state().doc.sheet().canvas.is_locked(id));
+    }
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(first).unwrap().band,
+        Band::Above
+    );
+
+    h.state_mut().view.board_selection = vec![first, third];
+    let before_arrange = h.state().doc.workbook().clone();
+    let group_delta = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(second)
+        .unwrap()
+        .rect
+        .center()
+        - h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(first)
+            .unwrap()
+            .rect
+            .center();
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::Arrange(crate::FloatingArrangement::Left)
+            )
+            .unwrap()
+        );
+    }
+    let after_delta = h
+        .state()
+        .doc
+        .sheet()
+        .canvas
+        .object(second)
+        .unwrap()
+        .rect
+        .center()
+        - h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(first)
+            .unwrap()
+            .rect
+            .center();
+    assert_eq!(after_delta, group_delta);
+    assert_ne!(h.state().doc.workbook(), &before_arrange);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before_arrange);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn shape_resize_rotation_and_invalid_commands_preserve_undo_boundaries() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Resize");
+    let mut h = harness(sheet);
+    let center = point(&h, Vec2::ZERO);
+    click(&mut h, center, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    let handle = h.get_by_label("Resize board item").rect().center();
+    let end = handle + vec2(60.0, 30.0);
+    drag(&mut h, handle, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    finish_drag(&mut h, end);
+    let rect = h.state().doc.sheet().canvas.object(id).unwrap().rect;
+    assert_eq!(rect.size, Vec2::new(180.0, 110.0));
+    let resized = h.state().doc.workbook().clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state_mut().doc.redo());
+    h.run_steps(2);
+
+    let handle = h.get_by_label("Rotate board item").rect().center();
+    let center = point(&h, rect.center());
+    let radius = (handle - center).length();
+    let end = center + vec2(radius, 0.0);
+    drag(&mut h, handle, end);
+    assert_eq!(h.state().doc.workbook(), &resized);
+    finish_drag(&mut h, end);
+    assert!((h.state().doc.sheet().canvas.object(id).unwrap().rotation - 90.0).abs() < 0.1);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &resized);
+    {
+        let state = h.state_mut();
+        assert!(!BoardAction::Rotate(f32::NAN).available(&state.doc, &state.view));
+        assert!(
+            !apply_board_action(
+                &mut state.doc,
+                &mut state.view,
+                BoardAction::Rotate(f32::NAN)
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(h.state().doc.workbook(), &resized);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn existing_image_card_has_separate_undoable_frame_and_image_resize_handles() {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(160, 80)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let mut sheet = board();
+    let id = sheet
+        .add_card(
+            "Image",
+            Vec2::ZERO,
+            Card::new(CardKind::Image, Vec2::new(300.0, 240.0)),
+        )
+        .unwrap();
+    thinoda_core::images::set_image(
+        &mut sheet,
+        id,
+        Some((
+            thinoda_core::resources::Resource::new("test.png", "image/png", bytes.into_inner())
+                .unwrap(),
+            Vec2::new(160.0, 80.0),
+        )),
+    )
+    .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.select_only(id);
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    let image_handle = h.get_by_label("Resize image").rect().center();
+    let end = image_handle + vec2(40.0, 20.0);
+    drag(&mut h, image_handle, end);
+    finish_drag(&mut h, end);
+    let topic = h.state().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.image_size, Some(Vec2::new(200.0, 100.0)));
+    assert_eq!(topic.card.unwrap().size, Vec2::new(300.0, 240.0));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    h.run_steps(2);
+
+    let card_handle = h.get_by_label("Resize board item").rect().center();
+    let end = card_handle + vec2(40.0, 20.0);
+    drag(&mut h, card_handle, end);
+    finish_drag(&mut h, end);
+    let topic = h.state().doc.sheet().topic(id).unwrap();
+    assert_eq!(topic.card.unwrap().size, Vec2::new(340.0, 260.0));
+    assert_eq!(topic.image_size, Some(Vec2::new(160.0, 80.0)));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_tool_creation_and_failed_label_edits_keep_the_draft() {
+    let mut h = harness(board());
+    h.state_mut()
+        .view
+        .board_labels
+        .shape_names
+        .insert(ShapeKind::Diamond, "Localized diamond".into());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Diamond));
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    let id = h.state().view.board_selection[0];
+    assert!(matches!(
+        h.state().doc.sheet().canvas.object(id).unwrap().kind,
+        CanvasObjectKind::Shape {
+            shape: ShapeKind::Diamond,
+            ..
+        }
+    ));
+    set_tool(&mut h, BoardTool::Select);
+    assert!(h.query_by_label("Localized diamond, Selected").is_some());
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    let too_long = "x".repeat(thinoda_core::board::MAX_BOARD_TEXT_CHARS + 1);
+    h.get_by_label("Board object label").type_text(&too_long);
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), Some(id));
+    assert_eq!(h.state().doc.sheet().canvas.object(id).unwrap().label(), "");
+    assert!(h.state().errors.last().is_some());
+    assert!(h.state().view.has_board_label_changes());
+    assert_eq!(
+        h.state().view.board_label_draft(),
+        Some((id, "", too_long.as_str()))
+    );
+    assert_eq!(
+        h.get_by_label("Board object label").value().as_deref(),
+        Some(too_long.as_str())
+    );
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_board_object(), None);
+    assert_eq!(h.state().view.board_label_draft(), None);
+    assert!(!h.state().view.has_board_label_changes());
+    assert_eq!(h.state().doc.sheet().canvas.object(id).unwrap().label(), "");
+}
+
+#[test]
+fn board_label_draft_validates_original_document_and_survives_rejected_commits() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-200.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let id = shape(&mut sheet, 130.0, 0.0, "Original");
+    sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(id)])
+        .unwrap();
+    let mut h = harness(sheet);
+    let other_sheet = h.state_mut().doc.add_sheet(board()).unwrap();
+    h.state_mut().doc.set_active(0);
+    {
+        let state = h.state_mut();
+        assert_eq!(state.view.board_label_draft(), None);
+        assert!(!state.view.has_board_label_changes());
+        assert_eq!(
+            state.view.validated_board_label_draft(&state.doc).unwrap(),
+            None
+        );
+        assert!(state.view.begin_board_label(&state.doc, id));
+        assert_eq!(
+            state.view.board_label_draft(),
+            Some((id, "Original", "Original"))
+        );
+        assert!(!state.view.has_board_label_changes());
+    }
+    h.run_steps(2);
+    h.get_by_label("Board object label").type_text("Draft");
+    h.run_steps(2);
+    {
+        let state = h.state();
+        assert!(state.view.has_board_label_changes());
+        assert_eq!(
+            state.view.validated_board_label_draft(&state.doc).unwrap(),
+            Some((id, "Original", "Draft"))
+        );
+        let cloned = Document::new(state.doc.workbook().clone());
+        assert!(state.view.validated_board_label_draft(&cloned).is_err());
+    }
+
+    h.state_mut().doc.set_active(other_sheet);
+    assert!(
+        h.state()
+            .view
+            .validated_board_label_draft(&h.state().doc)
+            .is_err()
+    );
+    assert_eq!(
+        h.state().view.board_label_draft(),
+        Some((id, "Original", "Draft"))
+    );
+    h.state_mut().doc.set_active(0);
+    h.state_mut()
+        .doc
+        .set_board_members_locked(&[BoardMember::Card(card)], true)
+        .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(state.view.validated_board_label_draft(&state.doc).is_err());
+        assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+        assert_eq!(
+            state.view.board_label_draft(),
+            Some((id, "Original", "Draft"))
+        );
+        assert!(state.doc.undo());
+        assert_eq!(
+            state.view.validated_board_label_draft(&state.doc).unwrap(),
+            Some((id, "Original", "Draft"))
+        );
+        assert!(state.view.try_commit_board_label(&mut state.doc).unwrap());
+        assert_eq!(
+            state.doc.sheet().canvas.object(id).unwrap().label(),
+            "Draft"
+        );
+        assert_eq!(state.view.board_label_draft(), None);
+        assert!(!state.view.has_board_label_changes());
+    }
+}
+
+#[test]
+fn connector_label_draft_is_available_for_snapshot_recovery() {
+    let mut sheet = board();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Point(Vec2::new(-100.0, 0.0)),
+        Endpoint::Point(Vec2::new(100.0, 0.0)),
+    );
+    connector.label = "Before".into();
+    let id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(2);
+    h.get_by_label("Board object label").type_text("After");
+    h.run_steps(2);
+    {
+        let state = h.state_mut();
+        assert_eq!(
+            state.view.validated_board_label_draft(&state.doc).unwrap(),
+            Some((id, "Before", "After"))
+        );
+        assert!(state.view.try_commit_board_label(&mut state.doc).unwrap());
+        assert_eq!(
+            state.doc.sheet().canvas.object(id).unwrap().label(),
+            "After"
+        );
+        assert!(state.doc.undo());
+        assert_eq!(
+            state.doc.sheet().canvas.object(id).unwrap().label(),
+            "Before"
+        );
+    }
+}
+
+#[test]
+fn changed_board_label_source_rejects_snapshot_but_retains_draft() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Original");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, id));
+    }
+    h.run_steps(2);
+    h.get_by_label("Board object label").type_text("Draft");
+    h.run_steps(2);
+    {
+        let state = h.state_mut();
+        state
+            .doc
+            .update_canvas_object("External edit", id, |object| {
+                if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+                    *label = "External".into();
+                }
+            })
+            .unwrap();
+        assert!(state.view.validated_board_label_draft(&state.doc).is_err());
+        assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+        assert_eq!(
+            state.view.board_label_draft(),
+            Some((id, "Original", "Draft"))
+        );
+        assert!(state.doc.undo());
+        assert_eq!(
+            state.view.validated_board_label_draft(&state.doc).unwrap(),
+            Some((id, "Original", "Draft"))
+        );
+    }
+}
+
+#[test]
+fn external_camera_change_cancels_the_uncommitted_move() {
+    let mut sheet = board();
+    shape(&mut sheet, 0.0, 0.0, "Move");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::ZERO);
+    let end = start + vec2(60.0, 30.0);
+    drag(&mut h, start, end);
+    h.state_mut().view.offset += vec2(10.0, 0.0);
+    h.run_steps(1);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("canceled"))
+    );
+}
+
+#[test]
+fn replacing_document_at_same_revision_does_not_commit_a_gesture_or_label_draft() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Original");
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::ZERO);
+    let end = start + vec2(60.0, 30.0);
+    drag(&mut h, start, end);
+    let replacement = Document::new(h.state().doc.workbook().clone());
+    assert_eq!(replacement.state_id(), h.state().doc.state_id());
+    h.state_mut().doc = replacement;
+    h.run_steps(1);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("canceled"))
+    );
+
+    h.state_mut().view.board_selection = vec![id];
+    h.run_steps(2);
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    h.get_by_label("Board object label").type_text("Draft");
+    h.run_steps(2);
+    let replacement = Document::new(h.state().doc.workbook().clone());
+    h.state_mut().doc = replacement;
+    {
+        let state = h.state_mut();
+        assert!(state.view.try_commit_board_label(&mut state.doc).is_err());
+        assert_eq!(state.view.editing_board_object(), Some(id));
+        assert_eq!(
+            state.doc.sheet().canvas.object(id).unwrap().label(),
+            "Original"
+        );
+    }
+}
+
+#[test]
+fn persistent_frame_moves_by_touch_and_resizes_by_mouse() {
+    let mut sheet = board();
+    let rect =
+        thinoda_core::Rect::from_min_size(Vec2::new(-250.0, -180.0), Vec2::new(400.0, 300.0));
+    let id = sheet.create_board_frame("Frame", rect).unwrap();
+    let mut h = harness(sheet);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, rect.min + Vec2::new(100.0, 0.0));
+    let end = start + vec2(50.0, 30.0);
+    touch(&mut h, egui::TouchPhase::Start, start);
+    touch(&mut h, egui::TouchPhase::Move, start + vec2(25.0, 15.0));
+    touch(&mut h, egui::TouchPhase::Move, end);
+    assert_eq!(h.state().doc.workbook(), &before);
+    touch(&mut h, egui::TouchPhase::End, end);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(id))
+    );
+    let moved = h.state().doc.sheet().zones[0].frame;
+    assert_eq!(moved, rect.translate(Vec2::new(50.0, 30.0)));
+    let after_move = h.state().doc.workbook().clone();
+
+    let corner = point(&h, moved.max());
+    let end = corner + vec2(60.0, 40.0);
+    drag(&mut h, corner, end);
+    assert_eq!(h.state().doc.workbook(), &after_move);
+    finish_drag(&mut h, end);
+    assert_eq!(
+        h.state().doc.sheet().zones[0].frame,
+        thinoda_core::Rect::from_min_size(moved.min, moved.size + Vec2::new(60.0, 40.0))
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &after_move);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn frame_clipping_limits_pointer_selection_and_accessible_items() {
+    let mut sheet = board();
+    let hidden = sheet
+        .add_card(
+            "Clipped card",
+            Vec2::new(400.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(100.0, 80.0)),
+        )
+        .unwrap();
+    let frame =
+        thinoda_core::Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(200.0, 200.0));
+    sheet
+        .create_zone("Clipping frame", vec![hidden], frame)
+        .unwrap();
+    sheet.zones[0].clip = true;
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_min_size(Vec2::new(-80.0, -40.0), Vec2::new(240.0, 80.0)),
+        ))
+        .unwrap();
+    let mut h = harness(sheet);
+    assert!(h.query_by_label("Sticky note: Clipped card").is_none());
+    let outside = point(&h, Vec2::new(130.0, 0.0));
+    click(&mut h, outside, Modifiers::NONE);
+    assert!(!h.state().view.board_selection.contains(&object));
+    let inside = point(&h, Vec2::ZERO);
+    click(&mut h, inside, Modifiers::NONE);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    {
+        let state = h.state_mut();
+        apply_action(&mut state.doc, &mut state.view, Action::SelectAll).unwrap();
+    }
+    assert!(!h.state().view.selection.contains(&hidden));
+    assert!(
+        !h.state()
+            .view
+            .selection
+            .contains(&h.state().doc.sheet().root)
+    );
+    assert!(h.state().view.board_selection.contains(&object));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn select_all_on_a_central_map_with_board_objects_includes_both_bands() {
+    let mut sheet = Sheet::new("Map", "Central");
+    let root = sheet.root;
+    let object = shape(&mut sheet, 250.0, 0.0, "Board object");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::SelectAll).unwrap());
+    }
+    assert!(h.state().view.selection.contains(&root));
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn zoom_fit_unions_rotated_scene_bounds_with_layout_extents() {
+    let mut sheet = board();
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(400.0, 80.0));
+    card.rotation = 90.0;
+    let card = sheet.add_card("Rotated", Vec2::ZERO, card).unwrap();
+    let object = shape(&mut sheet, 700.0, 0.0, "Rotated shape");
+    sheet.rotate_canvas_object(object, 45.0).unwrap();
+    let mut h = harness(sheet);
+    let state = h.state_mut();
+    let layout = state.view.layout_for(&state.doc);
+    let scene = build_scene(state.doc.sheet(), &layout);
+    let bounds = fit_bounds(state.doc.sheet(), &layout);
+    assert!(bounds.contains(layout.bounds.min));
+    assert!(bounds.contains(layout.bounds.max()));
+    for item in [SceneId::Topic(card), SceneId::Object(object)] {
+        let item = scene.item(item).unwrap();
+        assert!(bounds.contains(item.bounds.min), "{item:?}");
+        assert!(bounds.contains(item.bounds.max()), "{item:?}");
+    }
+    state.view.request_fit();
+    h.run_steps(2);
+    let state = h.state();
+    let available = state.view.canvas_rect.shrink(39.0);
+    for item in [SceneId::Topic(card), SceneId::Object(object)] {
+        let item = scene.item(item).unwrap();
+        assert!(available.contains_rect(state.view.xf().rect(item.bounds)));
+    }
+}
+
+#[test]
+fn host_reveals_resolved_connector_after_sheet_switch_and_reset() {
+    let mut next = board();
+    shape(&mut next, -1500.0, 0.0, "Other side");
+    let from = shape(&mut next, 2000.0, 0.0, "From");
+    let to = shape(&mut next, 2250.0, 0.0, "To");
+    let connector = next
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Object(from),
+            Endpoint::Object(to),
+        )))
+        .unwrap();
+    let stored = next.canvas.object(connector).unwrap().rect;
+
+    let mut h = harness(board());
+    {
+        let state = h.state_mut();
+        state.doc.add_sheet(next).unwrap();
+        state.view.reset();
+        state.view.set_initial_zoom(2.0);
+        let before = state.view.offset;
+        state.view.select_board_object(connector);
+        state.view.reveal_board_object(connector);
+        assert_eq!(state.view.offset, before, "reveal must wait for layout");
+        assert_eq!(state.view.board_selection, vec![connector]);
+        assert!(state.view.selection.is_empty());
+        assert_eq!(state.view.selected_object, None);
+    }
+    h.run_steps(2);
+    {
+        let state = h.state_mut();
+        let layout = state.view.layout_for(&state.doc);
+        let scene = build_scene(state.doc.sheet(), &layout);
+        let bounds = scene
+            .item(SceneId::Object(connector))
+            .unwrap()
+            .visible_bounds()
+            .unwrap();
+        assert_ne!(stored, bounds, "connector endpoints must be resolved");
+        assert!(
+            state
+                .view
+                .canvas_rect
+                .shrink(39.0)
+                .contains_rect(state.view.xf().rect(bounds))
+        );
+    }
+
+    {
+        let state = h.state_mut();
+        state
+            .doc
+            .move_canvas_objects(&[from, to], Vec2::new(1500.0, 300.0))
+            .unwrap();
+        let before = state.view.offset;
+        state.view.reveal_board_object(connector);
+        assert_eq!(state.view.offset, before);
+    }
+    h.run_steps(2);
+    let state = h.state_mut();
+    let layout = state.view.layout_for(&state.doc);
+    let scene = build_scene(state.doc.sheet(), &layout);
+    let bounds = scene
+        .item(SceneId::Object(connector))
+        .unwrap()
+        .visible_bounds()
+        .unwrap();
+    assert!(
+        state
+            .view
+            .canvas_rect
+            .shrink(39.0)
+            .contains_rect(state.view.xf().rect(bounds))
+    );
+    assert_eq!(state.view.board_selection, vec![connector]);
+    assert!(state.errors.is_empty(), "{:?}", state.errors);
+}
+
+#[test]
+fn host_reveal_uses_only_frame_clipped_object_bounds() {
+    let mut sheet = board();
+    let frame =
+        thinoda_core::Rect::from_min_size(Vec2::new(900.0, -100.0), Vec2::new(200.0, 200.0));
+    sheet.create_board_frame("Clip", frame).unwrap();
+    sheet.zones[0].clip = true;
+    let original =
+        thinoda_core::Rect::from_min_size(Vec2::new(0.0, -40.0), Vec2::new(2000.0, 80.0));
+    let object = sheet
+        .add_canvas_object(CanvasObject::shape(ShapeKind::Rectangle, original))
+        .unwrap();
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.offset = vec2(-1000.0, 0.0);
+        let layout = state.view.layout_for(&state.doc);
+        let scene = build_scene(state.doc.sheet(), &layout);
+        let item = scene.item(SceneId::Object(object)).unwrap();
+        assert_eq!(item.clip, Some(frame));
+        assert!(
+            state
+                .view
+                .canvas_rect
+                .shrink(39.0)
+                .contains_rect(state.view.xf().rect(item.visible_bounds().unwrap()))
+        );
+        assert!(
+            !state
+                .view
+                .canvas_rect
+                .contains_rect(state.view.xf().rect(original))
+        );
+        let before = state.view.offset;
+        state.view.reveal_board_object(object);
+        assert_eq!(state.view.offset, before);
+    }
+    let before = h.state().view.offset;
+    h.run_steps(2);
+    assert_eq!(h.state().view.offset, before);
+    assert!(h.state().view.board_selection.is_empty());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn mixed_clipboard_copy_paste_remaps_group_and_connector_endpoints() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-100.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 100.0, 0.0, "Shape");
+    let connector = sheet
+        .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Topic(card),
+            Endpoint::Object(object),
+        )))
+        .unwrap();
+    let group = sheet
+        .group_board_members(&[
+            BoardMember::Card(card),
+            BoardMember::Object(object),
+            BoardMember::Object(connector),
+        ])
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![card];
+    let before = h.state().doc.workbook().clone();
+    let text = {
+        let state = h.state_mut();
+        assert!(Action::Copy.available(&state.doc, &state.view));
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert_eq!(state.doc.workbook(), &before);
+        assert!(state.view.clipboard.is_none());
+        let payload = state.view.board_clipboard().unwrap();
+        assert_eq!(payload.source_topic_roots(), &[card]);
+        assert_eq!(payload.source_object_ids().count(), 2);
+        let text = state.view.clipboard_out.take().unwrap();
+        assert_eq!(text, state.view.board_clipboard().unwrap().text);
+        thinoda_core::clipboard::encode_board_payload(state.view.board_clipboard().unwrap())
+            .unwrap()
+    };
+    {
+        let state = h.state_mut();
+        assert!(
+            state
+                .view
+                .paste_encoded_board(&mut state.doc, &text.replace('\n', "\r\n"))
+                .unwrap()
+        );
+        assert_eq!(state.view.selection.len(), 1);
+        assert_eq!(state.view.board_selection.len(), 2);
+        let new_card = state.view.selection[0];
+        let new_shape = state
+            .view
+            .board_selection
+            .iter()
+            .copied()
+            .find(|id| {
+                matches!(
+                    state.doc.sheet().canvas.object(*id).unwrap().kind,
+                    CanvasObjectKind::Shape { .. }
+                )
+            })
+            .unwrap();
+        let new_connector = state
+            .view
+            .board_selection
+            .iter()
+            .copied()
+            .find(|id| {
+                matches!(
+                    state.doc.sheet().canvas.object(*id).unwrap().kind,
+                    CanvasObjectKind::Connector(_)
+                )
+            })
+            .unwrap();
+        assert_ne!(new_card, card);
+        assert_ne!(new_shape, object);
+        assert_ne!(new_connector, connector);
+        assert_eq!(
+            state.doc.sheet().topic(new_card).unwrap().position,
+            Some(Vec2::new(-60.0, 40.0))
+        );
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .canvas
+                .object(new_shape)
+                .unwrap()
+                .rect
+                .center(),
+            Vec2::new(140.0, 40.0)
+        );
+        let new_group = state
+            .doc
+            .sheet()
+            .board_member_group(BoardMember::Card(new_card))
+            .unwrap();
+        assert_ne!(new_group, group);
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .board_member_group(BoardMember::Object(new_shape)),
+            Some(new_group)
+        );
+        let CanvasObjectKind::Connector(new_connector) =
+            &state.doc.sheet().canvas.object(new_connector).unwrap().kind
+        else {
+            panic!("expected connector");
+        };
+        assert_eq!(new_connector.from, Endpoint::Topic(new_card));
+        assert_eq!(new_connector.to, Endpoint::Object(new_shape));
+        assert!(state.doc.undo());
+        assert_eq!(state.doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn mixed_clipboard_cut_is_atomic_and_locked_members_preserve_the_clipboard() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::new(-100.0, 0.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+        )
+        .unwrap();
+    let object = shape(&mut sheet, 100.0, 0.0, "Shape");
+    let other = shape(&mut sheet, 300.0, 0.0, "Other");
+    sheet
+        .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+        .unwrap();
+    sheet
+        .set_board_members_locked(&[BoardMember::Object(object)], true)
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.selection = vec![card];
+    h.state_mut().view.board_selection = vec![other];
+    let locked = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let payload = state.view.board_clipboard().cloned();
+        state.view.clipboard_out = None;
+        assert!(!Action::Cut.available(&state.doc, &state.view));
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Cut).unwrap());
+        assert_eq!(state.doc.workbook(), &locked);
+        assert_eq!(state.view.board_clipboard().cloned(), payload);
+        assert!(state.view.clipboard_out.is_none());
+        assert!(
+            apply_board_action(&mut state.doc, &mut state.view, BoardAction::Lock(false)).unwrap()
+        );
+        let unlocked = state.doc.workbook().clone();
+        assert!(Action::Cut.available(&state.doc, &state.view));
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Cut).unwrap());
+        assert!(!state.doc.sheet().contains(card));
+        assert!(state.doc.sheet().canvas.object(object).is_none());
+        assert!(state.doc.sheet().canvas.object(other).is_none());
+        assert!(state.view.selection.is_empty());
+        assert!(state.view.board_selection.is_empty());
+        assert!(state.doc.undo());
+        assert_eq!(state.doc.workbook(), &unlocked);
+    }
+}
+
+#[test]
+fn oversized_board_cut_is_rejected_before_removing_anything() {
+    let mut sheet = board();
+    let existing = shape(&mut sheet, -200.0, 0.0, "Previous");
+    let mut cards = Vec::new();
+    for (index, byte) in [0_u8, 1].into_iter().enumerate() {
+        let id = sheet
+            .add_card(
+                &format!("Card {index}"),
+                Vec2::new(index as f32 * 200.0, 0.0),
+                Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+        let resource = sheet
+            .resources
+            .insert(
+                thinoda_core::resources::Resource::new(
+                    &format!("attachment-{index}.bin"),
+                    "application/octet-stream",
+                    vec![byte; 6 * 1024 * 1024],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        sheet.topic_mut(id).unwrap().attachment = Some(thinoda_core::attachments::Attachment {
+            resource,
+            name: format!("attachment-{index}.bin"),
+        });
+        cards.push(id);
+    }
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.board_selection = vec![existing];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let previous = state.view.board_clipboard().cloned();
+        state.view.clipboard_out = None;
+        state.view.selection = cards;
+        state.view.board_selection.clear();
+        let before = state.doc.workbook().clone();
+        let revision = state.doc.state_id();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Cut).is_err());
+        assert_eq!(state.doc.workbook(), &before);
+        assert_eq!(state.doc.state_id(), revision);
+        assert_eq!(state.view.board_clipboard().cloned(), previous);
+        assert!(state.view.clipboard_out.is_none());
+    }
+}
+
+#[test]
+fn host_clipboard_hook_defers_canvas_events_without_mutating_the_document() {
+    let mut sheet = board();
+    let object = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![object];
+    h.state_mut().view.host_handles_clipboard = true;
+    let before = h.state().doc.workbook().clone();
+    for event in [
+        egui::Event::Copy,
+        egui::Event::Cut,
+        egui::Event::Paste("external text".into()),
+    ] {
+        h.event(event);
+        h.run_steps(1);
+    }
+    assert_eq!(
+        h.state().clipboard_requests,
+        vec![
+            Action::Copy,
+            Action::Cut,
+            Action::Paste(Some("external text".into()))
+        ]
+    );
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().view.clipboard_out.is_none());
+}
+
+#[test]
+fn host_clipboard_hook_does_not_intercept_a_focused_label_editor() {
+    let mut sheet = board();
+    let object = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.host_handles_clipboard = true;
+        assert!(state.view.begin_board_label(&state.doc, object));
+    }
+    h.run_steps(2);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert!(h.state().clipboard_requests.is_empty());
+    assert!(h.state().view.editing_board_object().is_some());
+}
+
+#[test]
+fn board_duplicate_does_not_replace_clipboard_and_can_cross_views() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 100.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![id];
+    let before = h.state().doc.workbook().clone();
+    let payload = {
+        let state = h.state_mut();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let payload = state.view.board_clipboard().unwrap().clone();
+        assert!(state.view.clipboard_out.take().is_some());
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Duplicate).unwrap());
+        assert_eq!(state.view.board_clipboard(), Some(&payload));
+        assert!(state.view.clipboard_out.is_none());
+        assert_ne!(state.view.board_selection[0], id);
+        assert!(state.doc.undo());
+        assert_eq!(state.doc.workbook(), &before);
+        payload
+    };
+    let mut target = harness(board());
+    let encoded = thinoda_core::clipboard::encode_board_payload(&payload).unwrap();
+    target.state_mut().view.set_board_clipboard(Some(payload));
+    target.state_mut().view.reset();
+    {
+        let state = target.state_mut();
+        assert!(state.view.board_clipboard().is_some());
+        state.view.invalidate_clipboard();
+        assert!(
+            state
+                .view
+                .paste_encoded_board(&mut state.doc, &encoded)
+                .unwrap()
+        );
+        assert_eq!(state.view.board_selection.len(), 1);
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+        assert_eq!(state.doc.sheet().canvas.objects[0].label(), "Shape");
+        assert!(state.doc.undo());
+        assert!(state.doc.sheet().canvas.objects.is_empty());
+    }
+}
+
+#[test]
+fn hidden_board_plain_text_paste_creates_floating_roots_and_is_undoable() {
+    let mut sheet = board();
+    let shape = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![shape];
+    let before = h.state().doc.workbook().clone();
+    {
+        let state = h.state_mut();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert!(
+            apply_action(
+                &mut state.doc,
+                &mut state.view,
+                Action::Paste(Some("New root\n\tChild\nOther root".into()))
+            )
+            .unwrap()
+        );
+        let roots = &state.view.selection;
+        assert_eq!(roots.len(), 2);
+        assert!(roots.iter().all(|id| state.doc.sheet().is_floating(*id)));
+        assert_eq!(state.doc.sheet().topic(roots[0]).unwrap().title, "New root");
+        let child = state.doc.sheet().children(roots[0])[0];
+        assert_eq!(state.doc.sheet().topic(child).unwrap().title, "Child");
+        assert_eq!(
+            state.doc.sheet().topic(roots[1]).unwrap().title,
+            "Other root"
+        );
+        assert!(state.view.board_clipboard().is_none());
+        assert!(
+            state
+                .doc
+                .sheet()
+                .children(state.doc.sheet().root)
+                .is_empty()
+        );
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+        assert!(state.doc.undo());
+        assert_eq!(state.doc.workbook(), &before);
+    }
+}
+
+#[test]
+fn board_clipboard_copy_event_rich_paste_and_duplicate_shortcut_work() {
+    let mut sheet = board();
+    let id = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    let center = point(&h, Vec2::ZERO);
+    click(&mut h, center, Modifiers::NONE);
+    let before = h.state().doc.workbook().clone();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    let encoded =
+        thinoda_core::clipboard::encode_board_payload(h.state().view.board_clipboard().unwrap())
+            .unwrap();
+    {
+        let state = h.state_mut();
+        assert!(
+            state
+                .view
+                .paste_encoded_board(&mut state.doc, &encoded)
+                .unwrap()
+        );
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 2);
+    assert_eq!(h.state().view.board_selection.len(), 1);
+    assert_ne!(h.state().view.board_selection[0], id);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::D);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 3);
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn unverified_identical_text_never_reuses_a_stale_board_payload() {
+    let mut sheet = board();
+    let shape = shape(&mut sheet, 0.0, 0.0, "Identical text");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.board_selection = vec![shape];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let external_text = state.view.board_clipboard().unwrap().text.clone();
+        assert!(
+            apply_action(
+                &mut state.doc,
+                &mut state.view,
+                Action::Paste(Some(external_text))
+            )
+            .unwrap()
+        );
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+        assert_eq!(state.view.selection.len(), 1);
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .topic(state.view.selection[0])
+                .unwrap()
+                .title,
+            "Identical text"
+        );
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.clipboard_out.is_none());
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Paste(None)).unwrap());
+    }
+}
+
+#[test]
+fn plain_text_with_a_board_prefix_is_pasted_as_external_text() {
+    let mut h = harness(board());
+    let text = "THINODA-BOARD-CLIPBOARD-1\n{not a board payload";
+    {
+        let state = h.state_mut();
+        assert!(
+            apply_action(
+                &mut state.doc,
+                &mut state.view,
+                Action::Paste(Some(text.into()))
+            )
+            .unwrap()
+        );
+        assert_eq!(state.view.selection.len(), 2);
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .topic(state.view.selection[0])
+                .unwrap()
+                .title,
+            "THINODA-BOARD-CLIPBOARD-1"
+        );
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .topic(state.view.selection[1])
+                .unwrap()
+                .title,
+            "{not a board payload"
+        );
+    }
+}
+
+#[test]
+fn central_map_plain_text_paste_does_not_restore_stale_board_selection() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let root = sheet.root;
+    let object = shape(&mut sheet, 0.0, 0.0, "Identical text");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.board_selection = vec![object];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let text = state.view.board_clipboard().unwrap().text.clone();
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Paste(Some(text))).unwrap());
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.board_selection.is_empty());
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+        assert_eq!(state.doc.sheet().children(root), state.view.selection);
+        assert_eq!(
+            state
+                .doc
+                .sheet()
+                .topic(state.view.selection[0])
+                .unwrap()
+                .title,
+            "Identical text"
+        );
+    }
+}
+
+#[test]
+fn identical_external_text_does_not_reuse_legacy_topic_content() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let root = sheet.root;
+    let original = sheet.add_child(root, None, "Same text");
+    sheet.topic_mut(original).unwrap().style.bold = Some(true);
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.select_only(original);
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let external_text = state.view.clipboard.as_ref().unwrap().text.clone();
+        state.view.select_only(root);
+        assert!(
+            apply_action(
+                &mut state.doc,
+                &mut state.view,
+                Action::Paste(Some(external_text))
+            )
+            .unwrap()
+        );
+        assert!(state.view.clipboard.is_none());
+        assert_eq!(state.view.selection.len(), 1);
+        let pasted = state.doc.sheet().topic(state.view.selection[0]).unwrap();
+        assert_eq!(pasted.title, "Same text");
+        assert_eq!(pasted.style.bold, None);
+    }
+}
+
+#[test]
+fn invalid_encoded_board_payload_rejects_without_reusing_old_content() {
+    let mut sheet = board();
+    let shape = shape(&mut sheet, 0.0, 0.0, "Shape");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.board_selection = vec![shape];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        let before = state.doc.workbook().clone();
+        assert!(
+            state
+                .view
+                .paste_encoded_board(&mut state.doc, "THINODA-BOARD-CLIPBOARD-1\n{")
+                .is_err()
+        );
+        assert_eq!(state.doc.workbook(), &before);
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.clipboard.is_none());
+        assert!(state.view.clipboard_out.is_none());
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Paste(None)).unwrap());
+    }
+}
+
+#[test]
+fn external_clipboard_change_invalidates_internal_and_pending_content() {
+    let mut sheet = board();
+    let object = shape(&mut sheet, 0.0, 0.0, "Board item");
+    let mut board_view = harness(sheet);
+    {
+        let state = board_view.state_mut();
+        state.view.board_selection = vec![object];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert!(state.view.board_clipboard().is_some());
+        assert!(state.view.clipboard_out.is_some());
+        state.view.invalidate_clipboard();
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.clipboard.is_none());
+        assert!(state.view.clipboard_out.is_none());
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Paste(None)).unwrap());
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+    }
+
+    let mut sheet = Sheet::new("Map", "Root");
+    let root = sheet.root;
+    let child = sheet.add_child(root, None, "Map topic");
+    let mut map_view = harness(sheet);
+    {
+        let state = map_view.state_mut();
+        state.view.select_only(child);
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert!(state.view.clipboard.is_some());
+        assert!(state.view.clipboard_out.is_some());
+        state.view.invalidate_clipboard();
+        assert!(state.view.clipboard.is_none());
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.clipboard_out.is_none());
+        state.view.select_only(root);
+        assert!(!apply_action(&mut state.doc, &mut state.view, Action::Paste(None)).unwrap());
+        assert_eq!(state.doc.sheet().children(root), [child]);
+    }
+}
+
+#[test]
+fn central_map_copy_replaces_stale_board_clipboard_and_stays_legacy() {
+    let mut sheet = Sheet::new("Map", "Root");
+    let root = sheet.root;
+    let child = sheet.add_child(root, None, "Map topic");
+    let object = shape(&mut sheet, 250.0, 100.0, "Shape");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        state.view.board_selection = vec![object];
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert!(state.view.board_clipboard().is_some());
+        state.view.select_only(child);
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Copy).unwrap());
+        assert!(state.view.board_clipboard().is_none());
+        assert!(state.view.clipboard.is_some());
+        let text = state.view.clipboard_out.take();
+        state.view.select_only(root);
+        assert!(apply_action(&mut state.doc, &mut state.view, Action::Paste(text)).unwrap());
+        let children = state.doc.sheet().children(root);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            state.doc.sheet().topic(children[1]).unwrap().title,
+            "Map topic"
+        );
+        assert_eq!(state.doc.sheet().canvas.objects.len(), 1);
+    }
+}
+
+#[test]
+fn localized_generated_names_and_hidden_tree_navigation() {
+    let mut sheet = board();
+    let root = sheet.add_floating("Tree", Vec2::new(-200.0, 0.0));
+    let child = sheet.add_child(root, None, "Child");
+    let object = shape(&mut sheet, 250.0, 0.0, "");
+    let mut h = harness(sheet);
+    h.state_mut()
+        .view
+        .board_labels
+        .shape_names
+        .insert(ShapeKind::Rectangle, "Localized rectangle".into());
+    h.run_steps(2);
+    assert!(h.query_by_label("Localized rectangle").is_some());
+    h.get_by_label("Localized rectangle").focus();
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![object]);
+    let layout = {
+        let state = h.state_mut();
+        state.view.layout_for(&state.doc)
+    };
+    let child_center = layout.rect(child).unwrap().center();
+    let root_center = layout.rect(root).unwrap().center();
+    let direction = if root_center.x < child_center.x {
+        Key::ArrowLeft
+    } else {
+        Key::ArrowRight
+    };
+    let child_point = point(&h, child_center);
+    click(&mut h, child_point, Modifiers::NONE);
+    assert_eq!(h.state().view.selection, vec![child]);
+    h.key_press(direction);
+    h.run_steps(2);
+    assert_eq!(h.state().view.selection, vec![root]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_tab_order_reaches_frames_objects_and_their_controls() {
+    let mut sheet = board();
+    let frame = sheet
+        .create_board_frame(
+            "Area",
+            thinoda_core::Rect::from_min_size(Vec2::new(-300.0, -250.0), Vec2::new(600.0, 500.0)),
+        )
+        .unwrap();
+    let first = shape(&mut sheet, -100.0, -100.0, "First");
+    let second = shape(&mut sheet, 100.0, 120.0, "Second");
+    let mut h = harness(sheet);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().view.selected_object,
+        Some(ObjectSelection::Zone(frame))
+    );
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![first]);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Resize board item").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Rotate board item").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert_eq!(h.state().view.board_selection, vec![second]);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_tab_can_leave_board_in_both_directions() {
+    let mut sheet = board();
+    shape(&mut sheet, -100.0, 0.0, "First");
+    shape(&mut sheet, 100.0, 0.0, "Last");
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.mark_saved();
+    let mut h = Harness::builder()
+        .with_size(vec2(1200.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, state: &mut State| {
+                let _ = ui.button("Before board");
+                ui.allocate_ui(vec2(1000.0, 700.0), |ui| {
+                    if let Some(error) = MapCanvas::show(ui, &mut state.doc, &mut state.view).error
+                    {
+                        state.errors.push(error);
+                    }
+                });
+                let _ = ui.button("After board");
+            },
+            State {
+                doc,
+                view: MapView {
+                    show_add_controls: false,
+                    ..Default::default()
+                },
+                errors: Vec::new(),
+                clipboard_requests: Vec::new(),
+            },
+        );
+    h.run_steps(3);
+
+    h.get_by_label("Rectangle: First").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.run_steps(3);
+    assert!(h.get_by_label("Before board").is_focused());
+
+    h.get_by_label("Rectangle: Last").focus();
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Resize board item").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Rotate board item").is_focused());
+    h.key_press(Key::Tab);
+    h.run_steps(3);
+    assert!(h.get_by_label("After board").is_focused());
+
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.run_steps(3);
+    assert!(h.get_by_label("Rectangle: Last, Selected").is_focused());
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("Rotate board item").is_focused());
+    assert_eq!(
+        h.state().view.board_selection,
+        vec![h.state().doc.sheet().canvas.objects[0].id]
+    );
+
+    {
+        let state = h.state_mut();
+        state.doc.replace(Workbook::new(board()));
+        state.view.reset();
+        state.view.set_board_tool(BoardTool::Sticky);
+    }
+    h.run_steps(3);
+    h.get_by_label("Mind map canvas").focus();
+    h.run_steps(2);
+    h.key_press(Key::Tab);
+    h.run_steps(3);
+    assert!(h.get_by_label("After board").is_focused());
+    h.get_by_label("Mind map canvas").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.run_steps(3);
+    assert!(h.get_by_label("Before board").is_focused());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn keyboard_group_lock_ungroup_and_hand_pan() {
+    let mut sheet = board();
+    let first = shape(&mut sheet, -150.0, 0.0, "First");
+    let second = shape(&mut sheet, 150.0, 0.0, "Second");
+    let mut h = harness(sheet);
+    let start = point(&h, Vec2::new(-150.0, 0.0));
+    let end = point(&h, Vec2::new(150.0, 0.0));
+    click(&mut h, start, Modifiers::NONE);
+    click(&mut h, end, Modifiers::SHIFT);
+    assert_eq!(h.state().view.board_selection, vec![first, second]);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(first)
+            .unwrap()
+            .group
+            .is_some()
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::L);
+    h.run_steps(2);
+    assert!(h.state().doc.sheet().canvas.is_locked(first));
+    assert!(h.state().doc.sheet().canvas.is_locked(second));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::L);
+    h.run_steps(2);
+    assert!(!h.state().doc.sheet().canvas.is_locked(first));
+    h.key_press_modifiers(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::G);
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(first)
+            .unwrap()
+            .group
+            .is_none()
+    );
+    assert!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(second)
+            .unwrap()
+            .group
+            .is_none()
+    );
+
+    set_tool(&mut h, BoardTool::Hand);
+    let before = h.state().doc.workbook().clone();
+    let offset = h.state().view.offset;
+    let start = point(&h, Vec2::new(0.0, 200.0));
+    let end = start + vec2(80.0, -30.0);
+    drag(&mut h, start, end);
+    finish_drag(&mut h, end);
+    assert_eq!(h.state().view.offset, offset + vec2(80.0, -30.0));
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}

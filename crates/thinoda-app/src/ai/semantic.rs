@@ -30,6 +30,7 @@ impl Source {
                     && doc.doc.state_id() == self.revision
                     && doc.inspector_edit.is_none()
                     && doc.view.editing_topic().is_none()
+                    && doc.view.editing_board_object().is_none()
             })
     }
 }
@@ -209,22 +210,24 @@ impl ThinodaApp {
         let Some(doc) = self.doc() else {
             return Err(t("Not possible here").into());
         };
-        if doc.inspector_edit.is_some() || doc.view.editing_topic().is_some() {
+        if doc.inspector_edit.is_some()
+            || doc.view.editing_topic().is_some()
+            || doc.view.editing_board_object().is_some()
+        {
             return Err(t("Finish the current edit before sending.").into());
         }
-        let topics = &doc.doc.sheet().topics;
+        let topics: Vec<_> = doc.doc.sheet().content_topics().collect();
+        if topics.is_empty() {
+            return Err(t("Add at least one topic before indexing.").into());
+        }
         if topics.len() > MAX_TOPICS
-            || topics
-                .values()
-                .map(|topic| topic.title.len())
-                .sum::<usize>()
-                > MAX_TEXT_BYTES
+            || topics.iter().map(|topic| topic.title.len()).sum::<usize>() > MAX_TEXT_BYTES
         {
             return Err(
                 t("Semantic indexing is limited to 500 topics and 64 KiB of titles.").into(),
             );
         }
-        if topics.values().any(|topic| {
+        if topics.iter().any(|topic| {
             topic.title.trim().is_empty()
                 || topic.title.len() > thinoda_ai::embeddings::MAX_TEXT_BYTES
         }) {
@@ -241,7 +244,7 @@ impl ThinodaApp {
             model: model.into(),
             viewport: self.current_viewport,
             topics: topics
-                .values()
+                .into_iter()
                 .map(|topic| (topic.id, topic.title.clone()))
                 .collect(),
         })
@@ -458,6 +461,7 @@ impl ThinodaApp {
         let key = cache.source.key.clone();
         let mut book = workbook_from_outline(&outline);
         let doc = self.docs.iter_mut().find(|doc| doc.key == key).unwrap();
+        doc.ensure_no_pending_ink()?;
         doc.doc
             .add_sheet(book.sheets.remove(0))
             .map_err(|error| error.to_string())?;

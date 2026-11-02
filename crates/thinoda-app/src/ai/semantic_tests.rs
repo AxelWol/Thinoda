@@ -168,6 +168,29 @@ fn app(server: &Server) -> ThinodaApp {
     app
 }
 
+#[test]
+fn semantic_source_rejects_an_active_board_label_draft() {
+    let server = Server::start("normal");
+    let mut app = app(&server);
+    let doc = app.doc_mut().unwrap();
+    let id = doc
+        .doc
+        .add_canvas_object(thinoda_core::CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(
+                thinoda_core::Vec2::ZERO,
+                thinoda_core::Vec2::new(120.0, 80.0),
+            ),
+        ))
+        .unwrap();
+    let source = app.semantic_source().unwrap();
+    let doc = app.doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    assert!(app.semantic_source().is_err());
+    assert!(!source.valid(&app));
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
 fn wait(app: &mut ThinodaApp, ctx: &Context) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while app.ai.semantic.pending.is_some() || app.ai.semantic.clustering.is_some() {
@@ -175,6 +198,33 @@ fn wait(app: &mut ThinodaApp, ctx: &Context) {
         app.poll_semantic(ctx);
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[test]
+fn semantic_index_ignores_hidden_anchor_and_rejects_empty_boards() {
+    let mut app = ThinodaApp::headless();
+    app.settings.ai.enabled = true;
+    app.settings.ai.embedding_model = "vectors".into();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let anchor = sheet.root;
+    app.doc_mut().unwrap().doc = thinoda_core::Document::new(Workbook::new(sheet));
+    assert_eq!(
+        app.semantic_source().err().unwrap(),
+        t("Add at least one topic before indexing.")
+    );
+
+    let topic = app
+        .doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Add", |sheet| {
+            Ok(sheet.add_floating("Idea", thinoda_core::Vec2::ZERO))
+        })
+        .unwrap();
+    let source = app.semantic_source().unwrap();
+    assert_eq!(source.topics, vec![(topic, "Idea".into())]);
+    assert!(source.topics.iter().all(|(id, _)| *id != anchor));
 }
 
 #[test]

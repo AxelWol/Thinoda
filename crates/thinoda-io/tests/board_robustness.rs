@@ -9,7 +9,7 @@ use thinoda_core::{
 use thinoda_io::{ExportOptions, Format, export_bytes_with_consent, import_bytes};
 
 fn board() -> Workbook {
-    let mut s = Sheet::new("Board", "Anchor");
+    let mut s = Sheet::new("Board", "");
     s.root_mode = SheetRootMode::Hidden;
     let a = s.add_floating("Idea", Vec2::new(200.0, 0.0));
     s.add_child(a, None, "Detail");

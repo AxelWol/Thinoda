@@ -47,6 +47,24 @@ impl ResolvedPresentationSlide {
     }
 }
 
+/// Intersects conservative presentation bounds with an optional visual clip.
+/// Degenerate intersections are retained because a stroked line can lie on a
+/// clip edge even when its geometric bounds have no width or height.
+pub fn clip_presentation_bounds(bounds: Rect, clip: Option<Rect>) -> Option<Rect> {
+    let Some(clip) = clip else {
+        return Some(bounds);
+    };
+    let bounds_max = bounds.max();
+    let clip_max = clip.max();
+    let min = Vec2::new(bounds.min.x.max(clip.min.x), bounds.min.y.max(clip.min.y));
+    let max = Vec2::new(bounds_max.x.min(clip_max.x), bounds_max.y.min(clip_max.y));
+    if min.x > max.x || min.y > max.y {
+        None
+    } else {
+        Some(Rect::from_min_size(min, max - min))
+    }
+}
+
 /// Resolves current slide content against a full-map layout. Never relayouts a filtered sheet.
 ///
 /// A missing/invalid source is an error, even for legacy contextual slides. Normal map
@@ -202,7 +220,8 @@ pub fn resolve_presentation_slide(
     let include_objects =
         slide.source == PresentationSource::Viewport || slide.scope == PresentationScope::Context;
     let zone_ids: HashSet<_> = zones.iter().map(|zone| zone.id).collect();
-    let mut bounds = build_scene(sheet, &filtered)
+    let scene = build_scene(sheet, &filtered);
+    let mut bounds = scene
         .items
         .iter()
         .filter(|item| match item.id {
@@ -212,31 +231,146 @@ pub fn resolve_presentation_slide(
         })
         .filter_map(|item| item.visible_bounds())
         .reduce(|a, b| a.union(&b));
-    let mut include_rect = |rect: Rect| {
-        bounds = Some(bounds.map_or(rect, |bounds| bounds.union(&rect)));
+    let has_clipped_frames = sheet.zones.iter().any(|zone| zone.clip);
+    let topic_clips: HashMap<_, _> = if has_clipped_frames {
+        scene
+            .items
+            .iter()
+            .filter_map(|item| match item.id {
+                SceneId::Topic(id) => Some((id, item.clip)),
+                _ => None,
+            })
+            .collect()
+    } else {
+        HashMap::new()
     };
-    for boundary in &filtered.boundaries {
-        include_rect(boundary.rect);
-    }
-    for summary in &filtered.summaries {
-        include_rect(summary.range_rect);
-        for point in [summary.start, summary.end, summary.tip] {
-            include_rect(Rect::from_min_size(point, Vec2::ZERO));
+    let topic_clip = |id| {
+        has_clipped_frames
+            .then(|| {
+                topic_clips
+                    .get(&id)
+                    .copied()
+                    .unwrap_or_else(|| crate::scene::topic_clip_rect(sheet, id))
+            })
+            .flatten()
+    };
+    let mut include_rect = |rect: Rect, clip: Option<Rect>| {
+        if let Some(rect) = clip_presentation_bounds(rect, clip) {
+            bounds = Some(bounds.map_or(rect, |bounds| bounds.union(&rect)));
+        }
+    };
+    // The legacy frame did not include map-edge geometry. Only add it when it
+    // is clipped: both endpoint topics can be outside while the edge crosses
+    // the frame and is still painted.
+    if has_clipped_frames {
+        for connector in &filtered.connectors {
+            if let Some(clip) = topic_clip(connector.child)
+                && let Some(rect) = crate::board::points_bounds(&[connector.start, connector.end])
+            {
+                include_rect(rect.expand(connector.width.max(0.0) / 2.0), Some(clip));
+            }
         }
     }
+    for boundary in &filtered.boundaries {
+        let source = has_clipped_frames
+            .then(|| {
+                sheet
+                    .boundaries
+                    .iter()
+                    .find(|source| source.id == boundary.id)
+            })
+            .flatten();
+        let clip = source.and_then(|source| topic_clip(source.parent));
+        let rect = if clip.is_some() {
+            // Both the canvas and SVG paint a stroke beyond the rectangle.
+            boundary.rect.expand(1.0)
+        } else {
+            boundary.rect
+        };
+        include_rect(rect, clip);
+        // The layout does not measure boundary titles. A clipped title may
+        // extend beyond the boundary rectangle, so retain its clip conservatively.
+        if let Some(clip) = clip
+            && source.is_some_and(|source| source.title.as_deref().is_some_and(|s| !s.is_empty()))
+        {
+            include_rect(clip, None);
+        }
+    }
+    for summary in &filtered.summaries {
+        let clip = topic_clip(summary.topic);
+        include_rect(summary.range_rect, clip);
+        if let Some(clip) = clip {
+            // Clip segment hulls, not individual vertices: a visible segment
+            // can cross the frame with both endpoints outside it.
+            for points in [[summary.start, summary.tip], [summary.end, summary.tip]] {
+                if let Some(rect) = crate::board::points_bounds(&points) {
+                    include_rect(rect.expand(1.0), Some(clip));
+                }
+            }
+            if let Some(topic) = filtered.rect(summary.topic) {
+                let end = match summary.dir {
+                    crate::layout::Dir::Right => topic.left_center(),
+                    crate::layout::Dir::Left => topic.right_center(),
+                    crate::layout::Dir::Down => topic.top_center(),
+                    crate::layout::Dir::Up => topic.bottom_center(),
+                };
+                if let Some(rect) = crate::board::points_bounds(&[summary.tip, end]) {
+                    include_rect(rect.expand(1.0), Some(clip));
+                }
+            }
+        } else {
+            for point in [summary.start, summary.end, summary.tip] {
+                include_rect(Rect::from_min_size(point, Vec2::ZERO), None);
+            }
+        }
+    }
+    let mut relationship_clip_zones = HashMap::new();
     for relationship in &filtered.relationships {
+        let source = has_clipped_frames
+            .then(|| {
+                sheet
+                    .relationships
+                    .iter()
+                    .find(|source| source.id == relationship.id)
+            })
+            .flatten();
+        let clip = source.and_then(|source| {
+            let from = *relationship_clip_zones
+                .entry(source.from)
+                .or_insert_with(|| crate::scene::topic_clip_zone(sheet, source.from));
+            let to = *relationship_clip_zones
+                .entry(source.to)
+                .or_insert_with(|| crate::scene::topic_clip_zone(sheet, source.to));
+            match (from, to) {
+                (Some((from_zone, clip)), Some((to_zone, _))) if from_zone == to_zone => Some(clip),
+                _ => None,
+            }
+        });
         // Cubic control hull conservatively bounds the whole curve.
-        for point in [
+        let points = [
             relationship.start,
             relationship.c1,
             relationship.c2,
             relationship.end,
-        ] {
-            include_rect(Rect::from_min_size(point, Vec2::ZERO));
+        ];
+        if let Some(clip) = clip {
+            if let Some(rect) = crate::board::points_bounds(&points) {
+                // The canvas arrowhead can extend almost ten units from the
+                // endpoint; this also covers the SVG marker and line strokes.
+                include_rect(rect.expand(10.0), Some(clip));
+            }
+            // Relationship label extents are not measured by Layout.
+            if source.is_some_and(|source| !source.title.is_empty()) {
+                include_rect(clip, None);
+            }
+        } else {
+            for point in points {
+                include_rect(Rect::from_min_size(point, Vec2::ZERO), None);
+            }
         }
     }
     for zone in &zones {
-        include_rect(zone.frame);
+        include_rect(zone.frame, None);
     }
     // Empty content deliberately stays empty, with a stable saved viewport.
     // Never use the full map's bounds as an empty-slide fallback.
@@ -298,6 +432,385 @@ mod tests {
             auto_frame: true,
             hidden_topics: Vec::new(),
             max_depth: None,
+        }
+    }
+
+    fn decoration_fixture() -> (Sheet, TopicId, crate::ZoneId) {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = crate::SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", Vec2::new(100.0, 100.0));
+        let first = sheet.add_child(root, None, "First");
+        let second = sheet.add_child(root, None, "Second");
+        sheet.add_boundary(&[first, second]).unwrap();
+        sheet.add_summary(&[first, second], "Summary").unwrap();
+        sheet.add_relationship(first, second).unwrap();
+        let zone = sheet
+            .create_zone(
+                "Frame",
+                vec![root],
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(320.0, 240.0)),
+            )
+            .unwrap();
+        sheet.zones[0].clip = true;
+        sheet.validate().unwrap();
+        (sheet, root, zone)
+    }
+
+    #[test]
+    fn clip_bounds_keep_lines_and_points_on_the_frame_edge() {
+        let rect =
+            |x, y, width, height| Rect::from_min_size(Vec2::new(x, y), Vec2::new(width, height));
+        let clip = rect(0.0, 0.0, 100.0, 100.0);
+        for (bounds, expected) in [
+            (
+                rect(100.0, 20.0, 0.0, 60.0),
+                Some(rect(100.0, 20.0, 0.0, 60.0)),
+            ),
+            (
+                rect(-20.0, 0.0, 140.0, 0.0),
+                Some(rect(0.0, 0.0, 100.0, 0.0)),
+            ),
+            (
+                rect(-10.0, -10.0, 10.0, 10.0),
+                Some(rect(0.0, 0.0, 0.0, 0.0)),
+            ),
+            (rect(100.01, 20.0, 0.0, 60.0), None),
+        ] {
+            assert_eq!(clip_presentation_bounds(bounds, Some(clip)), expected);
+            assert_eq!(clip_presentation_bounds(bounds, None), Some(bounds));
+        }
+    }
+
+    #[test]
+    fn clipped_labels_keep_the_owning_frame_when_its_zone_is_filtered_out() {
+        for kind in ["boundary", "relationship"] {
+            let (mut sheet, root, _) = decoration_fixture();
+            let other = sheet.add_floating("Other", Vec2::new(800.0, 800.0));
+            sheet.zones[0].roots.push(other);
+            let clip = sheet.zones[0].frame;
+            let boundary = sheet.boundaries[0].id;
+            let relationship = sheet.relationships[0].id;
+            sheet
+                .set_boundary_title(boundary, Some("Unmeasured boundary label".into()))
+                .unwrap();
+            sheet
+                .set_relationship_title(relationship, "Unmeasured relationship label")
+                .unwrap();
+            sheet.validate().unwrap();
+
+            let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+            for topic in layout.topics.values_mut() {
+                topic.rect =
+                    Rect::from_min_size(Vec2::new(1_000.0, 1_000.0), Vec2::new(20.0, 20.0));
+            }
+            layout.connectors.clear();
+            layout.summaries.clear();
+            let interior = Rect::from_min_size(Vec2::new(100.0, 100.0), Vec2::new(10.0, 10.0));
+            match kind {
+                "boundary" => {
+                    layout.relationships.clear();
+                    layout.boundaries[0].rect = interior;
+                }
+                "relationship" => {
+                    layout.boundaries.clear();
+                    let line = &mut layout.relationships[0];
+                    line.start = interior.min;
+                    line.c1 = Vec2::new(110.0, 100.0);
+                    line.c2 = interior.max();
+                    line.end = Vec2::new(100.0, 110.0);
+                }
+                _ => unreachable!(),
+            }
+            let source = slide(PresentationSource::Branch(root));
+            let resolved = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+            assert!(resolved.zones.is_empty(), "{kind}");
+            assert_eq!(resolved.layout.bounds, clip, "{kind}");
+            assert_eq!(resolved.frame, clip.expand(40.0), "{kind}");
+
+            sheet.set_boundary_title(boundary, None).unwrap();
+            sheet.set_relationship_title(relationship, "").unwrap();
+            let unlabelled = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+            let painted = interior.expand(if kind == "boundary" { 1.0 } else { 10.0 });
+            assert_eq!(unlabelled.layout.bounds, painted, "{kind}");
+            assert_eq!(unlabelled.frame, painted.expand(40.0), "{kind}");
+        }
+    }
+
+    #[test]
+    fn clipped_decorations_do_not_inflate_branch_or_zone_auto_frames() {
+        let (sheet, root, zone) = decoration_fixture();
+        let clip = sheet.zones[0].frame;
+        for kind in ["boundary", "summary", "relationship"] {
+            let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+            match kind {
+                "boundary" => {
+                    layout.boundaries[0].rect =
+                        Rect::from_min_size(Vec2::new(30_000.0, 30_000.0), Vec2::new(50.0, 50.0));
+                }
+                "summary" => {
+                    let summary = &mut layout.summaries[0];
+                    summary.range_rect =
+                        Rect::from_min_size(Vec2::new(30_000.0, 30_000.0), Vec2::new(50.0, 50.0));
+                    summary.start = Vec2::new(30_000.0, 30_000.0);
+                    summary.end = Vec2::new(30_050.0, 30_050.0);
+                    summary.tip = Vec2::new(30_025.0, 30_025.0);
+                }
+                "relationship" => {
+                    layout.relationships[0].c1 = Vec2::new(30_000.0, 30_000.0);
+                    layout.relationships[0].c2 = Vec2::new(30_050.0, 30_050.0);
+                }
+                _ => unreachable!(),
+            }
+            for source in [
+                PresentationSource::Branch(root),
+                PresentationSource::Zone(zone),
+            ] {
+                let resolved = resolve_presentation_slide(&sheet, &slide(source), &layout).unwrap();
+                assert_eq!(resolved.frame, clip.expand(40.0), "{kind}, {source:?}");
+
+                // Without a clip, retain the previous raw-geometry framing.
+                let mut legacy = sheet.clone();
+                legacy.zones[0].clip = false;
+                let resolved =
+                    resolve_presentation_slide(&legacy, &slide(source), &layout).unwrap();
+                assert_eq!(resolved.frame.max().x, 30_090.0, "{kind}, {source:?}");
+            }
+            let viewport = slide(PresentationSource::Viewport);
+            assert_eq!(
+                resolve_presentation_slide(&sheet, &viewport, &layout)
+                    .unwrap()
+                    .frame,
+                viewport.frame,
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn clipped_decoration_segments_crossing_a_hidden_frame_remain_framed() {
+        let (mut sheet, root, _) = decoration_fixture();
+        let other = sheet.add_floating("Other", Vec2::new(800.0, 800.0));
+        sheet.zones[0].roots.push(other);
+        sheet.validate().unwrap();
+        let original = layout_sheet(&sheet, &ApproxMeasure, false);
+        let summary_topic = sheet.summaries[0].topic;
+
+        for kind in ["boundary", "map edge", "summary connector", "relationship"] {
+            let mut layout = original.clone();
+            for topic in layout.topics.values_mut() {
+                topic.rect =
+                    Rect::from_min_size(Vec2::new(1_000.0, 1_000.0), Vec2::new(20.0, 20.0));
+            }
+            let mut boundary = layout.boundaries[0].clone();
+            let mut connector = layout
+                .connectors
+                .iter()
+                .find(|connector| connector.parent == root)
+                .unwrap()
+                .clone();
+            let mut summary = layout.summaries[0].clone();
+            let mut relationship = layout.relationships[0].clone();
+            layout.boundaries.clear();
+            layout.connectors.clear();
+            layout.summaries.clear();
+            layout.relationships.clear();
+
+            let visible = match kind {
+                "boundary" => {
+                    boundary.rect =
+                        Rect::from_min_size(Vec2::new(-50.0, 30.0), Vec2::new(420.0, 40.0));
+                    layout.boundaries.push(boundary);
+                    Rect::from_min_size(Vec2::new(0.0, 29.0), Vec2::new(320.0, 42.0))
+                }
+                "map edge" => {
+                    connector.start = Vec2::new(-50.0, 50.0);
+                    connector.end = Vec2::new(370.0, 50.0);
+                    let padding = connector.width.max(0.0) / 2.0;
+                    layout.connectors.push(connector);
+                    Rect::from_min_size(
+                        Vec2::new(0.0, 50.0 - padding),
+                        Vec2::new(320.0, padding * 2.0),
+                    )
+                }
+                "summary connector" => {
+                    summary.dir = crate::layout::Dir::Right;
+                    summary.range_rect =
+                        Rect::from_min_size(Vec2::new(-150.0, 40.0), Vec2::new(20.0, 20.0));
+                    summary.start = Vec2::new(-130.0, 40.0);
+                    summary.end = Vec2::new(-130.0, 60.0);
+                    summary.tip = Vec2::new(-50.0, 50.0);
+                    layout.topics.get_mut(&summary_topic).unwrap().rect =
+                        Rect::from_min_size(Vec2::new(370.0, 40.0), Vec2::new(20.0, 20.0));
+                    layout.summaries.push(summary);
+                    Rect::from_min_size(Vec2::new(0.0, 49.0), Vec2::new(320.0, 2.0))
+                }
+                "relationship" => {
+                    relationship.start = Vec2::new(-50.0, 50.0);
+                    relationship.c1 = Vec2::new(-50.0, 50.0);
+                    relationship.c2 = Vec2::new(370.0, 50.0);
+                    relationship.end = Vec2::new(370.0, 50.0);
+                    layout.relationships.push(relationship);
+                    Rect::from_min_size(Vec2::new(0.0, 40.0), Vec2::new(320.0, 20.0))
+                }
+                _ => unreachable!(),
+            };
+            let resolved = resolve_presentation_slide(
+                &sheet,
+                &slide(PresentationSource::Branch(root)),
+                &layout,
+            )
+            .unwrap();
+            assert!(resolved.zones.is_empty(), "{kind}");
+            assert_eq!(resolved.layout.bounds, visible, "{kind}");
+            assert_eq!(resolved.frame, visible.expand(40.0), "{kind}");
+        }
+    }
+
+    #[test]
+    fn clipped_strokes_outside_a_hidden_frame_remain_framed() {
+        let (mut sheet, root, _) = decoration_fixture();
+        let other = sheet.add_floating("Other", Vec2::new(800.0, 800.0));
+        sheet.zones[0].roots.push(other);
+        sheet.validate().unwrap();
+        let original = layout_sheet(&sheet, &ApproxMeasure, false);
+
+        for kind in [
+            "boundary",
+            "map edge",
+            "summary",
+            "relationship",
+            "relationship arrow",
+        ] {
+            let mut layout = original.clone();
+            for topic in layout.topics.values_mut() {
+                topic.rect =
+                    Rect::from_min_size(Vec2::new(1_000.0, 1_000.0), Vec2::new(20.0, 20.0));
+            }
+            let mut boundary = layout.boundaries[0].clone();
+            let mut connector = layout
+                .connectors
+                .iter()
+                .find(|connector| connector.parent == root)
+                .unwrap()
+                .clone();
+            let mut summary = layout.summaries[0].clone();
+            let mut relationship = layout.relationships[0].clone();
+            layout.boundaries.clear();
+            layout.connectors.clear();
+            layout.summaries.clear();
+            layout.relationships.clear();
+
+            match kind {
+                "boundary" => {
+                    boundary.rect =
+                        Rect::from_min_size(Vec2::new(-50.0, -40.0), Vec2::new(420.0, 39.75));
+                    layout.boundaries.push(boundary);
+                }
+                "map edge" => {
+                    connector.start = Vec2::new(-50.0, -0.25);
+                    connector.end = Vec2::new(370.0, -0.25);
+                    connector.width = 2.0;
+                    layout.connectors.push(connector);
+                }
+                "summary" => {
+                    summary.dir = crate::layout::Dir::Right;
+                    summary.range_rect =
+                        Rect::from_min_size(Vec2::new(-150.0, -90.0), Vec2::new(20.0, 20.0));
+                    summary.start = Vec2::new(-50.0, -0.25);
+                    summary.end = Vec2::new(370.0, -0.25);
+                    summary.tip = Vec2::new(160.0, -0.25);
+                    layout.topics.get_mut(&summary.topic).unwrap().rect =
+                        Rect::from_min_size(Vec2::new(160.0, -50.0), Vec2::new(20.0, 10.0));
+                    layout.summaries.push(summary);
+                }
+                "relationship" | "relationship arrow" => {
+                    let y = if kind == "relationship" { -0.25 } else { -3.0 };
+                    relationship.start = Vec2::new(100.0, y);
+                    relationship.c1 = Vec2::new(150.0, y);
+                    relationship.c2 = Vec2::new(180.0, y);
+                    relationship.end = Vec2::new(200.0, y);
+                    layout.relationships.push(relationship);
+                }
+                _ => unreachable!(),
+            }
+            let mut source = slide(PresentationSource::Branch(root));
+            source.frame =
+                Rect::from_min_size(Vec2::new(1_000.0, 1_000.0), Vec2::new(200.0, 200.0));
+            let resolved = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+            assert!(resolved.zones.is_empty(), "{kind}");
+            assert!(resolved.layout.bounds.min.x < 320.0, "{kind}");
+            assert!(resolved.layout.bounds.max().x > 0.0, "{kind}");
+            assert!(resolved.layout.bounds.max().y > 0.0, "{kind}");
+        }
+    }
+
+    #[test]
+    fn relationships_with_different_endpoint_clips_keep_their_full_bounds() {
+        let (mut sheet, root, _) = decoration_fixture();
+        let other = sheet.add_floating("Other", Vec2::new(500.0, 100.0));
+        sheet
+            .create_zone(
+                "Other frame",
+                vec![other],
+                Rect::from_min_size(Vec2::new(400.0, 0.0), Vec2::new(240.0, 240.0)),
+            )
+            .unwrap();
+        let relationship = sheet.add_relationship(root, other).unwrap();
+        let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let curve = layout
+            .relationships
+            .iter_mut()
+            .find(|curve| curve.id == relationship)
+            .unwrap();
+        curve.c1 = Vec2::new(30_000.0, 50.0);
+        curve.c2 = Vec2::new(30_050.0, 50.0);
+        let mut source = slide(PresentationSource::Branch(root));
+        source.scope = PresentationScope::Context;
+
+        for clips in [(true, true), (true, false), (false, false)] {
+            sheet.zones[0].clip = clips.0;
+            sheet.zones[1].clip = clips.1;
+            let resolved = resolve_presentation_slide(&sheet, &source, &layout).unwrap();
+            assert_eq!(resolved.frame.max().x, 30_090.0, "{clips:?}");
+        }
+    }
+
+    #[test]
+    fn coincident_distinct_frame_clips_do_not_bound_context_relationships() {
+        let (mut sheet, root, zone) = decoration_fixture();
+        let other = sheet.add_floating("Other", Vec2::new(200.0, 100.0));
+        let frame = sheet.zones[0].frame;
+        sheet
+            .create_zone("Other frame", vec![other], frame)
+            .unwrap();
+        sheet.zones[1].clip = true;
+        let relationship = sheet.add_relationship(root, other).unwrap();
+        sheet.validate().unwrap();
+        let mut layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let curve = layout
+            .relationships
+            .iter_mut()
+            .find(|curve| curve.id == relationship)
+            .unwrap();
+        curve.c1 = Vec2::new(30_000.0, 50.0);
+        curve.c2 = Vec2::new(30_050.0, 50.0);
+
+        for source in [
+            PresentationSource::Branch(root),
+            PresentationSource::Zone(zone),
+        ] {
+            let mut context = slide(source);
+            context.scope = PresentationScope::Context;
+            let resolved = resolve_presentation_slide(&sheet, &context, &layout).unwrap();
+            assert!(
+                resolved
+                    .layout
+                    .relationships
+                    .iter()
+                    .any(|curve| curve.id == relationship),
+                "{source:?}"
+            );
+            assert_eq!(resolved.frame.max().x, 30_090.0, "{source:?}");
         }
     }
 

@@ -35,7 +35,7 @@ impl ThinodaApp {
                 if !self.search.all_sheets && index != doc.doc.active_index() {
                     continue;
                 }
-                for topic in sheet.topics.values() {
+                for topic in sheet.content_topics() {
                     markers_present.extend(
                         topic
                             .markers

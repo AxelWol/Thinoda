@@ -14,8 +14,8 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 
 const MAX_HISTORY: usize = 300;
-/// Approximate memory budget of the undo stack. Large ink data is shared between
-/// snapshots (`Arc`) and therefore not counted per snapshot.
+/// Approximate memory budget for retained undo and redo snapshots. Shared ink
+/// and embedded resource allocations are counted once across both stacks.
 pub const MAX_HISTORY_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -32,6 +32,18 @@ struct Entry {
     bytes: usize,
 }
 
+impl Entry {
+    fn new(label: String, snapshot: Snapshot, state: u64) -> Self {
+        let bytes = std::mem::size_of::<Self>() + label.len() + snapshot.approx_bytes();
+        Self {
+            label,
+            snapshot,
+            state,
+            bytes,
+        }
+    }
+}
+
 impl Snapshot {
     fn approx_bytes(&self) -> usize {
         match self {
@@ -40,7 +52,7 @@ impl Snapshot {
         }
     }
 
-    fn visit_ink_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
+    fn visit_shared_buffers(&self, visit: &mut impl FnMut(usize, usize)) {
         fn visit_sheet(sheet: &Sheet, visit: &mut impl FnMut(usize, usize)) {
             for object in &sheet.canvas.objects {
                 if let crate::board::CanvasObjectKind::Ink(ink) = &object.kind {
@@ -54,6 +66,12 @@ impl Snapshot {
                             pressure.len() * std::mem::size_of::<f32>(),
                         );
                     }
+                }
+            }
+            for resource in sheet.resources.entries.values() {
+                let bytes = resource.bytes();
+                if !bytes.is_empty() {
+                    visit(bytes.as_ptr() as usize, bytes.len());
                 }
             }
         }
@@ -72,16 +90,16 @@ impl Snapshot {
 #[derive(Debug, Clone, Default)]
 struct HistoryAccounting {
     snapshot_bytes: usize,
-    ink_bytes: usize,
+    shared_bytes: usize,
     buffers: HashMap<usize, (usize, usize)>,
 }
 
 impl HistoryAccounting {
     fn add(&mut self, entry: &Entry) {
         self.snapshot_bytes += entry.bytes;
-        entry.snapshot.visit_ink_buffers(&mut |pointer, bytes| {
+        entry.snapshot.visit_shared_buffers(&mut |pointer, bytes| {
             let allocation = self.buffers.entry(pointer).or_insert_with(|| {
-                self.ink_bytes += bytes;
+                self.shared_bytes += bytes;
                 (0, bytes)
             });
             debug_assert_eq!(allocation.1, bytes);
@@ -91,28 +109,28 @@ impl HistoryAccounting {
 
     fn remove(&mut self, entry: &Entry) {
         self.snapshot_bytes -= entry.bytes;
-        entry.snapshot.visit_ink_buffers(&mut |pointer, bytes| {
+        entry.snapshot.visit_shared_buffers(&mut |pointer, bytes| {
             let allocation = self
                 .buffers
                 .get_mut(&pointer)
-                .expect("undo ink allocation must be accounted");
+                .expect("retained history allocation must be accounted");
             debug_assert_eq!(allocation.1, bytes);
             allocation.0 -= 1;
             if allocation.0 == 0 {
-                self.ink_bytes -= allocation.1;
+                self.shared_bytes -= allocation.1;
                 self.buffers.remove(&pointer);
             }
         });
     }
 
     fn bytes(&self) -> usize {
-        self.snapshot_bytes + self.ink_bytes
+        self.snapshot_bytes + self.shared_bytes
     }
 }
 
 /// Rough heap estimate of a sheet snapshot for the undo budget. Shared (`Arc`) data such
-/// as ink points and resource bytes is excluded here; unique ink buffers are accounted
-/// once across the complete undo stack.
+/// as ink points and resource bytes is excluded here; unique shared buffers are
+/// accounted once across the complete undo and redo history.
 pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
     use std::mem::size_of;
     let topics: usize = sheet
@@ -125,8 +143,15 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                 + t.children.len() * size_of::<crate::model::TopicId>()
                 + t.labels.iter().map(|l| l.len() + 24).sum::<usize>()
                 + t.markers.iter().map(|m| m.len() + 24).sum::<usize>()
-                + t.notes.as_ref().map_or(0, |_| 256)
+                + t.marker_colors.len()
+                    * (size_of::<usize>() + size_of::<crate::geometry::Color>() + 48)
+                + t.notes.as_ref().map_or(0, |notes| notes.len())
                 + t.hyperlink.as_ref().map_or(0, |h| h.len())
+                + t.image.as_ref().map_or(0, |image| image.len())
+                + t.attachment.as_ref().map_or(0, |attachment| {
+                    attachment.resource.len() + attachment.name.len()
+                })
+                + t.style.font_family.as_ref().map_or(0, String::len)
         })
         .sum();
     let objects: usize = sheet
@@ -139,24 +164,72 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
                 + o.alt_text.len()
                 + match &o.kind {
                     crate::board::CanvasObjectKind::Ink(s) => {
-                        // Point buffers are counted once across the undo stack.
+                        // Point buffers are counted once across both history stacks.
                         2 * size_of::<usize>() * (1 + s.pressure.is_some() as usize)
                     }
                     _ => 0,
                 }
         })
         .sum();
+    let resource_metadata: usize = sheet
+        .resources
+        .entries
+        .iter()
+        .map(|(id, resource)| {
+            size_of::<crate::resources::Resource>()
+                + 48
+                + id.len()
+                + resource.name.len()
+                + resource.media_type.len()
+        })
+        .sum();
     size_of::<Sheet>()
         + sheet.title.len()
+        + sheet.theme.theme_id.len()
+        + sheet.theme.font_family.as_ref().map_or(0, String::len)
         + topics
         + objects
+        + resource_metadata
+        + sheet.floating.len() * size_of::<crate::model::TopicId>()
         + sheet.canvas.groups.len() * size_of::<crate::board::CanvasGroup>()
         + sheet.canvas.card_states.len() * size_of::<crate::board::CanvasCardState>()
-        + sheet.relationships.len() * (size_of::<crate::model::Relationship>() + 32)
-        + sheet.boundaries.len() * size_of::<crate::model::Boundary>()
+        + sheet
+            .relationships
+            .iter()
+            .map(|relationship| size_of::<crate::model::Relationship>() + relationship.title.len())
+            .sum::<usize>()
+        + sheet
+            .boundaries
+            .iter()
+            .map(|boundary| {
+                size_of::<crate::model::Boundary>() + boundary.title.as_ref().map_or(0, String::len)
+            })
+            .sum::<usize>()
         + sheet.summaries.len() * size_of::<crate::model::Summary>()
-        + sheet.zones.len() * (size_of::<crate::model::Zone>() + 32)
-        + sheet.presentation.slides.len() * (size_of::<crate::model::PresentationSlide>() + 64)
+        + sheet
+            .zones
+            .iter()
+            .map(|zone| {
+                size_of::<crate::model::Zone>()
+                    + zone.name.len()
+                    + zone.roots.len() * size_of::<crate::model::TopicId>()
+            })
+            .sum::<usize>()
+        + sheet
+            .presentation
+            .slides
+            .iter()
+            .map(|slide| {
+                size_of::<crate::model::PresentationSlide>()
+                    + slide.title.len()
+                    + slide.hidden_topics.len() * size_of::<crate::model::TopicId>()
+            })
+            .sum::<usize>()
+        + sheet.scheduling.tasks.len()
+            * (size_of::<crate::model::TopicId>() + size_of::<Task>() + 48)
+        + sheet.scheduling.dependencies.len() * size_of::<crate::schedule::TaskDependency>()
+        + sheet.scheduling.calendar.exceptions.len()
+            * (size_of::<crate::schedule::LocalDate>() + size_of::<bool>() + 48)
 }
 
 /// Editable document with undo history.
@@ -192,22 +265,33 @@ impl Document {
         }
     }
 
-    /// Approximate bytes held by the undo stack.
+    /// Approximate bytes held by the undo and redo stacks.
     pub fn history_bytes(&self) -> usize {
         self.history.bytes()
     }
 
-    /// Overrides the undo byte budget (the newest entry is always kept).
+    /// Overrides the history budget. The nearest undo and redo entries are
+    /// retained even when their combined size exceeds the budget.
     pub fn set_history_byte_budget(&mut self, bytes: usize) {
         self.history_budget = bytes;
         self.trim_history();
     }
 
     fn trim_history(&mut self) {
-        while self.undo.len() > 1
-            && (self.history.bytes() > self.history_budget || self.undo.len() > MAX_HISTORY)
+        while self.history.bytes() > self.history_budget
+            || self.undo.len() + self.redo.len() > MAX_HISTORY
         {
-            let removed = self.undo.remove(0);
+            let remove_undo = match (self.undo.len() > 1, self.redo.len() > 1) {
+                (true, true) => self.undo.len() >= self.redo.len(),
+                (true, false) => true,
+                (false, true) => false,
+                (false, false) => break,
+            };
+            let removed = if remove_undo {
+                self.undo.remove(0)
+            } else {
+                self.redo.remove(0)
+            };
             self.history.remove(&removed);
         }
     }
@@ -258,17 +342,13 @@ impl Document {
     }
 
     fn push(&mut self, label: &str, snapshot: Snapshot) {
-        let bytes = snapshot.approx_bytes();
-        let entry = Entry {
-            label: label.to_string(),
-            snapshot,
-            state: self.state,
-            bytes,
-        };
+        for entry in self.redo.drain(..) {
+            self.history.remove(&entry);
+        }
+        let entry = Entry::new(label.to_string(), snapshot, self.state);
         self.history.add(&entry);
         self.undo.push(entry);
         self.trim_history();
-        self.redo.clear();
         self.state = self.bump();
     }
 
@@ -445,13 +525,11 @@ impl Document {
         };
         self.history.remove(&e);
         let snap = self.swap(e.snapshot);
-        self.redo.push(Entry {
-            label: e.label,
-            bytes: snap.approx_bytes(),
-            snapshot: snap,
-            state: self.state,
-        });
+        let entry = Entry::new(e.label, snap, self.state);
+        self.history.add(&entry);
+        self.redo.push(entry);
         self.state = e.state;
+        self.trim_history();
         true
     }
 
@@ -459,13 +537,9 @@ impl Document {
         let Some(e) = self.redo.pop() else {
             return false;
         };
+        self.history.remove(&e);
         let snap = self.swap(e.snapshot);
-        let entry = Entry {
-            label: e.label,
-            bytes: snap.approx_bytes(),
-            snapshot: snap,
-            state: self.state,
-        };
+        let entry = Entry::new(e.label, snap, self.state);
         self.history.add(&entry);
         self.undo.push(entry);
         self.trim_history();
@@ -1115,9 +1189,9 @@ mod tests {
         fn expected(document: &Document) -> usize {
             let mut seen = HashSet::new();
             let mut bytes = 0;
-            for entry in &document.undo {
+            for entry in document.undo.iter().chain(&document.redo) {
                 bytes += entry.bytes;
-                entry.snapshot.visit_ink_buffers(&mut |pointer, size| {
+                entry.snapshot.visit_shared_buffers(&mut |pointer, size| {
                     if seen.insert(pointer) {
                         bytes += size;
                     }

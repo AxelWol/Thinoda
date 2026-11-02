@@ -4,9 +4,11 @@ _Last updated: 2026-10-30 09:44:32 UTC (non-binding repository metadata)._ <!-- 
 
 ## Outcome and implementation contract
 
-Replace screenshot-based slide authoring and PowerPoint handoff with live vector
-scenes and editable PowerPoint objects. A slide is a view of current map content,
-not a detached copy of its text. Source topics remain the single source of truth.
+Replace screenshot-based branch and Zone slide authoring and PowerPoint handoff
+with live vector scenes and editable PowerPoint objects. A slide is a view of
+current map content, not a detached copy of its text. Source topics remain the
+single source of truth. Board viewport slides are an explicit exception in
+PowerPoint: their visual scenes are flattened to images.
 
 The existing player already paints vectors; the editor preview and PowerPoint
 export are the bitmap paths being replaced. An SVG picture inside PowerPoint is
@@ -49,8 +51,9 @@ No release or branch merge is implied by this implementation task.
   Renaming a topic changes its displayed content; a custom slide title remains
   independent. New descendants appear when permitted by scope, hidden-subtree
   and depth settings. Automatically framed slides recompute visible bounds.
-- Manually framed slides retain their saved viewport. Visibility is semantic,
-  not just spatial: a sibling inside that viewport must still be excluded.
+- Manually framed slides retain their saved viewport. Branch and Zone visibility
+  is semantic, not just spatial: an unrelated sibling inside that viewport must
+  still be excluded. A View slide instead represents the chosen spatial area.
 - Connectors and relationships require visible endpoints. Group annotations
   must not disclose hidden text or aggregate hidden members. Zones must not leak
   unrelated roots into branch-focused slides. A depth limit that removes part
@@ -72,7 +75,9 @@ formats. A bounded notes-equation appendix is included only for topics resolved
 as visible on each slide, using native editable text and fraction-rule paths;
 topic labels use font-measured, wrapped lines above their equations, with the
 same bounded appendix geometry in SVG, PDF and PowerPoint. Malformed source is
-rejected. Do not silently rasterize unsupported vector/text content.
+rejected. Do not silently rasterize unsupported vector/text content. Viewport
+slides are intentionally flattened in PowerPoint, with that loss reported by
+export preflight.
 Pixel-identical font rendering across Office installations cannot be
 guaranteed; preserve Unicode, editable text and geometry with declared font
 behavior.
@@ -139,11 +144,19 @@ and a horizontal strip in a narrow one. Select a thumbnail to edit that slide;
 use **Duplicate Slide**, **Move Up**, **Move Down** and **Remove Slide** to shape
 the narrative without changing map topics.
 
-**Slide source** selects the live branch or Zone. **Source subtree** excludes
-unrelated topics; **Map context** retains the surrounding map.
-**Auto-fit content** follows visible content after map edits. Disable it for a
-fixed crop and edit X/Y/Width/Height. **Limit topic depth** counts the source root
-as depth zero. Click a topic on the vector stage to hide its subtree, or use the
+To add the current board view, position and zoom the canvas before opening the
+editor, then choose **Capture** next to **View** in the editor. This adds a slide
+with a fixed viewport containing board objects and map content; its
+X/Y/Width/Height can be adjusted in the slide settings. The viewport is captured
+when the editor opens, not continuously while the editor is open.
+
+**Slide source** selects the live branch, Zone or View. For branch and Zone
+slides, **Source subtree** excludes unrelated topics and **Map context** retains
+the surrounding map. **Auto-fit content** follows visible content after map
+edits; disable it for a fixed crop and edit X/Y/Width/Height. Auto-framing is
+conservative for curves and labels and may include extra space.
+**Limit topic depth** counts the source root as depth zero. Click a topic on the
+vector stage to hide its subtree, or use the
 keyboard-accessible **Topic visibility** controls. **Hidden topics** offers
 individual restoration and **Restore all topics**.
 
@@ -163,12 +176,16 @@ happens to reuse topic IDs. If that source is replaced or all slides are removed
 the player ends safely. A deleted source's slide can be restored by undoing the
 map deletion.
 
-PowerPoint text is emitted as editable text boxes, with measured line placement;
-it is not a screenshot or outlined glyph image. Connecting curves are editable
-freeform vector paths, not a promise of PowerPoint auto-routing/reconnection.
-Photographs remain separate pictures. PDF retains vectors using outlined text
-from the existing export font resolver; editable text is a PPTX guarantee, not a
-PDF text-search guarantee. PowerPoint edits do not synchronize back into Thinoda.
+For branch and Zone slides, PowerPoint text is emitted as editable text boxes
+with measured line placement. Connecting curves are editable freeform vector
+paths, not a promise of PowerPoint auto-routing/reconnection; photographs remain
+separate pictures. Viewport slides instead become non-editable images, as
+reported before export. Some frame clipping on editable branch and Zone slides
+cannot be preserved and is also reported. PDF retains vectors using outlined
+text from the existing export font resolver; editable text is a PPTX guarantee
+for supported branch and Zone content, not a PDF text-search guarantee.
+PowerPoint edits do not synchronize back into Thinoda. Clipping is visual and
+must not be relied on as secure redaction.
 
 ## Implementation rubber-duck review
 
@@ -216,8 +233,11 @@ and playback integration executables, formatting, strict Clippy and the
 production web build. The editor matrix covers all ten languages, both
 appearances and narrow/wide layouts. No new tests are ignored.
 
-Implementation and both critiques are complete. Native opening acceptance was
-performed in Windows PowerPoint, not in every Office version or LibreOffice.
-Font substitution and consumer-specific text metrics remain portability limits;
-editable text, vector geometry and separate photographs remain the contract.
-This work does not create a release or merge the feature branch.
+Implementation and both critiques are complete for branch and Zone slides.
+Native opening acceptance was performed in Windows PowerPoint, not in every
+Office version or LibreOffice. Font substitution and consumer-specific text
+metrics remain portability limits; editable text, vector geometry and separate
+photographs remain the contract for supported branch and Zone content. The
+newer flattened viewport-slide path is covered separately and was not part of
+those Office fixtures. This work does not create a release or merge the feature
+branch.

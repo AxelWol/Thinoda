@@ -12,6 +12,7 @@
 //! command line tools and servers.
 
 pub mod board;
+mod board_semantics;
 pub mod clipboard;
 pub mod custom_theme;
 pub mod document;
@@ -55,7 +56,9 @@ pub use model::{
 };
 pub use outline::OutlineNode;
 pub use presentation::{ResolvedPresentationSlide, resolve_presentation_slide};
-pub use scene::{Scene, SceneBand, SceneHit, SceneId, SceneItem, build_scene, connector_path};
+pub use scene::{
+    Scene, SceneBand, SceneHit, SceneId, SceneItem, build_scene, connector_path, topic_clip_zone,
+};
 pub use schedule::{
     ComputedTask, LocalDate, MAX_CALENDAR_EXCEPTIONS, MAX_SCHEDULED_TASKS, MAX_TASK_DEPENDENCIES,
     MAX_TASK_DURATION_DAYS, SCHEDULING_VERSION, ScheduleError, SchedulingData, Task,

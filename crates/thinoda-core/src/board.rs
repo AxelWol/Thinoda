@@ -218,6 +218,9 @@ pub struct ObjectStyle {
     pub fill: Option<Color>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke: Option<Color>,
+    /// Explicit color for a shape's label; `None` uses the automatic color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<Color>,
     pub stroke_width: f32,
     pub opacity: f32,
 }
@@ -227,6 +230,7 @@ impl Default for ObjectStyle {
         Self {
             fill: None,
             stroke: None,
+            text_color: None,
             stroke_width: 2.0,
             opacity: 1.0,
         }
@@ -2010,7 +2014,9 @@ impl Sheet {
         }
         let members = self.expand_board_selection(members)?;
         self.require_board_members_unlocked(&members)?;
-        let degrees = normalize_rotation(degrees);
+        // Keep the sign for the transform: mapping a tiny negative angle into
+        // [0, 360) can round it to a full turn and silently discard it.
+        let degrees = degrees % 360.0;
         if degrees == 0.0 {
             return Ok(());
         }

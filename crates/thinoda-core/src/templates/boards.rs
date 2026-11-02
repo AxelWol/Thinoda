@@ -24,12 +24,12 @@ const PINK: Color = Color::rgb(0xFF, 0xC1, 0xD9);
 const ORANGE: Color = Color::rgb(0xFF, 0xD5, 0x91);
 pub(crate) const STICKY_TEXT: Color = Color::rgb(0x26, 0x26, 0x26);
 
-/// Translucent mid-tone frame tints: visible on Light and Dark backgrounds.
-const TINT_GREEN: Color = Color::rgba(0x4C, 0xAF, 0x50, 0x30);
-const TINT_ORANGE: Color = Color::rgba(0xFF, 0x98, 0x00, 0x30);
-const TINT_BLUE: Color = Color::rgba(0x21, 0x96, 0xF3, 0x30);
-const TINT_RED: Color = Color::rgba(0xE5, 0x39, 0x35, 0x30);
-const TINT_GRAY: Color = Color::rgba(0x80, 0x80, 0x80, 0x24);
+/// Stronger default frame borders remain visible in both themes; custom tints are unchanged.
+const TINT_GREEN: Color = Color::rgba(0x4C, 0xAF, 0x50, 0x80);
+const TINT_ORANGE: Color = Color::rgba(0xFF, 0x98, 0x00, 0x80);
+const TINT_BLUE: Color = Color::rgba(0x21, 0x96, 0xF3, 0x80);
+const TINT_RED: Color = Color::rgba(0xE5, 0x39, 0x35, 0x80);
+const TINT_GRAY: Color = Color::rgba(0x80, 0x80, 0x80, 0x68);
 
 const SHAPE_STROKE: Color = Color::rgb(0x5A, 0x6B, 0x7D);
 
@@ -562,4 +562,32 @@ pub fn board_strings() -> Vec<&'static str> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_frame_tints_have_more_contrast_in_both_themes() {
+        let settings = Sheet::new("Template", "").theme;
+        let theme = crate::theme::Theme::for_settings(&settings);
+        let tints = [
+            (TINT_GREEN, Color::rgba(0x4C, 0xAF, 0x50, 0x30)),
+            (TINT_ORANGE, Color::rgba(0xFF, 0x98, 0x00, 0x30)),
+            (TINT_BLUE, Color::rgba(0x21, 0x96, 0xF3, 0x30)),
+            (TINT_RED, Color::rgba(0xE5, 0x39, 0x35, 0x30)),
+            (TINT_GRAY, Color::rgba(0x80, 0x80, 0x80, 0x24)),
+        ];
+
+        for (tint, previous) in tints {
+            for dark in [false, true] {
+                let background = theme.background(&settings, dark);
+                assert!(
+                    tint.contrast_on(background) > previous.contrast_on(background),
+                    "default frame tint should be more visible in {dark} theme"
+                );
+            }
+        }
+    }
 }

@@ -81,6 +81,29 @@ fn scoped_chat_context_preserves_hierarchy_without_notes_or_unselected_trees() {
 }
 
 #[test]
+fn hidden_board_context_excludes_anchor_and_keeps_all_content_roots() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let later = sheet.add_floating("Later", thinoda_core::Vec2::new(0.0, 100.0));
+    let first = sheet.add_floating("First", thinoda_core::Vec2::new(0.0, 0.0));
+    sheet.add_child(first, None, "Detail");
+    let anchor = sheet.root;
+    let mut doc = crate::doc::OpenDoc::new(Workbook::new(sheet));
+    let json: serde_json::Value =
+        serde_json::from_str(&context(&doc, Scope::Sheet).unwrap()).unwrap();
+    assert_eq!(json["roots"], serde_json::json!([first, later]));
+    assert!(
+        json["topics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|topic| topic["id"] != serde_json::json!(anchor))
+    );
+    doc.view.select_only(anchor);
+    assert!(context(&doc, Scope::Selection).is_err());
+}
+
+#[test]
 fn chat_rejects_large_or_uncommitted_context_instead_of_truncating() {
     let mut app = ThinodaApp::headless();
     let doc = app.doc_mut().unwrap();

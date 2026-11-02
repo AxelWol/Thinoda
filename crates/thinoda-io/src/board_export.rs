@@ -4,6 +4,7 @@
 
 use crate::{ExportOptions, Format};
 use std::borrow::Cow;
+use std::collections::HashSet;
 use thinoda_core::{
     Sheet, Topic, Workbook,
     board::{CanvasObjectKind, SheetRootMode},
@@ -34,19 +35,7 @@ pub fn required_native_version(book: &Workbook) -> u64 {
 
 /// Whether `sheet` uses content only native format version 6 can represent.
 pub fn uses_board_semantics(sheet: &Sheet) -> bool {
-    sheet.root_mode == SheetRootMode::Hidden
-        || !sheet.canvas.is_empty()
-        || !sheet.board.is_default()
-        || sheet.topics.values().any(|topic| topic.card.is_some())
-        || sheet
-            .zones
-            .iter()
-            .any(|zone| zone.color.is_some() || zone.clip)
-        || sheet
-            .presentation
-            .slides
-            .iter()
-            .any(|slide| matches!(slide.source, PresentationSource::Viewport))
+    sheet.uses_board_semantics()
 }
 
 /// Sheet used by single-rooted outline exporters.
@@ -61,6 +50,7 @@ pub fn outline_sheet(sheet: &Sheet) -> Cow<'_, Sheet> {
         return Cow::Borrowed(sheet);
     }
     let roots = sheet.semantic_roots();
+    let root_ids: HashSet<_> = roots.iter().copied().collect();
     let mut out = sheet.clone();
     let title = synthesized_root_title(sheet);
     let mut root = Topic::new(out.root, title);
@@ -73,7 +63,7 @@ pub fn outline_sheet(sheet: &Sheet) -> Cow<'_, Sheet> {
             topic.card = None;
         }
     }
-    out.floating.retain(|id| !roots.contains(id));
+    out.floating.retain(|id| !root_ids.contains(id));
     out.root_mode = SheetRootMode::Central;
     out.canvas = Default::default();
     out.board = Default::default();
@@ -126,6 +116,9 @@ pub enum ExportLoss {
     ConnectorsDropped(usize),
     /// Cards are written as ordinary topics (detached topics or children of the root).
     CardsConvertedToTopics(usize),
+    /// Cards on Central sheets are omitted with their floating root trees. This
+    /// count is a subset of [`ExportLoss::FloatingTopicsDropped`].
+    CardsDropped(usize),
     /// The hidden central topic of sheet `sheet` is replaced by a root named `title`.
     SynthesizedRoot { sheet: usize, title: String },
     /// Presentation slides showing a free viewport are not written.
@@ -134,10 +127,16 @@ pub enum ExportLoss {
     RotationDropped(usize),
     /// Zones (frames, colors, clipping) are not written.
     ZonesDropped(usize),
-    /// Zone content clipping is not applied.
+    /// Zone content clipping may be omitted by exported editable slides.
     ZoneClipDropped(usize),
     /// Floating topics of Central sheets are outside the single outline and not written.
     FloatingTopicsDropped(usize),
+    /// Detached summary topic trees, including their descendants, are not written.
+    SummaryTreesDropped(usize),
+    /// Relationship annotations between topics are not written.
+    RelationshipsDropped(usize),
+    /// Boundary annotations around topics are not written.
+    BoundariesDropped(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
 }
@@ -145,9 +144,12 @@ pub enum ExportLoss {
 /// Content lost when exporting `book` to `format` with `opts`, itemised with counts.
 ///
 /// Plain data for an export preflight; empty when nothing is lost. Thinoda keeps
-/// everything. Visual formats (SVG, PNG, JPEG, PDF, PowerPoint) paint the whole scene
-/// and only lose zone clipping and the editing grid. XMind keeps every root as detached
-/// topics; the other editable formats write one outline (see [`outline_sheet`]).
+/// everything. SVG, PNG, JPEG and PDF apply frame clipping visually; this is not
+/// secure redaction of embedded resources or vector content. Flattened PowerPoint
+/// viewport slides also preserve visual clipping, while editable branch/zone slides
+/// may omit it and retain a clipping warning. Visual formats also omit the editing
+/// grid. XMind keeps every root as detached topics; the other editable formats write
+/// one outline (see [`outline_sheet`]).
 pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> Vec<ExportLoss> {
     if matches!(format, Format::Thinoda) {
         return Vec::new();
@@ -172,17 +174,72 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         format,
         Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
     ) {
-        push(ExportLoss::ZoneClipDropped, c.zone_clip);
+        if format == Format::PowerPoint
+            && sheets.iter().any(|(_, sheet)| {
+                sheet.presentation.slides.is_empty()
+                    || sheet
+                        .presentation
+                        .slides
+                        .iter()
+                        .any(|slide| slide.source != PresentationSource::Viewport)
+            })
+        {
+            push(ExportLoss::ZoneClipDropped, c.zone_clip);
+        }
     } else {
         push(ExportLoss::ShapesDropped, c.shapes);
         push(ExportLoss::InkDropped, c.ink);
         push(ExportLoss::ConnectorsDropped, c.connectors);
-        push(ExportLoss::CardsConvertedToTopics, c.cards);
+        if format == Format::XMind {
+            push(ExportLoss::CardsConvertedToTopics, c.cards);
+        } else {
+            push(
+                ExportLoss::CardsConvertedToTopics,
+                c.cards - c.central_floating_cards,
+            );
+            push(ExportLoss::CardsDropped, c.central_floating_cards);
+        }
         push(ExportLoss::RotationDropped, c.rotated_cards);
         push(ExportLoss::ViewportSlidesDropped, c.viewport_slides);
         push(ExportLoss::ZonesDropped, c.zones);
         if format != Format::XMind {
             push(ExportLoss::FloatingTopicsDropped, c.central_floating);
+        }
+        // These formats write only the ordinary child hierarchy (or, for FIM,
+        // the authoritative FIM document). XMind instead writes these
+        // annotations and detached summary topics in its public content.
+        if matches!(
+            format,
+            Format::FreeMind
+                | Format::Opml
+                | Format::Markdown
+                | Format::PlainText
+                | Format::MindManager
+                | Format::TextBundle
+                | Format::Word
+                | Format::Excel
+                | Format::Csv
+                | Format::FimXdf2
+                | Format::FimXdf3
+        ) {
+            push(
+                ExportLoss::SummaryTreesDropped,
+                sheets
+                    .iter()
+                    .map(|(_, sheet)| omitted_summary_trees(sheet))
+                    .sum(),
+            );
+            push(
+                ExportLoss::RelationshipsDropped,
+                sheets
+                    .iter()
+                    .map(|(_, sheet)| sheet.relationships.len())
+                    .sum(),
+            );
+            push(
+                ExportLoss::BoundariesDropped,
+                sheets.iter().map(|(_, sheet)| sheet.boundaries.len()).sum(),
+            );
         }
         for (index, sheet) in &sheets {
             if sheet.root_mode == SheetRootMode::Hidden {
@@ -199,12 +256,39 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
     out
 }
 
+/// Count distinct summary roots outside the exported ordinary child hierarchy.
+/// Summary descendants are not counted separately, and nested summaries count as
+/// their own detached trees. Hidden-root outlines start at the semantic roots.
+fn omitted_summary_trees(sheet: &Sheet) -> usize {
+    if sheet.summaries.is_empty() {
+        return 0;
+    }
+    let mut reachable = HashSet::new();
+    let mut stack = sheet.semantic_roots();
+    while let Some(id) = stack.pop() {
+        if reachable.insert(id)
+            && let Some(topic) = sheet.topic(id)
+        {
+            stack.extend(topic.children.iter().copied());
+        }
+    }
+    sheet
+        .summaries
+        .iter()
+        .map(|summary| summary.topic)
+        .filter(|id| sheet.contains(*id) && !reachable.contains(id))
+        .collect::<HashSet<_>>()
+        .len()
+}
+
 #[derive(Default)]
 struct Counts {
     shapes: usize,
     ink: usize,
     connectors: usize,
     cards: usize,
+    /// Cards among the floating trees omitted from a Central-sheet outline.
+    central_floating_cards: usize,
     rotated_cards: usize,
     viewport_slides: usize,
     zones: usize,
@@ -229,6 +313,9 @@ impl Counts {
             .filter_map(|topic| topic.card.as_ref())
         {
             self.cards += 1;
+            if sheet.root_mode == SheetRootMode::Central {
+                self.central_floating_cards += 1;
+            }
             self.rotated_cards += usize::from(card.rotation != 0.0);
         }
         self.viewport_slides += sheet

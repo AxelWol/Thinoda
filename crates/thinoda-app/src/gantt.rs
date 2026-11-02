@@ -18,6 +18,7 @@ mod tests;
 pub(crate) struct GanttState {
     owner: Option<(String, usize)>,
     root: Option<TopicId>,
+    switch_error: Option<String>,
     day_width: f32,
     output: Option<mpsc::Receiver<Result<PathBuf, String>>>,
 }
@@ -31,6 +32,7 @@ impl ThinodaApp {
     }
 
     pub(crate) fn open_gantt(&mut self) {
+        self.gantt.switch_error = None;
         self.gantt.root = self.doc().map(|doc| doc.doc.sheet().root);
         self.gantt.owner = self
             .doc()
@@ -113,9 +115,15 @@ impl ThinodaApp {
                         && let Some(doc) = self.doc_mut()
                         && doc.doc.active_index() != sheet
                     {
-                        doc.view.commit_edit(&mut doc.doc);
-                        doc.doc.set_active(sheet);
-                        doc.view.reset();
+                        if let Err(error) = doc.switch_sheet(sheet) {
+                            if self.gantt.switch_error.as_ref() != Some(&error) {
+                                self.toasts.error(error.clone());
+                                self.gantt.switch_error = Some(error);
+                            }
+                            self.toasts.show_with_modal(&ctx, self.any_modal_open());
+                            return;
+                        }
+                        self.gantt.switch_error = None;
                     }
                     #[cfg(target_os = "macos")]
                     if ctx.input(|input| input.focused) {
@@ -350,10 +358,12 @@ impl ThinodaApp {
         }
         if undo || redo {
             let doc = &mut self.docs[index];
-            if let Err(error) = doc.flush_inspector_edit(ui.ctx()) {
+            if let Err(error) = doc
+                .flush_inspector_edit(ui.ctx())
+                .and_then(|()| doc.commit_canvas_drafts())
+            {
                 self.toasts.error(error);
             } else {
-                doc.view.commit_edit(&mut doc.doc);
                 if undo {
                     doc.doc.undo();
                 } else {
@@ -368,10 +378,11 @@ impl ThinodaApp {
         if task_edit.is_some() || calendar || print {
             let active = self.active;
             self.active = index;
-            if self.docs[index].doc.active_index() != sheet_index {
-                self.docs[index].view.reset();
+            if let Err(error) = self.docs[index].switch_sheet(sheet_index) {
+                self.toasts.error(error);
+                self.active = active;
+                return;
             }
-            self.docs[index].doc.set_active(sheet_index);
             if let Some(topic) = selected {
                 self.docs[index].view.select_only(topic);
             }
@@ -406,7 +417,10 @@ impl ThinodaApp {
             self.toasts.error(error);
             return;
         }
-        doc.view.commit_edit(&mut doc.doc);
+        if let Err(error) = doc.commit_canvas_drafts() {
+            self.toasts.error(error);
+            return;
+        }
         let Some(sheet) = doc.doc.workbook().sheets.get(sheet).cloned() else {
             return;
         };
@@ -466,7 +480,7 @@ impl ThinodaApp {
             .find(|doc| doc.key == key)
             .ok_or_else(|| t("The document changed. Try again.").to_string())?;
         doc.flush_inspector_edit(ctx)?;
-        doc.view.commit_edit(&mut doc.doc);
+        doc.commit_canvas_drafts()?;
         if doc.doc.state_id() != revision || sheet >= doc.doc.workbook().sheets.len() {
             return Err(t("The document changed. Try again.").into());
         }

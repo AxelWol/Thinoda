@@ -4855,6 +4855,7 @@ name = "thinoda-app"
 version = "0.20.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "chrono",
  "eframe",
  "egui",

@@ -1,7 +1,10 @@
 use super::*;
 use crate::app::Cmd;
 use egui_kittest::{Harness, kittest::Queryable};
-use thinoda_core::{Vec2, Workbook};
+use thinoda_core::{
+    CanvasConnector, CanvasObject, CanvasObjectId, CanvasObjectKind, Endpoint, ShapeKind, Vec2,
+    Workbook,
+};
 
 pub(super) fn setup(saved: bool) -> ThinodaApp {
     let mut sheet = Sheet::new("Presentation", "Center");
@@ -26,6 +29,278 @@ pub(super) fn setup(saved: bool) -> ThinodaApp {
     doc.view.reset();
     doc.view.select_only(doc.doc.sheet().root);
     app
+}
+
+pub(super) fn label_harness(
+    connector: bool,
+    text: &str,
+) -> (Harness<'static, ThinodaApp>, CanvasObjectId) {
+    let mut app = setup(true);
+    let object = if connector {
+        CanvasObject::connector(CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-100.0, -180.0)),
+            Endpoint::Point(Vec2::new(100.0, -180.0)),
+        ))
+    } else {
+        CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(-80.0, -220.0), Vec2::new(160.0, 80.0)),
+        )
+    };
+    let doc = app.doc_mut().unwrap();
+    let id = doc.doc.add_canvas_object(object).unwrap();
+    doc.doc
+        .add_presentation_slide(
+            "View",
+            PresentationSource::Viewport,
+            Rect::from_min_size(Vec2::new(-1000.0, -1000.0), Vec2::new(2000.0, 2000.0)),
+        )
+        .unwrap();
+    doc.doc.mark_saved();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 850.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(3);
+    let doc = h.state_mut().doc_mut().unwrap();
+    doc.view.select_board_object(id);
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label(t("Board object label")).type_text(text);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().view.board_label_draft().unwrap().2,
+        text
+    );
+    (h, id)
+}
+
+fn change_label_outside_draft(app: &mut ThinodaApp, id: CanvasObjectId) {
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .update_canvas_object("Concurrent label change", id, |object| {
+            match &mut object.kind {
+                CanvasObjectKind::Shape { label, .. } => *label = "Changed elsewhere".into(),
+                CanvasObjectKind::Connector(connector) => {
+                    connector.label = "Changed elsewhere".into()
+                }
+                CanvasObjectKind::Ink(_) => unreachable!(),
+            }
+        })
+        .unwrap();
+}
+
+fn object_label_in_svg(svg: &str, id: CanvasObjectId) -> String {
+    let marker = format!("<g class=\"canvas-object\" id=\"object-{}\">", id.0);
+    let object = svg
+        .split_once(&marker)
+        .expect("board object is rendered")
+        .1
+        .split_once("</g>")
+        .expect("board object group is closed")
+        .0;
+    object
+        .split("<text ")
+        .skip(1)
+        .map(|text| {
+            text.split_once('>')
+                .expect("text element is opened")
+                .1
+                .split_once("</text>")
+                .expect("text element is closed")
+                .0
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn pitch_entry_commits_board_label_drafts_before_snapshotting() {
+    for connector in [false, true] {
+        for player in [false, true] {
+            let (mut h, id) = label_harness(connector, "Pending board label");
+            let ctx = h.ctx.clone();
+            let previous_revision = h.state().doc().unwrap().doc.state_id();
+            if player {
+                h.state_mut().open_pitch(&ctx, false);
+            } else {
+                h.state_mut().begin_presentation_editor(&ctx);
+            }
+            let app = h.state();
+            let doc = app.doc().unwrap();
+            assert!(doc.doc.state_id() != previous_revision);
+            assert_eq!(doc.view.editing_board_object(), None);
+            assert_eq!(
+                doc.doc.sheet().canvas.object(id).unwrap().label(),
+                "Pending board label"
+            );
+            let (sheet, revision) = if player {
+                let player = app.pitch.player.as_ref().unwrap();
+                (player.sheet.as_ref(), player.owner.revision)
+            } else {
+                let editor = app.pitch.editor.as_ref().unwrap();
+                (&editor.sheet, editor.owner.revision)
+            };
+            assert_eq!(revision, doc.doc.state_id());
+            assert_eq!(
+                sheet.canvas.object(id).unwrap().label(),
+                "Pending board label"
+            );
+            let svg = thinoda_io::render_presentation_slide_svg(
+                sheet,
+                sheet.presentation.slides.len() - 1,
+                &ExportOptions::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                object_label_in_svg(&svg, id),
+                "Pending board label",
+                "connector={connector}, player={player}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pitch_entry_rejects_stale_board_labels_without_discarding_the_draft() {
+    for player in [false, true] {
+        let (mut h, id) = label_harness(false, "Unsaved draft");
+        change_label_outside_draft(h.state_mut(), id);
+        let ctx = h.ctx.clone();
+        let before = h.state().doc().unwrap().doc.workbook().clone();
+        let revision = h.state().doc().unwrap().doc.state_id();
+        if player {
+            h.state_mut().open_pitch(&ctx, false);
+        } else {
+            h.state_mut().begin_presentation_editor(&ctx);
+        }
+        let app = h.state();
+        assert!(app.pitch.editor.is_none());
+        assert!(app.pitch.player.is_none());
+        let doc = app.doc().unwrap();
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.doc.state_id(), revision);
+        assert_eq!(
+            doc.view.board_label_draft(),
+            Some((id, "", "Unsaved draft"))
+        );
+    }
+}
+
+#[test]
+fn presentation_editor_rejects_a_new_pending_board_label() {
+    let (mut h, id) = label_harness(false, "Saved label");
+    let ctx = h.ctx.clone();
+    h.state_mut().begin_presentation_editor(&ctx);
+    let editor = h.state_mut().pitch.editor.take().unwrap();
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    assert!(
+        h.state()
+            .presentation_snapshot_has_pending_edit(&editor.owner)
+    );
+    assert!(h.state_mut().apply_presentation_draft(&editor).is_err());
+    assert_eq!(
+        h.state().doc().unwrap().view.editing_board_object(),
+        Some(id)
+    );
+}
+
+#[test]
+fn player_export_refreshes_a_pending_label_and_retains_invalid_drafts() {
+    let (mut h, id) = label_harness(true, "Original label");
+    let ctx = h.ctx.clone();
+    h.state_mut().open_pitch(&ctx, false);
+    let mut player = h.state_mut().pitch.player.take().unwrap();
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label(t("Board object label"))
+        .type_text("Updated label");
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc().unwrap().view.board_label_draft().unwrap().2,
+        "Updated label"
+    );
+    h.state_mut()
+        .prepare_pitch_player_export(&ctx, &mut player)
+        .unwrap();
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.view.editing_board_object(), None);
+    assert_eq!(
+        player.sheet.canvas.object(id).unwrap().label(),
+        "Updated label"
+    );
+    assert_eq!(player.owner.revision, doc.doc.state_id());
+    let svg = thinoda_io::render_presentation_slide_svg(
+        &player.sheet,
+        player.sheet.presentation.slides.len() - 1,
+        &ExportOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(object_label_in_svg(&svg, id), "Updated label");
+
+    let doc = h.state_mut().doc_mut().unwrap();
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label(t("Board object label"))
+        .type_text("Retained draft");
+    h.run_steps(2);
+    change_label_outside_draft(h.state_mut(), id);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    assert!(
+        h.state_mut()
+            .prepare_pitch_player_export(&ctx, &mut player)
+            .is_err()
+    );
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.workbook(), &before);
+    assert_eq!(
+        doc.view.board_label_draft(),
+        Some((id, "Updated label", "Retained draft"))
+    );
+}
+
+#[test]
+fn player_export_leaves_an_unrelated_sheet_label_draft_untouched() {
+    let (mut h, _) = label_harness(false, "Player sheet label");
+    let ctx = h.ctx.clone();
+    h.state_mut().open_pitch(&ctx, false);
+    let mut player = h.state_mut().pitch.player.take().unwrap();
+    let mut other = Sheet::new("Other sheet", "Other root");
+    let id = other
+        .add_canvas_object(CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_min_size(Vec2::new(-80.0, -220.0), Vec2::new(160.0, 80.0)),
+        ))
+        .unwrap();
+    let doc = h.state_mut().doc_mut().unwrap();
+    doc.doc
+        .edit_book("Add sheet", |book| {
+            book.sheets.push(other);
+            Ok(())
+        })
+        .unwrap();
+    doc.switch_sheet(1).unwrap();
+    doc.view.select_board_object(id);
+    assert!(doc.view.begin_board_label(&doc.doc, id));
+    h.run_steps(2);
+    h.get_by_label(t("Board object label"))
+        .type_text("Other sheet draft");
+    h.run_steps(2);
+    let before = h.state().doc().unwrap().doc.workbook().clone();
+    let revision = h.state().doc().unwrap().doc.state_id();
+    h.state_mut()
+        .prepare_pitch_player_export(&ctx, &mut player)
+        .unwrap();
+    let doc = h.state().doc().unwrap();
+    assert_eq!(doc.doc.workbook(), &before);
+    assert_eq!(doc.doc.state_id(), revision);
+    assert_eq!(
+        doc.view.board_label_draft(),
+        Some((id, "", "Other sheet draft"))
+    );
+    assert_eq!(player.owner.sheet, 0);
 }
 
 #[test]
@@ -85,6 +360,73 @@ fn pitch_accepts_valid_local_images_without_changing_source_or_history() {
     assert!(app.pitch.player.is_some());
     assert_eq!(app.doc().unwrap().doc.workbook(), &before);
     assert_eq!(app.doc().unwrap().doc.state_id(), state);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn pitch_player_preflight_is_visible_and_cancels_when_player_closes_or_stales() {
+    let mut app = setup(true);
+    app.doc_mut()
+        .unwrap()
+        .doc
+        .edit_sheet("Board setting", |sheet| {
+            sheet.board.snap = !sheet.board.snap;
+            Ok(())
+        })
+        .unwrap();
+    let before = app.doc().unwrap().doc.workbook().clone();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    let ctx = h.ctx.clone();
+    ctx.set_embed_viewports(true);
+    h.state_mut().exec(&ctx, Cmd::Pitch);
+    h.run_steps(4);
+    let request = |h: &mut Harness<'_, ThinodaApp>| {
+        h.query_all_by_role_and_label(egui::accesskit::Role::Button, t("Export"))
+            .last()
+            .expect("player export control")
+            .click();
+        h.run_steps(2);
+        h.get_by_label(t("Export PDF")).click();
+        h.run_steps(3);
+        assert!(h.state().dialogs.board_export.is_some());
+        h.get_by_role_and_label(egui::accesskit::Role::Window, t("Board export changes"));
+    };
+    request(&mut h);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, t("Cancel"))
+        .click();
+    h.run_steps(3);
+    assert!(h.state().dialogs.board_export.is_none());
+    assert!(h.state().pitch.player.is_some());
+    assert!(h.state().pitch.output.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
+
+    request(&mut h);
+    let close_ctx = Context::default();
+    close_ctx.set_embed_viewports(true);
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .events
+        .push(egui::ViewportEvent::Close);
+    let mut output = close_ctx.run_ui(input, |ui| h.state_mut().pitch_window(ui.ctx()));
+    output.textures_delta.clear();
+    assert!(h.state().pitch.player.is_none());
+    assert!(h.state().dialogs.board_export.is_none());
+    assert!(h.state().pitch.output.is_none());
+
+    h.state_mut().open_pitch(&ctx, false);
+    h.run_steps(3);
+    request(&mut h);
+    h.state_mut().pitch.player.as_mut().unwrap().owner.root = TopicId(u64::MAX);
+    h.run_steps(3);
+    assert!(h.state().pitch.player.is_none());
+    assert!(h.state().dialogs.board_export.is_none());
+    assert!(h.state().pitch.output.is_none());
+    assert_eq!(h.state().doc().unwrap().doc.workbook(), &before);
 }
 
 #[test]
@@ -242,6 +584,80 @@ struct Playing {
 }
 
 #[test]
+fn player_export_button_commits_or_preserves_a_board_label_draft() {
+    for invalid in [false, true] {
+        let (mut map, id) = label_harness(false, "First label");
+        let ctx = map.ctx.clone();
+        map.state_mut().open_pitch(&ctx, false);
+        let player = map.state_mut().pitch.player.take().unwrap();
+        let doc = map.state_mut().doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Board setting", |sheet| {
+                sheet.board.snap = !sheet.board.snap;
+                Ok(())
+            })
+            .unwrap();
+        assert!(doc.view.begin_board_label(&doc.doc, id));
+        map.run_steps(2);
+        map.get_by_label(t("Board object label"))
+            .type_text("Player draft");
+        map.run_steps(2);
+        if invalid {
+            change_label_outside_draft(map.state_mut(), id);
+        }
+        let app = std::mem::replace(map.state_mut(), ThinodaApp::headless());
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(
+                |ui, state: &mut Playing| {
+                    if state.open {
+                        state.open = state.app.pitch_player_ui(ui, &mut state.player);
+                    }
+                },
+                Playing {
+                    app,
+                    player,
+                    open: true,
+                },
+            );
+        h.run_steps(3);
+        h.get_by_label(t("Export")).click();
+        h.run_steps(2);
+        h.get_by_label(t("Export PDF")).click();
+        h.run_steps(2);
+        let state = h.state();
+        let doc = state.app.doc().unwrap();
+        if invalid {
+            assert!(state.app.dialogs.board_export.is_none());
+            assert!(state.app.pitch.output.is_none());
+            assert_eq!(
+                doc.view.board_label_draft(),
+                Some((id, "First label", "Player draft"))
+            );
+            assert_eq!(
+                doc.doc.sheet().canvas.object(id).unwrap().label(),
+                "Changed elsewhere"
+            );
+            assert!(
+                state
+                    .app
+                    .toasts
+                    .texts()
+                    .any(|text| text.contains(t("Export failed")))
+            );
+        } else {
+            assert!(state.app.dialogs.board_export.is_some());
+            assert_eq!(doc.view.editing_board_object(), None);
+            assert_eq!(
+                state.player.sheet.canvas.object(id).unwrap().label(),
+                "Player draft"
+            );
+            assert_eq!(state.player.owner.revision, doc.doc.state_id());
+        }
+    }
+}
+
+#[test]
 fn powerpoint_editor_action_applies_one_draft_and_opens_the_existing_export_flow() {
     let app = setup(true);
     let before = app.doc().unwrap().doc.workbook().clone();
@@ -288,6 +704,63 @@ fn powerpoint_editor_action_applies_one_draft_and_opens_the_existing_export_flow
     assert!(doc.doc.undo());
     assert_eq!(doc.doc.workbook(), &before);
     assert!(!doc.doc.undo());
+}
+
+#[test]
+fn viewport_editor_footer_actions_are_clickable_at_wide_and_narrow_sizes() {
+    for size in [
+        egui::vec2(1280.0, 1000.0),
+        egui::vec2(800.0, 650.0),
+        egui::vec2(400.0, 350.0),
+        egui::vec2(320.0, 260.0),
+    ] {
+        let mut sheet = Sheet::new("Presentation", "Root");
+        sheet
+            .add_presentation_slide(
+                "View",
+                PresentationSource::Viewport,
+                Rect::from_min_size(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+            )
+            .unwrap();
+        let mut app = ThinodaApp::headless();
+        let doc = app.doc_mut().unwrap();
+        doc.doc.replace(Workbook::new(sheet));
+        doc.doc.mark_saved();
+        doc.view.reset();
+        let mut h = Harness::builder()
+            .with_size(size)
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        let ctx = h.ctx.clone();
+        h.state_mut().exec(&ctx, Cmd::EditPresentation);
+        h.run_steps(4);
+        for label in ["Apply", "Cancel", "Apply and export PowerPoint"] {
+            let rect = h
+                .get_by_role_and_label(egui::accesskit::Role::Button, t(label))
+                .rect();
+            assert!(
+                ctx.content_rect().contains(rect.center()),
+                "{label} is off-screen at {size:?}: {rect:?}"
+            );
+            assert!(
+                ctx.interactive_rects_last_pass().iter().any(|hit| {
+                    hit.contains(rect.center())
+                        && hit.width() <= rect.width() + 1.0
+                        && hit.height() <= rect.height() + 1.0
+                }),
+                "{label} is clipped at {size:?}: {rect:?}"
+            );
+        }
+        h.get_by_role_and_label(
+            egui::accesskit::Role::Button,
+            t("Apply and export PowerPoint"),
+        )
+        .click();
+        h.run_steps(3);
+        assert!(
+            h.state().dialogs.powerpoint_export,
+            "PowerPoint action did not activate at {size:?}"
+        );
+    }
 }
 
 fn player_harness(width: f32, presenter: bool) -> Harness<'static, Playing> {

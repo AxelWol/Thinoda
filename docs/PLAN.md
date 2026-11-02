@@ -2934,11 +2934,13 @@ parallel document model.
 **Status:** F0 core model and IO, F4 board templates, and export preflight have
 focused coverage. F3 arrangement, guides, zoom-to-selection and frame clipping,
 the responsive toolbox, and pending-ink safeguards also have focused coverage.
-F1-F3 still need board styling and integrated acceptance; F5 needs its realistic
-performance gate; F6 needs final scene/export acceptance. Local browser storage
-and recovery and full native/web verification remain open. Provider/cloud code is
-merged upstream behind the default-off `integrated-cloud-services` feature;
-providers stay disabled until publisher registrations are in place.
+Board objects support Quick Styles, the existing Shape and Text controls, and
+the custom Fill-Color Picker, with focused styling and undo coverage. F1-F3
+still need broader integrated acceptance; F5 needs its realistic performance
+gate; F6 needs final scene/export acceptance. Local browser storage and recovery
+and full native/web verification remain open. Provider/cloud code is merged
+upstream behind the default-off `integrated-cloud-services` feature; providers
+stay disabled until publisher registrations are in place.
 
 1. F0 groundwork: `semantic_roots`/`visible_topic_ids`/`project_to_outline`
    queries and migration of all root callers; derived scene with layer bands for

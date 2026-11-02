@@ -1676,18 +1676,16 @@ fn every_template_is_created_from_the_preview_and_recents_survive_restart() {
             &thinoda_core::templates::instantiate(template.id)
         );
         assert!(h.state().doc().unwrap().path.is_none());
-        for extension in ["thinoda", "xmind"] {
-            let path = dir.path().join(format!("{}.{extension}", template.id));
-            h.state_mut()
-                .doc_mut()
-                .unwrap()
-                .save_to(&path, false)
-                .unwrap();
-            assert_eq!(
-                thinoda_io::import_file(&path).unwrap(),
-                thinoda_core::templates::instantiate(template.id)
-            );
-        }
+        let path = dir.path().join(format!("{}.thinoda", template.id));
+        h.state_mut()
+            .doc_mut()
+            .unwrap()
+            .save_to(&path, false)
+            .unwrap();
+        assert_eq!(
+            thinoda_io::import_file(&path).unwrap(),
+            thinoda_core::templates::instantiate(template.id)
+        );
     }
     let settings = Settings::load(&paths).unwrap();
     assert_eq!(

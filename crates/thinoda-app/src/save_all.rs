@@ -22,6 +22,10 @@ impl ThinodaApp {
             self.toasts.warning(t("Not possible here"));
             return;
         }
+        if let Some(index) = self.docs.iter().position(|doc| doc.has_unresolved_ink()) {
+            self.focus_pending_ink(ctx, index);
+            return;
+        }
         for doc in &mut self.docs {
             doc.view.commit_edit(&mut doc.doc);
         }
@@ -61,6 +65,7 @@ impl ThinodaApp {
 
     fn save_dialog_for(&self, key: &str) -> bool {
         self.dialogs.conflict.as_deref() == Some(key)
+            || self.board_save_pending_for(key)
             || self
                 .dialogs
                 .mindmanager_save

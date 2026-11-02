@@ -34,6 +34,7 @@ struct Scene {
     frame: Rect,
     layout: Arc<thinoda_core::Layout>,
     zones: Vec<thinoda_core::Zone>,
+    canvas: Arc<thinoda_core::CanvasLayer>,
 }
 
 pub(super) struct Playback {
@@ -80,18 +81,16 @@ impl Playback {
             return Vec::new();
         };
         let frame = resolved.frame;
-        resolved
-            .layout
-            .order
-            .iter()
-            .copied()
-            .filter(|id| {
-                resolved.layout.rect(*id).is_some_and(|rect| {
-                    rect.min.x < frame.max().x
-                        && rect.max().x > frame.min.x
-                        && rect.min.y < frame.max().y
-                        && rect.max().y > frame.min.y
-                })
+        thinoda_core::build_scene(sheet, &resolved.layout)
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                let thinoda_core::SceneId::Topic(id) = item.id else {
+                    return None;
+                };
+                item.visible_bounds()
+                    .is_some_and(|bounds| bounds.intersects(&frame))
+                    .then_some(id)
             })
             .collect()
     }
@@ -131,16 +130,16 @@ impl Playback {
             .slides
             .get(index)
             .ok_or_else(|| t("Slide source is unavailable.").to_string())?;
-        let resolved = thinoda_core::resolve_presentation_slide(sheet, slide, layout)?;
+        let mut resolved = thinoda_core::resolve_presentation_slide(sheet, slide, layout)?;
         let order = Self::topic_order(sheet, layout, index);
         let step = if self.build_topics {
             self.step.min(order.len().max(1))
         } else {
             usize::MAX
         };
-        let composed = if self.build_topics && step < order.len() {
+        if self.build_topics && step < order.len() {
             let visible: HashSet<_> = order.iter().take(step).copied().collect();
-            let mut composed = resolved.layout;
+            let composed = &mut resolved.layout;
             composed.topics.retain(|id, _| visible.contains(id));
             composed.order.retain(|id| visible.contains(id));
             composed.connectors.retain(|connector| {
@@ -156,20 +155,16 @@ impl Playback {
             // Group annotations can disclose unrevealed text; reveal them with the complete slide.
             composed.boundaries.clear();
             composed.summaries.clear();
-            Arc::new(composed)
-        } else {
-            Arc::new(resolved.layout)
-        };
+            resolved.zones.clear();
+        }
+        let paint_sheet = presentation_paint_sheet(sheet, &resolved);
         Ok(Scene {
             index,
             step,
             frame: resolved.frame,
-            layout: composed,
-            zones: if self.build_topics && step < order.len() {
-                Vec::new()
-            } else {
-                resolved.zones
-            },
+            layout: Arc::new(resolved.layout),
+            zones: paint_sheet.zones,
+            canvas: Arc::new(paint_sheet.canvas),
         })
     }
 
@@ -302,6 +297,7 @@ fn paint_scene(
     painter.rect_filled(crop, 0.0, background(sheet, dark));
     let mut paint_sheet = sheet.clone();
     paint_sheet.zones = scene.zones.clone();
+    paint_sheet.canvas = (*scene.canvas).clone();
     thinoda_canvas::paint_map(
         &painter,
         &paint_sheet,
@@ -323,6 +319,150 @@ fn background(sheet: &Sheet, dark: bool) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pitch_viewport_paints_board_objects_with_scene_and_viewport_clips() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        sheet.add_floating("Floating", thinoda_core::Vec2::new(30.0, 60.0));
+        let clip = Rect::from_min_size(
+            thinoda_core::Vec2::ZERO,
+            thinoda_core::Vec2::new(100.0, 100.0),
+        );
+        sheet.create_board_frame("Frame", clip).unwrap();
+        sheet.zones[0].clip = true;
+        let mut object = thinoda_core::CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            Rect::from_min_size(
+                thinoda_core::Vec2::new(60.0, 20.0),
+                thinoda_core::Vec2::new(60.0, 30.0),
+            ),
+        );
+        object.style.fill = Some(thinoda_core::Color::rgb(225, 20, 30));
+        sheet.add_canvas_object(object).unwrap();
+        let frame = Rect::from_min_size(
+            thinoda_core::Vec2::ZERO,
+            thinoda_core::Vec2::new(160.0, 120.0),
+        );
+        sheet
+            .add_presentation_slide("View", PresentationSource::Viewport, frame)
+            .unwrap();
+        let layout = Arc::new(thinoda_core::layout_sheet(
+            &sheet,
+            &thinoda_core::ApproxMeasure,
+            false,
+        ));
+        let mut playback = Playback::default();
+        let scene = playback.scene(&sheet, &layout, 0).unwrap();
+        assert_eq!(scene.frame, frame);
+        assert!(!scene.layout.topics.contains_key(&sheet.root));
+        assert_eq!(scene.zones.len(), 1);
+        assert_eq!(scene.canvas.objects.len(), 1);
+
+        let ctx = Context::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 300.0),
+                )),
+                ..Default::default()
+            },
+            |ui| playback.show(ui, &sheet, &layout, 0, egui::vec2(320.0, 240.0), false),
+        );
+        let red = egui::Color32::from_rgb(225, 20, 30);
+        let clipped = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Path(path) if path.fill == red => Some((shape.clip_rect, path)),
+                _ => None,
+            })
+            .expect("board shape must be painted by the Pitch stage");
+        assert!(
+            clipped
+                .1
+                .points
+                .iter()
+                .any(|point| point.x > clipped.0.right()),
+            "the crossing shape must be clipped at the frame boundary"
+        );
+        assert!(
+            clipped
+                .1
+                .points
+                .iter()
+                .any(|point| clipped.0.contains(*point))
+        );
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn pitch_hidden_and_unrevealed_topics_do_not_reveal_scene_connectors() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let root = sheet.add_floating("Root", thinoda_core::Vec2::new(80.0, 80.0));
+        let child = sheet.add_child(root, None, "Hidden child");
+        let zone = sheet
+            .create_zone(
+                "Clipping frame",
+                vec![root],
+                Rect::from_min_size(
+                    thinoda_core::Vec2::ZERO,
+                    thinoda_core::Vec2::new(400.0, 300.0),
+                ),
+            )
+            .unwrap();
+        sheet.zones[0].clip = true;
+        let mut connector = thinoda_core::CanvasConnector::new(
+            thinoda_core::Endpoint::Topic(child),
+            thinoda_core::Endpoint::Point(thinoda_core::Vec2::new(180.0, 30.0)),
+        );
+        connector.label = "Hidden connector".into();
+        let connector = sheet
+            .add_canvas_object(thinoda_core::CanvasObject::connector(connector))
+            .unwrap();
+        sheet
+            .add_presentation_slide(
+                "View",
+                PresentationSource::Viewport,
+                Rect::from_min_size(
+                    thinoda_core::Vec2::new(-100.0, -100.0),
+                    thinoda_core::Vec2::new(600.0, 500.0),
+                ),
+            )
+            .unwrap();
+        let layout = Arc::new(thinoda_core::layout_sheet(
+            &sheet,
+            &thinoda_core::ApproxMeasure,
+            false,
+        ));
+        sheet.presentation.slides[0].hidden_topics.push(child);
+        let scene = Playback::default().scene(&sheet, &layout, 0).unwrap();
+        assert!(scene.canvas.objects.iter().all(|item| item.id != connector));
+        let retained_clip = scene.zones.iter().find(|item| item.id == zone).unwrap();
+        assert!(retained_clip.clip);
+        assert!(retained_clip.name.is_empty());
+        assert_eq!(retained_clip.color.unwrap().a, 0);
+
+        sheet.presentation.slides[0].hidden_topics.clear();
+        let mut playback = Playback {
+            build_topics: true,
+            step: 1,
+            ..Default::default()
+        };
+        let first = playback.scene(&sheet, &layout, 0).unwrap();
+        assert!(first.canvas.objects.iter().all(|item| item.id != connector));
+        playback.step = usize::MAX;
+        let complete = playback.scene(&sheet, &layout, 0).unwrap();
+        assert!(
+            complete
+                .canvas
+                .objects
+                .iter()
+                .any(|item| item.id == connector)
+        );
+    }
 
     fn player_with_builds() -> PitchPlayer {
         let mut sheet = Sheet::new("Builds", "Center");

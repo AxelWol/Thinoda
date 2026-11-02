@@ -99,7 +99,10 @@ fn mode_label(mode: AiResponseMode) -> &'static str {
 }
 
 pub(super) fn context(doc: &crate::doc::OpenDoc, scope: Scope) -> Result<String, &'static str> {
-    if doc.inspector_edit.is_some() || doc.view.editing_topic().is_some() {
+    if doc.inspector_edit.is_some()
+        || doc.view.editing_topic().is_some()
+        || doc.view.editing_board_object().is_some()
+    {
         return Err(t("Finish the current edit before sending."));
     }
     let sheet = doc.doc.sheet();
@@ -108,21 +111,26 @@ pub(super) fn context(doc: &crate::doc::OpenDoc, scope: Scope) -> Result<String,
             if doc.view.selection.is_empty() {
                 return Err(t("Select a topic first"));
             }
-            doc.view
+            let roots: Vec<_> = doc
+                .view
                 .selection
                 .iter()
                 .copied()
+                .filter(|id| !sheet.is_anchor(*id))
                 .filter(|id| {
                     !sheet
                         .ancestors(*id)
                         .iter()
                         .any(|parent| doc.view.selection.contains(parent))
                 })
-                .collect::<Vec<_>>()
+                .collect();
+            if roots.is_empty() {
+                return Err(t("Select a topic first"));
+            }
+            roots
         }
-        Scope::Sheet => std::iter::once(sheet.root)
-            .chain(sheet.floating.iter().copied())
-            .collect(),
+        Scope::Sheet if sheet.is_anchor(sheet.root) => sheet.semantic_roots(),
+        Scope::Sheet => sheet.all_content_roots(),
     };
     if roots.len() > MAX_TOPICS {
         return Err(t("AI context is too large. Select a smaller branch."));

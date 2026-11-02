@@ -10,6 +10,32 @@ use thinoda_canvas::Action;
 use thinoda_platform::settings::{Language, Settings, ThemeMode};
 
 #[test]
+fn hidden_board_outliner_skips_the_anchor_and_counts_content() {
+    let mut app = ThinodaApp::headless();
+    let mut sheet = thinoda_core::Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let first = sheet.add_floating("First", thinoda_core::Vec2::ZERO);
+    sheet.add_floating("Second", thinoda_core::Vec2::new(0.0, 150.0));
+    app.docs[app.active] = thinoda_app::doc::OpenDoc::new(thinoda_core::Workbook::new(sheet));
+    app.mode = CenterMode::Outliner;
+    app.settings.show_status_bar = true;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Button, "First").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::ArrowUp);
+    h.run_steps(2);
+    assert_eq!(h.state().doc().unwrap().view.primary(), Some(first));
+    h.get_by_role_and_label(Role::Button, "Second");
+    h.get_by_role_and_label(Role::Button, t("Statistics"))
+        .click();
+    h.run_steps(2);
+    h.get_by_label("Topics: 2");
+}
+
+#[test]
 fn long_selected_titles_do_not_hide_outline_actions_or_topics() {
     for language in Language::ALL {
         for theme in [ThemeMode::Light, ThemeMode::Dark] {

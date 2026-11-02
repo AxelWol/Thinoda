@@ -115,7 +115,7 @@ LGPL/MPL licensing:
 
 ## Rust crates
 
-614 crates.
+616 crates.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -225,6 +225,7 @@ LGPL/MPL licensing:
 | document-features | 0.2.12 | MIT OR Apache-2.0 | <https://github.com/slint-ui/document-features> |
 | downcast-rs | 1.2.1 | MIT/Apache-2.0 | <https://github.com/marcianx/downcast-rs> |
 | dpi | 0.1.2 | Apache-2.0 AND MIT | <https://github.com/rust-windowing/winit> |
+| earcutr | 0.5.0 | ISC | <https://github.com/frewsxcv/earcutr/> |
 | ecolor | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui> |
 | eframe | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui/tree/main/crates/eframe> |
 | egui | 0.37.0 | MIT OR Apache-2.0 | <https://github.com/emilk/egui> |
@@ -334,6 +335,7 @@ LGPL/MPL licensing:
 | inout | 0.1.4 | MIT OR Apache-2.0 | <https://github.com/RustCrypto/utils> |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | <https://github.com/krisprice/ipnet> |
 | is_terminal_polyfill | 1.70.2 | MIT OR Apache-2.0 | <https://github.com/polyfill-rs/is_terminal_polyfill> |
+| itertools | 0.14.0 | MIT OR Apache-2.0 | <https://github.com/rust-itertools/itertools> |
 | itertools | 0.15.0 | MIT OR Apache-2.0 | <https://github.com/rust-itertools/itertools> |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | <https://github.com/dtolnay/itoa> |
 | jiff | 0.2.38 | Unlicense OR MIT | <https://github.com/BurntSushi/jiff> |

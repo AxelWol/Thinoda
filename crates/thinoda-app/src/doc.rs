@@ -5,7 +5,7 @@ use thinoda_platform::fs as pfs;
 use web_time::Instant;
 
 use thinoda_canvas::MapView;
-use thinoda_core::{Document, TopicId, Workbook};
+use thinoda_core::{CanvasObjectId, CanvasObjectKind, Document, TopicId, Workbook};
 use thinoda_io::{ExportOptions, Format};
 use thinoda_platform::{
     fs::{FileFingerprint, atomic_write, fingerprint},
@@ -144,11 +144,15 @@ pub struct OpenDoc {
     pub ignore_conflict: bool,
     pub(crate) inspector_edit: Option<InspectorEdit>,
     pub(crate) fim_edit: Option<FimEdit>,
+    pub(crate) ink_feedback: crate::ink_ui::InkFeedback,
     snapshot_inspector_edit: Option<InspectorEdit>,
     last_seen_inspector_edit: Option<InspectorEdit>,
     /// After a failed autosave, the next automatic attempt waits until then.
     pub(crate) autosave_retry_at: Option<Instant>,
     snapshot_title: Option<(TopicId, String, String)>,
+    snapshot_board_label: Option<(CanvasObjectId, String, String)>,
+    last_seen_board_label: Option<(CanvasObjectId, String, String)>,
+    snapshot_saw_ink: bool,
     fim_draft_revision: u64,
     snapshot_fim_revision: u64,
 }
@@ -157,7 +161,9 @@ impl OpenDoc {
     pub fn new(workbook: Workbook) -> Self {
         let doc = Document::new(workbook);
         let mut view = MapView::default();
-        view.select_only(doc.sheet().root);
+        if let Some(root) = doc.sheet().primary_content_root() {
+            view.select_only(root);
+        }
         let state = doc.state_id();
         Self {
             chat_identity: None,
@@ -174,10 +180,14 @@ impl OpenDoc {
             ignore_conflict: false,
             inspector_edit: None,
             fim_edit: None,
+            ink_feedback: crate::ink_ui::InkFeedback::default(),
             snapshot_inspector_edit: None,
             last_seen_inspector_edit: None,
             autosave_retry_at: None,
             snapshot_title: None,
+            snapshot_board_label: None,
+            last_seen_board_label: None,
+            snapshot_saw_ink: false,
             fim_draft_revision: 0,
             snapshot_fim_revision: 0,
         }
@@ -231,10 +241,14 @@ impl OpenDoc {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             None => {
-                let root = self.doc.workbook().sheets[0].root;
-                self.doc.workbook().sheets[0]
-                    .topic(root)
-                    .map(|t| t.title.lines().next().unwrap_or_default().to_string())
+                let sheet = &self.doc.workbook().sheets[0];
+                let title = if sheet.is_anchor(sheet.root) {
+                    Some(sheet.title.as_str())
+                } else {
+                    sheet.topic(sheet.root).map(|topic| topic.title.as_str())
+                };
+                title
+                    .map(|title| title.lines().next().unwrap_or_default().to_string())
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| t("Untitled").to_string())
             }
@@ -245,7 +259,21 @@ impl OpenDoc {
         self.doc.is_dirty()
             || self.has_inspector_changes()
             || self.view.has_title_changes()
+            || self.view.has_board_label_changes()
             || self.fim_edit.is_some()
+            || self.has_unresolved_ink()
+    }
+
+    pub(crate) fn has_unresolved_ink(&self) -> bool {
+        self.view.has_pending_ink_gesture() || !self.ink_feedback.is_empty()
+    }
+
+    pub(crate) fn ensure_no_pending_ink(&self) -> Result<(), String> {
+        if self.has_unresolved_ink() {
+            Err(t("Resolve pending ink before continuing. Retry, copy, or discard it.").into())
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn has_inspector_changes(&self) -> bool {
@@ -261,6 +289,9 @@ impl OpenDoc {
     }
 
     pub(crate) fn commit_inspector_edit(&mut self) -> Result<(), String> {
+        if self.inspector_edit.is_some() || self.fim_edit.is_some() {
+            self.ensure_no_pending_ink()?;
+        }
         if let Some(edit) = self.fim_edit.clone() {
             edit.apply(&mut self.doc)?;
             self.clear_fim_edit();
@@ -313,12 +344,43 @@ impl OpenDoc {
         Ok(())
     }
 
+    pub(crate) fn commit_canvas_drafts(&mut self) -> Result<(), String> {
+        self.ensure_no_pending_ink()?;
+        self.view
+            .try_commit_edit(&mut self.doc)
+            .and_then(|_| self.view.try_commit_board_label(&mut self.doc))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn switch_sheet(&mut self, index: usize) -> Result<bool, String> {
+        if index >= self.doc.workbook().sheets.len() {
+            return Err(t("Not possible here").into());
+        }
+        if index == self.doc.active_index() {
+            return Ok(false);
+        }
+        self.commit_canvas_drafts()?;
+        self.doc.set_active(index);
+        self.view.reset();
+        Ok(true)
+    }
+
     /// Call once per frame to track when the document last changed.
     pub fn tick(&mut self) {
+        self.snapshot_saw_ink |= self.has_unresolved_ink();
         let s = self.doc.state_id();
-        if s != self.last_seen_state || self.inspector_edit != self.last_seen_inspector_edit {
+        let board_label = self
+            .view
+            .board_label_draft()
+            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        if s != self.last_seen_state
+            || self.inspector_edit != self.last_seen_inspector_edit
+            || board_label != self.last_seen_board_label
+        {
             self.last_seen_state = s;
             self.last_seen_inspector_edit = self.inspector_edit.clone();
+            self.last_seen_board_label = board_label;
             self.last_change = Instant::now();
         }
     }
@@ -377,9 +439,26 @@ impl OpenDoc {
 
     /// Writes the document to `path` atomically.
     pub fn save_to(&mut self, path: &Path, backup: bool) -> Result<(), String> {
+        self.save_to_with_consent(path, backup, false, false)
+    }
+
+    pub(crate) fn save_to_with_consent(
+        &mut self,
+        path: &Path,
+        backup: bool,
+        allow_board_loss: bool,
+        allow_mindmanager_loss: bool,
+    ) -> Result<(), String> {
         let format = self.prepare_save(path)?;
         let state = self.doc.state_id();
-        let identity = write_workbook(self.doc.workbook(), format, path, backup)?;
+        let identity = write_workbook(
+            self.doc.workbook(),
+            format,
+            path,
+            backup,
+            allow_board_loss,
+            allow_mindmanager_loss,
+        )?;
         self.finish_save(path, format, state, identity);
         Ok(())
     }
@@ -389,9 +468,7 @@ impl OpenDoc {
     /// The committed workbook is what a following [`write_workbook`] must write; its
     /// `state_id` identifies that content for [`Self::finish_save`].
     pub(crate) fn prepare_save(&mut self, path: &Path) -> Result<Format, String> {
-        self.view
-            .try_commit_edit(&mut self.doc)
-            .map_err(|error| error.to_string())?;
+        self.commit_canvas_drafts()?;
         self.commit_inspector_edit()?;
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
@@ -427,6 +504,16 @@ impl OpenDoc {
 
     /// Writes just the active sheet without marking or retargeting the source document.
     pub fn save_sheet_to(&self, path: &Path, backup: bool) -> Result<(), String> {
+        self.save_sheet_to_with_consent(path, backup, false, false)
+    }
+
+    pub(crate) fn save_sheet_to_with_consent(
+        &self,
+        path: &Path,
+        backup: bool,
+        allow_board_loss: bool,
+        allow_mindmanager_loss: bool,
+    ) -> Result<(), String> {
         self.ensure_export_destination(path)?;
         let format = Format::from_path(path)
             .filter(|format| is_native(*format) || *format == Format::MindManager)
@@ -440,20 +527,39 @@ impl OpenDoc {
             metadata: source.metadata.clone(),
             ..Workbook::new(source.active().clone())
         };
-        let bytes = thinoda_io::export_bytes(&workbook, format, &ExportOptions::default())
-            .map_err(export_error)?;
+        crate::export_preflight::require_board_consent(
+            &workbook,
+            format,
+            &ExportOptions::default(),
+            allow_board_loss,
+        )?;
+        let bytes = thinoda_io::export_bytes_with_consent(
+            &workbook,
+            format,
+            &ExportOptions::default(),
+            allow_mindmanager_loss,
+        )
+        .map_err(export_error)?;
         atomic_write(path, &bytes, backup).map_err(|e| e.to_string())
     }
 
-    pub(crate) fn validate_pending_title(&self) -> Result<(), String> {
-        if self.view.has_title_changes() {
+    pub(crate) fn validate_pending_drafts(&self) -> Result<(), String> {
+        if self.view.has_title_changes() || self.view.has_board_label_changes() {
             self.document_with_drafts().map(|_| ())
         } else {
             Ok(())
         }
     }
 
-    fn document_with_drafts(&self) -> Result<Document, String> {
+    pub(crate) fn document_with_drafts(&self) -> Result<Document, String> {
+        self.ensure_no_pending_ink()?;
+        let board_label = if self.view.has_board_label_changes() {
+            self.view
+                .validated_board_label_draft(&self.doc)
+                .map_err(|error| error.to_string())?
+        } else {
+            None
+        };
         let mut document = self.doc.clone();
         if let Some(edit) = &self.fim_edit {
             edit.apply(&mut document)?;
@@ -469,6 +575,15 @@ impl OpenDoc {
                         ));
                     }
                     sheet.set_title(id, text)
+                })
+                .map_err(|error| error.to_string())?;
+        }
+        if let Some((id, _, text)) = board_label {
+            document
+                .update_canvas_object("Pending board label", id, |object| match &mut object.kind {
+                    CanvasObjectKind::Shape { label, .. } => *label = text.to_owned(),
+                    CanvasObjectKind::Connector(connector) => connector.label = text.to_owned(),
+                    CanvasObjectKind::Ink(_) => {}
                 })
                 .map_err(|error| error.to_string())?;
         }
@@ -493,15 +608,27 @@ impl OpenDoc {
 
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
+        // Never replace an earlier complete snapshot with one that silently
+        // omits retained canvas input. The recovery panel explains the gap.
+        if self.has_unresolved_ink() {
+            self.snapshot_saw_ink = true;
+            return;
+        }
         let s = self.doc.state_id();
         let title_draft = self
             .view
             .title_draft()
             .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
+        let board_label = self
+            .view
+            .board_label_draft()
+            .map(|(id, original, text)| (id, original.to_owned(), text.to_owned()));
         if s == self.snapshot_state
             && self.inspector_edit == self.snapshot_inspector_edit
             && title_draft == self.snapshot_title
+            && board_label == self.snapshot_board_label
             && self.fim_draft_revision == self.snapshot_fim_revision
+            && !self.snapshot_saw_ink
         {
             return;
         }
@@ -511,7 +638,9 @@ impl OpenDoc {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                     self.snapshot_title = title_draft;
+                    self.snapshot_board_label = board_label;
                     self.snapshot_fim_revision = self.fim_draft_revision;
+                    self.snapshot_saw_ink = false;
                 }
                 Err(error) => log::warn!("recovery snapshot cleanup failed: {error}"),
             }
@@ -537,7 +666,9 @@ impl OpenDoc {
                     self.snapshot_state = s;
                     self.snapshot_inspector_edit = self.inspector_edit.clone();
                     self.snapshot_title = title_draft;
+                    self.snapshot_board_label = board_label;
                     self.snapshot_fim_revision = self.fim_draft_revision;
+                    self.snapshot_saw_ink = false;
                 }
                 Err(error) => log::warn!("recovery snapshot queue failed: {error}"),
             },
@@ -593,6 +724,28 @@ pub fn convert_with_consent(
         }
         log::warn!("{}", t(crate::notes::EXPORT_SOURCE_WARNING));
     }
+    let board_losses = crate::export_preflight::export_loss_report(&report.workbook, format, opts);
+    if !board_losses.is_empty() {
+        let message = crate::export_preflight::loss_message(&board_losses, format);
+        if !allow_lossy {
+            return Err(format!(
+                "{message}\n{}",
+                t("Use --allow-lossy only if you accept these changes.")
+            ));
+        }
+        // A synthesized root can contain a user-provided sheet title. Keep it
+        // in the interactive refusal, but do not put document content in logs.
+        let mut logged_losses = board_losses.clone();
+        for loss in &mut logged_losses.losses {
+            if let thinoda_io::ExportLoss::SynthesizedRoot { title, .. } = loss {
+                *title = "…".into();
+            }
+        }
+        log::warn!(
+            "{}",
+            crate::export_preflight::loss_message(&logged_losses, format)
+        );
+    }
     if format == Format::MindManager {
         log::warn!(
             "{}",
@@ -621,9 +774,22 @@ pub(crate) fn write_workbook(
     format: Format,
     path: &Path,
     backup: bool,
+    allow_board_loss: bool,
+    allow_mindmanager_loss: bool,
 ) -> Result<WrittenWorkbook, String> {
-    let bytes = thinoda_io::export_bytes(workbook, format, &ExportOptions::default())
-        .map_err(export_error)?;
+    crate::export_preflight::require_board_consent(
+        workbook,
+        format,
+        &ExportOptions::default(),
+        allow_board_loss,
+    )?;
+    let bytes = thinoda_io::export_bytes_with_consent(
+        workbook,
+        format,
+        &ExportOptions::default(),
+        allow_mindmanager_loss,
+    )
+    .map_err(export_error)?;
     atomic_write(path, &bytes, backup).map_err(|e| e.to_string())?;
     Ok(WrittenWorkbook {
         fingerprint: fingerprint(path).ok(),
@@ -703,6 +869,149 @@ fn same_destination(source: &Path, destination: &Path) -> std::io::Result<bool> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    fn pending_board_label() -> (Harness<'static, OpenDoc>, CanvasObjectId) {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Sheet, SheetRootMode, Vec2};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_center_size(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+            *label = "Original".into();
+        }
+        let id = sheet.add_canvas_object(object).unwrap();
+        let mut workbook = Workbook::new(sheet);
+        workbook.sheets.push(Sheet::new("Other", "Other"));
+        let mut doc = OpenDoc::new(workbook);
+        doc.doc.mark_saved();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                |ui, doc: &mut OpenDoc| {
+                    thinoda_canvas::MapCanvas::show(ui, &mut doc.doc, &mut doc.view);
+                },
+                doc,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Rectangle: Original").focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::F2);
+        harness.run_steps(2);
+        harness
+            .get_by_label("Board object label")
+            .type_text("Pending label");
+        harness.run_steps(2);
+        assert!(harness.state().view.has_board_label_changes());
+        (harness, id)
+    }
+
+    #[test]
+    fn board_label_drafts_survive_snapshot_sheet_export_and_switch() {
+        let (mut harness, id) = pending_board_label();
+        let doc = harness.state_mut();
+        assert!(doc.is_dirty());
+        let draft = doc.document_with_drafts().unwrap();
+        assert_eq!(
+            draft.sheet().canvas.object(id).unwrap().label(),
+            "Pending label"
+        );
+        assert_eq!(
+            doc.doc.sheet().canvas.object(id).unwrap().label(),
+            "Original"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let sheet_path = dir.path().join("sheet.thinoda");
+        doc.save_sheet_to(&sheet_path, false).unwrap();
+        assert_eq!(
+            OpenDoc::open(&sheet_path)
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label(),
+            "Pending label"
+        );
+        assert!(doc.view.has_board_label_changes());
+
+        let paths = thinoda_platform::Paths::from_root(dir.path().join("profile"));
+        let recovery = RecoveryManager::start(&paths).unwrap();
+        doc.snapshot(&recovery);
+        recovery.suspend().unwrap();
+        let orphans = RecoveryManager::find_orphans(&paths);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(
+            orphans[0].docs[0]
+                .load()
+                .unwrap()
+                .active()
+                .canvas
+                .object(id)
+                .unwrap()
+                .label(),
+            "Pending label"
+        );
+        drop(orphans);
+        recovery.resume().unwrap();
+        recovery.finish().unwrap();
+
+        assert!(doc.switch_sheet(1).unwrap());
+        assert_eq!(
+            doc.doc.workbook().sheets[0]
+                .canvas
+                .object(id)
+                .unwrap()
+                .label(),
+            "Pending label"
+        );
+        assert!(doc.is_dirty());
+        assert!(doc.doc.undo());
+        assert_eq!(
+            doc.doc.workbook().sheets[0]
+                .canvas
+                .object(id)
+                .unwrap()
+                .label(),
+            "Original"
+        );
+    }
+
+    #[test]
+    fn stale_board_label_draft_is_retained_and_blocks_sheet_switch() {
+        let (mut harness, id) = pending_board_label();
+        let doc = harness.state_mut();
+        let replacement = Document::new(doc.doc.workbook().clone());
+        doc.doc = replacement;
+        assert!(doc.document_with_drafts().is_err());
+        assert!(doc.switch_sheet(1).is_err());
+        assert_eq!(doc.doc.active_index(), 0);
+        assert_eq!(
+            doc.doc.sheet().canvas.object(id).unwrap().label(),
+            "Original"
+        );
+        assert!(doc.view.has_board_label_changes());
+    }
+
+    #[test]
+    fn hidden_boards_select_content_not_the_anchor() {
+        let mut sheet = thinoda_core::Sheet::new("Board title", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let empty = OpenDoc::new(Workbook::new(sheet.clone()));
+        assert!(empty.view.primary().is_none());
+        assert_eq!(empty.title(), "Board title");
+
+        sheet.add_floating("Later", thinoda_core::Vec2::new(0.0, 200.0));
+        let first = sheet.add_floating("First", thinoda_core::Vec2::new(0.0, 0.0));
+        let doc = OpenDoc::new(Workbook::new(sheet));
+        assert_eq!(doc.view.primary(), Some(first));
+        assert!(!doc.view.selection.contains(&doc.doc.sheet().root));
+    }
 
     #[test]
     fn excel_note_export_errors_identify_the_topic() {

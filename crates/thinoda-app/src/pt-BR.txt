@@ -1,3 +1,35 @@
+# Regional wording for pending freehand input.
+Ink settings|Configurações da entrada à mão livre
+Ink is not saved or included in crash recovery until it is finished.|A entrada à mão livre não é salva nem incluída na recuperação após falha até o gesto terminar.
+The pointer is still down. Release it before retrying.|O ponteiro ainda está pressionado. Solte-o antes de tentar novamente.
+Accepted samples|Amostras aceitas
+# Regional wording for the offline board guide.
+On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.|Nos quadros, Alt+arrastar ou Alt+seta duplica itens móveis (Shift aumenta o passo das setas). Ctrl+Alt+Esquerda/Direita gira 1° (Shift: 15°); no macOS, use Command+Option. Itens e grupos bloqueados não podem ser duplicados por esses gestos.
+Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.|Caneta e Marca-texto desenham à mão livre. Ajuste Cor da tinta, Espessura do traço e Opacidade ou, para apagar, Raio da borracha; as configurações são capturadas no início de cada gesto.
+Object eraser removes whole ink strokes; Pixel eraser removes parts of strokes. Lasso selects topics and objects. Image card opens a local PNG/JPEG picker.|Borracha de objetos apaga traços de tinta inteiros; Borracha de pixels apaga partes dos traços. Laço seleciona tópicos e objetos. Cartão de imagem abre um seletor local de imagens PNG/JPEG.
+Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.|Use a barra de ferramentas do quadro para adicionar notas adesivas, cartões de texto, formas, conectores e molduras. Use a ferramenta de seleção para mover itens e a ferramenta de mão para deslocar a visualização. O menu Quadro inclui opções de agrupamento, bloqueio, grade e minimapa.
+Board > Hide central topic moves any central-topic content to a floating topic. Board > Show central topic shows the central topic again; floating topics stay separate. FIM sheets always show a central topic.|Quadro > Ocultar tópico central move o conteúdo do tópico central, se houver, para um tópico flutuante. Quadro > Mostrar tópico central exibe o tópico central novamente; os tópicos flutuantes permanecem separados. As folhas FIM sempre exibem um tópico central.
+Save boards as .thinoda to preserve cards, shapes, connectors, frames and board settings. Other formats may change or omit board content; review the export warnings.|Salve os quadros como .thinoda para preservar cartões, formas, conectores, molduras e configurações do quadro. Outros formatos podem alterar ou omitir conteúdo do quadro; confira os avisos de exportação.
+Frame clipping is visual, not secure redaction. Content outside a frame can remain in saved files or exports, and some exports may not apply clipping.|O recorte da moldura é apenas visual e não remove dados de forma segura. O conteúdo fora da moldura pode permanecer nos arquivos salvos ou exportados, e algumas exportações podem não aplicar o recorte.
+# Regional wording for the freeform board; other labels share Portuguese.
+Highlighter|Marca-texto
+Pixel eraser|Borracha de pixels
+No grid|Sem grade
+Dot grid|Grade de pontos
+Line grid|Grade de linhas
+Snap to grid|Ajustar à grade
+Board minimap. Click or drag to pan; arrow keys move the view; Shift makes larger steps.|Minimapa do quadro. Clique ou arraste para mover a visualização; as teclas de seta movem a visualização e Shift aumenta o passo.
+Click or drag to pan. Arrow keys move the view; Shift makes larger steps.|Clique ou arraste para mover a visualização. As teclas de seta movem a visualização e Shift aumenta o passo.
+The current view is outside the minimap.|A visualização atual está fora do minimapa.
+Bring forward|Trazer uma camada para frente
+Send backward|Enviar uma camada para trás
+Bring to front|Trazer para frente
+Rotate left|Girar para a esquerda
+Rotate right|Girar para a direita
+Rotate board item|Girar elemento do quadro
+Board object label|Rótulo do objeto do quadro
+Select one board object to edit its properties.|Selecione um objeto do quadro para editar suas propriedades.
+Replaces topic titles, board labels and descriptions.|Substitui títulos de tópicos, rótulos e descrições do quadro.
 Slides|Slides
 Local chat history|Histórico local do chat
 Disable and forget this file|Desativar e esquecer este arquivo
@@ -25,6 +57,29 @@ Slide source is unavailable.|A origem do slide não está disponível.
 Click a topic to hide its subtree.|Clique em um tópico para ocultar sua subárvore.
 Formatting is stored as Markdown text; other views and exports may show markup.|A formatação é salva como texto Markdown; outras visualizações e exportações podem mostrar as marcações.
 Bold notes|Notas em negrito
+Board export changes|Alterações na exportação do quadro
+The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
+Shapes omitted|Formas omitidas
+Card presentation omitted|Apresentação dos cartões omitida
+Sheet {sheet}: hidden root mode omitted.|Folha {sheet}: o modo de raiz oculta foi omitido.
+Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it.|O salvamento automático foi ignorado porque este formato não preserva o conteúdo do quadro. Salve como Thinoda para mantê-lo.
+Use --allow-lossy only if you accept these changes.|Use --allow-lossy apenas se aceitar estas alterações.
+Ink strokes omitted|Traços de tinta omitidos
+Connectors omitted|Conectores omitidos
+Cards converted to ordinary topics|Cartões convertidos em tópicos normais
+Card rotations omitted|Rotações de cartões omitidas
+Viewport slides omitted|Slides de área visível omitidos
+Zones omitted|Zonas omitidas
+Zone clipping not fully applied|Recorte das zonas não aplicado integralmente
+Viewport slides flattened to non-editable images|Slides de área de visualização convertidos em imagens não editáveis
+XMind stores a Thinoda-only copy of the complete board. Other apps may not display it and may discard it when saving. This export is not redacted.|O XMind armazena uma cópia completa do quadro em metadados exclusivos do Thinoda. Outros aplicativos podem não exibi-la e podem descartá-la ao salvar. Esta exportação não remove dados ocultos.
+Floating root trees omitted|Árvores de tópicos flutuantes omitidas
+Cards omitted|Cartões omitidos
+Summary topic trees omitted|Árvores de tópicos de resumo omitidas
+Relationships omitted|Relações omitidas
+Boundaries omitted|Contornos omitidos
+Board grid and snapping settings omitted|Configurações omitidas de grade e encaixe magnético do quadro
+Sheet {sheet}: a root named “{title}” will be created.|Folha {sheet}: um tópico raiz chamado “{title}” será criado.
 Data|Dados
 Equation|Equação
 Enlarge notes editor|Ampliar editor de notas
@@ -98,6 +153,7 @@ Build sends current-sheet titles to the embedding model. No background indexing.
 Set an explicit embedding model in Settings before indexing.|Defina um modelo de embeddings explícito nas configurações antes de indexar.
 Semantic indexing is limited to 500 topics and 64 KiB of titles.|A indexação semântica se limita a 500 tópicos e 64 KiB de títulos.
 Semantic indexing requires nonempty titles of at most 16 KiB each.|A indexação requer títulos não vazios com no máximo 16 KiB cada.
+Add at least one topic before indexing.|Adicione pelo menos um tópico antes de indexar.
 The embedding model returned an unusable vector.|O modelo de embeddings retornou um vetor inutilizável.
 The embedding model changed vector dimensions.|O modelo de embeddings alterou as dimensões dos vetores.
 Build the semantic index first.|Crie primeiro o índice semântico.
@@ -316,6 +372,7 @@ Quick style saved for this session|Estilo rápido salvo para esta sessão
 Could not save quick style|Não foi possível salvar o estilo rápido
 Select one topic to save a quick style.|Selecione um tópico para salvar um estilo rápido.
 Replaces topic appearance only. Reset Style restores theme inheritance.|Substitui apenas a aparência do tópico. Redefinir estilo restaura a herança do tema.
+Changes apply to unlocked selected items that support each setting.|As alterações se aplicam aos itens selecionados desbloqueados que oferecem suporte a cada configuração.
 Saves fixed colors and typography, without topic content.|Salva cores e tipografia fixas, sem o conteúdo do tópico.
 Saved|Salvo
 Unsaved changes|Alterações não salvas
@@ -418,6 +475,7 @@ Drag a topic onto a parent or sibling insertion slot to move its branch. The pre
 Sheet tabs support rename, duplicate, copy, paste, delete and separate save. New Sheet from Topic copies a branch; external relationships stay in the original sheet.|As abas permitem renomear, duplicar, copiar, colar, excluir e salvar folhas separadamente. Nova folha a partir do tópico copia um ramo; as relações externas ficam na folha original.
 Topic styles override map and theme defaults. Reset Style removes explicit topic overrides. Copy/Paste Style transfers appearance, not text or hierarchy.|Os estilos de tópico têm prioridade sobre os padrões do mapa e do tema. Redefinir estilo remove personalizações explícitas. Copiar/colar estilo transfere a aparência, não o texto ou a hierarquia.
 Quick Styles offers original presets and named local styles captured from resolved appearance. Applying a style to several selected topics is one undo step.|Estilos rápidos oferece predefinições originais e estilos locais com nome capturados a partir da aparência efetiva. Aplicar um estilo a vários tópicos selecionados é uma única etapa de desfazer.
+Quick Styles and Shape/Text colors work on cards and shapes. For shapes, presets change fill, border and label colors without changing geometry. Locked or unsupported items are skipped; the custom color picker remains available. Each change is one undo step.|Estilos rápidos e as cores de Forma/Texto funcionam em cartões e formas. Nas formas, as predefinições alteram as cores de preenchimento, borda e rótulo sem alterar a geometria. Itens bloqueados ou não compatíveis são ignorados; o seletor de cor personalizada continua disponível. Cada alteração é uma etapa de desfazer.
 Map > Custom Themes opens a staged editor. Apply Theme embeds the theme in the sheet; Save to Library stores a separate local copy without changing the map.|Mapa > Temas personalizados abre um editor de rascunho. Aplicar tema incorpora o tema na folha; Salvar na biblioteca salva uma cópia local separada sem alterar o mapa.
 Custom themes provide palette, light/dark backgrounds, fonts and role defaults. Explicit map and topic overrides take precedence. Removing a library theme does not change existing maps.|Os temas personalizados definem paleta, fundos claros/escuros, fontes e padrões por função. As personalizações explícitas do mapa e dos tópicos têm prioridade. Remover um tema da biblioteca não altera mapas existentes.
 Select a built-in theme to remove custom defaults. Optional recent-theme reuse affects new blank maps, not named templates. Missing local fonts keep their names and show a warning.|Selecione um tema integrado para remover padrões personalizados. A reutilização opcional do último tema afeta mapas novos vazios, não modelos com nome. As fontes locais ausentes mantêm os nomes e mostram um aviso.
