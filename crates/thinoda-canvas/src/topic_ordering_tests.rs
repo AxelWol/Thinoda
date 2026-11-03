@@ -1,5 +1,7 @@
 use crate::topic_drag::{DropTarget, apply, members, target};
-use thinoda_core::{ApproxMeasure, Document, Sheet, Structure, Vec2, Workbook, layout_sheet};
+use thinoda_core::{
+    ApproxMeasure, Document, Sheet, Structure, Vec2, Workbook, build_scene, layout_sheet,
+};
 
 #[test]
 fn insertion_edges_follow_connector_axis_and_document_order_for_all_structures() {
@@ -12,6 +14,7 @@ fn insertion_edges_follow_connector_axis_and_document_order_for_all_structures()
             .collect();
         let floating = sheet.add_floating("Moving", Vec2::new(-1000.0, -1000.0));
         let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
         let moving = members(&sheet, &[floating]);
         for (index, id) in children.iter().enumerate() {
             let rect = layout.topics[id].rect;
@@ -29,8 +32,12 @@ fn insertion_edges_follow_connector_axis_and_document_order_for_all_structures()
                 low.y = rect.min.y + 0.5;
                 high.y = rect.max().y - 0.5;
             }
-            let a = target(&sheet, &layout, &moving, low).unwrap().unwrap();
-            let b = target(&sheet, &layout, &moving, high).unwrap().unwrap();
+            let a = target(&sheet, &layout, &scene, &moving, low)
+                .unwrap()
+                .unwrap();
+            let b = target(&sheet, &layout, &scene, &moving, high)
+                .unwrap()
+                .unwrap();
             assert_eq!(a.parent, root, "{structure:?}");
             assert_eq!(b.parent, root, "{structure:?}");
             assert_eq!(
@@ -49,7 +56,7 @@ fn insertion_edges_follow_connector_axis_and_document_order_for_all_structures()
                 );
                 edited.validate().unwrap();
             }
-            let center = target(&sheet, &layout, &moving, rect.center())
+            let center = target(&sheet, &layout, &scene, &moving, rect.center())
                 .unwrap()
                 .unwrap();
             assert_eq!(center.parent, *id);
@@ -115,6 +122,7 @@ fn reversed_split_map_side_has_correct_before_and_after_slots() {
         .collect();
     let floating = sheet.add_floating("Moving", Vec2::new(-1000.0, -1000.0));
     let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let scene = build_scene(&sheet, &layout);
     let moving = members(&sheet, &[floating]);
     for pair in children.windows(2) {
         let a = &layout.topics[&pair[0]].rect;
@@ -132,7 +140,9 @@ fn reversed_split_map_side_has_correct_before_and_after_slots() {
                 a.max().y - 0.5
             },
         );
-        let proposal = target(&sheet, &layout, &moving, edge).unwrap().unwrap();
+        let proposal = target(&sheet, &layout, &scene, &moving, edge)
+            .unwrap()
+            .unwrap();
         assert_eq!(proposal.index, sheet.index_in_parent(pair[1]).unwrap());
     }
 }

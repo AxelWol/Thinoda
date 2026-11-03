@@ -1,8 +1,9 @@
 use std::io::{Cursor, Read};
 
 use thinoda_core::{
-    CanvasObject, Card, CardKind, Color, PresentationScope, PresentationSource, Rect, ShapeKind,
-    Sheet, SheetRootMode, TopicShape, Vec2, board::CanvasObjectKind, resources::Resource,
+    ApproxMeasure, CanvasConnector, CanvasObject, Card, CardKind, Color, Endpoint,
+    PresentationScope, PresentationSource, Rect, ShapeKind, Sheet, SheetRootMode, Structure,
+    TopicShape, Vec2, board::CanvasObjectKind, connector_path, layout_sheet, resources::Resource,
 };
 use thinoda_io::{
     ExportOptions, IoError, PresentationAspectRatio, export_presentation_pdf,
@@ -151,6 +152,134 @@ fn assert_rotated_points(
             (after.0 - expected.0).abs() <= 20.0 && (after.1 - expected.1).abs() <= 20.0,
             "rotated point {after:?} differs from {expected:?}"
         );
+    }
+}
+
+#[test]
+fn svg_and_editable_powerpoint_use_rotated_card_connector_anchors() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(180.0, 100.0));
+    card.rotation = 90.0;
+    let center = Vec2::new(100.0, 100.0);
+    let root = sheet.add_card("Card", center, card).unwrap();
+    sheet.topic_mut(root).unwrap().structure = Some(Structure::LogicRight);
+    let child = sheet.add_child(root, None, "Child");
+    let mut other_card = Card::new(CardKind::Text, Vec2::new(140.0, 80.0));
+    other_card.rotation = 45.0;
+    let other = sheet
+        .add_card("Other card", Vec2::new(500.0, 300.0), other_card)
+        .unwrap();
+    let relationship = sheet.add_relationship(root, other).unwrap();
+    sheet
+        .set_relationship_control_points(
+            relationship,
+            Some([Vec2::new(100.0, 60.0), Vec2::new(-100.0, -30.0)]),
+        )
+        .unwrap();
+    let mut connector = CanvasConnector::new(
+        Endpoint::Topic(root),
+        Endpoint::Point(Vec2::new(100.0, 400.0)),
+    );
+    connector.arrow_end = false;
+    let free_path = connector_path(
+        &sheet,
+        &layout_sheet(&sheet, &ApproxMeasure, false),
+        &connector,
+    );
+    let connector_id = sheet
+        .add_canvas_object(CanvasObject::connector(connector))
+        .unwrap();
+    let frame = Rect::from_min_size(Vec2::new(-200.0, -200.0), Vec2::new(1000.0, 800.0));
+    let zone = sheet
+        .create_zone("Frame", vec![root, other], frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Zone(zone), frame)
+        .unwrap();
+    sheet.presentation.slides[0].scope = PresentationScope::Context;
+    sheet.presentation.slides[0].auto_frame = false;
+    sheet.validate().unwrap();
+    let before = sheet.clone();
+
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let branch = layout
+        .connectors
+        .iter()
+        .find(|edge| edge.parent == root && edge.child == child)
+        .unwrap();
+    let curve = layout
+        .relationships
+        .iter()
+        .find(|curve| curve.id == relationship)
+        .unwrap();
+    for ratio in [
+        PresentationAspectRatio::Widescreen16x9,
+        PresentationAspectRatio::Standard4x3,
+    ] {
+        let options = ExportOptions {
+            presentation_aspect_ratio: ratio,
+            ..ExportOptions::default()
+        };
+        let svg = render_presentation_slide_svg(&sheet, 0, &options).unwrap();
+        let move_to = |point: Vec2| format!("M {:.2},{:.2}", point.x, point.y);
+        assert!(svg.contains(&move_to(branch.start)));
+        assert!(svg.contains(&format!(
+            "{} C {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+            move_to(curve.start),
+            curve.c1.x,
+            curve.c1.y,
+            curve.c2.x,
+            curve.c2.y,
+            curve.end.x,
+            curve.end.y
+        )));
+        let object = svg
+            .split_once(&format!("id=\"object-{}\"", connector_id.0))
+            .unwrap()
+            .1
+            .split_once("</g>")
+            .unwrap()
+            .0;
+        assert!(object.contains(&move_to(free_path[0])));
+
+        let output = export_presentation_pptx(&sheet, &options).unwrap();
+        let slide = xml(&output, "ppt/slides/slide1.xml");
+        let card_shape = transform(element(&slide, "sp", &format!("name=\"Topic {root}\"")));
+        let scale = card_shape.width / f64::from(card.size.x);
+        let pivot = card_shape.center();
+        let sheet_point = |point: (f64, f64)| {
+            (
+                f64::from(center.x) + (point.0 - pivot.0) / scale,
+                f64::from(center.y) + (point.1 - pivot.1) / scale,
+            )
+        };
+        let assert_point = |actual: (f64, f64), expected: Vec2| {
+            let actual = sheet_point(actual);
+            assert!((actual.0 - f64::from(expected.x)).abs() < 0.02);
+            assert!((actual.1 - f64::from(expected.y)).abs() < 0.02);
+        };
+        let branch_points = points(element(&slide, "sp", "name=\"Branch connector\""));
+        assert_point(branch_points[0], branch.start);
+        let relationship_points = points(element(&slide, "sp", "name=\"Relationship\""));
+        assert_eq!(relationship_points.len(), 4);
+        for (actual, expected) in
+            relationship_points
+                .into_iter()
+                .zip([curve.start, curve.c1, curve.c2, curve.end])
+        {
+            assert_point(actual, expected);
+        }
+        let free_points = points(element(
+            &slide,
+            "sp",
+            &format!("name=\"Canvas object {connector_id}\""),
+        ));
+        assert_eq!(free_points.len(), free_path.len());
+        for (actual, expected) in free_points.into_iter().zip(&free_path) {
+            assert_point(actual, *expected);
+        }
+        assert_eq!(sheet, before);
     }
 }
 

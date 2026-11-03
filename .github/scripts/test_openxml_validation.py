@@ -56,6 +56,9 @@ class OpenXmlValidationTests(unittest.TestCase):
             slide = package.read("ppt/slides/slide1.xml")
             for value in (b'rot="1800000"', b'rot="2700000"', b'rot="18900000"'):
                 self.assertIn(value, slide)
+            self.assertIn(b'name="Branch connector"', slide)
+            self.assertIn(b'name="Relationship"', slide)
+            self.assertIn(b"<a:t>Rotated connector</a:t>", slide)
             self.assertIn(b"<a:t>Viewport sticky</a:t>", slide)
             self.assertIn(b"<a:t>Viewport</a:t>", slide)
             self.assertIn(b"<a:t>shape</a:t>", slide)

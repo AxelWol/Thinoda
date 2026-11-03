@@ -186,9 +186,11 @@ text from the existing export font resolver; editable text is a PPTX guarantee
 for supported branch and Zone content, not a PDF text-search guarantee.
 Editable card shapes, text, annotations, pictures and paths carry their card's
 rotation, and shape labels rotate around the parent shape. They are separate
-PowerPoint objects, not a single linked object. The interactive canvas still
-keeps rotated card text, images and annotations upright, so it is not yet a
-complete visual match for the exported slide.
+PowerPoint objects, not a single linked object. The interactive canvas rotates
+card text, images and annotations around the same card center; its title
+editor remains upright at the rotated title position.
+Branch, relationship and free-connector anchors use the same rotated-card
+geometry as the shared layout; rotating a card does not reflow its children.
 PowerPoint edits do not synchronize back into Thinoda. Clipping is visual and
 must not be relied on as secure redaction.
 

@@ -52,6 +52,54 @@ fn harness(zoom: f32, below: bool) -> Harness<'static, State> {
     h
 }
 
+fn card_harness(zoom: f32, below: bool, rotation: f32) -> (Harness<'static, State>, TopicId) {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(160, 80)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    let mut card = thinoda_core::Card::new(thinoda_core::CardKind::Image, Vec2::new(340.0, 260.0));
+    card.rotation = rotation;
+    let id = sheet.add_card("Image", Vec2::ZERO, card).unwrap();
+    thinoda_core::images::set_image(
+        &mut sheet,
+        id,
+        Some((
+            Resource::new("test.png", "image/png", bytes.into_inner()).unwrap(),
+            Vec2::new(160.0, 80.0),
+        )),
+    )
+    .unwrap();
+    sheet.topic_mut(id).unwrap().image_below = below;
+    let mut view = MapView::default();
+    view.select_only(id);
+    let mut doc = Document::new(Workbook::new(sheet));
+    doc.mark_saved();
+    let mut h = Harness::builder()
+        .with_size(vec2(1200.0, 900.0))
+        .build_ui_state(
+            |ui, state: &mut State| {
+                ui.add_enabled_ui(state.enabled, |ui| {
+                    if let Some(error) = MapCanvas::show(ui, &mut state.doc, &mut state.view).error
+                    {
+                        state.errors.push(error);
+                    }
+                });
+            },
+            State {
+                doc,
+                view,
+                enabled: true,
+                errors: Vec::new(),
+            },
+        );
+    h.run_steps(3);
+    h.state_mut().view.set_zoom(zoom);
+    h.run_steps(2);
+    (h, id)
+}
+
 fn size(h: &Harness<'_, State>) -> Vec2 {
     h.state()
         .doc
@@ -131,6 +179,109 @@ fn image_resize_stages_until_release_and_is_one_undo_step_at_each_zoom_and_place
             assert_eq!(h.state().doc.workbook(), &resized);
         }
     }
+}
+
+#[test]
+fn rotated_image_card_resize_tracks_its_corner_and_local_axes() {
+    for rotation in [45.0_f32, 90.0, 270.0] {
+        for zoom in [0.5, 1.0, 2.0] {
+            for below in [false, true] {
+                let (mut h, id) = card_harness(zoom, below, rotation);
+                let layout = {
+                    let state = h.state_mut();
+                    state.view.layout_for(&state.doc)
+                };
+                let topic = &layout.topics[&id];
+                let image = topic.image_rect.unwrap();
+                let corner = rotate_around(image.max(), topic.rect.center(), rotation);
+                let expected = h.state().view.xf().pos(corner);
+                let handle = h.get_by_label("Resize image").rect().center();
+                assert!(
+                    handle.distance(expected) < 0.1,
+                    "handle {handle:?} should be at {expected:?} for {rotation} degrees"
+                );
+                let before = h.state().doc.workbook().clone();
+                let delta = rotate_around(Vec2::new(40.0, 20.0), Vec2::ZERO, rotation);
+                let end = drag(&mut h, vec2(delta.x, delta.y) * zoom);
+                assert_eq!(h.state().doc.workbook(), &before);
+                h.drop_at(end);
+                h.run_steps(3);
+                let size = h.state().doc.sheet().topic(id).unwrap().image_size.unwrap();
+                assert!((size.x - 200.0).abs() < 0.01, "{size:?}");
+                assert!((size.y - 100.0).abs() < 0.01, "{size:?}");
+                assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+                assert!(h.state_mut().doc.undo());
+                assert_eq!(h.state().doc.workbook(), &before);
+            }
+        }
+    }
+}
+
+#[test]
+fn rotated_image_resize_keyboard_and_stale_rotation_keep_one_undo_boundary() {
+    let (mut h, id) = card_harness(1.0, false, 90.0);
+    h.get_by_label("Resize image").focus();
+    h.key_press(Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc.sheet().topic(id).unwrap().image_size,
+        Some(Vec2::new(161.0, 80.5))
+    );
+    assert!(h.state_mut().doc.undo());
+    h.run_steps(2);
+    let delta = rotate_around(Vec2::new(40.0, 20.0), Vec2::ZERO, 90.0);
+    let end = drag(&mut h, vec2(delta.x, delta.y));
+    let mut card = h.state().doc.sheet().topic(id).unwrap().card.unwrap();
+    card.rotation = 180.0;
+    h.state_mut().doc.set_topic_card(id, Some(card)).unwrap();
+    h.run_steps(2);
+    let after_rotation = h.state().doc.workbook().clone();
+    h.drop_at(end);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &after_rotation);
+    assert_eq!(
+        h.state().doc.sheet().topic(id).unwrap().image_size,
+        Some(Vec2::new(160.0, 80.0))
+    );
+    assert!(h.state().view.image_resize.is_none());
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .topic(id)
+            .unwrap()
+            .card
+            .unwrap()
+            .rotation,
+        90.0
+    );
+}
+
+#[test]
+fn rotated_image_handle_is_not_interactive_outside_its_frame_clip() {
+    let (mut h, id) = card_harness(1.0, false, 90.0);
+    let layout = {
+        let state = h.state_mut();
+        state.view.layout_for(&state.doc)
+    };
+    let topic = &layout.topics[&id];
+    let corner = rotate_around(topic.image_rect.unwrap().max(), topic.rect.center(), 90.0);
+    let frame = thinoda_core::Rect::from_center_size(topic.rect.center(), Vec2::new(100.0, 100.0));
+    assert!(!frame.contains(corner));
+    h.state_mut()
+        .doc
+        .edit_sheet("Clip card", |sheet| {
+            sheet
+                .create_zone("Clip", vec![id], frame)
+                .map_err(thinoda_core::EditError::Invalid)?;
+            sheet.zones.last_mut().unwrap().clip = true;
+            Ok(())
+        })
+        .unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Resize image").is_none());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
 #[test]

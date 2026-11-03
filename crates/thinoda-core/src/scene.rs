@@ -8,7 +8,7 @@ use crate::board::{
     rotate_around, rotated_bounds, rotated_rect_contains, shape_geometry,
 };
 use crate::geometry::{Rect, Vec2};
-use crate::layout::{Layout, clip_to_rect, cubic};
+use crate::layout::{Layout, clip_to_rotated_rect, cubic};
 use crate::model::{Sheet, TopicId, ZoneId};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -400,27 +400,21 @@ impl Scene {
 /// Rect of `id` or of its nearest laid out ancestor (inside a collapsed branch).
 /// `None` for the hidden anchor and unknown topics.
 pub fn topic_anchor_rect(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<Rect> {
+    topic_anchor(sheet, layout, id).map(|(_, rect)| rect)
+}
+
+fn topic_anchor(sheet: &Sheet, layout: &Layout, id: TopicId) -> Option<(TopicId, Rect)> {
     let mut current = Some(id);
     while let Some(t) = current {
         if sheet.is_anchor(t) {
             return None;
         }
         if let Some(r) = layout.rect(t) {
-            return Some(r);
+            return Some((t, r));
         }
         current = sheet.topic(t)?.parent;
     }
     None
-}
-
-/// Border point of a (rotated) rect toward `toward`.
-fn clip_rotated(rect: Rect, rotation: f32, toward: Vec2) -> Vec2 {
-    if rect.size.x <= 0.0 && rect.size.y <= 0.0 {
-        return rect.center();
-    }
-    let c = rect.center();
-    let local = rotate_around(toward, c, -rotation);
-    rotate_around(clip_to_rect(rect, local), c, rotation)
 }
 
 fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> Vec<Vec2> {
@@ -428,17 +422,20 @@ fn routed_path(connector: &CanvasConnector, a: (Rect, f32), b: (Rect, f32)) -> V
     let (ca, cb) = (ra.center(), rb.center());
     match connector.route {
         ConnectorRoute::Straight => {
-            vec![clip_rotated(ra, rot_a, cb), clip_rotated(rb, rot_b, ca)]
+            vec![
+                clip_to_rotated_rect(ra, rot_a, cb),
+                clip_to_rotated_rect(rb, rot_b, ca),
+            ]
         }
         ConnectorRoute::Elbow => {
-            let a = clip_rotated(ra, rot_a, Vec2::new(cb.x, ca.y));
-            let b = clip_rotated(rb, rot_b, Vec2::new(ca.x, cb.y));
+            let a = clip_to_rotated_rect(ra, rot_a, Vec2::new(cb.x, ca.y));
+            let b = clip_to_rotated_rect(rb, rot_b, Vec2::new(ca.x, cb.y));
             let mx = (a.x + b.x) / 2.0;
             vec![a, Vec2::new(mx, a.y), Vec2::new(mx, b.y), b]
         }
         ConnectorRoute::Curve => {
-            let a = clip_rotated(ra, rot_a, cb);
-            let b = clip_rotated(rb, rot_b, ca);
+            let a = clip_to_rotated_rect(ra, rot_a, cb);
+            let b = clip_to_rotated_rect(rb, rot_b, ca);
             let dx = (b.x - a.x) / 2.0;
             let (c1, c2) = (a + Vec2::new(dx, 0.0), b - Vec2::new(dx, 0.0));
             (0..=CURVE_SEGMENTS)
@@ -469,15 +466,12 @@ impl<'a> ConnectorResolver<'a> {
         match end {
             Endpoint::Point(p) => Some((Rect::from_center_size(p, Vec2::ZERO), 0.0)),
             Endpoint::Topic(t) => {
-                let rect = topic_anchor_rect(self.sheet, self.layout, t)?;
-                let rotation = if self.layout.rect(t).is_some() {
-                    self.sheet
-                        .topic(t)
-                        .and_then(|topic| topic.card.as_ref())
-                        .map_or(0.0, |card| card.rotation)
-                } else {
-                    0.0
-                };
+                let (anchor, rect) = topic_anchor(self.sheet, self.layout, t)?;
+                let rotation = self
+                    .sheet
+                    .topic(anchor)
+                    .and_then(|topic| topic.card.as_ref())
+                    .map_or(0.0, |card| card.rotation);
                 Some((rect, rotation))
             }
             Endpoint::Object(id) => {

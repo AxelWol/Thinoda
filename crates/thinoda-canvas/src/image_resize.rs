@@ -8,13 +8,22 @@ pub(super) struct Gesture {
     state: u64,
     sheet: usize,
     camera: (EVec2, f32, Rect),
-    image_rect: thinoda_core::Rect,
+    geometry: Geometry,
     reference: String,
     grab: Pos2,
     size: Vec2,
     preview: Vec2,
     dragged: bool,
     canceled: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Geometry {
+    topic: TopicId,
+    image: thinoda_core::Rect,
+    pivot: Vec2,
+    rotation: f32,
+    clip: Option<thinoda_core::Rect>,
 }
 
 /// Project movement onto the original diagonal. Normalizing first avoids
@@ -30,11 +39,7 @@ fn resized(size: Vec2, delta: Vec2) -> Vec2 {
     unit * length
 }
 
-fn geometry(
-    view: &MapView,
-    sheet: &Sheet,
-    layout: &Layout,
-) -> Option<(TopicId, thinoda_core::Rect)> {
+fn geometry(view: &MapView, sheet: &Sheet, layout: &Layout) -> Option<Geometry> {
     if view.selection.len() != 1
         || view.selected_object.is_some()
         || view.editing.is_some()
@@ -48,13 +53,73 @@ fn geometry(
     let topic = sheet.topic(id)?;
     // Legacy path/URL images have no supported preview or resize interaction.
     sheet.resources.get(topic.image.as_deref()?).ok()?;
-    let rect = layout.topics.get(&id)?.image_rect?;
-    valid_size(rect.size).then_some((id, rect))
+    let layout = layout.topics.get(&id)?;
+    let image = layout.image_rect?;
+    if !valid_size(image.size) {
+        return None;
+    }
+    let geometry = Geometry {
+        topic: id,
+        image,
+        pivot: layout.rect.center(),
+        rotation: topic.card.map_or(0.0, |card| card.rotation),
+        clip: topic_clip_rect(sheet, id),
+    };
+    let corner = image_corner(geometry, image);
+    geometry
+        .clip
+        .is_none_or(|clip| clip.contains(corner))
+        .then_some(geometry)
 }
 
-fn handle_rect(view: &MapView, image: thinoda_core::Rect) -> Rect {
+fn image_corner(geometry: Geometry, image: thinoda_core::Rect) -> Vec2 {
+    if geometry.rotation == 0.0 {
+        image.max()
+    } else {
+        rotate_around(image.max(), geometry.pivot, geometry.rotation)
+    }
+}
+
+fn handle_rect(view: &MapView, geometry: Geometry, image: thinoda_core::Rect) -> Rect {
     // Constant screen-space target, including when the map is zoomed out.
-    Rect::from_center_size(view.xf().pos(image.max()), vec2(28.0, 28.0))
+    Rect::from_center_size(
+        view.xf().pos(image_corner(geometry, image)),
+        vec2(28.0, 28.0),
+    )
+}
+
+fn handle_visible(view: &MapView, geometry: Geometry, rect: Rect) -> bool {
+    view.canvas_rect.contains_rect(rect)
+        && geometry
+            .clip
+            .is_none_or(|clip| view.xf().rect(clip).contains_rect(rect))
+}
+
+fn resize_cursor(geometry: Geometry) -> egui::CursorIcon {
+    if geometry.rotation == 0.0 {
+        return egui::CursorIcon::ResizeNwSe;
+    }
+    let angle = (geometry
+        .image
+        .size
+        .y
+        .atan2(geometry.image.size.x)
+        .to_degrees()
+        + geometry.rotation)
+        .rem_euclid(180.0);
+    if !(22.5..157.5).contains(&angle) {
+        egui::CursorIcon::ResizeHorizontal
+    } else if angle < 67.5 {
+        egui::CursorIcon::ResizeNwSe
+    } else if angle < 112.5 {
+        egui::CursorIcon::ResizeVertical
+    } else {
+        egui::CursorIcon::ResizeNeSw
+    }
+}
+
+pub(super) fn cursor(view: &MapView, sheet: &Sheet, layout: &Layout) -> egui::CursorIcon {
+    geometry(view, sheet, layout).map_or(egui::CursorIcon::ResizeNwSe, resize_cursor)
 }
 
 fn handle_id(topic: TopicId) -> Id {
@@ -99,7 +164,7 @@ pub(super) fn interact(
             || drag.state != doc.state_id()
             || drag.sheet != doc.active_index()
             || drag.root != doc.sheet().root
-            || geometry != Some((drag.topic, drag.image_rect))
+            || geometry != Some(drag.geometry)
             || doc
                 .sheet()
                 .topic(drag.topic)
@@ -121,14 +186,16 @@ pub(super) fn interact(
             })
             || ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
     }
-    let Some((topic, image)) = geometry.filter(|_| enabled) else {
+    let Some(geometry) = geometry.filter(|_| enabled) else {
         // Keep ownership after cancellation until release, so a held pointer
         // cannot become a topic drag or a click on a different selection.
         view.image_resize = active.filter(|_| ctx.input(|i| i.pointer.primary_down()));
         return was_active;
     };
-    let rect = handle_rect(view, image);
-    if active.is_none() && !view.canvas_rect.contains_rect(rect) {
+    let topic = geometry.topic;
+    let image = geometry.image;
+    let rect = handle_rect(view, geometry, image);
+    if active.is_none() && !handle_visible(view, geometry, rect) {
         return false;
     }
     let response = ui.interact(
@@ -153,7 +220,7 @@ pub(super) fn interact(
             state: doc.state_id(),
             sheet: doc.active_index(),
             camera: (view.offset, view.zoom, view.canvas_rect),
-            image_rect: image,
+            geometry,
             reference: doc
                 .sheet()
                 .topic(topic)
@@ -209,7 +276,13 @@ pub(super) fn interact(
             && let Some(point) = ctx.pointer_latest_pos()
         {
             let delta = (point - drag.grab) / drag.camera.1;
-            drag.preview = resized(drag.size, Vec2::new(delta.x, delta.y));
+            let delta = Vec2::new(delta.x, delta.y);
+            let local = if drag.geometry.rotation == 0.0 {
+                delta
+            } else {
+                rotate_around(delta, Vec2::ZERO, -drag.geometry.rotation)
+            };
+            drag.preview = resized(drag.size, local);
         }
         if ctx.input(|i| i.pointer.primary_released()) {
             if !drag.canceled
@@ -228,7 +301,7 @@ pub(super) fn interact(
     }
     response
         .on_hover_text(&view.image_resize_label)
-        .on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+        .on_hover_cursor(resize_cursor(geometry));
     blocked
 }
 
@@ -242,24 +315,40 @@ pub(super) fn paint(
     if !enabled {
         return;
     }
-    let Some((topic, image)) = geometry(view, sheet, layout) else {
+    let Some(geometry) = geometry(view, sheet, layout) else {
         return;
     };
+    let topic = geometry.topic;
+    let image = geometry.image;
     let image = if let Some(drag) = &view.image_resize {
         if drag.canceled {
             return;
         }
-        thinoda_core::Rect::from_min_size(drag.image_rect.min, drag.preview)
+        thinoda_core::Rect::from_min_size(drag.geometry.image.min, drag.preview)
     } else {
         image
     };
-    let target = handle_rect(view, image);
-    if view.image_resize.is_none() && !view.canvas_rect.contains_rect(target) {
+    let target = handle_rect(view, geometry, image);
+    if view.image_resize.is_none() && !handle_visible(view, geometry, target) {
         return;
     }
+    let clipped = geometry
+        .clip
+        .map(|clip| painter.with_clip_rect(view.xf().rect(clip)));
+    let painter = clipped.as_ref().unwrap_or(painter);
     let stroke = Stroke::new(2.0, view.accent);
-    painter.rect_stroke(view.xf().rect(image), 0.0, stroke, StrokeKind::Outside);
-    if !view.canvas_rect.contains_rect(target) {
+    if geometry.rotation == 0.0 {
+        painter.rect_stroke(view.xf().rect(image), 0.0, stroke, StrokeKind::Outside);
+    } else {
+        let min = image.min;
+        let max = image.max();
+        let points = [min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)].map(|point| {
+            view.xf()
+                .pos(rotate_around(point, geometry.pivot, geometry.rotation))
+        });
+        painter.add(egui::Shape::closed_line(points.to_vec(), stroke));
+    }
+    if !handle_visible(view, geometry, target) {
         return;
     }
     let corner = target.center();

@@ -106,9 +106,14 @@ fn zone_title_color(
 pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: Rect, dark: bool) {
     painter.rect_filled(rect, 4, sheet_background(sheet, dark));
     let rect = rect.shrink(5.0);
-    let zoom = (rect.width() / layout.bounds.size.x.max(1.0))
-        .min(rect.height() / layout.bounds.size.y.max(1.0));
-    let center = layout.bounds.center();
+    let scene_bounds = build_scene(sheet, layout).bounds();
+    let bounds = match scene_bounds {
+        Some(bounds) if layout.order.is_empty() => bounds,
+        Some(bounds) => bounds.union(&layout.bounds),
+        None => layout.bounds,
+    };
+    let zoom = (rect.width() / bounds.size.x.max(1.0)).min(rect.height() / bounds.size.y.max(1.0));
+    let center = bounds.center();
     let xf = Xf {
         origin: rect.center() - vec2(center.x, center.y) * zoom,
         zoom,
@@ -496,7 +501,16 @@ pub fn paint_map(
         let show =
             t.hidden_children > 0 || opts.hovered == Some(*id) || opts.selection.contains(id);
         if show {
-            paint_badge(painter, t, xf, opts.accent, bg);
+            let clipped =
+                topic_clip_rect(sheet, *id).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+            paint_badge(
+                clipped.as_ref().unwrap_or(painter),
+                sheet,
+                t,
+                xf,
+                opts.accent,
+                bg,
+            );
         }
     }
 }
@@ -1234,9 +1248,28 @@ fn paint_canvas_object(
     }
 }
 
-fn paint_badge(painter: &Painter, t: &TopicLayout, xf: Xf, accent: Color32, bg: Color32) {
+pub(crate) fn topic_badge_center(sheet: &Sheet, t: &TopicLayout) -> Vec2 {
+    let rotation = sheet
+        .topic(t.id)
+        .and_then(|topic| topic.card)
+        .map_or(0.0, |card| card.rotation);
+    if rotation == 0.0 {
+        t.badge_center()
+    } else {
+        rotate_around(t.badge_center(), t.rect.center(), rotation)
+    }
+}
+
+fn paint_badge(
+    painter: &Painter,
+    sheet: &Sheet,
+    t: &TopicLayout,
+    xf: Xf,
+    accent: Color32,
+    bg: Color32,
+) {
     let z = xf.zoom.max(0.5);
-    let c = xf.pos(t.badge_center());
+    let c = xf.pos(topic_badge_center(sheet, t));
     let line = color32(t.style.line_color);
     if t.hidden_children > 0 {
         let text = if t.hidden_children > 99 {
@@ -1325,6 +1358,43 @@ fn paint_image(painter: &Painter, sheet: &Sheet, reference: &str, rect: Rect, di
         );
     }
     true
+}
+
+fn rotate_topic_shape(shape: &mut Shape, pivot: Pos2, angle: f32) {
+    let rotation = egui::emath::Rot2::from_angle(angle);
+    let rotate = |point: &mut Pos2| *point = pivot + rotation * (*point - pivot);
+    match shape {
+        Shape::Noop => {}
+        Shape::Vec(shapes) => {
+            for shape in shapes {
+                rotate_topic_shape(shape, pivot, angle);
+            }
+        }
+        Shape::Circle(circle) => rotate(&mut circle.center),
+        Shape::Ellipse(ellipse) => {
+            rotate(&mut ellipse.center);
+            ellipse.angle += angle;
+        }
+        Shape::LineSegment { points, .. } => points.iter_mut().for_each(rotate),
+        Shape::Path(path) => path.points.iter_mut().for_each(rotate),
+        Shape::Band(band) => {
+            *band = band.clone().with_angle_and_pivot(band.angle + angle, pivot);
+        }
+        Shape::Rect(rect) => {
+            let center = rect.rect.center();
+            let rotated = pivot + rotation * (center - pivot);
+            rect.rect = rect.rect.translate(rotated - center);
+            rect.angle += angle;
+        }
+        Shape::Text(text) => {
+            rotate(&mut text.pos);
+            text.angle += angle;
+        }
+        Shape::Mesh(mesh) => Arc::make_mut(mesh).rotate(rotation, pivot),
+        Shape::QuadraticBezier(curve) => curve.points.iter_mut().for_each(rotate),
+        Shape::CubicBezier(curve) => curve.points.iter_mut().for_each(rotate),
+        Shape::Callback(_) => unreachable!("topic painters cannot emit GPU callbacks"),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1453,6 +1523,12 @@ fn paint_topic(
         }
     }
 
+    let rotation = card.map_or(0.0, |card| card.rotation);
+    let content_start = (rotation != 0.0).then(|| {
+        painter
+            .ctx()
+            .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx())
+    });
     let text_color = if let Some(card_fill) = card_fill {
         let explicit = topic.and_then(|topic| topic.style.text_color);
         let color = explicit.map(color32).unwrap_or_else(|| {
@@ -1465,11 +1541,22 @@ fn paint_topic(
     };
     // Visible fallback for legacy/malformed images. Successful textures replace it.
     if let Some(ir) = t.image_rect {
+        let visible = if rotation == 0.0 {
+            ir
+        } else {
+            rotated_bounds(
+                thinoda_core::Rect::from_center_size(
+                    rotate_around(ir.center(), t.rect.center(), rotation),
+                    ir.size,
+                ),
+                rotation,
+            )
+        };
         let ir = xf.rect(ir);
         let rendered = topic
             .and_then(|t| t.image.as_deref())
             .is_some_and(|reference| {
-                !painter.clip_rect().intersects(ir)
+                !painter.clip_rect().intersects(xf.rect(visible))
                     || paint_image(painter, sheet, reference, ir, dim)
             });
         if !rendered {
@@ -1628,6 +1715,19 @@ fn paint_topic(
             FontId::proportional((st.font_size * 0.72).max(9.0) * z),
             a(fg),
         );
+    }
+
+    if let Some(start) = content_start {
+        let pivot = xf.pos(t.rect.center());
+        let angle = rotation.to_radians();
+        painter.ctx().graphics_mut(|graphics| {
+            let list = graphics.entry(painter.layer_id());
+            for index in start.0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                    rotate_topic_shape(&mut clipped.shape, pivot, angle);
+                });
+            }
+        });
     }
 }
 
@@ -2266,6 +2366,350 @@ mod tests {
         let explicit = Color::rgb(170, 35, 95);
         sheet.topic_mut(card).unwrap().style.text_color = Some(explicit);
         assert_eq!(label_color(&sheet), color32(explicit));
+    }
+
+    #[test]
+    fn thumbnails_fit_rotated_cards_and_object_only_boards() {
+        let thumbnail = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 80.0));
+        let fill = Color::rgb(190, 80, 120);
+        for objects_only in [false, true] {
+            let mut sheet = Sheet::new("Board", "");
+            sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+            if objects_only {
+                let mut shape = CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    thinoda_core::Rect::from_center_size(
+                        Vec2::new(2_000.0, 3_000.0),
+                        Vec2::new(80.0, 40.0),
+                    ),
+                );
+                shape.style.fill = Some(fill);
+                sheet.add_canvas_object(shape).unwrap();
+            } else {
+                let mut card = thinoda_core::Card::new(CardKind::Sticky, Vec2::new(300.0, 100.0));
+                card.rotation = 90.0;
+                card.color = Some(fill);
+                sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+            }
+            let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(thumbnail),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_thumbnail(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &sheet,
+                        &layout,
+                        thumbnail,
+                        false,
+                    );
+                },
+            );
+            let path = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Path(path) if path.fill == color32(fill) => Some(path),
+                    _ => None,
+                })
+                .expect("thumbnail should paint its board content");
+            let available = thumbnail.shrink(5.0).expand(0.1);
+            assert!(path.points.iter().all(|point| available.contains(*point)));
+            let bounds = path
+                .points
+                .iter()
+                .copied()
+                .fold(Rect::NOTHING, |bounds, point| {
+                    bounds.union(Rect::from_min_max(point, point))
+                });
+            assert!(
+                bounds.height() > 25.0,
+                "board content should fill the preview"
+            );
+            output.textures_delta.clear();
+        }
+    }
+
+    fn decorated_image_card() -> (Sheet, TopicId) {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(160, 80)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let id = sheet
+            .add_card(
+                "Rotated title",
+                Vec2::ZERO,
+                thinoda_core::Card::new(CardKind::Image, Vec2::new(340.0, 260.0)),
+            )
+            .unwrap();
+        thinoda_core::images::set_image(
+            &mut sheet,
+            id,
+            Some((
+                thinoda_core::resources::Resource::new("test.png", "image/png", bytes.into_inner())
+                    .unwrap(),
+                Vec2::new(160.0, 80.0),
+            )),
+        )
+        .unwrap();
+        let topic = sheet.topic_mut(id).unwrap();
+        topic.todo = Some(false);
+        topic.hyperlink = Some("https://example.com".into());
+        topic.markers.push("priority-1".into());
+        topic.labels.push("Tag".into());
+        (sheet, id)
+    }
+
+    #[test]
+    fn rotated_card_text_images_and_annotations_share_the_card_pivot() {
+        fn text<'a>(
+            shapes: &'a [egui::epaint::ClippedShape],
+            value: &str,
+        ) -> &'a egui::epaint::TextShape {
+            shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) if text.galley.job.text == value => Some(text),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing card text {value}"))
+        }
+
+        fn image_mesh(shapes: &[egui::epaint::ClippedShape]) -> &egui::epaint::Mesh {
+            shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Mesh(mesh) => Some(mesh.as_ref()),
+                    _ => None,
+                })
+                .expect("missing card image mesh")
+        }
+
+        let (mut sheet, id) = decorated_image_card();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let topic = &layout.topics[&id];
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1200.0));
+        for zoom in [0.5, 1.0, 2.0] {
+            let xf = Xf {
+                origin: pos2(700.0, 500.0),
+                zoom,
+            };
+            let mut paint = |angle| {
+                sheet.topic_mut(id).unwrap().card.as_mut().unwrap().rotation = angle;
+                let mut output = ctx.run_pass(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        paint_topic(
+                            &painter.with_clip_rect(screen),
+                            &sheet,
+                            topic,
+                            sheet.topic(id),
+                            xf,
+                            sheet_background(&sheet, false),
+                            false,
+                            false,
+                            false,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                output.shapes
+            };
+            let unrotated = paint(0.0);
+            let pivot = xf.pos(topic.rect.center());
+            for angle in [45.0_f32, 90.0, -90.0] {
+                let rotated = paint(angle);
+                assert_eq!(unrotated.len(), rotated.len());
+                assert!(
+                    unrotated
+                        .iter()
+                        .zip(&rotated)
+                        .all(|(before, after)| before.clip_rect == after.clip_rect)
+                );
+                let rotation = egui::emath::Rot2::from_angle(angle.to_radians());
+                for value in ["Rotated title", "Tag", "1"] {
+                    let before = text(&unrotated, value);
+                    let after = text(&rotated, value);
+                    let expected = pivot + rotation * (before.pos - pivot);
+                    assert!(
+                        after.pos.distance(expected) < 0.1,
+                        "{value} at {angle} degrees and {zoom} zoom"
+                    );
+                    assert!((after.angle - angle.to_radians()).abs() < 0.0001);
+                }
+                let before = image_mesh(&unrotated);
+                let after = image_mesh(&rotated);
+                assert_eq!(before.texture_id, after.texture_id);
+                assert_eq!(before.indices, after.indices);
+                for (before, after) in before.vertices.iter().zip(&after.vertices) {
+                    let expected = pivot + rotation * (before.pos - pivot);
+                    assert!(after.pos.distance(expected) < 0.1);
+                    assert_eq!(before.uv, after.uv);
+                }
+
+                let check = xf.rect(topic.todo_rect.unwrap()).shrink(zoom);
+                let index = unrotated
+                    .iter()
+                    .position(
+                        |shape| matches!(&shape.shape, Shape::Rect(rect) if rect.rect == check),
+                    )
+                    .expect("missing to-do checkbox");
+                let Shape::Rect(after) = &rotated[index].shape else {
+                    panic!("checkbox shape changed kind");
+                };
+                let expected = pivot + rotation * (check.center() - pivot);
+                assert!(after.rect.center().distance(expected) < 0.1);
+                assert!((after.angle - angle.to_radians()).abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn rotated_card_image_culling_uses_the_rotated_image_bounds() {
+        let (mut sheet, id) = decorated_image_card();
+        let mut layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let topic = layout.topics.get_mut(&id).unwrap();
+        let center = topic.rect.center();
+        topic.image_rect = Some(thinoda_core::Rect::from_center_size(
+            center + Vec2::new(-100.0, 0.0),
+            Vec2::new(20.0, 20.0),
+        ));
+        let xf = Xf {
+            origin: pos2(500.0, 500.0),
+            zoom: 1.0,
+        };
+        let rotated_center = rotate_around(topic.image_rect.unwrap().center(), center, 90.0);
+        let clip = Rect::from_center_size(xf.pos(rotated_center), vec2(30.0, 30.0));
+        assert!(!clip.intersects(xf.rect(topic.image_rect.unwrap())));
+        let ctx = egui::Context::default();
+        let mut paint = |angle| {
+            sheet.topic_mut(id).unwrap().card.as_mut().unwrap().rotation = angle;
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_topic(
+                        &ctx.layer_painter(egui::LayerId::background())
+                            .with_clip_rect(clip),
+                        &sheet,
+                        topic,
+                        sheet.topic(id),
+                        xf,
+                        sheet_background(&sheet, false),
+                        false,
+                        false,
+                        false,
+                    );
+                },
+            );
+            let painted = output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, Shape::Mesh(_)));
+            output.textures_delta.clear();
+            painted
+        };
+        assert!(!paint(0.0));
+        assert!(paint(90.0));
+    }
+
+    #[test]
+    fn rotated_card_text_is_painted_when_only_its_rotated_position_is_visible() {
+        let (mut sheet, id) = decorated_image_card();
+        sheet.topic_mut(id).unwrap().card.as_mut().unwrap().rotation = 90.0;
+        let mut layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let topic = layout.topics.get_mut(&id).unwrap();
+        topic.title_rect = thinoda_core::Rect::from_center_size(
+            topic.rect.center() + Vec2::new(-100.0, 0.0),
+            Vec2::new(100.0, 20.0),
+        );
+        let xf = Xf {
+            origin: pos2(500.0, 500.0),
+            zoom: 1.0,
+        };
+        let rotated_center = rotate_around(topic.title_rect.center(), topic.rect.center(), 90.0);
+        let clip = Rect::from_center_size(xf.pos(rotated_center), vec2(80.0, 40.0));
+        assert!(!clip.intersects(xf.rect(topic.title_rect)));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_topic(
+                    &ctx.layer_painter(egui::LayerId::background())
+                        .with_clip_rect(clip),
+                    &sheet,
+                    topic,
+                    sheet.topic(id),
+                    xf,
+                    sheet_background(&sheet, false),
+                    false,
+                    false,
+                    false,
+                );
+            },
+        );
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Text(text)
+                if text.galley.job.text == "Rotated title"
+                    && text.visual_bounding_rect().intersects(clip))
+        }));
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn rotated_card_contents_keep_the_screen_space_frame_clip() {
+        let (mut sheet, id) = decorated_image_card();
+        sheet.topic_mut(id).unwrap().card.as_mut().unwrap().rotation = 45.0;
+        let frame = thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(100.0, 100.0));
+        sheet.create_zone("Clip", vec![id], frame).unwrap();
+        sheet.zones[0].clip = true;
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let xf = Xf {
+            origin: pos2(300.0, 250.0),
+            zoom: 1.5,
+        };
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_pass(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                paint_map(
+                    &ctx.layer_painter(egui::LayerId::background())
+                        .with_clip_rect(screen),
+                    &sheet,
+                    &layout,
+                    xf,
+                    &PaintOptions::default(),
+                );
+            },
+        );
+        let title = output
+            .shapes
+            .iter()
+            .find(|shape| {
+                matches!(&shape.shape, Shape::Text(text) if text.galley.job.text == "Rotated title")
+            })
+            .expect("missing rotated card title");
+        assert_eq!(title.clip_rect, xf.rect(frame).intersect(screen));
+        output.textures_delta.clear();
     }
 
     #[test]

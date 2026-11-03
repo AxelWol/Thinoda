@@ -505,13 +505,13 @@ semantics and require native v6.
 - Editable PowerPoint cards preserve rotation for their shapes, text,
   annotations, pictures and paths. Shape labels rotate about their parent
   shape's center in the canvas and SVG-backed and editable PowerPoint exports.
-  The shape-label editor stays upright at the rotated label position.
+  Canvas card contents share their card's rotation, including image and
+  annotation rendering. Shape-label and card-title editors stay upright at
+  their rotated positions for usable text input.
 - XMind titles a Hidden root with the sheet title; imports run board
   validation and reject malformed or oversized data without panicking.
-- Known gaps: ink pressure is ignored; rotated card titles, images and
-  annotations remain upright on the interactive canvas even though SVG and
-  editable PowerPoint rotate them; the XMind central topic keeps the anchor's
-  non-title fields.
+- Known gaps: ink pressure is ignored, and the XMind central topic keeps the
+  anchor's non-title fields.
 
 ## 6. Phased plan
 
@@ -688,11 +688,28 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   respects frame clips. Native geometry tests cover multiple angles and zoom
   levels, both slide ratios, keyboard editing and undo. Ten regenerated Office
   packages pass Microsoft Open XML SDK validation, including a rotated board.
+- Canvas card titles, images, to-dos, markers and annotations now rotate about
+  the card center, with screen-space frame clips retained. Title editing stays
+  upright at the rotated title position; links and checkboxes use local-space
+  hit tests, while image resize handles track the rotated corner and preserve
+  cancellation and undo. Thumbnails fit rotated cards and object-only boards.
+  Native headless regressions cover several angles and zoom levels, text and
+  image visibility, touch cancellation, clipping and keyboard/IME input.
+- Branches, relationships and free connectors use rotated card outlines for
+  their anchors, including when a free connector targets a collapsed
+  descendant. Relationship previews use the same geometry as the committed
+  layout; control offsets stay in sheet coordinates. Unrotated layouts retain
+  their previous anchors. A regression checks those endpoints in SVG and
+  editable PowerPoint geometry at both supported aspect ratios; the rotated
+  Office schema fixture now includes a branch, relationship and free connector.
+- Rotation does not reflow a card's children, so rotated cards can overlap
+  nearby topics. The temporary subtree-drag connector is a schematic
+  center-to-center preview, not a promise of the final border anchors.
 - The label-culling bounds are deliberately generous estimates rather than
-  font-specific measurements. Canvas text wrapping still differs from export,
-  and card titles, images, annotations, title editing and image-resize handles
-  remain axis-aligned on the interactive canvas. Correcting card parity must
-  cover rendering, clipping, hit testing, resize and editing together.
+  font-specific measurements, and canvas text wrapping still differs from
+  export. The upright title editor is an interaction overlay and can extend
+  beyond a visually clipped frame; frame clipping is not secure redaction.
+  Real touch, screen-reader and cross-platform visual acceptance remain open.
 - The earlier rotated-board fixture opened in Windows PowerPoint without a
   repair dialog, but its captured slide surface was blank. Neither schema
   validation nor that observation establishes visual fidelity or interactive

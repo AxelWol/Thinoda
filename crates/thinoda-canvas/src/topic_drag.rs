@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use egui::{Color32, Painter, Stroke};
 use thinoda_core::{
-    BranchSide, EditError, Layout, Sheet, Structure, TopicId, Vec2, layout::ConnectorKind,
-    theme::level_of,
+    BranchSide, EditError, Layout, Scene, SceneHit, Sheet, Structure, TopicId, Vec2,
+    board::rotated_corners, layout::ConnectorKind, theme::level_of,
 };
 
 use crate::{MapView, PaintOptions, Xf, paint_map, render::connector_path};
@@ -57,6 +57,7 @@ pub(crate) fn members(sheet: &Sheet, ids: &[TopicId]) -> BTreeSet<TopicId> {
 pub(crate) fn target(
     sheet: &Sheet,
     layout: &Layout,
+    scene: &Scene,
     members: &BTreeSet<TopicId>,
     at: Vec2,
 ) -> Result<Option<DropTarget>, EditError> {
@@ -81,7 +82,7 @@ pub(crate) fn target(
             return Ok(None);
         }
     }
-    let Some(topic) = layout.hit_test(at) else {
+    let Some(SceneHit::Topic(topic)) = scene.hit_test_tolerance(at, 0.0) else {
         if sheet.theme.flexible_floating_topics {
             return Err(EditError::Invalid(
                 "disable Flexible Floating Topics to detach a topic into blank space".into(),
@@ -605,10 +606,12 @@ pub(crate) fn paint_drag_guides(painter: &Painter, xf: Xf, color: Color32, guide
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint(
     painter: &Painter,
     sheet: &Sheet,
     layout: &Layout,
+    scene: &Scene,
     view: &MapView,
     members: &BTreeSet<TopicId>,
     delta: Vec2,
@@ -632,7 +635,7 @@ pub(crate) fn paint(
             ..Default::default()
         },
     );
-    let target = target(sheet, layout, members, current);
+    let target = target(sheet, layout, scene, members, current);
     if matches!(target, Ok(None)) {
         if view.show_alignment_guides {
             let guides = drag_guides(layout, members, delta, 4.0 / xf.zoom);
@@ -640,7 +643,7 @@ pub(crate) fn paint(
         }
         return;
     }
-    let Some(topic) = layout.hit_test(current) else {
+    let Some(SceneHit::Topic(topic)) = scene.hit_test_tolerance(current, 0.0) else {
         return;
     };
     let rect = &layout.topics[&topic].rect;
@@ -649,12 +652,31 @@ pub(crate) fn paint(
     } else {
         Color32::from_rgb(220, 60, 60)
     };
-    painter.rect_stroke(
-        xf.rect(*rect).expand(4.0),
-        8.0,
-        Stroke::new(2.5, color),
-        egui::StrokeKind::Outside,
-    );
+    let rotation = sheet
+        .topic(topic)
+        .and_then(|topic| topic.card)
+        .map_or(0.0, |card| card.rotation);
+    {
+        let clipped = thinoda_core::scene::topic_clip_rect(sheet, topic)
+            .map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
+        if rotation == 0.0 {
+            painter.rect_stroke(
+                xf.rect(*rect).expand(4.0),
+                8.0,
+                Stroke::new(2.5, color),
+                egui::StrokeKind::Outside,
+            );
+        } else {
+            painter.add(egui::Shape::closed_line(
+                rotated_corners(rect.expand(4.0 / xf.zoom), rotation)
+                    .into_iter()
+                    .map(|point| xf.pos(point))
+                    .collect(),
+                Stroke::new(2.5, color),
+            ));
+        }
+    }
     if let Ok(Some(target)) = target {
         if let Some(slot) = target.slot {
             painter.line_segment(slot.map(|p| xf.pos(p)), Stroke::new(3.0, view.accent));

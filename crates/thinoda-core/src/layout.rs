@@ -5,6 +5,7 @@
 //! different structure than its parent). The result is toolkit independent and used by the
 //! canvas renderer, hit testing, keyboard navigation and SVG/PNG export.
 
+use crate::board::rotate_around;
 use crate::geometry::{Rect, Vec2};
 use crate::model::{
     BoundaryId, LineShape, RelationshipId, Sheet, Structure, SummaryId, TopicId, TopicShape,
@@ -589,7 +590,9 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
         let (Some(a), Some(b)) = (layout.rect(rel.from), layout.rect(rel.to)) else {
             continue;
         };
-        layout.relationships.push(relationship_curve(rel, a, b));
+        layout
+            .relationships
+            .push(relationship_curve_for_sheet(sheet, rel, a, b));
     }
 
     let mut bounds: Option<Rect> = None;
@@ -615,8 +618,48 @@ pub fn layout_sheet(sheet: &Sheet, measure: &dyn TextMeasure, dark: bool) -> Lay
     layout
 }
 
-/// Shared curve geometry for layout, export and non-destructive canvas previews.
+/// Curve geometry for unrotated endpoint rectangles.
+///
+/// Call [`relationship_curve_for_sheet`] when the endpoints may be cards.
 pub fn relationship_curve(rel: &crate::Relationship, a: Rect, b: Rect) -> RelationshipLayout {
+    relationship_curve_with_rotations(rel, a, 0.0, b, 0.0)
+}
+
+/// Shared curve geometry for layout and non-destructive relationship previews.
+///
+/// Rotations are read from the relationship's endpoint topics in `sheet`.
+/// Either rectangle may be zero-sized, for example while previewing an endpoint
+/// at a free pointer position. Control-point offsets remain in sheet axes.
+pub fn relationship_curve_for_sheet(
+    sheet: &Sheet,
+    rel: &crate::Relationship,
+    a: Rect,
+    b: Rect,
+) -> RelationshipLayout {
+    relationship_curve_with_rotations(
+        rel,
+        a,
+        topic_rotation(sheet, rel.from),
+        b,
+        topic_rotation(sheet, rel.to),
+    )
+}
+
+fn topic_rotation(sheet: &Sheet, id: TopicId) -> f32 {
+    sheet
+        .topic(id)
+        .filter(|topic| topic.parent.is_none())
+        .and_then(|topic| topic.card.as_ref())
+        .map_or(0.0, |card| card.rotation)
+}
+
+fn relationship_curve_with_rotations(
+    rel: &crate::Relationship,
+    a: Rect,
+    a_rotation: f32,
+    b: Rect,
+    b_rotation: f32,
+) -> RelationshipLayout {
     let ca = a.center();
     let cb = b.center();
     let d = cb - ca;
@@ -626,8 +669,8 @@ pub fn relationship_curve(rel: &crate::Relationship, a: Rect, b: Rect) -> Relati
         [ca + d * 0.25 + perp, ca + d * 0.75 + perp],
         |[from, to]| [ca + from, cb + to],
     );
-    let start = clip_to_rect(a, c1);
-    let end = clip_to_rect(b, c2);
+    let start = clip_to_rotated_rect(a, a_rotation, c1);
+    let end = clip_to_rotated_rect(b, b_rotation, c2);
     let mid = cubic(start, c1, c2, end, 0.5);
     RelationshipLayout {
         id: rel.id,
@@ -659,6 +702,83 @@ pub fn clip_to_rect(r: Rect, toward: Vec2) -> Vec2 {
         f32::INFINITY
     };
     c + d * tx.min(ty)
+}
+
+/// Border point of a rectangle rotated around its centre, in the direction of
+/// `toward`. Used for both map relationships and free board connectors.
+pub(crate) fn clip_to_rotated_rect(r: Rect, rotation: f32, toward: Vec2) -> Vec2 {
+    let center = r.center();
+    if r.size.x <= 0.0 && r.size.y <= 0.0 {
+        return center;
+    }
+    if rotation == 0.0 {
+        return clip_to_rect(r, toward);
+    }
+    // Work in center-relative coordinates and retain every nonzero component:
+    // a nearly axis-aligned ray can still meet the short side of a long card.
+    // Keep the legacy center fallback when the ray has no meaningful direction.
+    let local = rotate_around(toward - center, Vec2::ZERO, -rotation);
+    if local.length() < 1e-3 {
+        return center;
+    }
+    let half = r.size * 0.5;
+    let tx = if local.x != 0.0 {
+        half.x / local.x.abs()
+    } else {
+        f32::INFINITY
+    };
+    let ty = if local.y != 0.0 {
+        half.y / local.y.abs()
+    } else {
+        f32::INFINITY
+    };
+    center + rotate_around(local * tx.min(ty), Vec2::ZERO, rotation)
+}
+
+/// Intersect the rotated rectangle with the axis-aligned line through `anchor`,
+/// taking its exit in `dir`. Preserve the perpendicular offset when possible;
+/// a tree indent outside the rotated outline is clamped to its extreme.
+fn rotated_axis_anchor(r: Rect, rotation: f32, anchor: Vec2, dir: Dir) -> Vec2 {
+    if rotation == 0.0 {
+        return anchor;
+    }
+    let center = r.center();
+    let half = r.size * 0.5;
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let (offset, direction) = match dir {
+        Dir::Right | Dir::Left => {
+            let extent = half.x * sin.abs() + half.y * cos.abs();
+            let y = (anchor.y - center.y).clamp(-extent, extent);
+            (
+                Vec2::new(0.0, y),
+                Vec2::new(if dir == Dir::Right { 1.0 } else { -1.0 }, 0.0),
+            )
+        }
+        Dir::Down | Dir::Up => {
+            let extent = half.x * cos.abs() + half.y * sin.abs();
+            let x = (anchor.x - center.x).clamp(-extent, extent);
+            (
+                Vec2::new(x, 0.0),
+                Vec2::new(0.0, if dir == Dir::Down { 1.0 } else { -1.0 }),
+            )
+        }
+    };
+    let local = rotate_around(offset, Vec2::ZERO, -rotation);
+    let local_direction = rotate_around(direction, Vec2::ZERO, -rotation);
+    // The clamped sheet-axis line intersects the rotated rect. In local space,
+    // each pair of sides gives an exit parameter; the nearer exit is its edge.
+    let exit = |position: f32, delta: f32, half: f32| {
+        if delta > 0.0 {
+            (half - position) / delta
+        } else if delta < 0.0 {
+            (-half - position) / delta
+        } else {
+            f32::INFINITY
+        }
+    };
+    let distance =
+        exit(local.x, local_direction.x, half.x).min(exit(local.y, local_direction.y, half.y));
+    center + offset + direction * distance
 }
 
 /// Evaluates a cubic Bézier curve.
@@ -1090,7 +1210,7 @@ impl Engine<'_> {
         let r = Rect::from_center_size(center, *size);
         let underline = style.shape == TopicShape::Underline;
         let toward_right = (dir == Dir::Right) == outgoing;
-        match dir {
+        let anchor = match dir {
             Dir::Right | Dir::Left => {
                 let x = if toward_right { r.max().x } else { r.min.x };
                 let y = if underline { r.max().y } else { r.center().y };
@@ -1110,7 +1230,20 @@ impl Engine<'_> {
                     r.bottom_center()
                 }
             }
-        }
+        };
+        let outward = match dir {
+            Dir::Right | Dir::Left if toward_right => Dir::Right,
+            Dir::Right | Dir::Left => Dir::Left,
+            Dir::Down if outgoing => Dir::Down,
+            Dir::Down => Dir::Up,
+            Dir::Up if outgoing => Dir::Up,
+            Dir::Up => Dir::Down,
+        };
+        self.rotated_branch_anchor(id, r, anchor, outward)
+    }
+
+    fn rotated_branch_anchor(&self, id: TopicId, r: Rect, anchor: Vec2, outward: Dir) -> Vec2 {
+        rotated_axis_anchor(r, topic_rotation(self.sheet, id), anchor, outward)
     }
 
     fn connector(
@@ -1206,7 +1339,12 @@ impl Engine<'_> {
             } else {
                 -half.x + indent / 2.0
             };
-            let start = Vec2::new(sx, half.y);
+            let start = self.rotated_branch_anchor(
+                id,
+                Rect::from_center_size(Vec2::ZERO, half * 2.0),
+                Vec2::new(sx, half.y),
+                Dir::Down,
+            );
             let end = self.attach(*k, off, dir, false);
             let c = self.connector(id, *k, Some(ConnectorKind::Tree), true, start, end);
             block.merge(b.translate(off));
@@ -1308,7 +1446,12 @@ impl Engine<'_> {
             cursor += col_w + gm * 0.5;
             far = cursor;
         }
-        let start = Vec2::new(s * half.x, 0.0);
+        let start = self.rotated_branch_anchor(
+            id,
+            Rect::from_center_size(Vec2::ZERO, half * 2.0),
+            Vec2::new(s * half.x, 0.0),
+            dir,
+        );
         let end = Vec2::new(s * far, 0.0);
         let c = self.connector(id, id, Some(ConnectorKind::Straight), false, start, end);
         block.connectors.insert(0, c);

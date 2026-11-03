@@ -24,9 +24,11 @@ screen-reader acceptance.
 
 The remaining R14 gates are realistic ink performance, integrated
 accessibility and cross-platform/physical-device acceptance, and safe
-large-board browser recovery. Rotated card content still needs canvas rendering,
-editing and resize parity with exports. First-start contention is reduced in a
-measured desktop comparison; small desktop comparisons cover controlled warm
+large-board browser recovery. Rotated card contents and interaction controls
+now follow their card on the canvas, with an upright title editor and
+rotation-aware connector anchors. Rotating a card does not reflow its children.
+First-start contention is reduced in a measured desktop comparison; small
+desktop comparisons cover controlled warm
 reloads and the subsequent integrity guard, but actual iPad acceptance remains open.
 Integrated cloud providers remain **disabled by default** and paused until
 publisher registrations are complete. See the R14 status and
@@ -3005,7 +3007,8 @@ system-clipboard ownership, browser permissions or sanitization.
 
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
-and keeps its editor usable, but rotated card content remains upright there.
+and rotates card contents and image-resize interactions; text editors remain
+upright at their rotated positions for usability.
 The rotated Office fixture passes schema validation; actual rotated-slide
 appearance and editing in Office remain open. See the F6 critique in FREEFORM.
 

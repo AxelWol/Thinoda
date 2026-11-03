@@ -9,9 +9,10 @@ use egui::{
 use thinoda_core::{
     ApproxMeasure, BoundaryId, CanvasObjectId, Document, Layout, RelationshipId, ShapeKind, Sheet,
     SummaryId, TopicId,
+    board::{rotate_around, rotated_bounds},
     clipboard::{BoardClipboardPayload, ClipboardPayload},
     geometry::Vec2,
-    layout::{Dir, Icon, cubic as bezier},
+    layout::{Dir, Icon, TopicLayout, cubic as bezier},
     layout_sheet,
     navigation::Direction,
     scene::{Scene, SceneHit, SceneId, build_scene, topic_clip_rect},
@@ -26,7 +27,9 @@ use crate::{
         DEFAULT_MINIMAP_SIZE, MinimapCamera, MinimapLabels, MinimapScene, MinimapState,
         bottom_right_rect, show_minimap,
     },
-    render::{PaintOptions, Xf, brace_path, color32, paint_map, sheet_background},
+    render::{
+        PaintOptions, Xf, brace_path, color32, paint_map, sheet_background, topic_badge_center,
+    },
 };
 
 pub const MIN_ZOOM: f32 = 0.1;
@@ -1061,8 +1064,19 @@ impl MapView {
     }
 
     fn do_reveal(&mut self, sheet: &Sheet, layout: &Layout, id: TopicId) {
-        let Some(r) = layout.rect(id) else { return };
-        let mut r = self.xf().rect(r);
+        let Some(topic) = layout.topics.get(&id) else {
+            return;
+        };
+        let rotation = topic_rotation(sheet, topic);
+        let bounds = if rotation == 0.0 {
+            topic.rect
+        } else {
+            rotated_bounds(topic.rect, rotation)
+        };
+        let mut r = self.xf().rect(bounds);
+        if self.editing_topic() == Some(id) {
+            r = r.union(self.xf().rect(topic_editor_rect(sheet, topic)).expand(2.0));
+        }
         // Reserve the actual screen-space controls, including while editing hides
         // them. Never clamp a plus onto the topic's text at a viewport edge.
         for handle in topic_add_handles(self, sheet, layout, id) {
@@ -1180,6 +1194,33 @@ struct AddHandle {
     label: String,
 }
 
+fn topic_rotation(sheet: &Sheet, topic: &TopicLayout) -> f32 {
+    sheet
+        .topic(topic.id)
+        .and_then(|topic| topic.card)
+        .map_or(0.0, |card| card.rotation)
+}
+
+fn topic_editor_rect(sheet: &Sheet, topic: &TopicLayout) -> thinoda_core::Rect {
+    let rotation = topic_rotation(sheet, topic);
+    if rotation == 0.0 {
+        return topic.title_rect;
+    }
+    thinoda_core::Rect::from_center_size(
+        rotate_around(topic.title_rect.center(), topic.rect.center(), rotation),
+        topic.title_rect.size,
+    )
+}
+
+fn hit_badge(sheet: &Sheet, layout: &Layout, point: Vec2) -> Option<TopicId> {
+    layout.order.iter().rev().copied().find(|id| {
+        let topic = &layout.topics[id];
+        topic.hidden_children > 0
+            && topic_clip_rect(sheet, *id).is_none_or(|clip| clip.contains(point))
+            && (topic_badge_center(sheet, topic) - point).length() <= 10.0
+    })
+}
+
 impl AddHandle {
     fn rect(&self) -> Rect {
         Rect::from_center_size(self.center, vec2(28.0, 28.0))
@@ -1228,6 +1269,16 @@ fn topic_add_handles(
         Dir::Left => (r.left_center(), vec2(-1.0, 0.0)),
         Dir::Down => (r.center_bottom(), vec2(0.0, 1.0)),
         Dir::Up => (r.center_top(), vec2(0.0, -1.0)),
+    };
+    let rotation = topic_rotation(sheet, topic);
+    let (anchor, outward) = if rotation == 0.0 {
+        (anchor, outward)
+    } else {
+        let rotation = egui::emath::Rot2::from_angle(rotation.to_radians());
+        (
+            r.center() + rotation * (anchor - r.center()),
+            rotation * outward,
+        )
     };
     // Leave room for the existing collapsed-descendant badge, even when zoomed in.
     let mut handles = vec![AddHandle {
@@ -1614,6 +1665,7 @@ impl MapCanvas {
             doc,
             view,
             &mut layout,
+            &scene,
             &mut out.error,
             !space
                 && !touch_navigation
@@ -1788,11 +1840,17 @@ impl MapCanvas {
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
-            if let Some(b) = layout.hit_badge(sp) {
+            if let Some(b) = hit_badge(doc.sheet(), &layout, sp) {
                 view.select_only(b);
                 run(doc, view, Action::ToggleCollapse, &mut out);
             } else if let Some(t) = scene_topic_hit(&scene, sp) {
                 let tl = &layout.topics[&t];
+                let rotation = topic_rotation(doc.sheet(), tl);
+                let local = if rotation == 0.0 {
+                    sp
+                } else {
+                    rotate_around(sp, tl.rect.center(), -rotation)
+                };
                 if let Some(from) = view.relationship_from.take() {
                     match doc.edit_sheet("Add Relationship", |s| s.add_relationship(from, t)) {
                         Ok(r) => {
@@ -1800,7 +1858,7 @@ impl MapCanvas {
                         }
                         Err(e) => out.error = Some(e),
                     }
-                } else if tl.todo_rect.is_some_and(|r| r.expand(2.0).contains(sp)) {
+                } else if tl.todo_rect.is_some_and(|r| r.expand(2.0).contains(local)) {
                     let cur = doc.sheet().topic(t).and_then(|x| x.todo);
                     let next = !tl
                         .todo_progress
@@ -1810,7 +1868,7 @@ impl MapCanvas {
                         out.error = Some(e);
                     }
                 } else if let Some((Icon::Link, _)) =
-                    tl.icons.iter().find(|(_, r)| r.expand(2.0).contains(sp))
+                    tl.icons.iter().find(|(_, r)| r.expand(2.0).contains(local))
                 {
                     out.open_link = doc.sheet().topic(t).and_then(|x| x.hyperlink.clone());
                 } else {
@@ -1870,11 +1928,7 @@ impl MapCanvas {
             && let Some(p) = response.interact_pointer_pos()
         {
             let sp = view.xf().sheet(p);
-            let topic_hit = match scene.hit_test(sp) {
-                Some(SceneHit::Topic(id)) => Some(id),
-                Some(SceneHit::Object(_)) => None,
-                None => layout.hit_test(sp),
-            };
+            let topic_hit = scene_topic_hit(&scene, sp);
             if let Some(t) = topic_hit {
                 if doc.sheet().board_member_for_topic(t).is_some() {
                     board_input::select_hit(view, doc.sheet(), SceneHit::Topic(t), false);
@@ -1887,7 +1941,7 @@ impl MapCanvas {
                     view.begin_edit(doc.sheet(), t, true);
                 }
             } else if scene.hit_test(sp).is_none()
-                && layout.hit_badge(sp).is_none()
+                && hit_badge(doc.sheet(), &layout, sp).is_none()
                 && hit_object(doc.sheet(), &layout, sp, 6.0 / view.zoom).is_none()
                 && hit_zone(doc.sheet(), sp, 6.0 / view.zoom).is_none()
             {
@@ -2157,7 +2211,7 @@ impl MapCanvas {
         board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
         view.ink_controller.paint_preview(&painter, xf, view.accent);
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
-        crate::relationship_editing::paint_target(&painter, view, &layout);
+        crate::relationship_editing::paint_target(&painter, view, sheet, &layout);
         if !space && !matches!(view.drag, Drag::Topics { .. } | Drag::Zone { .. }) {
             for handle in add_handles(view, sheet, &layout) {
                 let hot = pointer.is_some_and(|p| handle.rect().contains(p));
@@ -2210,7 +2264,16 @@ impl MapCanvas {
                 ..
             } => {
                 let d = *current - *grab;
-                crate::topic_drag::paint(&painter, sheet, &layout, view, members, d, *current);
+                crate::topic_drag::paint(
+                    &painter,
+                    sheet,
+                    &layout,
+                    &paint_scene,
+                    view,
+                    members,
+                    d,
+                    *current,
+                );
             }
             Drag::Zone {
                 frame,
@@ -2277,7 +2340,7 @@ impl MapCanvas {
             let sheet = doc.sheet();
             let zone_hover = pointer.and_then(|point| {
                 let point = xf.sheet(point);
-                if layout.hit_test(point).is_some()
+                if scene.hit_test(point).is_some()
                     || hit_object(sheet, &layout, point, 6.0 / view.zoom).is_some()
                 {
                     return None;
@@ -2297,7 +2360,15 @@ impl MapCanvas {
                     ref members,
                     current,
                     ..
-                } if crate::topic_drag::target(doc.sheet(), &layout, members, current).is_err() => {
+                } if crate::topic_drag::target(
+                    doc.sheet(),
+                    &layout,
+                    &paint_scene,
+                    members,
+                    current,
+                )
+                .is_err() =>
+                {
                     egui::CursorIcon::NotAllowed
                 }
                 Drag::Topics { .. } => egui::CursorIcon::Grabbing,
@@ -2307,7 +2378,7 @@ impl MapCanvas {
                 _ if view.board_tool != BoardTool::Select => egui::CursorIcon::Crosshair,
                 _ if zone_hover == Some(true) => egui::CursorIcon::ResizeNwSe,
                 _ if zone_hover == Some(false) => egui::CursorIcon::Grab,
-                _ if image_handle => egui::CursorIcon::ResizeNwSe,
+                _ if image_handle => image_resize::cursor(view, doc.sheet(), &layout),
                 _ if hovered.is_some() || over_handle => egui::CursorIcon::PointingHand,
                 _ => egui::CursorIcon::Default,
             };
@@ -2511,7 +2582,7 @@ fn show_editor(
         return;
     };
     let xf = view.xf();
-    let r = xf.rect(tl.title_rect).expand(2.0);
+    let r = xf.rect(topic_editor_rect(doc.sheet(), tl)).expand(2.0);
     let style = &tl.style;
     let font = FontId::new(
         (style.font_size * view.zoom).max(4.0),
@@ -2627,6 +2698,7 @@ fn drop_topics(
     let target = match crate::topic_drag::target(
         doc.sheet(),
         layout,
+        &build_scene(doc.sheet(), layout),
         &crate::topic_drag::members(doc.sheet(), &ids),
         current,
     ) {

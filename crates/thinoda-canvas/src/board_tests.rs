@@ -11,6 +11,7 @@ struct State {
     view: MapView,
     errors: Vec<thinoda_core::EditError>,
     clipboard_requests: Vec<Action>,
+    open_links: Vec<String>,
 }
 
 fn board() -> Sheet {
@@ -40,6 +41,9 @@ fn harness_with_overlay(sheet: Sheet, overlay: Option<Rect>) -> Harness<'static,
                     state.errors.push(error);
                 }
                 state.clipboard_requests.extend(out.clipboard_requests);
+                if let Some(link) = out.open_link {
+                    state.open_links.push(link);
+                }
                 if let Some(rect) = overlay {
                     ui.interact(rect, Id::unique("test-overlay"), Sense::click_and_drag());
                 }
@@ -49,6 +53,7 @@ fn harness_with_overlay(sheet: Sheet, overlay: Option<Rect>) -> Harness<'static,
                 view,
                 errors: Vec::new(),
                 clipboard_requests: Vec::new(),
+                open_links: Vec::new(),
             },
         );
     harness.run_steps(3);
@@ -2656,6 +2661,296 @@ fn rotated_shape_label_editor_tracks_the_label_and_keeps_keyboard_editing() {
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
+fn rotated_image_card(angle: f32) -> (Sheet, TopicId) {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(160, 80)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let mut sheet = board();
+    let mut card = Card::new(CardKind::Image, Vec2::new(340.0, 260.0));
+    card.rotation = angle;
+    let id = sheet.add_card("Original", Vec2::ZERO, card).unwrap();
+    thinoda_core::images::set_image(
+        &mut sheet,
+        id,
+        Some((
+            thinoda_core::resources::Resource::new("test.png", "image/png", bytes.into_inner())
+                .unwrap(),
+            Vec2::new(160.0, 80.0),
+        )),
+    )
+    .unwrap();
+    let topic = sheet.topic_mut(id).unwrap();
+    topic.todo = Some(false);
+    topic.hyperlink = Some("https://example.com".into());
+    (sheet, id)
+}
+
+#[test]
+fn rotated_card_title_editor_tracks_the_title_and_keeps_undo() {
+    for angle in [45.0_f32, 90.0, 270.0] {
+        for zoom in [0.5, 1.0, 2.0] {
+            let (sheet, id) = rotated_image_card(angle);
+            let mut h = harness(sheet);
+            h.state_mut().view.set_zoom(zoom);
+            {
+                let state = h.state_mut();
+                state.view.select_only(id);
+                state.view.begin_edit(state.doc.sheet(), id, true);
+            }
+            h.run_steps(3);
+            let layout = {
+                let state = h.state_mut();
+                state.view.layout_for(&state.doc)
+            };
+            let topic = &layout.topics[&id];
+            let center = thinoda_core::board::rotate_around(
+                topic.title_rect.center(),
+                topic.rect.center(),
+                angle,
+            );
+            let expected = h
+                .state()
+                .view
+                .xf()
+                .rect(thinoda_core::Rect::from_center_size(
+                    center,
+                    topic.title_rect.size,
+                ))
+                .expand(2.0);
+            let editor = h.get_by_label("Topic title").rect();
+            assert!(
+                editor.min.distance(expected.min) < 1.0,
+                "editor {editor:?} should start at {expected:?} for {angle} degrees, {zoom} zoom"
+            );
+            h.get_by_label("Topic title").type_text("Updated");
+            h.run_steps(2);
+            h.key_press(Key::Enter);
+            h.run_steps(2);
+            assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "Updated");
+            assert!(h.state_mut().doc.undo());
+            assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "Original");
+            assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+        }
+    }
+}
+
+#[test]
+fn rotated_card_title_editor_keeps_ime_composition() {
+    let (sheet, id) = rotated_image_card(90.0);
+    let mut h = harness(sheet);
+    h.ctx
+        .set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    {
+        let state = h.state_mut();
+        state.view.select_only(id);
+        state.view.begin_edit(state.doc.sheet(), id, true);
+    }
+    h.run_steps(3);
+    h.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "nihon".into(),
+        active_range_chars: None,
+    }));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_topic(), Some(id));
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "Original");
+    h.input_mut().events.extend([
+        egui::Event::Ime(egui::ImeEvent::Commit("日本".into())),
+        egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().view.editing_topic(), Some(id));
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "日本");
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "Original");
+}
+
+#[test]
+fn rotated_card_todo_and_link_hit_their_visible_positions() {
+    for angle in [45.0_f32, 90.0, 270.0] {
+        let (sheet, id) = rotated_image_card(angle);
+        let mut h = harness(sheet);
+        let layout = {
+            let state = h.state_mut();
+            state.view.layout_for(&state.doc)
+        };
+        let topic = &layout.topics[&id];
+        let rotate = |point| thinoda_core::board::rotate_around(point, topic.rect.center(), angle);
+        let todo = point(&h, rotate(topic.todo_rect.unwrap().center()));
+        click(&mut h, todo, Modifiers::NONE);
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().todo, Some(true));
+        let link = topic
+            .icons
+            .iter()
+            .find_map(|(icon, rect)| (*icon == Icon::Link).then_some(rect.center()))
+            .expect("card link icon");
+        let link = point(&h, rotate(link));
+        click(&mut h, link, Modifiers::NONE);
+        assert_eq!(h.state().open_links, ["https://example.com"]);
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.sheet().topic(id).unwrap().todo, Some(false));
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn rotated_card_touch_cancel_does_not_activate_the_todo() {
+    let (sheet, id) = rotated_image_card(90.0);
+    let mut h = harness(sheet);
+    let layout = {
+        let state = h.state_mut();
+        state.view.layout_for(&state.doc)
+    };
+    let topic = &layout.topics[&id];
+    let todo = thinoda_core::board::rotate_around(
+        topic.todo_rect.unwrap().center(),
+        topic.rect.center(),
+        90.0,
+    );
+    let todo = point(&h, todo);
+    touch(&mut h, egui::TouchPhase::Start, todo);
+    touch(&mut h, egui::TouchPhase::Cancel, todo);
+    touch(&mut h, egui::TouchPhase::End, todo);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().todo, Some(false));
+    touch(&mut h, egui::TouchPhase::Start, todo);
+    touch(&mut h, egui::TouchPhase::End, todo);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().todo, Some(true));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().todo, Some(false));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rotated_card_double_click_does_not_edit_its_old_axis_aligned_footprint() {
+    let mut sheet = board();
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(300.0, 100.0));
+    card.rotation = 90.0;
+    let id = sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+    let mut h = harness(sheet);
+    let layout = {
+        let state = h.state_mut();
+        state.view.layout_for(&state.doc)
+    };
+    let rect = layout.topics[&id].rect;
+    let ghost = rect.center() + Vec2::new(120.0, 0.0);
+    assert!(rect.contains(ghost));
+    assert!(!thinoda_core::board::rotated_rect_contains(
+        rect, 90.0, ghost
+    ));
+    let ghost = point(&h, ghost);
+    click(&mut h, ghost, Modifiers::NONE);
+    click(&mut h, ghost, Modifiers::NONE);
+    assert_ne!(h.state().view.editing_topic(), Some(id));
+    assert_eq!(h.state().doc.sheet().topic(id).unwrap().title, "Card");
+}
+
+#[test]
+fn rotated_card_collapse_badge_moves_with_its_card() {
+    let mut sheet = board();
+    let mut card = Card::new(CardKind::Sticky, Vec2::new(220.0, 120.0));
+    card.rotation = 90.0;
+    let id = sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+    sheet.add_child(id, None, "Child");
+    sheet.set_collapsed(id, true).unwrap();
+    let mut h = harness(sheet);
+    let layout = {
+        let state = h.state_mut();
+        state.view.layout_for(&state.doc)
+    };
+    let topic = &layout.topics[&id];
+    let badge = thinoda_core::board::rotate_around(topic.badge_center(), topic.rect.center(), 90.0);
+    let badge = point(&h, badge);
+    click(&mut h, badge, Modifiers::NONE);
+    assert!(!h.state().doc.sheet().topic(id).unwrap().collapsed);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn rotated_card_add_child_handle_follows_its_anchor() {
+    let mut sheet = board();
+    let card = sheet
+        .add_card(
+            "Card",
+            Vec2::ZERO,
+            Card::new(CardKind::Sticky, Vec2::new(220.0, 120.0)),
+        )
+        .unwrap();
+    let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+    let mut view = MapView {
+        canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 900.0)),
+        ..Default::default()
+    };
+    for zoom in [0.5, 1.0, 2.0] {
+        view.set_zoom(zoom);
+        sheet
+            .topic_mut(card)
+            .unwrap()
+            .card
+            .as_mut()
+            .unwrap()
+            .rotation = 0.0;
+        let original = topic_add_handles(&view, &sheet, &layout, card);
+        assert_eq!(original.len(), 1);
+        let pivot = view.xf().pos(layout.topics[&card].rect.center());
+        for angle in [45.0_f32, 90.0, 270.0] {
+            sheet
+                .topic_mut(card)
+                .unwrap()
+                .card
+                .as_mut()
+                .unwrap()
+                .rotation = angle;
+            let actual = topic_add_handles(&view, &sheet, &layout, card);
+            let rotation = egui::emath::Rot2::from_angle(angle.to_radians());
+            for (original, actual) in original.iter().zip(actual) {
+                let anchor = pivot + rotation * (original.anchor - pivot);
+                let center = pivot + rotation * (original.center - pivot);
+                assert!(actual.anchor.distance(anchor) < 0.01);
+                assert!(actual.center.distance(center) < 0.01);
+            }
+        }
+    }
+}
+
+#[test]
+fn rotated_card_child_handle_remains_clickable_and_undoable() {
+    for structure in [
+        thinoda_core::Structure::LogicRight,
+        thinoda_core::Structure::OrgUp,
+    ] {
+        let mut sheet = board();
+        sheet.structure = structure;
+        let mut card = Card::new(CardKind::Sticky, Vec2::new(220.0, 120.0));
+        card.rotation = 90.0;
+        let card = sheet.add_card("Card", Vec2::ZERO, card).unwrap();
+        let mut h = harness(sheet);
+        h.state_mut().view.show_add_controls = true;
+        h.state_mut().view.select_only(card);
+        h.run_steps(3);
+        let before = h.state().doc.workbook().clone();
+        let handle = h.get_by_label("Add child topic").rect().center();
+        click(&mut h, handle, Modifiers::NONE);
+        let added = h.state().view.primary().unwrap();
+        assert_ne!(added, card, "{structure:?}: {:?}", h.state().errors);
+        assert_eq!(h.state().doc.sheet().parent(added), Some(card));
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
 #[test]
 fn image_card_accessible_name_preserves_its_kind_when_renamed() {
     let mut sheet = board();
@@ -4310,6 +4605,7 @@ fn keyboard_tab_can_leave_board_in_both_directions() {
                 },
                 errors: Vec::new(),
                 clipboard_requests: Vec::new(),
+                open_links: Vec::new(),
             },
         );
     h.run_steps(3);

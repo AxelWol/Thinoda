@@ -4,8 +4,10 @@ use crate::{MapCanvas, MapView, ObjectSelection};
 use egui::{Id, Key, Modifiers, Sense, Stroke, StrokeKind};
 use std::sync::Arc;
 use thinoda_core::{
-    Document, EditError, Layout, Rect, Relationship, TopicId, Vec2,
-    layout::{RelationshipLayout, relationship_curve},
+    Document, EditError, Layout, Rect, Relationship, Sheet, TopicId, Vec2,
+    board::rotated_corners,
+    layout::{RelationshipLayout, relationship_curve_for_sheet},
+    scene::{Scene, SceneHit},
 };
 
 pub(crate) struct RelationshipDrag {
@@ -50,6 +52,25 @@ fn edited(drag: &RelationshipDrag, curve: &RelationshipLayout, layout: &Layout) 
     rel
 }
 
+fn preview_curve(
+    sheet: &Sheet,
+    changed: &Relationship,
+    layout: &Layout,
+    drag: &RelationshipDrag,
+) -> RelationshipLayout {
+    let mut a = layout.topics[&changed.from].rect;
+    let mut b = layout.topics[&changed.to].rect;
+    if drag.candidate.is_none() {
+        if drag.part == 0 {
+            a = Rect::from_center_size(drag.point, Vec2::ZERO);
+        }
+        if drag.part == 3 {
+            b = Rect::from_center_size(drag.point, Vec2::ZERO);
+        }
+    }
+    relationship_curve_for_sheet(sheet, changed, a, b)
+}
+
 fn arrow(ui: &egui::Ui) -> Option<Vec2> {
     for (modifiers, step) in [(Modifiers::SHIFT, 10.0), (Modifiers::NONE, 1.0)] {
         for (key, delta) in [
@@ -91,6 +112,7 @@ pub(crate) fn interact(
     doc: &mut Document,
     view: &mut MapView,
     layout: &mut Arc<Layout>,
+    scene: &Scene,
     error: &mut Option<EditError>,
     enabled: bool,
 ) -> bool {
@@ -238,7 +260,10 @@ pub(crate) fn interact(
             drag.candidate = view
                 .canvas_rect()
                 .contains(point)
-                .then(|| layout.hit_test(drag.point))
+                .then(|| match scene.hit_test(drag.point) {
+                    Some(SceneHit::Topic(topic)) => Some(topic),
+                    _ => None,
+                })
                 .flatten();
         }
         let changed = edited(&drag, &curve, layout);
@@ -263,22 +288,13 @@ pub(crate) fn interact(
             }
             ctx.memory_mut(|m| m.request_focus(MapCanvas::id()));
         } else if ctx.input(|i| i.pointer.primary_down()) {
-            let mut a = layout.topics[&changed.from].rect;
-            let mut b = layout.topics[&changed.to].rect;
-            if drag.candidate.is_none() {
-                if drag.part == 0 {
-                    a = Rect::from_center_size(drag.point, Vec2::ZERO);
-                }
-                if drag.part == 3 {
-                    b = Rect::from_center_size(drag.point, Vec2::ZERO);
-                }
-            }
+            let preview = preview_curve(doc.sheet(), &changed, layout, &drag);
             if let Some(target) = Arc::make_mut(layout)
                 .relationships
                 .iter_mut()
                 .find(|r| r.id == id)
             {
-                *target = relationship_curve(&changed, a, b);
+                *target = preview;
             }
             view.relationship_drag = Some(drag);
         }
@@ -286,7 +302,12 @@ pub(crate) fn interact(
     blocked
 }
 
-pub(crate) fn paint_target(painter: &egui::Painter, view: &MapView, layout: &Layout) {
+pub(crate) fn paint_target(
+    painter: &egui::Painter,
+    view: &MapView,
+    sheet: &Sheet,
+    layout: &Layout,
+) {
     let Some(drag) = view
         .relationship_drag
         .as_ref()
@@ -300,19 +321,38 @@ pub(crate) fn paint_target(painter: &egui::Painter, view: &MapView, layout: &Lay
         } else {
             drag.source.from
         };
-        painter.rect_stroke(
-            view.xf().rect(layout.topics[&id].rect).expand(3.0),
-            6.0,
-            Stroke::new(
-                2.0,
-                if id == other {
-                    egui::Color32::RED
-                } else {
-                    view.accent
-                },
-            ),
-            StrokeKind::Outside,
+        let stroke = Stroke::new(
+            2.0,
+            if id == other {
+                egui::Color32::RED
+            } else {
+                view.accent
+            },
         );
+        let rect = layout.topics[&id].rect;
+        let rotation = sheet
+            .topic(id)
+            .and_then(|topic| topic.card)
+            .map_or(0.0, |card| card.rotation);
+        let clipped = thinoda_core::scene::topic_clip_rect(sheet, id)
+            .map(|clip| painter.with_clip_rect(view.xf().rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
+        if rotation == 0.0 {
+            painter.rect_stroke(
+                view.xf().rect(rect).expand(3.0),
+                6.0,
+                stroke,
+                StrokeKind::Outside,
+            );
+        } else {
+            painter.add(egui::Shape::closed_line(
+                rotated_corners(rect.expand(3.0 / view.zoom), rotation)
+                    .into_iter()
+                    .map(|point| view.xf().pos(point))
+                    .collect(),
+                stroke,
+            ));
+        }
     }
 }
 
@@ -451,6 +491,96 @@ mod tests {
                 assert_eq!(if part == 0 { rel.from } else { rel.to }, target);
                 assert_eq!(h.state().doc.sheet().topics, before.sheets[0].topics);
                 assert_eq!(rel.color, before.sheets[0].relationships[0].color);
+                assert!(h.state_mut().doc.undo());
+                assert_eq!(h.state().doc.workbook(), &before);
+            }
+        }
+    }
+
+    #[test]
+    fn relationship_endpoint_targets_rotated_visible_card_and_respects_occlusion() {
+        for covered in [false, true] {
+            let mut h = harness(1.0);
+            let target = h
+                .state()
+                .doc
+                .sheet()
+                .topics
+                .values()
+                .find(|topic| topic.title == "Target")
+                .unwrap()
+                .id;
+            let mut card =
+                thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(300.0, 100.0));
+            card.rotation = 90.0;
+            h.state_mut()
+                .doc
+                .set_topic_card(target, Some(card))
+                .unwrap();
+            h.run_steps(2);
+            let layout = {
+                let state = h.state_mut();
+                state.view.layout_for(&state.doc)
+            };
+            let rect = layout.topics[&target].rect;
+            let point = rect.center() + Vec2::new(0.0, 120.0);
+            assert!(!rect.contains(point));
+            if covered {
+                h.state_mut()
+                    .doc
+                    .edit_sheet("Cover target", |sheet| {
+                        let mut object = thinoda_core::CanvasObject::shape(
+                            thinoda_core::ShapeKind::Rectangle,
+                            Rect::from_center_size(point, Vec2::new(40.0, 40.0)),
+                        );
+                        object.band = thinoda_core::Band::Above;
+                        sheet
+                            .add_canvas_object(object)
+                            .map_err(EditError::Invalid)?;
+                        Ok(())
+                    })
+                    .unwrap();
+                h.run_steps(2);
+            }
+            let before = h.state().doc.workbook().clone();
+            let target_pos = h.state().view.xf().pos(point);
+            let start = h.get_by_label("Relationship end").rect().center();
+            start_drag(&mut h, "Relationship end", target_pos - start);
+            assert_eq!(
+                h.state().view.relationship_drag.as_ref().unwrap().candidate,
+                (!covered).then_some(target)
+            );
+            let preview = {
+                let state = h.state_mut();
+                let layout = state.view.layout_for(&state.doc);
+                let drag = state.view.relationship_drag.as_ref().unwrap();
+                let curve = &layout.relationships[0];
+                let changed = edited(drag, curve, &layout);
+                let preview = preview_curve(state.doc.sheet(), &changed, &layout, drag);
+                if covered {
+                    assert_eq!(preview.end, drag.point);
+                }
+                preview
+            };
+            h.drop_at(target_pos);
+            h.run_steps(2);
+            if covered {
+                assert_eq!(h.state().doc.workbook(), &before);
+            } else {
+                assert_eq!(h.state().doc.sheet().relationships[0].to, target);
+                let layout = {
+                    let state = h.state_mut();
+                    state.view.layout_for(&state.doc)
+                };
+                let committed = &layout.relationships[0];
+                for (preview, committed) in [
+                    (preview.start, committed.start),
+                    (preview.c1, committed.c1),
+                    (preview.c2, committed.c2),
+                    (preview.end, committed.end),
+                ] {
+                    assert!((preview - committed).length() < 0.01);
+                }
                 assert!(h.state_mut().doc.undo());
                 assert_eq!(h.state().doc.workbook(), &before);
             }

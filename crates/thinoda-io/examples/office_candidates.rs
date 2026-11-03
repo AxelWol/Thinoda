@@ -186,6 +186,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     image_card.rotation = 315.0;
     let image = sheet.add_card("Rotated photo", Vec2::new(500.0, 350.0), image_card)?;
+    sheet.add_child(card, None, "Rotated card child");
+    sheet.add_relationship(card, image)?;
+    let mut connector = thinoda_core::CanvasConnector::new(
+        thinoda_core::Endpoint::Topic(card),
+        thinoda_core::Endpoint::Topic(image),
+    );
+    connector.label = "Rotated connector".into();
+    sheet.add_canvas_object(thinoda_core::CanvasObject::connector(connector))?;
     let mut bytes = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
         32,

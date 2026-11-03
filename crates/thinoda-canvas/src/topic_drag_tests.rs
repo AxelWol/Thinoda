@@ -78,6 +78,86 @@ fn start_drag(h: &mut Harness<'_, State>, id: TopicId, end: Pos2) {
 }
 
 #[test]
+fn drag_targets_follow_rotated_cards_and_frame_clips() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+    sheet.theme.flexible_floating_topics = false;
+    let source = sheet.add_floating("Source", Vec2::new(-500.0, 0.0));
+    let mut card = thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(300.0, 100.0));
+    card.rotation = 90.0;
+    let target = sheet.add_card("Target", Vec2::ZERO, card).unwrap();
+    let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+    let rect = layout.topics[&target].rect;
+    let visible = rect.center() + Vec2::new(0.0, 120.0);
+    let ghost = rect.center() + Vec2::new(120.0, 0.0);
+    assert!(!rect.contains(visible));
+    assert!(rect.contains(ghost));
+    let members = crate::topic_drag::members(&sheet, &[source]);
+    let scene = build_scene(&sheet, &layout);
+    assert_eq!(
+        crate::topic_drag::target(&sheet, &layout, &scene, &members, visible)
+            .unwrap()
+            .unwrap()
+            .parent,
+        target
+    );
+    let proposal = crate::topic_drag::target(&sheet, &layout, &scene, &members, visible)
+        .unwrap()
+        .unwrap();
+    let mut edited = sheet.clone();
+    apply(&mut edited, &[source], &proposal, &layout).unwrap();
+    assert_eq!(edited.parent(source), Some(target));
+    edited.validate().unwrap();
+    assert!(
+        crate::topic_drag::target(&sheet, &layout, &scene, &members, ghost)
+            .unwrap()
+            .is_none()
+    );
+    let frame = thinoda_core::Rect::from_center_size(rect.center(), Vec2::new(100.0, 100.0));
+    sheet.create_zone("Clip", vec![target], frame).unwrap();
+    sheet.zones[0].clip = true;
+    let scene = build_scene(&sheet, &layout);
+    assert!(
+        crate::topic_drag::target(&sheet, &layout, &scene, &members, visible)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn drag_target_respects_objects_above_and_below_rotated_cards() {
+    for (band, expected) in [
+        (thinoda_core::Band::Below, true),
+        (thinoda_core::Band::Above, false),
+    ] {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        sheet.theme.flexible_floating_topics = false;
+        let source = sheet.add_floating("Source", Vec2::new(-500.0, 0.0));
+        let mut card =
+            thinoda_core::Card::new(thinoda_core::CardKind::Sticky, Vec2::new(300.0, 100.0));
+        card.rotation = 90.0;
+        let target = sheet.add_card("Target", Vec2::ZERO, card).unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let center = layout.topics[&target].rect.center();
+        let mut cover = thinoda_core::CanvasObject::shape(
+            thinoda_core::ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(center, Vec2::new(40.0, 40.0)),
+        );
+        cover.band = band;
+        sheet.add_canvas_object(cover).unwrap();
+        let scene = build_scene(&sheet, &layout);
+        let members = crate::topic_drag::members(&sheet, &[source]);
+        assert_eq!(
+            crate::topic_drag::target(&sheet, &layout, &scene, &members, center)
+                .unwrap()
+                .map(|target| target.parent),
+            expected.then_some(target)
+        );
+    }
+}
+
+#[test]
 fn alignment_guides_are_opt_in_view_only_and_do_not_snap_drops() {
     for zoom in [0.5, 1.0, 2.0] {
         let mut h = harness(zoom);
