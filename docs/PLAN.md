@@ -1,4 +1,4 @@
-_Last updated: 2026-11-03 06:14:06 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-03 06:26:33 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Thinoda — phased plan
 
@@ -3024,9 +3024,10 @@ download, and records that could not be listed remain inaccessible to this
 action. The separate asynchronous recovery draft is not integrated because its
 bounded discovery can miss uncoordinated writes or remain gated by retained
 tombstones.
-Headless Chromium now also exercises an actual localStorage quota failure with
-a large image: the previous snapshot survives and a full native download remains
-available. Recovery of the oversized unsaved board itself is not established.
+Desktop Chromium, Firefox and WebKit also exercise an actual localStorage quota
+failure with a large image: the previous snapshot survives and a full native
+download remains available. Recovery of the oversized unsaved board itself is
+not established.
 The fixes for two earlier macOS test failures are published.
 [CI run 41579324614](https://github.com/AxelWol/Thinoda/actions/runs/41579324614)
 passed on published commit `9bbaad5` across macOS, Windows x64/ARM,
@@ -3040,14 +3041,11 @@ shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
 inspect SVG, PNG, vector PDF and PowerPoint downloads without mutating the
 source board, including export cancellation and consent. The suite also covers
 mixed-board JPEG and SVG/PNG/JPEG image-card exports, including embedded bytes
-and rendered image quadrants. The locked suite passed 47 headless Chromium
-cases against the production candidate before the later image-card PDF
-assertion; focused mixed-board and expanded image-card PDF checks passed in
-desktop Chromium, Firefox and WebKit with a separate Chromium PDF viewer.
-Eleven focused
-startup, retry and offline checks passed in each of desktop WebKit and Firefox
-on Windows. Focused touch checks passed in both on an earlier build with
-identical Wasm. CI runs the Chromium suite before
+and rendered image quadrants. The locked suite passed 56 headless Chromium
+cases against the production candidate. Seventeen board and image-card cases,
+eleven startup/offline cases and three raw recovery cases passed in each of
+desktop Firefox and WebKit on Windows; PDF rendering uses a separate Chromium
+viewer. CI runs the Chromium suite before
 publishing. Same-frame text entry and canceled-touch ownership have focused
 regressions. These checks do not replace physical-device, screen-reader,
 additional export-format or large-board recovery acceptance; see the checkpoint
