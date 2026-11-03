@@ -711,11 +711,13 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   export. The upright title editor is an interaction overlay and can extend
   beyond a visually clipped frame; frame clipping is not secure redaction.
   Real touch, screen-reader and cross-platform visual acceptance remain open.
-- The earlier rotated-board fixture opened in Windows PowerPoint without a
-  repair dialog, but its captured slide surface was blank. Neither schema
-  validation nor that observation establishes visual fidelity or interactive
-  editing in PowerPoint or other Office hosts. Editable components remain
-  separate objects, and editing them does not update the Thinoda document.
+- The rotated-board fixture opened in Windows PowerPoint without repair. A PDF
+  exported by PowerPoint rendered its rotated sticky, photo and diamond, along
+  with the branch, relationship and free connector. This single-fixture check
+  is not a systematic visual comparison: the captured slide surface was blank,
+  and interactive editing and other Office hosts remain unverified. Editable
+  components remain separate objects, and editing them does not update the
+  Thinoda document.
 - The Pitch stage now fits its containing player rather than the height of the
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both

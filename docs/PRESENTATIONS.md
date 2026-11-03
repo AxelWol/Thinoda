@@ -250,6 +250,8 @@ those Office fixtures. This work does not create a release or merge the feature
 branch.
 
 The later editable-rotation fixture passes the Open XML SDK alongside the other
-nine Office fixtures. An earlier rotated fixture opened in Windows PowerPoint
-without repair, but its captured slide surface was blank; visual placement and
-interactive editing for rotated objects remain unverified in an Office host.
+nine Office fixtures. Windows PowerPoint opened it without repair and exported
+a PDF showing its rotated sticky, photo and diamond, branch, relationship and
+free connector. The slide surface could not be captured, so this single PDF is
+not a systematic visual comparison or proof of interactive editing. Other
+Office versions and hosts remain unverified.
