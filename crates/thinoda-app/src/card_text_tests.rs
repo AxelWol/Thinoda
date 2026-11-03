@@ -94,6 +94,29 @@ fn style(harness: &Harness<'_, ThinodaApp>, id: TopicId) -> TopicStyle {
         .clone()
 }
 
+fn assert_insert_toolbar_clears_title(h: &Harness<'_, ThinodaApp>) -> bool {
+    let editor = h.get_by_label("Topic title").rect();
+    let (visible, toolbar) = h.ctx.memory(|memory| {
+        let id = egui::Id::unique("thinoda_editing_toolbar");
+        (
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == id),
+            memory.area_rect(id),
+        )
+    });
+    if visible {
+        let toolbar = toolbar.unwrap();
+        assert!(
+            !toolbar.intersects(editor),
+            "toolbar={toolbar:?}, editor={editor:?}"
+        );
+    }
+    visible
+}
+
 #[test]
 fn selected_sticky_and_text_controls_edit_whole_card_and_round_trip() {
     for kind in [CardKind::Sticky, CardKind::Text] {
@@ -118,6 +141,28 @@ fn selected_sticky_and_text_controls_edit_whole_card_and_round_trip() {
                 .toggled(),
             Some(Toggled::False)
         );
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Strikethrough")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        h.get_by_role_and_label(Role::Button, "Strikethrough")
+            .click();
+        h.run_steps(3);
+        assert_eq!(style(&h, id).strikethrough, Some(false));
+        assert!(h.state_mut().doc_mut().unwrap().doc.undo());
+        assert_eq!(style(&h, id).strikethrough, Some(true));
+        assert!(h.state_mut().doc_mut().unwrap().doc.redo());
+        assert_eq!(style(&h, id).strikethrough, Some(false));
+        h.run_steps(3);
+        if h.query_by_role_and_label(Role::Button, "Bold").is_none() {
+            open_toolbar(&mut h);
+        }
+        h.get_by_role_and_label(Role::Button, "Strikethrough")
+            .click();
+        h.run_steps(3);
+        assert_eq!(style(&h, id).strikethrough, Some(true));
         h.get_by_role_and_label(Role::Button, "Bold").click();
         h.run_steps(3);
         assert_eq!(style(&h, id).bold, Some(true));
@@ -194,6 +239,11 @@ fn selected_sticky_and_text_controls_edit_whole_card_and_round_trip() {
         assert!(line.contains("font-family=\"monospace\""), "{line}");
         assert!(line.contains("font-size=\"24.00\""), "{line}");
         assert!(line.contains("font-weight=\"bold\""), "{line}");
+        assert!(line.contains("font-style=\"italic\""), "{line}");
+        assert!(
+            line.contains("text-decoration=\"underline line-through\""),
+            "{line}"
+        );
         assert!(line.to_ascii_uppercase().contains("#E8455C"), "{line}");
 
         scroll_and_click(&mut h, Role::Button, "Text Color · Auto");
@@ -220,6 +270,7 @@ fn keyboard_controls_use_theme_state_and_close_without_changing_selection() {
         .edit_sheet("Theme", |sheet| {
             let mut custom = thinoda_core::custom_theme::CustomTheme::from_settings(&sheet.theme);
             custom.roles.floating.bold = Some(true);
+            custom.roles.floating.strikethrough = Some(true);
             sheet.theme.custom_theme = Some(custom);
             Ok(())
         })
@@ -242,6 +293,27 @@ fn keyboard_controls_use_theme_state_and_close_without_changing_selection() {
     h.key_press(Key::Space);
     h.run_steps(3);
     assert_eq!(style(&h, id).italic, Some(true));
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Underline")
+            .is_focused()
+    );
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Strikethrough")
+            .is_focused()
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::Button, "Strikethrough")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True)
+    );
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(style(&h, id).strikethrough, Some(false));
     h.key_press(Key::Escape);
     h.run_steps(3);
     assert!(h.query_by_role_and_label(Role::Button, "Bold").is_none());
@@ -571,6 +643,72 @@ fn active_title_draft_and_ime_are_not_taken_over_by_the_toolbar() {
             .title,
         original
     );
+}
+
+#[test]
+fn floating_insert_toolbar_never_covers_an_active_card_title() {
+    for kind in [CardKind::Sticky, CardKind::Text] {
+        for size in [vec2(320.0, 240.0), vec2(640.0, 360.0), vec2(1200.0, 700.0)] {
+            let (mut app, id) = app_with_card(kind);
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .edit_sheet("Style", |sheet| {
+                    sheet.set_title(id, "A long title\nand a second line")?;
+                    sheet.update_style(&[id], |style| {
+                        style.bold = Some(true);
+                        style.italic = Some(true);
+                        style.font_size = Some(20.0);
+                    })
+                })
+                .unwrap();
+            let mut h = harness(app, size);
+            {
+                let doc = h.state_mut().doc_mut().unwrap();
+                doc.view.begin_edit(doc.doc.sheet(), id, true);
+            }
+            h.run_steps(5);
+            let visible = assert_insert_toolbar_clears_title(&h);
+            if size.x > 1000.0 {
+                assert!(visible, "the toolbar should remain available when it fits");
+                for resized in [vec2(320.0, 240.0), vec2(640.0, 360.0), size] {
+                    h.set_size(resized);
+                    h.run_steps(1);
+                    assert_insert_toolbar_clears_title(&h);
+                    assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
+                }
+                for scale in [1.5, 2.0, 1.0] {
+                    h.state_mut().settings.ui_scale = scale;
+                    h.run_steps(1);
+                    assert_insert_toolbar_clears_title(&h);
+                    assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
+                }
+            }
+            h.get_by_label("Topic title").type_text("Edited");
+            h.run_steps(2);
+            assert_eq!(h.state().doc().unwrap().view.editing_text(), Some("Edited"));
+            h.key_press(Key::Enter);
+            h.run_steps(5);
+            assert_eq!(
+                h.state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .topic(id)
+                    .unwrap()
+                    .title,
+                "Edited"
+            );
+            assert!(h.ctx.memory(|memory| {
+                memory
+                    .areas()
+                    .visible_layer_ids()
+                    .iter()
+                    .any(|layer| layer.id == egui::Id::unique("thinoda_editing_toolbar"))
+            }));
+        }
+    }
 }
 
 #[test]
@@ -1222,6 +1360,73 @@ fn card_text_visual_previews() {
                 .expect("formatting palette render")
                 .save(directory.join(format!("card-color-{theme}-{width}.png")))
                 .unwrap();
+        }
+    }
+}
+
+#[cfg(feature = "gpu-tests")]
+#[test]
+fn card_title_editor_visual_previews() {
+    let Some(directory) = std::env::var_os("THINODA_CARD_TEXT_VISUAL_DIR") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    for (kind, kind_name) in [(CardKind::Sticky, "sticky"), (CardKind::Text, "text")] {
+        for dark in [false, true] {
+            for (size, width) in [
+                (vec2(1200.0, 700.0), "wide"),
+                (vec2(320.0, 240.0), "compact"),
+            ] {
+                let (mut app, id) = app_with_card(kind);
+                app.settings.theme = if dark {
+                    SettingsTheme::Dark
+                } else {
+                    SettingsTheme::Light
+                };
+                app.doc_mut()
+                    .unwrap()
+                    .doc
+                    .edit_sheet("Style preview", |sheet| {
+                        sheet.set_title(id, "Ideas to explore\nA styled draft  ")?;
+                        sheet.update_style(&[id], |style| {
+                            style.bold = Some(true);
+                            style.italic = Some(true);
+                            style.underline = Some(true);
+                            style.strikethrough = Some(true);
+                            style.font_family = Some("monospace".into());
+                            style.font_size = Some(20.0);
+                            style.text_color = Some(Color::rgb(120, 45, 70));
+                            style.align = Some(TextAlign::Left);
+                        })
+                    })
+                    .unwrap();
+                let mut h = Harness::builder()
+                    .wgpu()
+                    .with_size(size)
+                    .with_step_dt(1.0 / 60.0)
+                    .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+                h.run_steps(6);
+                {
+                    let doc = h.state_mut().doc_mut().unwrap();
+                    doc.view.begin_edit(doc.doc.sheet(), id, true);
+                }
+                h.run_steps(4);
+                assert_eq!(h.state().doc().unwrap().view.editing_topic(), Some(id));
+                let theme = if dark { "dark" } else { "light" };
+                h.render()
+                    .expect("selected card editor render")
+                    .save(directory.join(format!(
+                        "card-editor-selected-{kind_name}-{theme}-{width}.png"
+                    )))
+                    .unwrap();
+                h.key_press(Key::ArrowRight);
+                h.run_steps(3);
+                h.render()
+                    .expect("card editor render")
+                    .save(directory.join(format!("card-editor-{kind_name}-{theme}-{width}.png")))
+                    .unwrap();
+            }
         }
     }
 }

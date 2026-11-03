@@ -21,12 +21,14 @@ commands and document semantics. Deliver in independently verified slices:
    Native egui tests and light/dark GPU previews cover narrow and short windows;
    real assistive technology and physical touch remain acceptance work.
 2. **Partial locally:** selected sticky notes have explicitly labeled whole-card
-   bold, italic, underline, alignment, font, size and color controls. Lists and
-   selected-range formatting remain open and require a document-model extension.
+   bold, italic, underline, strikethrough, alignment, font, size and color
+   controls. Lists and selected-range formatting remain open and require a
+   document-model extension.
 3. **Partial locally:** text cards use the same whole-card controls and supported
-   visual/export styles. Active title editing and selected-range formatting remain
-   open; define migration, undo, clipboard, accessibility and export behavior
-   before enabling them.
+   visual/export styles. Both card types show their existing whole-card styles in
+   the active title editor, but the controls cannot yet change styles during a
+   draft. Define ownership, migration, undo, clipboard, accessibility and export
+   behavior before enabling live or selected-range formatting.
 4. **Implemented locally:** selected connectors expose the existing route,
    endpoint arrows, width and color. The controls respect locked objects,
    active gestures and revision-bound edit transactions; SVG and editable
@@ -85,6 +87,14 @@ canvas; stale, locked and changed document/selection owners cannot be edited.
 SVG-derived exports now carry italic, underline, strikethrough and alignment;
 editable PowerPoint text respects alignment. See the [critique](FREEFORM.md)
 for export-font and active-editor limits.
+
+**2026-11-03 styled card-title checkpoint:** the whole-card strip now exposes
+strikethrough. Sticky-note and text-card drafts retain their resolved font,
+color, alignment and existing text decorations while editing, without changing
+the plain-text document model. The floating insert toolbar is temporarily hidden
+when it would cover the editor or its bounds are not yet known. See the
+[critique](FREEFORM.md) for selection-rendering limits and the still-open live
+formatting, device and accessibility gates.
 
 **2026-11-03 photo-orientation implementation:** bounded previews and visual
 exports apply all eight EXIF rotations/mirrors while native documents and

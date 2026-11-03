@@ -53,7 +53,7 @@ fn start_in_rect(rect: Rect, position: Pos2) -> bool {
 
 fn editor_contains_start(ctx: &egui::Context, view: &MapView, position: Pos2) -> bool {
     let editor_id = if view.editing.is_some() {
-        MapCanvas::id().with("edit")
+        MapCanvas::title_editor_id()
     } else if view.editing_board_object().is_some() {
         MapCanvas::id().with("board-label-edit")
     } else {

@@ -1320,6 +1320,11 @@ impl MapCanvas {
         Id::unique("thinoda_map_canvas")
     }
 
+    /// Focusable title editor, present only while a topic is being edited.
+    pub fn title_editor_id() -> Id {
+        Self::id().with("edit")
+    }
+
     /// Paints the current camera without interaction, selection, search dimming or editing chrome.
     pub fn show_snapshot(ui: &mut Ui, doc: &Document, view: &mut MapView) -> Rect {
         view.drag = Drag::None;
@@ -2629,12 +2634,22 @@ fn show_editor(
     let xf = view.xf();
     let r = xf.rect(topic_editor_rect(doc.sheet(), tl)).expand(2.0);
     let style = &tl.style;
+    let text_card = doc
+        .sheet()
+        .topic(edit.topic)
+        .and_then(|topic| topic.card)
+        .is_some_and(|card| {
+            matches!(
+                card.kind,
+                thinoda_core::CardKind::Sticky | thinoda_core::CardKind::Text
+            )
+        });
     let font = FontId::new(
         (style.font_size * view.zoom).max(4.0),
         crate::measure::font_family(ui.ctx(), style.font_family.as_deref()),
     );
     let color = color32(style.text_color);
-    let edit_id = MapCanvas::id().with("edit");
+    let edit_id = MapCanvas::title_editor_id();
 
     if !out.minimap_blocks_keyboard {
         view.protect_title_ime(ui.ctx(), edit_id);
@@ -2658,9 +2673,36 @@ fn show_editor(
         thinoda_core::TextAlign::Right => egui::Align::RIGHT,
         _ => egui::Align::Center,
     };
-    let te = TextEdit::multiline(&mut edit.text)
+    let line_height =
+        ui.fonts_mut(|fonts| fonts.row_height(&font)) + ui.spacing().extra_text_line_spacing;
+    let decoration = Stroke::new((style.font_size * view.zoom / 14.0).max(0.6), color);
+    let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+        let mut job = egui::text::LayoutJob::simple(
+            text.as_str().to_owned(),
+            font.clone(),
+            color,
+            wrap_width,
+        );
+        job.halign = align;
+        job.keep_trailing_whitespace = true;
+        let format = &mut job.sections[0].format;
+        format.line_height = Some(line_height);
+        format.italics = style.italic;
+        format.underline = if style.underline {
+            decoration
+        } else {
+            Stroke::NONE
+        };
+        format.strikethrough = if style.strikethrough {
+            decoration
+        } else {
+            Stroke::NONE
+        };
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+    let mut te = TextEdit::multiline(&mut edit.text)
         .id(edit_id)
-        .font(font)
+        .font(font.clone())
         .text_color(color)
         .frame(egui::Frame::NONE)
         .margin(egui::Margin::ZERO)
@@ -2677,8 +2719,21 @@ fn show_editor(
             vertical_arrows: true,
             escape: true,
         });
+    if text_card && (style.italic || style.underline || style.strikethrough) {
+        te = te.layouter(&mut layouter);
+    }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+    let bold_underlay = (text_card && style.bold).then(|| child.painter().add(egui::Shape::Noop));
     let output = te.show(&mut child);
+    if let Some(index) = bold_underlay {
+        // Keep selection and IME visuals above the unselected faux-bold copy.
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job((*output.galley.job).clone()));
+        let pos = output.galley_pos - vec2(galley.rect.left(), 0.0) + vec2(0.45 * view.zoom, 0.0);
+        child
+            .painter()
+            .with_clip_rect(output.text_clip_rect)
+            .set(index, egui::Shape::galley(pos, galley, color));
+    }
     if output.response.changed() {
         view.pending_reveal = Some(edit.topic);
     }

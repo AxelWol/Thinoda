@@ -23,10 +23,11 @@ registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
-coverage. Sticky-note and text-card controls now format the whole card, and
-selected connectors expose their existing route, arrows, width and color. Active
-title editing, selected ranges and lists remain open. Additional brushes are not
-represented as working features. Their
+coverage. Sticky-note and text-card controls now format the whole card, their
+title editors show existing whole-card styles, and selected connectors expose
+their existing route, arrows, width and color. Changing styles during an active
+title draft, selected-range formatting and lists remain open. Additional brushes
+are not represented as working features. Their
 persistence, accessibility and verification constraints are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
 

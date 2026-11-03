@@ -1158,6 +1158,36 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   italic geometry and cross-host rendering are not claimed. Physical touch,
   screen readers and external Office acceptance remain open.
 
+### Styled card-title checkpoint and critique
+
+- The whole-card formatting strip adds a localized strikethrough toggle using
+  the existing style transaction, undo and persistence. Sticky-note and text
+  card title drafts now display their resolved font family, size, color,
+  alignment, italic, underline and strikethrough. Bold uses the same offset
+  copy as canvas painting. The document still stores plain titles and one
+  whole-card style; formatting controls are not active during a title draft.
+- Duck check: painting the text-edit galley twice also paints its selection
+  backgrounds twice. The bold copy is instead laid out without selection and
+  painted beneath the editor's normal text, selection and IME feedback, clipped
+  to the editor. Opaque selection backgrounds can cover that copy, so selected
+  bold text may look lighter until the selection collapses. Decorations retain
+  their chosen color in a selection; user-selected colors can have low contrast.
+  Font measurement still uses the non-italic face, so exact wrap and geometry
+  parity with the non-editing canvas are not claimed.
+- Duck check: on a short window the global floating insert toolbar covered the
+  first lines of a card title. It is conservatively hidden while an active card
+  editor intersects its expected bounds or the bounds are not known; it returns
+  when the measured bounds clear the editor or the edit ends. The main menus
+  and shortcuts remain available. This does not claim that every board overlay
+  avoids every card.
+- Native egui tests cover both card kinds, all combinations of the four text
+  effects, light/dark themes, left/center/right alignment, several zoom levels,
+  wrapped trailing whitespace, selection, clipping, Unicode copy/paste, empty
+  drafts, synthetic IME input, conflicting drafts and undo/redo. They also cover
+  compact toolbar overlap and window/UI-scale changes. GPU-rendered selected
+  and unselected drafts were inspected in light/dark wide and compact views.
+  Real IME, touch, screen readers and physical-device acceptance remain open.
+
 ### Selected-connector checkpoint and critique
 
 - With exactly one connector selected in Select or Connector mode, the board

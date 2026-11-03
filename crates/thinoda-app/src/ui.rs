@@ -42,6 +42,7 @@ enum CardTextChange {
     Bold(bool),
     Italic(bool),
     Underline(bool),
+    Strikethrough(bool),
     Align(TextAlign),
     Family(Option<String>),
     Size(f32),
@@ -51,7 +52,9 @@ enum CardTextChange {
 impl CardTextChange {
     fn label(&self) -> &'static str {
         match self {
-            Self::Bold(_) | Self::Italic(_) | Self::Underline(_) => "Text Style",
+            Self::Bold(_) | Self::Italic(_) | Self::Underline(_) | Self::Strikethrough(_) => {
+                "Text Style"
+            }
             Self::Align(_) => "Align",
             Self::Family(_) => "Font Family",
             Self::Size(_) => "Font Size",
@@ -64,6 +67,7 @@ impl CardTextChange {
             Self::Bold(value) => style.bold = Some(*value),
             Self::Italic(value) => style.italic = Some(*value),
             Self::Underline(value) => style.underline = Some(*value),
+            Self::Strikethrough(value) => style.strikethrough = Some(*value),
             Self::Align(value) => style.align = Some(*value),
             Self::Family(value) => style.font_family = value.clone(),
             Self::Size(value) => style.font_size = Some(*value),
@@ -1847,8 +1851,32 @@ impl ThinodaApp {
     fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) -> Option<egui::Rect> {
         let d = self.doc()?;
         let has_selection = !d.view.selection.is_empty();
+        let toolbar_id = egui::Id::unique("thinoda_editing_toolbar");
+        let editing_card = d
+            .view
+            .editing_topic()
+            .and_then(|id| d.doc.sheet().topic(id))
+            .and_then(|topic| topic.card)
+            .is_some_and(|card| matches!(card.kind, CardKind::Sticky | CardKind::Text));
+        if editing_card {
+            let editor = ctx.read_response(MapCanvas::title_editor_id())?.rect;
+            let size = ctx.memory(|memory| memory.area_rect(toolbar_id))?.size();
+            if size.x > canvas.width() || size.y > canvas.height() {
+                return None;
+            }
+            let left =
+                (canvas.center().x - size.x * 0.5).clamp(canvas.left(), canvas.right() - size.x);
+            let top = (canvas.top() + 12.0).clamp(canvas.top(), canvas.bottom() - size.y);
+            let clearance = 2.0 / ctx.pixels_per_point() + 1.0;
+            if egui::Rect::from_min_size(egui::pos2(left, top), size)
+                .expand(clearance)
+                .intersects(editor)
+            {
+                return None;
+            }
+        }
         let mut cmd = None;
-        let rect = egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
+        let rect = egui::Area::new(toolbar_id)
             .order(egui::Order::Middle)
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(canvas.center_top() + vec2(0.0, 12.0))
@@ -2413,6 +2441,15 @@ impl ThinodaApp {
                                                     "Underline",
                                                     resolved.underline,
                                                     CardTextChange::Underline(!resolved.underline),
+                                                    false,
+                                                ),
+                                                (
+                                                    icons::STRIKE,
+                                                    "Strikethrough",
+                                                    resolved.strikethrough,
+                                                    CardTextChange::Strikethrough(
+                                                        !resolved.strikethrough,
+                                                    ),
                                                     false,
                                                 ),
                                             ] {
