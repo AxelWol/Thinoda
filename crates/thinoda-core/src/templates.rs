@@ -279,6 +279,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("meeting-board", "Meeting Board"),
     board_info("swimlane", "Swimlane"),
     board_info("venn-diagram", "Venn Diagram"),
+    board_info("empathy-map", "Empathy Map"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -780,6 +781,7 @@ mod tests {
                 "meeting-board",
                 "swimlane",
                 "venn-diagram",
+                "empathy-map",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -792,6 +794,7 @@ mod tests {
             ("meeting-board", "Meeting Board"),
             ("swimlane", "Swimlane"),
             ("venn-diagram", "Venn Diagram"),
+            ("empathy-map", "Empathy Map"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -1069,6 +1072,70 @@ mod tests {
     }
 
     #[test]
+    fn empathy_map_has_independent_prompts_and_persistent_visual_sections() {
+        use crate::board::{BoardMember, CardKind};
+
+        let mut wb = instantiate("empathy-map");
+        let sheet = wb.active();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|zone| zone.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Says", "Thinks", "Does", "Feels"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.canvas.groups.is_empty());
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let heading = sheet
+            .content_topics()
+            .find(|topic| topic.title == "Empathy map: whose perspective?")
+            .unwrap();
+        assert_eq!(heading.card.unwrap().kind, CardKind::Text);
+        assert!(layout.topics[&heading.id].rect.max().y < sheet.zones[0].frame.min.y);
+        let mut stickies = Vec::new();
+        for (zone, text) in sheet.zones.iter().zip([
+            "What do they say?",
+            "What might they think?",
+            "What do they do?",
+            "How might they feel?",
+        ]) {
+            let topic = sheet
+                .content_topics()
+                .find(|topic| topic.title == text)
+                .unwrap();
+            assert_eq!(topic.card.unwrap().kind, CardKind::Sticky);
+            let rect = layout.topics[&topic.id].rect;
+            assert!(zone.frame.contains(rect.min) && zone.frame.contains(rect.max()));
+            stickies.push(topic.id);
+        }
+        assert_eq!(sheet.content_topics().count(), 5);
+        let from = sheet.topic(stickies[0]).unwrap().position.unwrap();
+        let target = sheet.zones[1].frame.max() - crate::Vec2::new(90.0, 90.0);
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Card(stickies[0])], target - from)
+            .unwrap();
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let moved = layout.topics[&stickies[0]].rect;
+        assert!(sheet.zones[1].frame.contains(moved.min));
+        assert!(sheet.zones[1].frame.contains(moved.max()));
+        assert!(sheet.zones.iter().all(|zone| zone.roots.is_empty()));
+        for id in stickies {
+            assert!(sheet.detach_subtree(id).is_some());
+        }
+        assert_eq!(sheet.zones.len(), 4);
+        assert!(sheet.zones.iter().all(|zone| zone.keep_empty));
+        wb.validate().unwrap();
+    }
+
+    #[test]
     fn swimlane_has_editable_handoffs_between_persistent_visual_lanes() {
         use crate::board::{BoardMember, CanvasObjectKind, CardKind, ConnectorRoute, Endpoint};
         use crate::geometry::{Rect, Vec2};
@@ -1285,6 +1352,7 @@ mod tests {
             "meeting-board",
             "swimlane",
             "venn-diagram",
+            "empathy-map",
         ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
@@ -1336,6 +1404,15 @@ mod tests {
             "Set A",
             "Set B",
             "Shared",
+            "Empathy map: whose perspective?",
+            "Says",
+            "Thinks",
+            "Does",
+            "Feels",
+            "What do they say?",
+            "What might they think?",
+            "What do they do?",
+            "How might they feel?",
         ] {
             assert!(
                 strings.contains(&key),

@@ -620,6 +620,23 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "empathy-map",
+        cards: &[
+            note("Empathy map: whose perspective?", 450.0, -70.0, 560.0),
+            sticky("What do they say?", 105.0, 120.0, YELLOW),
+            sticky("What might they think?", 565.0, 120.0, BLUE),
+            sticky("What do they do?", 105.0, 440.0, GREEN),
+            sticky("How might they feel?", 565.0, 440.0, PINK),
+        ],
+        frames: &[
+            frame("Says", rect(0.0, 0.0, 440.0, 300.0), TINT_BLUE, &[]),
+            frame("Thinks", rect(460.0, 0.0, 440.0, 300.0), TINT_GRAY, &[]),
+            frame("Does", rect(0.0, 320.0, 440.0, 300.0), TINT_GREEN, &[]),
+            frame("Feels", rect(460.0, 320.0, 440.0, 300.0), TINT_ORANGE, &[]),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {

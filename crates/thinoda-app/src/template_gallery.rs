@@ -430,6 +430,7 @@ mod tests {
             "meeting-board",
             "swimlane",
             "venn-diagram",
+            "empathy-map",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
         }
@@ -631,6 +632,7 @@ mod tests {
             "eisenhower-matrix",
             "meeting-board",
             "swimlane",
+            "empathy-map",
         ] {
             let wb = templates::instantiate(id);
             let sheet = wb.active();

@@ -1319,6 +1319,19 @@ const DE: &[(&str, &str)] = &[
     ("Set A", "Menge A"),
     ("Set B", "Menge B"),
     ("Shared", "Gemeinsam"),
+    ("Empathy Map", "Empathiekarte"),
+    (
+        "Empathy map: whose perspective?",
+        "Empathiekarte: Wessen Perspektive?",
+    ),
+    ("Says", "Sagt"),
+    ("Thinks", "Denkt"),
+    ("Does", "Tut"),
+    ("Feels", "Fühlt"),
+    ("What do they say?", "Was sagt die Person?"),
+    ("What might they think?", "Was könnte die Person denken?"),
+    ("What do they do?", "Was tut die Person?"),
+    ("How might they feel?", "Wie könnte sich die Person fühlen?"),
     (
         "Name roles and map the handoffs",
         "Rollen benennen und Übergaben darstellen",
@@ -1465,6 +1478,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.",
         "Das Venn-Diagramm hat überlappende Kreise und unabhängige Beschriftungen. Das Verschieben eines Kreises bewegt keine Beschriftungen und weist keine Mengenzugehörigkeit zu.",
+    ),
+    (
+        "Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.",
+        "Die Empathiekarte hat vier visuelle Bereiche für das, was jemand sagt, denkt, tut und fühlt. Das Verschieben einer Notiz weist keine Kategorie zu.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3831,6 +3848,50 @@ mod tests {
                 "Role 3",
                 "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
             ] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
+        }
+    }
+
+    #[test]
+    fn empathy_map_uses_localized_sections_and_prompts_in_every_language() {
+        let sections = [
+            ("Says", "What do they say?"),
+            ("Thinks", "What might they think?"),
+            ("Does", "What do they do?"),
+            ("Feels", "How might they feel?"),
+        ];
+        let heading = "Empathy map: whose perspective?";
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("empathy-map", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Empathy Map"));
+            assert_eq!(sheet.zones.len(), sections.len());
+            assert_eq!(sheet.content_topics().count(), sections.len() + 1);
+            assert!(
+                sheet
+                    .content_topics()
+                    .any(|topic| topic.title == t_in(language, heading))
+            );
+            for (zone, (name, prompt)) in sheet.zones.iter().zip(sections) {
+                assert_eq!(zone.name, t_in(language, name));
+                assert!(zone.keep_empty && zone.roots.is_empty());
+                assert!(
+                    sheet
+                        .content_topics()
+                        .any(|topic| topic.title == t_in(language, prompt))
+                );
+            }
+            wb.validate().unwrap();
+        }
+        for language in TRANSLATED {
+            for key in ["Empathy Map", heading]
+                .into_iter()
+                .chain(sections.into_iter().flat_map(|(name, prompt)| [name, prompt]))
+                .chain(["Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category."])
+            {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
             }
         }

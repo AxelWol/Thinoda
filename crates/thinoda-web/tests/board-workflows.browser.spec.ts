@@ -175,6 +175,54 @@ test.describe("venn diagram gallery", () => {
     });
 });
 
+test.describe("empathy map gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("creates editable prompts in independent visual sections", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 1165, y: 394 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        await drag(page, [175, 310], [800, 400], 12);
+        const saved = sheetFrom(await saveAs(page, "empathy-map.thinoda"));
+        expect(saved.title).toBe("Empathy Map");
+        expect(saved.root_mode).toBe("hidden");
+        expect(saved.zones.map(zone => zone.name)).toEqual(["Says", "Thinks", "Does", "Feels"]);
+        expect(saved.zones.every(zone => zone.keep_empty && !zone.roots?.length)).toBe(true);
+        const cards = Object.values(saved.topics).filter(topic => topic.card);
+        expect(cards.map(card => [card.title, card.card?.kind])).toEqual([
+            ["Empathy map: whose perspective?", "text"],
+            ["What do they say?", "sticky"],
+            ["What might they think?", "sticky"],
+            ["What do they do?", "sticky"],
+            ["How might they feel?", "sticky"],
+        ]);
+        const moved = cards[1].position;
+        if (!moved) throw new Error("Saved prompt has no position");
+        const target = saved.zones[1].frame;
+        expect(moved.x - 75).toBeGreaterThanOrEqual(target.min.x);
+        expect(moved.x + 75).toBeLessThanOrEqual(target.min.x + target.size.x);
+        expect(moved.y - 50).toBeGreaterThanOrEqual(target.min.y);
+        expect(moved.y + 50).toBeLessThanOrEqual(target.min.y + target.size.y);
+        expect(cards.slice(2).map(card => card.position)).toEqual([
+            { x: 565, y: 120 },
+            { x: 105, y: 440 },
+            { x: 565, y: 440 },
+        ]);
+        expect(saved.floating).toEqual(cards.map(card => card.id));
+    });
+});
+
 test("rootless board objects, styling, connections and ink survive a native save", async ({ page }) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });

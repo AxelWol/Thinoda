@@ -753,6 +753,70 @@ fn swimlane_exports_frames_shapes_and_handoffs() {
 }
 
 #[test]
+fn empathy_map_exports_sections_and_prompt_cards() {
+    let wb = thinoda_core::templates::instantiate("empathy-map");
+    let sheet = wb.active();
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        let [x, y, w, h] = view_box(&svg);
+        for zone in &sheet.zones {
+            assert!(svg.contains(&zone.name), "missing section {}", zone.name);
+            assert!(x <= zone.frame.min.x && y <= zone.frame.min.y);
+            assert!(x + w >= zone.frame.max().x && y + h >= zone.frame.max().y);
+        }
+        for topic in sheet.content_topics() {
+            let prefix = format!("<text id=\"topic-{}-line-", topic.id.0);
+            let rendered: String = svg
+                .match_indices(&prefix)
+                .flat_map(|(start, _)| {
+                    svg[start..]
+                        .split_once('>')
+                        .unwrap()
+                        .1
+                        .split_once("</text>")
+                        .unwrap()
+                        .0
+                        .chars()
+                        .filter(|character| !character.is_whitespace())
+                })
+                .collect();
+            let expected: String = topic
+                .title
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            assert_eq!(rendered, expected, "missing prompt {}", topic.title);
+        }
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        for topic in sheet.content_topics() {
+            if let Some(color) = topic.card.and_then(|card| card.color) {
+                assert!(
+                    png.pixels()
+                        .any(|pixel| pixel.0 == [color.r, color.g, color.b]),
+                    "missing sticky fill for {}",
+                    topic.title
+                );
+            }
+        }
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
 fn venn_exports_translucent_intersections_in_light_and_dark() {
     let wb = thinoda_core::templates::instantiate("venn-diagram");
     let sheet = wb.active();

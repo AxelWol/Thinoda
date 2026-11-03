@@ -722,7 +722,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Thirteen board templates use the same validated primitives and translated
+- Fourteen board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
   persistent visual frames, the Eisenhower quadrants accept user-created
   content, and Swimlane provides three role frames and editable linked shapes.
@@ -765,6 +765,15 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   thumbnail was also visually inspected in a desktop browser. Browser tests
   do not assert thumbnail pixels. These checks do not prove physical-device,
   screen-reader or Office acceptance.
+- Empathy Map supplies a heading, four visual Says/Thinks/Does/Feels frames and
+  independent prompt stickies. A moved or deleted note does not change the
+  persistent frames or gain category membership. The prompts are editable
+  starting points, not inferred facts about a person. The fixed-size cards and
+  frames are a basic scaffold, not richer responsive text regions. Tests cover
+  localized creation, geometry, native round-trips and SVG/PNG/PDF generation.
+  Production desktop Chromium, Firefox and WebKit create the board, move a note
+  and inspect the saved file; these checks do not replace physical-device,
+  screen-reader or broader export acceptance.
 
 ### F5 ink checkpoint: critique
 
@@ -936,6 +945,7 @@ cards inside their assigned frames and catalog coverage.
 | Meeting board | Purpose heading and independent prompt stickies in visual Agenda, Notes, Decisions and Actions frames; no timer or task automation |
 | Swimlane | Three visual role frames and five editable process shapes linked by elbow connectors; no role or workflow automation |
 | Venn diagram | Two overlapping translucent circles with independent labels and a shared sticky; no set-membership logic |
+| Empathy map | Four visual sections and independent prompt stickies; no inferred thoughts, feelings or category membership |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -946,7 +956,7 @@ compatibility with the topic renderer.
 
 | Template | Needs |
 |---|---|
-| Lean Canvas, Empathy map | Frames (F2), text-heavy responsive regions |
+| Lean Canvas, richer Empathy map | Text-heavy responsive regions |
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |
 

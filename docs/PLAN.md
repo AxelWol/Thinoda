@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, thirteen board templates, responsive toolbox and
+The Freeform implementation, fourteen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -43,10 +43,12 @@ regression, and Meeting Board adds a localized, rootless meeting template with
 independent prompt cards and persistent visual frames. Swimlane adds editable
 process shapes and handoffs across three visual role lanes; it does not assign
 roles or automate workflows. Venn Diagram adds two translucent editable circles
-and independent labels, without set-membership logic. Board thumbnails now
-paint each scene object once, preserving opacity, layer order and frame
-clipping. Gallery previews are generated on demand; a least-recently-used
-cache retains at most two full template sets. A small desktop startup comparison
+and independent labels, without set-membership logic. Empathy Map provides
+four editable visual sections and independent prompt notes, not automatic
+categorization. Board thumbnails now paint each scene object once, preserving
+opacity, layer order and frame clipping. Gallery previews are generated on
+demand; a least-recently-used cache retains at most two full template sets.
+A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
 overhead is unmeasured. The next open work remains the browser accessibility
 bridge, safe large-board recovery, export acceptance and realistic
@@ -3067,6 +3069,15 @@ Chromium, Firefox and WebKit create, move, restyle and save a circle; the
 production light-theme thumbnail was also inspected in a desktop browser.
 These checks do not establish physical-device, screen-reader or Office acceptance.
 
+Empathy Map adds a localized perspective heading, Says/Thinks/Does/Feels visual
+frames and independent prompt stickies. Moving a note does not assign a
+category, and the template does not infer a person's thoughts or feelings.
+Richer responsive text regions remain open. Localized core and gallery tests
+cover creation and native round-trips; SVG text, PNG fills and PDF generation
+have focused coverage. Desktop Chromium, Firefox and WebKit create the board,
+move a note between sections and inspect the saved file. This is not physical
+device, screen-reader or broad export acceptance.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3129,7 +3140,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (thirteen implemented).
+5. F4 data-driven "Boards" templates (fourteen implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 
