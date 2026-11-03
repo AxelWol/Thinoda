@@ -95,6 +95,12 @@ discovery limits and gate editing across retries and reloads. The draft's
 discard/verification work remains unintegrated, and a bounded protocol that
 accounts for uncoordinated writers is still needed.
 
+The unintegrated recovery sources and standalone test harness are preserved
+under [work in progress](work-in-progress/freeform/README.txt), outside the
+application and its CI test selection. They are not a production recovery
+implementation. The same directory contains an unvalidated toolbar-placement
+patch that has not been applied.
+
 Early editing is acceptable only for a newly fenced, distinct document while
 discovery remains visibly pending. Late recovery results must not interrupt
 active edits, replace an edited document or silently overwrite the same open

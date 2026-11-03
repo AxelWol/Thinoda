@@ -12,3 +12,7 @@ __pycache__/
 /crates/thinoda-web/node_modules
 /crates/thinoda-web/playwright-report
 /crates/thinoda-web/test-results
+
+# Local agent and browser-inspection artifacts
+/.playwright-mcp/
+/.serena/
