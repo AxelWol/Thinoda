@@ -215,7 +215,10 @@ pub(crate) fn object_prims(
             });
         }
         (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, width }) => {
-            let color = faded(connector.color.unwrap_or(ink), opacity);
+            let color = faded(
+                connector.color.or(object.style.stroke).unwrap_or(ink),
+                opacity,
+            );
             let width = width.max(0.1);
             out.push(Prim::Path {
                 points: points.clone(),
@@ -245,7 +248,7 @@ pub(crate) fn object_prims(
                     rotation: 0.0,
                     lines,
                     size: 12.0,
-                    color: Color::highest_contrast_on(background),
+                    color,
                     backdrop: Some(background),
                 });
             }

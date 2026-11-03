@@ -319,7 +319,7 @@ pub(crate) fn reveal_changed_focus(ui: &mut Ui) {
     }
 }
 
-fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
+pub(crate) fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
     let mut current = response.clone();
     // Bound the walk in case conflicting widget IDs form a cycle.
     for _ in 0..1000 {
@@ -1378,6 +1378,7 @@ impl ThinodaApp {
                 editing_toolbar,
             )
         } else {
+            Self::close_connector_popups(&ctx, self.current_viewport);
             (None, None)
         };
 

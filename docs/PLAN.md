@@ -27,8 +27,10 @@ commands and document semantics. Deliver in independently verified slices:
    visual/export styles. Active title editing and selected-range formatting remain
    open; define migration, undo, clipboard, accessibility and export behavior
    before enabling them.
-4. Add selected-connector controls for the existing route, stroke and endpoint
-   options, respecting locked objects and existing edit transactions.
+4. **Implemented locally:** selected connectors expose the existing route,
+   endpoint arrows, width and color. The controls respect locked objects,
+   active gestures and revision-bound edit transactions; SVG and editable
+   PowerPoint retain explicit and inherited stroke colors and opacity.
 5. **Pen controls implemented locally:** color swatches and graphical width
    presets complement the existing automatic/custom color, exact width, opacity,
    pen/highlighter and eraser controls. Short popovers scroll without losing
@@ -40,6 +42,15 @@ accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.
 The browser accessibility bridge and physical-device acceptance remain separate
 open gates; integrated cloud providers remain paused.
+
+**2026-11-03 selected-connector checkpoint:** the board toolbox offers straight,
+elbow and curved routes, start/end arrows, width presets and an exact width,
+and automatic, swatch or custom color for a single selected connector. Compact
+toolbars and popovers scroll to keyboard focus, and custom colors retain their
+RGB even at zero opacity. Edits use existing connector fields and document
+transactions; stale or locked selections, unfinished gestures and pending
+drafts cannot receive changes. The [critique](FREEFORM.md) records the export
+fallback distinction and remaining device and accessibility acceptance.
 
 **2026-11-03 whole-card formatting checkpoint:** selected sticky and text cards
 have a docked, scrollable formatting strip, reachable from the selected-topic

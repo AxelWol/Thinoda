@@ -118,6 +118,8 @@ Description|Descripción|Description|Beskrivelse|Beschrijving|Descrição|Descri
 Opacity|Opacidad|Opacité|Opacitet|Dekking|Opacidade|Opacità|Krycie
 Stroke|Trazo|Trait|Streg|Lijn|Traço|Tratto|Linia
 Connector route|Trazado del conector|Tracé du connecteur|Forbindelseslinjens forløb|Verloop van de verbindingslijn|Traçado do conector|Percorso del connettore|Przebieg łącznika
+Connector color|Color del conector|Couleur du connecteur|Forbindelseslinjens farve|Kleur van de verbindingslijn|Cor do conector|Colore del connettore|Kolor łącznika
+Connector width|Grosor del conector|Épaisseur du connecteur|Forbindelseslinjens tykkelse|Dikte van de verbindingslijn|Espessura do conector|Spessore del connettore|Grubość łącznika
 Arrow at start|Flecha al inicio|Flèche au début|Pil ved start|Pijl aan het begin|Seta no início|Freccia all’inizio|Strzałka na początku
 Arrow at end|Flecha al final|Flèche à la fin|Pil ved slutning|Pijl aan het einde|Seta no fim|Freccia alla fine|Strzałka na końcu
 Card|Tarjeta|Carte|Kort|Kaart|Cartão|Scheda|Karta

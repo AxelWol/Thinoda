@@ -1158,6 +1158,34 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   italic geometry and cross-host rendering are not claimed. Physical touch,
   screen readers and external Office acceptance remain open.
 
+### Selected-connector checkpoint and critique
+
+- With exactly one connector selected in Select or Connector mode, the board
+  toolbox provides straight, elbow and curved routes; start and end arrows;
+  width presets and an exact value; and automatic, swatch and custom color.
+  The existing connector model, endpoints, label, description and object style
+  are preserved. Changes are undoable and survive native and clipboard
+  round-trips. The Auto choice removes only the connector's explicit color,
+  retaining any inherited object stroke.
+- Duck check: a popup or provisional numeric/color edit can outlive its target.
+  Document instance, revision, viewport, sheet and selection ownership are
+  rechecked at the transaction boundary. Locked/grouped objects, mixed
+  selections, canvas gestures, pending drafts and blocking UI states cannot be
+  edited; stale popups and drafts close without applying their values. Drag and
+  keyboard edits commit once and cancel on Escape, rejected touch or changed
+  ownership. An unpremultiplied color draft retains exact RGB through zero
+  opacity, including after the custom picker is reopened.
+- Duck check: keyboard focus can move below a short toolbar, and expanding the
+  custom color editor can leave it below the popup's viewport. Focus changes and
+  expansion now reveal the relevant controls. Native egui tests and inspected
+  light/dark GPU previews cover wide and compact layouts; these do not replace
+  actual screen-reader or physical touch/iPad acceptance.
+- SVG and editable PowerPoint now use the same explicit-then-inherited stroke
+  precedence and label color as the canvas, including object opacity and
+  arrowheads. The final automatic fallback still differs: the canvas uses its
+  view accent, while visual exports use their export-specific fallback. Exact
+  automatic-color parity and external Office rendering are not claimed.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

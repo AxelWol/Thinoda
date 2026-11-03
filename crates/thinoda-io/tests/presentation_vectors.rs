@@ -284,6 +284,91 @@ fn svg_and_editable_powerpoint_use_rotated_card_connector_anchors() {
 }
 
 #[test]
+fn connector_colors_and_opacity_match_in_svg_and_editable_powerpoint() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let root = sheet
+        .add_card(
+            "Context",
+            Vec2::new(0.0, -100.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 60.0)),
+        )
+        .unwrap();
+    let mut objects = Vec::new();
+    for (index, label, explicit, expected, alpha) in [
+        (0, "Inherited", None, "14283C", 100_u8),
+        (
+            1,
+            "Explicit",
+            Some(Color::rgba(90, 120, 150, 180)),
+            "5A7896",
+            90_u8,
+        ),
+    ] {
+        let y = index as f32 * 100.0;
+        let mut connector = CanvasConnector::new(
+            Endpoint::Point(Vec2::new(-100.0, y)),
+            Endpoint::Point(Vec2::new(100.0, y)),
+        );
+        connector.label = label.into();
+        connector.arrow_start = true;
+        connector.arrow_end = true;
+        connector.width = 8.0;
+        connector.color = explicit;
+        let mut object = CanvasObject::connector(connector);
+        object.style.stroke = Some(Color::rgba(20, 40, 60, 200));
+        object.style.opacity = 0.5;
+        let id = sheet.add_canvas_object(object).unwrap();
+        objects.push((id, label, expected, alpha));
+    }
+    let frame = Rect::from_min_size(Vec2::new(-250.0, -250.0), Vec2::new(700.0, 600.0));
+    let zone = sheet.create_zone("Frame", vec![root], frame).unwrap();
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Zone(zone), frame)
+        .unwrap();
+    sheet.presentation.slides[0].scope = PresentationScope::Context;
+    sheet.presentation.slides[0].auto_frame = false;
+    sheet.validate().unwrap();
+    let before = sheet.clone();
+
+    let options = ExportOptions::default();
+    let svg = render_presentation_slide_svg(&sheet, 0, &options).unwrap();
+    let pptx = export_presentation_pptx(&sheet, &options).unwrap();
+    let slide = xml(&pptx, "ppt/slides/slide1.xml");
+    for (id, label, rgb, alpha) in objects {
+        let svg_object = svg
+            .split_once(&format!("id=\"object-{}\"", id.0))
+            .unwrap()
+            .1
+            .split_once("</g>")
+            .unwrap()
+            .0;
+        let color = format!("#{rgb}{alpha:02X}");
+        assert!(svg_object.contains(&format!("stroke=\"{color}\"")));
+        assert!(svg_object.contains("stroke-width=\"8.00\""));
+        assert_eq!(svg_object.matches(&format!("fill=\"{color}\"")).count(), 3);
+        assert!(svg_object.contains(&format!("fill=\"{color}\">{label}</text>")));
+
+        let name = format!("name=\"Canvas object {id}\"");
+        let shapes: Vec<_> = slide
+            .split("<p:sp>")
+            .skip(1)
+            .filter_map(|part| part.split_once("</p:sp>").map(|(shape, _)| shape))
+            .filter(|shape| shape.contains(&name))
+            .collect();
+        assert_eq!(shapes.len(), 3, "{name}");
+        let fill = format!(
+            "<a:srgbClr val=\"{rgb}\"><a:alpha val=\"{}\"",
+            u32::from(alpha) * 100_000 / 255
+        );
+        assert!(shapes.iter().all(|shape| shape.contains(&fill)), "{name}");
+        let text = element(&slide, "sp", &format!("<a:t>{label}</a:t>"));
+        assert!(text.contains(&fill), "{label}");
+    }
+    assert_eq!(sheet, before);
+}
+
+#[test]
 fn editable_slides_rotate_cards_photos_and_multiline_shape_labels_about_their_pivots() {
     let mut sheet = Sheet::new("Board", "");
     sheet.root_mode = SheetRootMode::Hidden;
