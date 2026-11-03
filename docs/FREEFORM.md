@@ -693,6 +693,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   upright at the rotated title position; links and checkboxes use local-space
   hit tests, while image resize handles track the rotated corner and preserve
   cancellation and undo. Thumbnails fit rotated cards and object-only boards.
+  Thumbnail fitting reuses the scene for painting rather than rebuilding it.
   Native headless regressions cover several angles and zoom levels, text and
   image visibility, touch cancellation, clipping and keyboard/IME input.
 - Branches, relationships and free connectors use rotated card outlines for

@@ -106,7 +106,8 @@ fn zone_title_color(
 pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: Rect, dark: bool) {
     painter.rect_filled(rect, 4, sheet_background(sheet, dark));
     let rect = rect.shrink(5.0);
-    let scene_bounds = build_scene(sheet, layout).bounds();
+    let scene = build_scene(sheet, layout);
+    let scene_bounds = scene.bounds();
     let bounds = match scene_bounds {
         Some(bounds) if layout.order.is_empty() => bounds,
         Some(bounds) => bounds.union(&layout.bounds),
@@ -118,7 +119,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
         origin: rect.center() - vec2(center.x, center.y) * zoom,
         zoom,
     };
-    paint_map(
+    paint_map_scene(
         &painter.with_clip_rect(rect),
         sheet,
         layout,
@@ -127,6 +128,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
             dark,
             ..Default::default()
         },
+        &scene,
     );
 }
 
@@ -138,13 +140,24 @@ pub fn paint_map(
     xf: Xf,
     opts: &PaintOptions<'_>,
 ) {
+    let scene = build_scene(sheet, layout);
+    paint_map_scene(painter, sheet, layout, xf, opts, &scene);
+}
+
+fn paint_map_scene(
+    painter: &Painter,
+    sheet: &Sheet,
+    layout: &Layout,
+    xf: Xf,
+    opts: &PaintOptions<'_>,
+    scene: &Scene,
+) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
     let dim = |id: TopicId| {
         opts.filter.is_some_and(|f| !f.contains(&id))
             || opts.dimmed.is_some_and(|ids| ids.contains(&id))
     };
-    let scene = build_scene(sheet, layout);
     let objects: HashMap<_, _> = sheet
         .canvas
         .objects
@@ -222,7 +235,7 @@ pub fn paint_map(
         painter,
         sheet,
         &objects,
-        &scene,
+        scene,
         SceneBand::BelowMap,
         xf,
         opts,
@@ -446,7 +459,7 @@ pub fn paint_map(
         painter,
         sheet,
         &objects,
-        &scene,
+        scene,
         SceneBand::AboveMap,
         xf,
         opts,
