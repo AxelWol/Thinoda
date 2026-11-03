@@ -1,4 +1,4 @@
-_Last updated: 2026-11-03 03:12:54 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-03 03:21:09 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Web first-start performance: concept and critique
 
