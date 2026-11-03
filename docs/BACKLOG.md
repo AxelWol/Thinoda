@@ -1886,8 +1886,11 @@ User-directed concept (2026-10-28), planned as **R14** in
 [PLAN.md](PLAN.md#r14---freeform-boards-and-flexible-map-roots); research,
 feature verdicts, concept and rubber-duck critique in [FREEFORM.md](FREEFORM.md).
 F0-F5 implementation and the F6 viewport-scene/mini-map work have focused
-coverage. Image-card names retain their localized type after renaming, and
-visible ink-cache admission improved a headless Windows CPU benchmark. F1-F3
+coverage. Image-card names retain their localized type after renaming, visible
+ink-cache admission improved a headless Windows CPU benchmark, and indexed
+accessibility registration improved matched large-board CPU and headless
+browser comparisons without dropping targets. These do not replace the missing
+browser accessibility bridge or realistic performance acceptance. F1-F3
 integration acceptance, the full F0/F5 performance gate, F6
 export acceptance, browser recovery, and native/web integration verification
 remain open as described in the linked plan. Production-browser regressions now

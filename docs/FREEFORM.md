@@ -394,6 +394,64 @@ strokes. Focused tests cover over-capacity bands, disjoint and empty views,
 reused IDs, invalidation, entry/byte limits, and admission that cannot fit even
 after off-screen eviction; real multi-window and device workloads remain open.
 
+#### Indexed board accessibility registration: critique
+
+The board's accessibility pass used repeated linear lookups for each scene
+item, label and group lock. It now builds per-pass indexes and keeps the
+sorted scene-item references, while retaining every accessibility target and
+the existing reading order. Group mobility accounts for direct member locks;
+selection indexes are refreshed when focus changes the selection during the
+same pass. Workbooks with duplicate object, zone, card-state, floating-topic or
+group IDs use the previous mobility and scene-lookup paths so host-constructed,
+unvalidated sheets retain those first-match semantics. This is not a general
+guarantee for arbitrary malformed sheets.
+
+On Windows, a release-mode canvas test ran two interleaved baseline/candidate
+pairs, with three warmups and 20 measured CPU-side `egui::Context::run_ui`
+passes per run. Each hidden-root board had 64 points per stroke and 50
+image-card placeholders, without image bytes. Values are ranges of per-run
+p50 / p95 milliseconds, not combined percentiles:
+
+| Strokes | AccessKit | Baseline p50 / p95 | Indexed p50 / p95 |
+|---|---|---|---|
+| 1,000 | off | 1.175–1.198 / 1.226–1.260 | 0.568–0.582 / 0.636–0.861 |
+| 1,000 | on | 1.646–1.699 / 1.868–1.910 | 1.059–1.096 / 1.180–1.330 |
+| 10,000 | off | 92.803–93.860 / 95.685–95.787 | 11.186–11.421 / 13.024–13.523 |
+| 10,000 | on | 100.242–102.553 / 103.899–106.436 | 13.765–14.053 / 15.410–15.902 |
+
+A separate production-Wasm comparison used headless Chromium 156 on
+SwiftShader, fresh isolated contexts and synthetic alternating wheel events.
+It validated each saved board before measuring 70 animation-frame intervals
+after warmup, with two interleaved pairs per fixture. For 1,000 strokes,
+baseline p50 / p95 was 50.2–50.6 / 57.8–60.0 ms and indexed was
+50.5–51.2 / 56.4–61.4 ms; this comparison does not establish an improvement.
+For 10,000 strokes, baseline was 269.4–274.4 / 297.1–315.0 ms and indexed
+was 184.2–185.5 / 201.2–212.5 ms. These are animation-frame intervals under a
+software renderer, not hardware-GPU presentation or input-to-display latency.
+A screenshot hash change is only a sanity check, not proof of panning.
+
+The index is rebuilt each pass and uses additional temporary memory; it does not
+hide off-screen targets or solve the missing browser accessibility bridge.
+The duplicate-ID fallback deliberately retains the slower path. Focused
+coverage compares direct and mixed-group locks, descriptions, duplicate
+first-match behavior and same-frame focus/selection. The full canvas suite,
+targeted app/style/export tests and production-browser board regressions passed;
+screen-reader, realistic embedded-image, memory, recovery, hardware-GPU and
+physical-device acceptance remain open. The original F0/F5 performance gate
+still lacks numerical budgets and representative devices, so it is not closed.
+Detailed samples and artifact hashes are in
+[board-accessibility-index-2026-11-03.json](benchmarks/board-accessibility-index-2026-11-03.json).
+
+For a repeat, the ignored native test is
+`cargo test --release -p thinoda-canvas --lib measure_large_board_canvas_pass -- --ignored --nocapture`.
+Generate browser fixtures with
+`python crates\thinoda-web\tests\benchmarks\make-board-fixtures.py crates\thinoda-web\tests\fixtures\affinity-diagram.thinoda <fixture-directory>`,
+then serve baseline and candidate release builds locally and run
+`node crates\thinoda-web\tests\benchmarks\compare-board-frames.cjs <fixture-directory> <baseline-url> <candidate-url> <output-json>`.
+The browser harness blocks service workers and cross-origin requests. Use
+matching toolchains, a quiet machine and the same benchmark test in both native
+builds; neither harness replaces device or assistive-technology testing.
+
 ### 5.5 Input devices
 
 - Mouse and touch are supported drawing inputs, but real-device and

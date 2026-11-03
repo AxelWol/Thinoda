@@ -2,12 +2,14 @@
 
 use super::*;
 use crate::actions::{BoardAction, apply_board_action, board_actions};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use thinoda_core::{
     CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, EditError, EditResult,
-    Endpoint, Scene, SceneId, SheetRootMode, ZOrder,
-    board::{BoardMember, MIN_CARD_SIZE, rotate_around, rotated_corners},
-    scene::SceneGeometry,
+    Endpoint, Scene, SceneId, SheetRootMode, ZOrder, Zone, ZoneId,
+    board::{
+        BoardMember, CanvasCardState, CanvasGroupId, MIN_CARD_SIZE, rotate_around, rotated_corners,
+    },
+    scene::{SceneGeometry, SceneItem},
 };
 
 #[derive(Default)]
@@ -1756,7 +1758,7 @@ fn focus_duplicated_selection(ui: &Ui, view: &mut MapView) {
     }
 }
 
-fn reading_order(sheet: &Sheet, scene: &Scene) -> Vec<SceneId> {
+fn reading_order<'a>(sheet: &Sheet, scene: &'a Scene) -> Vec<&'a SceneItem> {
     let mut items: Vec<_> = scene
         .items
         .iter()
@@ -1774,7 +1776,104 @@ fn reading_order(sheet: &Sheet, scene: &Scene) -> Vec<SceneId> {
             .then(a.bounds.min.y.total_cmp(&b.bounds.min.y))
             .then(a.bounds.min.x.total_cmp(&b.bounds.min.x))
     });
-    items.into_iter().map(|item| item.id).collect()
+    items
+}
+
+/// Per-pass lookups for accessibility labels and whole-group mobility.
+struct AccessibilityIndex<'a> {
+    objects: HashMap<CanvasObjectId, &'a CanvasObject>,
+    zones: HashMap<ZoneId, &'a Zone>,
+    card_states: HashMap<TopicId, &'a CanvasCardState>,
+    floating: HashSet<TopicId>,
+    locked_groups: HashSet<CanvasGroupId>,
+    duplicate_ids: bool,
+}
+
+impl<'a> AccessibilityIndex<'a> {
+    fn new(sheet: &'a Sheet) -> Self {
+        let mut objects = HashMap::with_capacity(sheet.canvas.objects.len());
+        for object in &sheet.canvas.objects {
+            objects.entry(object.id).or_insert(object);
+        }
+        let mut zones = HashMap::with_capacity(sheet.zones.len());
+        for zone in &sheet.zones {
+            zones.entry(zone.id).or_insert(zone);
+        }
+        let mut card_states = HashMap::with_capacity(sheet.canvas.card_states.len());
+        for state in &sheet.canvas.card_states {
+            card_states.entry(state.topic).or_insert(state);
+        }
+        let floating: HashSet<_> = sheet.floating.iter().copied().collect();
+        let groups: HashSet<_> = sheet.canvas.groups.iter().map(|group| group.id).collect();
+        let duplicate_ids = objects.len() != sheet.canvas.objects.len()
+            || zones.len() != sheet.zones.len()
+            || card_states.len() != sheet.canvas.card_states.len()
+            || floating.len() != sheet.floating.len()
+            || groups.len() != sheet.canvas.groups.len();
+        let mut locked_groups: HashSet<_> = sheet
+            .canvas
+            .groups
+            .iter()
+            .filter(|group| group.locked)
+            .map(|group| group.id)
+            .collect();
+        for object in &sheet.canvas.objects {
+            if object.locked
+                && let Some(group) = object.group.filter(|group| groups.contains(group))
+            {
+                locked_groups.insert(group);
+            }
+        }
+        for state in &sheet.canvas.card_states {
+            if state.locked
+                && let Some(group) = state.group.filter(|group| groups.contains(group))
+                && state.topic != sheet.root
+                && floating.contains(&state.topic)
+                && sheet
+                    .topic(state.topic)
+                    .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+            {
+                locked_groups.insert(group);
+            }
+        }
+        Self {
+            objects,
+            zones,
+            card_states,
+            floating,
+            locked_groups,
+            duplicate_ids,
+        }
+    }
+
+    fn object_is_unlocked(&self, sheet: &Sheet, object: &CanvasObject) -> bool {
+        if self.duplicate_ids {
+            return board_actions::member_is_movable(sheet, BoardMember::Object(object.id));
+        }
+        object
+            .group
+            .map_or(!object.locked, |group| !self.locked_groups.contains(&group))
+    }
+
+    fn topic_is_unlocked(&self, sheet: &Sheet, id: TopicId) -> bool {
+        if self.duplicate_ids {
+            return topic_is_unlocked(sheet, id);
+        }
+        let Some(state) = self.card_states.get(&id) else {
+            return true;
+        };
+        if id == sheet.root
+            || !self.floating.contains(&id)
+            || !sheet
+                .topic(id)
+                .is_some_and(|topic| topic.parent.is_none() && topic.card.is_some())
+        {
+            return true;
+        }
+        state
+            .group
+            .map_or(!state.locked, |group| !self.locked_groups.contains(&group))
+    }
 }
 
 fn object_kind_name<'a>(view: &'a MapView, kind: &CanvasObjectKind) -> &'a str {
@@ -1789,7 +1888,12 @@ fn object_kind_name<'a>(view: &'a MapView, kind: &CanvasObjectKind) -> &'a str {
     }
 }
 
-fn endpoint_description(sheet: &Sheet, view: &MapView, endpoint: Endpoint) -> String {
+fn endpoint_description(
+    sheet: &Sheet,
+    view: &MapView,
+    index: &AccessibilityIndex<'_>,
+    endpoint: Endpoint,
+) -> String {
     match endpoint {
         Endpoint::Topic(id) => sheet
             .topic(id)
@@ -1798,7 +1902,7 @@ fn endpoint_description(sheet: &Sheet, view: &MapView, endpoint: Endpoint) -> St
                 || view.board_labels.free_point.clone(),
                 |topic| topic.title.clone(),
             ),
-        Endpoint::Object(id) => sheet.canvas.object(id).map_or_else(
+        Endpoint::Object(id) => index.objects.get(&id).map_or_else(
             || view.board_labels.free_point.clone(),
             |object| {
                 if !object.alt_text.is_empty() {
@@ -1819,10 +1923,17 @@ fn endpoint_description(sheet: &Sheet, view: &MapView, endpoint: Endpoint) -> St
     }
 }
 
-fn item_label(sheet: &Sheet, view: &MapView, id: SceneId) -> Option<(String, bool)> {
+fn item_label(
+    sheet: &Sheet,
+    view: &MapView,
+    index: &AccessibilityIndex<'_>,
+    selected_topics: &HashSet<TopicId>,
+    selected_objects: &HashSet<CanvasObjectId>,
+    id: SceneId,
+) -> Option<(String, bool)> {
     let (mut label, selected, locked) = match id {
         SceneId::Zone(id) => {
-            let zone = sheet.zones.iter().find(|zone| zone.id == id)?;
+            let zone = index.zones.get(&id)?;
             (
                 format!("{}: {}", view.board_labels.frame, zone.name),
                 view.selected_object == Some(ObjectSelection::Zone(id)),
@@ -1842,12 +1953,12 @@ fn item_label(sheet: &Sheet, view: &MapView, id: SceneId) -> Option<(String, boo
             };
             (
                 format!("{kind}{}", topic.title),
-                view.selection.contains(&id),
-                !topic_is_unlocked(sheet, id),
+                selected_topics.contains(&id),
+                !index.topic_is_unlocked(sheet, id),
             )
         }
         SceneId::Object(id) => {
-            let object = sheet.canvas.object(id)?;
+            let object = index.objects.get(&id)?;
             let kind = object_kind_name(view, &object.kind);
             let description = if !object.alt_text.is_empty() {
                 object.alt_text.as_str()
@@ -1863,15 +1974,15 @@ fn item_label(sheet: &Sheet, view: &MapView, id: SceneId) -> Option<(String, boo
                 label.push_str(&format!(
                     ", {}: {}, {}: {}",
                     view.board_labels.from,
-                    endpoint_description(sheet, view, connector.from),
+                    endpoint_description(sheet, view, index, connector.from),
                     view.board_labels.to,
-                    endpoint_description(sheet, view, connector.to)
+                    endpoint_description(sheet, view, index, connector.to)
                 ));
             }
             (
                 label,
-                view.board_selection.contains(&id),
-                !board_actions::member_is_movable(sheet, BoardMember::Object(id)),
+                selected_objects.contains(&id),
+                !index.object_is_unlocked(sheet, object),
             )
         }
     };
@@ -1906,10 +2017,22 @@ pub(super) fn accessibility(ui: &mut Ui, view: &mut MapView, sheet: &Sheet, scen
         return false;
     }
     let focus_after_duplicate = view.board_input.focus_after_duplicate.take();
+    let index = AccessibilityIndex::new(sheet);
+    let mut selected_topics: HashSet<_> = view.selection.iter().copied().collect();
+    let mut selected_objects: HashSet<_> = view.board_selection.iter().copied().collect();
     let mut focused = false;
-    for id in reading_order(sheet, scene) {
-        let Some(item) = scene.item(id) else { continue };
-        let Some((label, selected)) = item_label(sheet, view, id) else {
+    for item in reading_order(sheet, scene) {
+        // Valid workbooks have unique ids; preserve the old first-match path
+        // for malformed sheets supplied directly by a host.
+        let item = if index.duplicate_ids {
+            scene.item(item.id).expect("reading order item is in scene")
+        } else {
+            item
+        };
+        let id = item.id;
+        let Some((label, selected)) =
+            item_label(sheet, view, &index, &selected_topics, &selected_objects, id)
+        else {
             continue;
         };
         let mut rect = view.xf().rect(item.bounds);
@@ -1921,6 +2044,10 @@ pub(super) fn accessibility(ui: &mut Ui, view: &mut MapView, sheet: &Sheet, scen
             .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
         if response.gained_focus() && focus_after_duplicate != Some(id) {
             select_item(view, sheet, id);
+            selected_topics.clear();
+            selected_topics.extend(view.selection.iter().copied());
+            selected_objects.clear();
+            selected_objects.extend(view.board_selection.iter().copied());
         }
         if response.has_focus() {
             focused = true;
@@ -1967,16 +2094,18 @@ fn cycle_selection(
         return;
     }
     let current = focused
-        .and_then(|focused| items.iter().position(|item| item_id(*item) == focused))
+        .and_then(|focused| items.iter().position(|item| item_id(item.id) == focused))
         .or_else(|| {
             if focused == Some(MapCanvas::id()) {
                 None
             } else if let Some(id) = view.board_selection.last() {
-                items.iter().position(|item| *item == SceneId::Object(*id))
+                items
+                    .iter()
+                    .position(|item| item.id == SceneId::Object(*id))
             } else if let Some(id) = view.primary() {
-                items.iter().position(|item| *item == SceneId::Topic(id))
+                items.iter().position(|item| item.id == SceneId::Topic(id))
             } else if let Some(ObjectSelection::Zone(id)) = view.selected_object {
-                items.iter().position(|item| *item == SceneId::Zone(id))
+                items.iter().position(|item| item.id == SceneId::Zone(id))
             } else {
                 None
             }
@@ -1994,7 +2123,7 @@ fn cycle_selection(
         (Some(index), false) => index + 1,
         (None, false) => 0,
     };
-    let id = items[index];
+    let id = items[index].id;
     select_item(view, doc.sheet(), id);
     let target = if reverse {
         controls(view, doc.sheet(), layout, scene)
@@ -2503,6 +2632,249 @@ mod identity_tests {
         let draft = view.board_input.label.as_mut().unwrap();
         draft.sheet_identity.allocation = replacement_address;
         assert!(validate_label_source(draft, &replacement).is_err());
+    }
+}
+
+#[cfg(test)]
+mod accessibility_index_tests {
+    use super::*;
+    use thinoda_core::Workbook;
+
+    fn card(sheet: &mut Sheet, title: &str, x: f32) -> TopicId {
+        sheet
+            .add_card(
+                title,
+                Vec2::new(x, 0.0),
+                Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+            )
+            .unwrap()
+    }
+
+    fn shape(sheet: &mut Sheet, label: &str, x: f32) -> CanvasObjectId {
+        let mut object = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(x, 150.0), Vec2::new(100.0, 80.0)),
+        );
+        if let CanvasObjectKind::Shape { label: text, .. } = &mut object.kind {
+            *text = label.into();
+        }
+        sheet.add_canvas_object(object).unwrap()
+    }
+
+    fn assert_mobility_matches_existing_path(sheet: &Sheet) {
+        let index = AccessibilityIndex::new(sheet);
+        for object in &sheet.canvas.objects {
+            assert_eq!(
+                index.object_is_unlocked(sheet, object),
+                board_actions::member_is_movable(sheet, BoardMember::Object(object.id)),
+                "object {}",
+                object.id
+            );
+        }
+        for id in sheet.topics.keys().copied() {
+            assert_eq!(
+                index.topic_is_unlocked(sheet, id),
+                topic_is_unlocked(sheet, id),
+                "topic {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_locks_match_direct_and_mixed_group_mobility() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let free = shape(&mut sheet, "Free", 0.0);
+        let locked = shape(&mut sheet, "Locked", 150.0);
+        let standalone_card = card(&mut sheet, "Locked card", 300.0);
+        let ordinary = sheet.add_floating("Ordinary topic", Vec2::new(450.0, 0.0));
+        sheet.add_child(ordinary, None, "Child");
+
+        let mut pairs = Vec::new();
+        for (number, x) in [600.0, 750.0, 900.0, 1050.0].into_iter().enumerate() {
+            let card = card(&mut sheet, &format!("Card {number}"), x);
+            let object = shape(&mut sheet, &format!("Shape {number}"), x);
+            let group = sheet
+                .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+                .unwrap();
+            pairs.push((card, object, group));
+        }
+        sheet
+            .set_board_members_locked(
+                &[
+                    BoardMember::Object(locked),
+                    BoardMember::Card(standalone_card),
+                    BoardMember::Object(pairs[1].1),
+                    BoardMember::Card(pairs[2].0),
+                ],
+                true,
+            )
+            .unwrap();
+        sheet.set_canvas_group_locked(pairs[3].2, true).unwrap();
+        Workbook::new(sheet.clone()).validate().unwrap();
+        assert_mobility_matches_existing_path(&sheet);
+
+        let index = AccessibilityIndex::new(&sheet);
+        assert!(index.object_is_unlocked(&sheet, sheet.canvas.object(free).unwrap()));
+        assert!(!index.object_is_unlocked(&sheet, sheet.canvas.object(locked).unwrap()));
+        assert!(!index.topic_is_unlocked(&sheet, standalone_card));
+        assert!(index.topic_is_unlocked(&sheet, ordinary));
+        assert!(index.topic_is_unlocked(&sheet, pairs[0].0));
+        for (card, object, _) in &pairs[1..] {
+            assert!(!index.topic_is_unlocked(&sheet, *card));
+            assert!(!index.object_is_unlocked(&sheet, sheet.canvas.object(*object).unwrap()));
+        }
+
+        sheet
+            .set_board_members_locked(
+                &[
+                    BoardMember::Object(pairs[1].1),
+                    BoardMember::Card(pairs[2].0),
+                ],
+                false,
+            )
+            .unwrap();
+        sheet.set_canvas_group_locked(pairs[3].2, false).unwrap();
+        assert_mobility_matches_existing_path(&sheet);
+        let refreshed = AccessibilityIndex::new(&sheet);
+        for (card, object, _) in &pairs {
+            assert!(refreshed.topic_is_unlocked(&sheet, *card));
+            assert!(refreshed.object_is_unlocked(&sheet, sheet.canvas.object(*object).unwrap()));
+        }
+    }
+
+    #[test]
+    fn indexed_labels_preserve_selection_lock_and_connector_descriptions() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = card(&mut sheet, "Idea", 0.0);
+        let object = shape(&mut sheet, "Visible label", 150.0);
+        sheet.canvas.object_mut(object).unwrap().alt_text = "Described shape".into();
+        let group = sheet
+            .group_board_members(&[BoardMember::Card(card), BoardMember::Object(object)])
+            .unwrap();
+        sheet.set_canvas_group_locked(group, true).unwrap();
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(card),
+                Endpoint::Object(object),
+            )))
+            .unwrap();
+        let frame = sheet
+            .create_board_frame(
+                "Area",
+                thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(500.0, 400.0)),
+            )
+            .unwrap();
+        Workbook::new(sheet.clone()).validate().unwrap();
+        let index = AccessibilityIndex::new(&sheet);
+        let view = MapView {
+            selected_object: Some(ObjectSelection::Zone(frame)),
+            ..Default::default()
+        };
+        let selected_topics = HashSet::from([card]);
+        let selected_objects = HashSet::from([object, connector]);
+        let label = |id| {
+            item_label(
+                &sheet,
+                &view,
+                &index,
+                &selected_topics,
+                &selected_objects,
+                id,
+            )
+        };
+        assert_eq!(
+            label(SceneId::Topic(card)),
+            Some(("Sticky note: Idea, Selected, Locked".into(), true))
+        );
+        assert_eq!(
+            label(SceneId::Object(object)),
+            Some(("Rectangle: Described shape, Selected, Locked".into(), true))
+        );
+        assert_eq!(
+            label(SceneId::Object(connector)),
+            Some((
+                "Connector, From: Idea, To: Described shape, Selected".into(),
+                true
+            ))
+        );
+        assert_eq!(
+            label(SceneId::Zone(frame)),
+            Some(("Frame: Area, Selected".into(), true))
+        );
+        assert_eq!(label(SceneId::Topic(sheet.root)), None);
+    }
+
+    #[test]
+    fn indexed_lookups_keep_first_matches_for_rejected_duplicate_ids() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let object = shape(&mut sheet, "First shape", 0.0);
+        let mut duplicate = sheet.canvas.object(object).unwrap().clone();
+        duplicate.alt_text = "Second shape".into();
+        sheet.canvas.objects.push(duplicate);
+        let frame = sheet
+            .create_board_frame(
+                "First frame",
+                thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(300.0, 300.0)),
+            )
+            .unwrap();
+        let mut duplicate = sheet.zones[0].clone();
+        duplicate.name = "Second frame".into();
+        sheet.zones.push(duplicate);
+        let card = card(&mut sheet, "Card", 300.0);
+        sheet.canvas.card_states.extend([
+            CanvasCardState {
+                topic: card,
+                group: None,
+                locked: false,
+            },
+            CanvasCardState {
+                topic: card,
+                group: None,
+                locked: true,
+            },
+        ]);
+        assert!(Workbook::new(sheet.clone()).validate().is_err());
+        let index = AccessibilityIndex::new(&sheet);
+        assert_eq!(index.objects[&object].label(), "First shape");
+        assert_eq!(index.zones[&frame].name, "First frame");
+        assert!(!index.card_states[&card].locked);
+        assert!(index.duplicate_ids);
+        assert_mobility_matches_existing_path(&sheet);
+    }
+
+    #[test]
+    fn duplicate_group_members_use_existing_first_match_mobility() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let first = shape(&mut sheet, "First", 0.0);
+        let peer = shape(&mut sheet, "Peer", 150.0);
+        let first_group = CanvasGroupId(1000);
+        let second_group = CanvasGroupId(1001);
+        sheet.canvas.groups.extend([
+            thinoda_core::board::CanvasGroup {
+                id: first_group,
+                locked: false,
+            },
+            thinoda_core::board::CanvasGroup {
+                id: second_group,
+                locked: false,
+            },
+        ]);
+        sheet.canvas.objects[0].group = Some(first_group);
+        sheet.canvas.objects[1].group = Some(second_group);
+        let mut duplicate = sheet.canvas.objects[0].clone();
+        duplicate.group = Some(second_group);
+        duplicate.locked = true;
+        sheet.canvas.objects.push(duplicate);
+        assert!(Workbook::new(sheet.clone()).validate().is_err());
+        assert_mobility_matches_existing_path(&sheet);
+        let index = AccessibilityIndex::new(&sheet);
+        assert!(index.duplicate_ids);
+        assert!(index.object_is_unlocked(&sheet, sheet.canvas.object(first).unwrap()));
+        assert!(index.object_is_unlocked(&sheet, sheet.canvas.object(peer).unwrap()));
     }
 }
 

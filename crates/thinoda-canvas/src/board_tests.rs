@@ -141,6 +141,79 @@ fn shape(sheet: &mut Sheet, x: f32, y: f32, label: &str) -> CanvasObjectId {
 }
 
 #[test]
+#[ignore = "manual full canvas CPU measurement"]
+fn measure_large_board_canvas_pass() {
+    use std::{hint::black_box, time::Instant};
+    use thinoda_core::{Color, InkStroke, InkTool};
+
+    for strokes in [1_000, 10_000] {
+        let mut sheet = board();
+        for index in 0..strokes {
+            let origin = Vec2::new((index % 100) as f32 * 80.0, (index / 100) as f32 * 80.0);
+            let points = (0..64)
+                .map(|point| {
+                    let x = point as f32;
+                    origin + Vec2::new(x, (x * 0.2).sin() * 6.0)
+                })
+                .collect();
+            sheet
+                .add_canvas_object(CanvasObject::ink(InkStroke::new(
+                    InkTool::Pen,
+                    Color::rgb(40, 100, 220),
+                    2.0,
+                    points,
+                )))
+                .unwrap();
+        }
+        for index in 0..50 {
+            sheet
+                .add_card(
+                    &format!("Image {index}"),
+                    Vec2::new(index as f32 * 160.0, -180.0),
+                    Card::new(CardKind::Image, Vec2::new(140.0, 100.0)),
+                )
+                .unwrap();
+        }
+        let workbook = Workbook::new(sheet);
+        workbook.validate().unwrap();
+        for accesskit in [false, true] {
+            let mut doc = Document::new(workbook.clone());
+            let mut view = MapView {
+                show_add_controls: false,
+                ..Default::default()
+            };
+            let ctx = egui::Context::default();
+            if accesskit {
+                ctx.enable_accesskit();
+            }
+            let mut samples = Vec::new();
+            for sample in 0..23 {
+                let start = Instant::now();
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        assert!(MapCanvas::show(ui, &mut doc, &mut view).error.is_none());
+                    },
+                );
+                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                black_box(output);
+                if sample >= 3 {
+                    samples.push(elapsed);
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "strokes={strokes} cards=50 accesskit={accesskit} p50_ms={:.3} p95_ms={:.3}",
+                samples[9], samples[18]
+            );
+        }
+    }
+}
+
+#[test]
 fn board_duplication_transaction_remaps_mixed_groups_and_skips_locked_items() {
     let mut sheet = board();
     let card = sheet
@@ -4574,6 +4647,48 @@ fn keyboard_tab_order_reaches_frames_objects_and_their_controls() {
     h.run_steps(2);
     assert_eq!(h.state().view.board_selection, vec![second]);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn focusing_group_member_updates_later_accessible_labels_in_same_frame() {
+    let mut sheet = board();
+    let focused = shape(&mut sheet, -200.0, -180.0, "Group focus");
+    let peer = shape(&mut sheet, 0.0, 120.0, "Group peer");
+    let previous = shape(&mut sheet, 250.0, 200.0, "Previous");
+    let card = sheet
+        .add_card(
+            "Group card",
+            Vec2::new(-200.0, 40.0),
+            Card::new(CardKind::Sticky, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    sheet
+        .group_board_members(&[
+            BoardMember::Object(focused),
+            BoardMember::Object(peer),
+            BoardMember::Card(card),
+        ])
+        .unwrap();
+    let mut h = harness(sheet);
+    h.state_mut().view.board_selection = vec![previous];
+    h.run_steps(2);
+
+    h.get_by_label("Rectangle: Group focus").focus();
+    h.run_steps(1);
+
+    assert_eq!(h.state().view.selection, vec![card]);
+    assert!(h.state().view.board_selection.contains(&focused));
+    assert!(h.state().view.board_selection.contains(&peer));
+    assert!(!h.state().view.board_selection.contains(&previous));
+    assert!(
+        h.query_by_label("Sticky note: Group card, Selected")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("Rectangle: Group peer, Selected")
+            .is_some()
+    );
+    assert!(h.query_by_label("Rectangle: Previous").is_some());
 }
 
 #[test]

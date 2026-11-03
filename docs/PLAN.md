@@ -50,9 +50,13 @@ opacity, layer order and frame clipping. Gallery previews are generated on
 demand; a least-recently-used cache retains at most two full template sets.
 A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
-overhead is unmeasured. The next open work remains the browser accessibility
-bridge, safe large-board recovery, export acceptance and realistic
-performance/device gates; cloud-provider work stays paused.
+overhead is unmeasured. Board accessibility registration now uses per-pass
+indexes without dropping targets or changing reading order. Matched native CPU
+and headless software-rendered browser comparisons show improvement on the
+10,000-stroke placeholder fixture, but do not close the performance gate.
+The next open work remains the browser accessibility bridge, safe large-board
+recovery, export acceptance and realistic performance/device gates;
+cloud-provider work stays paused.
 
 ## Current next-value state (2026-10-30)
 
@@ -3027,6 +3031,9 @@ Localized image-card accessible names now retain the card type after a title
 change. A bounded visible-mesh cache improved the 10,000-stroke headless
 Windows CPU benchmark, but does not close the GPU, web or device performance
 gate; details and tradeoffs are in FREEFORM.
+Indexed accessibility registration likewise improves the matched
+10,000-stroke CPU and headless browser comparisons while keeping all targets;
+its duplicate-ID fallback, evidence and limitations are documented in FREEFORM.
 
 Focused production-browser regressions exercise mixed-board copy/paste, image
 resources, connector remapping, undo/redo, plain-text replacement and rejected
