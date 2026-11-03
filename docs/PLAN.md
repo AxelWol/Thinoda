@@ -33,12 +33,14 @@ Integrated cloud providers remain **disabled by default** and paused until
 publisher registrations are complete. See the R14 status and
 [FREEFORM.md](FREEFORM.md) for phase-specific evidence and limits.
 
-**Latest non-cloud checkpoint:** selected-topic actions avoid visible cards,
+**Latest non-cloud checkpoints:** selected-topic actions avoid visible cards,
 frame titles and the other board toolbars, including rotated and clipped cards.
-When no safe space exists, the selection and existing menu actions remain
-available. Ordinary map placement is unchanged. The next open work remains the
-browser accessibility bridge, safe large-board recovery, export acceptance
-and realistic performance/device gates; cloud-provider work stays paused.
+When no safe space exists, selection and existing menu actions remain available;
+ordinary map placement is unchanged. Embedded-resource unions now avoid
+revalidating the growing store for each item while preserving validation,
+deduplication and atomic paste. The next open work remains the browser
+accessibility bridge, safe large-board recovery, export acceptance and
+realistic performance/device gates; cloud-provider work stays paused.
 
 ## Current next-value state (2026-10-30)
 
@@ -3015,10 +3017,17 @@ Windows CPU benchmark, but does not close the GPU, web or device performance
 gate; details and tradeoffs are in FREEFORM.
 
 Focused production-browser regressions exercise mixed-board copy/paste, image
-resources, connector remapping, undo, plain-text replacement and rejected cuts
-through synthetic events and an isolated virtual clipboard. All nine cases passed
-across desktop Chromium, Firefox and WebKit. They do not prove real
+resources, connector remapping, undo/redo, plain-text replacement and rejected
+cuts through synthetic events and an isolated virtual clipboard. Four cases
+passed in each of desktop Chromium, Firefox and WebKit. They do not prove real
 system-clipboard ownership, browser permissions or sanitization.
+
+Resource unions validate the original store once and each incoming resource
+individually; legacy floating-subtree paste aggregates already-validated sources
+without repeatedly rehashing the growing union. A matched 50-image Wasm
+microbenchmark shows lower union times in Chromium, Firefox and WebKit, but no
+material archive-import change. Tests and limits, including the distinction
+from end-to-end paste and device acceptance, are recorded in FREEFORM.
 
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot

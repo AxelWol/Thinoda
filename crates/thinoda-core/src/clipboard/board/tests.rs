@@ -680,6 +680,101 @@ fn floating_legacy_subtrees_preserve_cards_and_resources_and_validate_atomically
 }
 
 #[test]
+fn floating_subtrees_merge_multiple_resources_atomically_and_preserve_undo() {
+    let mut source = hidden_sheet("Source", "");
+    let mut cards = Vec::new();
+    let bytes = [b"shared".as_slice(), b"second", b"third", b"second"];
+    for (index, bytes) in bytes.into_iter().enumerate() {
+        let name = format!("source-{index}.txt");
+        let reference = source
+            .resources
+            .insert(crate::resources::Resource::new(&name, "text/plain", bytes.to_vec()).unwrap())
+            .unwrap();
+        let card = source
+            .add_card(
+                &name,
+                Vec2::new(index as f32 * 160.0, 0.0),
+                Card::new(CardKind::Sticky, Vec2::new(120.0, 80.0)),
+            )
+            .unwrap();
+        source.topic_mut(card).unwrap().attachment = Some(crate::attachments::Attachment {
+            resource: reference,
+            name,
+        });
+        cards.push(card);
+    }
+    let mut payload = crate::clipboard::copy_topics(&source, &cards).unwrap();
+    payload.subtrees[3]
+        .resources
+        .entries
+        .values_mut()
+        .next()
+        .unwrap()
+        .name = "later-duplicate.txt".into();
+    let mut destination = hidden_sheet("Destination", "");
+    let shared = destination
+        .resources
+        .insert(
+            crate::resources::Resource::new("destination.txt", "text/plain", b"shared".to_vec())
+                .unwrap(),
+        )
+        .unwrap();
+    let mut doc = Document::new(Workbook::new(destination));
+    let before = doc.workbook().clone();
+    let mut malformed = payload.subtrees.clone();
+    let resources = &mut malformed[1].resources.entries;
+    let (id, resource) = resources.pop_first().unwrap();
+    assert_ne!(id, "0".repeat(64));
+    resources.insert("0".repeat(64), resource);
+    assert!(
+        doc.edit_sheet("Invalid paste", |sheet| {
+            paste_floating_subtrees(sheet, &malformed, Vec2::ZERO).map_err(EditError::Invalid)
+        })
+        .is_err()
+    );
+    assert_eq!(doc.workbook(), &before);
+    assert!(!doc.can_undo());
+
+    let pasted = doc
+        .edit_sheet("Paste", |sheet| {
+            paste_floating_subtrees(sheet, &payload.subtrees, Vec2::new(50.0, 60.0))
+                .map_err(EditError::Invalid)
+        })
+        .unwrap();
+    assert_eq!(pasted.len(), 4);
+    assert_eq!(doc.sheet().resources.entries.len(), 3);
+    assert_eq!(
+        doc.sheet().resources.get(&shared).unwrap().name,
+        "destination.txt"
+    );
+    assert!(
+        doc.sheet()
+            .resources
+            .entries
+            .values()
+            .any(|resource| resource.name == "source-1.txt")
+    );
+    for (index, id) in pasted.into_iter().enumerate() {
+        let attachment = doc.sheet().topic(id).unwrap().attachment.as_ref().unwrap();
+        assert_eq!(attachment.name, format!("source-{index}.txt"));
+        assert_eq!(
+            doc.sheet()
+                .resources
+                .get(&attachment.resource)
+                .unwrap()
+                .bytes(),
+            bytes[index]
+        );
+    }
+    doc.workbook().validate().unwrap();
+    let after = doc.workbook().clone();
+    assert!(doc.undo());
+    assert_eq!(doc.workbook(), &before);
+    assert!(doc.redo());
+    assert_eq!(doc.workbook(), &after);
+}
+
+#[test]
 fn floating_plain_text_paste_undoes_in_one_step() {
     let subtrees = crate::clipboard::subtrees_from_text("One\nTwo");
     let mut doc = Document::new(Workbook::new(hidden_sheet("Target", "")));

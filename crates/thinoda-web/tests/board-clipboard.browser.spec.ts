@@ -272,6 +272,69 @@ test("rich mixed-board clipboard remaps connections and carries images across do
     expect(targetUndo.manifest.resources).toEqual(targetBefore.manifest.resources);
 });
 
+test("multiple embedded images survive cross-document paste, undo and redo", async ({ page }) => {
+    const images = [
+        { name: "clipboard-first.jpg", bytes: await jpeg(page, 64, 0.9) },
+        { name: "clipboard-second.jpg", bytes: await jpeg(page, 48, 0.85) },
+    ];
+    for (const image of images) {
+        await imagePicker(page, { name: image.name, mimeType: "image/jpeg", buffer: image.bytes });
+        await page.waitForTimeout(500);
+    }
+
+    const source = archive(await saveAs(page, "clipboard-multiple-source.thinoda"));
+    const sourceCards = Object.values(source.content.sheets[0].topics)
+        .filter((topic) => topic.card?.kind === "image");
+    expect(sourceCards).toHaveLength(2);
+    expect(source.manifest.resources).toHaveLength(2);
+    for (const image of images) {
+        const resource = source.manifest.resources.find((entry) => entry.name === image.name);
+        if (!resource) throw new Error(`Missing source resource ${image.name}`);
+        expect(sourceCards.some((card) => card.image === `thinoda-resource:${resource.id}`)).toBe(true);
+        expect(zipEntry(source.zip, `resources/${resource.id}`)).toEqual(image.bytes);
+    }
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await page.keyboard.press("Control+a");
+    await frames(page);
+    await copyOrCut(page, "copy");
+    await openBoard(page);
+    const before = archive(await saveAs(page, "clipboard-multiple-before.thinoda"));
+    await paste(page);
+    const pasted = archive(await saveAs(page, "clipboard-multiple-pasted.thinoda"));
+    const pastedCards = Object.values(pasted.content.sheets[0].topics)
+        .filter((topic) => topic.card?.kind === "image");
+    expect(pastedCards).toHaveLength(2);
+    expect(pasted.manifest.resources).toEqual(source.manifest.resources);
+    for (const image of images) {
+        const resource = pasted.manifest.resources.find((entry) => entry.name === image.name);
+        if (!resource) throw new Error(`Missing pasted resource ${image.name}`);
+        expect(pastedCards.some((card) => card.image === `thinoda-resource:${resource.id}`)).toBe(true);
+        expect(zipEntry(pasted.zip, `resources/${resource.id}`)).toEqual(image.bytes);
+    }
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    const undone = archive(await saveAs(page, "clipboard-multiple-undo.thinoda"));
+    expect(undone.content.sheets).toEqual(before.content.sheets);
+    expect(undone.manifest.resources).toEqual(before.manifest.resources);
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    const redone = archive(await saveAs(page, "clipboard-multiple-redo.thinoda"));
+    expect(redone.content.sheets).toEqual(pasted.content.sheets);
+    expect(redone.manifest.resources).toEqual(pasted.manifest.resources);
+    for (const image of images) {
+        const resource = redone.manifest.resources.find((entry) => entry.name === image.name);
+        if (!resource) throw new Error(`Missing restored resource ${image.name}`);
+        expect(zipEntry(redone.zip, `resources/${resource.id}`)).toEqual(image.bytes);
+    }
+});
+
 test("identical external text does not reuse an earlier rich board selection", async ({ page }) => {
     await createShape(page, "Clipboard plain replacement");
     const before = archive(await saveAs(page, "clipboard-plain-before.thinoda"));

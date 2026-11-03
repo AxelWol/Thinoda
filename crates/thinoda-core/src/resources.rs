@@ -156,15 +156,29 @@ impl ResourceStore {
     /// Equal bytes share an ID; the existing display metadata is kept on deduplication.
     pub fn insert(&mut self, resource: Resource) -> Result<String, String> {
         self.validate()?;
+        let mut total_bytes = self.byte_len();
+        self.insert_validated(resource, &mut total_bytes)
+    }
+
+    // The caller must validate the store and initialize the byte total from it.
+    fn insert_validated(
+        &mut self,
+        resource: Resource,
+        total_bytes: &mut usize,
+    ) -> Result<String, String> {
         validate_metadata(&resource.name, &resource.media_type)?;
+        if resource.data.is_empty() || resource.data.len() > MAX_RESOURCE_BYTES {
+            return Err("embedded resource must contain 1 byte to 8 MiB".into());
+        }
         let id = resource.id();
         if !self.entries.contains_key(&id) {
             if self.entries.len() >= MAX_RESOURCES
-                || self.byte_len().saturating_add(resource.data.len()) > MAX_SHEET_RESOURCE_BYTES
+                || total_bytes.saturating_add(resource.data.len()) > MAX_SHEET_RESOURCE_BYTES
             {
                 return Err("sheet embedded resources exceed 128 entries or 32 MiB".into());
             }
 
+            *total_bytes += resource.data.len();
             self.entries.insert(id.clone(), resource);
         }
         Ok(format!("{RESOURCE_PREFIX}{id}"))
@@ -174,8 +188,9 @@ impl ResourceStore {
     pub fn merged(&self, incoming: impl IntoIterator<Item = Resource>) -> Result<Self, String> {
         self.validate()?;
         let mut result = self.clone();
+        let mut total_bytes = self.byte_len();
         for resource in incoming {
-            result.insert(resource)?;
+            result.insert_validated(resource, &mut total_bytes)?;
         }
         Ok(result)
     }
@@ -269,5 +284,22 @@ mod tests {
         assert_eq!(store, before);
         store.version = 2;
         assert!(store.validate().unwrap_err().contains("unsupported"));
+    }
+
+    #[test]
+    fn invalid_incoming_data_is_rejected_without_changing_the_store() {
+        let mut store = ResourceStore::default();
+        let before = store.clone();
+        let mut empty = Resource::new("file", "text/plain", vec![1]).unwrap();
+        empty.data = Arc::from([]);
+        assert!(store.insert(empty.clone()).is_err());
+        assert!(store.merged([empty]).is_err());
+        assert_eq!(store, before);
+
+        let mut oversized = Resource::new("file", "text/plain", vec![1]).unwrap();
+        oversized.data = vec![0; MAX_RESOURCE_BYTES + 1].into();
+        assert!(store.insert(oversized.clone()).is_err());
+        assert!(store.merged([oversized]).is_err());
+        assert_eq!(store, before);
     }
 }

@@ -713,10 +713,12 @@ pub fn paste_floating_subtrees(
             dependency.successor = map(dependency.successor)?;
             fragment.scheduling.dependencies.push(dependency);
         }
-        fragment.resources = fragment
-            .resources
-            .merged(subtree.resources.entries.values().cloned())?;
     }
+    fragment.resources = fragment.resources.merged(
+        subtrees
+            .iter()
+            .flat_map(|subtree| subtree.resources.entries.values().cloned()),
+    )?;
 
     // The existing topic-paste path also accepts an embedded resource already
     // in the destination when an older subtree omits its own copy.

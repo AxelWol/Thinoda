@@ -621,13 +621,52 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - Production-browser regressions use synthetic clipboard events and an isolated
   in-page Clipboard API to exercise a mixed rootless board. They verify rich
   copy/paste, connector endpoint remapping, embedded-image bytes, cross-document
-  paste and undo. Replacing the clipboard with identical plain text must not
-  resurrect rich objects, and a rejected cut write must leave the board intact.
-  All nine cases passed across desktop Chromium, Firefox and WebKit.
+  paste and undo, including two distinct image resources through undo and redo.
+  Replacing the clipboard with identical plain text must not resurrect rich
+  objects, and a rejected cut write must leave the board intact. All twelve
+  cases passed across desktop Chromium, Firefox and WebKit.
 - The virtual clipboard deliberately does not touch the user's system clipboard.
   These checks do not establish trusted keyboard-event handling, real clipboard
   permissions or sanitization, operating-system ownership, cross-application
   interchange, or screen-reader behavior; those host checks remain open.
+
+### Resource-union checkpoint: critique
+
+- Merging embedded resources previously revalidated and rehashed the growing
+  destination for every incoming item. The union now validates the original
+  store once, checks each incoming resource, and maintains a bounded byte total
+  while constructing a private clone. Public single-item insertion still
+  validates the current store; mutable metadata and public store entries are
+  never covered by a cached validation claim.
+- Legacy floating-subtree paste validates every source store, including its
+  digest keys, then merges their resources in source order. The first existing
+  metadata wins on deduplication. Malformed input, entry/byte-limit failures
+  and missing references remain atomic, and both board and ordinary topic
+  paste retain embedded bytes and one-step undo/redo. For payloads containing
+  multiple independent errors, the first reported error can differ because
+  subtree validation now precedes the aggregate union.
+- Core and I/O suites, focused board UI tests, native and Wasm strict lint,
+  a production web build and the three-engine clipboard regressions passed.
+  Some existing I/O tests remain ignored; the browser clipboard is synthetic.
+- A release Wasm harness compared the previous and revised implementation in
+  desktop browsers on Windows. The same 50 distinct JPEG resources totalled
+  7,677,622 bytes. After two warmups, eight pairs per case were interleaved;
+  results were checked outside the timed interval. The partial store already
+  contained 25 of the resources. Median times in milliseconds were:
+
+  | Browser engine | Empty union, before / after | Partial union, before / after | Archive import, before / after |
+  |---|---:|---:|---:|
+  | Chromium | 352.45 / 13.75 | 452.45 / 20.60 | 46.95 / 45.00 |
+  | Firefox | 349.50 / 13.00 | 447.00 / 21.00 | 46.50 / 46.50 |
+  | WebKit | 534.50 / 21.00 | 659.50 / 30.50 | 56.00 / 56.00 |
+
+  The rounded samples, fixture and artifact hashes, engine versions and
+  methodology are retained in
+  [the benchmark record](benchmarks/resource-union-wasm-2026-11-03.json).
+  This measures the in-memory resource operation, not a complete paste or
+  first-start experience. Archive-import timing is essentially unchanged;
+  these results do not close the realistic F5 performance gate or establish
+  GPU, native-host, real-clipboard, screen-reader or physical-iPad acceptance.
 
 ### Toolbox checkpoint: critique
 
