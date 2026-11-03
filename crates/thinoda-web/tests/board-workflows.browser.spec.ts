@@ -3,7 +3,8 @@
  * The native archive is inspected rather than inferring edits from pixels.
  */
 import { expect, test } from "@playwright/test";
-import { command, drag, frames, jpeg, saveAs, touchEvents, zipEntry } from "./board-browser-helpers";
+import { readFile } from "node:fs/promises";
+import { colorBounds, command, drag, frames, saveAs, touchEvents, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -54,7 +55,7 @@ function sheetFrom(zip: Buffer): BoardSheet {
 test.describe("storyboard gallery", () => {
     test.use({ viewport: { width: 1280, height: 800 } });
 
-    test("fills an existing scene image and restores it through undo and redo", async ({ page }) => {
+    test("exports a filled scene to PDF and restores it through undo and redo", async ({ page }) => {
         await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
         await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
         const canvas = page.locator("#thinoda_canvas");
@@ -82,7 +83,16 @@ test.describe("storyboard gallery", () => {
         expect(images.every(image => !image.image)).toBe(true);
         expect(manifest(baseline).resources).toHaveLength(0);
 
-        const bytes = await jpeg(page, 64, 0.9);
+        const fixture = await page.evaluate(() => {
+            const image = document.createElement("canvas");
+            image.width = image.height = 64;
+            const context = image.getContext("2d");
+            if (!context) throw new Error("Cannot create the image fixture");
+            context.fillStyle = "#12c478";
+            context.fillRect(0, 0, 64, 64);
+            return image.toDataURL("image/jpeg", 0.95).split(",")[1];
+        });
+        const bytes = Buffer.from(fixture, "base64");
         await canvas.click({ position: { x: 290, y: 400 } });
         await frames(page);
         const pending = page.waitForEvent("filechooser");
@@ -103,6 +113,48 @@ test.describe("storyboard gallery", () => {
         expect(updated.topics[String(images[1].id)].image).toBeUndefined();
         expect(updated.topics[String(images[2].id)].image).toBeUndefined();
         expect(zipEntry(uploaded, `resources/${resources[0].id}`)).toEqual(bytes);
+
+        await page.evaluate(() => { window.prompt = () => "storyboard.pdf"; });
+        await command(page, "Export PDF");
+        await page.mouse.move(879, 476);
+        await expect.poll(() => canvas.evaluate(element => (element as HTMLCanvasElement).style.cursor))
+            .toBe("pointer");
+        const pendingPdf = page.waitForEvent("download", { timeout: 30_000 });
+        await page.mouse.click(879, 476);
+        const download = await pendingPdf;
+        expect(download.suggestedFilename()).toBe("storyboard.pdf");
+        const pdf = await readFile(await download.path());
+        expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+        await withPdfViewer(pdf, async (viewer) => {
+            const colors = [
+                [18, 196, 120],
+                [238, 247, 254], [241, 249, 241], [255, 247, 235],
+                [255, 229, 143], [165, 216, 255], [183, 235, 143],
+            ];
+            const inspect = async () => colorBounds(page, await viewer.screenshot(), colors, 4);
+            await expect.poll(async () => (await inspect()).every(region => region.count > 500), {
+                timeout: 30_000,
+                intervals: [500, 1_000, 2_000],
+            }).toBe(true);
+            const [picture, ...regions] = await inspect();
+            const [first, second, third, yellow, blue, green] = regions;
+            expect(first.maxX).toBeLessThan(second.minX);
+            expect(second.maxX).toBeLessThan(third.minX);
+            for (const [frame, note] of [[first, yellow], [second, blue], [third, green]]) {
+                expect(note.minX).toBeGreaterThan(frame.minX);
+                expect(note.maxX).toBeLessThan(frame.maxX);
+                expect(note.minY).toBeGreaterThan(frame.minY);
+                expect(note.maxY).toBeLessThan(frame.maxY);
+            }
+            expect(picture.minX).toBeGreaterThan(first.minX);
+            expect(picture.maxX).toBeLessThan(first.maxX);
+            expect(picture.minY).toBeGreaterThan(first.minY);
+            expect(picture.maxY).toBeLessThan(yellow.minY);
+        });
+        const afterExport = await saveAs(page, "storyboard-after-export.thinoda");
+        expect(sheetFrom(afterExport)).toEqual(updated);
+        expect(manifest(afterExport).resources).toEqual(resources);
+        expect(zipEntry(afterExport, `resources/${resources[0].id}`)).toEqual(bytes);
 
         await page.keyboard.press("Control+z");
         await frames(page);

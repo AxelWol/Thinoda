@@ -9,7 +9,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { command, frames, imagePicker, jpeg, largeJpeg, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
+import { colorBounds, command, frames, imagePicker, jpeg, largeJpeg, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -292,37 +292,7 @@ test.describe("rootless image-card export", () => {
         const pdf = await exportFile("Export PDF", "image-card.pdf");
         expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
         await withPdfViewer(pdf, async (viewer) => {
-            const inspectPdf = async () => page.evaluate(async ({ screenshot, colors }) => {
-                const image = new Image();
-                image.src = `data:image/png;base64,${screenshot}`;
-                await image.decode();
-                const canvas = document.createElement("canvas");
-                canvas.width = image.naturalWidth;
-                canvas.height = image.naturalHeight;
-                const context = canvas.getContext("2d");
-                if (!context) throw new Error("Cannot inspect the PDF viewer");
-                context.drawImage(image, 0, 0);
-                const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-                const bounds = colors.map(() => ({
-                    count: 0, minX: canvas.width, minY: canvas.height, maxX: -1, maxY: -1,
-                }));
-                for (let y = 0; y < canvas.height; y++) {
-                    for (let x = 0; x < canvas.width; x++) {
-                        const pixel = (y * canvas.width + x) * 4;
-                        for (let i = 0; i < colors.length; i++) {
-                            if (colors[i].every((value, channel) => Math.abs(pixels[pixel + channel] - value) < 25)) {
-                                const region = bounds[i];
-                                region.count++;
-                                region.minX = Math.min(region.minX, x);
-                                region.minY = Math.min(region.minY, y);
-                                region.maxX = Math.max(region.maxX, x);
-                                region.maxY = Math.max(region.maxY, y);
-                            }
-                        }
-                    }
-                }
-                return bounds;
-            }, { screenshot: (await viewer.screenshot()).toString("base64"), colors: expected });
+            const inspectPdf = async () => colorBounds(page, await viewer.screenshot(), expected);
             await expect.poll(async () => (await inspectPdf()).every((region) => region.count > 500), {
                 timeout: 30_000,
                 intervals: [500, 1_000, 2_000],

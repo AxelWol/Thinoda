@@ -1953,7 +1953,9 @@ draft remains blocked on safe bounded discovery and is not integrated.
   Storyboard scenes are visual guides, not role, set or category assignments,
   grouped or timed scenes, presentation slides or workflow automation.
   Storyboard embeds user-selected local pictures in initially empty image cards;
-  realistic large-image storage and physical-device acceptance remain open.
+  focused PDF raster checks cover its scene frames, notes and an embedded image.
+  Realistic large-image storage, physical-device and broader export acceptance
+  remain open.
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,
   highlighter, object/pixel eraser and lasso; pressure optional.
 - P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance

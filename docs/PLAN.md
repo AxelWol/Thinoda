@@ -50,7 +50,9 @@ opacity, layer order and frame clipping. Gallery previews are generated on
 demand; a least-recently-used cache retains at most two full template sets.
 Storyboard adds three visual scenes with independent action notes and initially
 empty image cards. Selected local images are embedded in the native document;
-frames are not groups and do not define timing or slides.
+frames are not groups and do not define timing or slides. Focused PDF
+rasterization checks now cover its frames, notes and an embedded image; broad
+export acceptance remains open.
 A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
 overhead is unmeasured. Board accessibility registration now uses per-pass
@@ -3096,12 +3098,14 @@ Storyboard adds three localized visual scene frames, empty image cards and
 independent action notes. Selecting an image card and choosing Local Image embeds
 the selected resource without creating another card. The frame and card geometry,
 all-language gallery, native round-trip and image upload/undo/redo have focused
-coverage. SVG and PNG checks include the embedded image, while the PDF check
-establishes generation only. Desktop Chromium, Firefox and WebKit create the
-template, upload an image and inspect saved, undone and redone archives. Visual
-frames do not group content or represent timed scenes or presentation slides.
-Realistic image-storage scaling, physical-device, screen-reader and broader
-export acceptance remain open.
+coverage. SVG and PNG checks include the embedded image. An optional PDFium
+test rasterizes its scene frames, title regions, notes and embedded image in
+both themes. Desktop Chromium, Firefox and WebKit create the template, upload
+a synthetic JPEG, export PDF and inspect its scene, note and image placement
+in a separate Chromium viewer, then verify the saved and undo/redo archives.
+Visual frames do not group content or represent timed scenes or presentation
+slides. Realistic image-storage scaling, physical-device, screen-reader and
+broader export acceptance remain open.
 
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot

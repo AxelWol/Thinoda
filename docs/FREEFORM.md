@@ -838,11 +838,17 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   the card reference and resource. Its frames do not group content, sequence
   timed scenes or create presentation slides. Fixed card/frame dimensions are a
   simple scaffold, not responsive layout. Native round-trip and SVG/PNG tests
-  check the embedded bytes and image output; PDF is checked for generation, not
-  visual fidelity. Production desktop Chromium, Firefox and WebKit regressions
-  create the template, upload an image and inspect saved/undo/redo archives.
-  These checks do not close realistic image-storage scaling, screen-reader,
-  physical-device or broader export-acceptance gates.
+  check the embedded bytes and image output. An independent PDFium rasterization
+  check verifies the three scene fills and title regions, action-note colors
+  and embedded image position in both themes; it is ignored by default because
+  it requires Python, pypdfium2 and Pillow. Production desktop Chromium,
+  Firefox and WebKit regressions create the template, upload a synthetic JPEG,
+  consent to PDF export and inspect its scene colors, note placement and image
+  using a separate Chromium PDF viewer. They also verify that export preserves
+  the saved document and resource, and that undo/redo restore them. This is a
+  focused single-page fixture, not evidence for arbitrary images, screen
+  readers, physical devices, realistic image-storage scaling or broader export
+  acceptance.
 
 ### F5 ink checkpoint: critique
 

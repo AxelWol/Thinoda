@@ -752,8 +752,7 @@ fn swimlane_exports_frames_shapes_and_handoffs() {
     assert!(export(&wb, Format::Pdf).starts_with(b"%PDF"));
 }
 
-#[test]
-fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
+fn storyboard_with_image() -> (Workbook, Vec<u8>) {
     let mut wb = thinoda_core::templates::instantiate("storyboard");
     let sheet = wb.active_mut();
     let image_card = sheet
@@ -771,7 +770,12 @@ fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
     thinoda_core::images::set_image(sheet, image_card, Some((resource, Vec2::new(120.0, 100.0))))
         .unwrap();
     wb.validate().unwrap();
+    (wb, image_bytes)
+}
 
+#[test]
+fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
+    let (wb, image_bytes) = storyboard_with_image();
     let native = export(&wb, Format::Thinoda);
     let restored = import_bytes(Format::Thinoda, &native).unwrap();
     assert_eq!(restored, wb);
@@ -808,6 +812,136 @@ fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
             export_bytes_with_consent(&wb, Format::Pdf, &options, true)
                 .unwrap()
                 .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Python 3, pypdfium2 and Pillow"]
+fn storyboard_pdf_rasterizes_scenes_and_embedded_image_in_both_themes() {
+    use std::process::{Command, Stdio};
+    use thinoda_core::theme::Theme;
+
+    fn rasterize(pdf: &[u8]) -> image::RgbImage {
+        let script = r#"
+import sys
+import pypdfium2 as pdfium
+document = pdfium.PdfDocument(sys.stdin.buffer.read())
+assert len(document) == 1, f"expected one page, got {len(document)}"
+document[0].render(scale=2).to_pil().convert("RGB").save(sys.stdout.buffer, format="PNG")
+"#;
+        let mut child = Command::new("python")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("install Python, pypdfium2 and Pillow to run this ignored test");
+        child.stdin.take().unwrap().write_all(pdf).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "PDF rasterization failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        image::load_from_memory(&output.stdout).unwrap().to_rgb8()
+    }
+
+    fn sample(image: &image::RgbImage, view: [f32; 4], x: f32, y: f32) -> [u8; 3] {
+        let px = ((x - view[0]) / view[2] * image.width() as f32).floor() as i32;
+        let py = ((y - view[1]) / view[3] * image.height() as f32).floor() as i32;
+        assert!(
+            px >= 0 && py >= 0 && px < image.width() as i32 && py < image.height() as i32,
+            "point ({x}, {y}) is outside exported page {view:?}"
+        );
+        image.get_pixel(px as u32, py as u32).0
+    }
+
+    fn near(actual: [u8; 3], expected: [u8; 3], tolerance: u8) -> bool {
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(&a, b)| a.abs_diff(b) <= tolerance)
+    }
+
+    let (wb, _) = storyboard_with_image();
+    let sheet = wb.active();
+    assert_eq!(sheet.zones.len(), 3);
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        let view = view_box(&svg);
+        let image =
+            rasterize(&export_bytes_with_consent(&wb, Format::Pdf, &options, true).unwrap());
+        let bg = Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+        for (index, zone) in sheet.zones.iter().enumerate() {
+            assert!(svg.contains(&zone.name), "missing {}", zone.name);
+            let tint = zone.color.unwrap();
+            let fill = Color::rgba(tint.r, tint.g, tint.b, 20).over(bg);
+            let expected = [fill.r, fill.g, fill.b];
+            let frame = zone.frame;
+            let x = frame.min.x + 10.0;
+            let y = frame.min.y + 90.0;
+            let actual = sample(&image, view, x, y);
+            assert!(
+                near(actual, expected, 3),
+                "scene {} background in dark={dark}: {actual:?} vs {expected:?}",
+                index + 1
+            );
+            let label_pixels = (5..20)
+                .flat_map(|dy| (8..160).map(move |dx| (dx, dy)))
+                .filter(|&(dx, dy)| {
+                    !near(
+                        sample(
+                            &image,
+                            view,
+                            frame.min.x + dx as f32,
+                            frame.min.y + dy as f32,
+                        ),
+                        expected,
+                        60,
+                    )
+                })
+                .count();
+            assert!(label_pixels > 10, "scene {} title is missing", index + 1);
+        }
+
+        for (x, expected) in [
+            (115.0, [0xFF, 0xE5, 0x8F]),
+            (495.0, [0xA5, 0xD8, 0xFF]),
+            (875.0, [0xB7, 0xEB, 0x8F]),
+        ] {
+            let actual = sample(&image, view, x, 330.0);
+            assert!(
+                near(actual, expected, 3),
+                "action note at x={x} in dark={dark}: {actual:?} vs {expected:?}"
+            );
+        }
+
+        let first = sheet.zones[0].frame;
+        let mut image_pixels = 0;
+        for (x, y, pixel) in image.enumerate_pixels() {
+            if near(pixel.0, [18, 196, 120], 10) {
+                let world_x = view[0] + (x as f32 + 0.5) * view[2] / image.width() as f32;
+                let world_y = view[1] + (y as f32 + 0.5) * view[3] / image.height() as f32;
+                assert!(
+                    world_x >= first.min.x
+                        && world_x <= first.max().x
+                        && world_y >= first.min.y
+                        && world_y <= first.max().y,
+                    "embedded image escaped the first scene"
+                );
+                image_pixels += 1;
+            }
+        }
+        assert!(
+            image_pixels > 1_000,
+            "embedded image is missing in dark={dark}"
         );
     }
 }

@@ -148,6 +148,45 @@ export async function saveAs(page: Page, name: string): Promise<Buffer> {
     return readFile(await download.path());
 }
 
+export async function colorBounds(
+    page: Page,
+    screenshot: Buffer,
+    colors: readonly (readonly number[])[],
+    tolerance = 25,
+) {
+    return page.evaluate(async ({ screenshot, colors, tolerance }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${screenshot}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Cannot inspect the rendered image");
+        context.drawImage(image, 0, 0);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const bounds = colors.map(() => ({
+            count: 0, minX: canvas.width, minY: canvas.height, maxX: -1, maxY: -1,
+        }));
+        for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
+                const pixel = (y * canvas.width + x) * 4;
+                for (let i = 0; i < colors.length; i++) {
+                    if (colors[i].every((value, channel) => Math.abs(pixels[pixel + channel] - value) < tolerance)) {
+                        const region = bounds[i];
+                        region.count++;
+                        region.minX = Math.min(region.minX, x);
+                        region.minY = Math.min(region.minY, y);
+                        region.maxX = Math.max(region.maxX, x);
+                        region.maxY = Math.max(region.maxY, y);
+                    }
+                }
+            }
+        }
+        return bounds;
+    }, { screenshot: screenshot.toString("base64"), colors, tolerance });
+}
+
 export async function withPdfViewer(bytes: Buffer, inspect: (viewer: Page) => Promise<void>): Promise<void> {
     // The full Chromium build renders PDFs; headless-shell downloads them instead.
     const renderer = await chromium.launch({
