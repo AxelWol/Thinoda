@@ -722,7 +722,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Twelve board templates use the same validated primitives and translated
+- Thirteen board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
   persistent visual frames, the Eisenhower quadrants accept user-created
   content, and Swimlane provides three role frames and editable linked shapes.
@@ -751,6 +751,20 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   desktop Chromium, Firefox and WebKit regressions create the template, move a
   shape and inspect the saved lanes and connector endpoints; they do not prove
   physical-device behavior or broad export appearance parity.
+- Venn Diagram uses two translucent ellipses below separate text cards and a
+  sticky note. The intersection is visual: no set membership is inferred, and
+  moving a circle does not move its labels or the sticky. The ellipse
+  descriptions are translated at creation but do not follow later label edits;
+  edit a circle's Description separately if its label changes. Applying a Quick
+  Style retains its opacity. Thumbnail tests cover the translucent circles in
+  both themes. Board thumbnails now paint objects once using the normal scene
+  renderer, preserving band order and frame clipping; their simplified grid and
+  frames remain preview-specific. Native-v6, SVG/PNG compositing and PDF
+  generation have focused coverage. Production desktop Chromium, Firefox and
+  WebKit create, move, restyle and save a circle; the light-theme production
+  thumbnail was also visually inspected in a desktop browser. Browser tests
+  do not assert thumbnail pixels. These checks do not prove physical-device,
+  screen-reader or Office acceptance.
 
 ### F5 ink checkpoint: critique
 
@@ -903,8 +917,9 @@ templates). All content strings are catalog keys translated at creation time
 (`templates::instantiate_localized`); every UI language catalog covers them.
 Sticky colours are pastel fills with dark text and frame tints are translucent
 mid-tones, so both read on Light and Dark backgrounds. Tests check validation,
-determinism, an empty hidden anchor, no overlaps, cards inside their frames and
-catalog coverage.
+determinism, an empty hidden anchor, disjoint card/tree subtrees, disjoint
+frames, intended Venn circle overlap, disjoint shapes in other templates,
+cards inside their assigned frames and catalog coverage.
 
 | Template | Built from |
 |---|---|
@@ -920,6 +935,7 @@ catalog coverage.
 | Eisenhower matrix | Four persistent, labeled priority-quadrant frames |
 | Meeting board | Purpose heading and independent prompt stickies in visual Agenda, Notes, Decisions and Actions frames; no timer or task automation |
 | Swimlane | Three visual role frames and five editable process shapes linked by elbow connectors; no role or workflow automation |
+| Venn diagram | Two overlapping translucent circles with independent labels and a shared sticky; no set-membership logic |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -933,7 +949,6 @@ compatibility with the topic renderer.
 | Lean Canvas, Empathy map | Frames (F2), text-heavy responsive regions |
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |
-| Venn diagram | Shape opacity and intersections |
 
 Existing tree templates stay unchanged.
 

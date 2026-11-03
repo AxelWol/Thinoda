@@ -210,8 +210,8 @@ templates, selection, creation and document state are unchanged. This moves
 some work to first use, rather than loading a separate Wasm module or reducing
 download size.
 
-The cache now retains at most twice the current number of templates (94
-entries for 47 templates), using least-recently-used eviction across language
+The cache now retains at most twice the current number of templates (96
+entries for 48 templates), using least-recently-used eviction across language
 and appearance combinations. This accommodates all templates in two
 combinations without eviction; switching among more combinations can rebuild
 older previews synchronously on first use. An `Arc` already returned to a
@@ -219,17 +219,21 @@ caller remains valid after eviction. Tests cycle through every template, all
 ten languages and both appearances, verify the entry bound and eviction order,
 and compare rebuilt samples with the originals. The entry limit is not a
 byte budget or a measurement of actual memory savings, and it does not limit
-references retained elsewhere. Cache hits scan a recency queue of at most 94
+references retained elsewhere. Cache hits scan a recency queue of at most 96
 keys; the limit trades bounded retention for lookup work and synchronous
 reconstruction after eviction.
 
 A focused 480 × 360 headless egui fixture requests four of 46 templates on the
 first all-categories frame; the old cache built all 46. Tests cover subsequent
 scrolling and recent items, every template in all languages and both
-appearances, and gallery selection and creation. The bounded-cache production
+appearances, and gallery selection and creation. The earlier bounded-cache
 candidate passed 18 startup, offline-update and language checks plus Meeting
 Board and Swimlane gallery creation in each of desktop Chromium, Firefox and
-WebKit. These browser checks do not exercise eviction across all language/theme
+WebKit. The later Venn build passed the same startup/offline/language checks
+and Meeting Board, Swimlane and Venn creation in those three engines. Board
+thumbnails now use one normal scene pass for objects, fixing duplicate painting
+of translucent shapes; frame and grid previews remain simplified. Browser tests
+do not assert thumbnail pixels or exercise eviction across all language/theme
 combinations. First-scroll latency, eviction overhead and actual memory impact
 have not been benchmarked.
 

@@ -1725,7 +1725,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         .iter()
         .filter(|t| t.category == TemplateCategory::Boards)
         .collect();
-    assert_eq!(boards.len(), 12);
+    assert_eq!(boards.len(), 13);
     for template in &boards {
         h.get_by_role_and_label(Role::Button, template.name);
     }
@@ -1740,6 +1740,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
             &["Agenda", "Notes", "Decisions", "Actions"][..],
         ),
         ("Swimlane", &["Role 1", "Role 2", "Role 3"][..]),
+        ("Venn Diagram", &[][..]),
     ] {
         h.state_mut().exec(&ctx, Cmd::Home);
         h.state_mut().template_category = Some(TemplateCategory::Boards);
@@ -1757,6 +1758,12 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         assert!(sheet.central_topic_content().is_none());
         let names: Vec<_> = sheet.zones.iter().map(|z| z.name.as_str()).collect();
         assert_eq!(names, expected);
+        if name == "Venn Diagram" {
+            assert_eq!(sheet.canvas.objects.len(), 2);
+            assert!(sheet.canvas.objects.iter().all(|object| {
+                object.band == thinoda_core::board::Band::Below && object.style.opacity == 0.55
+            }));
+        }
         assert!(
             sheet
                 .floating

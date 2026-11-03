@@ -17,7 +17,12 @@ type BoardSheet = {
     title: string;
     root_mode: string;
     floating: number[];
-    topics: Record<string, { id: number; title: string; card?: { kind: string; color?: string } }>;
+    topics: Record<string, {
+        id: number;
+        title: string;
+        position?: { x: number; y: number };
+        card?: { kind: string; color?: string };
+    }>;
     zones: {
         name: string;
         roots?: number[];
@@ -33,6 +38,8 @@ type BoardSheet = {
                 ink?: { tool: string; color: string; width: number; points: { x: number; y: number }[] };
             };
             rect: { min: { x: number; y: number }; size: { x: number; y: number } };
+            band?: string;
+            alt_text?: string;
             style: { fill?: string; text_color?: string; stroke_width?: number; opacity?: number };
         }[];
     };
@@ -120,6 +127,51 @@ test.describe("swimlane gallery", () => {
                 arrow_end: true,
             });
         }
+    });
+});
+
+test.describe("venn diagram gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("creates editable overlapping circles and independent labels", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 990, y: 394 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        await drag(page, [210, 461], [250, 461]);
+        await command(page, "Quick Style: Warning");
+        const saved = sheetFrom(await saveAs(page, "venn-diagram.thinoda"));
+        expect(saved.title).toBe("Venn Diagram");
+        expect(saved.root_mode).toBe("hidden");
+        expect(saved.zones).toHaveLength(0);
+        expect(saved.canvas.objects).toHaveLength(2);
+        const [left, right] = saved.canvas.objects;
+        expect(left.kind.shape?.shape).toBe("ellipse");
+        expect(right.kind.shape?.shape).toBe("ellipse");
+        expect([left.band, right.band]).toEqual(["below", "below"]);
+        expect([left.alt_text, right.alt_text]).toEqual(["Set A", "Set B"]);
+        expect([left.style.opacity, right.style.opacity]).toEqual([0.55, 0.55]);
+        expect(left.style.fill).toBe("#FFEDD5");
+        expect(left.rect.min.x).toBeCloseTo(40, 1);
+        expect(left.rect.min.y).toBeCloseTo(0, 1);
+        expect(right.rect.min).toEqual({ x: 300, y: 0 });
+        const cards = Object.values(saved.topics).filter(topic => topic.card);
+        expect(cards.map(card => [card.title, card.card?.kind, card.position])).toEqual([
+            ["Compare two sets", "text", { x: 390, y: -70 }],
+            ["Set A", "text", { x: 240, y: 140 }],
+            ["Set B", "text", { x: 540, y: 140 }],
+            ["Shared", "sticky", { x: 390, y: 265 }],
+        ]);
     });
 });
 

@@ -7,8 +7,8 @@
 
 use crate::TopicId;
 use crate::board::{
-    CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorRoute, Endpoint,
-    GridKind, ShapeKind, SheetRootMode,
+    Band, CanvasConnector, CanvasObject, CanvasObjectKind, Card, CardKind, ConnectorRoute,
+    Endpoint, GridKind, ShapeKind, SheetRootMode,
 };
 use crate::geometry::{Color, Rect, Vec2};
 use crate::model::{Sheet, Structure, Workbook};
@@ -64,6 +64,9 @@ pub(crate) struct ShapeDef {
     pub label: &'static str,
     pub rect: Rect,
     pub fill: Color,
+    pub description: &'static str,
+    pub band: Band,
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -134,6 +137,18 @@ const fn shape(shape: ShapeKind, label: &'static str, rect: Rect, fill: Color) -
         label,
         rect,
         fill,
+        description: "",
+        band: Band::Above,
+        opacity: 1.0,
+    }
+}
+
+const fn venn_circle(description: &'static str, rect: Rect, fill: Color) -> ShapeDef {
+    ShapeDef {
+        description,
+        band: Band::Below,
+        opacity: 0.55,
+        ..shape(ShapeKind::Ellipse, "", rect, fill)
     }
 }
 
@@ -591,6 +606,20 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "venn-diagram",
+        cards: &[
+            note("Compare two sets", 390.0, -70.0, 500.0),
+            note("Set A", 240.0, 140.0, 160.0),
+            note("Set B", 540.0, 140.0, 160.0),
+            sticky("Shared", 390.0, 265.0, YELLOW),
+        ],
+        shapes: &[
+            venn_circle("Set A", rect(0.0, 0.0, 480.0, 480.0), BLUE),
+            venn_circle("Set B", rect(300.0, 0.0, 480.0, 480.0), GREEN),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {
@@ -648,11 +677,18 @@ pub(crate) fn build(def: &BoardDef, title: &str, tr: &dyn Fn(&'static str) -> St
     let mut shapes = Vec::with_capacity(def.shapes.len());
     for s in def.shapes {
         let mut object = CanvasObject::shape(s.shape, s.rect);
-        if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+        if let CanvasObjectKind::Shape { label, .. } = &mut object.kind
+            && !s.label.is_empty()
+        {
             *label = tr(s.label);
         }
+        if !s.description.is_empty() {
+            object.alt_text = tr(s.description);
+        }
+        object.band = s.band;
         object.style.fill = Some(s.fill);
         object.style.stroke = Some(SHAPE_STROKE);
+        object.style.opacity = s.opacity;
         shapes.push(
             sheet
                 .add_canvas_object(object)
@@ -689,7 +725,13 @@ pub fn board_strings() -> Vec<&'static str> {
             out.push(tree.title);
             out.extend(tree.children.iter().copied());
         }
-        out.extend(board.shapes.iter().map(|s| s.label));
+        out.extend(
+            board
+                .shapes
+                .iter()
+                .flat_map(|s| [s.label, s.description])
+                .filter(|s| !s.is_empty()),
+        );
         out.extend(
             board
                 .links

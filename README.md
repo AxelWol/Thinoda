@@ -343,10 +343,11 @@ those system-owned controls. WinGet publishing remains paused.
   The Boards category starts maps with a hidden central topic: Blank Canvas,
   Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
   Kanban Board, Business Model Canvas, Flowchart, SWOT Board, Affinity Diagram,
-  Eisenhower Matrix, Meeting Board and Swimlane. Frames, sticky/text cards and
-  shapes are created in the current UI language. Affinity, Eisenhower, Meeting
-  and Swimlane frames are visual guides; they do not automatically group
-  content, assign roles or schedule tasks.
+  Eisenhower Matrix, Meeting Board, Swimlane and Venn Diagram. Frames,
+  sticky/text cards and shapes are created in the current UI language.
+  Affinity, Eisenhower, Meeting and Swimlane frames are visual guides; they do
+  not automatically group content, assign roles or schedule tasks. Venn labels
+  and translucent circles are independent and do not assign set membership.
 - Freeform boards combine independent topic trees with cards, shapes, connectors,
   frames and ink. Use **Board > Hide central topic** to turn a map into a
   rootless board, or **Show central topic** to bring it back; existing content

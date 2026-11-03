@@ -753,6 +753,77 @@ fn swimlane_exports_frames_shapes_and_handoffs() {
 }
 
 #[test]
+fn venn_exports_translucent_intersections_in_light_and_dark() {
+    let wb = thinoda_core::templates::instantiate("venn-diagram");
+    let sheet = wb.active();
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        let [x, y, w, h] = view_box(&svg);
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        let background =
+            thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, dark);
+        let fills: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|circle| {
+                let fill = circle.style.fill.unwrap();
+                Color::rgba(
+                    fill.r,
+                    fill.g,
+                    fill.b,
+                    (f32::from(fill.a) * circle.style.opacity).round() as u8,
+                )
+            })
+            .collect();
+        for (circle, fill) in sheet.canvas.objects.iter().zip(&fills) {
+            assert!(svg.contains(&fill.to_hex()));
+            let object = svg.find(&format!("id=\"object-{}\"", circle.id.0)).unwrap();
+            assert!(object < svg.find("id=\"topic-").unwrap());
+        }
+        let samples = [
+            (Vec2::new(180.0, 360.0), fills[0].over(background)),
+            (Vec2::new(600.0, 360.0), fills[1].over(background)),
+            (
+                Vec2::new(390.0, 360.0),
+                fills[1].over(fills[0].over(background)),
+            ),
+        ];
+        for (point, expected) in samples {
+            let pixel = png.get_pixel(
+                ((point.x - x) / w * png.width() as f32) as u32,
+                ((point.y - y) / h * png.height() as f32) as u32,
+            );
+            for (actual, expected) in pixel
+                .0
+                .into_iter()
+                .zip([expected.r, expected.g, expected.b])
+            {
+                assert!(
+                    actual.abs_diff(expected) <= 2,
+                    "dark={dark}, {point:?}: {pixel:?} differs from {expected:?}"
+                );
+            }
+        }
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
 fn svg_rotates_an_offset_shape_label_around_the_shape_center() {
     let mut wb = board();
     let mut triangle = CanvasObject::shape(

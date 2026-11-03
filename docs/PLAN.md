@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, twelve board templates, responsive toolbox and
+The Freeform implementation, thirteen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -42,12 +42,15 @@ deduplication and atomic paste. Pixel erasing has a saved-state browser
 regression, and Meeting Board adds a localized, rootless meeting template with
 independent prompt cards and persistent visual frames. Swimlane adds editable
 process shapes and handoffs across three visual role lanes; it does not assign
-roles or automate workflows. Gallery previews are now generated on demand; a
-least-recently-used cache retains at most two full template sets. A small
-desktop startup comparison of the earlier on-demand change did not establish a
-speedup, and eviction overhead is unmeasured. The next open work remains the
-browser accessibility bridge, safe large-board recovery, export acceptance and
-realistic performance/device gates; cloud-provider work stays paused.
+roles or automate workflows. Venn Diagram adds two translucent editable circles
+and independent labels, without set-membership logic. Board thumbnails now
+paint each scene object once, preserving opacity, layer order and frame
+clipping. Gallery previews are generated on demand; a least-recently-used
+cache retains at most two full template sets. A small desktop startup comparison
+of the earlier on-demand change did not establish a speedup, and eviction
+overhead is unmeasured. The next open work remains the browser accessibility
+bridge, safe large-board recovery, export acceptance and realistic
+performance/device gates; cloud-provider work stays paused.
 
 ## Current next-value state (2026-10-30)
 
@@ -3053,6 +3056,17 @@ The localized gallery, native round-trip and scene exports have focused
 coverage. Desktop browser checks create, move and save the template, but do
 not replace physical-device or broader export acceptance.
 
+Venn Diagram adds two translucent, independently movable circles, two text
+labels and a shared sticky note. Labels, circle descriptions and geometry do
+not stay synchronized automatically, and the overlap has no set-membership
+semantics. Core and localized gallery tests cover the template; SVG and raster
+checks verify compositing in light and dark, and PDF generation is exercised.
+Board thumbnail tests verify a single paint per shape, connector and ink
+stroke in both bands, including frame clipping and both appearances. Desktop
+Chromium, Firefox and WebKit create, move, restyle and save a circle; the
+production light-theme thumbnail was also inspected in a desktop browser.
+These checks do not establish physical-device, screen-reader or Office acceptance.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3115,7 +3129,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (twelve implemented).
+5. F4 data-driven "Boards" templates (thirteen implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 

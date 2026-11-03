@@ -767,6 +767,12 @@ Agenda|Pauta
 Meeting Board has visual areas for agenda, notes, decisions and actions. Its frames do not group notes automatically, and it has no timer.|O quadro de reunião tem áreas visuais para pauta, notas, decisões e ações. As molduras não agrupam notas automaticamente e não há cronômetro.
 Name roles and map the handoffs|Nomeie as funções e mapeie as transferências
 Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.|O diagrama de raias mostra transferências entre funções. As raias são guias visuais; mover uma forma não atribui uma função nem automatiza um fluxo de trabalho.
+Venn Diagram|Diagrama de Venn
+Compare two sets|Compare dois conjuntos
+Set A|Conjunto A
+Set B|Conjunto B
+Shared|Em comum
+Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.|O diagrama de Venn tem círculos sobrepostos e rótulos independentes. Mover um círculo não move os rótulos nem atribui pertencimento a conjuntos.
 What do we need to learn?|O que precisamos aprender?
 Retrospective: team and time period|Retrospectiva: equipe e período
 Went well|Deu certo

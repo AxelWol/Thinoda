@@ -278,6 +278,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("eisenhower-matrix", "Eisenhower Matrix"),
     board_info("meeting-board", "Meeting Board"),
     board_info("swimlane", "Swimlane"),
+    board_info("venn-diagram", "Venn Diagram"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -778,6 +779,7 @@ mod tests {
                 "eisenhower-matrix",
                 "meeting-board",
                 "swimlane",
+                "venn-diagram",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -789,6 +791,7 @@ mod tests {
             ("eisenhower-matrix", "Eisenhower Matrix"),
             ("meeting-board", "Meeting Board"),
             ("swimlane", "Swimlane"),
+            ("venn-diagram", "Venn Diagram"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -847,7 +850,9 @@ mod tests {
                 .collect();
             for (i, a) in shapes.iter().enumerate() {
                 for b in &shapes[i + 1..] {
-                    assert!(!a.rect.intersects(&b.rect), "{id}: shapes overlap");
+                    if id != "venn-diagram" {
+                        assert!(!a.rect.intersects(&b.rect), "{id}: shapes overlap");
+                    }
                 }
             }
         }
@@ -1205,12 +1210,81 @@ mod tests {
     }
 
     #[test]
+    fn venn_diagram_has_editable_overlapping_circles_and_independent_labels() {
+        use crate::board::{Band, BoardMember, CanvasObjectKind, CardKind, ShapeKind};
+        use crate::geometry::{Color, Vec2};
+
+        let mut wb = instantiate("venn-diagram");
+        let sheet = wb.active();
+        assert!(sheet.zones.is_empty());
+        assert_eq!(sheet.floating.len(), 4);
+        assert_eq!(sheet.canvas.objects.len(), 2);
+        let circles = &sheet.canvas.objects;
+        assert!(circles[0].rect.intersects(&circles[1].rect));
+        for (circle, description) in circles.iter().zip(["Set A", "Set B"]) {
+            assert!(matches!(
+                &circle.kind,
+                CanvasObjectKind::Shape {
+                    shape: ShapeKind::Ellipse,
+                    label,
+                } if label.is_empty()
+            ));
+            assert_eq!(circle.alt_text, description);
+            assert_eq!(circle.band, Band::Below);
+            assert_eq!(circle.style.opacity, 0.55);
+            assert!(circle.style.fill.is_some());
+        }
+
+        let shared = sheet
+            .content_topics()
+            .find(|topic| topic.title == "Shared")
+            .unwrap();
+        assert_eq!(shared.card.unwrap().kind, CardKind::Sticky);
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let shared_rect = layout.topics[&shared.id].rect;
+        for circle in circles {
+            let center = circle.rect.center();
+            let radius = circle.rect.size.x / 2.0;
+            for corner in [
+                shared_rect.min,
+                Vec2::new(shared_rect.max().x, shared_rect.min.y),
+                shared_rect.max(),
+                Vec2::new(shared_rect.min.x, shared_rect.max().y),
+            ] {
+                assert!((corner - center).length() < radius);
+            }
+        }
+        let circle_id = circles[0].id;
+        let card_positions: Vec<_> = sheet
+            .floating
+            .iter()
+            .map(|id| (*id, sheet.topic(*id).unwrap().position))
+            .collect();
+
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Object(circle_id)], Vec2::new(-40.0, 0.0))
+            .unwrap();
+        sheet
+            .update_canvas_object(circle_id, |circle| {
+                circle.style.fill = Some(Color::rgb(40, 100, 220));
+            })
+            .unwrap();
+        assert_eq!(sheet.canvas.object(circle_id).unwrap().style.opacity, 0.55);
+        for (id, position) in card_positions {
+            assert_eq!(sheet.topic(id).unwrap().position, position);
+        }
+        wb.validate().unwrap();
+    }
+
+    #[test]
     fn additional_board_templates_round_trip_with_localized_content() {
         for id in [
             "affinity-diagram",
             "eisenhower-matrix",
             "meeting-board",
             "swimlane",
+            "venn-diagram",
         ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
@@ -1258,6 +1332,10 @@ mod tests {
             "Role 1",
             "Role 2",
             "Role 3",
+            "Compare two sets",
+            "Set A",
+            "Set B",
+            "Shared",
         ] {
             assert!(
                 strings.contains(&key),
@@ -1280,7 +1358,8 @@ mod tests {
             for object in &sheet.canvas.objects {
                 match &object.kind {
                     crate::board::CanvasObjectKind::Shape { label, .. } => {
-                        assert!(label.starts_with('<'))
+                        assert!(label.is_empty() || label.starts_with('<'));
+                        assert!(object.alt_text.is_empty() || object.alt_text.starts_with('<'));
                     }
                     crate::board::CanvasObjectKind::Connector(c) => {
                         assert!(c.label.is_empty() || c.label.starts_with('<'))

@@ -1314,6 +1314,11 @@ const DE: &[(&str, &str)] = &[
     ("Eisenhower Matrix", "Eisenhower-Matrix"),
     ("Meeting Board", "Besprechungsboard"),
     ("Swimlane", "Swimlane-Diagramm"),
+    ("Venn Diagram", "Venn-Diagramm"),
+    ("Compare two sets", "Zwei Mengen vergleichen"),
+    ("Set A", "Menge A"),
+    ("Set B", "Menge B"),
+    ("Shared", "Gemeinsam"),
     (
         "Name roles and map the handoffs",
         "Rollen benennen und Übergaben darstellen",
@@ -1456,6 +1461,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
         "Das Swimlane-Diagramm zeigt Übergaben zwischen Rollen. Die Bahnen sind visuelle Hilfen; das Verschieben einer Form weist keine Rolle zu und automatisiert keinen Ablauf.",
+    ),
+    (
+        "Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.",
+        "Das Venn-Diagramm hat überlappende Kreise und unabhängige Beschriftungen. Das Verschieben eines Kreises bewegt keine Beschriftungen und weist keine Mengenzugehörigkeit zu.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3821,6 +3830,42 @@ mod tests {
                 "Role 2",
                 "Role 3",
                 "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
+            ] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
+        }
+    }
+
+    #[test]
+    fn venn_diagram_uses_localized_labels_and_descriptions_in_every_language() {
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("venn-diagram", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Venn Diagram"));
+            for key in ["Compare two sets", "Set A", "Set B", "Shared"] {
+                assert!(
+                    sheet
+                        .content_topics()
+                        .any(|topic| topic.title == t_in(language, key)),
+                    "{language:?}: {key}"
+                );
+            }
+            for (circle, key) in sheet.canvas.objects.iter().zip(["Set A", "Set B"]) {
+                assert_eq!(circle.alt_text, t_in(language, key));
+                assert!(circle.label().is_empty());
+            }
+            wb.validate().unwrap();
+        }
+        for language in TRANSLATED {
+            for key in [
+                "Venn Diagram",
+                "Compare two sets",
+                "Set A",
+                "Set B",
+                "Shared",
+                "Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.",
             ] {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
             }

@@ -6,9 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use egui::{Color32, Painter, Pos2, Stroke, StrokeKind, Ui, vec2};
 use thinoda_canvas::{PaintOptions, Xf, color32};
 use thinoda_core::{
-    CanvasObjectKind, GridKind, Layout, Sheet, SheetRootMode,
-    board::{Band, shape_geometry},
-    connector_path,
+    GridKind, Layout, Sheet, SheetRootMode,
     layout::{ApproxMeasure, layout_sheet},
     templates::{self, TemplateCategory, TemplateInfo},
 };
@@ -144,39 +142,6 @@ fn paint_board_thumbnail(
             ink,
         );
     }
-    let objects = |band: Band| {
-        for object in sheet.canvas.objects.iter().filter(|o| o.band == band) {
-            match &object.kind {
-                CanvasObjectKind::Shape { shape, .. } => {
-                    let outline = shape_geometry(*shape, object.rect, object.rotation).outline;
-                    let points = outline.into_iter().map(|p| xf.pos(p)).collect();
-                    let stroke = object.style.stroke.map_or(ink, color32);
-                    let fill = object.style.fill.map_or(Color32::TRANSPARENT, color32);
-                    painter.add(egui::Shape::convex_polygon(
-                        points,
-                        fill,
-                        Stroke::new(0.8, stroke),
-                    ));
-                }
-                CanvasObjectKind::Connector(connector) => {
-                    let points: Vec<_> = connector_path(sheet, layout, connector)
-                        .into_iter()
-                        .map(|p| xf.pos(p))
-                        .collect();
-                    let color = connector.color.map_or(ink, color32);
-                    painter.add(egui::Shape::line(points, Stroke::new(0.8, color)));
-                }
-                CanvasObjectKind::Ink(stroke) => {
-                    let points = stroke.points.iter().map(|p| xf.pos(*p)).collect();
-                    painter.add(egui::Shape::line(
-                        points,
-                        Stroke::new((stroke.width * zoom).max(0.5), color32(stroke.color)),
-                    ));
-                }
-            }
-        }
-    };
-    objects(Band::Below);
     thinoda_canvas::paint_map(
         &painter,
         sheet,
@@ -188,7 +153,6 @@ fn paint_board_thumbnail(
             ..Default::default()
         },
     );
-    objects(Band::Above);
 }
 
 fn cards(
@@ -465,8 +429,196 @@ mod tests {
             "eisenhower-matrix",
             "meeting-board",
             "swimlane",
+            "venn-diagram",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
+        }
+    }
+
+    #[test]
+    fn venn_thumbnail_preserves_translucent_overlapping_shapes() {
+        let wb = templates::instantiate("venn-diagram");
+        let sheet = wb.active();
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
+        let visible = rect.shrink(5.0).expand(0.01);
+        for dark in [false, true] {
+            let layout = layout_sheet(sheet, &ApproxMeasure, dark);
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                paint_board_thumbnail(ui.painter(), sheet, &layout, rect, dark);
+            });
+            output.textures_delta.clear();
+            for object in &sheet.canvas.objects {
+                let fill = color32(object.style.fill.unwrap()).gamma_multiply(object.style.opacity);
+                assert!(fill.a() < 255);
+                let paths: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Path(path) if path.fill == fill => Some(path),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    paths.len(),
+                    1,
+                    "thumbnail must paint circle {} exactly once",
+                    object.id.0
+                );
+                assert!(
+                    paths[0].points.iter().all(|point| visible.contains(*point)),
+                    "circle {} is clipped in {dark:?} theme",
+                    object.id.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn board_thumbnail_paints_objects_once_in_layer_order_with_frame_clipping() {
+        use thinoda_core::{
+            Band, CanvasConnector, CanvasObject, Color, Endpoint, InkStroke, InkTool, Vec2,
+        };
+
+        fn has_color(shape: &egui::Shape, color: Color32) -> bool {
+            match shape {
+                egui::Shape::Path(path) => {
+                    path.fill == color
+                        || matches!(path.stroke.color, egui::epaint::ColorMode::Solid(c) if c == color)
+                }
+                egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| vertex.color == color),
+                egui::Shape::Circle(circle) => circle.fill == color,
+                egui::Shape::LineSegment { stroke, .. } => stroke.color == color,
+                _ => false,
+            }
+        }
+
+        let mut wb = templates::instantiate("venn-diagram");
+        let sheet = wb.active_mut();
+        sheet.canvas.objects[1].band = Band::Above;
+        let circle_colors: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|circle| color32(circle.style.fill.unwrap()).gamma_multiply(circle.style.opacity))
+            .collect();
+
+        let frame_rect =
+            thinoda_core::Rect::from_min_size(Vec2::new(0.0, 0.0), Vec2::new(280.0, 360.0));
+        let frame = sheet.create_board_frame("Clip frame", frame_rect).unwrap();
+        let zone = sheet
+            .zones
+            .iter_mut()
+            .find(|zone| zone.id == frame)
+            .unwrap();
+        zone.clip = true;
+        zone.color = Some(Color::rgba(100, 40, 180, 110));
+        let frame_color = color32(zone.color.unwrap());
+
+        let connector_colors = [Color::rgb(230, 25, 150), Color::rgb(25, 210, 170)];
+        let ink_colors = [Color::rgb(200, 80, 15), Color::rgb(90, 45, 230)];
+        for (index, band) in [Band::Below, Band::Above].into_iter().enumerate() {
+            let x = if index == 0 { 60.0 } else { 520.0 };
+            let mut connector = CanvasConnector::new(
+                Endpoint::Point(Vec2::new(x, 280.0)),
+                Endpoint::Point(Vec2::new(x + 170.0, 300.0)),
+            );
+            connector.arrow_end = false;
+            connector.color = Some(connector_colors[index]);
+            let mut connector = CanvasObject::connector(connector);
+            connector.band = band;
+            sheet.add_canvas_object(connector).unwrap();
+
+            let mut ink = CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                ink_colors[index],
+                20.0,
+                vec![Vec2::new(x, 310.0), Vec2::new(x + 100.0, 320.0)],
+            ));
+            ink.band = band;
+            sheet.add_canvas_object(ink).unwrap();
+        }
+        wb.validate().unwrap();
+
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
+        let visible = rect.shrink(5.0);
+        for dark in [false, true] {
+            let sheet = wb.active();
+            let layout = layout_sheet(sheet, &ApproxMeasure, dark);
+            let zoom = (visible.width() / layout.bounds.size.x)
+                .min(visible.height() / layout.bounds.size.y);
+            let center = layout.bounds.center();
+            let xf = Xf {
+                origin: visible.center() - vec2(center.x, center.y) * zoom,
+                zoom,
+            };
+            let frame_clip = visible.intersect(xf.rect(frame_rect));
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                paint_board_thumbnail(ui.painter(), sheet, &layout, rect, dark);
+            });
+            output.textures_delta.clear();
+
+            let single_index = |color| {
+                let indices: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, clipped)| has_color(&clipped.shape, color))
+                    .map(|(index, _)| index)
+                    .collect();
+                assert_eq!(indices.len(), 1, "color {color:?}, dark={dark}");
+                indices[0]
+            };
+            let below = [
+                single_index(circle_colors[0]),
+                single_index(color32(connector_colors[0])),
+                single_index(color32(ink_colors[0])),
+            ];
+            let above = [
+                single_index(circle_colors[1]),
+                single_index(color32(connector_colors[1])),
+                single_index(color32(ink_colors[1])),
+            ];
+            let topic = output
+                .shapes
+                .iter()
+                .position(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "Shared")
+                })
+                .expect("shared card must be painted");
+            let frame_indices: Vec<_> = output
+                .shapes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, shape)| {
+                    matches!(&shape.shape, egui::Shape::Rect(frame) if frame.fill == frame_color)
+                        .then_some(index)
+                })
+                .collect();
+            assert_eq!(frame_indices.len(), 1);
+            let frame_index = frame_indices[0];
+            let grid_color = if dark {
+                Color32::from_gray(170)
+            } else {
+                Color32::from_gray(85)
+            }
+            .gamma_multiply(0.35);
+            assert!(output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Circle(dot) if dot.fill == grid_color)
+            }));
+            assert!(
+                below
+                    .iter()
+                    .all(|index| frame_index < *index && *index < topic)
+            );
+            assert!(above.iter().all(|index| topic < *index));
+            for index in below {
+                assert_eq!(output.shapes[index].clip_rect, frame_clip);
+            }
+            for index in above {
+                assert_eq!(output.shapes[index].clip_rect, visible);
+            }
         }
     }
 

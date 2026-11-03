@@ -1934,9 +1934,10 @@ draft remains blocked on safe bounded discovery and is not integrated.
   existing styling controls for applicable shapes.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
-  Flowchart, SWOT board, Affinity diagram, Eisenhower matrix, Meeting board and
-  Swimlane (more templates listed with prerequisites). Swimlane lanes are
-  visual guides, not role assignments or workflow automation.
+  Flowchart, SWOT board, Affinity diagram, Eisenhower matrix, Meeting board,
+  Swimlane and Venn diagram (more templates listed with prerequisites).
+  Swimlane lanes and Venn intersections are visual guides, not role or set
+  assignments or workflow automation.
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,
   highlighter, object/pixel eraser and lasso; pressure optional.
 - P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance
