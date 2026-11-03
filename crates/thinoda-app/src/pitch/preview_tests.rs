@@ -97,6 +97,28 @@ fn missing_preview_source_is_explicit_and_never_falls_back_to_full_map() {
 }
 
 #[test]
+fn slide_editor_preview_uses_the_current_accent_for_automatic_board_strokes() {
+    let sheet = crate::visual_export::test_helpers::sheet();
+    for dark in [false, true] {
+        let accent = egui::Color32::from_rgb(221, 12, 179);
+        let ctx = crate::visual_export::test_helpers::context(accent, dark);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, dark);
+        let mut preview = SlidePreview;
+        for accent in [accent, egui::Color32::TRANSPARENT] {
+            crate::visual_export::test_helpers::set_accent(&ctx, accent, dark);
+            let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                preview.show(ui, &sheet, &layout, 0, egui::vec2(400.0, 300.0));
+            });
+            output.textures_delta.clear();
+            crate::visual_export::test_helpers::assert_stroke(
+                &output,
+                thinoda_canvas::automatic_board_stroke(accent, dark),
+            );
+        }
+    }
+}
+
+#[test]
 fn preview_hit_tests_rotated_cards_and_respects_frame_clipping() {
     let mut sheet = Sheet::new("Board", "");
     sheet.root_mode = thinoda_core::SheetRootMode::Hidden;

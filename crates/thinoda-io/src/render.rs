@@ -1,4 +1,4 @@
-use crate::{ExportOptions, IoError};
+use crate::{ExportOptions, IoError, VisualExportContext};
 use std::{borrow::Cow, collections::HashMap, io::Cursor};
 use thinoda_core::{
     Rect, Sheet, TextAlign, TopicId, Workbook,
@@ -66,17 +66,22 @@ fn visual_image<'a>(
     Ok(VisualImage { media_type, bytes })
 }
 
-pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
-    svg_with_fonts(w, o, crate::fonts::database())
+pub(crate) fn svg(
+    w: &Workbook,
+    o: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<String, IoError> {
+    svg_with_fonts(w, o, crate::fonts::database(), visual)
 }
 
 fn svg_with_fonts(
     w: &Workbook,
     o: &ExportOptions,
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
+    visual: VisualExportContext,
 ) -> Result<String, IoError> {
     let s = sheet(w, o);
-    svg_sheet_with_fonts(s, o, fontdb, None)
+    svg_sheet_with_fonts(s, o, fontdb, None, visual)
 }
 
 pub(crate) fn presentation_layout(s: &Sheet, dark: bool) -> Result<thinoda_core::Layout, IoError> {
@@ -209,6 +214,7 @@ pub(crate) fn svg_resolved(
     o: &ExportOptions,
     resolved: &thinoda_core::ResolvedPresentationSlide,
     clip_scene: bool,
+    visual: VisualExportContext,
 ) -> Result<String, IoError> {
     svg_layout_with_fonts(
         paint_sheet,
@@ -217,7 +223,7 @@ pub(crate) fn svg_resolved(
         Some(resolved.frame),
         &resolved.layout,
         &resolved.zones,
-        SvgSceneOptions::new(source, clip_scene),
+        SvgSceneOptions::new(source, clip_scene, visual),
     )
 }
 
@@ -225,13 +231,15 @@ pub(crate) fn svg_resolved(
 struct SvgSceneOptions {
     clip_scene: bool,
     has_board_semantics: bool,
+    visual: VisualExportContext,
 }
 
 impl SvgSceneOptions {
-    fn new(source: &Sheet, clip_scene: bool) -> Self {
+    fn new(source: &Sheet, clip_scene: bool, visual: VisualExportContext) -> Self {
         Self {
             clip_scene,
             has_board_semantics: source.uses_board_semantics(),
+            visual,
         }
     }
 }
@@ -403,6 +411,7 @@ fn svg_sheet_with_fonts(
     o: &ExportOptions,
     fontdb: std::sync::Arc<resvg::usvg::fontdb::Database>,
     frame: Option<thinoda_core::Rect>,
+    visual: VisualExportContext,
 ) -> Result<String, IoError> {
     let text = text::ExportText::new(s, o.dark, fontdb.clone())?;
     let layout = layout_sheet(s, &text, o.dark);
@@ -413,7 +422,7 @@ fn svg_sheet_with_fonts(
         frame,
         &layout,
         &s.zones,
-        SvgSceneOptions::new(s, false),
+        SvgSceneOptions::new(s, false, visual),
     )
 }
 
@@ -569,7 +578,13 @@ fn svg_layout_with_fonts(
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::BelowMap) {
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
-        out.push_str(&board_object_svg(item, object, bg, o.dark));
+        out.push_str(&board_object_svg(
+            item,
+            object,
+            bg,
+            o.dark,
+            scene_options.visual,
+        ));
         if clipped {
             out.push_str("</g>");
         }
@@ -917,7 +932,13 @@ fn svg_layout_with_fonts(
     }
     for (item, object) in board::band_items(s, &scene, thinoda_core::SceneBand::AboveMap) {
         let clipped = clip_scene && open_scene_clip(&mut out, item.clip, "object", object.id.0);
-        out.push_str(&board_object_svg(item, object, bg, o.dark));
+        out.push_str(&board_object_svg(
+            item,
+            object,
+            bg,
+            o.dark,
+            scene_options.visual,
+        ));
         if clipped {
             out.push_str("</g>");
         }
@@ -1086,9 +1107,10 @@ fn board_object_svg(
     object: &thinoda_core::board::CanvasObject,
     background: Color,
     dark: bool,
+    visual: VisualExportContext,
 ) -> String {
     let mut out = format!("<g class=\"canvas-object\" id=\"object-{}\">", object.id.0);
-    for prim in board::object_prims(item, object, background, dark) {
+    for prim in board::object_prims(item, object, background, dark, visual) {
         match prim {
             board::Prim::Path {
                 points,
@@ -1254,8 +1276,9 @@ pub(crate) fn raster(
     w: &Workbook,
     o: &ExportOptions,
     fmt: image::ImageFormat,
+    visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
-    let source = svg(w, o)?;
+    let source = svg(w, o, visual)?;
     raster_svg(&source, o.scale, fmt)
 }
 
@@ -1301,10 +1324,14 @@ pub(crate) fn raster_svg(
     }
     Ok(out.into_inner())
 }
-pub(crate) fn pdf(w: &Workbook, o: &ExportOptions) -> Result<Vec<u8>, IoError> {
+pub(crate) fn pdf(
+    w: &Workbook,
+    o: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
     let mut opts = o.clone();
     opts.transparent = false;
-    let source = svg(w, &opts)?;
+    let source = svg(w, &opts, visual)?;
     pdf_svg(&source)
 }
 
@@ -1532,7 +1559,12 @@ mod tests {
     #[test]
     fn svg_escapes_topic_text() {
         let w = Workbook::new(thinoda_core::Sheet::new("S", "<root>"));
-        let xml = svg(&w, &ExportOptions::default()).unwrap();
+        let xml = svg(
+            &w,
+            &ExportOptions::default(),
+            VisualExportContext::default(),
+        )
+        .unwrap();
         assert!(xml.contains("&lt;root&gt;"));
     }
 
@@ -1564,15 +1596,28 @@ mod tests {
             r##"<text id="topic-4-line-0" x="227.00" y="5.91" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16.00" font-weight="normal" fill="#1F2328" textLength="67.04" lengthAdjust="spacingAndGlyphs">Summary</text></svg>"##,
         );
         let fontdb = Arc::new(crate::fonts::build(false));
-        let actual =
-            svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb.clone(), None).unwrap();
+        let actual = svg_sheet_with_fonts(
+            &sheet,
+            &ExportOptions::default(),
+            fontdb.clone(),
+            None,
+            VisualExportContext::default(),
+        )
+        .unwrap();
         assert_eq!(actual, expected);
 
         // A board setting changes no other paint, but enables the additional
         // summary connector even when there are no clipping frames.
         sheet.board.snap = !sheet.board.snap;
         assert!(crate::board_export::uses_board_semantics(&sheet));
-        let board = svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb, None).unwrap();
+        let board = svg_sheet_with_fonts(
+            &sheet,
+            &ExportOptions::default(),
+            fontdb,
+            None,
+            VisualExportContext::default(),
+        )
+        .unwrap();
         let connector = r##"<path class="summary-connector" d="M 203.00,0.00 L 213.00,0.00" fill="none" stroke="#777777" stroke-width="2"/>"##;
         assert!(board.contains(connector));
         assert_eq!(board.replacen(connector, "", 1), expected);
@@ -1591,7 +1636,14 @@ mod tests {
             .unwrap();
         assert!(!sheet.uses_board_semantics());
         let fontdb = Arc::new(crate::fonts::build(false));
-        let actual = svg_sheet_with_fonts(&sheet, &ExportOptions::default(), fontdb, None).unwrap();
+        let actual = svg_sheet_with_fonts(
+            &sheet,
+            &ExportOptions::default(),
+            fontdb,
+            None,
+            VisualExportContext::default(),
+        )
+        .unwrap();
 
         // Captured before the board-title contrast change with only embedded
         // fallback fonts. Check the complete legacy output, including its tint.
@@ -1666,7 +1718,7 @@ mod tests {
                 frame,
                 &layout,
                 &sheet.zones,
-                SvgSceneOptions::new(&sheet, false),
+                SvgSceneOptions::new(&sheet, false, VisualExportContext::default()),
             )
             .unwrap();
             let with_clipping = svg_layout_with_fonts(
@@ -1676,7 +1728,7 @@ mod tests {
                 frame,
                 &layout,
                 &sheet.zones,
-                SvgSceneOptions::new(&sheet, true),
+                SvgSceneOptions::new(&sheet, true, VisualExportContext::default()),
             )
             .unwrap();
             // Compare the current paths, not a historical renderer fixture.
@@ -1684,7 +1736,14 @@ mod tests {
             if frame.is_none() {
                 assert_eq!(
                     without_clipping,
-                    svg_sheet_with_fonts(&sheet, &opts, fontdb.clone(), None).unwrap()
+                    svg_sheet_with_fonts(
+                        &sheet,
+                        &opts,
+                        fontdb.clone(),
+                        None,
+                        VisualExportContext::default(),
+                    )
+                    .unwrap()
                 );
                 for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
                     assert_eq!(
@@ -1746,7 +1805,7 @@ mod tests {
                 Some(frame),
                 layout,
                 &source.zones,
-                SvgSceneOptions::new(source, true),
+                SvgSceneOptions::new(source, true, VisualExportContext::default()),
             )
             .unwrap();
             let image =
@@ -1981,7 +2040,7 @@ mod tests {
                 frame,
                 &layout,
                 &source.zones,
-                SvgSceneOptions::new(source, true),
+                SvgSceneOptions::new(source, true, VisualExportContext::default()),
             )
             .unwrap()
         };
@@ -2022,7 +2081,7 @@ mod tests {
             frame,
             &Layout::default(),
             &sheet.zones,
-            SvgSceneOptions::new(&sheet, true),
+            SvgSceneOptions::new(&sheet, true, VisualExportContext::default()),
         )
         .unwrap();
         let empty =
@@ -2203,7 +2262,9 @@ mod tests {
                 };
                 let text = text::ExportText::new(w.active(), dark, fontdb.clone()).unwrap();
                 let layout = layout_sheet(w.active(), &text, dark);
-                let source = svg_with_fonts(&w, &opts, fontdb.clone()).unwrap();
+                let source =
+                    svg_with_fonts(&w, &opts, fontdb.clone(), VisualExportContext::default())
+                        .unwrap();
                 assert_title_fits(&source, fontdb.clone(), &layout, &text);
                 let substituted = source.replace(
                     "font-family=\"Segoe UI, Helvetica, Arial, sans-serif\"",
@@ -2230,7 +2291,7 @@ mod tests {
         let w = Workbook::new(sheet);
         let text = text::ExportText::new(w.active(), false, crate::fonts::database()).unwrap();
         assert_eq!(text.topic(id).lines.len(), 1);
-        let source = svg(&w, &Default::default()).unwrap();
+        let source = svg(&w, &Default::default(), VisualExportContext::default()).unwrap();
         assert!(source.contains("Formen von KI-Coding</text>"));
         assert!(!source.contains(&format!("topic-{id}-line-1")));
     }
@@ -2238,13 +2299,14 @@ mod tests {
     #[test]
     fn pdf_contains_vectors_not_a_page_sized_bitmap_and_ignores_raster_scale() {
         let w = regression_map();
-        let a = pdf(&w, &Default::default()).unwrap();
+        let a = pdf(&w, &Default::default(), VisualExportContext::default()).unwrap();
         let b = pdf(
             &w,
             &ExportOptions {
                 scale: 8.0,
                 ..Default::default()
             },
+            VisualExportContext::default(),
         )
         .unwrap();
         assert!(a.starts_with(b"%PDF-"));

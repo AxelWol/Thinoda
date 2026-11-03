@@ -30,6 +30,11 @@ represented as working features. Their
 persistence, accessibility and verification constraints are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
 
+**Board export appearance:** GUI visual exports, Pitch and print now share the
+canvas's automatic connector and unstyled-shape stroke, without changing stored
+objects or legacy CLI/API defaults. External Office, physical printing and
+device appearance acceptance remain open; see [FREEFORM.md](FREEFORM.md).
+
 **Camera photo acceptance:** EXIF rotations/mirrors are applied to previews and
 visual exports with original native/clipboard bytes preserved and metadata-loss
 preflight. Verify real camera files, color-profile appearance and external

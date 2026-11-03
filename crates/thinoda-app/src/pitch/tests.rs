@@ -1034,16 +1034,56 @@ fn presentation_outputs_use_the_captured_frames_without_changing_the_source() {
     let sheet = app.doc().unwrap().doc.sheet();
     let before = sheet.clone();
     assert!(
-        ThinodaApp::pitch_bytes(sheet, &ExportOptions::default(), false)
-            .unwrap()
-            .starts_with(b"%PDF")
+        ThinodaApp::pitch_bytes(
+            sheet,
+            &ExportOptions::default(),
+            false,
+            thinoda_io::VisualExportContext::default(),
+        )
+        .unwrap()
+        .starts_with(b"%PDF")
     );
     assert!(
-        ThinodaApp::pitch_bytes(sheet, &ExportOptions::default(), true)
-            .unwrap()
-            .starts_with(b"PK")
+        ThinodaApp::pitch_bytes(
+            sheet,
+            &ExportOptions::default(),
+            true,
+            thinoda_io::VisualExportContext::default(),
+        )
+        .unwrap()
+        .starts_with(b"PK")
     );
     assert_eq!(sheet, &before);
+}
+
+#[test]
+fn presentation_output_uses_the_captured_visual_context() {
+    let sheet = crate::visual_export::test_helpers::sheet();
+    let before = sheet.clone();
+    let options = ExportOptions::default();
+    let visual = thinoda_io::VisualExportContext::default()
+        .with_automatic_board_stroke(thinoda_core::Color::rgb(220, 30, 150));
+    for images in [false, true] {
+        let actual = ThinodaApp::pitch_bytes(&sheet, &options, images, visual).unwrap();
+        let expected = if images {
+            thinoda_io::export_presentation_png_zip_with_visual_context(&sheet, &options, visual)
+        } else {
+            thinoda_io::export_presentation_pdf_with_visual_context(&sheet, &options, visual)
+        }
+        .unwrap();
+        assert_eq!(actual, expected);
+        assert_ne!(
+            actual,
+            ThinodaApp::pitch_bytes(
+                &sheet,
+                &options,
+                images,
+                thinoda_io::VisualExportContext::default(),
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(sheet, before);
 }
 
 #[test]

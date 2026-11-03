@@ -149,6 +149,7 @@ fn paint_board_thumbnail(
         xf,
         &PaintOptions {
             dark,
+            accent: thinoda_ui::Palette::of(painter.ctx()).accent,
             omit_zones: true,
             ..Default::default()
         },
@@ -439,6 +440,45 @@ mod tests {
             "storyboard",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
+        }
+    }
+
+    #[test]
+    fn board_thumbnail_uses_the_current_accent_for_automatic_strokes() {
+        let mut sheet = crate::visual_export::test_helpers::sheet();
+        sheet
+            .add_canvas_object(thinoda_core::CanvasObject::shape(
+                thinoda_core::ShapeKind::Rectangle,
+                thinoda_core::Rect::from_center_size(
+                    thinoda_core::Vec2::new(100.0, 130.0),
+                    thinoda_core::Vec2::new(80.0, 40.0),
+                ),
+            ))
+            .unwrap();
+        for dark in [false, true] {
+            let accent = Color32::from_rgb(221, 12, 179);
+            let ctx = crate::visual_export::test_helpers::context(accent, dark);
+            let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
+            let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
+            for accent in [accent, Color32::TRANSPARENT] {
+                crate::visual_export::test_helpers::set_accent(&ctx, accent, dark);
+                let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                    paint_board_thumbnail(ui.painter(), &sheet, &layout, rect, dark);
+                });
+                output.textures_delta.clear();
+                crate::visual_export::test_helpers::assert_stroke(
+                    &output,
+                    thinoda_canvas::automatic_board_stroke(accent, dark),
+                );
+                assert!(output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::Shape::Path(path)
+                        if path.closed
+                            && path.stroke.color == egui::epaint::ColorMode::Solid(
+                                thinoda_canvas::automatic_board_stroke(accent, dark)
+                            )
+                )));
+            }
         }
     }
 

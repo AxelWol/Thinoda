@@ -2804,11 +2804,13 @@ impl ThinodaApp {
             presentation_aspect_ratio: self.dialogs.powerpoint_aspect_ratio,
             ..Default::default()
         };
-        let res = thinoda_io::export_bytes_with_consent(
+        let visual = crate::visual_export::for_view(d.view.accent, d.view.dark);
+        let res = thinoda_io::export_bytes_with_consent_and_visual_context(
             d.doc.workbook(),
             format,
             &opts,
             format == Format::MindManager,
+            visual,
         )
         .map_err(crate::doc::export_error)
         .and_then(|b| {

@@ -100,6 +100,7 @@ impl SlidePreview {
             xf,
             &thinoda_canvas::PaintOptions {
                 dark: Palette::of_ui(ui).dark,
+                accent: Palette::of_ui(ui).accent,
                 ..Default::default()
             },
         );

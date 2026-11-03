@@ -13,7 +13,7 @@ use thinoda_core::{
     theme::Theme,
 };
 
-use crate::{ExportOptions, IoError, render};
+use crate::{ExportOptions, IoError, VisualExportContext, render};
 
 const PPTX_IMAGE_WIDTH: f32 = 1280.0;
 const EMU_PER_INCH: u64 = 914_400;
@@ -140,6 +140,21 @@ pub fn render_presentation_slide_svg(
     slide_index: usize,
     options: &ExportOptions,
 ) -> Result<String, IoError> {
+    render_presentation_slide_svg_with_visual_context(
+        sheet,
+        slide_index,
+        options,
+        VisualExportContext::default(),
+    )
+}
+
+/// Render a slide with an optional caller-provided board appearance.
+pub fn render_presentation_slide_svg_with_visual_context(
+    sheet: &Sheet,
+    slide_index: usize,
+    options: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<String, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     let resolved = resolve_slide(sheet, slide_index, options)?;
     svg_for_slide(
@@ -147,6 +162,7 @@ pub fn render_presentation_slide_svg(
         &sheet.presentation.slides[slide_index],
         options,
         &resolved,
+        visual,
     )
 }
 
@@ -173,10 +189,11 @@ fn svg_for_slide(
     slide: &PresentationSlide,
     options: &ExportOptions,
     resolved: &ResolvedPresentationSlide,
+    visual: VisualExportContext,
 ) -> Result<String, IoError> {
     if slide.source != PresentationSource::Viewport {
         let scene_sheet = scene_sheet_without_hidden_connectors(sheet, resolved);
-        return render::svg_resolved(sheet, &scene_sheet, options, resolved, false);
+        return render::svg_resolved(sheet, &scene_sheet, options, resolved, false, visual);
     }
 
     // The map exporter appends equation notes below the drawing. A viewport
@@ -234,7 +251,7 @@ fn svg_for_slide(
         && off_frame_images.is_empty()
         && off_frame_objects.is_empty()
     {
-        return render::svg_resolved(sheet, sheet, options, resolved, true);
+        return render::svg_resolved(sheet, sheet, options, resolved, true, visual);
     }
     if !off_frame_images.is_empty() {
         // Pruning an unused photo must not hide a malformed embedded resource.
@@ -274,7 +291,7 @@ fn svg_for_slide(
             .objects
             .retain(|object| scene_connector_visible(sheet, resolved, object));
     }
-    render::svg_resolved(sheet, &scene_sheet, options, resolved, true)
+    render::svg_resolved(sheet, &scene_sheet, options, resolved, true, visual)
 }
 
 fn scene_connector_visible(
@@ -373,6 +390,21 @@ pub fn render_presentation_slide_png(
     slide_index: usize,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
+    render_presentation_slide_png_with_visual_context(
+        sheet,
+        slide_index,
+        options,
+        VisualExportContext::default(),
+    )
+}
+
+/// Render a slide PNG with an optional caller-provided board appearance.
+pub fn render_presentation_slide_png_with_visual_context(
+    sheet: &Sheet,
+    slide_index: usize,
+    options: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
     validate_scale(options.scale)?;
     sheet.validate().map_err(IoError::Invalid)?;
     let resolved = resolve_slide(sheet, slide_index, options)?;
@@ -383,6 +415,7 @@ pub fn render_presentation_slide_png(
         &sheet.presentation.slides[slide_index],
         options,
         &resolved,
+        visual,
     )?;
     render::raster_svg(&svg, options.scale, ImageFormat::Png)
 }
@@ -391,6 +424,15 @@ pub fn render_presentation_slide_png(
 pub fn export_presentation_png_zip(
     sheet: &Sheet,
     options: &ExportOptions,
+) -> Result<Vec<u8>, IoError> {
+    export_presentation_png_zip_with_visual_context(sheet, options, VisualExportContext::default())
+}
+
+/// Export slide images with an optional caller-provided board appearance.
+pub fn export_presentation_png_zip_with_visual_context(
+    sheet: &Sheet,
+    options: &ExportOptions,
+    visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
@@ -401,7 +443,13 @@ pub fn export_presentation_png_zip(
     for index in 0..sheet.presentation.slides.len() {
         let resolved = resolve_slide(sheet, index, options)?;
         image_dimensions(resolved.frame, options.scale, &mut total_pixels)?;
-        let svg = svg_for_slide(sheet, &sheet.presentation.slides[index], options, &resolved)?;
+        let svg = svg_for_slide(
+            sheet,
+            &sheet.presentation.slides[index],
+            options,
+            &resolved,
+            visual,
+        )?;
         let png = render::raster_svg(&svg, options.scale, ImageFormat::Png)?;
         rendered.push((format!("slides/slide-{:03}.png", index + 1), png));
     }
@@ -433,6 +481,15 @@ pub fn export_presentation_pptx(
     sheet: &Sheet,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
+    export_presentation_pptx_with_visual_context(sheet, options, VisualExportContext::default())
+}
+
+/// Export PowerPoint slides with an optional caller-provided board appearance.
+pub fn export_presentation_pptx_with_visual_context(
+    sheet: &Sheet,
+    options: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     render::validate_equation_notes(sheet)?;
     validate_slides(sheet)?;
@@ -463,6 +520,7 @@ pub fn export_presentation_pptx(
                 index + 1,
                 width_emu,
                 height_emu,
+                visual,
             )?
         } else {
             resolved.frame = fitted;
@@ -475,6 +533,7 @@ pub fn export_presentation_pptx(
                 index + 1,
                 (width_emu, height_emu),
                 MAX_PRESENTATION_ARCHIVE_BYTES.saturating_sub(native_bytes),
+                visual,
             )?;
             PresentationPptxSlide {
                 shapes: native.shapes,
@@ -576,10 +635,11 @@ fn viewport_pptx_slide(
     slide_number: usize,
     width: u64,
     height: u64,
+    visual: VisualExportContext,
 ) -> Result<PresentationPptxSlide, IoError> {
     let mut opaque_options = options.clone();
     opaque_options.transparent = false;
-    let svg = svg_for_slide(sheet, slide, &opaque_options, resolved)?;
+    let svg = svg_for_slide(sheet, slide, &opaque_options, resolved, visual)?;
     if svg.len() > MAX_PRESENTATION_ARCHIVE_BYTES {
         return Err(IoError::PresentationLimit("slide source size"));
     }
@@ -637,6 +697,21 @@ pub fn render_presentation_pptx_slide_png(
     slide_index: usize,
     options: &ExportOptions,
 ) -> Result<Vec<u8>, IoError> {
+    render_presentation_pptx_slide_png_with_visual_context(
+        sheet,
+        slide_index,
+        options,
+        VisualExportContext::default(),
+    )
+}
+
+/// Render a PowerPoint-sized preview with an optional caller-provided board appearance.
+pub fn render_presentation_pptx_slide_png_with_visual_context(
+    sheet: &Sheet,
+    slide_index: usize,
+    options: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     let (target_ratio, target_height, ..) = options.presentation_aspect_ratio.dimensions();
     let target_width = (PPTX_IMAGE_WIDTH / 2.0).min(target_height * target_ratio / 2.0);
@@ -648,6 +723,7 @@ pub fn render_presentation_pptx_slide_png(
         target_ratio,
         target_width,
         &mut total_pixels,
+        visual,
     )
 }
 
@@ -658,6 +734,7 @@ fn render_pptx_slide(
     target_ratio: f32,
     target_width: f32,
     total_pixels: &mut u64,
+    visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
     let mut resolved = resolve_slide(sheet, slide_index, options)?;
     let frame = fit_frame(resolved.frame, target_ratio)?;
@@ -671,7 +748,7 @@ fn render_pptx_slide(
     };
     let slide = &sheet.presentation.slides[slide_index];
     let svg = if slide.source == PresentationSource::Viewport {
-        let scene = svg_for_slide(sheet, slide, &render_options, &resolved)?;
+        let scene = svg_for_slide(sheet, slide, &render_options, &resolved, visual)?;
         let view = resolved.frame;
         let bg = Theme::for_settings(&sheet.theme).background(&sheet.theme, options.dark);
         // The nested SVG keeps its own viewport; the extra clip also prevents
@@ -698,7 +775,7 @@ fn render_pptx_slide(
         )
     } else {
         resolved.frame = frame;
-        svg_for_slide(sheet, slide, &render_options, &resolved)?
+        svg_for_slide(sheet, slide, &render_options, &resolved, visual)?
     };
     render::raster_svg(&svg, scale, ImageFormat::Png)
 }
@@ -841,6 +918,15 @@ fn theme_xml() -> &'static str {
 /// Viewport clipping is visual, not a redaction guarantee: intersecting paths,
 /// images, and some off-frame scene data may remain in PDF resources.
 pub fn export_presentation_pdf(sheet: &Sheet, options: &ExportOptions) -> Result<Vec<u8>, IoError> {
+    export_presentation_pdf_with_visual_context(sheet, options, VisualExportContext::default())
+}
+
+/// Export slide PDF pages with an optional caller-provided board appearance.
+pub fn export_presentation_pdf_with_visual_context(
+    sheet: &Sheet,
+    options: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
     sheet.validate().map_err(IoError::Invalid)?;
     validate_slides(sheet)?;
     validate_scale(options.scale)?;
@@ -863,6 +949,7 @@ pub fn export_presentation_pdf(sheet: &Sheet, options: &ExportOptions) -> Result
             &sheet.presentation.slides[index],
             &opaque_options,
             &resolved,
+            visual,
         )?;
         source_bytes = source_bytes.saturating_add(svg.len());
         if source_bytes > MAX_PRESENTATION_ARCHIVE_BYTES {

@@ -631,6 +631,7 @@ pub(crate) fn paint(
         },
         &PaintOptions {
             dark: view.dark,
+            accent: view.accent,
             omit_zones: true,
             ..Default::default()
         },
@@ -705,6 +706,52 @@ pub(crate) fn paint(
 mod tests {
     use super::*;
     use thinoda_core::{ApproxMeasure, layout_sheet};
+
+    #[test]
+    fn topic_drag_ghost_uses_the_view_automatic_stroke() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, SheetRootMode, build_scene};
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let first = sheet.add_floating("First", Vec2::new(-100.0, 0.0));
+        let second = sheet.add_floating("Second", Vec2::new(100.0, 0.0));
+        let mut connector = CanvasConnector::new(Endpoint::Topic(first), Endpoint::Topic(second));
+        connector.arrow_end = false;
+        sheet
+            .add_canvas_object(CanvasObject::connector(connector))
+            .unwrap();
+        let members = members(&sheet, &[first, second]);
+        for dark in [false, true] {
+            let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
+            let scene = build_scene(&sheet, &layout);
+            for accent in [Color32::from_rgb(221, 12, 179), Color32::TRANSPARENT] {
+                let mut view = MapView::default();
+                view.accent = accent;
+                view.dark = dark;
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(Default::default(), |ui| {
+                    paint(
+                        ui.painter(),
+                        &sheet,
+                        &layout,
+                        &scene,
+                        &view,
+                        &members,
+                        Vec2::ZERO,
+                        Vec2::new(10_000.0, 10_000.0),
+                    );
+                });
+                output.textures_delta.clear();
+                let stroke = crate::automatic_board_stroke(accent, dark).gamma_multiply(0.55);
+                assert!(output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::Shape::Path(path)
+                        if !path.closed
+                            && path.stroke.color == egui::epaint::ColorMode::Solid(stroke)
+                )));
+            }
+        }
+    }
 
     #[test]
     fn alignment_uses_group_bounds_and_stable_nearest_reference_per_axis() {

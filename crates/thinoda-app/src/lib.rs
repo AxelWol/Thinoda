@@ -52,6 +52,7 @@ mod theme_editor;
 mod tree_table;
 pub mod ui;
 mod updates;
+mod visual_export;
 mod zones;
 
 pub use app::{Startup, ThinodaApp, start_services};

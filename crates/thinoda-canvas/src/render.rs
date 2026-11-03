@@ -1035,14 +1035,19 @@ fn opacity_color(color: Color32, opacity: f32) -> Color32 {
     color.gamma_multiply(opacity.clamp(0.0, 1.0))
 }
 
-fn default_object_stroke(opts: &PaintOptions<'_>) -> Color32 {
-    if opts.accent.a() > 0 {
-        opts.accent
-    } else if opts.dark {
+/// Resolve the automatic stroke used by unstyled board shapes and connectors.
+pub fn automatic_board_stroke(accent: Color32, dark: bool) -> Color32 {
+    if accent.a() > 0 {
+        accent
+    } else if dark {
         Color32::from_gray(225)
     } else {
         Color32::from_gray(65)
     }
+}
+
+fn default_object_stroke(opts: &PaintOptions<'_>) -> Color32 {
+    automatic_board_stroke(opts.accent, opts.dark)
 }
 
 struct ShapeFill {

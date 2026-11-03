@@ -195,6 +195,26 @@ impl Default for ExportOptions {
     }
 }
 
+/// Optional view appearance for visual exports. The default retains the
+/// historical export colors, independently of any application UI settings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VisualExportContext {
+    automatic_board_stroke: Option<thinoda_core::Color>,
+}
+
+impl VisualExportContext {
+    /// Use the caller's resolved automatic board stroke for connectors and
+    /// unstyled shape outlines. Explicit and inherited colors still take
+    /// precedence, and the source document is not modified. The supplied
+    /// color must already include any fallback for a transparent UI accent.
+    /// This also matches the canvas's two-unit default outline width and
+    /// suppresses interior strokes of filled shapes with no explicit stroke.
+    pub fn with_automatic_board_stroke(mut self, color: thinoda_core::Color) -> Self {
+        self.automatic_board_stroke = Some(color);
+        self
+    }
+}
+
 /// Import/export error.
 #[derive(Debug, Error)]
 pub enum IoError {
@@ -272,8 +292,11 @@ pub use gantt::{
 pub use presentation::{
     MAX_PRESENTATION_ARCHIVE_BYTES, MAX_PRESENTATION_IMAGE_PIXELS, MAX_PRESENTATION_IMAGE_SIDE,
     MAX_PRESENTATION_TOTAL_PIXELS, PresentationAspectRatio, export_presentation_pdf,
-    export_presentation_png_zip, export_presentation_pptx, fit_presentation_frame,
-    generate_presentation, render_presentation_slide_png, render_presentation_slide_svg,
+    export_presentation_pdf_with_visual_context, export_presentation_png_zip,
+    export_presentation_png_zip_with_visual_context, export_presentation_pptx,
+    export_presentation_pptx_with_visual_context, fit_presentation_frame, generate_presentation,
+    render_presentation_slide_png, render_presentation_slide_png_with_visual_context,
+    render_presentation_slide_svg, render_presentation_slide_svg_with_visual_context,
 };
 pub use print::PrintDocument;
 
@@ -557,6 +580,16 @@ pub fn export_bytes(
     export_bytes_with_consent(book, format, opts, false)
 }
 
+/// Export using an optional caller-provided view appearance.
+pub fn export_bytes_with_visual_context(
+    book: &Workbook,
+    format: Format,
+    opts: &ExportOptions,
+    visual: VisualExportContext,
+) -> Result<Vec<u8>, IoError> {
+    export_bytes_with_consent_and_visual_context(book, format, opts, false, visual)
+}
+
 /// Export with explicit consent to omit unsupported MindManager content.
 /// Other format policies are unchanged.
 pub fn export_bytes_with_consent(
@@ -564,6 +597,24 @@ pub fn export_bytes_with_consent(
     format: Format,
     opts: &ExportOptions,
     allow_lossy: bool,
+) -> Result<Vec<u8>, IoError> {
+    export_bytes_with_consent_and_visual_context(
+        book,
+        format,
+        opts,
+        allow_lossy,
+        VisualExportContext::default(),
+    )
+}
+
+/// Export with both explicit consent and an optional caller-provided view
+/// appearance. Non-visual formats retain their existing behavior.
+pub fn export_bytes_with_consent_and_visual_context(
+    book: &Workbook,
+    format: Format,
+    opts: &ExportOptions,
+    allow_lossy: bool,
+    visual: VisualExportContext,
 ) -> Result<Vec<u8>, IoError> {
     if book.sheets.iter().any(|s| s.fim.is_some())
         && !matches!(
@@ -715,17 +766,17 @@ pub fn export_bytes_with_consent(
             })?
         }
         Format::TextBundle => formats::textbundle_export(book, opts)?,
-        Format::Svg => render::svg(book, opts)?.into_bytes(),
-        Format::Png => render::raster(book, opts, image::ImageFormat::Png)?,
-        Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg)?,
-        Format::Pdf => render::pdf(book, opts)?,
+        Format::Svg => render::svg(book, opts, visual)?.into_bytes(),
+        Format::Png => render::raster(book, opts, image::ImageFormat::Png, visual)?,
+        Format::Jpeg => render::raster(book, opts, image::ImageFormat::Jpeg, visual)?,
+        Format::Pdf => render::pdf(book, opts, visual)?,
         Format::Word => office::docx(book, opts)?,
         Format::PowerPoint => {
             let sheet = &book.sheets[opts
                 .sheet
                 .unwrap_or(book.active_sheet)
                 .min(book.sheets.len() - 1)];
-            export_presentation_pptx(sheet, opts)?
+            export_presentation_pptx_with_visual_context(sheet, opts, visual)?
         }
         Format::Excel => office::xlsx(book, opts)?,
         Format::Csv => office::csv(book, opts),

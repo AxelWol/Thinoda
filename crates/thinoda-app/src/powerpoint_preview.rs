@@ -113,6 +113,7 @@ impl PowerPointPreview {
                                 xf,
                                 &thinoda_canvas::PaintOptions {
                                     dark,
+                                    accent: Palette::of_ui(ui).accent,
                                     ..Default::default()
                                 },
                             );
@@ -138,6 +139,33 @@ impl PowerPointPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powerpoint_preview_uses_the_current_accent_for_automatic_board_strokes() {
+        let sheet = crate::visual_export::test_helpers::sheet();
+        for dark in [false, true] {
+            let accent = egui::Color32::from_rgb(221, 12, 179);
+            let ctx = crate::visual_export::test_helpers::context(accent, dark);
+            let mut preview = PowerPointPreview::default();
+            for accent in [accent, egui::Color32::TRANSPARENT] {
+                crate::visual_export::test_helpers::set_accent(&ctx, accent, dark);
+                let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                    preview.show(
+                        ui,
+                        &sheet,
+                        &("source".into(), 0, 1),
+                        PresentationAspectRatio::Widescreen16x9,
+                        vec2(400.0, 300.0),
+                    );
+                });
+                output.textures_delta.clear();
+                crate::visual_export::test_helpers::assert_stroke(
+                    &output,
+                    thinoda_canvas::automatic_board_stroke(accent, dark),
+                );
+            }
+        }
+    }
 
     #[test]
     fn preview_is_vector_and_rekeys_for_ratio_theme_and_revision() {

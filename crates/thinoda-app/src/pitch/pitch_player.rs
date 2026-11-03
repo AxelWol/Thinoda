@@ -537,6 +537,7 @@ fn presenter_map(ui: &mut egui::Ui, player: &PitchPlayer, size: egui::Vec2, dark
         xf,
         &thinoda_canvas::PaintOptions {
             dark,
+            accent: Palette::of_ui(ui).accent,
             ..Default::default()
         },
     );
@@ -551,6 +552,33 @@ fn presenter_map(ui: &mut egui::Ui, player: &PitchPlayer, size: egui::Vec2, dark
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presenter_map_uses_the_current_accent_for_automatic_board_strokes() {
+        let sheet = crate::visual_export::test_helpers::sheet();
+        for dark in [false, true] {
+            let accent = egui::Color32::from_rgb(221, 12, 179);
+            let ctx = crate::visual_export::test_helpers::context(accent, dark);
+            let mut app = ThinodaApp::headless();
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .replace(thinoda_core::Workbook::new(sheet.clone()));
+            app.open_pitch(&ctx, true);
+            let player = app.pitch.player.take().unwrap();
+            for accent in [accent, egui::Color32::TRANSPARENT] {
+                crate::visual_export::test_helpers::set_accent(&ctx, accent, dark);
+                let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                    presenter_map(ui, &player, egui::vec2(400.0, 300.0), dark);
+                });
+                output.textures_delta.clear();
+                crate::visual_export::test_helpers::assert_stroke(
+                    &output,
+                    thinoda_canvas::automatic_board_stroke(accent, dark),
+                );
+            }
+        }
+    }
 
     fn painted_texts(output: &egui::FullOutput) -> Vec<String> {
         fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {

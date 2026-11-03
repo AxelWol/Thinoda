@@ -13,7 +13,12 @@ use egui::{Context, RichText};
 #[cfg(not(target_arch = "wasm32"))]
 use raw_window_handle::HasWindowHandle;
 use thinoda_core::Workbook;
-use thinoda_io::print::{Paper, PrintDocument, PrintSettings, render_print};
+#[cfg(test)]
+use thinoda_io::print::render_print;
+use thinoda_io::{
+    VisualExportContext,
+    print::{Paper, PrintDocument, PrintSettings, render_print_with_visual_context},
+};
 #[cfg(not(target_arch = "wasm32"))]
 use thinoda_platform::printing::{PrintOutcome, PrintPage};
 use thinoda_platform::system::run_background;
@@ -76,6 +81,7 @@ struct PrintEditor {
     gantt: bool,
     workbook: Arc<Workbook>,
     sheet: usize,
+    visual: VisualExportContext,
     title: String,
     settings: PrintSettings,
     pending: Option<(PrintSettings, mpsc::Receiver<RenderResult>)>,
@@ -144,6 +150,7 @@ impl PrintEditor {
             let sheet = self.sheet;
             let settings = self.settings;
             let gantt = self.gantt;
+            let visual = self.visual;
             let repaint = ctx.clone();
             let (sender, receiver) = mpsc::channel();
             self.pending = Some((settings, receiver));
@@ -152,7 +159,7 @@ impl PrintEditor {
                 let result = if gantt {
                     thinoda_io::render_gantt_print(&workbook.sheets[sheet], settings)
                 } else {
-                    render_print(&workbook, sheet, settings)
+                    render_print_with_visual_context(&workbook, sheet, settings, visual)
                 }
                 .map_err(crate::doc::export_error);
                 let _ = sender.send(result);
@@ -361,12 +368,14 @@ impl ThinodaApp {
         let sheet = doc.doc.active_index();
         let title = doc.doc.sheet().title.clone();
         let workbook = Arc::new(doc.doc.workbook().clone());
+        let visual = crate::visual_export::for_view(doc.view.accent, doc.view.dark);
         self.printing.message = None;
         self.printing.editor = Some(PrintEditor {
             viewport: ctx.viewport_id(),
             gantt,
             workbook,
             sheet,
+            visual,
             title,
             settings: PrintSettings::default(),
             pending: None,
@@ -681,6 +690,50 @@ mod tests {
     }
 
     #[test]
+    fn print_preview_freezes_the_source_view_appearance() {
+        let mut app = ThinodaApp::headless();
+        let ctx = Context::default();
+        let accent = egui::Color32::from_rgb(220, 30, 150);
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .replace(Workbook::new(crate::visual_export::test_helpers::sheet()));
+        doc.view.accent = accent;
+        doc.view.dark = true;
+        let before = doc.doc.workbook().clone();
+        app.begin_print(&ctx);
+        let expected = crate::visual_export::for_view(accent, true);
+        let doc = app.doc_mut().unwrap();
+        doc.view.accent = egui::Color32::TRANSPARENT;
+        doc.view.dark = false;
+        let editor = app.printing.editor.as_mut().unwrap();
+        assert_eq!(editor.visual, expected);
+        assert_eq!(editor.workbook.as_ref(), &before);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            editor.poll(&ctx);
+            assert!(editor.failed.is_none(), "print preview failed");
+            if editor.ready() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "print preview timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let pixels = editor
+            .rendered
+            .as_ref()
+            .unwrap()
+            .image
+            .pixels()
+            .filter(|pixel| pixel[0] > 170 && pixel[1] < 100 && pixel[2] > 100)
+            .count();
+        assert!(pixels > 20);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+    }
+
+    #[test]
     fn preview_thumbnail_preserves_page_aspect_ratio_without_upscaling() {
         for dimensions in [(1754, 1240), (1240, 1754), (3508, 4961), (12, 8)] {
             let image = image::RgbImage::new(dimensions.0, dimensions.1);
@@ -701,6 +754,7 @@ mod tests {
             gantt: false,
             workbook: Arc::new(Workbook::default()),
             sheet: 0,
+            visual: VisualExportContext::default(),
             title: "Map".into(),
             settings,
             pending: Some((settings, receiver)),

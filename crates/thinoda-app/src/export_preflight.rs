@@ -10,7 +10,7 @@ use std::{
 
 use egui::Context;
 use thinoda_core::{PresentationSource, Sheet, Workbook};
-use thinoda_io::{ExportLoss, ExportOptions, Format, print::PrintDocument};
+use thinoda_io::{ExportLoss, ExportOptions, Format, VisualExportContext, print::PrintDocument};
 use thinoda_ui::{Dialog, widgets};
 
 use crate::{
@@ -70,6 +70,7 @@ enum Action {
         sheet: Box<Sheet>,
         options: ExportOptions,
         images: bool,
+        visual: VisualExportContext,
     },
     Print {
         document: Arc<PrintDocument>,
@@ -392,17 +393,18 @@ impl ThinodaApp {
             sheet: owner.1,
             revision: owner.2,
         };
-        if !self.docs.iter().any(|doc| owner.matches(doc)) {
+        let Some(doc) = self.docs.iter().find(|doc| owner.matches(doc)) else {
             self.toasts.warning(t("The document changed. Try again."));
             return;
-        }
+        };
+        let visual = crate::visual_export::for_view(doc.view.accent, doc.view.dark);
         let format = if images { Format::Png } else { Format::Pdf };
         let workbook = Workbook::new(sheet.clone());
         let mut analysis_options = options.clone();
         analysis_options.sheet = None;
         let losses = export_loss_report(&workbook, format, &analysis_options);
         if losses.is_empty() {
-            self.begin_pitch_export(ctx, sheet, options, images);
+            self.begin_pitch_export(ctx, sheet, options, images, visual);
         } else {
             self.dialogs.board_export = Some(BoardPreflight {
                 owner: Some(owner),
@@ -413,6 +415,7 @@ impl ThinodaApp {
                     sheet: Box::new(sheet),
                     options,
                     images,
+                    visual,
                 },
             });
             ctx.request_repaint();
@@ -584,7 +587,8 @@ impl ThinodaApp {
                 sheet,
                 options,
                 images,
-            } => self.begin_pitch_export(ctx, *sheet, options, images),
+                visual,
+            } => self.begin_pitch_export(ctx, *sheet, options, images, visual),
             Action::Print {
                 document,
                 title,

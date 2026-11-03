@@ -308,6 +308,38 @@ fn presentation_player_can_export_a_non_active_sheet_and_close_cancels() {
 }
 
 #[test]
+fn presentation_preflight_freezes_the_source_view_appearance() {
+    let mut app = ThinodaApp::headless();
+    let accent = egui::Color32::from_rgba_unmultiplied(80, 140, 200, 190);
+    let doc = app.doc_mut().unwrap();
+    doc.view.accent = accent;
+    doc.view.dark = true;
+    let key = doc.key.clone();
+    let sheet = doc.doc.active_index();
+    let revision = doc.doc.state_id();
+    let mut draft = doc.doc.sheet().clone();
+    draft.board.snap = !draft.board.snap;
+    let expected = crate::visual_export::for_view(accent, true);
+    let ctx = Context::default();
+    app.request_pitch_export(
+        &ctx,
+        (&key, sheet, revision),
+        draft,
+        ExportOptions::default(),
+        false,
+    );
+    let doc = app.doc_mut().unwrap();
+    doc.view.accent = egui::Color32::from_rgb(240, 40, 100);
+    doc.view.dark = false;
+    let pending = app.dialogs.board_export.as_ref().unwrap();
+    assert!(app.board_preflight_valid(pending, true));
+    match &pending.action {
+        Action::Presentation { visual, .. } => assert_eq!(*visual, expected),
+        _ => panic!("expected a presentation preflight"),
+    }
+}
+
+#[test]
 fn print_preflight_uses_the_rendered_snapshot_and_cancel_starts_no_output() {
     let mut app = ThinodaApp::headless();
     let ctx = Context::default();

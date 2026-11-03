@@ -11,6 +11,8 @@ use thinoda_core::{
     scene::{Scene, SceneBand, SceneGeometry, SceneId, SceneItem},
 };
 
+use crate::VisualExportContext;
+
 /// Multiplier applied to highlighter ink.
 pub(crate) const HIGHLIGHTER_ALPHA: f32 = 0.35;
 pub(crate) const LABEL_SIZE: f32 = 14.0;
@@ -133,6 +135,7 @@ pub(crate) fn object_prims(
     object: &CanvasObject,
     background: Color,
     dark: bool,
+    visual: VisualExportContext,
 ) -> Vec<Prim> {
     let opacity = object.style.opacity;
     let ink = if dark {
@@ -140,6 +143,7 @@ pub(crate) fn object_prims(
     } else {
         Color::rgb(0x4A, 0x55, 0x68)
     };
+    let automatic_stroke = visual.automatic_board_stroke.unwrap_or(ink);
     let mut out = Vec::new();
     match (&object.kind, &item.geometry) {
         (CanvasObjectKind::Shape { shape, label }, SceneGeometry::Polygon { outline, details }) => {
@@ -147,9 +151,15 @@ pub(crate) fn object_prims(
             let stroke_color = object
                 .style
                 .stroke
-                .or(object.style.fill.is_none().then_some(ink))
+                .or(object.style.fill.is_none().then_some(automatic_stroke))
                 .map(|c| faded(c, opacity));
-            let stroke = stroke_color.map(|c| (c, object.style.stroke_width.max(0.0)));
+            let width = if visual.automatic_board_stroke.is_some() && object.style.stroke.is_none()
+            {
+                2.0
+            } else {
+                object.style.stroke_width.max(0.0)
+            };
+            let stroke = stroke_color.map(|c| (c, width));
             out.push(Prim::Path {
                 points: outline.clone(),
                 closed: true,
@@ -162,7 +172,11 @@ pub(crate) fn object_prims(
                     points: detail.clone(),
                     closed: false,
                     fill: None,
-                    stroke: Some(stroke.unwrap_or((ink, 1.0))),
+                    stroke: if visual.automatic_board_stroke.is_some() {
+                        stroke
+                    } else {
+                        Some(stroke.unwrap_or((ink, 1.0)))
+                    },
                     round: false,
                 });
             }
@@ -216,7 +230,10 @@ pub(crate) fn object_prims(
         }
         (CanvasObjectKind::Connector(connector), SceneGeometry::Polyline { points, width }) => {
             let color = faded(
-                connector.color.or(object.style.stroke).unwrap_or(ink),
+                connector
+                    .color
+                    .or(object.style.stroke)
+                    .unwrap_or(automatic_stroke),
                 opacity,
             );
             let width = width.max(0.1);

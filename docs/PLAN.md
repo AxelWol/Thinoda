@@ -49,8 +49,18 @@ and automatic, swatch or custom color for a single selected connector. Compact
 toolbars and popovers scroll to keyboard focus, and custom colors retain their
 RGB even at zero opacity. Edits use existing connector fields and document
 transactions; stale or locked selections, unfinished gestures and pending
-drafts cannot receive changes. The [critique](FREEFORM.md) records the export
-fallback distinction and remaining device and accessibility acceptance.
+drafts cannot receive changes. The [critique](FREEFORM.md) records the remaining
+device and accessibility acceptance.
+
+**2026-11-03 visual export appearance checkpoint:** GUI exports and print use
+the canvas's resolved automatic board stroke, while Pitch and PowerPoint
+previews use the active accent. Presentation consent and print workers retain
+their captured appearance. Explicit and inherited colors still take priority,
+and existing CLI/API callers retain their historical defaults. Focused
+SVG, image, PDFium, print and editable/flattened PowerPoint checks cover the
+change; see the [critique](FREEFORM.md) for opacity, page-theme mismatches and
+host-acceptance limits. Follow up on resolved system-theme export and the
+PowerPoint preview/export page-theme mismatch.
 
 **2026-11-03 whole-card formatting checkpoint:** selected sticky and text cards
 have a docked, scrollable formatting strip, reachable from the selected-topic

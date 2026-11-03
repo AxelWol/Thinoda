@@ -305,6 +305,7 @@ fn paint_scene(
         xf,
         &thinoda_canvas::PaintOptions {
             dark,
+            accent: thinoda_ui::Palette::of(painter.ctx()).accent,
             ..Default::default()
         },
     );
@@ -319,6 +320,32 @@ fn background(sheet: &Sheet, dark: bool) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playback_uses_the_current_accent_for_automatic_board_strokes() {
+        let sheet = crate::visual_export::test_helpers::sheet();
+        for dark in [false, true] {
+            let accent = egui::Color32::from_rgb(221, 12, 179);
+            let ctx = crate::visual_export::test_helpers::context(accent, dark);
+            let layout = Arc::new(thinoda_core::layout_sheet(
+                &sheet,
+                &thinoda_core::ApproxMeasure,
+                dark,
+            ));
+            let mut playback = Playback::default();
+            for accent in [accent, egui::Color32::TRANSPARENT] {
+                crate::visual_export::test_helpers::set_accent(&ctx, accent, dark);
+                let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                    playback.show(ui, &sheet, &layout, 0, egui::vec2(400.0, 300.0), dark);
+                });
+                output.textures_delta.clear();
+                crate::visual_export::test_helpers::assert_stroke(
+                    &output,
+                    thinoda_canvas::automatic_board_stroke(accent, dark),
+                );
+            }
+        }
+    }
 
     #[test]
     fn pitch_viewport_paints_board_objects_with_scene_and_viewport_clips() {

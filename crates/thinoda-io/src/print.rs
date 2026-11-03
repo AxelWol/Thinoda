@@ -6,7 +6,7 @@ use std::io::Cursor;
 use image::{ImageFormat, RgbImage};
 use thinoda_core::Workbook;
 
-use crate::{ExportOptions, IoError, render};
+use crate::{ExportOptions, IoError, VisualExportContext, render};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Paper {
@@ -131,6 +131,16 @@ pub fn render_print(
     sheet: usize,
     settings: PrintSettings,
 ) -> Result<PrintDocument, IoError> {
+    render_print_with_visual_context(workbook, sheet, settings, VisualExportContext::default())
+}
+
+/// Render a print page using an optional caller-provided board appearance.
+pub fn render_print_with_visual_context(
+    workbook: &Workbook,
+    sheet: usize,
+    settings: PrintSettings,
+    visual: VisualExportContext,
+) -> Result<PrintDocument, IoError> {
     settings.validate()?;
     if sheet >= workbook.sheets.len() {
         return Err(IoError::Invalid("print sheet does not exist".into()));
@@ -144,6 +154,7 @@ pub fn render_print(
             padding: 12.0,
             ..Default::default()
         },
+        visual,
     )?;
     render_print_svg(&source, settings)
 }

@@ -405,6 +405,7 @@ impl ThinodaApp {
         sheet: Sheet,
         options: ExportOptions,
         images: bool,
+        visual: thinoda_io::VisualExportContext,
     ) {
         let extension = if images { "zip" } else { "pdf" };
         let Some(path) = crate::files::save_target(
@@ -421,11 +422,12 @@ impl ThinodaApp {
         let repaint = ctx.clone();
         if let Err(error) =
             thinoda_platform::system::run_background("thinoda-pitch-export", move || {
-                let result = Self::pitch_bytes(&sheet, &options, images).and_then(|bytes| {
-                    thinoda_platform::fs::atomic_write(&path, &bytes, false)
-                        .map_err(|error| error.to_string())?;
-                    Ok(path)
-                });
+                let result =
+                    Self::pitch_bytes(&sheet, &options, images, visual).and_then(|bytes| {
+                        thinoda_platform::fs::atomic_write(&path, &bytes, false)
+                            .map_err(|error| error.to_string())?;
+                        Ok(path)
+                    });
                 let _ = sender.send(result);
                 repaint.request_repaint_of(egui::ViewportId::ROOT);
             })
@@ -440,11 +442,12 @@ impl ThinodaApp {
         sheet: &Sheet,
         options: &ExportOptions,
         images: bool,
+        visual: thinoda_io::VisualExportContext,
     ) -> Result<Vec<u8>, String> {
         if images {
-            thinoda_io::export_presentation_png_zip(sheet, options)
+            thinoda_io::export_presentation_png_zip_with_visual_context(sheet, options, visual)
         } else {
-            thinoda_io::export_presentation_pdf(sheet, options)
+            thinoda_io::export_presentation_pdf_with_visual_context(sheet, options, visual)
         }
         .map_err(crate::doc::export_error)
     }

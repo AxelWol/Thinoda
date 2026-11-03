@@ -1182,9 +1182,49 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   actual screen-reader or physical touch/iPad acceptance.
 - SVG and editable PowerPoint now use the same explicit-then-inherited stroke
   precedence and label color as the canvas, including object opacity and
-  arrowheads. The final automatic fallback still differs: the canvas uses its
-  view accent, while visual exports use their export-specific fallback. Exact
-  automatic-color parity and external Office rendering are not claimed.
+  arrowheads. Automatic fallback parity was addressed in the subsequent visual
+  export appearance checkpoint; external Office rendering is still unverified.
+
+### Visual export appearance checkpoint and critique
+
+- GUI SVG, PNG, JPEG, PDF, print, Pitch and PowerPoint exports use the document
+  view's resolved automatic board stroke. An explicit connector color wins over
+  its inherited object stroke, which wins over the automatic color. Unstyled,
+  unfilled shapes use the canvas's two-unit outline; filled shapes without an
+  explicit outline no longer acquire interior detail strokes. Pitch editor,
+  player, presenter map, PowerPoint preview and board thumbnails paint using
+  the current palette. The inactive canvas snapshot and drag ghost use the
+  same view accent rather than switching to gray.
+- Duck check: appearance is not document content. The source workbook, native
+  serialization and nonvisual formats remain unchanged. A new optional export
+  context carries a resolved color rather than modifying the workbook or adding
+  a field to existing public options. Callers that do not supply it, including
+  the CLI, retain historical export colors, widths and shape details.
+- Duck check: consent and output work may outlive a view change. Pitch captures
+  appearance before its loss-consent dialog and passes it to the worker. Print
+  captures it with the workbook when its editor opens, so later settings or
+  theme changes do not silently change that snapshot. Ordinary GUI export uses
+  the document view at export time. An intentionally transparent UI accent
+  resolves to the same light/dark gray fallback as the canvas.
+- Duck check: egui colors are premultiplied. The captured accent is converted
+  to unpremultiplied sRGB before the export renderer applies object opacity;
+  explicit and inherited colors keep their existing precedence. Raster
+  antialiasing, low-alpha rounding, zoom-dependent minimum strokes and color
+  management may still differ, so pixel-identical rendering is not promised.
+  Print's light/dark controls change the page theme, not the captured stroke;
+  an accent chosen for a different page theme can therefore have low contrast.
+- Duck check: this change does not resolve every page-theme mismatch. The
+  PowerPoint preview currently follows the UI theme while export retains its
+  existing light page theme. Ordinary image/PDF export also checks the explicit
+  theme setting rather than the resolved view, so a dark system theme can
+  export a light page. Both require separate correction and acceptance.
+- Focused regressions cover both themes, transparent accents, opacity including
+  zero, labels and arrows, explicit/inherited/automatic strokes, shape details,
+  unchanged sources and historical defaults. They inspect SVG and editable
+  PowerPoint XML, pixels in PNG/JPEG and flattened PowerPoint, slide previews,
+  print snapshots and worker output. PDFium rasterization checks map,
+  presentation and print PDFs in both themes. These tests are not physical
+  printer, external Office, hardware-GPU, screen-reader or iPad acceptance.
 
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library

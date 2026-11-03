@@ -2,7 +2,7 @@
 
 use super::text::ExportText;
 use crate::presentation::xml_escape as esc;
-use crate::{ExportOptions, IoError};
+use crate::{ExportOptions, IoError, VisualExportContext};
 use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, ResolvedPresentationSlide, Sheet, TextAlign, TopicId, TopicShape, Vec2,
@@ -251,8 +251,9 @@ impl Drawing {
         object: &thinoda_core::board::CanvasObject,
         background: Color,
         dark: bool,
+        visual: VisualExportContext,
     ) {
-        for prim in super::board::object_prims(item, object, background, dark) {
+        for prim in super::board::object_prims(item, object, background, dark, visual) {
             match prim {
                 super::board::Prim::Path {
                     points,
@@ -314,6 +315,7 @@ impl Drawing {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn editable_slide(
     source: &Sheet,
     sheet: &Sheet,
@@ -322,6 +324,7 @@ pub(crate) fn editable_slide(
     slide_number: usize,
     size: (u64, u64),
     mut image_budget: usize,
+    visual: VisualExportContext,
 ) -> Result<NativeSlide, IoError> {
     crate::render::validate_equation_notes(sheet)?;
     let dimensions = thinoda_core::images::validate_visual(sheet).map_err(IoError::Invalid)?;
@@ -369,7 +372,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::BelowMap)
     {
-        draw.board_object(item, object, page, options.dark);
+        draw.board_object(item, object, page, options.dark, visual);
     }
     for boundary in &layout.boundaries {
         let source = sheet
@@ -728,7 +731,7 @@ pub(crate) fn editable_slide(
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
     {
-        draw.board_object(item, object, page, options.dark);
+        draw.board_object(item, object, page, options.dark, visual);
     }
     if let Some(appendix) = crate::render::equation_appendix(sheet, layout)? {
         let start_y = resolved.frame.max().y - appendix.height;
@@ -882,7 +885,8 @@ mod tests {
                 &options,
                 1,
                 size,
-                normalized.len() - 1
+                normalized.len() - 1,
+                VisualExportContext::default(),
             )
             .is_err()
         );
@@ -894,6 +898,7 @@ mod tests {
             1,
             size,
             normalized.len(),
+            VisualExportContext::default(),
         )
         .unwrap();
         assert_eq!(slide.media.len(), 1);

@@ -1341,6 +1341,7 @@ impl MapCanvas {
             view.xf(),
             &PaintOptions {
                 dark: view.dark,
+                accent: view.accent,
                 show_grid: true,
                 ..Default::default()
             },
@@ -2899,6 +2900,64 @@ mod tests {
     struct State {
         doc: Document,
         view: MapView,
+    }
+
+    #[test]
+    fn modal_snapshot_retains_the_canvas_automatic_stroke() {
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        sheet.add_floating("Card", Vec2::new(0.0, 100.0));
+        let mut connector = thinoda_core::CanvasConnector::new(
+            thinoda_core::Endpoint::Point(Vec2::new(-100.0, 0.0)),
+            thinoda_core::Endpoint::Point(Vec2::new(100.0, 0.0)),
+        );
+        connector.arrow_end = false;
+        sheet
+            .add_canvas_object(thinoda_core::CanvasObject::connector(connector))
+            .unwrap();
+        sheet
+            .add_canvas_object(thinoda_core::CanvasObject::shape(
+                thinoda_core::ShapeKind::Rectangle,
+                thinoda_core::Rect::from_center_size(Vec2::new(0.0, -100.0), Vec2::new(80.0, 60.0)),
+            ))
+            .unwrap();
+        let doc = Document::new(Workbook::new(sheet));
+        for dark in [false, true] {
+            for accent in [Color32::from_rgb(221, 12, 179), Color32::TRANSPARENT] {
+                let mut view = MapView {
+                    accent,
+                    dark,
+                    ..Default::default()
+                };
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(500.0, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        MapCanvas::show_snapshot(ui, &doc, &mut view);
+                    },
+                );
+                output.textures_delta.clear();
+                let stroke = crate::automatic_board_stroke(accent, dark);
+                for closed in [false, true] {
+                    assert!(
+                        output.shapes.iter().any(|shape| matches!(
+                            &shape.shape,
+                            egui::Shape::Path(path)
+                                if path.closed == closed
+                                    && path.stroke.color == egui::epaint::ColorMode::Solid(stroke)
+                        )),
+                        "snapshot missed the {} automatic stroke",
+                        if closed { "shape" } else { "connector" }
+                    );
+                }
+            }
+        }
     }
 
     fn harness() -> Harness<'static, State> {
