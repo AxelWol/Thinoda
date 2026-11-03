@@ -1947,8 +1947,10 @@ draft remains blocked on safe bounded discovery and is not integrated.
   iPad Safari/Edge. Deferred offline-shell registration improved a synthetic
   desktop cold-start comparison without changing the Wasm bundle. Gallery
   thumbnails are now constructed on demand, but a small desktop comparison did
-  not demonstrate a startup improvement. Verify real iPads and the remaining
-  browser-compatibility paths. See [WEB-STARTUP.md](WEB-STARTUP.md).
+  not demonstrate a startup improvement. Their least-recently-used cache is
+  limited to two full template sets, with eviction overhead still unmeasured.
+  Verify real iPads and the remaining browser-compatibility paths. See
+  [WEB-STARTUP.md](WEB-STARTUP.md).
 - P1 Visual regression tests (kittest snapshot images) per theme
 - P2 Accessibility audit with screen readers (NVDA, VoiceOver, Orca), including
   a browser accessibility bridge for canvas controls and correct IME semantics

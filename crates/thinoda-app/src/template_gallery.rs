@@ -1,6 +1,6 @@
 //! Built-in template previews, generated from the actual documents that Create opens.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::{Color32, Painter, Pos2, Stroke, StrokeKind, Ui, vec2};
@@ -26,22 +26,41 @@ type SampleKey = (bool, u8, &'static str);
 #[derive(Default)]
 struct SampleCache {
     entries: HashMap<SampleKey, Arc<Sample>>,
+    recency: VecDeque<SampleKey>,
 }
 
 impl SampleCache {
+    fn limit() -> usize {
+        (templates::TEMPLATES.len() * 2).max(1)
+    }
+
     fn get(&mut self, dark: bool, language: Lang, id: &'static str) -> Arc<Sample> {
-        Arc::clone(
+        let key = (dark, language as u8, id);
+        if let Some(sample) = self.entries.get(&key).cloned() {
+            let position = self
+                .recency
+                .iter()
+                .position(|entry| *entry == key)
+                .expect("cached preview must have a recency entry");
+            self.recency.remove(position);
+            self.recency.push_back(key);
+            return sample;
+        }
+
+        let sheet = templates::instantiate_localized(id, &|s| t_in(language, s).to_owned())
+            .sheets
+            .remove(0);
+        let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
+        let sample = Arc::new((sheet, layout));
+        if self.entries.len() >= Self::limit() {
+            let oldest = self.recency.pop_front().expect("preview cache is nonempty");
             self.entries
-                .entry((dark, language as u8, id))
-                .or_insert_with(|| {
-                    let sheet =
-                        templates::instantiate_localized(id, &|s| t_in(language, s).to_owned())
-                            .sheets
-                            .remove(0);
-                    let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
-                    Arc::new((sheet, layout))
-                }),
-        )
+                .remove(&oldest)
+                .expect("recency entry must have a cached preview");
+        }
+        self.entries.insert(key, Arc::clone(&sample));
+        self.recency.push_back(key);
+        sample
     }
 }
 
@@ -50,7 +69,8 @@ thread_local! {
     static SAMPLE_REQUESTS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Cache each visible sample by template, appearance and UI language.
+/// Cache visible samples by template, appearance and UI language, bounded to
+/// two full template sets.
 fn sample(dark: bool, language: Lang, id: &'static str) -> Arc<Sample> {
     #[cfg(test)]
     SAMPLE_REQUESTS.with(|requests| requests.borrow_mut().push(id));
@@ -320,13 +340,13 @@ mod tests {
                         assert!(layout.bounds.size.y.is_finite() && layout.bounds.size.y > 0.0);
                     }
                     assert!(Arc::ptr_eq(&preview, &cache.get(dark, language, info.id)));
+                    assert!(cache.entries.len() <= SampleCache::limit());
+                    assert_eq!(cache.recency.len(), cache.entries.len());
                 }
             }
         }
-        assert_eq!(
-            cache.entries.len(),
-            templates::TEMPLATES.len() * Lang::ALL.len() * 2
-        );
+        assert_eq!(cache.entries.len(), SampleCache::limit());
+        assert_eq!(cache.recency.len(), cache.entries.len());
         assert!(!Arc::ptr_eq(
             &cache.get(false, Lang::En, "meeting-board"),
             &cache.get(true, Lang::En, "meeting-board")
@@ -335,6 +355,33 @@ mod tests {
             &cache.get(false, Lang::En, "meeting-board"),
             &cache.get(false, Lang::De, "meeting-board")
         ));
+    }
+
+    #[test]
+    fn preview_cache_evicts_least_recently_used_without_invalidating_samples() {
+        let mut cache = SampleCache::default();
+        let first = templates::TEMPLATES[0].id;
+        let second = templates::TEMPLATES[1].id;
+        let protected = cache.get(false, Lang::En, first);
+        let evicted = cache.get(false, Lang::En, second);
+        for info in &templates::TEMPLATES[2..] {
+            cache.get(false, Lang::En, info.id);
+        }
+        for info in templates::TEMPLATES {
+            cache.get(true, Lang::En, info.id);
+        }
+        assert_eq!(cache.entries.len(), SampleCache::limit());
+        assert!(Arc::ptr_eq(&protected, &cache.get(false, Lang::En, first)));
+        cache.get(false, Lang::De, first);
+        assert!(cache.entries.contains_key(&(false, Lang::En as u8, first)));
+        assert!(!cache.entries.contains_key(&(false, Lang::En as u8, second)));
+        assert_eq!(cache.entries.len(), SampleCache::limit());
+        assert_eq!(cache.recency.len(), cache.entries.len());
+
+        let rebuilt = cache.get(false, Lang::En, second);
+        assert!(!Arc::ptr_eq(&evicted, &rebuilt));
+        assert_eq!(evicted.as_ref(), rebuilt.as_ref());
+        assert_eq!(cache.entries.len(), SampleCache::limit());
     }
 
     #[test]

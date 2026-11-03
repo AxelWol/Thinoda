@@ -12,7 +12,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 ## Current Freeform and web-startup status
 
 The Freeform implementation, twelve board templates, responsive toolbox and
-existing style controls are in place. The production candidate passed
+existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
 behavior and recovery failures. On the same production candidate, 17 board
@@ -43,10 +43,11 @@ regression, and Meeting Board adds a localized, rootless meeting template with
 independent prompt cards and persistent visual frames. Swimlane adds editable
 process shapes and handoffs across three visual role lanes; it does not assign
 roles or automate workflows. Gallery previews are now generated on demand; a
-small desktop startup comparison did not establish a speedup. The next open
-work remains the browser accessibility bridge, safe large-board recovery,
-export acceptance and realistic performance/device gates; cloud-provider work
-stays paused.
+least-recently-used cache retains at most two full template sets. A small
+desktop startup comparison of the earlier on-demand change did not establish a
+speedup, and eviction overhead is unmeasured. The next open work remains the
+browser accessibility bridge, safe large-board recovery, export acceptance and
+realistic performance/device gates; cloud-provider work stays paused.
 
 ## Current next-value state (2026-10-30)
 

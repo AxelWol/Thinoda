@@ -208,16 +208,30 @@ still receive their normal layout, focus and activation metadata; scrolling or
 filtering generates newly visible previews synchronously in that frame. Recent
 templates, selection, creation and document state are unchanged. This moves
 some work to first use, rather than loading a separate Wasm module or reducing
-download size. The in-memory cache can still grow to the number of templates
-times ten languages and two appearances over the app's lifetime.
+download size.
+
+The cache now retains at most twice the current number of templates (94
+entries for 47 templates), using least-recently-used eviction across language
+and appearance combinations. This accommodates all templates in two
+combinations without eviction; switching among more combinations can rebuild
+older previews synchronously on first use. An `Arc` already returned to a
+caller remains valid after eviction. Tests cycle through every template, all
+ten languages and both appearances, verify the entry bound and eviction order,
+and compare rebuilt samples with the originals. The entry limit is not a
+byte budget or a measurement of actual memory savings, and it does not limit
+references retained elsewhere. Cache hits scan a recency queue of at most 94
+keys; the limit trades bounded retention for lookup work and synchronous
+reconstruction after eviction.
 
 A focused 480 × 360 headless egui fixture requests four of 46 templates on the
 first all-categories frame; the old cache built all 46. Tests cover subsequent
 scrolling and recent items, every template in all languages and both
-appearances, and gallery selection and creation. The production candidate also
-passed 18 startup, offline-update and language checks plus Meeting Board gallery
-creation in each of desktop Chromium, Firefox and WebKit. The first-scroll
-latency and memory impact have not been benchmarked.
+appearances, and gallery selection and creation. The bounded-cache production
+candidate passed 18 startup, offline-update and language checks plus Meeting
+Board and Swimlane gallery creation in each of desktop Chromium, Firefox and
+WebKit. These browser checks do not exercise eviction across all language/theme
+combinations. First-scroll latency, eviction overhead and actual memory impact
+have not been benchmarked.
 
 Six interleaved pairs compared the previous and new production builds in
 headless Edge on Windows over unthrottled loopback. All cold and controlled warm
