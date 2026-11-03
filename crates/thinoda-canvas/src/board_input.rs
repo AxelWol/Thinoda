@@ -1837,7 +1837,8 @@ fn item_label(sheet: &Sheet, view: &MapView, id: SceneId) -> Option<(String, boo
             let kind = match topic.card.map(|card| card.kind) {
                 Some(CardKind::Sticky) => format!("{}: ", view.board_labels.sticky),
                 Some(CardKind::Text) => format!("{}: ", view.board_labels.text),
-                Some(CardKind::Image) | None => String::new(),
+                Some(CardKind::Image) => format!("{}: ", view.board_labels.image),
+                None => String::new(),
             };
             (
                 format!("{kind}{}", topic.title),

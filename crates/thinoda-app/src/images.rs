@@ -771,7 +771,8 @@ mod tests {
             .complete_image_pick(request, std::slice::from_ref(&path));
         h.run_steps(4);
         let label = format!(
-            "{}: evidence.png, {}",
+            "{}: {}: evidence.png, {}",
+            h.state().doc().unwrap().view.board_labels.image,
             t("Local Image"),
             h.state().doc().unwrap().view.board_labels.selected
         );

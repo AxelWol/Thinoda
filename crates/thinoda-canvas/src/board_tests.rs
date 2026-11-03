@@ -2603,6 +2603,36 @@ fn shape_accessibility_and_keyboard_label_editing() {
 }
 
 #[test]
+fn image_card_accessible_name_preserves_its_kind_when_renamed() {
+    let mut sheet = board();
+    let id = sheet
+        .add_card(
+            "Diagram",
+            Vec2::ZERO,
+            Card::new(CardKind::Image, Vec2::new(120.0, 100.0)),
+        )
+        .unwrap();
+    let mut h = harness(sheet);
+    h.get_by_label("Image card: Diagram").focus();
+    h.run_steps(2);
+    assert_eq!(h.state().view.primary(), Some(id));
+
+    h.state_mut()
+        .doc
+        .edit_sheet("Rename image", |sheet| {
+            sheet.set_title(id, "Renamed diagram")
+        })
+        .unwrap();
+    h.run_steps(2);
+    h.get_by_label("Image card: Renamed diagram, Selected");
+
+    h.state_mut().view.board_labels.image = "Bildkarte".into();
+    h.run_steps(2);
+    h.get_by_label("Bildkarte: Renamed diagram, Selected");
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn pending_text_is_applied_before_finishing_board_labels() {
     for connector in [false, true] {
         for key in [Key::Enter, Key::Tab, Key::Escape] {

@@ -92,6 +92,7 @@ impl BoardTool {
 pub struct BoardLabels {
     pub sticky: String,
     pub text: String,
+    pub image: String,
     /// Generic fallback when a shape has no entry in `shape_names`.
     pub shape: String,
     /// Localized, human-readable names keyed by the core shape kind.
@@ -115,6 +116,7 @@ impl Default for BoardLabels {
         Self {
             sticky: "Sticky note".into(),
             text: "Text card".into(),
+            image: "Image card".into(),
             shape: "Shape".into(),
             shape_names: ShapeKind::ALL
                 .into_iter()

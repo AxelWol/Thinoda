@@ -504,6 +504,14 @@ accessibility names. Focused egui accessibility tests therefore do not close
 the browser screen-reader gate. The observed gap and required follow-up are
 recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
+### F2 image-card accessibility checkpoint: critique
+
+- Image cards now retain a localized type in their accessible name even when
+  their title is changed. Focus, selection, renaming and localized labels have
+  focused egui coverage.
+- A card title is not a substitute for an image description. The browser
+  accessibility bridge and real screen-reader acceptance remain open.
+
 ### History resource-accounting checkpoint: critique
 
 - Retained undo and redo snapshots now account for distinct shared ink and

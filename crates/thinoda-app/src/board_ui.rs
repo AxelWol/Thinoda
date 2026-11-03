@@ -150,6 +150,7 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
     let labels = &mut view.board_labels;
     labels.sticky = t("Sticky note").into();
     labels.text = t("Text card").into();
+    labels.image = t("Image card").into();
     labels.shape = t("Shape").into();
     labels.shape_names = ShapeKind::ALL
         .into_iter()
