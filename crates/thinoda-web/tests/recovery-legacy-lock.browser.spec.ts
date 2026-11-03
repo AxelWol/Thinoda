@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { command, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
+import { command, frames, imagePicker, largeJpeg, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -233,13 +233,7 @@ test("a real browser quota failure preserves the previous snapshot and allows a 
         };
     }, snapshot.key);
 
-    let image = await jpeg(page, 1950, 0.98);
-    for (const quality of [0.95, 0.9, 0.85]) {
-        if (image.length <= 8 * 1024 * 1024) break;
-        image = await jpeg(page, 1950, quality);
-    }
-    expect(image.length).toBeGreaterThan(4 * 1024 * 1024);
-    expect(image.length).toBeLessThanOrEqual(8 * 1024 * 1024);
+    const image = await largeJpeg(page);
     await imagePicker(page, { name: "recovery-large.jpg", mimeType: "image/jpeg", buffer: image });
     await expect.poll(
         () => page.evaluate(() => (Reflect.get(window, "__realRecoveryQuotaFailures") as string[])

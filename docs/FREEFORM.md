@@ -542,9 +542,11 @@ headless Chromium cases, including
 mixed-board editing, mini-map input, SVG/PNG/JPEG/PDF/PowerPoint export,
 image-card export, browser-language selection and browser recovery failures.
 The same source passed the full local native `cargo xtask ci` with live AI
-disabled and tests serialized. Eleven startup/offline and three raw recovery
-checks passed on that production bundle in each of desktop WebKit and Firefox
-on Windows; earlier builds also passed focused touch checks there.
+disabled and tests serialized. Seventeen board and image-card scenarios,
+eleven startup/offline checks and three raw recovery checks passed on that
+production bundle in each of desktop WebKit and Firefox on Windows. The
+real browser-quota recovery check passed in all three engines. PDF rendering
+checks use a separate Chromium viewer.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).

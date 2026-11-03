@@ -268,21 +268,29 @@ above is not integrated. Cleanup errors are logged rather than silently ignored.
 An open document retries removing its saved snapshot on a later recovery cycle;
 persistent failures or closing before a successful retry can still leave a saved
 snapshot to be offered again.
-In headless Chromium, a real quota failure while adding
-a synthetic JPEG larger than 4 MiB retained the previous snapshot, announced
+In desktop Chromium, Firefox and WebKit, a real quota failure while adding a
+synthetic JPEG larger than 4 MiB retained the previous snapshot, announced
 the failure, and still allowed a native download containing the exact image
-bytes. This does not recover the oversized unsaved board or establish storage
-limits on other browsers. Device-level reload, quota, concurrent-tab and
-large-board acceptance therefore remain open.
+bytes. These checks do not recover the oversized unsaved board or establish
+storage limits on other devices or browser configurations. Device-level
+reload, quota, concurrent-tab and large-board acceptance therefore remain open.
+
+The image-card and quota tests now share a bounded JPEG fixture: browser
+encoders can produce different sizes for the same quality, so it lowers
+quality as needed and still verifies that the result exceeds 4 MiB without
+exceeding the 8 MiB upload limit. The earlier Firefox image-card run exposed
+this fixture assumption before exercising the app. A successful bounded
+fixture is not evidence that every user image or quota size is supported.
 
 The production bundle at source checkpoint `03cbac1` passed 56 headless
 Chromium regressions,
 including startup and offline-shell failures, browser-language selection,
 mixed-board editing, mini-map input, SVG/PNG/JPEG/PDF/PowerPoint export,
 image-card export, recovery lease loss, quota retry and the real-quota case.
-Eleven startup/offline and three raw recovery checks passed on that bundle in
-headless WebKit and Firefox on Windows. An earlier build also passed focused
-touch and language checks in those engines; desktop and
+Seventeen board and image-card scenarios, eleven startup/offline checks and
+three raw recovery checks passed on that bundle in headless WebKit and Firefox
+on Windows. PDF rendering checks use a separate Chromium viewer. An earlier
+build also passed language checks in those engines; desktop and
 390-pixel screenshots showed the warning and dismiss control within the
 viewport. An earlier run had one failure when its loopback
 server refused a static-resource connection; that case passed three isolated

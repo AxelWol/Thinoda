@@ -9,7 +9,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { command, frames, imagePicker, jpeg, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
+import { command, frames, imagePicker, jpeg, largeJpeg, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -86,9 +86,7 @@ test("large picker uploads remain transient and rootless image cards undo atomic
     expect(documentJson(canceled, "content.json").sheets).toEqual(baselineContent.sheets);
     expect(documentJson(canceled, "manifest.json").resources).toHaveLength(0);
 
-    const large = await jpeg(page, 1950, 0.98);
-    expect(large.length).toBeGreaterThan(4 * 1024 * 1024);
-    expect(large.length).toBeLessThanOrEqual(8 * 1024 * 1024);
+    const large = await largeJpeg(page);
     const largeFile = { name: "synthetic-large.jpg", mimeType: "image/jpeg", buffer: large };
 
     // A rejected browser read must clear the request and leave the board intact.

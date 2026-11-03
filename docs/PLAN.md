@@ -15,12 +15,11 @@ The Freeform implementation, ten board templates, responsive toolbox and
 existing style controls are in place. The production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
-behavior and recovery failures. An earlier focused image-card PDF assertion
-passed in desktop Chromium, Firefox and WebKit using a separate Chromium PDF
-viewer. On the same production candidate, 11 startup/offline and three raw
-recovery checks passed in each of desktop Firefox and WebKit. Earlier touch
-checks passed in both engines with identical Wasm. These are not physical-device
-or screen-reader acceptance.
+behavior and recovery failures. On the same production candidate, 17 board
+and image-card scenarios, 11 startup/offline checks and three raw recovery
+checks passed in each of desktop Firefox and WebKit. The real browser-quota
+recovery check passed in all three engines. PDF rendering checks use a separate
+Chromium viewer. These are not physical-device or screen-reader acceptance.
 
 The remaining R14 gates are realistic ink performance, integrated
 accessibility and cross-platform/physical-device acceptance, and safe

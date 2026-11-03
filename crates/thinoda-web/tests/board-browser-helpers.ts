@@ -126,6 +126,18 @@ export async function jpeg(page: Page, side: number, quality: number): Promise<B
     return Buffer.from(dataUrl.split(",")[1], "base64");
 }
 
+export async function largeJpeg(page: Page): Promise<Buffer> {
+    // Browser JPEG encoders produce different sizes for the same quality.
+    let image = await jpeg(page, 1950, 0.98);
+    for (const quality of [0.95, 0.9, 0.85]) {
+        if (image.length <= 8 * 1024 * 1024) break;
+        image = await jpeg(page, 1950, quality);
+    }
+    expect(image.length).toBeGreaterThan(4 * 1024 * 1024);
+    expect(image.length).toBeLessThanOrEqual(8 * 1024 * 1024);
+    return image;
+}
+
 export async function saveAs(page: Page, name: string): Promise<Buffer> {
     await page.evaluate((fileName) => { window.prompt = () => fileName; }, name);
     const pending = page.waitForEvent("download", { timeout: 30_000 });
