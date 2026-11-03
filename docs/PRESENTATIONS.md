@@ -1,4 +1,4 @@
-_Last updated: 2026-11-03 05:16:05 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
+_Last updated: 2026-11-03 05:56:36 UTC (non-binding repository metadata)._ <!-- docs-stamp -->
 
 # Vector presentations
 
