@@ -28,9 +28,11 @@ commands and document semantics. Deliver in independently verified slices:
    undo, clipboard, accessibility and export behavior before enabling new styles.
 4. Add selected-connector controls for the existing route, stroke and endpoint
    options, respecting locked objects and existing edit transactions.
-5. Improve pen and eraser context menus for color, width, opacity, supported
-   stroke types and pixel/object erasing. Additional brush appearances require
-   real rendering and persistence support rather than decorative placeholders.
+5. **Pen controls implemented locally:** color swatches and graphical width
+   presets complement the existing automatic/custom color, exact width, opacity,
+   pen/highlighter and eraser controls. Short popovers scroll without losing
+   pointer targets. Additional brush appearances require real rendering and
+   persistence support rather than decorative placeholders.
 
 All slices must fit light/dark themes and constrained windows, retain localized
 accessible names and keyboard navigation, and test selection ownership,

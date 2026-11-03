@@ -270,23 +270,46 @@ impl ThinodaApp {
                                 false,
                                 row_height,
                                 |ui| {
-                                    ui.checkbox(&mut auto_color, t("Auto"));
-                                    if !auto_color {
-                                        let mut color = Color32::from_rgba_unmultiplied(
-                                            ink_settings.color.r,
-                                            ink_settings.color.g,
-                                            ink_settings.color.b,
-                                            ink_settings.color.a,
-                                        );
-                                        if ui
-                                            .color_edit_button_srgba(&mut color)
-                                            .accessible_name(t("Ink color"))
-                                            .changed()
-                                        {
-                                            let [r, g, b, a] = color.to_srgba_unmultiplied();
-                                            ink_settings.color = Color::rgba(r, g, b, a);
-                                        }
-                                    }
+                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 164.0));
+                                    reserve_popup_scrollbar_space(ui);
+                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("board_ink_color_choices")
+                                        .min_scrolled_height(max_height.min(120.0))
+                                        .max_height(max_height)
+                                        .show(ui, |ui| {
+                                            ui.checkbox(&mut auto_color, t("Auto"));
+                                            let selected = (!auto_color).then(|| {
+                                                Color32::from_rgb(
+                                                    ink_settings.color.r,
+                                                    ink_settings.color.g,
+                                                    ink_settings.color.b,
+                                                )
+                                            });
+                                            if let Some(color) = widgets::color_swatches(
+                                                ui,
+                                                &crate::ui::SWATCHES,
+                                                selected,
+                                            ) {
+                                                let [r, g, b, _] = color.to_srgba_unmultiplied();
+                                                ink_settings.color =
+                                                    Color::rgba(r, g, b, ink_settings.color.a);
+                                                auto_color = false;
+                                            }
+                                            if !auto_color {
+                                                let mut color =
+                                                    crate::ui::from_color(ink_settings.color);
+                                                if ui
+                                                    .color_edit_button_srgba(&mut color)
+                                                    .accessible_name(t("Ink color"))
+                                                    .changed()
+                                                {
+                                                    let [r, g, b, a] =
+                                                        color.to_srgba_unmultiplied();
+                                                    ink_settings.color = Color::rgba(r, g, b, a);
+                                                }
+                                            }
+                                        });
                                 },
                             );
                             let color = if auto_color {
@@ -317,11 +340,24 @@ impl ThinodaApp {
                                 false,
                                 row_height,
                                 |ui| {
-                                    ui.add(egui::DragValue::new(&mut ink_settings.width).range(
-                                        thinoda_core::board::MIN_STROKE_WIDTH
-                                            ..=thinoda_core::board::MAX_STROKE_WIDTH,
-                                    ))
-                                    .accessible_name(t("Ink width"));
+                                    ui.set_width((canvas.width() - 24.0).clamp(1.0, 206.0));
+                                    reserve_popup_scrollbar_space(ui);
+                                    let max_height = (canvas.height() - 32.0).clamp(1.0, 180.0);
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("board_ink_width_choices")
+                                        .min_scrolled_height(max_height.min(120.0))
+                                        .max_height(max_height)
+                                        .show(ui, |ui| {
+                                            ink_width_presets(ui, &mut ink_settings.width);
+                                            ui.add(
+                                                egui::DragValue::new(&mut ink_settings.width)
+                                                    .range(
+                                                    thinoda_core::board::MIN_STROKE_WIDTH
+                                                        ..=thinoda_core::board::MAX_STROKE_WIDTH,
+                                                ),
+                                            )
+                                            .accessible_name(t("Ink width"));
+                                        });
                                 },
                             );
                             board_tool_popup(
@@ -751,6 +787,7 @@ fn shape_library(
     const GAP: f32 = 4.0;
     const COLUMNS: f32 = 6.0;
 
+    reserve_popup_scrollbar_space(ui);
     let available = canvas.size().min(ui.ctx().content_rect().size());
     let frame = egui::Frame::popup(ui.style()).total_margin().sum();
     let width = (available.x - frame.x - 8.0)
@@ -929,6 +966,40 @@ fn shape_tile(
     (response.on_hover_text(name), activated)
 }
 
+fn reserve_popup_scrollbar_space(ui: &mut Ui) {
+    let scroll = &mut ui.spacing_mut().scroll;
+    if scroll.floating {
+        // Floating bars otherwise intercept clicks on controls under their full hit area.
+        scroll.floating_allocated_width = scroll
+            .floating_allocated_width
+            .max(scroll.bar_width + scroll.bar_outer_margin);
+    }
+}
+
+fn ink_width_presets(ui: &mut Ui, current: &mut f32) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        for width in [1.0, 2.0, 4.0, 8.0, 16.0] {
+            let selected = (*current - width).abs() < f32::EPSILON;
+            let label = format!("{}: {width}", t("Ink width"));
+            let response = ui
+                .add_sized(vec2(38.0, 32.0), egui::Button::new("").selected(selected))
+                .on_hover_text(&label);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &label)
+            });
+            let center = response.rect.center();
+            ui.painter().line_segment(
+                [center - vec2(11.0, 0.0), center + vec2(11.0, 0.0)],
+                egui::Stroke::new(width, thinoda_ui::Palette::of_ui(ui).text),
+            );
+            if widgets::touch_activation_allowed(ui.ctx()) && response.clicked() {
+                *current = width;
+            }
+        }
+    });
+}
+
 fn route_name(route: ConnectorRoute) -> &'static str {
     match route {
         ConnectorRoute::Straight => "Straight",
@@ -1022,6 +1093,21 @@ mod tests {
         harness.get_by_label(label).scroll_to_me();
         harness.run_steps(4);
         harness.get_by_label(label).click();
+        harness.run_steps(2);
+    }
+
+    fn click_point(harness: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2) {
+        harness.event(egui::Event::PointerMoved(pos));
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        }
         harness.run_steps(2);
     }
 
@@ -1557,6 +1643,41 @@ mod tests {
     }
 
     #[test]
+    fn shape_library_scrollbar_does_not_cover_tile_hit_targets() {
+        for size in [vec2(320.0, 240.0), vec2(180.0, 120.0)] {
+            let mut harness = Harness::builder()
+                .with_size(size)
+                .build_ui_state(expanded_toolbar, ThinodaApp::headless());
+            harness.run_steps(4);
+            click_scrolled_into_view(&mut harness, "Shape library");
+            harness.run_steps(8);
+            let shape = ShapeKind::ALL
+                .into_iter()
+                .max_by(|a, b| {
+                    harness
+                        .get_by_label(shape_name(*a))
+                        .rect()
+                        .right()
+                        .total_cmp(&harness.get_by_label(shape_name(*b)).rect().right())
+                })
+                .unwrap();
+            harness.get_by_label(shape_name(shape)).scroll_to_me();
+            harness.run_steps(12);
+            let rect = harness.get_by_label(shape_name(shape)).rect();
+            assert!(harness.ctx.content_rect().contains_rect(rect), "{rect:?}");
+            click_point(
+                &mut harness,
+                egui::pos2(rect.right() - 1.0, rect.center().y),
+            );
+            assert_eq!(
+                harness.state().doc().unwrap().view.board_tool,
+                BoardTool::Shape(shape),
+                "right edge of {shape:?} was not clickable at {size:?}"
+            );
+        }
+    }
+
+    #[test]
     fn shape_library_reflows_and_resets_scrolling_when_search_changes() {
         let mut harness = Harness::builder()
             .with_size(vec2(800.0, 800.0))
@@ -1583,11 +1704,18 @@ mod tests {
             sixth.top() > first.top(),
             "grid should have fewer columns: first={first:?}, sixth={sixth:?}, bounds={bounds:?}"
         );
+        let below_first = ShapeKind::ALL
+            .into_iter()
+            .find(|shape| {
+                let rect = harness.get_by_label(shape_name(*shape)).rect();
+                rect.top() > first.top() && (rect.left() - first.left()).abs() < 1.0
+            })
+            .unwrap();
         harness.get_by_label("Rectangle").focus();
         harness.run_steps(3);
         harness.key_press(egui::Key::ArrowDown);
         harness.run_steps(3);
-        assert!(harness.get_by_label("Diamond").is_focused());
+        assert!(harness.get_by_label(shape_name(below_first)).is_focused());
         let last_before = harness.get_by_label("Off-page connector").rect();
         harness.hover_at(first.center());
         harness.event(egui::Event::MouseWheel {
@@ -1782,6 +1910,46 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "gpu-tests")]
+    #[test]
+    fn ink_context_visual_previews() {
+        let Some(directory) = std::env::var_os("THINODA_BOARD_VISUAL_DIR") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).expect("create ink context preview directory");
+        for dark in [false, true] {
+            for (size, width) in [
+                (vec2(800.0, 600.0), "wide"),
+                (vec2(320.0, 240.0), "compact"),
+            ] {
+                let mut app = ThinodaApp::headless();
+                app.doc_mut().unwrap().view.dark = dark;
+                app.doc_mut().unwrap().view.board_tool = BoardTool::Pen;
+                let mut harness = Harness::builder().wgpu().with_size(size).build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        shape_test_theme(ui.ctx(), dark);
+                        expanded_toolbar(ui, app);
+                    },
+                    app,
+                );
+                harness.run_steps(4);
+                let theme = if dark { "dark" } else { "light" };
+                for (control, name) in [("Ink color", "color"), ("Ink width", "width")] {
+                    click_scrolled_into_view(&mut harness, control);
+                    harness.run_steps(6);
+                    harness
+                        .render()
+                        .expect("ink context render")
+                        .save(directory.join(format!("ink-{name}-{theme}-{width}.png")))
+                        .unwrap();
+                    harness.key_press(egui::Key::Escape);
+                    harness.run_steps(3);
+                }
+            }
+        }
+    }
+
     #[test]
     fn toolbar_exposes_ink_tools_and_selection_free_image_cards() {
         let mut harness = harness();
@@ -1935,6 +2103,254 @@ mod tests {
                 harness.state().doc().unwrap().view.board_tool,
                 BoardTool::Highlighter
             );
+        }
+    }
+
+    #[test]
+    fn ink_context_palette_and_width_presets_are_keyboard_accessible() {
+        for dark in [false, true] {
+            for collapsed in [false, true] {
+                let mut app = ThinodaApp::headless();
+                let doc = app.doc_mut().unwrap();
+                doc.view.board_tool = BoardTool::Pen;
+                doc.view.dark = dark;
+                doc.view.ink_settings.opacity = 0.4;
+                let before = doc.doc.workbook().clone();
+                let state = doc.doc.state_id();
+                let mut harness = Harness::builder()
+                    .with_size(vec2(800.0, 800.0))
+                    .build_ui_state(
+                        move |ui, app: &mut ThinodaApp| {
+                            shape_test_theme(ui.ctx(), dark);
+                            expanded_toolbar(ui, app);
+                        },
+                        app,
+                    );
+                harness.run_steps(3);
+                if collapsed {
+                    harness.get_by_label("Collapse board toolbar").click();
+                    harness.run_steps(3);
+                }
+                harness
+                    .get_by_role_and_label(egui::Role::Button, "Ink color")
+                    .click();
+                harness.run_steps(3);
+                let blue = harness.get_by_role_and_label(egui::Role::ColorWell, "#2E7CF6");
+                blue.focus();
+                harness.run_steps(2);
+                harness.key_press(egui::Key::Space);
+                harness.run_steps(3);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(doc.view.ink_settings.color, Color::rgb(0x2e, 0x7c, 0xf6));
+                assert_eq!(doc.view.ink_settings.opacity, 0.4);
+                assert_eq!(doc.doc.workbook(), &before);
+                assert_eq!(doc.doc.state_id(), state);
+                assert_eq!(
+                    harness
+                        .get_by_role_and_label(egui::Role::ColorWell, "#2E7CF6")
+                        .accesskit_node()
+                        .toggled(),
+                    Some(egui::accesskit::Toggled::True)
+                );
+                harness.key_press(egui::Key::Escape);
+                harness.run_steps(2);
+                harness
+                    .get_by_role_and_label(egui::Role::Button, "Ink width")
+                    .click();
+                harness.run_steps(3);
+                let wide = harness.get_by_role_and_label(egui::Role::Button, "Ink width: 8");
+                wide.focus();
+                harness.run_steps(2);
+                harness.key_press(egui::Key::Enter);
+                harness.run_steps(3);
+                let doc = harness.state().doc().unwrap();
+                assert_eq!(doc.view.ink_settings.width, 8.0);
+                assert_eq!(doc.doc.workbook(), &before);
+                assert_eq!(doc.doc.state_id(), state);
+                assert_eq!(
+                    harness
+                        .get_by_role_and_label(egui::Role::Button, "Ink width: 8")
+                        .accesskit_node()
+                        .toggled(),
+                    Some(egui::accesskit::Toggled::True)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ink_palette_preserves_alpha_and_can_return_to_automatic_color() {
+        let mut app = ThinodaApp::headless();
+        let view = &mut app.doc_mut().unwrap().view;
+        view.board_tool = BoardTool::Pen;
+        view.ink_settings.color = Color::rgba(100, 120, 140, 96);
+        view.ink_settings.opacity = 0.6;
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 800.0))
+            .build_ui_state(expanded_toolbar, app);
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Ink color")
+            .click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(egui::Role::ColorWell, "#2E7CF6")
+            .click();
+        harness.run_steps(3);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(
+            doc.view.ink_settings.color,
+            Color::rgba(0x2e, 0x7c, 0xf6, 96)
+        );
+        assert_eq!(doc.view.ink_settings.opacity, 0.6);
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::Role::ColorWell, "#2E7CF6")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness.get_by_label("Auto").click();
+        harness.run_steps(3);
+        let doc = harness.state().doc().unwrap();
+        let sheet = doc.doc.sheet();
+        let background =
+            thinoda_core::theme::Theme::for_settings(&sheet.theme).background(&sheet.theme, false);
+        assert_eq!(
+            doc.view.ink_settings.color,
+            Color::highest_contrast_on(background)
+        );
+    }
+
+    #[test]
+    fn ink_palette_fits_a_tall_window_without_clipping_swatches() {
+        let mut app = ThinodaApp::headless();
+        app.doc_mut().unwrap().view.board_tool = BoardTool::Pen;
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(expanded_toolbar, app);
+        harness.run_steps(4);
+        harness.get_by_label("Ink color").click();
+        harness.run_steps(12);
+        for color in crate::ui::SWATCHES {
+            let label = format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b());
+            let rect = harness
+                .get_by_role_and_label(egui::Role::ColorWell, &label)
+                .rect()
+                .shrink(2.0);
+            assert!(
+                harness.output().shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Rect(painted)
+                        if painted.rect == rect
+                            && painted.fill == color
+                            && shape.clip_rect.contains_rect(rect))
+                }),
+                "swatch {label} is clipped despite the available space"
+            );
+        }
+    }
+
+    #[test]
+    fn ink_context_palettes_scroll_in_short_narrow_windows() {
+        for dark in [false, true] {
+            for collapsed in [false, true] {
+                for size in [vec2(320.0, 240.0), vec2(180.0, 120.0)] {
+                    let mut app = ThinodaApp::headless();
+                    app.doc_mut().unwrap().view.board_tool = BoardTool::Pen;
+                    app.doc_mut().unwrap().view.dark = dark;
+                    let mut harness = Harness::builder().with_size(size).build_ui_state(
+                        move |ui, app: &mut ThinodaApp| {
+                            shape_test_theme(ui.ctx(), dark);
+                            expanded_toolbar(ui, app);
+                        },
+                        app,
+                    );
+                    harness.run_steps(4);
+                    if collapsed {
+                        harness.get_by_label("Collapse board toolbar").click();
+                        harness.run_steps(3);
+                    }
+                    click_scrolled_into_view(&mut harness, "Ink color");
+                    harness
+                        .get_by_role_and_label(egui::Role::ColorWell, "#FFFFFF")
+                        .scroll_to_me();
+                    harness.run_steps(12);
+                    let color = harness.get_by_role_and_label(egui::Role::ColorWell, "#FFFFFF");
+                    assert!(
+                        harness.ctx.content_rect().contains_rect(color.rect()),
+                        "palette color outside viewport: dark={dark} collapsed={collapsed} size={size:?}"
+                    );
+                    color.click();
+                    harness.run_steps(3);
+                    assert_eq!(
+                        harness.state().doc().unwrap().view.ink_settings.color,
+                        Color::WHITE,
+                        "palette color not activated: dark={dark} collapsed={collapsed} size={size:?}"
+                    );
+                    let target = crate::ui::SWATCHES
+                        .iter()
+                        .copied()
+                        .max_by(|a, b| {
+                            let label =
+                                |c: &Color32| format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());
+                            harness
+                                .get_by_role_and_label(egui::Role::ColorWell, &label(a))
+                                .rect()
+                                .right()
+                                .total_cmp(
+                                    &harness
+                                        .get_by_role_and_label(egui::Role::ColorWell, &label(b))
+                                        .rect()
+                                        .right(),
+                                )
+                        })
+                        .unwrap();
+                    let label = format!("#{:02X}{:02X}{:02X}", target.r(), target.g(), target.b());
+                    harness
+                        .get_by_role_and_label(egui::Role::ColorWell, &label)
+                        .scroll_to_me();
+                    harness.run_steps(12);
+                    let rect = harness
+                        .get_by_role_and_label(egui::Role::ColorWell, &label)
+                        .rect();
+                    assert!(harness.ctx.content_rect().contains_rect(rect), "{rect:?}");
+                    let other = crate::ui::SWATCHES
+                        .iter()
+                        .find(|color| **color != target)
+                        .unwrap();
+                    harness
+                        .state_mut()
+                        .doc_mut()
+                        .unwrap()
+                        .view
+                        .ink_settings
+                        .color = Color::rgb(other.r(), other.g(), other.b());
+                    click_point(
+                        &mut harness,
+                        egui::pos2(rect.right() - 1.0, rect.center().y),
+                    );
+                    assert_eq!(
+                        harness.state().doc().unwrap().view.ink_settings.color,
+                        Color::rgb(target.r(), target.g(), target.b()),
+                        "palette color edge not activated: dark={dark} collapsed={collapsed} size={size:?}"
+                    );
+                    harness.key_press(egui::Key::Escape);
+                    harness.run_steps(3);
+                    click_scrolled_into_view(&mut harness, "Ink width");
+                    harness
+                        .get_by_role_and_label(egui::Role::Button, "Ink width: 16")
+                        .scroll_to_me();
+                    harness.run_steps(12);
+                    let width = harness.get_by_role_and_label(egui::Role::Button, "Ink width: 16");
+                    assert!(
+                        harness.ctx.content_rect().contains_rect(width.rect()),
+                        "width preset outside viewport: dark={dark} collapsed={collapsed} size={size:?}"
+                    );
+                    width.click();
+                    harness.run_steps(3);
+                    assert_eq!(harness.state().doc().unwrap().view.ink_settings.width, 16.0);
+                }
+            }
         }
     }
 

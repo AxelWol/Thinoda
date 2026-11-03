@@ -484,6 +484,8 @@ semantics and require native v6.
 - Show contextual action icons for the active mode. For ink, expose colour,
   width, opacity, and the supported pen/highlighter stroke types; erasers expose
   their radius. These controls remain usable in either toolbar presentation.
+  Colour swatches and graphical width presets complement the exact controls;
+  swatches preserve colour alpha and do not change the independent opacity.
 - Inspector sections for card colour, shape fill/stroke, ink width/colour/
   opacity, rotation, lock, alt text.
 - Keep the working custom Fill-Color Picker and also reuse the existing quick
@@ -852,6 +854,15 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F5 ink checkpoint: critique
 
+- The colour and width popovers use the existing shared palette and exact
+  controls rather than inventing unsupported brushes. The chosen settings apply
+  to future gestures; a stroke already being drawn keeps its captured style.
+  A short-window regression exposed floating scrollbars covering swatch hit
+  targets, so ink and Shape-library popovers reserve the scrollbar's full hit
+  width. Another regression checks that a tall window does not clip the palette.
+  Native keyboard, light/dark, compact-window, per-gesture and undo/redo checks
+  cover the slice; physical touch, screen readers and realistic performance
+  remain separate acceptance gates.
 - Ink gestures commit atomically, and pending or rejected gestures are exposed
   for retry or cancellation rather than silently discarded. Pending ink is not
   crash-recoverable until it is committed.

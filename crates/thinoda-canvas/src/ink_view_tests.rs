@@ -155,6 +155,63 @@ fn pen_preview_commits_one_undoable_stroke_without_moving_the_canvas() {
 }
 
 #[test]
+fn ink_settings_are_captured_per_gesture_and_survive_undo() {
+    let mut h = harness(board());
+    tool(&mut h, BoardTool::Pen);
+    {
+        let settings = &mut h.state_mut().view.ink_settings;
+        settings.color = Color::rgb(200, 30, 40);
+        settings.width = 4.0;
+        settings.opacity = 0.4;
+    }
+    let start = point(&h, Vec2::new(-100.0, -100.0));
+    press(&mut h, start, Modifiers::NONE);
+    move_to(&mut h, start + vec2(30.0, 0.0));
+    {
+        let settings = &mut h.state_mut().view.ink_settings;
+        settings.color = Color::rgb(20, 100, 220);
+        settings.width = 8.0;
+        settings.opacity = 0.8;
+    }
+    let pending = h.state().view.pending_ink_settings().unwrap();
+    assert_eq!(pending.color, Color::rgb(200, 30, 40));
+    assert_eq!(pending.width, 4.0);
+    assert_eq!(pending.opacity, 0.4);
+    release(&mut h, start + vec2(60.0, 0.0), Modifiers::NONE);
+
+    let next = start + vec2(0.0, 60.0);
+    press(&mut h, next, Modifiers::NONE);
+    move_to(&mut h, next + vec2(30.0, 0.0));
+    release(&mut h, next + vec2(60.0, 0.0), Modifiers::NONE);
+    assert!(
+        h.state().ink_errors.is_empty(),
+        "{:?}",
+        h.state().ink_errors
+    );
+    let objects = &h.state().doc.sheet().canvas.objects;
+    assert_eq!(objects.len(), 2);
+    for (object, color, width, opacity) in [
+        (&objects[0], Color::rgb(200, 30, 40), 4.0, 0.4),
+        (&objects[1], Color::rgb(20, 100, 220), 8.0, 0.8),
+    ] {
+        let CanvasObjectKind::Ink(ink) = &object.kind else {
+            panic!("expected an ink stroke");
+        };
+        assert_eq!(ink.color, color);
+        assert_eq!(ink.width, width);
+        assert_eq!(object.style.opacity, opacity);
+    }
+    let committed = objects.clone();
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    assert!(h.state_mut().doc.undo());
+    assert!(h.state().doc.sheet().canvas.objects.is_empty());
+    assert!(h.state_mut().doc.redo());
+    assert!(h.state_mut().doc.redo());
+    assert_eq!(h.state().doc.sheet().canvas.objects, committed);
+}
+
+#[test]
 fn space_does_not_steal_an_in_progress_stroke() {
     let mut h = harness(board());
     tool(&mut h, BoardTool::Pen);
