@@ -760,6 +760,8 @@ Choose a backup folder outside every detected cloud folder.|Escolha uma pasta de
 Use the asynchronous file workflow for browser documents.|Use o fluxo assíncrono de arquivos para documentos do navegador.
 Wait until the file is saved|Aguarde até o arquivo ser salvo
 Retrospective Board|Quadro de retrospectiva
+Affinity Diagram|Diagrama de afinidade
+Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.|O diagrama de afinidade e a matriz de Eisenhower oferecem molduras visuais. Mover uma nota para uma moldura não a agrupa nem agenda uma tarefa automaticamente.
 What do we need to learn?|O que precisamos aprender?
 Retrospective: team and time period|Retrospectiva: equipe e período
 Went well|Deu certo

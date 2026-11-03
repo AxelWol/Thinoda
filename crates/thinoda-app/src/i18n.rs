@@ -1306,6 +1306,33 @@ const DE: &[(&str, &str)] = &[
     ("Business Model Canvas", "Business Model Canvas"),
     ("Flowchart", "Flussdiagramm"),
     ("SWOT Board", "SWOT-Board"),
+    ("Affinity Diagram", "Affinitätsdiagramm"),
+    ("Eisenhower Matrix", "Eisenhower-Matrix"),
+    (
+        "Group related ideas, then name each theme",
+        "Gruppiere verwandte Ideen und benenne jedes Thema",
+    ),
+    ("An idea or observation", "Eine Idee oder Beobachtung"),
+    ("Ideas to sort", "Ideen zum Sortieren"),
+    ("Theme 1", "Thema 1"),
+    ("Theme 2", "Thema 2"),
+    ("Theme 3", "Thema 3"),
+    (
+        "Do: urgent and important",
+        "Erledigen: dringend und wichtig",
+    ),
+    (
+        "Schedule: important, not urgent",
+        "Planen: wichtig, nicht dringend",
+    ),
+    (
+        "Delegate: urgent, not important",
+        "Delegieren: dringend, nicht wichtig",
+    ),
+    (
+        "Eliminate: neither urgent nor important",
+        "Streichen: weder dringend noch wichtig",
+    ),
     ("Option A", "Option A"),
     ("Option B", "Option B"),
     ("Benefits", "Vorteile"),
@@ -1398,6 +1425,10 @@ const DE: &[(&str, &str)] = &[
     (
         "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
         "Die Kategorie Boards erstellt Leinwand-Karten ohne sichtbares Hauptthema: leere Leinwand, mehrere unabhängige Mindmaps, Notizzettel-Wände, Retrospektiven, Kanban, Business Model Canvas, Flussdiagramme und SWOT. Board-Texte verwenden die Sprache der Oberfläche.",
+    ),
+    (
+        "Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.",
+        "Affinitätsdiagramm und Eisenhower-Matrix bieten visuelle Rahmen. Eine Notiz im Rahmen wird weder automatisch gruppiert noch als Aufgabe geplant.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3622,6 +3653,62 @@ mod tests {
             for token in ["UTF-16LE", "BOM", ".thinoda"] {
                 assert!(text.contains(token), "{language:?}: {token}");
             }
+        }
+    }
+
+    #[test]
+    fn new_frame_board_templates_use_localized_starter_content() {
+        let affinity_labels = [
+            "Affinity Diagram",
+            "Group related ideas, then name each theme",
+            "An idea or observation",
+            "Ideas to sort",
+            "Theme 1",
+            "Theme 2",
+            "Theme 3",
+        ];
+        let matrix_labels = [
+            "Do: urgent and important",
+            "Schedule: important, not urgent",
+            "Delegate: urgent, not important",
+            "Eliminate: neither urgent nor important",
+        ];
+        for language in TRANSLATED {
+            for key in affinity_labels
+                .iter()
+                .copied()
+                .chain(["Eisenhower Matrix"])
+                .chain(matrix_labels)
+            {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
+            let affinity =
+                thinoda_core::templates::instantiate_localized("affinity-diagram", &|key| {
+                    t_in(language, key).to_owned()
+                });
+            let sheet = affinity.active();
+            assert_eq!(sheet.zones.len(), affinity_labels.len() - 3);
+            assert!(
+                sheet
+                    .content_topics()
+                    .any(|topic| { topic.title == t_in(language, "An idea or observation") })
+            );
+            assert!(sheet.content_topics().any(|topic| {
+                topic.title == t_in(language, "Group related ideas, then name each theme")
+            }));
+            for (zone, key) in sheet.zones.iter().zip(&affinity_labels[3..]) {
+                assert_eq!(zone.name, t_in(language, key));
+            }
+            let matrix =
+                thinoda_core::templates::instantiate_localized("eisenhower-matrix", &|key| {
+                    t_in(language, key).to_owned()
+                });
+            assert_eq!(matrix.active().zones.len(), matrix_labels.len());
+            for (zone, key) in matrix.active().zones.iter().zip(matrix_labels) {
+                assert_eq!(zone.name, t_in(language, key));
+            }
+            affinity.validate().unwrap();
+            matrix.validate().unwrap();
         }
     }
 

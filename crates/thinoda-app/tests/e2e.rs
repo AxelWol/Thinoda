@@ -1719,7 +1719,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         .iter()
         .filter(|t| t.category == TemplateCategory::Boards)
         .collect();
-    assert_eq!(boards.len(), 8);
+    assert_eq!(boards.len(), 10);
     for template in &boards {
         h.get_by_role_and_label(Role::Button, template.name);
     }

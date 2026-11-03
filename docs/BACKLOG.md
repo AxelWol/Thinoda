@@ -1899,10 +1899,11 @@ passed in desktop Chromium, Firefox and WebKit using a separate Chromium PDF
 viewer. Focused virtual-clipboard regressions cover mixed-board paste and undo,
 plain-text replacement and rejected cuts; all nine cases passed in desktop
 Chromium, Firefox and WebKit. Actual system-clipboard acceptance remains open.
-Editable PowerPoint card and shape-label rotation and matching canvas
-shape-label positioning have focused geometry and SDK coverage. Rotated card
-content still needs interactive-canvas parity, and Office visual/editing
-acceptance remains open.
+Editable PowerPoint card and shape-label rotation and matching canvas card
+content, editing controls and connector anchors have focused geometry and SDK
+coverage. Windows PowerPoint also exported the rotated fixture to a visible
+PDF. Systematic Office appearance and interactive-editing acceptance remain
+open.
 Eleven focused startup, retry and offline cases also passed in each of
 desktop Firefox and WebKit. An earlier build with the same Wasm passed focused
 touch checks in both engines. CI runs the Chromium and
@@ -1910,8 +1911,11 @@ startup/offline suite against the release build; these checks do not establish
 physical touch-device, screen-reader or remaining export-format acceptance.
 
 The live browser recovery path detects lost or corrupt leases, but its cooperative
-localStorage leases remain non-atomic across tabs. The separate asynchronous
-recovery draft remains blocked on safe bounded discovery and is not integrated.
+localStorage leases remain non-atomic across tabs. Listed unreadable records
+can be downloaded without changing the original as UTF-16LE browser-storage
+data, not as a repaired native document; unlisted records and silent browser
+download cancellation remain limitations. The separate asynchronous recovery
+draft remains blocked on safe bounded discovery and is not integrated.
 
 - P2 F0 groundwork (implemented; full acceptance open): root query APIs and
   migration of all `sheet.root` callers, derived scene with layer bands,
@@ -1929,7 +1933,8 @@ recovery draft remains blocked on safe bounded discovery and is not integrated.
   existing styling controls for applicable shapes.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
-  Flowchart and SWOT board (more templates listed with prerequisites).
+  Flowchart, SWOT board, Affinity diagram and Eisenhower matrix (more templates
+  listed with prerequisites).
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,
   highlighter, object/pixel eraser and lasso; pressure optional.
 - P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance

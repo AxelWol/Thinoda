@@ -150,6 +150,28 @@ fn board_workbooks_write_native_v6_and_round_trip() {
 }
 
 #[test]
+fn localized_board_templates_round_trip_in_native_v6() {
+    use thinoda_core::templates::{TEMPLATES, TemplateCategory, instantiate_localized};
+
+    for template in TEMPLATES
+        .iter()
+        .filter(|template| template.category == TemplateCategory::Boards)
+    {
+        let wb = instantiate_localized(template.id, &|key| format!("<{key}>"));
+        let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();
+        assert_eq!(manifest_version(&bytes), 6, "{}", template.id);
+        let restored = import_bytes(Format::Thinoda, &bytes).unwrap();
+        assert_eq!(restored, wb, "{}", template.id);
+        assert_eq!(
+            export_bytes(&restored, Format::Thinoda, &ExportOptions::default()).unwrap(),
+            bytes,
+            "{}",
+            template.id
+        );
+    }
+}
+
+#[test]
 fn legacy_v6_hidden_anchor_title_round_trips_without_becoming_board_content() {
     let wb = board();
     let bytes = export_bytes(&wb, Format::Thinoda, &ExportOptions::default()).unwrap();

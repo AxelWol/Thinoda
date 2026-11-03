@@ -274,6 +274,8 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("business-model-canvas", "Business Model Canvas"),
     board_info("flowchart", "Flowchart"),
     board_info("swot-board", "SWOT Board"),
+    board_info("affinity-diagram", "Affinity Diagram"),
+    board_info("eisenhower-matrix", "Eisenhower Matrix"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -770,11 +772,22 @@ mod tests {
                 "business-model-canvas",
                 "flowchart",
                 "swot-board",
+                "affinity-diagram",
+                "eisenhower-matrix",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
         for board in boards::BOARDS {
             assert!(board_ids().contains(&board.id), "{}", board.id);
+        }
+        for (id, name) in [
+            ("affinity-diagram", "Affinity Diagram"),
+            ("eisenhower-matrix", "Eisenhower Matrix"),
+        ] {
+            let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
+            assert_eq!(info.name, name);
+            assert_eq!(info.category, TemplateCategory::Boards);
+            assert!(boards::find(id).is_some());
         }
     }
 
@@ -856,14 +869,175 @@ mod tests {
     }
 
     #[test]
+    fn affinity_diagram_has_independent_stickies_and_persistent_frames() {
+        use crate::board::{BoardMember, CardKind};
+
+        let mut wb = instantiate("affinity-diagram");
+        let sheet = wb.active();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|z| z.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Ideas to sort", "Theme 1", "Theme 2", "Theme 3"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.canvas.groups.is_empty());
+
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let source = sheet.zones[0].frame;
+        let target = sheet.zones[1].frame;
+        let heading = sheet
+            .content_topics()
+            .find(|topic| topic.title == "Group related ideas, then name each theme")
+            .unwrap();
+        assert_eq!(heading.card.unwrap().kind, CardKind::Text);
+        assert!(layout.topics[&heading.id].rect.max().y < source.min.y);
+        let stickies: Vec<_> = sheet
+            .content_topics()
+            .filter(|topic| topic.card.is_some_and(|card| card.kind == CardKind::Sticky))
+            .map(|topic| topic.id)
+            .collect();
+        assert_eq!(stickies.len(), 4);
+        for id in &stickies {
+            let topic = sheet.topic(*id).unwrap();
+            let rect = layout.topics[id].rect;
+            assert_eq!(topic.title, "An idea or observation");
+            assert!(topic.card.unwrap().color.is_some());
+            assert!(source.contains(rect.min) && source.contains(rect.max()));
+        }
+
+        // Moving notes is visual; it does not silently assign them to a frame.
+        let from = sheet.topic(stickies[0]).unwrap().position.unwrap();
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Card(stickies[0])], target.center() - from)
+            .unwrap();
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let moved = layout.topics[&stickies[0]].rect;
+        assert!(target.contains(moved.min) && target.contains(moved.max()));
+        assert!(sheet.zones.iter().all(|zone| zone.roots.is_empty()));
+        for id in stickies {
+            assert!(sheet.detach_subtree(id).is_some());
+        }
+        assert_eq!(sheet.zones.len(), 4);
+        wb.validate().unwrap();
+    }
+
+    #[test]
+    fn eisenhower_matrix_has_four_aligned_empty_quadrants() {
+        use crate::board::{Card, CardKind};
+        use crate::geometry::Vec2;
+
+        let mut wb = instantiate("eisenhower-matrix");
+        let sheet = wb.active();
+        assert!(sheet.floating.is_empty());
+        assert_eq!(sheet.topics.len(), 1);
+        assert!(sheet.canvas.objects.is_empty());
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|z| z.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Do: urgent and important",
+                "Schedule: important, not urgent",
+                "Delegate: urgent, not important",
+                "Eliminate: neither urgent nor important",
+            ]
+        );
+        let [do_first, schedule, delegate, eliminate] = sheet.zones.as_slice() else {
+            panic!("expected four quadrants");
+        };
+        assert_eq!(do_first.frame.size, schedule.frame.size);
+        assert_eq!(do_first.frame.size, delegate.frame.size);
+        assert_eq!(do_first.frame.size, eliminate.frame.size);
+        assert_eq!(do_first.frame.min.y, schedule.frame.min.y);
+        assert_eq!(delegate.frame.min.y, eliminate.frame.min.y);
+        assert_eq!(do_first.frame.min.x, delegate.frame.min.x);
+        assert_eq!(schedule.frame.min.x, eliminate.frame.min.x);
+        assert!(do_first.frame.max().x < schedule.frame.min.x);
+        assert!(do_first.frame.max().y < delegate.frame.min.y);
+
+        // Even a quadrant that later acquires and loses a member remains a frame.
+        let frame_id = do_first.id;
+        let center = do_first.frame.center();
+        let sheet = wb.active_mut();
+        let card = sheet
+            .add_card(
+                "Example",
+                center,
+                Card::new(CardKind::Sticky, Vec2::new(150.0, 100.0)),
+            )
+            .unwrap();
+        sheet.set_zone_roots(frame_id, vec![card]).unwrap();
+        assert!(sheet.detach_subtree(card).is_some());
+        assert_eq!(sheet.zones.len(), 4);
+        assert!(sheet.zones.iter().all(|zone| zone.roots.is_empty()));
+        wb.validate().unwrap();
+    }
+
+    #[test]
+    fn additional_board_templates_round_trip_with_localized_content() {
+        for id in ["affinity-diagram", "eisenhower-matrix"] {
+            let original = instantiate_localized(id, &|key| format!("<{key}>"));
+            original.validate().unwrap();
+            let json = serde_json::to_string(&original).unwrap();
+            let restored: Workbook = serde_json::from_str(&json).unwrap();
+            restored.validate().unwrap();
+            assert_eq!(original, restored, "{id}");
+            assert!(restored.active().title.starts_with('<'));
+            assert!(
+                restored
+                    .active()
+                    .zones
+                    .iter()
+                    .all(|zone| zone.keep_empty && zone.roots.is_empty())
+            );
+        }
+    }
+
+    #[test]
     fn board_content_is_localized_through_the_translator() {
         let strings = board_strings();
         assert!(strings.contains(&"Key Partners"));
         assert!(strings.contains(&"Yes"));
+        for key in [
+            "Group related ideas, then name each theme",
+            "An idea or observation",
+            "Ideas to sort",
+            "Theme 1",
+            "Theme 2",
+            "Theme 3",
+            "Do: urgent and important",
+            "Schedule: important, not urgent",
+            "Delegate: urgent, not important",
+            "Eliminate: neither urgent nor important",
+        ] {
+            assert!(
+                strings.contains(&key),
+                "{key} is missing from board strings"
+            );
+        }
         for id in board_ids() {
             let wb = instantiate_localized(id, &|s| format!("<{s}>"));
             wb.validate().unwrap();
             let sheet = wb.active();
+            let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
+            assert_eq!(sheet.title, format!("<{}>", info.name));
             assert!(sheet.root_topic().title.is_empty());
             for topic in sheet.content_topics() {
                 assert!(topic.title.starts_with('<'), "{id}: {}", topic.title);

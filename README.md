@@ -342,8 +342,10 @@ those system-owned controls. WinGet publishing remains paused.
   is English and editable. These are original Thinoda maps, not XMind template copies.
   The Boards category starts maps with a hidden central topic: Blank Canvas,
   Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
-  Kanban Board, Business Model Canvas, Flowchart (shapes and connectors) and SWOT Board.
-  Frames, sticky/text cards and shapes are created in the current UI language.
+  Kanban Board, Business Model Canvas, Flowchart, SWOT Board, Affinity Diagram
+  and Eisenhower Matrix. Frames, sticky/text cards and shapes are created in the
+  current UI language. The Affinity and Eisenhower frames are visual guides;
+  they do not automatically group notes or schedule tasks.
 - Freeform boards combine independent topic trees with cards, shapes, connectors,
   frames and ink. Use **Board > Hide central topic** to turn a map into a
   rootless board, or **Show central topic** to bring it back; existing content

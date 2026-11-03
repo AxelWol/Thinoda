@@ -658,9 +658,16 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Eight board templates use the same validated primitives and translated
-  creation-time strings. The additional layouts do not imply structured
-  Kanban, table or collaboration semantics.
+- Ten board templates use the same validated primitives and translated
+  creation-time strings. Affinity notes can be moved among persistent visual
+  frames, and the Eisenhower quadrants accept user-created content. Neither
+  automatically assigns membership or manages tasks; the additional layouts
+  also do not imply structured Kanban, table or collaboration semantics.
+- The new starter content is checked in all ten supported languages; gallery
+  previews fit every frame in light and dark themes. Template creation is
+  exercised in English and German, and localized board templates round-trip
+  through native v6 with byte-stable re-export. These checks do not replace
+  physical-device or screen-reader acceptance.
 
 ### F5 ink checkpoint: critique
 
@@ -797,7 +804,7 @@ A new gallery category **Boards**. Templates become data-driven (versioned,
 localised strings, theme-aware colours, validated) instead of growing the
 hard-coded switch in `templates.rs`.
 
-**Template MVP (F4):**
+**Board templates (F4):**
 
 Status: implemented in `crates/thinoda-core/src/templates/boards.rs` (data:
 frames, cards, floating trees, shapes, connectors; one builder) and listed in
@@ -819,6 +826,8 @@ catalog coverage.
 | Business Model Canvas | Nine frames in the canonical layout, each with a prompt text card |
 | Flowchart | Start/End terminators, process steps, a decision, labelled connectors (Yes/No) on a line grid |
 | SWOT board | Four tinted frames with one prompt sticky each |
+| Affinity diagram | Idea stickies and persistent frames for sorting and naming themes |
+| Eisenhower matrix | Four persistent, labeled priority-quadrant frames |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -829,9 +838,7 @@ compatibility with the topic renderer.
 
 | Template | Needs |
 |---|---|
-| Affinity diagram | Frames + stickies (F2); AI clustering optional |
 | Lean Canvas, Empathy map | Frames (F2), text-heavy responsive regions |
-| Eisenhower matrix | Frames (F2); Matrix structure exists for tree variants |
 | Swimlane | Shapes and connector routing (F3) |
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |

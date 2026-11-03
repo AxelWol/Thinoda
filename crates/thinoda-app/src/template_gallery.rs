@@ -326,8 +326,46 @@ mod tests {
             "kanban-board",
             "business-model-canvas",
             "swot-board",
+            "affinity-diagram",
+            "eisenhower-matrix",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
+        }
+    }
+
+    #[test]
+    fn new_frame_board_thumbnails_fit_every_frame() {
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
+        let visible = rect.shrink(5.0).expand(0.01);
+        for id in ["affinity-diagram", "eisenhower-matrix"] {
+            let wb = templates::instantiate(id);
+            let sheet = wb.active();
+            for dark in [false, true] {
+                let layout = layout_sheet(sheet, &ApproxMeasure, dark);
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(Default::default(), |ui| {
+                    paint_board_thumbnail(ui.painter(), sheet, &layout, rect, dark);
+                });
+                output.textures_delta.clear();
+                for zone in &sheet.zones {
+                    let fill = color32(zone.color.unwrap());
+                    let matches: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(frame) if frame.fill == fill => Some(frame.rect),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(matches.len(), 1, "{id}: {}", zone.name);
+                    assert!(
+                        visible.contains(matches[0].min) && visible.contains(matches[0].max),
+                        "{id}: {} is outside the thumbnail: {:?}",
+                        zone.name,
+                        matches[0]
+                    );
+                }
+            }
         }
     }
 }

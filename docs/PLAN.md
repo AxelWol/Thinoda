@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, eight board templates, responsive toolbox and
+The Freeform implementation, ten board templates, responsive toolbox and
 existing style controls are in place. The production candidate passed
 47 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, SVG/PNG/JPEG image-card export,
@@ -3009,22 +3009,31 @@ Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
 upright at their rotated positions for usability.
-The rotated Office fixture passes schema validation; actual rotated-slide
-appearance and editing in Office remain open. See the F6 critique in FREEFORM.
+The rotated Office fixture passes schema validation. Windows PowerPoint also
+opened it without repair and exported a PDF showing the rotated objects and
+connectors; systematic appearance comparison and interactive editing remain
+open. See the F6 critique in FREEFORM.
 
 The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;
 localStorage still cannot provide atomic cross-tab compare-and-swap. The
-separate asynchronous recovery draft is not integrated because its bounded
-discovery can miss uncoordinated writes or remain gated by retained tombstones.
+current synchronous path can also download a listed unreadable record as
+lossless UTF-16LE storage data without changing the original; this is not a
+native document or a repair mechanism. The browser may silently cancel the
+download, and records that could not be listed remain inaccessible to this
+action. The separate asynchronous recovery draft is not integrated because its
+bounded discovery can miss uncoordinated writes or remain gated by retained
+tombstones.
 Headless Chromium now also exercises an actual localStorage quota failure with
 a large image: the previous snapshot survives and a full native download remains
 available. Recovery of the oversized unsaved board itself is not established.
-The fixes for two earlier macOS test failures are published. A fresh CI run on
-published commit `351f4e1` passed the macOS, Windows x64/ARM, Linux x64/ARM and
-web jobs. It does not cover the later local cache and export-test changes or
-replace real-device acceptance. The final cache source passed the full local
-native `cargo xtask ci` with live AI disabled and tests serialized.
+The fixes for two earlier macOS test failures are published.
+[CI run 41579324614](https://github.com/AxelWol/Thinoda/actions/runs/41579324614)
+passed on published commit `9bbaad5` across macOS, Windows x64/ARM,
+Linux x64/ARM and web jobs. It does not cover the later local rotation,
+thumbnail, browser-rescue or template changes and does not replace real-device
+acceptance. The earlier cache source passed the full local native
+`cargo xtask ci` with live AI disabled and tests serialized.
 
 Automated production-browser checks exercise a rootless board's saved sticky,
 shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
@@ -3059,7 +3068,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (eight implemented).
+5. F4 data-driven "Boards" templates (ten implemented).
 6. F5 ink; F6 viewport scenes, mini-map, optional pen pressure.
 
 **Exit:** existing maps and golden exports unchanged; anchor-root contract tests;

@@ -456,6 +456,70 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "affinity-diagram",
+        // The frames are visual guides: placing a card in one does not assign
+        // semantic membership or automatically group related cards.
+        cards: &[
+            note(
+                "Group related ideas, then name each theme",
+                370.0,
+                -70.0,
+                560.0,
+            ),
+            sticky("An idea or observation", 95.0, 120.0, YELLOW),
+            sticky("An idea or observation", 265.0, 120.0, GREEN),
+            sticky("An idea or observation", 95.0, 240.0, BLUE),
+            sticky("An idea or observation", 265.0, 240.0, PINK),
+        ],
+        frames: &[
+            frame(
+                "Ideas to sort",
+                rect(0.0, 0.0, 360.0, 300.0),
+                TINT_GRAY,
+                &[],
+            ),
+            frame("Theme 1", rect(380.0, 0.0, 360.0, 300.0), TINT_BLUE, &[]),
+            frame("Theme 2", rect(0.0, 320.0, 360.0, 300.0), TINT_GREEN, &[]),
+            frame(
+                "Theme 3",
+                rect(380.0, 320.0, 360.0, 300.0),
+                TINT_ORANGE,
+                &[],
+            ),
+        ],
+        ..EMPTY
+    },
+    BoardDef {
+        id: "eisenhower-matrix",
+        frames: &[
+            frame(
+                "Do: urgent and important",
+                rect(0.0, 0.0, 420.0, 300.0),
+                TINT_RED,
+                &[],
+            ),
+            frame(
+                "Schedule: important, not urgent",
+                rect(440.0, 0.0, 420.0, 300.0),
+                TINT_BLUE,
+                &[],
+            ),
+            frame(
+                "Delegate: urgent, not important",
+                rect(0.0, 320.0, 420.0, 300.0),
+                TINT_ORANGE,
+                &[],
+            ),
+            frame(
+                "Eliminate: neither urgent nor important",
+                rect(440.0, 320.0, 420.0, 300.0),
+                TINT_GRAY,
+                &[],
+            ),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {
@@ -485,14 +549,18 @@ pub(crate) fn build(def: &BoardDef, title: &str, tr: &dyn Fn(&'static str) -> St
         add_card(&mut sheet, card, tr);
     }
     for frame in def.frames {
-        let roots = frame
+        let roots: Vec<_> = frame
             .cards
             .iter()
             .map(|card| add_card(&mut sheet, card, tr))
             .collect();
-        let zone = sheet
-            .create_zone(&tr(frame.name), roots, frame.rect)
-            .expect("valid template frame");
+        let name = tr(frame.name);
+        let zone = if roots.is_empty() {
+            sheet.create_board_frame(&name, frame.rect)
+        } else {
+            sheet.create_zone(&name, roots, frame.rect)
+        }
+        .expect("valid template frame");
         if let Some(z) = sheet.zones.iter_mut().find(|z| z.id == zone) {
             z.color = frame.color;
         }
