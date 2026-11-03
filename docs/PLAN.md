@@ -40,10 +40,11 @@ ordinary map placement is unchanged. Embedded-resource unions now avoid
 revalidating the growing store for each item while preserving validation,
 deduplication and atomic paste. Pixel erasing has a saved-state browser
 regression, and Meeting Board adds a localized, rootless meeting template with
-independent prompt cards and persistent visual frames. The next open work
-remains the browser accessibility bridge, safe large-board recovery, export
-acceptance and realistic performance/device gates; cloud-provider work stays
-paused.
+independent prompt cards and persistent visual frames. Gallery previews are
+now generated on demand; a small desktop startup comparison did not establish
+a speedup. The next open work remains the browser accessibility bridge, safe
+large-board recovery, export acceptance and realistic performance/device
+gates; cloud-provider work stays paused.
 
 ## Current next-value state (2026-10-30)
 

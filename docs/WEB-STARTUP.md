@@ -199,6 +199,37 @@ fresh size-optimized production build and neither startup time nor behavior was
 measured for it. The probe was not adopted; transfer size alone does not
 establish a useful iPad improvement.
 
+### On-demand template previews: critique
+
+The Home gallery previously constructed and laid out every template the first
+time any thumbnail was painted. It now resolves only visible thumbnails and
+reuses each sample by template, language and appearance. Offscreen controls
+still receive their normal layout, focus and activation metadata; scrolling or
+filtering generates newly visible previews synchronously in that frame. Recent
+templates, selection, creation and document state are unchanged. This moves
+some work to first use, rather than loading a separate Wasm module or reducing
+download size. The in-memory cache can still grow to the number of templates
+times ten languages and two appearances over the app's lifetime.
+
+A focused 480 × 360 headless egui fixture requests four of 46 templates on the
+first all-categories frame; the old cache built all 46. Tests cover subsequent
+scrolling and recent items, every template in all languages and both
+appearances, and gallery selection and creation. The production candidate also
+passed 18 startup, offline-update and language checks plus Meeting Board gallery
+creation in each of desktop Chromium, Firefox and WebKit. The first-scroll
+latency and memory impact have not been benchmarked.
+
+Six interleaved pairs compared the previous and new production builds in
+headless Edge on Windows over unthrottled loopback. All cold and controlled warm
+interactions succeeded. Median cold time to a handled Open shortcut was
+1.036 s before and 1.036 s after; warm medians were 0.373 s and 0.395 s.
+These few noisy samples do not demonstrate a startup improvement or an
+overhead bound. The shortcut reached a cancelling file-picker shim, not a real
+picker. The [measurement record](benchmarks/gallery-startup-2026-11-03.json)
+includes the artifact identities, paired timings and limitations. The OS file
+cache was not cleared, and no physical iPad or representative network was
+measured.
+
 ### Browser accessibility checkpoint
 
 A desktop Lighthouse navigation audit of the production shell identified the

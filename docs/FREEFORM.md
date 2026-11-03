@@ -737,8 +737,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   physical-device or screen-reader acceptance.
 - Meeting Board reuses existing v6 primitives, so it adds no new file format;
   its starter text is translated only when the document is created. The
-  gallery still eagerly builds its preview cache per language and theme, so
-  this adds one sample and does not establish iPad first-start performance.
+  gallery builds visible previews on demand and caches them separately per
+  template, language and theme. This does not establish iPad first-start
+  performance; see [WEB-STARTUP.md](WEB-STARTUP.md).
 
 ### F5 ink checkpoint: critique
 

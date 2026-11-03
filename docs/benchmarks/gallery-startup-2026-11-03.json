@@ -1,0 +1,55 @@
+{
+  "description": "Interleaved desktop comparison of eager and viewport-driven template previews",
+  "date_utc": "2026-11-03",
+  "environment": {
+    "os": "Windows x64 10.0.26300",
+    "cpu": "AMD Ryzen 7 PRO 9755, 16 logical processors",
+    "browser": "Headless Microsoft Edge 156.0.4314.58",
+    "playwright": "1.64.1",
+    "viewport_css_pixels": [1252, 1278],
+    "device_pixel_ratio": 1,
+    "browser_language": "de",
+    "server": "loopback, uncompressed files",
+    "samples": "six matched pairs; new browser profile per variant and pair; service-worker-controlled warm reload"
+  },
+  "artifacts": {
+    "baseline": {
+      "description": "Production release build immediately before on-demand previews",
+      "build_identity": "0.21.0:2e71c93cfca5e37d",
+      "manifest_sha256": "ba33881025ba49f2db9cf77b5c963a742848e1a95735434437a6a69a461391ea",
+      "wasm_bytes": 27415542,
+      "wasm_sha256": "bd24a7981798334b9587576da725bb1a42092e4d7264d536a82c1101a05fb8b4"
+    },
+    "candidate": {
+      "description": "Production release build with on-demand previews",
+      "build_identity": "0.21.0:5806ee56dcd20507",
+      "manifest_sha256": "a867624ba66606b0d57a2cdb4ac76b130eeed6894a8f8260c6f2fb43161afbc4",
+      "wasm_bytes": 27415802,
+      "wasm_sha256": "80bd42b13ac88901f0d47640dbf4c61ab8e92dc53a221ef81b79a0f60e32b63a"
+    },
+    "stable_on_reinspection": true
+  },
+  "method": {
+    "loader_ms": "Browser-observed loading-overlay removal from navigation time origin.",
+    "interaction_ms": "Ctrl+O invokes an injected file-picker shim that cancels immediately; includes automation overhead.",
+    "cold": "Fresh browser profile and context, with empty browser storage and cache.",
+    "warm": "Subsequent navigation controlled by the installed service worker.",
+    "ordering": "baseline/candidate, candidate/baseline, candidate/baseline, baseline/candidate, baseline/candidate, candidate/baseline"
+  },
+  "pairs_ms": [
+    {"baseline": {"cold": [671.2, 1032.4], "warm": [253.8, 373.1]}, "candidate": {"cold": [675.5, 1086.3], "warm": [253.1, 371.8]}},
+    {"baseline": {"cold": [655.4, 987.8], "warm": [245.4, 336.2]}, "candidate": {"cold": [631.5, 1117.4], "warm": [266.4, 405.2]}},
+    {"baseline": {"cold": [676.9, 970.6], "warm": [257.4, 351.8]}, "candidate": {"cold": [644.6, 1057.0], "warm": [268.1, 357.0]}},
+    {"baseline": {"cold": [673.7, 1184.5], "warm": [262.9, 373.5]}, "candidate": {"cold": [757.9, 1014.0], "warm": [265.2, 384.8]}},
+    {"baseline": {"cold": [732.7, 1039.6], "warm": [422.8, 513.1]}, "candidate": {"cold": [653.3, 972.7], "warm": [264.4, 406.8]}},
+    {"baseline": {"cold": [654.7, 1117.9], "warm": [417.1, 541.6]}, "candidate": {"cold": [673.4, 965.5], "warm": [401.3, 504.2]}}
+  ],
+  "array_order": ["loader_ms", "interaction_ms"],
+  "all_interactions_succeeded": true,
+  "limitations": [
+    "These few noisy desktop samples do not demonstrate a startup improvement or an overhead bound.",
+    "The OS file cache was not cleared; the loopback server and uncompressed responses do not represent production delivery.",
+    "The shim does not exercise a real file picker; no physical iPad, touch, GPU presentation, or screen-reader acceptance was measured.",
+    "The experiment does not measure first-scroll latency, memory, or the reported two-minute iPad startup."
+  ]
+}

@@ -1,7 +1,7 @@
 //! Built-in template previews, generated from the actual documents that Create opens.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::{Color32, Painter, Pos2, Stroke, StrokeKind, Ui, vec2};
 use thinoda_canvas::{PaintOptions, Xf, color32};
@@ -13,36 +13,53 @@ use thinoda_core::{
     templates::{self, TemplateCategory, TemplateInfo},
 };
 
-use crate::i18n::t;
+use crate::i18n::{Lang, t, t_in};
 
 pub(crate) enum GalleryAction {
     Navigate(TemplateCategory),
     Create(&'static str),
 }
 
-type Samples = &'static [(Sheet, Layout)];
+type Sample = (Sheet, Layout);
+type SampleKey = (bool, u8, &'static str);
 
-/// Samples per appearance and UI language (board template content is localized).
-fn samples(dark: bool) -> Samples {
-    static CACHE: OnceLock<Mutex<HashMap<(bool, u8), Samples>>> = OnceLock::new();
-    let key = (dark, crate::i18n::lang() as u8);
-    let mut cache = CACHE
+#[derive(Default)]
+struct SampleCache {
+    entries: HashMap<SampleKey, Arc<Sample>>,
+}
+
+impl SampleCache {
+    fn get(&mut self, dark: bool, language: Lang, id: &'static str) -> Arc<Sample> {
+        Arc::clone(
+            self.entries
+                .entry((dark, language as u8, id))
+                .or_insert_with(|| {
+                    let sheet =
+                        templates::instantiate_localized(id, &|s| t_in(language, s).to_owned())
+                            .sheets
+                            .remove(0);
+                    let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
+                    Arc::new((sheet, layout))
+                }),
+        )
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SAMPLE_REQUESTS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Cache each visible sample by template, appearance and UI language.
+fn sample(dark: bool, language: Lang, id: &'static str) -> Arc<Sample> {
+    #[cfg(test)]
+    SAMPLE_REQUESTS.with(|requests| requests.borrow_mut().push(id));
+    static CACHE: OnceLock<Mutex<SampleCache>> = OnceLock::new();
+    CACHE
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    cache.entry(key).or_insert_with(|| {
-        let built: Vec<_> = templates::TEMPLATES
-            .iter()
-            .map(|info| {
-                let sheet = templates::instantiate_localized(info.id, &|s| t(s).to_owned())
-                    .sheets
-                    .remove(0);
-                let layout = layout_sheet(&sheet, &ApproxMeasure, dark);
-                (sheet, layout)
-            })
-            .collect();
-        Box::leak(built.into_boxed_slice())
-    })
+        .unwrap_or_else(|e| e.into_inner())
+        .get(dark, language, id)
 }
 
 fn is_board(sheet: &Sheet) -> bool {
@@ -170,19 +187,17 @@ fn cards(
         .show(ui, |ui| {
             for (index, template) in entries.iter().enumerate() {
                 ui.push_id(template.id, |ui| {
-                    let sample_index = templates::TEMPLATES
-                        .iter()
-                        .position(|info| info.id == template.id)
-                        .unwrap();
                     let dark = ui.visuals().dark_mode;
-                    let (sheet, layout) = &samples(dark)[sample_index];
+                    let language = crate::i18n::lang();
                     let (response, activated) = thinoda_ui::widgets::preview_card(
                         ui,
-                        t(template.name),
+                        t_in(language, template.name),
                         *choice == Some(template.id),
                         card_width,
                         94.0,
                         |ui, rect| {
+                            let sample = sample(dark, language, template.id);
+                            let (sheet, layout) = sample.as_ref();
                             if is_board(sheet) {
                                 paint_board_thumbnail(ui.painter(), sheet, layout, rect, dark)
                             } else {
@@ -282,27 +297,97 @@ mod tests {
     use super::*;
 
     #[test]
-    fn previews_match_every_instantiated_template_and_are_cached_per_appearance() {
-        for dark in [false, true] {
-            assert_eq!(samples(dark).len(), templates::TEMPLATES.len());
-            for (info, (sheet, layout)) in templates::TEMPLATES.iter().zip(samples(dark)) {
-                assert_eq!(
-                    sheet,
-                    templates::instantiate_localized(info.id, &|s| t(s).to_owned()).active()
-                );
-                let board = info.category == TemplateCategory::Boards;
-                assert_eq!(is_board(sheet), board, "{}", info.id);
-                let hidden = usize::from(sheet.root_mode == SheetRootMode::Hidden);
-                assert_eq!(layout.topics.len(), sheet.topics.len() - hidden);
-                if info.id == "blank-canvas" {
-                    continue;
+    fn previews_match_every_template_and_are_cached_per_language_and_appearance() {
+        let mut cache = SampleCache::default();
+        for language in Lang::ALL {
+            for dark in [false, true] {
+                for info in templates::TEMPLATES {
+                    let preview = cache.get(dark, language, info.id);
+                    let (sheet, layout) = preview.as_ref();
+                    assert_eq!(
+                        sheet,
+                        templates::instantiate_localized(info.id, &|s| {
+                            t_in(language, s).to_owned()
+                        })
+                        .active()
+                    );
+                    let board = info.category == TemplateCategory::Boards;
+                    assert_eq!(is_board(sheet), board, "{}", info.id);
+                    let hidden = usize::from(sheet.root_mode == SheetRootMode::Hidden);
+                    assert_eq!(layout.topics.len(), sheet.topics.len() - hidden);
+                    if info.id != "blank-canvas" {
+                        assert!(layout.bounds.size.x.is_finite() && layout.bounds.size.x > 0.0);
+                        assert!(layout.bounds.size.y.is_finite() && layout.bounds.size.y > 0.0);
+                    }
+                    assert!(Arc::ptr_eq(&preview, &cache.get(dark, language, info.id)));
                 }
-                assert!(layout.bounds.size.x.is_finite() && layout.bounds.size.x > 0.0);
-                assert!(layout.bounds.size.y.is_finite() && layout.bounds.size.y > 0.0);
             }
         }
-        assert!(std::ptr::eq(samples(false), samples(false)));
-        assert!(!std::ptr::eq(samples(false), samples(true)));
+        assert_eq!(
+            cache.entries.len(),
+            templates::TEMPLATES.len() * Lang::ALL.len() * 2
+        );
+        assert!(!Arc::ptr_eq(
+            &cache.get(false, Lang::En, "meeting-board"),
+            &cache.get(true, Lang::En, "meeting-board")
+        ));
+        assert!(!Arc::ptr_eq(
+            &cache.get(false, Lang::En, "meeting-board"),
+            &cache.get(false, Lang::De, "meeting-board")
+        ));
+    }
+
+    #[test]
+    fn only_visible_previews_are_resolved_and_scrolling_builds_new_ones() {
+        let ctx = egui::Context::default();
+        let mut choice = None;
+        let mut render = |category, offset, recent: &[String]| {
+            SAMPLE_REQUESTS.with(|requests| requests.borrow_mut().clear());
+            let mut max_offset = 0.0_f32;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 360.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let scroll = egui::ScrollArea::vertical()
+                        .id_salt("gallery_visibility_test")
+                        .max_height(280.0)
+                        .vertical_scroll_offset(offset)
+                        .show(ui, |ui| {
+                            show(ui, category, &mut choice, recent);
+                        });
+                    max_offset = (scroll.content_size.y - scroll.inner_rect.height()).max(0.0);
+                },
+            );
+            output.textures_delta.clear();
+            (
+                SAMPLE_REQUESTS.with(|requests| requests.borrow().clone()),
+                max_offset,
+            )
+        };
+        let (initial, _) = render(None, 0.0, &[]);
+        assert!(!initial.is_empty());
+        assert!(initial.len() < templates::TEMPLATES.len());
+        assert!(!initial.contains(&"meeting-board"));
+        let mut unique = initial.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        eprintln!(
+            "Initial gallery requested {} of {} templates",
+            unique.len(),
+            templates::TEMPLATES.len()
+        );
+
+        let recent = ["meeting-board".to_owned()];
+        let (with_recent, _) = render(None, 0.0, &recent);
+        assert!(with_recent.contains(&"meeting-board"));
+
+        let (boards, max_offset) = render(Some(TemplateCategory::Boards), 0.0, &[]);
+        assert!(boards.contains(&"blank-canvas"));
+        assert!(!boards.contains(&"meeting-board"));
+        let (bottom, _) = render(Some(TemplateCategory::Boards), max_offset, &[]);
+        assert!(bottom.contains(&"meeting-board"), "{bottom:?}");
     }
 
     #[test]
@@ -310,10 +395,13 @@ mod tests {
         let ctx = egui::Context::default();
         let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
         let mut counts = HashMap::new();
-        for (info, (sheet, layout)) in templates::TEMPLATES.iter().zip(samples(false)) {
+        let mut cache = SampleCache::default();
+        for info in templates::TEMPLATES {
             if info.category != TemplateCategory::Boards {
                 continue;
             }
+            let sample = cache.get(false, Lang::En, info.id);
+            let (sheet, layout) = sample.as_ref();
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 paint_board_thumbnail(ui.painter(), sheet, layout, rect, false);
             });
