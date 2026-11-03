@@ -1332,6 +1332,20 @@ const DE: &[(&str, &str)] = &[
     ("What might they think?", "Was könnte die Person denken?"),
     ("What do they do?", "Was tut die Person?"),
     ("How might they feel?", "Wie könnte sich die Person fühlen?"),
+    ("Storyboard", "Storyboard"),
+    (
+        "Select an image card, then choose Local Image",
+        "Bildkarte auswählen, dann „Lokales Bild“ wählen",
+    ),
+    ("Scene 1", "Szene 1"),
+    ("Scene 2", "Szene 2"),
+    ("Scene 3", "Szene 3"),
+    ("Scene 1 image", "Bild für Szene 1"),
+    ("Scene 2 image", "Bild für Szene 2"),
+    ("Scene 3 image", "Bild für Szene 3"),
+    ("Scene 1 action", "Handlung in Szene 1"),
+    ("Scene 2 action", "Handlung in Szene 2"),
+    ("Scene 3 action", "Handlung in Szene 3"),
     (
         "Name roles and map the handoffs",
         "Rollen benennen und Übergaben darstellen",
@@ -1482,6 +1496,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.",
         "Die Empathiekarte hat vier visuelle Bereiche für das, was jemand sagt, denkt, tut und fühlt. Das Verschieben einer Notiz weist keine Kategorie zu.",
+    ),
+    (
+        "Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.",
+        "Das Storyboard hat drei visuelle Szenen mit Bildkarten. Eine Karte auswählen und über „Lokales Bild“ ein Bild hinzufügen; Rahmen gruppieren oder zeitlich steuern die Szenen nicht.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3894,6 +3912,52 @@ mod tests {
             {
                 assert_ne!(t_in(language, key), key, "{language:?}: {key}");
             }
+        }
+    }
+
+    #[test]
+    fn storyboard_localizes_scene_cards_and_keeps_them_inside_frames() {
+        use thinoda_core::{ApproxMeasure, CardKind, layout_sheet};
+
+        let scenes = [
+            ("Scene 1", "Scene 1 image", "Scene 1 action"),
+            ("Scene 2", "Scene 2 image", "Scene 2 action"),
+            ("Scene 3", "Scene 3 image", "Scene 3 action"),
+        ];
+        let instructions = "Select an image card, then choose Local Image";
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("storyboard", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Storyboard"));
+            assert!(sheet.resources.is_empty());
+            assert_eq!(sheet.zones.len(), scenes.len());
+            assert_eq!(sheet.content_topics().count(), 7);
+            assert!(
+                sheet
+                    .content_topics()
+                    .any(|topic| topic.title == t_in(language, instructions))
+            );
+            let layout = layout_sheet(sheet, &ApproxMeasure, false);
+            for (zone, (name, image, action)) in sheet.zones.iter().zip(scenes) {
+                assert_eq!(zone.name, t_in(language, name));
+                assert!(zone.keep_empty && zone.roots.is_empty());
+                for (title, kind) in [(image, CardKind::Image), (action, CardKind::Sticky)] {
+                    let topic = sheet
+                        .content_topics()
+                        .find(|topic| topic.title == t_in(language, title))
+                        .unwrap();
+                    assert_eq!(topic.card.unwrap().kind, kind);
+                    assert!(topic.image.is_none());
+                    let rect = layout.topics[&topic.id].rect;
+                    assert!(
+                        zone.frame.contains(rect.min) && zone.frame.contains(rect.max()),
+                        "{language:?}: {title}"
+                    );
+                }
+            }
+            wb.validate().unwrap();
         }
     }
 

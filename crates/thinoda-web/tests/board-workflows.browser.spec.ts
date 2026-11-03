@@ -3,7 +3,7 @@
  * The native archive is inspected rather than inferring edits from pixels.
  */
 import { expect, test } from "@playwright/test";
-import { command, drag, frames, saveAs, touchEvents, zipEntry } from "./board-browser-helpers";
+import { command, drag, frames, jpeg, saveAs, touchEvents, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -21,6 +21,7 @@ type BoardSheet = {
         id: number;
         title: string;
         position?: { x: number; y: number };
+        image?: string;
         card?: { kind: string; color?: string };
     }>;
     zones: {
@@ -49,6 +50,74 @@ function sheetFrom(zip: Buffer): BoardSheet {
     const content: { sheets: BoardSheet[] } = JSON.parse(zipEntry(zip, "content.json").toString("utf8"));
     return content.sheets[0];
 }
+
+test.describe("storyboard gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("fills an existing scene image and restores it through undo and redo", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 115, y: 532 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        const baseline = await saveAs(page, "storyboard-baseline.thinoda");
+        const initial = sheetFrom(baseline);
+        const manifest = (zip: Buffer): { resources: { id: string; name: string; media_type: string; size: number }[] } =>
+            JSON.parse(zipEntry(zip, "manifest.json").toString("utf8"));
+        expect(initial.title).toBe("Storyboard");
+        expect(initial.root_mode).toBe("hidden");
+        expect(initial.zones.map(zone => zone.name)).toEqual(["Scene 1", "Scene 2", "Scene 3"]);
+        expect(initial.zones.every(zone => zone.keep_empty && !zone.roots?.length)).toBe(true);
+        const images = Object.values(initial.topics).filter(topic => topic.card?.kind === "image");
+        expect(images.map(image => image.title)).toEqual(["Scene 1 image", "Scene 2 image", "Scene 3 image"]);
+        expect(images.every(image => !image.image)).toBe(true);
+        expect(manifest(baseline).resources).toHaveLength(0);
+
+        const bytes = await jpeg(page, 64, 0.9);
+        await canvas.click({ position: { x: 290, y: 400 } });
+        await frames(page);
+        const pending = page.waitForEvent("filechooser");
+        await command(page, "Local Image");
+        await (await pending).setFiles({ name: "storyboard-scene.jpg", mimeType: "image/jpeg", buffer: bytes });
+        await page.waitForTimeout(500);
+
+        const uploaded = await saveAs(page, "storyboard-upload.thinoda");
+        const updated = sheetFrom(uploaded);
+        const resources = manifest(uploaded).resources;
+        expect(resources).toHaveLength(1);
+        expect(resources[0]).toMatchObject({
+            name: "storyboard-scene.jpg",
+            media_type: "image/jpeg",
+            size: bytes.length,
+        });
+        expect(updated.topics[String(images[0].id)].image).toBe(`thinoda-resource:${resources[0].id}`);
+        expect(updated.topics[String(images[1].id)].image).toBeUndefined();
+        expect(updated.topics[String(images[2].id)].image).toBeUndefined();
+        expect(zipEntry(uploaded, `resources/${resources[0].id}`)).toEqual(bytes);
+
+        await page.keyboard.press("Control+z");
+        await frames(page);
+        const undone = await saveAs(page, "storyboard-undone.thinoda");
+        expect(sheetFrom(undone)).toEqual(initial);
+        expect(manifest(undone).resources).toHaveLength(0);
+
+        await page.keyboard.press("Control+Shift+z");
+        await frames(page);
+        const redone = await saveAs(page, "storyboard-redone.thinoda");
+        expect(sheetFrom(redone)).toEqual(updated);
+        expect(manifest(redone).resources).toEqual(resources);
+        expect(zipEntry(redone, `resources/${resources[0].id}`)).toEqual(bytes);
+    });
+});
 
 test.describe("meeting board gallery", () => {
     test.use({ viewport: { width: 1280, height: 800 } });

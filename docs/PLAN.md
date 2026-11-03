@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, fourteen board templates, responsive toolbox and
+The Freeform implementation, fifteen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -48,6 +48,9 @@ four editable visual sections and independent prompt notes, not automatic
 categorization. Board thumbnails now paint each scene object once, preserving
 opacity, layer order and frame clipping. Gallery previews are generated on
 demand; a least-recently-used cache retains at most two full template sets.
+Storyboard adds three visual scenes with independent action notes and initially
+empty image cards. Selected local images are embedded in the native document;
+frames are not groups and do not define timing or slides.
 A small desktop startup comparison
 of the earlier on-demand change did not establish a speedup, and eviction
 overhead is unmeasured. Board accessibility registration now uses per-pass
@@ -3085,6 +3088,17 @@ have focused coverage. Desktop Chromium, Firefox and WebKit create the board,
 move a note between sections and inspect the saved file. This is not physical
 device, screen-reader or broad export acceptance.
 
+Storyboard adds three localized visual scene frames, empty image cards and
+independent action notes. Selecting an image card and choosing Local Image embeds
+the selected resource without creating another card. The frame and card geometry,
+all-language gallery, native round-trip and image upload/undo/redo have focused
+coverage. SVG and PNG checks include the embedded image, while the PDF check
+establishes generation only. Desktop Chromium, Firefox and WebKit create the
+template, upload an image and inspect saved, undone and redone archives. Visual
+frames do not group content or represent timed scenes or presentation slides.
+Realistic image-storage scaling, physical-device, screen-reader and broader
+export acceptance remain open.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3147,7 +3161,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (fourteen implemented).
+5. F4 data-driven "Boards" templates (fifteen implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 
@@ -3275,13 +3289,13 @@ External prerequisites: licensed content/fonts, service/API availability, signin
 accounts/certificates and native Windows ARM64/macOS/Linux test capacity.
 Unavailable integrations remain tracked with their blocker, not silently dropped.
 
-### Immediate next work
+### Historical continuation and gesture inventory
 
-Finish and publish the Fill/color-picker fix (F0), then execute the active
-feature phase plan: native menus, saved configurable keymaps, planning/Gantt,
-Zones/Pitch and enhanced AI. The security/stability sprint and gesture checklist
-below are deferred evidence/inventory, not work to resume before those features
-are implemented, tested and complete.
+The earlier Fill/color-picker, native-menu, keymap, planning/Gantt, Zones/Pitch
+and AI phases were addressed in subsequent checkpoints. Their remaining
+acceptance boundaries are tracked in the current status above. The gesture
+checklist below remains an inventory of implementation and device-acceptance
+work, not a current instruction to restart those earlier phases.
 
 **User-directed workstream - native/web touch and trackpad gestures:**
 deliver consistent direct manipulation on Windows x64/ARM64, macOS Intel/Apple

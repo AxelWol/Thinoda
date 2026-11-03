@@ -31,6 +31,7 @@ const PAGES: &[Page] = &[
             "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
             "Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.",
             "Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.",
+            "Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.",
             "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
             BOARD_TOOLBAR_FALLBACK_GUIDE,
             BOARD_INK_GUIDE,

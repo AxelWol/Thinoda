@@ -280,6 +280,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("swimlane", "Swimlane"),
     board_info("venn-diagram", "Venn Diagram"),
     board_info("empathy-map", "Empathy Map"),
+    board_info("storyboard", "Storyboard"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -782,6 +783,7 @@ mod tests {
                 "swimlane",
                 "venn-diagram",
                 "empathy-map",
+                "storyboard",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -795,6 +797,7 @@ mod tests {
             ("swimlane", "Swimlane"),
             ("venn-diagram", "Venn Diagram"),
             ("empathy-map", "Empathy Map"),
+            ("storyboard", "Storyboard"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -1345,6 +1348,69 @@ mod tests {
     }
 
     #[test]
+    fn storyboard_has_editable_image_cards_and_independent_frames() {
+        use crate::board::{BoardMember, CardKind};
+        use crate::geometry::Vec2;
+
+        let mut wb = instantiate("storyboard");
+        let sheet = wb.active();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|zone| zone.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Scene 1", "Scene 2", "Scene 3"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.resources.is_empty());
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let mut images = Vec::new();
+        for (index, zone) in sheet.zones.iter().enumerate() {
+            for (suffix, kind) in [("image", CardKind::Image), ("action", CardKind::Sticky)] {
+                let title = format!("Scene {} {suffix}", index + 1);
+                let topic = sheet
+                    .content_topics()
+                    .find(|topic| topic.title == title)
+                    .unwrap();
+                assert_eq!(topic.card.unwrap().kind, kind);
+                assert!(topic.image.is_none());
+                let rect = layout.topics[&topic.id].rect;
+                assert!(zone.frame.contains(rect.min) && zone.frame.contains(rect.max()));
+                if kind == CardKind::Image {
+                    images.push(topic.id);
+                }
+            }
+        }
+        let original_frames = sheet.zones.clone();
+        let other_positions: Vec<_> = sheet
+            .floating
+            .iter()
+            .filter(|id| **id != images[0])
+            .map(|id| (*id, sheet.topic(*id).unwrap().position))
+            .collect();
+        let original_position = sheet.topic(images[0]).unwrap().position.unwrap();
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Card(images[0])], Vec2::new(380.0, 0.0))
+            .unwrap();
+        assert_eq!(
+            sheet.topic(images[0]).unwrap().position,
+            Some(original_position + Vec2::new(380.0, 0.0))
+        );
+        assert_eq!(sheet.zones, original_frames);
+        for (id, position) in other_positions {
+            assert_eq!(sheet.topic(id).unwrap().position, position);
+        }
+        wb.validate().unwrap();
+    }
+
+    #[test]
     fn additional_board_templates_round_trip_with_localized_content() {
         for id in [
             "affinity-diagram",
@@ -1353,6 +1419,7 @@ mod tests {
             "swimlane",
             "venn-diagram",
             "empathy-map",
+            "storyboard",
         ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
@@ -1413,6 +1480,16 @@ mod tests {
             "What might they think?",
             "What do they do?",
             "How might they feel?",
+            "Select an image card, then choose Local Image",
+            "Scene 1",
+            "Scene 2",
+            "Scene 3",
+            "Scene 1 image",
+            "Scene 2 image",
+            "Scene 3 image",
+            "Scene 1 action",
+            "Scene 2 action",
+            "Scene 3 action",
         ] {
             assert!(
                 strings.contains(&key),

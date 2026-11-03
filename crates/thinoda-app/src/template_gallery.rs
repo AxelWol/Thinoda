@@ -398,7 +398,12 @@ mod tests {
         assert!(boards.contains(&"blank-canvas"));
         assert!(!boards.contains(&"meeting-board"));
         let (bottom, _) = render(Some(TemplateCategory::Boards), max_offset, &[]);
-        assert!(bottom.contains(&"meeting-board"), "{bottom:?}");
+        let last_board = templates::TEMPLATES
+            .iter()
+            .rev()
+            .find(|info| info.category == TemplateCategory::Boards)
+            .unwrap();
+        assert!(bottom.contains(&last_board.id), "{bottom:?}");
     }
 
     #[test]
@@ -431,6 +436,7 @@ mod tests {
             "swimlane",
             "venn-diagram",
             "empathy-map",
+            "storyboard",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
         }
@@ -633,6 +639,7 @@ mod tests {
             "meeting-board",
             "swimlane",
             "empathy-map",
+            "storyboard",
         ] {
             let wb = templates::instantiate(id);
             let sheet = wb.active();

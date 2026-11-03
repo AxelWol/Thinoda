@@ -780,7 +780,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Fourteen board templates use the same validated primitives and translated
+- Fifteen board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
   persistent visual frames, the Eisenhower quadrants accept user-created
   content, and Swimlane provides three role frames and editable linked shapes.
@@ -832,6 +832,17 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Production desktop Chromium, Firefox and WebKit create the board, move a note
   and inspect the saved file; these checks do not replace physical-device,
   screen-reader or broader export acceptance.
+- Storyboard reuses three visual frames, three initially empty image cards and
+  independent action notes. Selecting a card and choosing Local Image embeds the
+  selected image rather than creating another card; undo and redo restore both
+  the card reference and resource. Its frames do not group content, sequence
+  timed scenes or create presentation slides. Fixed card/frame dimensions are a
+  simple scaffold, not responsive layout. Native round-trip and SVG/PNG tests
+  check the embedded bytes and image output; PDF is checked for generation, not
+  visual fidelity. Production desktop Chromium, Firefox and WebKit regressions
+  create the template, upload an image and inspect saved/undo/redo archives.
+  These checks do not close realistic image-storage scaling, screen-reader,
+  physical-device or broader export-acceptance gates.
 
 ### F5 ink checkpoint: critique
 
@@ -1004,6 +1015,7 @@ cards inside their assigned frames and catalog coverage.
 | Swimlane | Three visual role frames and five editable process shapes linked by elbow connectors; no role or workflow automation |
 | Venn diagram | Two overlapping translucent circles with independent labels and a shared sticky; no set-membership logic |
 | Empathy map | Four visual sections and independent prompt stickies; no inferred thoughts, feelings or category membership |
+| Storyboard | Three visual scene frames with empty image cards and independent action notes; no grouping, timing or slide semantics |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -1016,7 +1028,7 @@ compatibility with the topic renderer.
 |---|---|
 | Lean Canvas, richer Empathy map | Text-heavy responsive regions |
 | User journey map, Roadmap | Structured axes or lanes |
-| Storyboard, Moodboard | Image cards, scalable resource storage |
+| Moodboard | Scalable resource storage and richer image arrangement |
 
 Existing tree templates stay unchanged.
 

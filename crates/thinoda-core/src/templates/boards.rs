@@ -110,6 +110,16 @@ const fn note(text: &'static str, x: f32, y: f32, w: f32) -> CardDef {
     }
 }
 
+const fn image(text: &'static str, x: f32, y: f32) -> CardDef {
+    CardDef {
+        text,
+        center: Vec2::new(x, y),
+        kind: CardKind::Image,
+        size: Vec2::new(320.0, 190.0),
+        color: None,
+    }
+}
+
 const fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect {
         min: Vec2::new(x, y),
@@ -634,6 +644,29 @@ pub(crate) const BOARDS: &[BoardDef] = &[
             frame("Thinks", rect(460.0, 0.0, 440.0, 300.0), TINT_GRAY, &[]),
             frame("Does", rect(0.0, 320.0, 440.0, 300.0), TINT_GREEN, &[]),
             frame("Feels", rect(460.0, 320.0, 440.0, 300.0), TINT_ORANGE, &[]),
+        ],
+        ..EMPTY
+    },
+    BoardDef {
+        id: "storyboard",
+        cards: &[
+            note(
+                "Select an image card, then choose Local Image",
+                560.0,
+                -70.0,
+                780.0,
+            ),
+            image("Scene 1 image", 180.0, 145.0),
+            sticky("Scene 1 action", 180.0, 305.0, YELLOW),
+            image("Scene 2 image", 560.0, 145.0),
+            sticky("Scene 2 action", 560.0, 305.0, BLUE),
+            image("Scene 3 image", 940.0, 145.0),
+            sticky("Scene 3 action", 940.0, 305.0, GREEN),
+        ],
+        frames: &[
+            frame("Scene 1", rect(0.0, 0.0, 360.0, 390.0), TINT_BLUE, &[]),
+            frame("Scene 2", rect(380.0, 0.0, 360.0, 390.0), TINT_GREEN, &[]),
+            frame("Scene 3", rect(760.0, 0.0, 360.0, 390.0), TINT_ORANGE, &[]),
         ],
         ..EMPTY
     },

@@ -467,6 +467,56 @@ mod tests {
     }
 
     #[test]
+    fn storyboard_image_upload_fills_the_selected_card_and_undoes_atomically() {
+        let mut app = ThinodaApp::headless();
+        app.new_doc(thinoda_core::templates::instantiate("storyboard"));
+        let doc = app.doc_mut().unwrap();
+        let id = doc
+            .doc
+            .sheet()
+            .content_topics()
+            .find(|topic| topic.title == "Scene 1 image")
+            .unwrap()
+            .id;
+        doc.view.select_only(id);
+        let request = ImageRequest::capture(doc, 42).unwrap();
+        let before = doc.doc.workbook().clone();
+        assert!(app.command_available(&crate::app::Cmd::LocalImage));
+        app.image_request = Some(request);
+        let bytes = encoded(180);
+        app.complete_image_upload(
+            42,
+            files::ImageUpload {
+                name: "scene.png".into(),
+                bytes: bytes.clone(),
+            },
+        );
+
+        assert!(app.image_request.is_none());
+        let doc = app.doc().unwrap();
+        let sheet = doc.doc.sheet();
+        let topic = sheet.topic(id).unwrap();
+        assert_eq!(topic.title, "Scene 1 image");
+        assert_eq!(topic.card.unwrap().kind, CardKind::Image);
+        assert_eq!(sheet.floating.len(), 7);
+        assert_eq!(sheet.zones, before.active().zones);
+        assert_eq!(
+            sheet
+                .resources
+                .get(topic.image.as_deref().unwrap())
+                .unwrap()
+                .bytes(),
+            bytes.as_slice()
+        );
+        let after = doc.doc.workbook().clone();
+        let doc = app.doc_mut().unwrap();
+        assert!(doc.doc.undo());
+        assert_eq!(doc.doc.workbook(), &before);
+        assert!(doc.doc.redo());
+        assert_eq!(doc.doc.workbook(), &after);
+    }
+
+    #[test]
     fn browser_image_upload_inserts_large_jpeg_without_persistent_staging() {
         let bytes = large_jpeg();
         let mut app = rootless_app();

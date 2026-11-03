@@ -753,6 +753,66 @@ fn swimlane_exports_frames_shapes_and_handoffs() {
 }
 
 #[test]
+fn storyboard_image_card_round_trips_and_exports_its_embedded_image() {
+    let mut wb = thinoda_core::templates::instantiate("storyboard");
+    let sheet = wb.active_mut();
+    let image_card = sheet
+        .content_topics()
+        .find(|topic| topic.title == "Scene 1 image")
+        .unwrap()
+        .id;
+    let source = image::RgbImage::from_pixel(8, 8, image::Rgb([18, 196, 120]));
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(source)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+    let image_bytes = encoded.into_inner();
+    let resource = Resource::new("scene.png", "image/png", image_bytes.clone()).unwrap();
+    thinoda_core::images::set_image(sheet, image_card, Some((resource, Vec2::new(120.0, 100.0))))
+        .unwrap();
+    wb.validate().unwrap();
+
+    let native = export(&wb, Format::Thinoda);
+    let restored = import_bytes(Format::Thinoda, &native).unwrap();
+    assert_eq!(restored, wb);
+    assert_eq!(
+        restored
+            .active()
+            .resources
+            .entries
+            .values()
+            .next()
+            .unwrap()
+            .bytes(),
+        image_bytes.as_slice()
+    );
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let svg =
+            String::from_utf8(export_bytes_with_consent(&wb, Format::Svg, &options, true).unwrap())
+                .unwrap();
+        assert!(svg.contains("data:image/png;base64,"));
+        for name in ["Scene 1", "Scene 2", "Scene 3"] {
+            assert!(svg.contains(name), "missing {name}");
+        }
+        let png = image::load_from_memory(
+            &export_bytes_with_consent(&wb, Format::Png, &options, true).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+        assert!(png.pixels().any(|pixel| pixel.0 == [18, 196, 120]));
+        assert!(
+            export_bytes_with_consent(&wb, Format::Pdf, &options, true)
+                .unwrap()
+                .starts_with(b"%PDF")
+        );
+    }
+}
+
+#[test]
 fn empathy_map_exports_sections_and_prompt_cards() {
     let wb = thinoda_core::templates::instantiate("empathy-map");
     let sheet = wb.active();

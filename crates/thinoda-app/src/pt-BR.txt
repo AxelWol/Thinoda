@@ -782,7 +782,19 @@ What do they say?|O que diz?
 What might they think?|O que pode estar pensando?
 What do they do?|O que faz?
 How might they feel?|Como pode estar se sentindo?
+Storyboard|Storyboard
+Select an image card, then choose Local Image|Selecione um cartão de imagem e escolha Imagem local
+Scene 1|Cena 1
+Scene 2|Cena 2
+Scene 3|Cena 3
+Scene 1 image|Imagem da cena 1
+Scene 2 image|Imagem da cena 2
+Scene 3 image|Imagem da cena 3
+Scene 1 action|Ação da cena 1
+Scene 2 action|Ação da cena 2
+Scene 3 action|Ação da cena 3
 Empathy Map has four visual sections for what someone says, thinks, does and feels. Moving a note does not assign a category.|O mapa de empatia tem quatro áreas visuais para o que uma pessoa diz, pensa, faz e sente. Mover uma nota não atribui uma categoria.
+Storyboard has three visual scenes with image cards. Select a card and choose Local Image to add a picture; frames do not group or time the scenes.|O storyboard tem três cenas visuais com cartões de imagem. Selecione um cartão e escolha Imagem local para adicionar uma imagem; as molduras não agrupam nem cronometram as cenas.
 Venn Diagram has overlapping circles and independent labels. Moving a circle does not move labels or assign set membership.|O diagrama de Venn tem círculos sobrepostos e rótulos independentes. Mover um círculo não move os rótulos nem atribui pertencimento a conjuntos.
 What do we need to learn?|O que precisamos aprender?
 Retrospective: team and time period|Retrospectiva: equipe e período

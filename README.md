@@ -326,7 +326,7 @@ those system-owned controls. WinGet publishing remains paused.
   Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
 
-- Home offers rendered previews of 47 original templates across nine categories.
+- Home offers rendered previews of 50 original templates across nine categories.
   Select a card, then Create, or double-click a card to create immediately.
   Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
@@ -343,12 +343,14 @@ those system-owned controls. WinGet publishing remains paused.
   The Boards category starts maps with a hidden central topic: Blank Canvas,
   Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
   Kanban Board, Business Model Canvas, Flowchart, SWOT Board, Affinity Diagram,
-  Eisenhower Matrix, Meeting Board, Swimlane, Venn Diagram and Empathy Map.
-  Frames, sticky/text cards and shapes are created in the current UI language.
-  Affinity, Eisenhower, Meeting, Swimlane and Empathy frames are visual guides;
-  they do not automatically group or categorize content, assign roles or
-  schedule tasks. Venn labels and translucent circles are independent and do
-  not assign set membership.
+  Eisenhower Matrix, Meeting Board, Swimlane, Venn Diagram, Empathy Map and
+  Storyboard. Frames, cards and shapes are created in the current UI language.
+  Storyboard starts with three empty image cards; select a card and use
+  **Insert > Local Image** to embed a picture. Affinity, Eisenhower, Meeting,
+  Swimlane, Empathy and Storyboard frames are visual guides; they do not
+  automatically group or categorize content, assign roles or schedule tasks.
+  Storyboard scenes have no timing or slide semantics. Venn labels and
+  translucent circles are independent and do not assign set membership.
 - Freeform boards combine independent topic trees with cards, shapes, connectors,
   frames and ink. Use **Board > Hide central topic** to turn a map into a
   rootless board, or **Show central topic** to bring it back; existing content

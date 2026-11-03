@@ -9,6 +9,14 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 
 ## Current open work-item inventory
 
+**2026-11-03 Freeform continuation:** fifteen localized board templates now
+include Storyboard with three initially empty image cards and independent visual
+frames. The template's image upload, native persistence and undo/redo are covered
+in desktop browsers. Browser screen-reader access, safe large-board recovery,
+realistic ink/image performance, export acceptance and physical-device checks
+remain open. Integrated cloud providers stay disabled and paused until publisher
+registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
+
 **2026-10-30 continuation:** vector presentation redesign is implemented and
 accepted in local user review; see [PRESENTATIONS.md](PRESENTATIONS.md).
 Task Planning now belongs in Data after Equation, including its schedule
@@ -1938,9 +1946,12 @@ draft remains blocked on safe bounded discovery and is not integrated.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
   Flowchart, SWOT board, Affinity diagram, Eisenhower matrix, Meeting board,
-  Swimlane, Venn diagram and Empathy Map (more templates listed with
-  prerequisites). Swimlane lanes, Venn intersections and Empathy sections are
-  visual guides, not role, set or category assignments or workflow automation.
+  Swimlane, Venn diagram, Empathy Map and Storyboard (more templates listed with
+  prerequisites). Swimlane lanes, Venn intersections, Empathy sections and
+  Storyboard scenes are visual guides, not role, set or category assignments,
+  grouped or timed scenes, presentation slides or workflow automation.
+  Storyboard embeds user-selected local pictures in initially empty image cards;
+  realistic large-image storage and physical-device acceptance remain open.
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,
   highlighter, object/pixel eraser and lasso; pressure optional.
 - P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance
