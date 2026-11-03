@@ -1,14 +1,20 @@
 //! View-only subtree previews; the document changes only on a valid drop.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use egui::{Color32, Painter, Stroke};
 use thinoda_core::{
-    BranchSide, EditError, Layout, Scene, SceneHit, Sheet, Structure, TopicId, Vec2,
-    board::rotated_corners, layout::ConnectorKind, theme::level_of,
+    BranchSide, CanvasObjectKind, EditError, Endpoint, Layout, Scene, SceneHit, SceneId, Sheet,
+    Structure, TopicId, Vec2, ZoneId,
+    board::{BoardMember, rotated_corners},
+    layout::ConnectorKind,
+    theme::level_of,
 };
 
-use crate::{MapView, PaintOptions, Xf, paint_map, render::connector_path};
+use crate::{
+    MapView, PaintOptions, Xf,
+    render::{GhostClip, connector_path, paint_map_scene},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DropTarget {
@@ -284,6 +290,204 @@ pub(crate) fn ghost_layout(sheet: &Sheet, layout: &Layout, members: &BTreeSet<To
             .cloned()
             .collect(),
         bounds: layout.bounds,
+    }
+}
+
+fn ghost_scene(
+    sheet: &Sheet,
+    scene: &Scene,
+    members: &BTreeSet<TopicId>,
+    delta: Vec2,
+    moving_zone: Option<ZoneId>,
+) -> Scene {
+    let connectors: HashSet<_> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            CanvasObjectKind::Connector(connector)
+                if matches!(connector.from, Endpoint::Topic(id) if members.contains(&id))
+                    && matches!(connector.to, Endpoint::Topic(id) if members.contains(&id)) =>
+            {
+                Some(object.id)
+            }
+            _ => None,
+        })
+        .collect();
+    Scene {
+        grid: None,
+        items: scene
+            .items
+            .iter()
+            .filter(|item| matches!(item.id, SceneId::Object(id) if connectors.contains(&id)))
+            .map(|item| {
+                let mut item = item.clone();
+                let center = item.bounds.center() + delta;
+                item.clip = sheet.zones.iter().find_map(|zone| {
+                    let frame = if moving_zone == Some(zone.id) {
+                        zone.frame.translate(delta)
+                    } else {
+                        zone.frame
+                    };
+                    (zone.clip && frame.contains(center)).then(|| frame.translate(delta * -1.0))
+                });
+                item
+            })
+            .collect(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_ghost(
+    painter: &Painter,
+    sheet: &Sheet,
+    layout: &Layout,
+    scene: &Scene,
+    view: &MapView,
+    members: &BTreeSet<TopicId>,
+    delta: Vec2,
+    moving_zone: Option<ZoneId>,
+) {
+    let xf = view.xf();
+    let ghost = ghost_layout(sheet, layout, members);
+    let scene = ghost_scene(sheet, scene, members, delta, moving_zone);
+    paint_map_scene(
+        painter,
+        sheet,
+        &ghost,
+        Xf {
+            origin: xf.origin + egui::vec2(delta.x, delta.y) * xf.zoom,
+            ..xf
+        },
+        &PaintOptions {
+            dark: view.dark,
+            accent: view.accent,
+            omit_zones: true,
+            ..Default::default()
+        },
+        &scene,
+        Some(GhostClip { delta, moving_zone }),
+    );
+}
+
+pub(crate) fn zone_board_members(
+    sheet: &Sheet,
+    roots: &[TopicId],
+) -> Result<Vec<BoardMember>, EditError> {
+    let cards: Vec<_> = roots
+        .iter()
+        .copied()
+        .filter(|root| sheet.topic(*root).is_some_and(|topic| topic.card.is_some()))
+        .map(BoardMember::Card)
+        .collect();
+    if cards.is_empty() {
+        return Ok(Vec::new());
+    }
+    sheet
+        .expand_board_selection(&cards)
+        .map_err(EditError::Invalid)
+}
+
+pub(crate) fn zone_moving_topics(
+    sheet: &Sheet,
+    topics: &BTreeSet<TopicId>,
+    board_members: &[BoardMember],
+) -> BTreeSet<TopicId> {
+    topics
+        .iter()
+        .copied()
+        .chain(
+            board_members
+                .iter()
+                .filter_map(|member| match member {
+                    BoardMember::Card(id) if !topics.contains(id) => Some(*id),
+                    _ => None,
+                })
+                .flat_map(|id| sheet.owned_subtree_ids(id)),
+        )
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_zone_members(
+    painter: &Painter,
+    sheet: &Sheet,
+    scene: &Scene,
+    view: &MapView,
+    zone: ZoneId,
+    topics: &BTreeSet<TopicId>,
+    board_members: &[BoardMember],
+    moving_topics: &BTreeSet<TopicId>,
+    delta: Vec2,
+) {
+    if board_members
+        .iter()
+        .all(|member| matches!(member, BoardMember::Card(id) if topics.contains(id)))
+    {
+        return;
+    }
+    let selected: HashSet<_> = board_members.iter().copied().collect();
+    let objects: HashMap<_, _> = sheet
+        .canvas
+        .objects
+        .iter()
+        .filter(|object| selected.contains(&BoardMember::Object(object.id)))
+        .map(|object| (object.id, object))
+        .collect();
+    let follows = |endpoint| match endpoint {
+        Endpoint::Point(_) => true,
+        Endpoint::Topic(id) => moving_topics.contains(&id),
+        Endpoint::Object(id) => {
+            selected.contains(&BoardMember::Object(id))
+                && objects
+                    .get(&id)
+                    .is_some_and(|object| !object.is_connector())
+        }
+    };
+    let xf = view.xf();
+    for item in &scene.items {
+        let clip = match item.id {
+            SceneId::Topic(id) if moving_topics.contains(&id) && !topics.contains(&id) => {
+                thinoda_core::scene::topic_clip_zone(sheet, id).map(|(owner, frame)| {
+                    if owner == zone {
+                        frame.translate(delta)
+                    } else {
+                        frame
+                    }
+                })
+            }
+            SceneId::Object(id) if selected.contains(&BoardMember::Object(id)) => {
+                let Some(object) = objects.get(&id) else {
+                    continue;
+                };
+                if let CanvasObjectKind::Connector(connector) = &object.kind
+                    && !(follows(connector.from) && follows(connector.to))
+                {
+                    continue;
+                }
+                let center = match object.kind {
+                    CanvasObjectKind::Connector(_) => item.bounds.center(),
+                    _ => object.rect.center(),
+                } + delta;
+                sheet.zones.iter().find_map(|candidate| {
+                    let frame = if candidate.id == zone {
+                        candidate.frame.translate(delta)
+                    } else {
+                        candidate.frame
+                    };
+                    (candidate.clip && frame.contains(center)).then_some(frame)
+                })
+            }
+            _ => continue,
+        };
+        let clipped = clip.map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let painter = clipped.as_ref().unwrap_or(painter);
+        painter.rect_stroke(
+            xf.rect(item.bounds.translate(delta)),
+            2.0,
+            Stroke::new(2.0, view.accent),
+            egui::StrokeKind::Outside,
+        );
     }
 }
 
@@ -617,25 +821,19 @@ pub(crate) fn paint(
     delta: Vec2,
     current: Vec2,
 ) {
-    let xf = view.xf();
-    let ghost = ghost_layout(sheet, layout, members);
     let mut translucent = painter.clone();
     translucent.set_opacity(0.55);
-    paint_map(
+    paint_ghost(
         &translucent,
         sheet,
-        &ghost,
-        Xf {
-            origin: xf.origin + egui::vec2(delta.x, delta.y) * xf.zoom,
-            ..xf
-        },
-        &PaintOptions {
-            dark: view.dark,
-            accent: view.accent,
-            omit_zones: true,
-            ..Default::default()
-        },
+        layout,
+        scene,
+        view,
+        members,
+        delta,
+        None,
     );
+    let xf = view.xf();
     let target = target(sheet, layout, scene, members, current);
     if matches!(target, Ok(None)) {
         if view.show_alignment_guides {
@@ -705,11 +903,11 @@ pub(crate) fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use thinoda_core::{ApproxMeasure, layout_sheet};
+    use thinoda_core::{ApproxMeasure, build_scene, layout_sheet};
 
     #[test]
     fn topic_drag_ghost_uses_the_view_automatic_stroke() {
-        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, SheetRootMode, build_scene};
+        use thinoda_core::{CanvasConnector, CanvasObject, Endpoint, SheetRootMode};
 
         let mut sheet = Sheet::new("Board", "");
         sheet.root_mode = SheetRootMode::Hidden;
@@ -751,6 +949,376 @@ mod tests {
                 )));
             }
         }
+    }
+
+    #[test]
+    fn topic_ghost_contains_only_connectors_between_moving_topics() {
+        use thinoda_core::{
+            Band, CanvasConnector, CanvasObject, Color, InkStroke, InkTool, Rect, ShapeKind,
+        };
+
+        let mut sheet = Sheet::new("Map", "Root");
+        let first = sheet.add_floating("First", Vec2::new(-100.0, 0.0));
+        let second = sheet.add_floating("Second", Vec2::new(100.0, 0.0));
+        let stationary = sheet.add_floating("Stationary", Vec2::new(300.0, 0.0));
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Rectangle,
+            Rect::from_center_size(Vec2::new(0.0, 100.0), Vec2::new(80.0, 40.0)),
+        );
+        shape.band = Band::Below;
+        let shape = sheet.add_canvas_object(shape).unwrap();
+        let ink = sheet
+            .add_canvas_object(CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                Color::rgb(20, 180, 90),
+                3.0,
+                vec![Vec2::new(-50.0, 120.0), Vec2::new(50.0, 120.0)],
+            )))
+            .unwrap();
+        let free = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-80.0, 150.0)),
+                Endpoint::Point(Vec2::new(80.0, 150.0)),
+            )))
+            .unwrap();
+        let outside = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(first),
+                Endpoint::Topic(stationary),
+            )))
+            .unwrap();
+        let inside = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(first),
+                Endpoint::Topic(second),
+            )))
+            .unwrap();
+        let before = sheet.clone();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let members = members(&sheet, &[first, second]);
+        let ghost = ghost_layout(&sheet, &layout, &members);
+        assert_eq!(ghost.order.len(), 2);
+        let original_scene = build_scene(&sheet, &layout);
+        for id in [shape, ink, free, inside] {
+            assert!(original_scene.item(SceneId::Object(id)).is_some());
+        }
+        let scene = ghost_scene(&sheet, &original_scene, &members, Vec2::ZERO, None);
+        let objects: Vec<_> = scene
+            .items
+            .iter()
+            .filter_map(|item| match item.id {
+                SceneId::Object(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(objects, vec![inside]);
+        assert_eq!(scene.items.len(), 1);
+        assert!(scene.item(SceneId::Object(outside)).is_none());
+        let render = |sheet: &Sheet, scene: &Scene| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                paint_ghost(
+                    ui.painter(),
+                    sheet,
+                    &layout,
+                    scene,
+                    &MapView::default(),
+                    &members,
+                    Vec2::new(30.0, 40.0),
+                    None,
+                );
+            });
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let mut reference = sheet.clone();
+        reference
+            .canvas
+            .objects
+            .retain(|object| object.id == inside);
+        let reference_scene = build_scene(&reference, &layout);
+        assert_eq!(
+            render(&sheet, &original_scene),
+            render(&reference, &reference_scene)
+        );
+        assert_eq!(sheet, before);
+    }
+
+    #[test]
+    fn topic_ghost_keeps_stationary_frame_clips_and_moves_the_dragged_frame_clip() {
+        use thinoda_core::Rect;
+
+        let mut sheet = Sheet::new("Map", "Root");
+        let root = sheet.add_floating("Moving", Vec2::ZERO);
+        let child = sheet.insert_child(root, "Child").unwrap();
+        sheet.add_relationship(root, child).unwrap();
+        let frame = Rect::from_min_size(Vec2::new(-180.0, -120.0), Vec2::new(360.0, 240.0));
+        let zone = sheet.create_zone("Frame", vec![root], frame).unwrap();
+        sheet.zones[0].clip = true;
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let members = members(&sheet, &[root]);
+        let view = MapView::default();
+        let delta = Vec2::new(100.0, 60.0);
+        let xf = view.xf();
+
+        for moving_zone in [None, Some(zone)] {
+            let ctx = egui::Context::default();
+            let mut painter_clip = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    painter_clip = ui.painter().clip_rect();
+                    paint_ghost(
+                        ui.painter(),
+                        &sheet,
+                        &layout,
+                        &scene,
+                        &view,
+                        &members,
+                        delta,
+                        moving_zone,
+                    );
+                },
+            );
+            let target_frame = if moving_zone.is_some() {
+                frame.translate(delta)
+            } else {
+                frame
+            };
+            let expected = painter_clip.intersect(xf.rect(target_frame));
+            output.textures_delta.clear();
+            assert!(
+                !output.shapes.is_empty()
+                    && output
+                        .shapes
+                        .iter()
+                        .all(|shape| shape.clip_rect == expected),
+                "ghost shapes must be clipped to {target_frame:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ghost_connector_clip_follows_destination_geometry_and_frame_motion() {
+        use thinoda_core::{CanvasConnector, CanvasObject, Rect};
+
+        let mut sheet = Sheet::new("Map", "Root");
+        let first = sheet.add_floating("First", Vec2::new(250.0, 0.0));
+        let second = sheet.add_floating("Second", Vec2::new(350.0, 0.0));
+        let frame = Rect::from_min_size(Vec2::new(-100.0, -100.0), Vec2::new(200.0, 200.0));
+        let zone = sheet
+            .create_zone("Frame", vec![first, second], frame)
+            .unwrap();
+        sheet.zones[0].clip = true;
+        let connector = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(first),
+                Endpoint::Topic(second),
+            )))
+            .unwrap();
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let item = scene.item(SceneId::Object(connector)).unwrap();
+        assert_eq!(item.clip, None);
+        let members = members(&sheet, &[first, second]);
+        let delta = frame.center() - item.bounds.center();
+        let stationary = ghost_scene(&sheet, &scene, &members, delta, None);
+        assert_eq!(
+            stationary.item(SceneId::Object(connector)).unwrap().clip,
+            Some(frame.translate(delta * -1.0))
+        );
+        let moving = ghost_scene(&sheet, &scene, &members, delta, Some(zone));
+        assert_eq!(moving.item(SceneId::Object(connector)).unwrap().clip, None);
+    }
+
+    #[test]
+    fn zone_group_outlines_only_actual_rigid_members_with_their_target_clips() {
+        use thinoda_core::{
+            CanvasConnector, CanvasObject, Card, CardKind, Rect, ShapeKind, SheetRootMode,
+        };
+
+        let mut sheet = Sheet::new("Board", "");
+        sheet.root_mode = SheetRootMode::Hidden;
+        let card = |sheet: &mut Sheet, title, center| {
+            sheet
+                .add_card(
+                    title,
+                    center,
+                    Card::new(CardKind::Sticky, Vec2::new(80.0, 60.0)),
+                )
+                .unwrap()
+        };
+        let inside = card(&mut sheet, "Inside", Vec2::new(-80.0, 0.0));
+        let outside = card(&mut sheet, "Outside", Vec2::new(250.0, 0.0));
+        let outside_child = sheet.insert_child(outside, "Child").unwrap();
+        let frame = Rect::from_min_size(Vec2::new(-180.0, -150.0), Vec2::new(320.0, 300.0));
+        let other_frame = Rect::from_min_size(Vec2::new(150.0, -150.0), Vec2::new(300.0, 300.0));
+        let zone = sheet.create_zone("Moving", vec![inside], frame).unwrap();
+        let other = sheet
+            .create_zone("Stationary", vec![outside], other_frame)
+            .unwrap();
+        for zone in &mut sheet.zones {
+            zone.clip = true;
+        }
+        let add_shape = |sheet: &mut Sheet, center| {
+            sheet
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_center_size(center, Vec2::new(40.0, 30.0)),
+                ))
+                .unwrap()
+        };
+        let in_frame = add_shape(&mut sheet, Vec2::new(-40.0, 70.0));
+        let in_other = add_shape(&mut sheet, Vec2::new(300.0, 70.0));
+        let stationary = add_shape(&mut sheet, Vec2::new(350.0, -70.0));
+        let inside_stationary = add_shape(&mut sheet, Vec2::new(-140.0, -70.0));
+        let free = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Point(Vec2::new(-120.0, 110.0)),
+                Endpoint::Point(Vec2::new(-60.0, 110.0)),
+            )))
+            .unwrap();
+        let stretched = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(inside),
+                Endpoint::Object(stationary),
+            )))
+            .unwrap();
+        let grouped_link = sheet
+            .add_canvas_object(CanvasObject::connector(CanvasConnector::new(
+                Endpoint::Topic(inside),
+                Endpoint::Topic(outside_child),
+            )))
+            .unwrap();
+        sheet
+            .group_board_members(&[
+                BoardMember::Card(inside),
+                BoardMember::Card(outside),
+                BoardMember::Object(in_frame),
+                BoardMember::Object(in_other),
+                BoardMember::Object(free),
+                BoardMember::Object(stretched),
+                BoardMember::Object(grouped_link),
+            ])
+            .unwrap();
+        let before = sheet.clone();
+        let board_members = zone_board_members(&sheet, &[inside]).unwrap();
+        assert!(!board_members.contains(&BoardMember::Object(stationary)));
+        let topics = members(&sheet, &[inside]);
+        let moving_topics = zone_moving_topics(&sheet, &topics, &board_members);
+        assert!(moving_topics.contains(&inside));
+        assert!(moving_topics.contains(&outside));
+        assert!(moving_topics.contains(&outside_child));
+        let layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        let scene = build_scene(&sheet, &layout);
+        let view = MapView::default();
+        let xf = view.xf();
+        let delta = Vec2::new(30.0, 40.0);
+        let ctx = egui::Context::default();
+        let mut painter_clip = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                painter_clip = ui.painter().clip_rect();
+                paint_zone_members(
+                    ui.painter(),
+                    &sheet,
+                    &scene,
+                    &view,
+                    zone,
+                    &topics,
+                    &board_members,
+                    &moving_topics,
+                    delta,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let outline = |id| {
+            let rect = xf.rect(scene.item(id).unwrap().bounds.translate(delta));
+            output.shapes.iter().find(|shape| {
+                matches!(
+                    &shape.shape,
+                    egui::Shape::Rect(outline)
+                        if outline.rect == rect && outline.stroke.color == view.accent
+                )
+            })
+        };
+        assert_eq!(
+            outline(SceneId::Object(in_frame)).unwrap().clip_rect,
+            painter_clip.intersect(xf.rect(frame.translate(delta)))
+        );
+        assert_eq!(
+            outline(SceneId::Object(in_other)).unwrap().clip_rect,
+            painter_clip.intersect(xf.rect(other_frame))
+        );
+        assert_eq!(
+            outline(SceneId::Topic(outside)).unwrap().clip_rect,
+            painter_clip.intersect(xf.rect(other_frame))
+        );
+        assert_eq!(
+            outline(SceneId::Topic(outside_child)).unwrap().clip_rect,
+            painter_clip.intersect(xf.rect(other_frame))
+        );
+        assert!(outline(SceneId::Object(free)).is_some());
+        assert!(outline(SceneId::Object(grouped_link)).is_some());
+        assert!(outline(SceneId::Object(stretched)).is_none());
+        assert!(outline(SceneId::Object(stationary)).is_none());
+        assert!(outline(SceneId::Object(inside_stationary)).is_none());
+        assert_eq!(sheet, before);
+
+        sheet.move_zone(zone, delta).unwrap();
+        for id in [in_frame, in_other, free, stretched, grouped_link] {
+            assert_eq!(
+                sheet.canvas.object(id).unwrap().rect,
+                before.canvas.object(id).unwrap().rect.translate(delta)
+            );
+        }
+        assert_eq!(
+            sheet.canvas.object(stationary),
+            before.canvas.object(stationary)
+        );
+        assert_eq!(
+            sheet.canvas.object(inside_stationary),
+            before.canvas.object(inside_stationary)
+        );
+        for id in [inside, outside] {
+            assert_eq!(
+                sheet.topic(id).unwrap().position,
+                before
+                    .topic(id)
+                    .unwrap()
+                    .position
+                    .map(|position| position + delta)
+            );
+        }
+        let moved_layout = layout_sheet(&sheet, &ApproxMeasure, false);
+        assert_eq!(
+            moved_layout.rect(outside_child).unwrap().center(),
+            layout.rect(outside_child).unwrap().center() + delta
+        );
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .find(|item| item.id == other)
+                .unwrap()
+                .frame,
+            other_frame
+        );
     }
 
     #[test]

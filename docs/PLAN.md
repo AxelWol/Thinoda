@@ -68,6 +68,13 @@ this intentionally changes GUI PowerPoint output in dark mode, without changing
 CLI/API defaults or print's separate controls. The [critique](FREEFORM.md)
 records focused evidence and real-host acceptance still required.
 
+**2026-11-03 topic and frame drag-preview checkpoint:** ghosts no longer
+translate unrelated board objects, and frame previews account for the complete
+groups of their root cards, including outside cards and descendants. Frame
+clipping follows the moving or stationary owner; locked moves remain atomic
+and resizing remains independent. The [critique](FREEFORM.md) records schematic
+connector and reparenting limits and the remaining device/performance gates.
+
 **2026-11-03 whole-card formatting checkpoint:** selected sticky and text cards
 have a docked, scrollable formatting strip, reachable from the selected-topic
 toolbar or canvas context menu. Its visible scope label distinguishes whole-card

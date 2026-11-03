@@ -1,6 +1,6 @@
 use super::*;
 use egui_kittest::Harness;
-use thinoda_core::{Workbook, ZoneId};
+use thinoda_core::{CanvasGroupId, CanvasObjectId, Workbook, ZoneId, board::BoardMember};
 
 struct State {
     doc: Document,
@@ -68,6 +68,196 @@ fn drag(h: &mut Harness<'_, State>, resize: bool, delta: EVec2) -> Pos2 {
     h.run_steps(2);
     assert!(matches!(h.state().view.drag, Drag::Zone { .. }));
     end
+}
+
+fn add_mixed_frame_group(
+    h: &mut Harness<'_, State>,
+) -> (
+    TopicId,
+    TopicId,
+    CanvasObjectId,
+    CanvasObjectId,
+    CanvasGroupId,
+) {
+    let zone = h.state().zone;
+    let result = h
+        .state_mut()
+        .doc
+        .edit_sheet("Mixed frame fixture", |sheet| {
+            use thinoda_core::{CanvasObject, Card, CardKind, ShapeKind};
+
+            let card = |sheet: &mut Sheet, title, center| {
+                sheet
+                    .add_card(
+                        title,
+                        center,
+                        Card::new(CardKind::Sticky, Vec2::new(80.0, 60.0)),
+                    )
+                    .map_err(thinoda_core::EditError::Invalid)
+            };
+            let inside = card(sheet, "Inside", Vec2::new(30.0, 0.0))?;
+            let outside = card(sheet, "Outside", Vec2::new(350.0, 0.0))?;
+            sheet
+                .zones
+                .iter_mut()
+                .find(|candidate| candidate.id == zone)
+                .unwrap()
+                .roots
+                .push(inside);
+            let shape = |sheet: &mut Sheet, center| {
+                sheet
+                    .add_canvas_object(CanvasObject::shape(
+                        ShapeKind::Rectangle,
+                        thinoda_core::Rect::from_center_size(center, Vec2::new(40.0, 30.0)),
+                    ))
+                    .map_err(thinoda_core::EditError::Invalid)
+            };
+            let grouped = shape(sheet, Vec2::new(100.0, 60.0))?;
+            let stationary = shape(sheet, Vec2::new(-190.0, 80.0))?;
+            let group = sheet
+                .group_board_members(&[
+                    BoardMember::Card(inside),
+                    BoardMember::Card(outside),
+                    BoardMember::Object(grouped),
+                ])
+                .map_err(thinoda_core::EditError::Invalid)?;
+            Ok((inside, outside, grouped, stationary, group))
+        })
+        .unwrap();
+    h.run_steps(2);
+    result
+}
+
+#[test]
+fn frame_drag_previews_and_moves_only_its_expanded_group() {
+    let mut h = harness(1.0);
+    let (inside, outside, grouped, stationary, _) = add_mixed_frame_group(&mut h);
+    let before = h.state().doc.workbook().clone();
+    assert!(
+        before.sheets[0].zones[0].frame.contains(
+            before.sheets[0]
+                .canvas
+                .object(stationary)
+                .unwrap()
+                .rect
+                .center()
+        )
+    );
+    let delta = Vec2::new(70.0, 40.0);
+    let end = drag(&mut h, false, vec2(delta.x, delta.y));
+    let Drag::Zone {
+        board_members,
+        moving_topics,
+        ..
+    } = &h.state().view.drag
+    else {
+        panic!("expected a frame drag");
+    };
+    for member in [
+        BoardMember::Card(inside),
+        BoardMember::Card(outside),
+        BoardMember::Object(grouped),
+    ] {
+        assert!(board_members.contains(&member));
+    }
+    assert!(!board_members.contains(&BoardMember::Object(stationary)));
+    assert!(moving_topics.contains(&inside));
+    assert!(moving_topics.contains(&outside));
+    assert_eq!(h.state().doc.workbook(), &before);
+    h.drop_at(end);
+    h.run_steps(3);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    for id in [inside, outside] {
+        assert_eq!(
+            h.state().doc.sheet().topic(id).unwrap().position,
+            before.sheets[0]
+                .topic(id)
+                .unwrap()
+                .position
+                .map(|position| position + delta)
+        );
+    }
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(grouped).unwrap().rect,
+        before.sheets[0]
+            .canvas
+            .object(grouped)
+            .unwrap()
+            .rect
+            .translate(delta)
+    );
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(stationary),
+        before.sheets[0].canvas.object(stationary)
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+}
+
+#[test]
+fn locked_frame_group_move_is_rejected_without_changing_the_document() {
+    let mut h = harness(1.0);
+    let (_, _, _, _, group) = add_mixed_frame_group(&mut h);
+    h.state_mut()
+        .doc
+        .set_canvas_group_locked(group, true)
+        .unwrap();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    let end = drag(&mut h, false, vec2(70.0, 40.0));
+    h.drop_at(end);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("locked")),
+        "{:?}",
+        h.state().errors
+    );
+}
+
+#[test]
+fn grouped_frame_drag_cancels_without_moving_members() {
+    let mut h = harness(1.0);
+    add_mixed_frame_group(&mut h);
+    let before = h.state().doc.workbook().clone();
+    let end = drag(&mut h, false, vec2(70.0, 40.0));
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    h.drop_at(end);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(matches!(h.state().view.drag, Drag::None));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn locked_frame_group_does_not_block_frame_resize() {
+    let mut h = harness(1.0);
+    let (inside, outside, grouped, _, group) = add_mixed_frame_group(&mut h);
+    h.state_mut()
+        .doc
+        .set_canvas_group_locked(group, true)
+        .unwrap();
+    h.run_steps(2);
+    let before = h.state().doc.workbook().clone();
+    let end = drag(&mut h, true, vec2(70.0, 40.0));
+    h.drop_at(end);
+    h.run_steps(3);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    assert_eq!(
+        h.state().doc.sheet().zones[0].frame.size,
+        before.sheets[0].zones[0].frame.size + Vec2::new(70.0, 40.0)
+    );
+    for id in [inside, outside] {
+        assert_eq!(h.state().doc.sheet().topic(id), before.sheets[0].topic(id));
+    }
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(grouped),
+        before.sheets[0].canvas.object(grouped)
+    );
 }
 
 #[test]

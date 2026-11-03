@@ -1243,6 +1243,37 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   inside generated decks in both themes. They do not replace acceptance in
   installed Office, on physical printers, or on real browser/OS hosts.
 
+### Topic and frame drag-preview checkpoint and critique
+
+- Topic and frame ghosts no longer translate unrelated shapes, ink or
+  free-standing connectors. A ghost paints board connectors only when both
+  topic endpoints are moving with it. The main canvas and ghost share the
+  already-built scene, and frame-group expansion and descendant collection are
+  captured at gesture start rather than repeated on every paint.
+- Duck check: frame membership is not geometric containment. Moving a frame
+  moves its floating roots and the complete board groups of its root cards,
+  even when other group members are outside the frame. The preview outlines
+  those additional cards, visible descendants and grouped objects, while
+  ungrouped objects merely inside the frame remain stationary. The core move
+  operation remains authoritative; resize does not move group members or
+  reject a locked group, while a locked-group move is rejected without a
+  partial edit.
+- Duck check: a frame's clip moves with that frame, but other frame clips stay
+  fixed. Ghost connector clipping is recalculated from its destination
+  geometry. A topic drag retains its current clipping owner in the preview;
+  reparenting can change that owner and reflow the layout on drop.
+- Duck check: group outlines are schematic, not rendered copies. Connectors
+  with a stationary endpoint or a connector endpoint are not translated as
+  rigid outlines, and ungrouped links involving additional group members may
+  update only after drop. The real connector geometry remains authoritative.
+  The canvas still scans board objects during painting; this checkpoint does
+  not establish a large-board performance threshold.
+- Regression coverage compares rendered ghosts with and without unrelated
+  board objects, checks stationary and moving clips, grouped descendants and
+  connector outlines, and exercises move, resize, locked rejection, cancel
+  and undo through the canvas. Physical touch and cross-platform visual
+  acceptance remain open.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

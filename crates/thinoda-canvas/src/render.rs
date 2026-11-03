@@ -13,11 +13,11 @@ use std::{
 };
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
-    ShapeKind, Sheet, TextAlign, TopicId, TopicShape,
+    ShapeKind, Sheet, TextAlign, TopicId, TopicShape, ZoneId,
     board::{rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
-    scene::{Scene, SceneGeometry, build_scene, topic_clip_rect, topic_clip_zone},
+    scene::{Scene, SceneGeometry, build_scene, topic_clip_zone},
     theme::Theme,
 };
 
@@ -77,6 +77,12 @@ pub struct PaintOptions<'a> {
     pub show_grid: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct GhostClip {
+    pub delta: Vec2,
+    pub moving_zone: Option<ZoneId>,
+}
+
 /// Background color of the sheet.
 pub fn sheet_background(sheet: &Sheet, dark: bool) -> Color32 {
     color32(Theme::for_settings(&sheet.theme).background(&sheet.theme, dark))
@@ -129,6 +135,7 @@ pub fn paint_thumbnail(painter: &Painter, sheet: &Sheet, layout: &Layout, rect: 
             ..Default::default()
         },
         &scene,
+        None,
     );
 }
 
@@ -141,22 +148,30 @@ pub fn paint_map(
     opts: &PaintOptions<'_>,
 ) {
     let scene = build_scene(sheet, layout);
-    paint_map_scene(painter, sheet, layout, xf, opts, &scene);
+    paint_map_scene(painter, sheet, layout, xf, opts, &scene, None);
 }
 
-fn paint_map_scene(
+pub(crate) fn paint_map_scene(
     painter: &Painter,
     sheet: &Sheet,
     layout: &Layout,
     xf: Xf,
     opts: &PaintOptions<'_>,
     scene: &Scene,
+    ghost_clip: Option<GhostClip>,
 ) {
     let z = xf.zoom;
     let bg = sheet_background(sheet, opts.dark);
     let dim = |id: TopicId| {
         opts.filter.is_some_and(|f| !f.contains(&id))
             || opts.dimmed.is_some_and(|ids| ids.contains(&id))
+    };
+    // Ghost geometry already uses a translated transform; stationary clips cancel it.
+    let topic_clip = |id| {
+        topic_clip_zone(sheet, id).map(|(zone, frame)| match ghost_clip {
+            Some(ghost) if ghost.moving_zone != Some(zone) => frame.translate(ghost.delta * -1.0),
+            _ => frame,
+        })
     };
     let objects: HashMap<_, _> = sheet
         .canvas
@@ -247,7 +262,7 @@ fn paint_map_scene(
     for b in &layout.boundaries {
         let bd = sheet.boundaries.iter().find(|x| x.id == b.id);
         let clipped = bd
-            .and_then(|boundary| topic_clip_rect(sheet, boundary.parent))
+            .and_then(|boundary| topic_clip(boundary.parent))
             .map(|clip| painter.with_clip_rect(xf.rect(clip)));
         let painter = clipped.as_ref().unwrap_or(painter);
         let selected = opts.selected_object == Some(ObjectSelection::Boundary(b.id));
@@ -288,8 +303,7 @@ fn paint_map_scene(
 
     // Branch connectors.
     for c in &layout.connectors {
-        let clipped =
-            topic_clip_rect(sheet, c.child).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let clipped = topic_clip(c.child).map(|clip| painter.with_clip_rect(xf.rect(clip)));
         let painter = clipped.as_ref().unwrap_or(painter);
         let mut color = color32(c.color);
         if dim(c.child) {
@@ -313,8 +327,7 @@ fn paint_map_scene(
 
     // Summaries (brace + connector to summary topic).
     for s in &layout.summaries {
-        let clipped =
-            topic_clip_rect(sheet, s.topic).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+        let clipped = topic_clip(s.topic).map(|clip| painter.with_clip_rect(xf.rect(clip)));
         let painter = clipped.as_ref().unwrap_or(painter);
         let selected = opts.selection.contains(&s.topic)
             || opts.selected_object == Some(ObjectSelection::Summary(s.id));
@@ -362,7 +375,7 @@ fn paint_map_scene(
             continue;
         };
         let topic = sheet.topic(*id);
-        let clipped = topic_clip_rect(sheet, *id).map(|r| painter.with_clip_rect(xf.rect(r)));
+        let clipped = topic_clip(*id).map(|r| painter.with_clip_rect(xf.rect(r)));
         paint_topic(
             clipped.as_ref().unwrap_or(painter),
             sheet,
@@ -381,7 +394,8 @@ fn paint_map_scene(
         let rel = sheet.relationships.iter().find(|x| x.id == r.id);
         let clipped = rel
             .and_then(|relationship| {
-                relationship_clip_rect(sheet, relationship.from, relationship.to)
+                relationship_clip_rect(sheet, relationship.from, relationship.to)?;
+                topic_clip(relationship.from)
             })
             .map(|clip| painter.with_clip_rect(xf.rect(clip)));
         let painter = clipped.as_ref().unwrap_or(painter);
@@ -514,8 +528,7 @@ fn paint_map_scene(
         let show =
             t.hidden_children > 0 || opts.hovered == Some(*id) || opts.selection.contains(id);
         if show {
-            let clipped =
-                topic_clip_rect(sheet, *id).map(|clip| painter.with_clip_rect(xf.rect(clip)));
+            let clipped = topic_clip(*id).map(|clip| painter.with_clip_rect(xf.rect(clip)));
             paint_badge(
                 clipped.as_ref().unwrap_or(painter),
                 sheet,
@@ -3917,7 +3930,10 @@ mod tests {
         assert_ne!(from_zone, to_zone);
         assert_eq!(topic_clip_zone(&sheet, from), Some((from_zone, frame)));
         assert_eq!(topic_clip_zone(&sheet, to), Some((to_zone, frame)));
-        assert_eq!(topic_clip_rect(&sheet, from), Some(frame));
+        assert_eq!(
+            thinoda_core::scene::topic_clip_rect(&sheet, from),
+            Some(frame)
+        );
         assert_eq!(relationship_clip_rect(&sheet, from, to), None);
     }
 

@@ -28,7 +28,8 @@ use crate::{
         bottom_right_rect, show_minimap,
     },
     render::{
-        PaintOptions, Xf, brace_path, color32, paint_map, sheet_background, topic_badge_center,
+        PaintOptions, Xf, brace_path, color32, paint_map, paint_map_scene, sheet_background,
+        topic_badge_center,
     },
 };
 
@@ -271,6 +272,8 @@ enum Drag {
         id: thinoda_core::ZoneId,
         frame: thinoda_core::Rect,
         members: std::collections::BTreeSet<TopicId>,
+        board_members: Vec<thinoda_core::board::BoardMember>,
+        moving_topics: std::collections::BTreeSet<TopicId>,
         grab: Vec2,
         current: Vec2,
         state: u64,
@@ -1778,17 +1781,41 @@ impl MapCanvas {
                 let frame = zone.frame;
                 let members = crate::topic_drag::members(doc.sheet(), &zone.roots);
                 let resize = (sp - frame.max()).length() <= 12.0 / view.zoom;
+                let board_members = if resize {
+                    Ok(Vec::new())
+                } else {
+                    crate::topic_drag::zone_board_members(doc.sheet(), &zone.roots)
+                };
                 view.select_object(ObjectSelection::Zone(id));
-                view.drag = Drag::Zone {
-                    id,
-                    frame,
-                    members,
-                    grab: sp,
-                    current: sp,
-                    state: doc.state_id(),
-                    sheet: doc.active_index(),
-                    camera: (view.offset, view.zoom),
-                    resize,
+                match board_members {
+                    Ok(board_members) => {
+                        let moving_topics = if resize {
+                            std::collections::BTreeSet::new()
+                        } else {
+                            crate::topic_drag::zone_moving_topics(
+                                doc.sheet(),
+                                &members,
+                                &board_members,
+                            )
+                        };
+                        view.drag = Drag::Zone {
+                            id,
+                            frame,
+                            members,
+                            board_members,
+                            moving_topics,
+                            grab: sp,
+                            current: sp,
+                            state: doc.state_id(),
+                            sheet: doc.active_index(),
+                            camera: (view.offset, view.zoom),
+                            resize,
+                        };
+                    }
+                    Err(error) => {
+                        view.drag = Drag::None;
+                        out.error = Some(error);
+                    }
                 };
             } else if any_touches {
                 view.drag = Drag::Pan;
@@ -2216,8 +2243,8 @@ impl MapCanvas {
             omit_zones: false,
             show_grid: true,
         };
-        paint_map(&painter, sheet, &layout, xf, &opts);
         let paint_scene = build_scene(sheet, &layout);
+        paint_map_scene(&painter, sheet, &layout, xf, &opts, &paint_scene, None);
         board_input::paint(&painter, view, sheet, &layout, &paint_scene, pointer);
         view.ink_controller.paint_preview(&painter, xf, view.accent);
         image_resize::paint(&painter, view, sheet, &layout, !space && !touch_navigation);
@@ -2286,8 +2313,11 @@ impl MapCanvas {
                 );
             }
             Drag::Zone {
+                id,
                 frame,
                 members,
+                board_members,
+                moving_topics,
                 grab,
                 current,
                 resize,
@@ -2303,21 +2333,26 @@ impl MapCanvas {
                         ),
                     )
                 } else {
-                    let ghost = crate::topic_drag::ghost_layout(sheet, &layout, members);
-                    paint_map(
+                    crate::topic_drag::paint_ghost(
                         &painter,
                         sheet,
-                        &ghost,
-                        Xf {
-                            origin: xf.origin + vec2(delta.x, delta.y) * xf.zoom,
-                            ..xf
-                        },
-                        &PaintOptions {
-                            dark: view.dark,
-                            accent: view.accent,
-                            omit_zones: true,
-                            ..Default::default()
-                        },
+                        &layout,
+                        &paint_scene,
+                        view,
+                        members,
+                        delta,
+                        Some(*id),
+                    );
+                    crate::topic_drag::paint_zone_members(
+                        &painter,
+                        sheet,
+                        &paint_scene,
+                        view,
+                        *id,
+                        members,
+                        board_members,
+                        moving_topics,
+                        delta,
                     );
                     thinoda_core::Rect::from_min_size(frame.min + delta, frame.size)
                 };
