@@ -385,6 +385,10 @@ const DE: &[(&str, &str)] = &[
     ),
     // Offline board guide.
     (
+        "If the selected-topic toolbar cannot fit, use the main menu or the topic's context menu.",
+        "Wenn die Werkzeugleiste des ausgewählten Themas keinen Platz findet, verwenden Sie das Hauptmenü oder das Kontextmenü des Themas.",
+    ),
+    (
         "Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.",
         "Mit Stift und Textmarker zeichnen Sie freihändig. Stellen Sie Tintenfarbe, Strichbreite und Deckkraft oder zum Radieren den Radius des Radierers ein; die Einstellungen werden zu Beginn jeder Geste übernommen.",
     ),
@@ -3889,11 +3893,15 @@ mod tests {
     }
 
     #[test]
-    fn board_duplication_guide_is_localized() {
-        let key = crate::help::BOARD_DUPLICATION_GUIDE;
-        assert!(crate::help::translation_keys().any(|entry| entry == key));
-        for language in TRANSLATED {
-            assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+    fn board_duplication_and_toolbar_fallback_guides_are_localized() {
+        for key in [
+            crate::help::BOARD_DUPLICATION_GUIDE,
+            crate::help::BOARD_TOOLBAR_FALLBACK_GUIDE,
+        ] {
+            assert!(crate::help::translation_keys().any(|entry| entry == key));
+            for language in TRANSLATED {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
         }
     }
 

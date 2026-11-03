@@ -1,0 +1,84 @@
+import { expect, test, type Page } from "@playwright/test";
+import { join } from "node:path";
+import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+
+test.use({
+    viewport: { width: 800, height: 600 },
+    deviceScaleFactor: 1,
+    locale: "en-US",
+    serviceWorkers: "block",
+    screenshot: "only-on-failure",
+});
+test.setTimeout(180_000);
+
+async function stickyPixels(page: Page): Promise<number[]> {
+    const screenshot = await page.screenshot();
+    return page.evaluate(async (base64) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Cannot inspect the board screenshot");
+        context.drawImage(image, 0, 0);
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        const colors = [
+            [255, 229, 143], [183, 235, 143], [165, 216, 255], [255, 193, 217],
+        ];
+        const counts = colors.map(() => 0);
+        for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width * 0.75; x++) {
+                const offset = (y * canvas.width + x) * 4;
+                colors.forEach(([r, g, b], index) => {
+                    if (Math.abs(data[offset] - r) <= 4
+                        && Math.abs(data[offset + 1] - g) <= 4
+                        && Math.abs(data[offset + 2] - b) <= 4) counts[index]++;
+                });
+            }
+        }
+        return counts;
+    }, screenshot.toString("base64"));
+}
+
+test("selected-topic actions leave the Affinity starter notes visible", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    // Exported from the built-in affinity-diagram template with thinoda-io.
+    await canvas.drop({ files: join(__dirname, "fixtures", "affinity-diagram.thinoda") });
+    await expect.poll(async () => (await stickyPixels(page))[2], { timeout: 30_000 })
+        .toBeGreaterThan(200);
+
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error("The board canvas is unavailable");
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.8);
+    await page.mouse.wheel(0, 80);
+    await page.waitForTimeout(600);
+    await canvas.focus();
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, 100);
+    await page.keyboard.up("Control");
+    await page.waitForTimeout(600);
+    await page.mouse.wheel(0, 170);
+    await page.waitForTimeout(600);
+
+    const [yellow, green, blue, pink] = await stickyPixels(page);
+    expect(blue).toBeGreaterThan(500);
+    expect(pink).toBeGreaterThan(500);
+    expect(yellow, "the toolbar must not obscure the upper yellow note")
+        .toBeGreaterThan(blue * 0.85);
+    expect(green, "the toolbar must not obscure the upper green note")
+        .toBeGreaterThan(pink * 0.85);
+
+    await command(page, "To-Do");
+    await frames(page);
+    const workbook: { sheets: { topics: Record<string, { title: string; todo?: boolean }> }[] } =
+        JSON.parse(zipEntry(await saveAs(page, "affinity-toolbar.thinoda"), "content.json")
+            .toString("utf8"));
+    const heading = Object.values(workbook.sheets[0].topics).find(
+        (topic) => topic.title === "Group related ideas, then name each theme",
+    );
+    expect(heading?.todo).toBe(false);
+});

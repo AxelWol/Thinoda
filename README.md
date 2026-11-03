@@ -352,10 +352,13 @@ those system-owned controls. WinGet publishing remains paused.
   is retained. The floating toolbox starts as icons with tooltips; use its top
   arrow to expand action labels or collapse them again. Pen and highlighter
   expose color, width, opacity and stroke type controls, while erasers expose
-  their radius. Board commands also provide grid, snapping, grouping, locking,
-  arrangement and a minimap. Native files use version 6 when board features are
-  present; other formats may show an itemized warning before exporting content
-  they cannot retain. Frame clipping is visual, not secure redaction.
+  their radius. Selected-topic actions move to avoid visible cards, frame
+  titles and toolbars. If they cannot fit, use the main menu or the topic's
+  context menu instead. Board commands also provide grid, snapping, grouping,
+  locking, arrangement and a minimap. Native files use version 6 when board
+  features are present; other formats may show an itemized warning before
+  exporting content they cannot retain. Frame clipping is visual, not secure
+  redaction.
 - Copy/Paste Style (Ctrl+Alt+C/V) shares explicit topic-style overrides across open
   documents; Reset Style restores automatic theme inheritance. Multi-topic paste/reset
   is one undo step and does not replace text or hierarchy.

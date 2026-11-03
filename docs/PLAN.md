@@ -33,6 +33,13 @@ Integrated cloud providers remain **disabled by default** and paused until
 publisher registrations are complete. See the R14 status and
 [FREEFORM.md](FREEFORM.md) for phase-specific evidence and limits.
 
+**Latest non-cloud checkpoint:** selected-topic actions avoid visible cards,
+frame titles and the other board toolbars, including rotated and clipped cards.
+When no safe space exists, the selection and existing menu actions remain
+available. Ordinary map placement is unchanged. The next open work remains the
+browser accessibility bridge, safe large-board recovery, export acceptance
+and realistic performance/device gates; cloud-provider work stays paused.
+
 ## Current next-value state (2026-10-30)
 
 **Ordered continuation and release handoff (2026-10-30):** equation vector
@@ -2992,6 +2999,15 @@ gate; F6 needs final scene/export acceptance. Large-board browser recovery,
 cross-platform CI and real-device verification remain open. Provider/cloud code is merged
 upstream behind the default-off `integrated-cloud-services` feature; providers
 stay disabled until publisher registrations are in place.
+
+Selected-topic placement now accounts for visible card bounds, rotation and
+frame clipping, multiline frame titles, and board/editing toolbars. Focused
+tests cover first paint, expanded/collapsed toolbox states, actions, dense
+fallback, 10,000 synthetic obstacles and 2,000 exhaustive small geometries.
+A production-browser regression reproduced the original Affinity overlap on
+the previous build and passed on the revised build in Chromium, Firefox and
+WebKit. This is not a GPU/frame-time benchmark or physical-device acceptance;
+the limits and critique are in FREEFORM.
 
 Localized image-card accessible names now retain the card type after a title
 change. A bounded visible-mesh cache improved the 10,000-stroke headless

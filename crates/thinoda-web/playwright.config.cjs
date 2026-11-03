@@ -9,6 +9,7 @@ module.exports = defineConfig({
         "board-export.browser.spec.ts",
         "board-minimap.browser.spec.ts",
         "board-pptx.browser.spec.ts",
+        "board-toolbar.browser.spec.ts",
         "board-workflows.browser.spec.ts",
         "image-card.browser.spec.ts",
         "language.browser.spec.ts",

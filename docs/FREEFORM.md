@@ -642,12 +642,35 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Switching to one of these modes reveals its controls even if the tools were
   previously scrolled; the toolbox starts collapsed so that board content is
   not hidden by default. Board fit reserves room for the compact toolbox. A
-  selected-topic toolbar is repositioned away from the toolbox and frame
-  titles, or omitted when it cannot fit, where the normal menus remain
-  available.
+  selected-topic toolbar avoids visible cards, frame titles and the board and
+  editing toolbars, or is omitted when it cannot fit, where the normal menus
+  remain available.
 - Light/dark desktop previews and focused interaction tests cover these states.
   Browser, screen-reader and cross-platform acceptance remain part of the full
   integration, not evidence that the whole phase is complete.
+
+### Selected-topic placement checkpoint: critique
+
+- Placement measures the toolbar before painting it and searches both axes
+  against visible card bounds, including rotation and frame clipping, measured
+  multiline frame titles and the other board toolbars. A sweep with a range
+  coverage tree avoids a quadratic candidate-by-obstacle scan; the fast path
+  keeps the preferred position when it is clear. A stale size is clipped and
+  made non-interactive until reflow. Ordinary mind maps retain their prior
+  anchor behavior.
+- If no safe rectangle exists, the selected topic remains selected and its
+  existing menu actions remain usable; the toolbar returns when space does.
+  The offline guide explains this fallback in all supported languages. The
+  search intentionally does not treat freeform shapes, ink, connectors or
+  unrelated ordinary topics as obstacles, so they can still be covered.
+- Native regressions exercise first paint, both toolbox states, DPI scaling,
+  rotated and clipped cards, title measurement, resizing, toolbar and menu
+  activation, a 10,000-obstacle search and 2,000 small exhaustive comparisons.
+  A production-browser screenshot regression fails on the previous build and
+  passes in desktop Chromium, Firefox and WebKit; it checks note visibility and
+  a saved command-palette action. These synthetic checks do not establish
+  frame-time or input-latency budgets, browser accessibility, real iPad
+  behavior or visual acceptance on other native platforms.
 
 ### F3 geometry checkpoint: critique
 

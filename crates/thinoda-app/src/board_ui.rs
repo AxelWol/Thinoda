@@ -1279,6 +1279,776 @@ mod tests {
         }
     }
 
+    fn visible_topic_toolbar(harness: &Harness<'_, ThinodaApp>) -> Option<Rect> {
+        let id = egui::Id::unique("thinoda_topic_toolbar");
+        harness.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .any(|layer| layer.id == id)
+                .then(|| memory.area_rect(id))
+                .flatten()
+        })
+    }
+
+    #[test]
+    fn affinity_toolbar_never_paints_over_cards_during_initial_layout() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        app.new_doc(thinoda_core::templates::instantiate("affinity-diagram"));
+        let mut harness = Harness::builder()
+            .with_size(vec2(1200.0, 900.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        let mut painted = false;
+        for _ in 0..8 {
+            harness.step();
+            let Some(toolbar) = visible_topic_toolbar(&harness) else {
+                continue;
+            };
+            if !harness.output().shapes.iter().any(|shape| {
+                matches!(
+                    &shape.shape,
+                    egui::Shape::Text(text)
+                        if text.galley.job.text == icons::SUBTOPIC
+                            && toolbar.expand(2.0).contains(text.pos)
+                )
+            }) {
+                continue;
+            }
+            painted = true;
+            let doc = harness.state_mut().doc_mut().unwrap();
+            let layout = doc.view.layout_for(&doc.doc);
+            let sheet = doc.doc.sheet();
+            let canvas = doc.view.canvas_rect();
+            let origin = canvas.center() + doc.view.offset;
+            for item in &thinoda_core::scene::build_scene(sheet, &layout).items {
+                let thinoda_core::SceneId::Topic(id) = item.id else {
+                    continue;
+                };
+                if sheet.topic(id).is_none_or(|topic| topic.card.is_none()) {
+                    continue;
+                }
+                if let Some(bounds) = item.visible_bounds() {
+                    let visible = Rect::from_min_max(
+                        origin + vec2(bounds.min.x, bounds.min.y) * doc.view.zoom,
+                        origin + vec2(bounds.max().x, bounds.max().y) * doc.view.zoom,
+                    )
+                    .intersect(canvas);
+                    assert!(
+                        !visible.is_positive() || !toolbar.intersects(visible),
+                        "the first painted toolbar covers a card: {toolbar:?}, {visible:?}"
+                    );
+                }
+            }
+        }
+        assert!(
+            painted,
+            "a safely placed toolbar should eventually be painted"
+        );
+    }
+
+    #[test]
+    fn affinity_heading_toolbar_does_not_cover_starter_cards() {
+        for (collapsed, ai_enabled, ppp) in [
+            (false, true, 1.0),
+            (true, true, 2.0),
+            (false, false, 2.0),
+            (true, false, 1.0),
+        ] {
+            let mut app = ThinodaApp::headless();
+            app.settings.ai.enabled = ai_enabled;
+            app.new_doc(thinoda_core::templates::instantiate("affinity-diagram"));
+            let mut harness = Harness::builder()
+                .with_size(vec2(1200.0, 900.0))
+                .with_pixels_per_point(ppp)
+                .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+            harness.run_steps(5);
+            if !collapsed {
+                harness.get_by_label("Expand board toolbar").click();
+                harness.run_steps(3);
+            }
+
+            // Put the selected heading near the top and the starter notes just
+            // below the frame titles, as in the Windows preview.
+            {
+                let doc = harness.state_mut().doc_mut().unwrap();
+                let canvas = doc.view.canvas_rect();
+                doc.view.zoom = 0.5;
+                doc.view.offset = canvas.left_top() + vec2(120.0, 70.0) - canvas.center();
+            }
+            harness.run_steps(5);
+
+            let toolbar = visible_topic_toolbar(&harness).expect("topic actions should fit");
+            let board = harness
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_board_toolbar")))
+                .unwrap();
+            assert!(!toolbar.intersects(board));
+            let editing = harness
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
+                .unwrap();
+            assert!(
+                !toolbar.intersects(editing),
+                "selected-topic actions must not cover the editing toolbar"
+            );
+            let heading = {
+                let doc = harness.state_mut().doc_mut().unwrap();
+                let heading = doc.view.primary().unwrap();
+                assert_eq!(
+                    doc.doc.sheet().topic(heading).unwrap().title,
+                    "Group related ideas, then name each theme"
+                );
+                let layout = doc.view.layout_for(&doc.doc);
+                let sheet = doc.doc.sheet();
+                let scene = thinoda_core::scene::build_scene(sheet, &layout);
+                let canvas = doc.view.canvas_rect();
+                let origin = canvas.center() + doc.view.offset;
+                let zoom = doc.view.zoom;
+                assert!(canvas.contains_rect(toolbar));
+                let mut visible_stickies = 0;
+                for item in &scene.items {
+                    let thinoda_core::SceneId::Topic(id) = item.id else {
+                        continue;
+                    };
+                    let Some(card) = sheet.topic(id).and_then(|topic| topic.card) else {
+                        continue;
+                    };
+                    let Some(bounds) = item.visible_bounds() else {
+                        continue;
+                    };
+                    let max = bounds.max();
+                    let visible = Rect::from_min_max(
+                        origin + vec2(bounds.min.x, bounds.min.y) * zoom,
+                        origin + vec2(max.x, max.y) * zoom,
+                    )
+                    .intersect(canvas);
+                    if visible.is_positive() {
+                        if card.kind == CardKind::Sticky {
+                            visible_stickies += 1;
+                        }
+                        assert!(
+                            !toolbar.intersects(visible.expand(0.5)),
+                            "toolbar obscures card {id:?} when collapsed={collapsed}, ai={ai_enabled}, ppp={ppp}: {toolbar:?}, {visible:?}"
+                        );
+                    }
+                }
+                assert_eq!(visible_stickies, 4, "the starter notes must be visible");
+                for zone in &sheet.zones {
+                    let min = origin + vec2(zone.frame.min.x, zone.frame.min.y) * zoom;
+                    let max = origin + vec2(zone.frame.max().x, zone.frame.max().y) * zoom;
+                    let title =
+                        Rect::from_min_max(min, egui::pos2(max.x, (min.y + 24.0).min(max.y)));
+                    assert!(
+                        !toolbar.intersects(title),
+                        "toolbar obscures frame title {}: {toolbar:?}, {title:?}",
+                        zone.name
+                    );
+                }
+                heading
+            };
+            harness.get_by_label("Toggle to-do").click();
+            harness.run_steps(3);
+            assert_eq!(
+                harness
+                    .state()
+                    .doc()
+                    .unwrap()
+                    .doc
+                    .sheet()
+                    .topic(heading)
+                    .unwrap()
+                    .todo,
+                Some(false),
+                "the selected topic action remains clickable"
+            );
+            harness.get_by_label("Sticky note").click();
+            harness.run_steps(3);
+            assert_eq!(
+                harness.state().doc().unwrap().view.board_tool,
+                BoardTool::Sticky,
+                "the board toolbox remains clickable"
+            );
+        }
+    }
+
+    #[test]
+    fn board_toolbar_card_obstacles_respect_rotation_zoom_and_clipping() {
+        let mut sheet = thinoda_core::Sheet::new("Board", "");
+        sheet.root_mode = thinoda_core::SheetRootMode::Hidden;
+        let mut card = Card::new(CardKind::Sticky, Vec2::new(120.0, 40.0));
+        card.rotation = 90.0;
+        let id = sheet.add_card("Visible", Vec2::ZERO, card).unwrap();
+        sheet
+            .create_zone(
+                "Clipped",
+                vec![id],
+                BoardRect::from_min_size(Vec2::new(-10.0, -100.0), Vec2::new(110.0, 200.0)),
+            )
+            .unwrap();
+        sheet.zones[0].clip = true;
+        sheet
+            .add_card("Offscreen", Vec2::new(10_000.0, 10_000.0), card)
+            .unwrap();
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let canvas = Rect::from_min_max(egui::pos2(190.0, 80.0), egui::pos2(260.0, 180.0));
+        let obstacles =
+            crate::ui::board_card_obstacles(&sheet, &layout, egui::pos2(200.0, 150.0), 2.0, canvas);
+        assert_eq!(obstacles.len(), 1);
+        let actual = obstacles[0];
+        for (value, expected) in [
+            (actual.left(), 190.0),
+            (actual.right(), 240.0),
+            (actual.top(), 80.0),
+            (actual.bottom(), 180.0),
+        ] {
+            assert!((value - expected).abs() < 0.001, "{actual:?}");
+        }
+    }
+
+    #[test]
+    fn selected_rotated_card_toolbar_stays_outside_its_painted_bounds() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+        let selected = {
+            let doc = app.doc_mut().unwrap();
+            let selected = doc
+                .doc
+                .edit_sheet("Rotated card", |sheet| {
+                    let mut card = Card::new(CardKind::Sticky, Vec2::new(120.0, 40.0));
+                    card.rotation = 90.0;
+                    sheet
+                        .add_card("Selected", Vec2::ZERO, card)
+                        .map_err(thinoda_core::EditError::Invalid)
+                })
+                .unwrap();
+            doc.view.select_only(selected);
+            selected
+        };
+        let mut harness = Harness::builder()
+            .with_size(vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            doc.view.zoom = 1.5;
+            doc.view.offset = egui::Vec2::ZERO;
+        }
+        harness.run_steps(5);
+        let toolbar = visible_topic_toolbar(&harness).expect("topic actions should fit");
+        let doc = harness.state_mut().doc_mut().unwrap();
+        let layout = doc.view.layout_for(&doc.doc);
+        let scene = thinoda_core::scene::build_scene(doc.doc.sheet(), &layout);
+        let bounds = scene
+            .item(thinoda_core::SceneId::Topic(selected))
+            .unwrap()
+            .visible_bounds()
+            .unwrap();
+        let origin = doc.view.canvas_rect().center() + doc.view.offset;
+        let max = bounds.max();
+        let screen = Rect::from_min_max(
+            origin + vec2(bounds.min.x, bounds.min.y) * doc.view.zoom,
+            origin + vec2(max.x, max.y) * doc.view.zoom,
+        );
+        assert!(
+            !toolbar.intersects(screen),
+            "toolbar covers the rotated selected card: {toolbar:?}, {screen:?}"
+        );
+    }
+
+    #[test]
+    fn selected_card_toolbar_keeps_multiline_frame_titles_visible() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+        let name = "FIRST title line\nSECOND title line\nTHIRD title line\nFOURTH title line\nFIFTH title line\nSIXTH title line";
+        {
+            let doc = app.doc_mut().unwrap();
+            let selected = doc
+                .doc
+                .edit_sheet("Card and multiline frame", |sheet| {
+                    let selected = sheet
+                        .add_card(
+                            "Selected",
+                            Vec2::ZERO,
+                            Card::new(CardKind::Sticky, Vec2::new(120.0, 60.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    sheet
+                        .create_board_frame(
+                            name,
+                            BoardRect::from_min_size(
+                                Vec2::new(-80.0, -120.0),
+                                Vec2::new(400.0, 200.0),
+                            ),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    Ok(selected)
+                })
+                .unwrap();
+            doc.view.select_only(selected);
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            doc.view.zoom = 1.0;
+            doc.view.offset = egui::Vec2::ZERO;
+        }
+        harness.run_steps(5);
+
+        let toolbar = visible_topic_toolbar(&harness).expect("topic actions should fit");
+        let doc = harness.state().doc().unwrap();
+        let canvas = doc.view.canvas_rect();
+        let origin = canvas.center() + doc.view.offset;
+        let zone = &doc.doc.sheet().zones[0];
+        let frame = Rect::from_min_size(
+            origin + vec2(zone.frame.min.x, zone.frame.min.y) * doc.view.zoom,
+            vec2(zone.frame.size.x, zone.frame.size.y) * doc.view.zoom,
+        );
+        let title_size = harness.ctx.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    name.to_owned(),
+                    egui::FontId::proportional(12.0),
+                    Color32::WHITE,
+                )
+                .size()
+        });
+        let title = Rect::from_min_size(frame.left_top() + vec2(8.0, 6.0), title_size)
+            .intersect(frame.shrink(4.0))
+            .intersect(canvas);
+        assert!(title.height() > 24.0, "test requires a multiline title");
+        let topic = doc.view.selected_topic_rect(&doc.doc).unwrap();
+        let legacy = Rect::from_min_size(
+            egui::pos2(
+                topic.center().x - toolbar.width() * 0.5,
+                topic.top() - 12.0 - toolbar.height(),
+            ),
+            toolbar.size(),
+        );
+        assert!(legacy.intersects(title), "test must reproduce the overlap");
+        assert!(!toolbar.intersects(title), "{toolbar:?}, {title:?}");
+    }
+
+    #[test]
+    fn dense_board_search_finds_sideways_space_with_many_obstacles() {
+        let available = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let desired = Rect::from_min_size(egui::pos2(200.0, 120.0), vec2(100.0, 30.0));
+        let obstacles: Vec<_> = (0..10_000)
+            .map(|index| {
+                let offset = index as f32 * 0.001;
+                Rect::from_min_max(
+                    egui::pos2(180.0 + offset, 0.0),
+                    egui::pos2(320.0 + offset, 300.0),
+                )
+            })
+            .collect();
+        let result = crate::ui::nearest_clear_toolbar_rect(desired, available, &obstacles, 1.0)
+            .expect("there is room beside the blocked column");
+        assert!(available.contains_rect(result));
+        assert_ne!(result.left(), desired.left());
+        assert!(
+            obstacles
+                .iter()
+                .all(|obstacle| !result.intersects(*obstacle))
+        );
+        assert!(
+            crate::ui::nearest_clear_toolbar_rect(desired, available, &[available], 1.0).is_none()
+        );
+    }
+
+    #[test]
+    fn toolbar_search_matches_exhaustive_geometry_on_small_boards() {
+        fn next(seed: &mut u64, limit: u32) -> u32 {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((*seed >> 32) as u32) % limit
+        }
+        fn overlaps(a: Rect, b: Rect) -> bool {
+            a.left() < b.right()
+                && a.right() > b.left()
+                && a.top() < b.bottom()
+                && a.bottom() > b.top()
+        }
+
+        let mut seed = 0x7468696e6f6461;
+        for case in 0..2_000 {
+            let width = next(&mut seed, 16) + 5;
+            let height = next(&mut seed, 16) + 5;
+            let available =
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(width as f32, height as f32));
+            let size = vec2(
+                (next(&mut seed, width) + 1) as f32,
+                (next(&mut seed, height) + 1) as f32,
+            );
+            let desired = Rect::from_min_size(
+                egui::pos2(
+                    next(&mut seed, width + 20) as f32 - 10.0,
+                    next(&mut seed, height + 20) as f32 - 10.0,
+                ),
+                size,
+            );
+            let clearance = next(&mut seed, 5) as f32 * 0.5;
+            let count = next(&mut seed, 8);
+            let obstacles: Vec<_> = (0..count)
+                .map(|_| {
+                    Rect::from_min_size(
+                        egui::pos2(
+                            next(&mut seed, width + 10) as f32 - 5.0,
+                            next(&mut seed, height + 10) as f32 - 5.0,
+                        ),
+                        vec2(
+                            (next(&mut seed, 12) + 1) as f32,
+                            (next(&mut seed, 12) + 1) as f32,
+                        ),
+                    )
+                })
+                .collect();
+            let max = available.max - size;
+            let target = egui::pos2(
+                desired.left().clamp(available.left(), max.x),
+                desired.top().clamp(available.top(), max.y),
+            );
+            let mut xs = vec![available.left(), max.x, target.x];
+            let mut ys = vec![available.top(), max.y, target.y];
+            for obstacle in &obstacles {
+                let blocked = Rect::from_min_max(
+                    obstacle.min - size - vec2(clearance, clearance),
+                    obstacle.max + vec2(clearance, clearance),
+                );
+                xs.extend(
+                    [blocked.left(), blocked.right()]
+                        .into_iter()
+                        .filter(|x| available.left() <= *x && *x <= max.x),
+                );
+                ys.extend(
+                    [blocked.top(), blocked.bottom()]
+                        .into_iter()
+                        .filter(|y| available.top() <= *y && *y <= max.y),
+                );
+            }
+            let expected = xs
+                .iter()
+                .flat_map(|x| ys.iter().map(move |y| egui::pos2(*x, *y)))
+                .map(|position| Rect::from_min_size(position, size))
+                .filter(|rect| {
+                    obstacles
+                        .iter()
+                        .all(|obstacle| !overlaps(*rect, obstacle.expand(clearance)))
+                })
+                .map(|rect| (rect.min - target).length_sq())
+                .min_by(f32::total_cmp);
+            let actual =
+                crate::ui::nearest_clear_toolbar_rect(desired, available, &obstacles, clearance);
+            assert_eq!(
+                actual.is_some(),
+                expected.is_some(),
+                "case {case}: {desired:?}, {available:?}, {obstacles:?}, {clearance}"
+            );
+            if let (Some(rect), Some(distance)) = (actual, expected) {
+                assert!(available.contains_rect(rect), "case {case}: {rect:?}");
+                assert!(
+                    obstacles
+                        .iter()
+                        .all(|obstacle| !overlaps(rect, obstacle.expand(clearance))),
+                    "case {case}: {rect:?}, {obstacles:?}, {clearance}"
+                );
+                assert!(
+                    ((rect.min - target).length_sq() - distance).abs() < 0.001,
+                    "case {case}: {rect:?}, expected distance {distance}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dense_board_hides_only_the_toolbar_until_space_returns() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+        let (selected, blocker) = {
+            let doc = app.doc_mut().unwrap();
+            let ids = doc
+                .doc
+                .edit_sheet("Dense board", |sheet| {
+                    let selected = sheet
+                        .add_card(
+                            "Selected",
+                            Vec2::ZERO,
+                            Card::new(CardKind::Sticky, Vec2::new(120.0, 60.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    let blocker = sheet
+                        .add_card(
+                            "Cover",
+                            Vec2::ZERO,
+                            Card::new(CardKind::Sticky, Vec2::new(4_000.0, 4_000.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                    Ok((selected, blocker))
+                })
+                .unwrap();
+            doc.view.select_only(ids.0);
+            ids
+        };
+        let mut harness = Harness::builder()
+            .with_size(vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            doc.view.zoom = 1.0;
+            doc.view.offset = egui::Vec2::ZERO;
+        }
+        harness.run_steps(5);
+        assert!(visible_topic_toolbar(&harness).is_none());
+        assert_eq!(
+            harness.state().doc().unwrap().view.primary(),
+            Some(selected)
+        );
+        assert!(
+            harness
+                .state()
+                .command_available(&Cmd::Canvas(thinoda_canvas::Action::ToggleTodo))
+        );
+        harness.get_by_label(t("Main Menu")).click();
+        harness.run_steps(2);
+        harness.get_by_label("Insert").click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "To-Do")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(selected)
+                .unwrap()
+                .todo,
+            Some(false),
+            "menu actions stay usable while the floating toolbar is hidden"
+        );
+
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Remove blocker", |sheet| {
+                assert!(sheet.detach_subtree(blocker).is_some());
+                Ok(())
+            })
+            .unwrap();
+        harness.run_steps(5);
+        assert!(visible_topic_toolbar(&harness).is_some());
+        assert_eq!(
+            harness.state().doc().unwrap().view.primary(),
+            Some(selected)
+        );
+        harness.get_by_label("Toggle to-do").click();
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .topic(selected)
+                .unwrap()
+                .todo,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn hidden_board_toolbar_remeasures_when_actions_become_narrower() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = true;
+        app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+        let selected = {
+            let doc = app.doc_mut().unwrap();
+            let selected = doc
+                .doc
+                .edit_sheet("Selected card", |sheet| {
+                    sheet
+                        .add_card(
+                            "Selected",
+                            Vec2::ZERO,
+                            Card::new(CardKind::Sticky, Vec2::new(120.0, 60.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)
+                })
+                .unwrap();
+            doc.view.select_only(selected);
+            selected
+        };
+        let mut harness = Harness::builder()
+            .with_size(vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        {
+            let doc = harness.state_mut().doc_mut().unwrap();
+            doc.view.zoom = 1.0;
+            doc.view.offset = egui::Vec2::ZERO;
+        }
+        harness.run_steps(5);
+        let wide = visible_topic_toolbar(&harness).unwrap().size();
+        harness.state_mut().settings.ai.enabled = false;
+        harness.run_steps(5);
+        let narrow = visible_topic_toolbar(&harness).unwrap().size();
+        assert!(wide.x > narrow.x + 8.0);
+        harness.state_mut().settings.ai.enabled = true;
+        harness.run_steps(5);
+
+        let canvas = harness.state().doc().unwrap().view.canvas_rect();
+        let slot_size = vec2((wide.x + narrow.x) * 0.5, narrow.y + 8.0);
+        let slot = Rect::from_min_size(
+            egui::pos2(canvas.center().x - slot_size.x * 0.5, canvas.top() + 80.0),
+            slot_size,
+        );
+        let blockers = [
+            Rect::from_min_max(canvas.min, egui::pos2(canvas.right(), slot.top())),
+            Rect::from_min_max(egui::pos2(canvas.left(), slot.bottom()), canvas.max),
+            Rect::from_min_max(
+                egui::pos2(canvas.left(), slot.top()),
+                egui::pos2(slot.left(), slot.bottom()),
+            ),
+            Rect::from_min_max(
+                egui::pos2(slot.right(), slot.top()),
+                egui::pos2(canvas.right(), slot.bottom()),
+            ),
+        ];
+        let origin = canvas.center();
+        harness
+            .state_mut()
+            .doc_mut()
+            .unwrap()
+            .doc
+            .edit_sheet("Leave a narrow slot", |sheet| {
+                for rect in blockers {
+                    let center = rect.center() - origin;
+                    let size = rect.size();
+                    sheet
+                        .add_card(
+                            "Obstacle",
+                            Vec2::new(center.x, center.y),
+                            Card::new(CardKind::Sticky, Vec2::new(size.x, size.y)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        harness.run_steps(5);
+        assert!(visible_topic_toolbar(&harness).is_none());
+        assert_eq!(
+            harness.state().doc().unwrap().view.primary(),
+            Some(selected)
+        );
+
+        harness.state_mut().settings.ai.enabled = false;
+        harness.run_steps(5);
+        let toolbar = visible_topic_toolbar(&harness).expect("the narrower toolbar fits the slot");
+        assert!(slot.contains_rect(toolbar), "{slot:?}, {toolbar:?}");
+        assert_eq!(
+            harness.state().doc().unwrap().view.primary(),
+            Some(selected)
+        );
+    }
+
+    #[test]
+    fn board_toolbar_disables_an_unexpected_size_change_until_reflow() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        app.new_doc(thinoda_core::templates::instantiate("blank-canvas"));
+        {
+            let doc = app.doc_mut().unwrap();
+            let selected = doc
+                .doc
+                .edit_sheet("Selected card", |sheet| {
+                    sheet
+                        .add_card(
+                            "Selected",
+                            Vec2::ZERO,
+                            Card::new(CardKind::Sticky, Vec2::new(120.0, 60.0)),
+                        )
+                        .map_err(thinoda_core::EditError::Invalid)
+                })
+                .unwrap();
+            doc.view.select_only(selected);
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+
+        let id = egui::Id::unique("thinoda_topic_toolbar");
+        let layer = egui::LayerId::new(egui::Order::Middle, id);
+        let mut state = egui::containers::AreaState::load(&harness.ctx, id).unwrap();
+        let size = state.size.unwrap();
+        state.size = Some(vec2(size.x * 0.5, size.y));
+        harness
+            .ctx
+            .memory_mut(|memory| memory.areas_mut().set_state(layer, state));
+        // A discard is not guaranteed to be granted by egui.
+        harness
+            .ctx
+            .options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+        harness.step();
+        assert!(
+            !egui::containers::AreaState::load(&harness.ctx, id)
+                .unwrap()
+                .interactable,
+            "a stale-sized area must not intercept clicks"
+        );
+
+        harness.run_steps(3);
+        assert!(
+            egui::containers::AreaState::load(&harness.ctx, id)
+                .unwrap()
+                .interactable
+        );
+        let toolbar = visible_topic_toolbar(&harness).expect("the toolbar should reflow");
+        let doc = harness.state().doc().unwrap();
+        let card = doc.view.selected_topic_rect(&doc.doc).unwrap();
+        assert!(!toolbar.intersects(card));
+    }
+
+    #[test]
+    fn plain_map_topic_toolbar_keeps_its_legacy_anchor() {
+        let mut app = ThinodaApp::headless();
+        app.settings.ai.enabled = false;
+        let mut harness = Harness::builder()
+            .with_size(vec2(1200.0, 900.0))
+            .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+        harness.run_steps(5);
+        let doc = harness.state().doc().unwrap();
+        assert!(!doc.doc.sheet().uses_board_semantics());
+        let topic = doc.view.selected_topic_rect(&doc.doc).unwrap();
+        let toolbar = visible_topic_toolbar(&harness).unwrap();
+        let below = topic.top() - 52.0 < doc.view.canvas_rect().top();
+        let expected = if below {
+            topic.bottom() + 12.0
+        } else {
+            topic.top() - 12.0
+        };
+        let actual = if below {
+            toolbar.top()
+        } else {
+            toolbar.bottom()
+        };
+        assert!((actual - expected).abs() <= 1.0, "{toolbar:?}, {topic:?}");
+    }
+
     #[test]
     fn choosing_ink_reveals_its_context_after_scrolling() {
         let mut harness = Harness::builder()

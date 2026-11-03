@@ -12,11 +12,10 @@ have been resolved and independently verified.
 The relocated standalone harness passed 57 Chromium storage checks; that does
 not verify application integration or resolve the blockers.
 
-toolbar-overlap.patch.gz preserves an unvalidated candidate for avoiding other
-board cards when positioning the selected-topic toolbar. It has not been
-applied, compiled, or checked in the native application. Decompress it and
-normalize CRLF to LF before checking whether it applies; review and test it
-before use.
+toolbar-overlap.patch.gz preserves the historical placement candidate. An
+adapted and tested implementation now lives in the application; the archive
+is retained for context, not as a patch to apply again. The current scope,
+verification and remaining limits are recorded in docs/FREEFORM.md.
 
 The recovery harness retains its draft-relative imports inside recovery/crates/
 and uses the repository's live browser_storage.js for document-migration checks.

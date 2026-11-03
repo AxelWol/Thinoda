@@ -17,6 +17,8 @@ struct Page {
 pub(crate) const BOARD_INK_GUIDE: &str = "Pen and Highlighter draw freehand. Adjust Ink color, Ink width and Opacity, or Eraser radius for erasing; settings are captured when each gesture begins.";
 pub(crate) const BOARD_TOOLS_GUIDE: &str = "Object eraser removes whole ink strokes; Pixel eraser removes parts of strokes. Lasso selects topics and objects. Image card opens a local PNG/JPEG picker.";
 pub(crate) const BOARD_DUPLICATION_GUIDE: &str = "On boards, Alt-drag or Alt+arrow duplicates movable items (Shift makes arrow steps larger). Ctrl+Alt+Left/Right rotates by 1° (Shift: 15°); use Command+Option on macOS. Locked items and groups cannot be duplicated by these gestures.";
+pub(crate) const BOARD_TOOLBAR_FALLBACK_GUIDE: &str =
+    "If the selected-topic toolbar cannot fit, use the main menu or the topic's context menu.";
 
 const PAGES: &[Page] = &[
     Page {
@@ -26,6 +28,7 @@ const PAGES: &[Page] = &[
             "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
             "Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.",
             "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
+            BOARD_TOOLBAR_FALLBACK_GUIDE,
             BOARD_INK_GUIDE,
             BOARD_TOOLS_GUIDE,
             BOARD_DUPLICATION_GUIDE,

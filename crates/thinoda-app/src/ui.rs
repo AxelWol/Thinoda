@@ -211,28 +211,320 @@ fn response_is_within(ui: &Ui, response: &egui::Response) -> bool {
     false
 }
 
-fn nearest_clear_toolbar_rect(
+#[derive(Clone, Copy)]
+struct ToolbarSweepEvent {
+    x: f32,
+    start: usize,
+    end: usize,
+    delta: i32,
+}
+
+// Range-add/min tree over candidate y coordinates. A zero is an uncovered
+// coordinate; range updates and nearest-zero queries are logarithmic.
+struct ToolbarCoverage {
+    len: usize,
+    minimum: Vec<i32>,
+    lazy: Vec<i32>,
+}
+
+impl ToolbarCoverage {
+    fn new(len: usize) -> Self {
+        Self {
+            len,
+            minimum: vec![0; len * 4],
+            lazy: vec![0; len * 4],
+        }
+    }
+
+    fn add(&mut self, start: usize, end: usize, delta: i32) {
+        self.add_in(1, 0..self.len, start..end, delta);
+    }
+
+    fn add_in(
+        &mut self,
+        node: usize,
+        span: std::ops::Range<usize>,
+        update: std::ops::Range<usize>,
+        delta: i32,
+    ) {
+        if update.start <= span.start && span.end <= update.end {
+            self.minimum[node] += delta;
+            self.lazy[node] += delta;
+            return;
+        }
+        let middle = (span.start + span.end) / 2;
+        if update.start < middle {
+            self.add_in(node * 2, span.start..middle, update.clone(), delta);
+        }
+        if middle < update.end {
+            self.add_in(node * 2 + 1, middle..span.end, update, delta);
+        }
+        self.minimum[node] =
+            self.lazy[node] + self.minimum[node * 2].min(self.minimum[node * 2 + 1]);
+    }
+
+    fn first_clear(&self, start: usize) -> Option<usize> {
+        self.first_clear_in(1, 0..self.len, start, 0)
+    }
+
+    fn first_clear_in(
+        &self,
+        node: usize,
+        span: std::ops::Range<usize>,
+        start: usize,
+        inherited: i32,
+    ) -> Option<usize> {
+        if span.end <= start || inherited + self.minimum[node] > 0 {
+            return None;
+        }
+        if span.end - span.start == 1 {
+            return Some(span.start);
+        }
+        let middle = (span.start + span.end) / 2;
+        let inherited = inherited + self.lazy[node];
+        self.first_clear_in(node * 2, span.start..middle, start, inherited)
+            .or_else(|| self.first_clear_in(node * 2 + 1, middle..span.end, start, inherited))
+    }
+
+    fn last_clear(&self, end: usize) -> Option<usize> {
+        self.last_clear_in(1, 0..self.len, end, 0)
+    }
+
+    fn last_clear_in(
+        &self,
+        node: usize,
+        span: std::ops::Range<usize>,
+        end: usize,
+        inherited: i32,
+    ) -> Option<usize> {
+        if end <= span.start || inherited + self.minimum[node] > 0 {
+            return None;
+        }
+        if span.end - span.start == 1 {
+            return Some(span.start);
+        }
+        let middle = (span.start + span.end) / 2;
+        let inherited = inherited + self.lazy[node];
+        self.last_clear_in(node * 2 + 1, middle..span.end, end, inherited)
+            .or_else(|| self.last_clear_in(node * 2, span.start..middle, end, inherited))
+    }
+}
+
+pub(crate) fn nearest_clear_toolbar_rect(
     desired: egui::Rect,
     available: egui::Rect,
     obstacles: &[egui::Rect],
+    clearance: f32,
 ) -> Option<egui::Rect> {
-    let candidates = std::iter::once(desired.top()).chain(
-        obstacles
-            .iter()
-            .flat_map(|rect| [rect.top() - desired.height() - 6.0, rect.bottom() + 6.0]),
+    let size = desired.size();
+    if !available.is_positive()
+        || size.x <= 0.0
+        || size.y <= 0.0
+        || size.x > available.width()
+        || size.y > available.height()
+    {
+        return None;
+    }
+    let min = available.min;
+    let max = available.max - size;
+    let target = egui::pos2(
+        desired.left().clamp(min.x, max.x),
+        desired.top().clamp(min.y, max.y),
     );
-    candidates
-        .filter_map(|top| {
-            let rect = egui::Rect::from_min_size(egui::pos2(desired.left(), top), desired.size());
-            (available.contains_rect(rect)
-                && obstacles.iter().all(|other| !rect.intersects(*other)))
-            .then_some(rect)
+    let at_target = egui::Rect::from_min_size(target, size);
+    if obstacles
+        .iter()
+        .all(|obstacle| !at_target.intersects(obstacle.expand(clearance)))
+    {
+        return Some(at_target);
+    }
+
+    // In toolbar-top-left coordinates, each obstacle expands by the toolbar
+    // size. Points on the expanded boundary retain `clearance` from the real
+    // obstacle, including after egui rounds the Area position to pixels.
+    let domain = egui::Rect::from_min_max(min, max);
+    let blocked: Vec<_> = obstacles
+        .iter()
+        .filter(|obstacle| obstacle.is_positive())
+        .map(|obstacle| {
+            egui::Rect::from_min_max(
+                obstacle.min - size - vec2(clearance, clearance),
+                obstacle.max + vec2(clearance, clearance),
+            )
         })
-        .min_by(|a, b| {
-            (a.top() - desired.top())
-                .abs()
-                .total_cmp(&(b.top() - desired.top()).abs())
+        .filter(|rect| rect.intersects(domain))
+        .collect();
+    let mut xs = vec![min.x, max.x, target.x];
+    let mut ys = vec![min.y, max.y, target.y];
+    for rect in &blocked {
+        for x in [rect.left(), rect.right()] {
+            if min.x <= x && x <= max.x {
+                xs.push(x);
+            }
+        }
+        for y in [rect.top(), rect.bottom()] {
+            if min.y <= y && y <= max.y {
+                ys.push(y);
+            }
+        }
+    }
+    xs.sort_by(f32::total_cmp);
+    xs.dedup_by(|a, b| *a == *b);
+    ys.sort_by(f32::total_cmp);
+    ys.dedup_by(|a, b| *a == *b);
+
+    let mut events = Vec::with_capacity(blocked.len() * 2);
+    for rect in blocked {
+        // Edges of the expanded obstacles are safe, so only cover candidate
+        // coordinates strictly inside each interval.
+        let start = ys.partition_point(|y| *y <= rect.top());
+        let end = ys.partition_point(|y| *y < rect.bottom());
+        if start < end {
+            events.push(ToolbarSweepEvent {
+                x: rect.left(),
+                start,
+                end,
+                delta: 1,
+            });
+            events.push(ToolbarSweepEvent {
+                x: rect.right(),
+                start,
+                end,
+                delta: -1,
+            });
+        }
+    }
+    events.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let target_y = ys.partition_point(|y| *y < target.y);
+    let mut coverage = ToolbarCoverage::new(ys.len());
+    let mut cursor = 0;
+    let mut best: Option<(f32, egui::Rect)> = None;
+    for x in xs {
+        while cursor < events.len() && events[cursor].x < x {
+            let event = events[cursor];
+            coverage.add(event.start, event.end, event.delta);
+            cursor += 1;
+        }
+        let first = cursor;
+        while cursor < events.len() && events[cursor].x == x {
+            cursor += 1;
+        }
+        for event in events[first..cursor].iter().filter(|event| event.delta < 0) {
+            coverage.add(event.start, event.end, event.delta);
+        }
+        for index in [
+            coverage.last_clear(target_y + 1),
+            coverage.first_clear(target_y),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let top_left = egui::pos2(x, ys[index]);
+            let distance = (top_left - target).length_sq();
+            if best.is_none_or(|(best_distance, _)| distance < best_distance) {
+                best = Some((distance, egui::Rect::from_min_size(top_left, size)));
+            }
+        }
+        for event in events[first..cursor].iter().filter(|event| event.delta > 0) {
+            coverage.add(event.start, event.end, event.delta);
+        }
+    }
+    best.map(|(_, rect)| rect)
+}
+
+fn board_screen_rect(rect: thinoda_core::Rect, origin: egui::Pos2, zoom: f32) -> egui::Rect {
+    let max = rect.max();
+    egui::Rect::from_min_max(
+        origin + vec2(rect.min.x, rect.min.y) * zoom,
+        origin + vec2(max.x, max.y) * zoom,
+    )
+}
+
+pub(crate) fn board_card_obstacles(
+    sheet: &thinoda_core::Sheet,
+    layout: &thinoda_core::Layout,
+    origin: egui::Pos2,
+    zoom: f32,
+    canvas: egui::Rect,
+) -> Vec<egui::Rect> {
+    // Cards are floating roots. Build the first clipping frame for each root
+    // once instead of looking through every frame for every card.
+    let mut clips = std::collections::HashMap::new();
+    for zone in sheet.zones.iter().filter(|zone| zone.clip) {
+        for id in &zone.roots {
+            clips.entry(*id).or_insert(zone.frame);
+        }
+    }
+    layout
+        .order
+        .iter()
+        .filter_map(|id| {
+            let card = sheet.topic(*id)?.card?;
+            let rect = layout.topics.get(id)?.rect;
+            let rect = thinoda_core::board::rotated_bounds(rect, card.rotation);
+            let mut visible = board_screen_rect(rect, origin, zoom);
+            if let Some(clip) = clips.get(id) {
+                visible = visible.intersect(board_screen_rect(*clip, origin, zoom));
+            }
+            visible = visible.intersect(canvas);
+            visible.is_positive().then_some(visible)
         })
+        .collect()
+}
+
+#[derive(Clone, PartialEq)]
+struct TopicToolbarMeasureKey {
+    document: String,
+    ai_enabled: bool,
+    has_link: bool,
+    todo: bool,
+    language: i18n::Lang,
+    available_size: [u32; 2],
+    pixels_per_point: u32,
+    style: std::sync::Arc<egui::Style>,
+    font_key: u64,
+}
+
+fn topic_toolbar_measure_key(
+    ctx: &Context,
+    available: egui::Rect,
+    document: &str,
+    ai_enabled: bool,
+    has_link: bool,
+    todo: bool,
+) -> TopicToolbarMeasureKey {
+    use std::hash::{Hash, Hasher};
+
+    let font_key = ctx.fonts(|fonts| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let defs = fonts.definitions();
+        defs.families.hash(&mut hasher);
+        for (name, data) in &defs.font_data {
+            name.hash(&mut hasher);
+            std::sync::Arc::as_ptr(data).hash(&mut hasher);
+        }
+        for font in fonts.discovered_fonts() {
+            font.name.hash(&mut hasher);
+            font.data.index.hash(&mut hasher);
+            (std::sync::Arc::as_ptr(&font.data.font) as *const ()).hash(&mut hasher);
+            for family in &font.families {
+                family.family.hash(&mut hasher);
+                family.priority.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    });
+    TopicToolbarMeasureKey {
+        document: document.to_owned(),
+        ai_enabled,
+        has_link,
+        todo,
+        language: i18n::lang(),
+        available_size: [available.width().to_bits(), available.height().to_bits()],
+        pixels_per_point: ctx.pixels_per_point().to_bits(),
+        style: ctx.global_style(),
+        font_key,
+    }
 }
 
 fn menu_button(
@@ -1741,7 +2033,8 @@ impl ThinodaApp {
         if !self.settings.show_topic_toolbar {
             return;
         }
-        let Some(d) = self.doc() else { return };
+        let ai_enabled = self.settings.ai.enabled;
+        let Some(d) = self.doc_mut() else { return };
         if d.view.selection.len() != 1
             || d.view.editing_topic().is_some()
             || d.view.editing_board_object().is_some()
@@ -1749,13 +2042,33 @@ impl ThinodaApp {
         {
             return;
         }
-        let Some(rect) = d.view.selected_topic_rect(&d.doc) else {
+        let Some(unrotated_rect) = d.view.selected_topic_rect(&d.doc) else {
+            return;
+        };
+        let Some(selected) = d.view.primary() else {
             return;
         };
         let canvas = d.view.canvas_rect();
-        let topic = d.view.primary().and_then(|id| d.doc.sheet().topic(id));
+        let topic = d.doc.sheet().topic(selected);
         let has_link = topic.is_some_and(|topic| topic.hyperlink.is_some());
         let todo = topic.is_some_and(|topic| topic.todo.is_some());
+        let card = topic.and_then(|topic| topic.card);
+        let is_board = d.doc.sheet().uses_board_semantics();
+        let origin = canvas.center() + d.view.offset;
+        let zoom = d.view.zoom;
+        let layout = is_board.then(|| d.view.layout_for(&d.doc));
+        let rect = layout
+            .as_ref()
+            .and_then(|layout| layout.rect(selected))
+            .map(|rect| {
+                let rotation = card.map_or(0.0, |card| card.rotation);
+                board_screen_rect(
+                    thinoda_core::board::rotated_bounds(rect, rotation),
+                    origin,
+                    zoom,
+                )
+            })
+            .unwrap_or(unrotated_rect);
         let below = rect.top() - 52.0 < canvas.top();
         let mut position = egui::pos2(
             rect.center().x,
@@ -1767,13 +2080,126 @@ impl ThinodaApp {
         );
         let toolbar_id = egui::Id::unique("thinoda_topic_toolbar");
         let mut available = canvas.shrink(4.0);
+        let mut safe_clip = None;
+        if is_board && !available.is_positive() {
+            return;
+        }
         let previous_size = ctx
             .memory(|memory| memory.area_rect(toolbar_id))
             .map(|rect| rect.size());
+        let measure_id = toolbar_id.with(("board_measure_key", ctx.viewport_id()));
+        let measure_key = is_board
+            .then(|| topic_toolbar_measure_key(ctx, available, &d.key, ai_enabled, has_link, todo));
+        if !is_board {
+            ctx.data_mut(|data| data.remove::<TopicToolbarMeasureKey>(measure_id));
+        }
+        let sizing_pass = is_board
+            && (previous_size.is_none()
+                || ctx
+                    .data(|data| data.get_temp::<TopicToolbarMeasureKey>(measure_id))
+                    .as_ref()
+                    != measure_key.as_ref());
         if board_toolbar.is_some() && previous_size.is_none() {
             ctx.request_repaint();
         }
-        if let (Some(board), Some(size)) = (board_toolbar, previous_size) {
+        if is_board && !sizing_pass {
+            let Some(size) = previous_size else { return };
+            if size.x > available.width() || size.y > available.height() {
+                return;
+            }
+            let left =
+                (position.x - size.x * 0.5).clamp(available.left(), available.right() - size.x);
+            let top = (if below {
+                position.y
+            } else {
+                position.y - size.y
+            })
+            .clamp(available.top(), available.bottom() - size.y);
+            let desired = egui::Rect::from_min_size(egui::pos2(left, top), size);
+            let Some(layout) = layout.as_ref() else {
+                return;
+            };
+            let sheet = d.doc.sheet();
+            let mut obstacles = board_card_obstacles(sheet, layout, origin, zoom, canvas);
+            if card.is_none() {
+                let mut visible = rect;
+                if let Some(clip) = thinoda_core::scene::topic_clip_rect(sheet, selected) {
+                    visible = visible.intersect(board_screen_rect(clip, origin, zoom));
+                }
+                visible = visible.intersect(canvas);
+                if visible.is_positive() {
+                    obstacles.push(visible);
+                }
+            }
+            for zone in sheet.zones.iter().filter(|zone| !zone.name.is_empty()) {
+                let frame = board_screen_rect(zone.frame, origin, zoom);
+                if !frame.intersects(canvas) {
+                    continue;
+                }
+                // Frame names may contain newlines. Match the fixed-size text
+                // used by the canvas rather than assuming a single title row.
+                let title_height = ctx.fonts_mut(|fonts| {
+                    let galley = fonts.layout_no_wrap(
+                        zone.name.clone(),
+                        egui::FontId::proportional(12.0),
+                        Color32::WHITE,
+                    );
+                    galley.size().y.max(galley.mesh_bounds.bottom())
+                });
+                let title = egui::Rect::from_min_max(
+                    frame.min,
+                    egui::pos2(
+                        frame.right(),
+                        (frame.top() + (6.0 + title_height).max(24.0)).min(frame.bottom()),
+                    ),
+                )
+                .intersect(canvas);
+                if title.is_positive() {
+                    obstacles.push(title);
+                }
+            }
+            if let Some(board) = board_toolbar {
+                obstacles.push(board.expand(6.0));
+                if let Some(editing) = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
+                {
+                    obstacles.push(editing.expand(4.0));
+                }
+            }
+            // Allow for card outlines as well as egui's Area rounding.
+            let pixels_per_point = ctx.pixels_per_point();
+            if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
+                return;
+            }
+            let clearance = 2.0 / pixels_per_point + 1.125;
+            if !clearance.is_finite() {
+                return;
+            }
+            let Some(clear) = nearest_clear_toolbar_rect(desired, available, &obstacles, clearance)
+            else {
+                return;
+            };
+            // Preserve the card frame's shadow where it fits; do not move the
+            // toolbar farther away merely to make room for the shadow.
+            let shadow_clip = clear.expand(8.0 + clearance * 0.5);
+            // If egui unexpectedly changes the size this pass, neither its
+            // paint nor its widgets may escape the last safe placement.
+            safe_clip = Some(
+                if obstacles
+                    .iter()
+                    .all(|obstacle| !shadow_clip.intersects(obstacle.expand(clearance * 0.5)))
+                {
+                    shadow_clip
+                } else {
+                    clear.expand(clearance * 0.5)
+                },
+            );
+            position = egui::pos2(
+                clear.center().x,
+                if below { clear.top() } else { clear.bottom() },
+            );
+        } else if !is_board && let (Some(board), Some(size)) = (board_toolbar, previous_size) {
+            // Keep the existing non-board toolbar placement unchanged.
             let left = (position.x - size.x * 0.5).clamp(
                 available.left(),
                 (available.right() - size.x).max(available.left()),
@@ -1787,61 +2213,17 @@ impl ThinodaApp {
                 available.top(),
                 (available.bottom() - size.y).max(available.top()),
             );
-            let mut desired = egui::Rect::from_min_size(egui::pos2(left, top), size);
+            let desired = egui::Rect::from_min_size(egui::pos2(left, top), size);
             if board.expand(6.0).intersects(desired) {
                 let left = board.right() + 8.0;
                 if available.right() - left < size.x {
                     return;
                 }
                 available.min.x = left;
-                desired =
-                    desired.translate(vec2((available.left() - desired.left()).max(0.0), 0.0));
-            }
-            if d.doc.sheet().uses_board_semantics() {
-                let origin = canvas.center() + d.view.offset;
-                let zoom = d.view.zoom;
-                let titles: Vec<_> = d
-                    .doc
-                    .sheet()
-                    .zones
-                    .iter()
-                    .filter(|zone| !zone.name.is_empty())
-                    .filter_map(|zone| {
-                        let min = origin + vec2(zone.frame.min.x, zone.frame.min.y) * zoom;
-                        let max = origin + vec2(zone.frame.max().x, zone.frame.max().y) * zoom;
-                        let frame = egui::Rect::from_min_max(min, max);
-                        let title = egui::Rect::from_min_max(
-                            frame.min,
-                            egui::pos2(frame.right(), (frame.top() + 24.0).min(frame.bottom())),
-                        );
-                        (title.intersects(available)
-                            && title.left() < desired.right()
-                            && desired.left() < title.right())
-                        .then_some(title)
-                    })
-                    .collect();
-                if titles.iter().any(|title| title.intersects(desired)) {
-                    let mut obstacles = titles;
-                    obstacles.push(rect.expand(2.0));
-                    obstacles.push(board.expand(6.0));
-                    if let Some(editing) = ctx.memory(|memory| {
-                        memory.area_rect(egui::Id::unique("thinoda_editing_toolbar"))
-                    }) {
-                        obstacles.push(editing.expand(4.0));
-                    }
-                    let Some(clear) = nearest_clear_toolbar_rect(desired, available, &obstacles)
-                    else {
-                        return;
-                    };
-                    position = egui::pos2(
-                        clear.center().x,
-                        if below { clear.top() } else { clear.bottom() },
-                    );
-                }
             }
         }
         let mut cmd = None;
-        egui::Area::new(toolbar_id)
+        let shown = egui::Area::new(toolbar_id)
             .order(egui::Order::Middle)
             .pivot(if below {
                 egui::Align2::CENTER_TOP
@@ -1851,7 +2233,11 @@ impl ThinodaApp {
             .fixed_pos(position)
             .constrain_to(available)
             .movable(false)
+            .sizing_pass(sizing_pass)
             .show(ctx, |ui| {
+                if let Some(clip) = safe_clip {
+                    ui.shrink_clip_rect(clip);
+                }
                 widgets::card(ui).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if self.settings.ai.enabled {
@@ -1913,6 +2299,27 @@ impl ThinodaApp {
                     });
                 });
             });
+        if let Some(measure_key) = measure_key {
+            ctx.data_mut(|data| data.insert_temp(measure_id, measure_key));
+            if !sizing_pass
+                && previous_size.is_some_and(|size| {
+                    let actual = shown.response.rect.size();
+                    (actual.x - size.x).abs() > 0.125 || (actual.y - size.y).abs() > 0.125
+                })
+            {
+                if let Some(mut state) = egui::containers::AreaState::load(ctx, toolbar_id) {
+                    state.interactable = false;
+                    ctx.memory_mut(|memory| {
+                        memory
+                            .areas_mut()
+                            .set_state(egui::LayerId::new(egui::Order::Middle, toolbar_id), state);
+                    });
+                }
+                ctx.request_discard("board topic toolbar size changed");
+                ctx.request_repaint();
+                return;
+            }
+        }
         if let Some(command) = cmd {
             self.exec(ctx, command);
         }
