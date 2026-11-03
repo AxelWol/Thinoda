@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read};
 
 use thinoda_core::{
-    Color, PresentationScope, PresentationSource, Rect, Sheet, TopicShape, Vec2,
-    resources::Resource,
+    CanvasObject, Card, CardKind, Color, PresentationScope, PresentationSource, Rect, ShapeKind,
+    Sheet, SheetRootMode, TopicShape, Vec2, board::CanvasObjectKind, resources::Resource,
 };
 use thinoda_io::{
     ExportOptions, IoError, PresentationAspectRatio, export_presentation_pdf,
@@ -39,6 +39,297 @@ fn photo(sheet: &mut Sheet, id: thinoda_core::TopicId, format: image::ImageForma
     let resource = Resource::new("Original test photo", media, bytes.clone()).unwrap();
     thinoda_core::images::set_image(sheet, id, Some((resource, Vec2::new(80.0, 40.0)))).unwrap();
     bytes
+}
+
+#[derive(Debug)]
+struct Transform {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    rotation: Option<i64>,
+}
+
+impl Transform {
+    fn center(&self) -> (f64, f64) {
+        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+}
+
+fn element<'a>(slide: &'a str, tag: &str, marker: &str) -> &'a str {
+    let start = format!("<p:{tag}>");
+    let end = format!("</p:{tag}>");
+    slide
+        .split(&start)
+        .skip(1)
+        .filter_map(|part| part.split_once(&end).map(|(element, _)| element))
+        .find(|element| element.contains(marker))
+        .unwrap_or_else(|| panic!("missing {tag} containing {marker}"))
+}
+
+fn attr(tag: &str, name: &str) -> Option<i64> {
+    tag.split_once(&format!("{name}=\""))
+        .map(|(_, rest)| rest.split('"').next().unwrap().parse().unwrap())
+}
+
+fn transform(element: &str) -> Transform {
+    let after_start = element.split_once("<a:xfrm").unwrap().1;
+    let (opening, body) = after_start.split_once('>').unwrap();
+    let offset = body
+        .split_once("<a:off ")
+        .unwrap()
+        .1
+        .split_once("/>")
+        .unwrap()
+        .0;
+    let extent = body
+        .split_once("<a:ext ")
+        .unwrap()
+        .1
+        .split_once("/>")
+        .unwrap()
+        .0;
+    Transform {
+        x: attr(offset, "x").unwrap() as f64,
+        y: attr(offset, "y").unwrap() as f64,
+        width: attr(extent, "cx").unwrap() as f64,
+        height: attr(extent, "cy").unwrap() as f64,
+        rotation: attr(opening, "rot"),
+    }
+}
+
+fn assert_rotated(original: &Transform, actual: &Transform, pivot: (f64, f64), degrees: f64) {
+    assert_eq!(original.rotation, None);
+    assert_eq!(actual.rotation, Some((degrees * 60_000.0).round() as i64));
+    assert_eq!(actual.width, original.width);
+    assert_eq!(actual.height, original.height);
+    let center = original.center();
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let delta = (center.0 - pivot.0, center.1 - pivot.1);
+    let expected = (
+        pivot.0 + delta.0 * cos - delta.1 * sin,
+        pivot.1 + delta.0 * sin + delta.1 * cos,
+    );
+    let actual_center = actual.center();
+    assert!(
+        (actual_center.0 - expected.0).abs() <= 20.0
+            && (actual_center.1 - expected.1).abs() <= 20.0,
+        "rotated center {actual_center:?} differs from {expected:?}; original {original:?}"
+    );
+}
+
+fn points(element: &str) -> Vec<(f64, f64)> {
+    element
+        .split("<a:pt ")
+        .skip(1)
+        .map(|part| {
+            let tag = part.split_once("/>").unwrap().0;
+            (
+                attr(tag, "x").unwrap() as f64,
+                attr(tag, "y").unwrap() as f64,
+            )
+        })
+        .collect()
+}
+
+fn assert_rotated_points(
+    original: &[(f64, f64)],
+    actual: &[(f64, f64)],
+    pivot: (f64, f64),
+    degrees: f64,
+) {
+    assert_eq!(original.len(), actual.len());
+    assert!(original.len() >= 2);
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    for (before, after) in original.iter().zip(actual) {
+        let delta = (before.0 - pivot.0, before.1 - pivot.1);
+        let expected = (
+            pivot.0 + delta.0 * cos - delta.1 * sin,
+            pivot.1 + delta.0 * sin + delta.1 * cos,
+        );
+        assert!(
+            (after.0 - expected.0).abs() <= 20.0 && (after.1 - expected.1).abs() <= 20.0,
+            "rotated point {after:?} differs from {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn editable_slides_rotate_cards_photos_and_multiline_shape_labels_about_their_pivots() {
+    let mut sheet = Sheet::new("Board", "");
+    sheet.root_mode = SheetRootMode::Hidden;
+    let sticky = sheet
+        .add_card(
+            "Sticky first\nSticky second",
+            Vec2::new(50.0, 60.0),
+            Card::new(CardKind::Sticky, Vec2::new(180.0, 100.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(sticky).unwrap().labels = vec!["Card tag".into()];
+    let image_card = sheet
+        .add_card(
+            "Image caption",
+            Vec2::new(350.0, 90.0),
+            Card::new(CardKind::Image, Vec2::new(180.0, 130.0)),
+        )
+        .unwrap();
+    sheet.topic_mut(image_card).unwrap().style.shape = Some(TopicShape::Underline);
+    let jpeg = photo(&mut sheet, image_card, image::ImageFormat::Jpeg);
+    let untouched = sheet
+        .add_card(
+            "Unrotated card",
+            Vec2::new(600.0, 100.0),
+            Card::new(CardKind::Text, Vec2::new(150.0, 100.0)),
+        )
+        .unwrap();
+    let mut shape = CanvasObject::shape(
+        ShapeKind::Triangle,
+        Rect::from_min_size(Vec2::new(120.0, 290.0), Vec2::new(180.0, 130.0)),
+    );
+    if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+        *label = "Shape A\nShape B".into();
+    }
+    let shape_id = sheet.add_canvas_object(shape).unwrap();
+    let frame = Rect::from_min_size(Vec2::new(-250.0, -250.0), Vec2::new(1200.0, 800.0));
+    let zone = sheet
+        .create_zone("Frame", vec![sticky, image_card, untouched], frame)
+        .unwrap();
+    sheet
+        .add_presentation_slide("Editable", PresentationSource::Zone(zone), frame)
+        .unwrap();
+    sheet.presentation.slides[0].auto_frame = false;
+    sheet.validate().unwrap();
+
+    let mut rotated = sheet.clone();
+    rotated
+        .topic_mut(sticky)
+        .unwrap()
+        .card
+        .as_mut()
+        .unwrap()
+        .rotation = 90.0;
+    rotated
+        .topic_mut(image_card)
+        .unwrap()
+        .card
+        .as_mut()
+        .unwrap()
+        .rotation = 315.0;
+    rotated.canvas.object_mut(shape_id).unwrap().rotation = 45.0;
+    rotated.validate().unwrap();
+    let snapshot = rotated.clone();
+
+    for ratio in [
+        PresentationAspectRatio::Widescreen16x9,
+        PresentationAspectRatio::Standard4x3,
+    ] {
+        let options = ExportOptions {
+            presentation_aspect_ratio: ratio,
+            ..ExportOptions::default()
+        };
+        let before = xml(
+            &export_presentation_pptx(&sheet, &options).unwrap(),
+            "ppt/slides/slide1.xml",
+        );
+        let output = export_presentation_pptx(&rotated, &options).unwrap();
+        let after = xml(&output, "ppt/slides/slide1.xml");
+        let sticky_marker = format!("name=\"Topic {sticky}\"");
+        let sticky_before = transform(element(&before, "sp", &sticky_marker));
+        let sticky_after = transform(element(&after, "sp", &sticky_marker));
+        let sticky_pivot = sticky_before.center();
+        assert_rotated(&sticky_before, &sticky_after, sticky_pivot, 90.0);
+        for text in ["Sticky first", "Sticky second", "Card tag"] {
+            let marker = format!("<a:t>{text}</a:t>");
+            assert_rotated(
+                &transform(element(&before, "sp", &marker)),
+                &transform(element(&after, "sp", &marker)),
+                sticky_pivot,
+                90.0,
+            );
+        }
+
+        let image_marker = format!("name=\"Topic {image_card}\"");
+        let image_before = transform(element(&before, "sp", &image_marker));
+        let image_pivot = image_before.center();
+        assert_rotated(
+            &image_before,
+            &transform(element(&after, "sp", &image_marker)),
+            image_pivot,
+            315.0,
+        );
+        assert_rotated(
+            &transform(element(&before, "pic", "name=\"Topic photo\"")),
+            &transform(element(&after, "pic", "name=\"Topic photo\"")),
+            image_pivot,
+            315.0,
+        );
+        assert_rotated(
+            &transform(element(&before, "sp", "<a:t>Image caption</a:t>")),
+            &transform(element(&after, "sp", "<a:t>Image caption</a:t>")),
+            image_pivot,
+            315.0,
+        );
+        assert_rotated_points(
+            &points(element(&before, "sp", "name=\"Topic underline\"")),
+            &points(element(&after, "sp", "name=\"Topic underline\"")),
+            image_pivot,
+            315.0,
+        );
+        let mut archive = ZipArchive::new(Cursor::new(&output)).unwrap();
+        let mut embedded = Vec::new();
+        archive
+            .by_name("ppt/media/slide1-photo1.jpg")
+            .unwrap()
+            .read_to_end(&mut embedded)
+            .unwrap();
+        assert_eq!(embedded, jpeg);
+
+        let first = "<a:t>Shape A</a:t>";
+        let second = "<a:t>Shape B</a:t>";
+        let first_before = transform(element(&before, "sp", first));
+        let second_before = transform(element(&before, "sp", second));
+        let outline = points(element(
+            &before,
+            "sp",
+            &format!("name=\"Canvas object {shape_id}\""),
+        ));
+        let shape_pivot = (
+            (outline.iter().map(|p| p.0).fold(f64::INFINITY, f64::min)
+                + outline
+                    .iter()
+                    .map(|p| p.0)
+                    .fold(f64::NEG_INFINITY, f64::max))
+                / 2.0,
+            (outline.iter().map(|p| p.1).fold(f64::INFINITY, f64::min)
+                + outline
+                    .iter()
+                    .map(|p| p.1)
+                    .fold(f64::NEG_INFINITY, f64::max))
+                / 2.0,
+        );
+        assert_rotated(
+            &first_before,
+            &transform(element(&after, "sp", first)),
+            shape_pivot,
+            45.0,
+        );
+        assert_rotated(
+            &second_before,
+            &transform(element(&after, "sp", second)),
+            shape_pivot,
+            45.0,
+        );
+        assert_eq!(
+            transform(element(
+                &after,
+                "sp",
+                &format!("name=\"Topic {untouched}\"")
+            ))
+            .rotation,
+            None
+        );
+        assert_eq!(rotated, snapshot);
+    }
 }
 
 #[test]

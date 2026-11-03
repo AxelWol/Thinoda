@@ -184,6 +184,11 @@ reported before export. Some frame clipping on editable branch and Zone slides
 cannot be preserved and is also reported. PDF retains vectors using outlined
 text from the existing export font resolver; editable text is a PPTX guarantee
 for supported branch and Zone content, not a PDF text-search guarantee.
+Editable card shapes, text, annotations, pictures and paths carry their card's
+rotation, and shape labels rotate around the parent shape. They are separate
+PowerPoint objects, not a single linked object. The interactive canvas still
+keeps rotated card text, images and annotations upright, so it is not yet a
+complete visual match for the exported slide.
 PowerPoint edits do not synchronize back into Thinoda. Clipping is visual and
 must not be relied on as secure redaction.
 
@@ -241,3 +246,8 @@ photographs remain the contract for supported branch and Zone content. The
 newer flattened viewport-slide path is covered separately and was not part of
 those Office fixtures. This work does not create a release or merge the feature
 branch.
+
+The later editable-rotation fixture passes the Open XML SDK alongside the other
+nine Office fixtures. An earlier rotated fixture opened in Windows PowerPoint
+without repair, but its captured slide surface was blank; visual placement and
+interactive editing for rotated objects remain unverified in an Office host.

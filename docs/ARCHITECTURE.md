@@ -111,9 +111,10 @@ graph TD
 - **Office export acceptance:** PPTX uses slide-master ID
   `2147483648` and slide-layout ID `2147483649`; layout IDs must be in the
   schema's high range and must not reuse master IDs. Rust package regressions
-  guard this invariant. CI's `office` job generates eight original fixtures
+  guard this invariant. CI's `office` job generates ten original fixtures
   with `cargo run --locked -p thinoda-io --example office_candidates -- <new-directory>`,
-  covering plain/rich Word, Excel and light/dark 16:9/4:3 PowerPoint.
+  covering plain/rich Word, Excel, light/dark 16:9/4:3 PowerPoint, a flattened
+  board viewport and an editable rotated board.
   `.github/tools/OpenXmlValidation` is a locked .NET 10 tool using Microsoft
   Open XML SDK 3.5.1, read-only `OpenXmlValidator(Microsoft365)` and a supplemental
   master/layout ID collision check. It reports package/part/path failures and

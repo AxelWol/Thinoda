@@ -6,7 +6,7 @@ use crate::{ExportOptions, IoError};
 use std::collections::HashMap;
 use thinoda_core::{
     Color, Rect, ResolvedPresentationSlide, Sheet, TopicId, TopicShape, Vec2,
-    board::CardKind,
+    board::{CardKind, rotate_around},
     layout::{ConnectorKind, Icon},
     theme::Theme,
 };
@@ -26,6 +26,13 @@ struct Drawing {
     scale: f32,
     width: u64,
     height: u64,
+    rotation: Option<Rotation>,
+}
+
+#[derive(Clone, Copy)]
+struct Rotation {
+    center: Vec2,
+    degrees: f32,
 }
 
 fn fill(color: Option<Color>) -> String {
@@ -47,8 +54,18 @@ impl Drawing {
     }
 
     fn transform(&self, rect: Rect) -> String {
+        let (rect, rotation) = self.rotation.map_or((rect, String::new()), |rotation| {
+            let center = rotate_around(rect.center(), rotation.center, rotation.degrees);
+            let angle = ((rotation.degrees * 60_000.0).round() as i64).rem_euclid(21_600_000);
+            let attribute = if angle == 0 {
+                String::new()
+            } else {
+                format!(r#" rot="{angle}""#)
+            };
+            (Rect::from_center_size(center, rect.size), attribute)
+        });
         format!(
-            r#"<a:xfrm><a:off x="{}" y="{}"/><a:ext cx="{}" cy="{}"/></a:xfrm>"#,
+            r#"<a:xfrm{rotation}><a:off x="{}" y="{}"/><a:ext cx="{}" cy="{}"/></a:xfrm>"#,
             self.emu(rect.min.x - self.frame.min.x),
             self.emu(rect.min.y - self.frame.min.y),
             self.emu(rect.size.x).max(1),
@@ -95,6 +112,9 @@ impl Drawing {
     }
 
     fn point(&self, point: Vec2) -> String {
+        let point = self.rotation.map_or(point, |rotation| {
+            rotate_around(point, rotation.center, rotation.degrees)
+        });
         format!(
             r#"<a:pt x="{}" y="{}"/>"#,
             self.emu(point.x - self.frame.min.x),
@@ -231,15 +251,20 @@ impl Drawing {
                     fill,
                     stroke,
                 ),
-                // Rotated shape labels are exported upright; geometry keeps the rotation.
                 super::board::Prim::Text {
                     rect,
+                    pivot,
+                    rotation,
                     lines,
                     size,
                     color,
                     backdrop,
-                    ..
                 } => {
+                    let previous_rotation = self.rotation;
+                    self.rotation = (rotation != 0.0).then_some(Rotation {
+                        center: pivot,
+                        degrees: rotation,
+                    });
                     if let Some(backdrop) = backdrop {
                         let id = self.id();
                         self.shape(
@@ -266,6 +291,7 @@ impl Drawing {
                             color,
                         );
                     }
+                    self.rotation = previous_rotation;
                 }
             }
         }
@@ -292,6 +318,7 @@ pub(crate) fn editable_slide(
         scale: width as f32 / resolved.frame.size.x,
         width,
         height,
+        rotation: None,
     };
     let topic_ids: HashMap<TopicId, u32> = layout.order.iter().map(|id| (*id, draw.id())).collect();
     let grey = Color::rgb(0x77, 0x77, 0x77);
@@ -456,6 +483,14 @@ pub(crate) fn editable_slide(
         let topic = sheet
             .topic(*id)
             .ok_or_else(|| IoError::Invalid("missing native topic".into()))?;
+        draw.rotation = topic
+            .card
+            .as_ref()
+            .filter(|card| topic.parent.is_none() && card.rotation != 0.0)
+            .map(|card| Rotation {
+                center: tl.rect.center(),
+                degrees: card.rotation,
+            });
         let s = &tl.style;
         let card = topic
             .card
@@ -480,7 +515,6 @@ pub(crate) fn editable_slide(
         let mut topic_fill = s.fill;
         let mut text_color = s.text_color;
         if let Some(card) = card {
-            // Card rotation is not exported to editable slides.
             geometry = "rect";
             simple = false;
             topic_fill = card_fill;
@@ -663,6 +697,7 @@ pub(crate) fn editable_slide(
                 false,
             );
         }
+        draw.rotation = None;
     }
     for (item, object) in super::board::band_items(sheet, &scene, thinoda_core::SceneBand::AboveMap)
     {

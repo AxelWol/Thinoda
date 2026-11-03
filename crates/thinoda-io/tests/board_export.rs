@@ -695,6 +695,24 @@ fn svg_paints_the_board_scene() {
 }
 
 #[test]
+fn svg_rotates_an_offset_shape_label_around_the_shape_center() {
+    let mut wb = board();
+    let mut triangle = CanvasObject::shape(
+        ShapeKind::Triangle,
+        Rect::from_min_size(Vec2::new(120.0, 290.0), Vec2::new(180.0, 130.0)),
+    );
+    if let CanvasObjectKind::Shape { label, .. } = &mut triangle.kind {
+        *label = "Triangle".into();
+    }
+    triangle.rotation = 90.0;
+    wb.sheets[0].add_canvas_object(triangle).unwrap();
+    let svg = String::from_utf8(export(&wb, Format::Svg)).unwrap();
+    assert!(svg.contains("<g transform=\"rotate(90.00 210.00 355.00)\">"));
+    assert!(svg.contains("<text x=\"210.00\" y=\"381.00\""));
+    assert!(svg.contains("Triangle</text>"));
+}
+
+#[test]
 fn below_band_objects_paint_before_topics() {
     let mut wb = board();
     let below = {

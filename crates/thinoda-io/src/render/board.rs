@@ -25,9 +25,10 @@ pub(crate) enum Prim {
         /// Round caps and joins (ink).
         round: bool,
     },
-    /// Centered text lines in an unrotated `rect`, turned by `rotation` around its centre.
+    /// Centered text lines in an unrotated `rect`, turned around `pivot`.
     Text {
         rect: Rect,
+        pivot: Vec2,
         rotation: f32,
         lines: Vec<String>,
         size: f32,
@@ -170,6 +171,7 @@ pub(crate) fn object_prims(
                 let under = object.style.fill.map_or(background, |f| f.over(background));
                 out.push(Prim::Text {
                     rect,
+                    pivot: object.rect.center(),
                     rotation: object.rotation,
                     lines: wrap(label, rect.size.x, LABEL_SIZE),
                     size: LABEL_SIZE,
@@ -239,6 +241,7 @@ pub(crate) fn object_prims(
                 );
                 out.push(Prim::Text {
                     rect: Rect::from_center_size(mid, size),
+                    pivot: mid,
                     rotation: 0.0,
                     lines,
                     size: 12.0,

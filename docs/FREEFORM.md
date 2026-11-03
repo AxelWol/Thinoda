@@ -502,10 +502,15 @@ semantics and require native v6.
 - Viewport scenes can be captured, edited, played and exported. PowerPoint
   viewport slides are flattened to images; editable branch/zone slides do not
   fully preserve frame clipping and the preflight reports that loss.
+- Editable PowerPoint cards preserve rotation for their shapes, text,
+  annotations, pictures and paths. Shape labels rotate about their parent
+  shape's center in the canvas and SVG-backed and editable PowerPoint exports.
+  The shape-label editor stays upright at the rotated label position.
 - XMind titles a Hidden root with the sheet title; imports run board
   validation and reject malformed or oversized data without panicking.
-- Known gaps: ink pressure is ignored; card rotation and rotated shape labels
-  stay upright in editable PPTX; the XMind central topic keeps the anchor's
+- Known gaps: ink pressure is ignored; rotated card titles, images and
+  annotations remain upright on the interactive canvas even though SVG and
+  editable PowerPoint rotate them; the XMind central topic keeps the anchor's
   non-title fields.
 
 ## 6. Phased plan
@@ -676,6 +681,23 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   is not redaction, and editable PowerPoint output reports clipping it cannot
   preserve. Browser storage limits and realistic rendering performance still
   require integration acceptance.
+- Editable branch/Zone PowerPoint slides now rotate card components and
+  multiline shape labels around their owning card or shape, preserving image
+  bytes and source data. The canvas rotates shape labels around the same pivot;
+  its upright editor tracks the rotated label, and offscreen-label culling
+  respects frame clips. Native geometry tests cover multiple angles and zoom
+  levels, both slide ratios, keyboard editing and undo. Ten regenerated Office
+  packages pass Microsoft Open XML SDK validation, including a rotated board.
+- The label-culling bounds are deliberately generous estimates rather than
+  font-specific measurements. Canvas text wrapping still differs from export,
+  and card titles, images, annotations, title editing and image-resize handles
+  remain axis-aligned on the interactive canvas. Correcting card parity must
+  cover rendering, clipping, hit testing, resize and editing together.
+- The earlier rotated-board fixture opened in Windows PowerPoint without a
+  repair dialog, but its captured slide surface was blank. Neither schema
+  validation nor that observation establishes visual fidelity or interactive
+  editing in PowerPoint or other Office hosts. Editable components remain
+  separate objects, and editing them does not update the Thinoda document.
 - The Pitch stage now fits its containing player rather than the height of the
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both

@@ -1081,6 +1081,7 @@ fn board_object_svg(
             }
             board::Prim::Text {
                 rect,
+                pivot,
                 rotation,
                 lines,
                 size,
@@ -1091,7 +1092,7 @@ fn board_object_svg(
                 if rotation != 0.0 {
                     out.push_str(&format!(
                         "<g transform=\"rotate({rotation:.2} {:.2} {:.2})\">",
-                        c.x, c.y
+                        pivot.x, pivot.y
                     ));
                 }
                 if let Some(backdrop) = backdrop {

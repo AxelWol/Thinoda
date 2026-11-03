@@ -2381,7 +2381,11 @@ pub(super) fn show_label_editor(
     };
     let rect = match &object.kind {
         CanvasObjectKind::Shape { shape, .. } => {
-            thinoda_core::board::shape_label_rect(*shape, object.rect)
+            let label_rect = thinoda_core::board::shape_label_rect(*shape, object.rect);
+            thinoda_core::Rect::from_center_size(
+                rotate_around(label_rect.center(), object.rect.center(), object.rotation),
+                label_rect.size,
+            )
         }
         CanvasObjectKind::Connector(_) => {
             let point = match &item.geometry {

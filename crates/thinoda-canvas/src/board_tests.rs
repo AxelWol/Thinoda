@@ -2603,6 +2603,60 @@ fn shape_accessibility_and_keyboard_label_editing() {
 }
 
 #[test]
+fn rotated_shape_label_editor_tracks_the_label_and_keeps_keyboard_editing() {
+    let mut sheet = board();
+    let mut object = CanvasObject::shape(
+        ShapeKind::Triangle,
+        thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+    );
+    object.rotation = 90.0;
+    if let CanvasObjectKind::Shape { label, .. } = &mut object.kind {
+        *label = "Original".into();
+    }
+    let id = sheet.add_canvas_object(object).unwrap();
+    let mut h = harness(sheet);
+    h.get_by_label("Triangle: Original").focus();
+    h.run_steps(2);
+    h.key_press(Key::F2);
+    h.run_steps(2);
+    let object = h.state().doc.sheet().canvas.object(id).unwrap();
+    let label_rect = thinoda_core::board::shape_label_rect(ShapeKind::Triangle, object.rect);
+    let center = thinoda_core::board::rotate_around(
+        label_rect.center(),
+        object.rect.center(),
+        object.rotation,
+    );
+    let expected = h
+        .state()
+        .view
+        .xf()
+        .rect(thinoda_core::Rect::from_center_size(
+            center,
+            label_rect.size,
+        ))
+        .expand(2.0);
+    let editor = h.get_by_label("Board object label").rect();
+    assert!(
+        editor.min.distance(expected.min) < 1.0,
+        "editor {editor:?} should start at {expected:?}"
+    );
+    h.get_by_label("Board object label").type_text("Updated");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "Updated"
+    );
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state().doc.sheet().canvas.object(id).unwrap().label(),
+        "Original"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
 fn image_card_accessible_name_preserves_its_kind_when_renamed() {
     let mut sheet = board();
     let id = sheet

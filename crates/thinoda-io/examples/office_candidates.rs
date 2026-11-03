@@ -142,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *label = "Viewport shape".into();
     }
     shape.style.fill = Some(Color::rgb(190, 220, 245));
-    sheet.add_canvas_object(shape)?;
+    let shape_id = sheet.add_canvas_object(shape)?;
     let card = sheet.add_floating("Viewport sticky", Vec2::new(80.0, 80.0));
     sheet.topic_mut(card).unwrap().card = Some(thinoda_core::board::Card::new(
         thinoda_core::board::CardKind::Sticky,
@@ -168,6 +168,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     export_file(
         &board,
         &output.join("viewport-board.pptx"),
+        Format::PowerPoint,
+        &Default::default(),
+    )?;
+    let sheet = board.active_mut();
+    sheet.canvas.object_mut(shape_id).unwrap().rotation = 45.0;
+    sheet
+        .topic_mut(card)
+        .unwrap()
+        .card
+        .as_mut()
+        .unwrap()
+        .rotation = 30.0;
+    let mut image_card = thinoda_core::board::Card::new(
+        thinoda_core::board::CardKind::Image,
+        Vec2::new(160.0, 100.0),
+    );
+    image_card.rotation = 315.0;
+    let image = sheet.add_card("Rotated photo", Vec2::new(500.0, 350.0), image_card)?;
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        32,
+        16,
+        image::Rgb([30, 120, 210]),
+    ))
+    .write_to(&mut bytes, image::ImageFormat::Jpeg)?;
+    let resource = thinoda_core::resources::Resource::new(
+        "Rotated fixture photo",
+        "image/jpeg",
+        bytes.into_inner(),
+    )?;
+    thinoda_core::images::set_image(sheet, image, Some((resource, Vec2::new(80.0, 40.0))))?;
+    sheet.presentation.slides.clear();
+    sheet.add_presentation_slide(
+        "Editable rotated board",
+        thinoda_core::PresentationSource::Branch(card),
+        frame,
+    )?;
+    sheet.presentation.slides[0].scope = thinoda_core::PresentationScope::Context;
+    sheet.presentation.slides[0].auto_frame = false;
+    export_file(
+        &board,
+        &output.join("rotated-editable-board.pptx"),
         Format::PowerPoint,
         &Default::default(),
     )?;

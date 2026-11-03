@@ -34,13 +34,13 @@ class OpenXmlValidationTests(unittest.TestCase):
                 "plain.docx", "rich-notes.docx", "plain.xlsx", "map.xlsx",
                 "slides-light-16x9.pptx", "slides-dark-16x9.pptx",
                 "slides-light-4x3.pptx", "slides-dark-4x3.pptx",
-                "viewport-board.pptx",
+                "viewport-board.pptx", "rotated-editable-board.pptx",
             },
         )
         result = self.run_validator(fixtures)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Validated 9 Office file(s)", result.stdout)
-        self.assertEqual(result.stdout.count(": 0 validation error(s)"), 9)
+        self.assertIn("Validated 10 Office file(s)", result.stdout)
+        self.assertEqual(result.stdout.count(": 0 validation error(s)"), 10)
 
     def test_viewport_slide_contains_the_flattened_board(self):
         with zipfile.ZipFile(Path(FIXTURES) / "viewport-board.pptx") as package:
@@ -50,6 +50,20 @@ class OpenXmlValidationTests(unittest.TestCase):
                       if name.startswith("ppt/media/") and name.endswith(".png")]
             self.assertEqual(len(images), 1)
             self.assertGreater(len(package.read(images[0])), 100)
+
+    def test_editable_board_has_rotated_shapes_text_and_photo(self):
+        with zipfile.ZipFile(Path(FIXTURES) / "rotated-editable-board.pptx") as package:
+            slide = package.read("ppt/slides/slide1.xml")
+            for value in (b'rot="1800000"', b'rot="2700000"', b'rot="18900000"'):
+                self.assertIn(value, slide)
+            self.assertIn(b"<a:t>Viewport sticky</a:t>", slide)
+            self.assertIn(b"<a:t>Viewport</a:t>", slide)
+            self.assertIn(b"<a:t>shape</a:t>", slide)
+            self.assertIn(b"<p:pic>", slide)
+            self.assertEqual(
+                [name for name in package.namelist() if name.startswith("ppt/media/")],
+                ["ppt/media/slide1-photo1.jpg"],
+            )
 
     def test_office_lock_files_are_ignored_and_corruption_does_not_skip_other_files(self):
         with tempfile.TemporaryDirectory() as temporary:

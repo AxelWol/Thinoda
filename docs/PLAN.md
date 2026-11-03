@@ -24,9 +24,10 @@ screen-reader acceptance.
 
 The remaining R14 gates are realistic ink performance, integrated
 accessibility and cross-platform/physical-device acceptance, and safe
-large-board browser recovery. First-start contention is reduced in a measured
-desktop comparison; small desktop comparisons cover controlled warm reloads and
-the subsequent integrity guard, but actual iPad acceptance remains open.
+large-board browser recovery. Rotated card content still needs canvas rendering,
+editing and resize parity with exports. First-start contention is reduced in a
+measured desktop comparison; small desktop comparisons cover controlled warm
+reloads and the subsequent integrity guard, but actual iPad acceptance remains open.
 Integrated cloud providers remain **disabled by default** and paused until
 publisher registrations are complete. See the R14 status and
 [FREEFORM.md](FREEFORM.md) for phase-specific evidence and limits.
@@ -3001,6 +3002,12 @@ resources, connector remapping, undo, plain-text replacement and rejected cuts
 through synthetic events and an isolated virtual clipboard. All nine cases passed
 across desktop Chromium, Firefox and WebKit. They do not prove real
 system-clipboard ownership, browser permissions or sanitization.
+
+Editable PowerPoint slides now preserve card-component rotation and rotate
+shape labels about the parent shape. The canvas applies that shape-label pivot
+and keeps its editor usable, but rotated card content remains upright there.
+The rotated Office fixture passes schema validation; actual rotated-slide
+appearance and editing in Office remain open. See the F6 critique in FREEFORM.
 
 The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;

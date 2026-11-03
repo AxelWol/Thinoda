@@ -14,7 +14,7 @@ use std::{
 use thinoda_core::{
     CanvasObject, CanvasObjectId, CanvasObjectKind, CardKind, GridKind, Layout, SceneBand, SceneId,
     ShapeKind, Sheet, TextAlign, TopicId, TopicShape,
-    board::{rotate_around, rotated_corners, shape_label_rect},
+    board::{rotate_around, rotated_bounds, rotated_corners, shape_label_rect},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, Icon, TopicLayout, cubic},
     scene::{Scene, SceneGeometry, build_scene, topic_clip_rect, topic_clip_zone},
@@ -22,6 +22,10 @@ use thinoda_core::{
 };
 
 pub(crate) const RELATIONSHIP_SEGMENTS: usize = 32;
+
+fn shape_label_font_size(zoom: f32) -> f32 {
+    (12.0 * zoom).max(7.0)
+}
 
 /// Converts a core color into an egui color.
 pub fn color32(c: Color) -> Color32 {
@@ -616,6 +620,8 @@ fn object_in_viewport(
     viewport.is_none_or(|viewport| {
         object_visible_bounds(object, item, zoom)
             .is_some_and(|bounds| rects_intersect_inclusive(bounds, viewport))
+            || shape_label_visible_bounds(object, item, zoom)
+                .is_some_and(|bounds| rects_intersect_inclusive(bounds, viewport))
     })
 }
 
@@ -664,6 +670,38 @@ fn object_visible_bounds(
     let mut bounds = item
         .bounds
         .expand(geometry_margin + 1.0 / zoom.max(f32::EPSILON));
+    if let Some(clip) = item.clip {
+        bounds = intersect_rect(bounds, clip)?;
+    }
+    Some(bounds)
+}
+
+fn shape_label_visible_bounds(
+    object: &CanvasObject,
+    item: &thinoda_core::SceneItem,
+    zoom: f32,
+) -> Option<thinoda_core::Rect> {
+    let CanvasObjectKind::Shape { shape, label } = &object.kind else {
+        return None;
+    };
+    if label.is_empty() {
+        return None;
+    }
+    // Labels can extend beyond their outline; keep a generous text bound for culling.
+    let (longest, line_count) = label.split('\n').fold((0, 0), |(longest, lines), line| {
+        (longest.max(line.len()), lines + 1)
+    });
+    let font_size = shape_label_font_size(zoom) / zoom.max(f32::EPSILON);
+    let size = Vec2::new(longest as f32, line_count as f32) * (font_size * 2.0);
+    let center = rotate_around(
+        shape_label_rect(*shape, object.rect).center(),
+        object.rect.center(),
+        object.rotation,
+    );
+    let mut bounds = rotated_bounds(
+        thinoda_core::Rect::from_center_size(center, size),
+        object.rotation,
+    );
     if let Some(clip) = item.clip {
         bounds = intersect_rect(bounds, clip)?;
     }
@@ -1091,18 +1129,23 @@ fn paint_canvas_object(
             }
             if !label.is_empty() {
                 let text_rect = shape_label_rect(*shape, object.rect);
-                let font = FontId::proportional((12.0 * z).max(7.0));
+                let font = FontId::proportional(shape_label_font_size(z));
                 let text_color = object.style.text_color.map(color32).unwrap_or_else(|| {
                     let page = core_color32(sheet_background(sheet, opts.dark));
                     let background = object.style.fill.map_or(page, |fill| fill.over(page));
                     color32(Color::highest_contrast_on(background))
                 });
-                painter.text(
-                    xf.pos(text_rect.center()),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    font,
-                    opacity_color(text_color, object.style.opacity),
+                let text_color = opacity_color(text_color, object.style.opacity);
+                let galley = painter.layout_no_wrap(label.clone(), font, text_color);
+                let center = xf.pos(rotate_around(
+                    text_rect.center(),
+                    object.rect.center(),
+                    object.rotation,
+                ));
+                let angle = object.rotation.to_radians();
+                let origin = center - egui::emath::Rot2::from_angle(angle) * (galley.size() / 2.0);
+                painter.add(
+                    egui::epaint::TextShape::new(origin, galley, text_color).with_angle(angle),
                 );
             }
         }
@@ -2029,6 +2072,136 @@ mod tests {
         let expected = opacity_color(color32(Color::highest_contrast_on(under)), 0.5);
         assert_eq!(label_color(&fallback_output), expected);
         fallback_output.textures_delta.clear();
+    }
+
+    #[test]
+    fn shape_labels_rotate_about_the_shape_center_at_any_zoom() {
+        let mut sheet = Sheet::new("S", "Root");
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Triangle,
+            thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(200.0, 120.0)),
+        );
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "Rotating label".to_owned();
+        }
+        sheet.canvas.objects.push(shape);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        for zoom in [0.2, 1.5, 3.0] {
+            let xf = Xf {
+                origin: pos2(300.0, 250.0),
+                zoom,
+            };
+            for angle in [0.0_f32, 45.0, 90.0, -90.0] {
+                let shape = &mut sheet.canvas.objects[0];
+                shape.rotation = angle;
+                let label_center = shape_label_rect(ShapeKind::Triangle, shape.rect).center();
+                let expected = xf.pos(rotate_around(label_center, shape.rect.center(), angle));
+                let mut output = ctx.run_pass(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        paint_map(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            &sheet,
+                            &layout,
+                            xf,
+                            &PaintOptions::default(),
+                        );
+                    },
+                );
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        Shape::Text(text) if text.galley.job.text == "Rotating label" => {
+                            Some((text.angle, text.pos, text.galley.size()))
+                        }
+                        _ => None,
+                    });
+                output.textures_delta.clear();
+                let (actual_angle, position, size) = text.expect("shape label should be painted");
+                assert!((actual_angle - angle.to_radians()).abs() < 0.0001);
+                let center = position + egui::emath::Rot2::from_angle(actual_angle) * (size / 2.0);
+                assert!(
+                    center.distance(expected) < 0.1,
+                    "label center {center:?} differs from {expected:?} at {angle} degrees and {zoom} zoom"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rotated_label_remains_visible_when_its_shape_is_outside_the_viewport() {
+        let mut sheet = Sheet::new("S", "Root");
+        let mut shape = CanvasObject::shape(
+            ShapeKind::Triangle,
+            thinoda_core::Rect::from_center_size(Vec2::new(140.0, 0.0), Vec2::new(20.0, 20.0)),
+        );
+        shape.rotation = 45.0;
+        if let CanvasObjectKind::Shape { label, .. } = &mut shape.kind {
+            *label = "Rotating label extends into viewport".to_owned();
+        }
+        sheet.canvas.objects.push(shape);
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0));
+        let label_bounds = |sheet: &Sheet| {
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        &layout,
+                        Xf {
+                            origin: pos2(100.0, 100.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                    );
+                },
+            );
+            let bounds = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(text)
+                        if text.galley.job.text == "Rotating label extends into viewport" =>
+                    {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                });
+            output.textures_delta.clear();
+            bounds
+        };
+        assert!(
+            label_bounds(&sheet)
+                .expect("visible label should not be culled with its offscreen shape")
+                .intersects(screen)
+        );
+        sheet.zones.push(thinoda_core::Zone {
+            id: thinoda_core::ZoneId(1),
+            name: "Offscreen clip".into(),
+            frame: thinoda_core::Rect::from_center_size(
+                Vec2::new(140.0, 0.0),
+                Vec2::new(40.0, 40.0),
+            ),
+            roots: vec![],
+            keep_empty: true,
+            color: None,
+            clip: true,
+        });
+        assert!(label_bounds(&sheet).is_none());
+        sheet.zones.clear();
+        sheet.canvas.objects[0].rect.min.x += 2_000.0;
+        assert!(label_bounds(&sheet).is_none());
     }
 
     #[test]
