@@ -839,8 +839,8 @@ the raw error under **Technical details**:
   `npx playwright install chromium`, and `npm run test:browser`. The suite
   serves `dist` on loopback with Python, runs one isolated Chromium context per
   test, and covers the production loader, deferred offline installation,
-  rootless board editing, mini-map navigation and pointer capture, SVG/PNG/PDF
-  and PowerPoint exports, image cards and Pitch viewport. Set
+  rootless board editing, mini-map navigation and pointer capture, SVG/PNG/JPEG/PDF
+  and PowerPoint exports, embedded image cards and Pitch viewport. Set
   `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
   test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an
   installed Chromium-compatible browser. Concurrent Playwright runs must use

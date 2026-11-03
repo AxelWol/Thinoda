@@ -8,6 +8,7 @@
  * where documents are stored, so it can run with either browser storage backend.
  */
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { command, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -148,4 +149,151 @@ test("large picker uploads remain transient and rootless image cards undo atomic
     expect(resources[0]).toMatchObject({ name: "synthetic-small.jpg", media_type: "image/jpeg", size: small.length });
     expect(cards[0].image).toBe(`thinoda-resource:${resources[0].id}`);
     expect(zipEntry(saved, `resources/${resources[0].id}`)).toEqual(small);
+});
+
+test.describe("rootless image-card export", () => {
+    test.use({ serviceWorkers: "block" });
+
+    test("SVG, PNG and JPEG render the embedded image without modifying the board", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+
+        const fixture = await page.evaluate(() => {
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 64;
+            const context = canvas.getContext("2d");
+            if (!context) throw new Error("Cannot create the image fixture");
+            const quadrants: [number, number, string][] = [
+                [0, 0, "#1db5f5"], [32, 0, "#f3a322"],
+                [0, 32, "#dd3399"], [32, 32, "#39ca71"],
+            ];
+            for (const [x, y, color] of quadrants) {
+                context.fillStyle = color;
+                context.fillRect(x, y, 32, 32);
+            }
+            return canvas.toDataURL("image/jpeg", 0.92).split(",")[1];
+        });
+        const image = Buffer.from(fixture, "base64");
+        const beforeImage = await boardCenter(page);
+        await imagePicker(page, { name: "export-image.jpg", mimeType: "image/jpeg", buffer: image });
+        await expect.poll(async () => changedPixels(page, beforeImage, await boardCenter(page)), {
+            timeout: 20_000,
+        }).toBeGreaterThan(500);
+
+        const before = await saveAs(page, "image-export-before.thinoda");
+        const beforeContent = documentJson(before, "content.json");
+        const beforeManifest = documentJson(before, "manifest.json");
+        const sheet = beforeContent.sheets[0];
+        const cards = Object.values(sheet.topics) as { id: number; image?: string; card?: { kind: string } }[];
+        const imageCards = cards.filter((topic) => topic.card?.kind === "image");
+        expect(sheet.root_mode).toBe("hidden");
+        expect(imageCards).toHaveLength(1);
+        expect(beforeManifest.resources).toHaveLength(1);
+        const resource = beforeManifest.resources[0];
+        expect(imageCards[0].image).toBe(`thinoda-resource:${resource.id}`);
+        expect(zipEntry(before, `resources/${resource.id}`)).toEqual(image);
+
+        const exportFile = async (label: string, name: string) => {
+            await page.evaluate((fileName) => { window.prompt = () => fileName; }, name);
+            const pending = page.waitForEvent("download", { timeout: 30_000 });
+            await command(page, label);
+            const download = await pending;
+            expect(download.suggestedFilename()).toBe(name);
+            return readFile(await download.path());
+        };
+        const svg = await exportFile("Export SVG", "image-card.svg");
+        const scene = await page.evaluate((source) => {
+            const doc = new DOMParser().parseFromString(source, "image/svg+xml");
+            const embedded = Array.from(doc.querySelectorAll("defs image"));
+            const references = Array.from(doc.querySelectorAll("use"));
+            const image = embedded[0];
+            const href = image?.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+            const reference = references.find((element) =>
+                element.getAttributeNS("http://www.w3.org/1999/xlink", "href") === `#${image?.id}`);
+            return {
+                error: doc.querySelector("parsererror")?.textContent ?? null,
+                imageCount: embedded.length,
+                width: image?.getAttribute("width"),
+                height: image?.getAttribute("height"),
+                href,
+                transform: reference?.getAttribute("transform"),
+                viewBox: doc.documentElement.getAttribute("viewBox"),
+            };
+        }, svg.toString("utf8"));
+        expect(scene.error).toBeNull();
+        expect(scene.imageCount).toBe(1);
+        expect(scene.width).toBe("64");
+        expect(scene.height).toBe("64");
+        expect(scene.href).toBe(`data:image/jpeg;base64,${image.toString("base64")}`);
+        expect(scene.transform).toBeTruthy();
+        expect(scene.viewBox).toBeTruthy();
+        const transform = /^translate\(([-\d.]+)\s+([-\d.]+)\)\s+scale\(([-\d.]+)\)$/
+            .exec(scene.transform!);
+        if (!transform || !scene.viewBox) throw new Error("Missing image placement in exported SVG");
+        const geometry = {
+            x: Number(transform[1]), y: Number(transform[2]), scale: Number(transform[3]),
+            viewBox: scene.viewBox.trim().split(/\s+/).map(Number),
+        };
+        expect(geometry.viewBox).toHaveLength(4);
+        expect([...geometry.viewBox, geometry.x, geometry.y, geometry.scale].every(Number.isFinite)).toBe(true);
+        expect(geometry.scale).toBeGreaterThan(0);
+
+        const inspect = async (bytes: Buffer, mime: string) => page.evaluate(
+            async ({ data, mime, geometry }) => {
+                const blob = new Blob([Uint8Array.from(atob(data), (character) => character.charCodeAt(0))], { type: mime });
+                const url = URL.createObjectURL(blob);
+                try {
+                    const image = new Image();
+                    image.src = url;
+                    await image.decode();
+                    const canvas = document.createElement("canvas");
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+                    const context = canvas.getContext("2d");
+                    if (!context) throw new Error("Cannot inspect the exported image");
+                    context.drawImage(image, 0, 0);
+                    return [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]
+                        .map(([x, y]) => {
+                            const px = Math.floor((geometry.x + x * 64 * geometry.scale - geometry.viewBox[0])
+                                / geometry.viewBox[2] * canvas.width);
+                            const py = Math.floor((geometry.y + y * 64 * geometry.scale - geometry.viewBox[1])
+                                / geometry.viewBox[3] * canvas.height);
+                            if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) {
+                                throw new Error("Exported image lies outside the viewport");
+                            }
+                            return Array.from(context.getImageData(px, py, 1, 1).data);
+                        });
+                } finally {
+                    URL.revokeObjectURL(url);
+                }
+            },
+            { data: bytes.toString("base64"), mime, geometry },
+        );
+        const png = await exportFile("Export PNG", "image-card.png");
+        const jpg = await exportFile("Export JPEG", "image-card.jpg");
+        expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+        expect(jpg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+        const expected = [[29, 181, 245], [243, 163, 34], [221, 51, 153], [57, 202, 113]];
+        for (const [bytes, mime] of [[svg, "image/svg+xml"], [png, "image/png"], [jpg, "image/jpeg"]] as const) {
+            const samples = await inspect(bytes, mime);
+            for (let i = 0; i < expected.length; i++) {
+                for (let channel = 0; channel < 3; channel++) {
+                    expect(Math.abs(samples[i][channel] - expected[i][channel]), `${mime} quadrant ${i}`)
+                        .toBeLessThan(30);
+                }
+                expect(samples[i][3]).toBe(255);
+            }
+        }
+
+        const after = await saveAs(page, "image-export-after.thinoda");
+        expect(documentJson(after, "content.json")).toEqual(beforeContent);
+        expect(documentJson(after, "manifest.json")).toEqual(beforeManifest);
+        expect(zipEntry(after, `resources/${resource.id}`)).toEqual(image);
+    });
 });

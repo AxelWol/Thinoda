@@ -527,9 +527,11 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The final production candidate passed 46 headless Chromium cases,
-including mixed-board editing, mini-map input, SVG/PNG/PDF/PowerPoint export,
-browser-language selection and browser recovery failures. Eleven focused
+open. The production candidate passed 46 headless Chromium cases before the
+later export-test additions, including mixed-board editing, mini-map input,
+SVG/PNG/PDF/PowerPoint export, browser-language selection and browser recovery
+failures. Subsequent focused Chromium checks also cover JPEG and embedded
+image-card exports. Eleven focused
 startup, retry and offline checks passed in each of desktop WebKit and Firefox on Windows; an
 earlier build with identical Wasm also passed focused touch checks there.
 Cloud-provider code is merged upstream behind a default-off feature and stays
@@ -658,12 +660,22 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - The Pitch stage now fits its containing player rather than the height of the
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both
-  appear within the player. Browser SVG, PNG and PDF regressions inspect the
-  downloads after consent and verify rendered board content and source
+  appear within the player. Browser SVG, PNG, JPEG and PDF regressions inspect
+  the downloads after consent and verify rendered board content and source
   preservation. A separate PowerPoint regression checks consent, cancellation,
   the flattened viewport image, its board content and the unchanged source.
   These do not substitute for the remaining format, physical-device and
   cross-platform presentation acceptance.
+- A focused rootless image-card regression checks that SVG embeds the original
+  JPEG and references it, and that SVG, PNG and JPEG render all four colored
+  fixture quadrants in their expected positions. It compares native board
+  content, resource metadata and image bytes before and after export. The
+  mixed-board JPEG check allows compression differences and locates the frame
+  by dense pixel extents instead of treating isolated compression artifacts as
+  its edges. Both the image-card and mixed-board SVG/PNG/JPEG regressions passed
+  in desktop Chromium, Firefox and WebKit on Windows. This synthetic 64-pixel
+  image does not establish PDF image-card, large-image, EXIF-orientation,
+  physical-device or screen-reader acceptance.
 - A production-browser regression checks that the mini-map pans without
   creating a shape underneath it and that hiding the mini-map restores canvas
   input. It passed in desktop Chromium, Firefox and WebKit at one viewport;

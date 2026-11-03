@@ -12,9 +12,10 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 ## Current Freeform and web-startup status
 
 The Freeform implementation, eight board templates, responsive toolbox and
-existing style controls are in place. The latest production candidate passed
-45 Chromium browser scenarios, including mixed-board editing, SVG/PNG/PDF and
-PowerPoint exports, startup, offline behavior and recovery failures. Focused
+existing style controls are in place. The production candidate passed
+46 Chromium browser scenarios before later export-test additions, including
+mixed-board editing, SVG/PNG/PDF and PowerPoint exports, startup, offline
+behavior and recovery failures. Focused
 startup checks also passed in desktop Firefox and WebKit, as did touch checks
 on an earlier build with identical Wasm. These are not physical-device or
 screen-reader acceptance.
@@ -3009,8 +3010,11 @@ replace real-device acceptance.
 Automated production-browser checks exercise a rootless board's saved sticky,
 shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
 inspect SVG, PNG, vector PDF and PowerPoint downloads without mutating the
-source board, including export cancellation and consent. The locked suite passed
-46 headless Chromium cases against the final production candidate; 11 focused
+source board, including export cancellation and consent. Later focused Chromium
+checks cover mixed-board JPEG and SVG/PNG/JPEG image-card exports, including
+the embedded bytes and rendered image quadrants. The locked suite passed
+46 headless Chromium cases against the production candidate before those test
+additions; 11 focused
 startup, retry and offline checks passed in each of desktop WebKit and Firefox
 on Windows. Focused touch checks passed in both on an earlier build with
 identical Wasm. CI runs the Chromium suite before

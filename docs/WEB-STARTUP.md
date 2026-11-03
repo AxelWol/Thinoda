@@ -261,9 +261,10 @@ bytes. This does not recover the oversized unsaved board or establish storage
 limits on other browsers. Device-level reload, quota, concurrent-tab and
 large-board acceptance therefore remain open.
 
-The current candidate production bundle passed 45 headless Chromium regressions,
+The candidate production bundle passed 46 headless Chromium regressions before
+later focused export-test additions,
 including startup and offline-shell failures, browser-language selection,
-mixed-board editing, SVG/PNG/PDF/PowerPoint export, recovery lease loss, quota
+mixed-board editing, mini-map input, SVG/PNG/PDF/PowerPoint export, recovery lease loss, quota
 retry and the real-quota case. Eleven startup and offline checks passed in
 headless WebKit and Firefox on Windows. An earlier build with identical Wasm
 also passed focused touch and language checks in those engines; desktop and

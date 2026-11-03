@@ -1,7 +1,7 @@
 /**
  * Production-browser coverage for exporting a mixed rootless board.
  * The document is created in the test's isolated browser context, and the
- * downloaded SVG, PNG and PDF are inspected rather than inferred from the canvas.
+ * downloaded SVG, PNG, JPEG and PDF are inspected rather than inferred from the canvas.
  */
 import { chromium, expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -109,7 +109,7 @@ async function confirmVisualPreflight(page: Page) {
     await frames(page);
 }
 
-test("mixed rootless board SVG and PNG exports require consent and preserve their objects", async ({ page }, testInfo) => {
+test("mixed rootless board SVG, PNG and JPEG exports require consent and preserve their objects", async ({ page }, testInfo) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await page.locator("#thinoda_canvas").focus();
@@ -350,7 +350,7 @@ test("mixed rootless board SVG and PNG exports require consent and preserve thei
     expect(raster.styledPixels).toBeGreaterThan(1_000);
 
     await setExportPrompt(page, "f6-rootless-board.png");
-    await command(page, "PNG");
+    await command(page, "Export PNG");
     await page.waitForTimeout(300);
     expect(await exportPrompts(page)).toEqual([]);
     const pendingPng = page.waitForEvent("download", { timeout: 30_000 });
@@ -366,13 +366,39 @@ test("mixed rootless board SVG and PNG exports require consent and preserve thei
     const png = await readFile(pngPath);
     await testInfo.attach("downloaded PNG", { path: pngPath, contentType: "image/png" });
     expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    const rendered = await inspectRasterScene(page, png, frame.frame, ink.kind.ink!.points, true);
+    const rendered = await inspectRasterScene(page, png, frame.frame, ink.kind.ink!.points, "png");
     expect(rendered.warnings).toHaveLength(2);
     expect(rendered.frame.count).toBeGreaterThan(500);
     expect(rendered.labelPixels.every((count) => count > 10)).toBe(true);
     expect(rendered.connectorPixels).toBeGreaterThan(30);
     expect(rendered.connectorHits).toEqual([true, true]);
     expect(rendered.inkHits).toEqual([true, true, true]);
+
+    await setExportPrompt(page, "f6-rootless-board.jpg");
+    await command(page, "Export JPEG");
+    await page.waitForTimeout(300);
+    expect(await exportPrompts(page)).toEqual([]);
+    const pendingJpeg = page.waitForEvent("download", { timeout: 30_000 });
+    await confirmVisualPreflight(page);
+    const jpegDownload = await pendingJpeg;
+    expect(jpegDownload.suggestedFilename()).toBe("f6-rootless-board.jpg");
+    expect(await exportPrompts(page)).toEqual([{
+        message: "File name",
+        suggested: expect.stringMatching(/\.jpe?g$/i),
+    }]);
+    const jpegPath = testInfo.outputPath("downloaded-board.jpg");
+    await jpegDownload.saveAs(jpegPath);
+    const jpeg = await readFile(jpegPath);
+    await testInfo.attach("downloaded JPEG", { path: jpegPath, contentType: "image/jpeg" });
+    expect(jpeg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    const renderedJpeg = await inspectRasterScene(page, jpeg, frame.frame, ink.kind.ink!.points, "jpeg");
+    expect(renderedJpeg.transparentPixels).toBe(0);
+    expect(renderedJpeg.warnings).toHaveLength(2);
+    expect(renderedJpeg.frame.count).toBeGreaterThan(500);
+    expect(renderedJpeg.labelPixels.every((count) => count > 10)).toBe(true);
+    expect(renderedJpeg.connectorPixels).toBeGreaterThan(30);
+    expect(renderedJpeg.connectorHits).toEqual([true, true]);
+    expect(renderedJpeg.inkHits).toEqual([true, true, true]);
 
     expect(sheetFrom(await saveAs(page, "f6-after-export.thinoda"))).toEqual(baseline);
 });
@@ -441,11 +467,11 @@ async function inspectRasterScene(
     screenshot: Buffer,
     frame: BoardRect,
     points: { x: number; y: number }[],
-    pngExport = false,
+    rasterFormat: "viewer" | "png" | "jpeg" = "viewer",
 ) {
-    return page.evaluate(async ({ screenshot, frame, points, pngExport }) => {
+    return page.evaluate(async ({ screenshot, frame, points, rasterFormat }) => {
         const image = new Image();
-        image.src = `data:image/png;base64,${screenshot}`;
+        image.src = `data:image/${rasterFormat === "jpeg" ? "jpeg" : "png"};base64,${screenshot}`;
         await image.decode();
         const canvas = document.createElement("canvas");
         canvas.width = image.naturalWidth;
@@ -467,17 +493,47 @@ async function inspectRasterScene(
         const paper = emptyBounds();
         const framePixels = emptyBounds();
         const columns = Array.from({ length: canvas.width }, emptyBounds);
+        let transparentPixels = 0;
+        const jpegExport = rasterFormat === "jpeg";
+        const frameRows = jpegExport ? new Uint32Array(canvas.height) : null;
+        const frameColumns = jpegExport ? new Uint32Array(canvas.width) : null;
+        const near = (value: number, expected: number) =>
+            Math.abs(value - expected) <= (jpegExport ? 8 : 0);
         for (let y = 0; y < canvas.height; y++) {
             for (let x = 0; x < canvas.width; x++) {
                 const i = (y * canvas.width + x) * 4;
                 const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
-                if (r === 255 && g === 255 && b === 255) include(paper, x, y);
+                if (pixels[i + 3] !== 255) transparentPixels++;
+                if (near(r, 255) && near(g, 255) && near(b, 255)) include(paper, x, y);
                 // PNG compositing can round green one unit above the PDF viewer.
-                if (r === 242 && b === 246 && (g === 244 || (pngExport && g === 245))) {
+                if (near(r, 242) && near(b, 246)
+                    && (near(g, 244) || (rasterFormat === "png" && g === 245))) {
                     include(framePixels, x, y);
+                    if (frameRows && frameColumns) {
+                        frameRows[y]++;
+                        frameColumns[x]++;
+                    }
                 }
-                if (r === 255 && g === 237 && b === 213) include(columns[x], x, y);
+                if (near(r, 255) && near(g, 237) && near(b, 213)) include(columns[x], x, y);
             }
+        }
+        if (frameRows && frameColumns) {
+            // Compression creates isolated frame-colored pixels outside the frame.
+            const denseExtent = (counts: Uint32Array) => {
+                const cutoff = Math.max(1, Math.floor(counts.reduce((max, value) => Math.max(max, value), 0) * 0.6));
+                let first = -1;
+                let last = -1;
+                for (let i = 0; i < counts.length; i++) {
+                    if (counts[i] >= cutoff) {
+                        if (first < 0) first = i;
+                        last = i;
+                    }
+                }
+                if (first < 0) throw new Error("Cannot locate the exported JPEG frame");
+                return [first, last];
+            };
+            [framePixels.minX, framePixels.maxX] = denseExtent(frameColumns);
+            [framePixels.minY, framePixels.maxY] = denseExtent(frameRows);
         }
         const warnings: ReturnType<typeof emptyBounds>[] = [];
         let run: ReturnType<typeof emptyBounds> | null = null;
@@ -551,8 +607,11 @@ async function inspectRasterScene(
             }
             return false;
         });
-        return { paper, frame: framePixels, warnings, labelPixels, connectorPixels, connectorHits, inkHits };
-    }, { screenshot: screenshot.toString("base64"), frame, points, pngExport });
+        return {
+            paper, frame: framePixels, warnings, labelPixels, connectorPixels,
+            connectorHits, inkHits, transparentPixels,
+        };
+    }, { screenshot: screenshot.toString("base64"), frame, points, rasterFormat });
 }
 
 async function renderedPdfPixels(

@@ -1892,8 +1892,9 @@ integration acceptance, the full F0/F5 performance gate, F6
 export acceptance, browser recovery, and native/web integration verification
 remain open as described in the linked plan. Production-browser regressions now
 cover a saved mixed board, ink undo, touch cancellation, mini-map input, a
-captured Pitch viewport and inspected SVG/PNG/PDF/PowerPoint exports. The latest
-production candidate passed all 46 Chromium cases; 11 focused startup, retry
+captured Pitch viewport and inspected SVG/PNG/PDF/PowerPoint exports. The
+production candidate passed all 46 Chromium cases before later focused
+mixed-board JPEG and image-card SVG/PNG/JPEG checks; 11 focused startup, retry
 and offline cases also passed in each of desktop Firefox and WebKit. An earlier build with the
 same Wasm passed focused touch checks in both engines. CI runs the Chromium and
 startup/offline suite against the release build; these checks do not establish
