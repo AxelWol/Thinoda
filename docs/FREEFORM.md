@@ -254,9 +254,10 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
   decoded image size.
 - Rendering culls off-screen strokes and caches bounded, screen-space
   tessellated meshes keyed by geometry, transform, clip, style and
-  tessellation settings. Changes such as panning invalidate affected entries;
-  visible working sets larger than the cache can repeatedly evict and
-  retessellate strokes. The cache is not a guarantee of the frame-time target.
+  tessellation settings. Changes such as panning invalidate affected entries.
+  Each paint protects currently visible meshes in both object bands before
+  admitting misses; visible strokes beyond the budget still retessellate.
+  The cache is not a guarantee of the frame-time target.
 - F0 benchmark gate: 1,000 and 10,000 strokes, plus a 50-image board, on native
   and web: frame time, memory, undo memory, save/load time, recovery journal
   size.
@@ -350,6 +351,43 @@ baseline versus 126.07/125.51 MB candidate. This is a whole-process
 measurement, not an isolated cache allocation. It supports a modest memory
 reduction but does not demonstrate a frame-time improvement or meet the F5
 performance gate; GPU, browser and physical-device measurements remain open.
+
+#### Visible ink-cache admission checkpoint: critique
+
+The cache now protects visible resident strokes across both scene bands before
+admitting new meshes. Misses can evict off-screen entries, but not a visible
+entry that will be painted later in the same pass. Empty or alternate views do
+not clear the cache merely by rendering. Geometry, color, zoom, pan, clip,
+pixel scale and tessellation settings remain part of the validity check, and
+the entry and conservative byte budgets remain bounded.
+Admission also checks whether a new mesh can fit alongside the protected
+entries before evicting any off-screen entries; a rejected large mesh therefore
+does not needlessly empty the rest of the cache.
+
+On Windows, three interleaved pairs of the same canvas/core-only, 50-JPEG
+release harness used 20 warm samples per run. At 10,000 visible strokes,
+overview paint plus tessellation p50 was 51.92–52.99 ms before and
+38.13–39.66 ms afterward; p95 was 54.89–55.78 ms and 40.01–43.09 ms.
+At 1,000 strokes, p50 was 2.43–2.53 ms before and 2.15–2.35 ms afterward.
+This headless CPU result excludes GPU presentation, input latency, recovery
+and browser execution. It does not meet the overall F5 frame-time gate or
+establish physical-device performance.
+
+In the first 10,000-stroke candidate run, the separate p50 measurements were
+8.01 ms for paint and 30.22 ms for tessellation, with approximately 1.92 million
+vertices and 7.57 million indices. Tessellation dominates that particular CPU
+fixture; this is not a measurement of GPU frame time. Two subsequent interleaved
+pairs compared that candidate with the final protected-byte accounting: p50 at
+10,000 strokes was 38.34/39.08 ms before and 38.43/37.07 ms afterward; p95 was
+39.81/46.83 ms and 52.51/39.27 ms. The noisy samples do not establish an
+overhead bound.
+
+Protecting a full visible cache can leave additional visible strokes
+uncached; switching to a disjoint view may evict old entries and later require
+retessellation. These are deliberate bounded-memory tradeoffs, not lost
+strokes. Focused tests cover over-capacity bands, disjoint and empty views,
+reused IDs, invalidation, entry/byte limits, and admission that cannot fit even
+after off-screen eviction; real multi-window and device workloads remain open.
 
 ### 5.5 Input devices
 
@@ -489,10 +527,10 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The final production candidate passed 45 headless Chromium cases,
-including mixed-board editing, SVG/PNG/PDF/PowerPoint export, browser-language
-selection and browser recovery failures. Eleven focused startup, retry and
-offline checks passed in each of desktop WebKit and Firefox on Windows; an
+open. The final production candidate passed 46 headless Chromium cases,
+including mixed-board editing, mini-map input, SVG/PNG/PDF/PowerPoint export,
+browser-language selection and browser recovery failures. Eleven focused
+startup, retry and offline checks passed in each of desktop WebKit and Firefox on Windows; an
 earlier build with identical Wasm also passed focused touch checks there.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
@@ -626,6 +664,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   the flattened viewport image, its board content and the unchanged source.
   These do not substitute for the remaining format, physical-device and
   cross-platform presentation acceptance.
+- A production-browser regression checks that the mini-map pans without
+  creating a shape underneath it and that hiding the mini-map restores canvas
+  input. It passed in desktop Chromium, Firefox and WebKit at one viewport;
+  physical touch and screen-reader acceptance remain open.
 
 ### Integrated editing checkpoint: critique
 

@@ -186,6 +186,29 @@ pub fn paint_map(
         }
     }
 
+    let ctx = painter.ctx();
+    let cache_id = ink_cache_id();
+    let mut ink_cache = ctx
+        .data_mut(|data| data.remove_temp::<InkGeometryCache>(cache_id))
+        .unwrap_or_default();
+    // Protect both bands before admitting misses, so a lower-band miss cannot
+    // evict a visible mesh that will be painted later in the upper band.
+    ink_cache.begin_pass();
+    let viewport = sheet_viewport(painter.clip_rect(), xf);
+    for item in &scene.items {
+        let SceneId::Object(id) = item.id else {
+            continue;
+        };
+        if !matches!(&item.geometry, SceneGeometry::Ink { points, .. } if points.len() > 1) {
+            continue;
+        }
+        ink_cache.protect_if(id, || {
+            objects
+                .get(&id)
+                .is_some_and(|object| object_in_viewport(object, item, xf.zoom, viewport))
+        });
+    }
+    let ink_tessellation = ink_tessellation_config(ctx);
     paint_objects_in_band(
         painter,
         sheet,
@@ -194,6 +217,8 @@ pub fn paint_map(
         SceneBand::BelowMap,
         xf,
         opts,
+        &mut ink_cache,
+        ink_tessellation,
     );
 
     // Boundaries.
@@ -416,7 +441,10 @@ pub fn paint_map(
         SceneBand::AboveMap,
         xf,
         opts,
+        &mut ink_cache,
+        ink_tessellation,
     );
+    ctx.data_mut(|data| data.insert_temp(cache_id, ink_cache));
 
     // Selection and badges.
     for id in opts.selection {
@@ -542,6 +570,7 @@ fn paint_grid(painter: &Painter, sheet: &Sheet, xf: Xf, dark: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_objects_in_band(
     painter: &Painter,
     sheet: &Sheet,
@@ -550,14 +579,10 @@ fn paint_objects_in_band(
     band: SceneBand,
     xf: Xf,
     opts: &PaintOptions<'_>,
+    ink_cache: &mut InkGeometryCache,
+    ink_tessellation: InkTessellationConfig,
 ) {
     let viewport = sheet_viewport(painter.clip_rect(), xf);
-    let ctx = painter.ctx();
-    let cache_id = ink_cache_id();
-    let mut ink_cache = ctx
-        .data_mut(|data| data.remove_temp::<InkGeometryCache>(cache_id))
-        .unwrap_or_default();
-    let ink_tessellation = ink_tessellation_config(ctx);
     for item in scene.items.iter().filter(|item| item.band == band) {
         let SceneId::Object(id) = item.id else {
             continue;
@@ -565,10 +590,7 @@ fn paint_objects_in_band(
         let Some(object) = objects.get(&id) else {
             continue;
         };
-        if viewport.is_some_and(|viewport| {
-            !object_visible_bounds(object, item, xf.zoom)
-                .is_some_and(|bounds| rects_intersect_inclusive(bounds, viewport))
-        }) {
+        if !object_in_viewport(object, item, xf.zoom, viewport) {
             continue;
         }
         let clipped = item.clip.map(|r| painter.with_clip_rect(xf.rect(r)));
@@ -579,11 +601,22 @@ fn paint_objects_in_band(
             item,
             xf,
             opts,
-            &mut ink_cache,
+            ink_cache,
             ink_tessellation,
         );
     }
-    ctx.data_mut(|data| data.insert_temp(cache_id, ink_cache));
+}
+
+fn object_in_viewport(
+    object: &CanvasObject,
+    item: &thinoda_core::SceneItem,
+    zoom: f32,
+    viewport: Option<thinoda_core::Rect>,
+) -> bool {
+    viewport.is_none_or(|viewport| {
+        object_visible_bounds(object, item, zoom)
+            .is_some_and(|bounds| rects_intersect_inclusive(bounds, viewport))
+    })
 }
 
 fn sheet_viewport(screen: Rect, xf: Xf) -> Option<thinoda_core::Rect> {
@@ -679,6 +712,7 @@ fn ink_tessellation_config(ctx: &egui::Context) -> InkTessellationConfig {
 struct InkGeometryEntry {
     object: CanvasObjectId,
     token: u64,
+    protected: bool,
     source_points: Arc<[Vec2]>,
     mesh: Arc<egui::Mesh>,
     center: Vec2,
@@ -701,6 +735,8 @@ struct InkGeometryCache {
     insertion_order: std::collections::VecDeque<(CanvasObjectId, u64)>,
     next_token: u64,
     allocated_bytes: usize,
+    evictable: usize,
+    protected_bytes: usize,
 }
 
 impl InkGeometryEntry {
@@ -754,9 +790,34 @@ impl InkGeometryEntry {
 }
 
 impl InkGeometryCache {
+    fn begin_pass(&mut self) {
+        self.evictable = self.entries.len();
+        self.protected_bytes = 0;
+        for entry in self.entries.values_mut() {
+            entry.protected = false;
+        }
+    }
+
+    fn protect_if(&mut self, object: CanvasObjectId, visible: impl FnOnce() -> bool) {
+        if let Some(entry) = self.entries.get_mut(&object)
+            && !entry.protected
+            && visible()
+        {
+            entry.protected = true;
+            self.evictable -= 1;
+            self.protected_bytes += entry.allocation_cost();
+        }
+    }
+
     fn remove(&mut self, object: CanvasObjectId) {
         if let Some(entry) = self.entries.remove(&object) {
-            self.allocated_bytes = self.allocated_bytes.saturating_sub(entry.allocation_cost());
+            let allocation_cost = entry.allocation_cost();
+            self.allocated_bytes = self.allocated_bytes.saturating_sub(allocation_cost);
+            if entry.protected {
+                self.protected_bytes -= allocation_cost;
+            } else {
+                self.evictable -= 1;
+            }
         }
         if self.insertion_order.len() >= MAX_INK_CACHE_ENTRIES * 2 {
             let entries = &self.entries;
@@ -791,29 +852,42 @@ impl InkGeometryCache {
             return false;
         }
         let allocation_cost = entry.allocation_cost();
-        if allocation_cost > max_bytes {
+        if self.protected_bytes.saturating_add(allocation_cost) > max_bytes
+            || self.entries.len() - self.evictable >= max_entries
+        {
             return false;
         }
         while self.entries.len() >= max_entries
             || self.allocated_bytes.saturating_add(allocation_cost) > max_bytes
         {
+            if self.evictable == 0 {
+                return false;
+            }
             let Some((evicted_object, token)) = self.insertion_order.pop_front() else {
                 return false;
             };
-            if self
-                .entries
-                .get(&evicted_object)
-                .is_some_and(|entry| entry.token == token)
-                && let Some(entry) = self.entries.remove(&evicted_object)
+            if let Some(entry) = self.entries.get(&evicted_object)
+                && entry.token == token
             {
-                self.allocated_bytes = self.allocated_bytes.saturating_sub(entry.allocation_cost());
+                if entry.protected {
+                    self.insertion_order.push_back((evicted_object, token));
+                } else {
+                    self.remove(evicted_object);
+                }
             }
         }
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1);
         self.allocated_bytes += allocation_cost;
-        self.entries
-            .insert(object, InkGeometryEntry { token, ..entry });
+        self.protected_bytes += allocation_cost;
+        self.entries.insert(
+            object,
+            InkGeometryEntry {
+                token,
+                protected: true,
+                ..entry
+            },
+        );
         self.insertion_order.push_back((object, token));
         true
     }
@@ -875,6 +949,7 @@ fn ink_tessellated_mesh(
     let entry = InkGeometryEntry {
         object,
         token: 0,
+        protected: true,
         source_points: Arc::clone(source_points),
         mesh: Arc::clone(&mesh),
         center,
@@ -2270,7 +2345,7 @@ mod tests {
     }
 
     #[test]
-    fn ink_mesh_cache_evicts_within_strict_entry_and_byte_budgets() {
+    fn ink_mesh_cache_evicts_only_unprotected_entries_within_budgets() {
         fn entry(object: u64) -> InkGeometryEntry {
             let mesh = egui::Mesh {
                 vertices: vec![
@@ -2284,6 +2359,7 @@ mod tests {
             InkGeometryEntry {
                 object: CanvasObjectId(object),
                 token: 0,
+                protected: true,
                 source_points: Arc::from(vec![Vec2::ZERO, Vec2::new(1.0, 0.0)]),
                 mesh: Arc::new(mesh),
                 center: Vec2::ZERO,
@@ -2305,33 +2381,229 @@ mod tests {
         let byte_limit = first.allocation_cost() + second.allocation_cost();
         assert!(cache.insert_with_limits(first.clone(), 3, byte_limit));
         assert!(cache.insert_with_limits(second.clone(), 3, byte_limit));
+        assert!(!cache.insert_with_limits(third.clone(), 3, byte_limit));
+        for _ in 0..3 {
+            cache.begin_pass();
+            for id in [CanvasObjectId(1), CanvasObjectId(2)] {
+                cache.protect_if(id, || true);
+            }
+            assert!(!cache.insert_with_limits(third.clone(), 3, byte_limit));
+            assert!(cache.entries.contains_key(&CanvasObjectId(1)));
+            assert!(cache.entries.contains_key(&CanvasObjectId(2)));
+            assert_eq!(cache.allocated_bytes, byte_limit);
+        }
+        cache.begin_pass();
+        cache.begin_pass();
+        cache.protect_if(CanvasObjectId(2), || true);
         assert!(cache.insert_with_limits(third, 3, byte_limit));
         assert!(!cache.entries.contains_key(&CanvasObjectId(1)));
         assert!(cache.entries.contains_key(&CanvasObjectId(2)));
         assert!(cache.entries.contains_key(&CanvasObjectId(3)));
         assert_eq!(cache.entries.len(), 2);
         assert!(cache.allocated_bytes <= byte_limit);
-        assert_eq!(cache.insertion_order.len(), cache.entries.len());
+        assert_eq!(cache.evictable, 0);
 
         let mut entry_limited = InkGeometryCache::default();
         let entry_limit =
             first.allocation_cost() + second.allocation_cost() + entry(6).allocation_cost();
         assert!(entry_limited.insert_with_limits(first, 2, entry_limit));
         assert!(entry_limited.insert_with_limits(second, 2, entry_limit));
+        assert!(!entry_limited.insert_with_limits(entry(6), 2, entry_limit));
+        entry_limited.begin_pass();
+        entry_limited.protect_if(CanvasObjectId(2), || true);
         assert!(entry_limited.insert_with_limits(entry(6), 2, entry_limit));
         assert!(!entry_limited.entries.contains_key(&CanvasObjectId(1)));
+        assert!(entry_limited.entries.contains_key(&CanvasObjectId(2)));
         assert_eq!(entry_limited.entries.len(), 2);
 
-        let mut oversized = entry(4);
+        for _ in 0..4 {
+            assert!(entry_limited.insert_with_limits(entry(2), 2, entry_limit));
+        }
+        entry_limited.begin_pass();
+        entry_limited.protect_if(CanvasObjectId(6), || true);
+        assert!(entry_limited.insert_with_limits(entry(7), 2, entry_limit));
+        assert!(!entry_limited.entries.contains_key(&CanvasObjectId(2)));
+        assert!(entry_limited.entries.contains_key(&CanvasObjectId(6)));
+        assert!(entry_limited.entries.contains_key(&CanvasObjectId(7)));
+        assert_eq!(entry_limited.evictable, 0);
+
+        let mut oversized = entry(3);
         oversized.source_points = Arc::from(vec![Vec2::ZERO; MAX_CACHED_STROKE_POINTS + 1]);
         assert!(!cache.insert_with_limits(oversized, 3, byte_limit));
-        assert!(!cache.entries.contains_key(&CanvasObjectId(4)));
+        assert!(!cache.entries.contains_key(&CanvasObjectId(3)));
+        assert_eq!(cache.allocated_bytes, entry(2).allocation_cost());
 
         let too_small = entry(5);
         let too_small_limit = too_small.allocation_cost() - 1;
         assert!(!cache.insert_with_limits(too_small, 3, too_small_limit));
         assert!(!cache.entries.contains_key(&CanvasObjectId(5)));
         assert!(cache.allocated_bytes <= byte_limit);
+
+        let protected = entry(10);
+        let offscreen = entry(11);
+        let mut too_large_for_protected = entry(12);
+        too_large_for_protected.mesh = Arc::new(egui::Mesh {
+            vertices: vec![egui::epaint::Vertex::default(); 10],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        });
+        let admission_limit = protected.allocation_cost() + offscreen.allocation_cost();
+        assert!(too_large_for_protected.allocation_cost() <= admission_limit);
+        assert!(
+            protected.allocation_cost() + too_large_for_protected.allocation_cost()
+                > admission_limit
+        );
+        let mut partial = InkGeometryCache::default();
+        assert!(partial.insert_with_limits(protected, 3, admission_limit));
+        assert!(partial.insert_with_limits(offscreen, 3, admission_limit));
+        partial.begin_pass();
+        partial.protect_if(CanvasObjectId(10), || true);
+        partial.protect_if(CanvasObjectId(10), || panic!("already protected"));
+        partial.protect_if(CanvasObjectId(11), || false);
+        assert_eq!(partial.protected_bytes, entry(10).allocation_cost());
+        assert_eq!(partial.evictable, 1);
+        assert!(!partial.insert_with_limits(too_large_for_protected, 3, admission_limit));
+        assert!(partial.entries.contains_key(&CanvasObjectId(10)));
+        assert!(partial.entries.contains_key(&CanvasObjectId(11)));
+        assert_eq!(partial.allocated_bytes, admission_limit);
+    }
+
+    #[test]
+    fn ink_mesh_cache_protects_visible_meshes_across_bands_at_capacity() {
+        use thinoda_core::{Band, InkStroke, InkTool};
+
+        let mut sheet = Sheet::new("S", "Root");
+        for index in 0..MAX_INK_CACHE_ENTRIES + 4 {
+            let mut ink = CanvasObject::ink(InkStroke::new(
+                InkTool::Pen,
+                Color::rgb(20, 40, 200),
+                2.0,
+                vec![Vec2::new(10.0, 10.0), Vec2::new(30.0, 20.0)],
+            ));
+            ink.id = CanvasObjectId(index as u64 + 100);
+            ink.band = if index % 2 == 0 {
+                Band::Below
+            } else {
+                Band::Above
+            };
+            sheet.canvas.objects.push(ink);
+        }
+        let layout = thinoda_core::layout_sheet(&sheet, &thinoda_core::ApproxMeasure, false);
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+        let render = |sheet: &Sheet, layout: &Layout| {
+            let mut output = ctx.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_map(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        sheet,
+                        layout,
+                        Xf {
+                            origin: pos2(100.0, 100.0),
+                            zoom: 1.0,
+                        },
+                        &PaintOptions::default(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| {
+                data.get_temp::<InkGeometryCache>(ink_cache_id())
+                    .unwrap()
+                    .entries
+                    .into_iter()
+                    .map(|(id, entry)| (id, entry.mesh))
+                    .collect::<HashMap<_, _>>()
+            })
+        };
+        let first = render(&sheet, &layout);
+        assert_eq!(first.len(), MAX_INK_CACHE_ENTRIES);
+        assert!(
+            sheet
+                .canvas
+                .objects
+                .iter()
+                .any(|object| { object.band == Band::Below && first.contains_key(&object.id) })
+        );
+        assert!(
+            sheet
+                .canvas
+                .objects
+                .iter()
+                .any(|object| { object.band == Band::Above && first.contains_key(&object.id) })
+        );
+        let second = render(&sheet, &layout);
+        assert_eq!(first.len(), second.len());
+        for (id, mesh) in &first {
+            assert!(
+                Arc::ptr_eq(mesh, &second[id]),
+                "visible mesh {id:?} was evicted"
+            );
+        }
+
+        let empty = Sheet::new("Other", "Root");
+        let empty_layout = thinoda_core::layout_sheet(&empty, &thinoda_core::ApproxMeasure, false);
+        let after_empty = render(&empty, &empty_layout);
+        for (id, mesh) in &first {
+            assert!(Arc::ptr_eq(mesh, &after_empty[id]));
+        }
+        let restored = render(&sheet, &layout);
+        for (id, mesh) in &first {
+            assert!(Arc::ptr_eq(mesh, &restored[id]));
+        }
+
+        let mut other = Sheet::new("Other", "Root");
+        for index in 0..4 {
+            let mut ink = CanvasObject::ink(InkStroke::new(
+                InkTool::Highlighter,
+                Color::rgb(200, 30, 50),
+                3.0,
+                vec![Vec2::new(20.0, 30.0), Vec2::new(40.0, 40.0)],
+            ));
+            ink.id = CanvasObjectId(MAX_INK_CACHE_ENTRIES as u64 + 200 + index);
+            other.canvas.objects.push(ink);
+        }
+        let other_layout = thinoda_core::layout_sheet(&other, &thinoda_core::ApproxMeasure, false);
+        let switched = render(&other, &other_layout);
+        assert_eq!(switched.len(), MAX_INK_CACHE_ENTRIES);
+        for object in &other.canvas.objects {
+            assert!(switched.contains_key(&object.id));
+        }
+        let returned = render(&sheet, &layout);
+        for (id, mesh) in &first {
+            if let Some(retained) = switched.get(id) {
+                assert!(Arc::ptr_eq(mesh, retained));
+                assert!(Arc::ptr_eq(mesh, &returned[id]));
+            }
+        }
+        for object in &other.canvas.objects {
+            assert!(!returned.contains_key(&object.id));
+        }
+
+        let reused_id = *returned.keys().next().unwrap();
+        let mut reused = Sheet::new("Reused ID", "Root");
+        let mut ink = CanvasObject::ink(InkStroke::new(
+            InkTool::Pen,
+            Color::rgb(200, 30, 50),
+            4.0,
+            vec![Vec2::new(40.0, 40.0), Vec2::new(60.0, 50.0)],
+        ));
+        ink.id = reused_id;
+        reused.canvas.objects.push(ink);
+        let reused_layout =
+            thinoda_core::layout_sheet(&reused, &thinoda_core::ApproxMeasure, false);
+        let replaced = render(&reused, &reused_layout);
+        assert!(!Arc::ptr_eq(&returned[&reused_id], &replaced[&reused_id]));
+        assert!(
+            replaced[&reused_id]
+                .vertices
+                .iter()
+                .any(|vertex| vertex.color == color32(Color::rgb(200, 30, 50)))
+        );
     }
 
     #[test]

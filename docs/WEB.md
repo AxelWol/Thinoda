@@ -32,7 +32,8 @@ sub path. WebGL 2 is required; Thinoda renders through wgpu's WebGL backend.
 The custom Trunk bootstrap pattern uses the generated wasm-bindgen loader and
 default preloads, and reports initialization failures before the Rust UI is
 available. Preserve `window.wasmBindings` and the `TrunkApplicationStarted`
-event when changing it.
+event when changing it. The bootstrap requires Trunk's generated integrity
+metadata; builds with `--no-sri` or `TRUNK_BUILD_NO_SRI=true` fail closed.
 
 Integrated remote cloud accounts are disabled in the default build while
 publisher registrations are pending. OPFS/IndexedDB document storage, quota
@@ -838,11 +839,15 @@ the raw error under **Technical details**:
   `npx playwright install chromium`, and `npm run test:browser`. The suite
   serves `dist` on loopback with Python, runs one isolated Chromium context per
   test, and covers the production loader, deferred offline installation,
-  rootless board editing, SVG/PNG/PDF and PowerPoint exports, image cards and
-  Pitch viewport. Set
+  rootless board editing, mini-map navigation and pointer capture, SVG/PNG/PDF
+  and PowerPoint exports, image cards and Pitch viewport. Set
   `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
   test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an
-  installed Chromium-compatible browser. The PDF-content check uses Playwright's
+  installed Chromium-compatible browser. Concurrent Playwright runs must use
+  separate `--output` directories: each run clears its output directory on
+  startup and can otherwise delete another run's downloads. Use an existing
+  server through `THINODA_WEB_URL` or separate servers for concurrent runs.
+  The PDF-content check uses Playwright's
   full Chromium build independently; set `THINODA_PDF_BROWSER_EXECUTABLE` only
   if a different browser with an inline PDF viewer is required. These desktop
   checks do not replace physical iPad or screen-reader testing.

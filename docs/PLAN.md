@@ -2988,7 +2988,12 @@ cross-platform CI and real-device verification remain open. Provider/cloud code 
 upstream behind the default-off `integrated-cloud-services` feature; providers
 stay disabled until publisher registrations are in place.
 
-The browser recovery hardening in progress detects lost or corrupt cooperative
+Localized image-card accessible names now retain the card type after a title
+change. A bounded visible-mesh cache improved the 10,000-stroke headless
+Windows CPU benchmark, but does not close the GPU, web or device performance
+gate; details and tradeoffs are in FREEFORM.
+
+The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;
 localStorage still cannot provide atomic cross-tab compare-and-swap. The
 separate asynchronous recovery draft is not integrated because its bounded
@@ -2996,14 +3001,16 @@ discovery can miss uncoordinated writes or remain gated by retained tombstones.
 Headless Chromium now also exercises an actual localStorage quota failure with
 a large image: the previous snapshot survives and a full native download remains
 available. Recovery of the oversized unsaved board itself is not established.
-The published cross-platform CI run passed both Windows jobs but failed two
-macOS tests; local fixes require a fresh CI run before that gate can close.
+The fixes for two earlier macOS test failures are published. A fresh CI run on
+published commit `351f4e1` passed the macOS, Windows x64/ARM, Linux x64/ARM and
+web jobs. It does not cover the later local cache and export-test changes or
+replace real-device acceptance.
 
 Automated production-browser checks exercise a rootless board's saved sticky,
 shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
 inspect SVG, PNG, vector PDF and PowerPoint downloads without mutating the
 source board, including export cancellation and consent. The locked suite passed
-45 headless Chromium cases against the final production candidate; 11 focused
+46 headless Chromium cases against the final production candidate; 11 focused
 startup, retry and offline checks passed in each of desktop WebKit and Firefox
 on Windows. Focused touch checks passed in both on an earlier build with
 identical Wasm. CI runs the Chromium suite before

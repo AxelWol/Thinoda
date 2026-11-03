@@ -121,6 +121,9 @@ initial load and a retry, an explicit module script applies the generated
 preload's integrity metadata before the bindings are imported. This avoids
 relying on modulepreload enforcement alone: in a desktop WebKit probe,
 modulepreload did not prevent a modified initial module from executing.
+The normal Trunk build supplies that metadata. A custom build with
+`--no-sri` or `TRUNK_BUILD_NO_SRI=true` fails closed at startup rather than
+loading an unverified app module.
 A successful bootstrap removes the temporary retry markers.
 If session storage is unavailable, the error link still supplies its own
 marker. The service worker maps only that retry query on a whitelisted app

@@ -1886,18 +1886,20 @@ User-directed concept (2026-10-28), planned as **R14** in
 [PLAN.md](PLAN.md#r14---freeform-boards-and-flexible-map-roots); research,
 feature verdicts, concept and rubber-duck critique in [FREEFORM.md](FREEFORM.md).
 F0-F5 implementation and the F6 viewport-scene/mini-map work have focused
-coverage. F1-F3 integration acceptance, the full F0/F5 performance gate, F6
+coverage. Image-card names retain their localized type after renaming, and
+visible ink-cache admission improved a headless Windows CPU benchmark. F1-F3
+integration acceptance, the full F0/F5 performance gate, F6
 export acceptance, browser recovery, and native/web integration verification
 remain open as described in the linked plan. Production-browser regressions now
-cover a saved mixed board, ink undo, touch cancellation, a captured Pitch
-viewport and inspected SVG/PNG/PDF/PowerPoint exports. The latest production
-candidate passed all 45 Chromium cases; 11 focused startup/retry/offline cases
-also passed in each of desktop Firefox and WebKit. An earlier build with the
+cover a saved mixed board, ink undo, touch cancellation, mini-map input, a
+captured Pitch viewport and inspected SVG/PNG/PDF/PowerPoint exports. The latest
+production candidate passed all 46 Chromium cases; 11 focused startup, retry
+and offline cases also passed in each of desktop Firefox and WebKit. An earlier build with the
 same Wasm passed focused touch checks in both engines. CI runs the Chromium and
 startup/offline suite against the release build; these checks do not establish
 physical touch-device, screen-reader or remaining export-format acceptance.
 
-The live browser recovery path is being hardened, but its cooperative
+The live browser recovery path detects lost or corrupt leases, but its cooperative
 localStorage leases remain non-atomic across tabs. The separate asynchronous
 recovery draft remains blocked on safe bounded discovery and is not integrated.
 
