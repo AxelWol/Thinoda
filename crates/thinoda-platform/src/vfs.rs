@@ -593,6 +593,45 @@ pub fn global() -> &'static Vfs {
     })
 }
 
+/// Copy the exact localStorage value, including malformed VFS envelopes.
+/// The blob contains UTF-16LE code units without a BOM, not a decoded file.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn raw_browser_record(path: &Path) -> io::Result<web_sys::Blob> {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen(inline_js = r#"
+        export function thinoda_raw_storage_record(storage, key) {
+            const value = storage.getItem(key);
+            if (typeof value !== "string") throw new Error("Recovery record is missing");
+            // Serialize each original UTF-16 code unit, without a BOM. Passing
+            // the string to Blob, TextEncoder, or Rust can replace lone surrogates.
+            const bytes = new Uint8Array(value.length * 2);
+            for (let i = 0; i < value.length; i++) {
+                const unit = value.charCodeAt(i);
+                bytes[i * 2] = unit & 0xff;
+                bytes[i * 2 + 1] = unit >>> 8;
+            }
+            return new Blob([bytes], { type: "application/octet-stream" });
+        }
+    "#)]
+    extern "C" {
+        #[wasm_bindgen(catch)]
+        fn thinoda_raw_storage_record(
+            storage: &web_sys::Storage,
+            key: &str,
+        ) -> std::result::Result<web_sys::Blob, JsValue>;
+    }
+
+    // Never consult localStorage when the VFS chose the volatile fallback.
+    if !global_uses_local_storage() {
+        return Err(io::Error::other("browser recovery storage is unavailable"));
+    }
+    let storage = LocalStorage::storage()
+        .ok_or_else(|| io::Error::other("browser storage is unavailable"))?;
+    thinoda_raw_storage_record(&storage, &Vfs::key(&normalize(path)))
+        .map_err(|_| io::Error::other("browser recovery record could not be read"))
+}
+
 /// Milliseconds since the Unix epoch (browser-safe).
 pub fn now_ms() -> u64 {
     web_time::SystemTime::now()

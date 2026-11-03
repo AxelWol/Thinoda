@@ -418,6 +418,10 @@ Saved to|Salvo em
 Could not save|Não foi possível salvar
 Crash recovery is unavailable. Save or download your work.|A recuperação após falha não está disponível. Salve ou baixe seu trabalho.
 Some recovery data could not be checked. Keep existing storage and save your work.|Não foi possível verificar alguns dados de recuperação. Não exclua os dados salvos e salve seu trabalho.
+Download raw record|Baixar registro bruto
+Raw downloads contain a browser storage record (UTF-16LE code units, no BOM), not a .thinoda document. The original stays in browser storage.|O download bruto contém um registro do armazenamento do navegador (unidades de código UTF-16LE, sem BOM), não um documento .thinoda. O original permanece no armazenamento do navegador.
+Raw download failed. Keep recovery data, check browser storage and downloads, close other tabs, and try again.|O download bruto falhou. Mantenha os dados de recuperação, verifique o armazenamento e os downloads do navegador, feche outras abas e tente novamente.
+Download requested. Check browser downloads; the original recovery data was kept.|Download solicitado. Verifique os downloads do navegador; os dados de recuperação originais foram mantidos.
 Autosaved|Salvo automaticamente
 Autosave|Salvamento automático
 Autosave interval (s)|Intervalo de salvamento automático (s)

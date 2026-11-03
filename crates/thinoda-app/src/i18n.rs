@@ -300,6 +300,19 @@ const DE: &[(&str, &str)] = &[
         "Some recovery data could not be checked. Keep existing storage and save your work.",
         "Einige Wiederherstellungsdaten konnten nicht geprüft werden. Löschen Sie keine gespeicherten Daten und speichern Sie Ihre Arbeit.",
     ),
+    ("Download raw record", "Rohdatensatz herunterladen"),
+    (
+        "Raw downloads contain a browser storage record (UTF-16LE code units, no BOM), not a .thinoda document. The original stays in browser storage.",
+        "Der Rohdaten-Download enthält einen Browser-Speicherdatensatz (UTF-16LE-Codeeinheiten, ohne BOM), kein .thinoda-Dokument. Das Original bleibt im Browserspeicher.",
+    ),
+    (
+        "Raw download failed. Keep recovery data, check browser storage and downloads, close other tabs, and try again.",
+        "Der Rohdaten-Download ist fehlgeschlagen. Bewahren Sie die Wiederherstellungsdaten auf, prüfen Sie den Browserspeicher und Downloads, schließen Sie andere Tabs und versuchen Sie es erneut.",
+    ),
+    (
+        "Download requested. Check browser downloads; the original recovery data was kept.",
+        "Download angefordert. Prüfen Sie die Browser-Downloads; die ursprünglichen Wiederherstellungsdaten bleiben erhalten.",
+    ),
     ("Pending ink gesture", "Ausstehende Freihandgeste"),
     (
         "Ink is not saved or included in crash recovery until it is finished.",
@@ -3597,6 +3610,18 @@ mod tests {
         let key = crate::file_ops::DOCUMENT_TOO_LARGE;
         for language in TRANSLATED {
             assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+        }
+    }
+
+    #[test]
+    fn raw_recovery_format_guidance_is_translated_in_every_catalog() {
+        let key = "Raw downloads contain a browser storage record (UTF-16LE code units, no BOM), not a .thinoda document. The original stays in browser storage.";
+        for language in TRANSLATED {
+            let text = t_in(language, key);
+            assert_ne!(text, key, "{language:?}: {key}");
+            for token in ["UTF-16LE", "BOM", ".thinoda"] {
+                assert!(text.contains(token), "{language:?}: {token}");
+            }
         }
     }
 

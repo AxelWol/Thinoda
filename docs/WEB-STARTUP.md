@@ -79,13 +79,15 @@ actual release boot chain before choosing the changes:
 The separate, unintegrated browser-recovery draft specifies one nominal
 30-second asynchronous discovery budget. Scheduling, parsing and browser
 throttling mean this is not a hard wall-clock limit or a measurement of startup.
-The draft still lacks a non-destructive in-app rescue path for oversized or
-unreadable sources; those cases can leave editing gated. Browser document
-migration also runs before recovery and has not been measured against this
-budget. Before integration, bound synchronous work and provide explicit pending,
-failure, retry and rescue behavior without allowing unresolved snapshots to be
-silently overwritten or discarded. Verify the deadline and ownership behavior
-before using that build as the startup baseline. A proposed resumable scan also
+The draft itself still lacks an integrated rescue path for oversized or
+unreadable sources; those cases can leave editing gated. The currently shipped
+synchronous path can download listed unreadable records as described below,
+but that does not make the draft safe to integrate. Browser document migration
+also runs before recovery and has not been measured against this budget. Before
+integration, bound synchronous work and provide explicit pending, failure,
+retry and rescue behavior without allowing unresolved snapshots to be silently
+overwritten or discarded. Verify the deadline and ownership behavior before
+using that build as the startup baseline. A proposed resumable scan also
 missed a snapshot written by an uncoordinated same-origin writer after a
 checkpoint; it was removed rather than treating an incomplete scan as empty.
 Retained deletion tombstones can therefore still exhaust the draft's
@@ -245,8 +247,20 @@ session must resume before cleanup. A listing that visibly changes length or
 loses an indexed key fails instead of treating a partial scan as complete.
 An incomplete scan or a later failed recovery load also blocks the app's
 bulk-discard action and offers a non-destructive way to leave the recovery
-dialog; it does not yet provide raw export or repair of an unreadable snapshot.
-This narrows observed stale-owner hazards; it cannot make localStorage's
+dialog. For listed records, **Download raw record** rechecks the cooperative
+lease and copies the original browser storage value without modifying it.
+The downloaded file contains the exact UTF-16LE code units without a BOM,
+including unpaired surrogates; it is not a `.thinoda` document, and it does not
+repair or re-import the record. A download request may be blocked or cancelled
+silently by the browser, so the user must verify the downloaded file. Records
+that could not be listed, ambiguous keys, unavailable storage and allocations
+too large for memory remain outside this rescue path.
+
+Focused desktop Edge, Firefox and WebKit checks cover unreadable records and
+byte-for-byte preservation of all 65,536 JavaScript code units, including lone
+surrogates and an empty value. Failure, retry and lost-lease checks preserve the
+originals; these do not establish device-level acceptance. This narrows observed
+stale-owner hazards; it cannot make localStorage's
 separate read, check and write operations atomic. Same-length key changes or
 competing tabs can still race between them, large snapshots remain
 subject to localStorage quota and main-thread costs, and the asynchronous draft

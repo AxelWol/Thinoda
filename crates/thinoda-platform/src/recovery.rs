@@ -598,6 +598,20 @@ impl OrphanDoc {
         Ok(snapshot.workbook)
     }
 
+    /// Copy the raw browser storage record while this session is still claimed.
+    /// The UTF-16LE blob is not a validated snapshot or a `.thinoda` document.
+    #[cfg(target_arch = "wasm32")]
+    pub fn raw_browser_record(&self) -> Result<web_sys::Blob> {
+        // Discovery represents storage keys as UTF-8 paths. Reject noncanonical
+        // IDs so lossy conversion or path normalization cannot select another
+        // record; recovery-generated session and document IDs are ASCII.
+        check_key(&self.session_id)?;
+        check_key(&self.doc_key)?;
+        let guard = self.lease.lock.lock().map_err(|_| Error::Poisoned)?;
+        guard.as_ref().ok_or(Error::Finished)?.refresh()?;
+        Ok(crate::vfs::raw_browser_record(&self.path)?)
+    }
+
     /// Permanently discard this snapshot, cleaning the session when it becomes empty.
     pub fn discard(&self) -> Result<()> {
         self.lease.discard(&self.path)

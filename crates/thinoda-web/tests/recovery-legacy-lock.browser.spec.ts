@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { command, frames, imagePicker, jpeg, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
@@ -56,6 +57,37 @@ async function startBoard(page: Page) {
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await newBoard(page);
     return waitForSnapshot(page, "Before takeover");
+}
+
+async function recoveryTabs(page: Page, count: number) {
+    await page.locator("#thinoda_canvas").focus();
+    for (let i = 0; i < count; i++) {
+        await page.keyboard.press("Tab");
+        await frames(page);
+    }
+}
+
+const rescueError = "Raw download failed. Keep recovery data, check browser storage and downloads, close other tabs, and try again.";
+const rescueRequested = "Download requested. Check browser downloads; the original recovery data was kept.";
+const rescueBase = "thinoda.vfs:/thinoda/data/recovery/rescue-fixture/docs/";
+const sourceKey = "thinoda.vfs:/Documents/original.thinoda";
+const sourceValue = JSON.stringify({ m: 1, l: 8, d: "b3JpZ2luYWw=" });
+
+async function openRescueFixture(page: Page, records: { key: string; value: string }[]) {
+    await page.addInitScript((records) => {
+        if (sessionStorage.getItem("rescue-fixture-seeded")) return;
+        for (const { key, value } of records) localStorage.setItem(key, value);
+        sessionStorage.setItem("rescue-fixture-seeded", "yes");
+    }, records);
+    page.on("dialog", (dialog) => dialog.accept());
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await expect(page.locator("#thinoda-recovery-discovery")).not.toBeEmpty();
+    // Install a separate legacy document after migration has completed.
+    await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+        key: sourceKey, value: sourceValue,
+    });
+    await frames(page);
 }
 
 function recoveryWarnings(page: Page) {
@@ -437,7 +469,9 @@ test("unreadable recovery data can be kept for a later launch", async ({ page },
     await page.setViewportSize({ width: 390, height: 844 });
     await frames(page);
     await page.screenshot({ path: testInfo.outputPath("incomplete-recovery-mobile.png") });
-    await page.mouse.click(170, 546);
+    // Three title controls, Restore, Download raw, Restore All, Keep recovery data.
+    await recoveryTabs(page, 7);
+    await page.keyboard.press("Enter");
     await frames(page);
     await page.setViewportSize({ width: 1252, height: 1278 });
     await frames(page);
@@ -451,4 +485,355 @@ test("unreadable recovery data can be kept for a later launch", async ({ page },
         "Some recovery data could not be checked. Keep existing storage and save your work.",
     );
     expect(await page.evaluate((key) => localStorage.getItem(key), snapshot.key)).toBe(corrupted);
+});
+
+test("raw recovery downloads preserve each corrupt stored value and other documents", async ({ page }) => {
+    const first = {
+        key: `${rescueBase}a-broken-wrapper.json`,
+        // Include a large value and unpaired surrogates, which JS-to-Rust strings cannot preserve.
+        value: `invalid storage ${"x".repeat(1024 * 1024)}\ud800\u0000\udc00`,
+    };
+    const corruptSnapshot = Buffer.from([0xff, 0x00, 0x80, 0x7b, 0x0a]);
+    const second = {
+        key: `${rescueBase}b-broken-snapshot.json`,
+        value: JSON.stringify({ m: 1, l: corruptSnapshot.length, d: corruptSnapshot.toString("base64") }),
+    };
+    await openRescueFixture(page, [first, second]);
+    const alert = page.locator("#thinoda-recovery-download");
+    await expect(alert).toHaveAttribute("role", "alert");
+    await page.evaluate((protectedKeys) => {
+        const original = URL.createObjectURL;
+        URL.createObjectURL = function (blob) {
+            Reflect.set(window, "__rescueMediaType", blob.type);
+            return original.call(this, blob);
+        };
+        const set = Storage.prototype.setItem;
+        const remove = Storage.prototype.removeItem;
+        const mutations: string[] = [];
+        Reflect.set(window, "__rescueMutations", mutations);
+        Storage.prototype.setItem = function (key, value) {
+            if (this === localStorage && protectedKeys.includes(key)) mutations.push(`set:${key}`);
+            return set.call(this, key, value);
+        };
+        Storage.prototype.removeItem = function (key) {
+            if (this === localStorage && protectedKeys.includes(key)) mutations.push(`remove:${key}`);
+            return remove.call(this, key);
+        };
+    }, [first.key, second.key, sourceKey]);
+
+    // Navigate the modal with the keyboard: title controls, first Restore, first raw download.
+    await recoveryTabs(page, 5);
+    const firstRequest = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const firstDownload = await firstRequest;
+    expect(firstDownload.suggestedFilename()).toBe("thinoda-recovery-record.utf16le");
+    expect(await firstDownload.failure()).toBeNull();
+    expect(await readFile(await firstDownload.path())).toEqual(Buffer.from(first.value, "utf16le"));
+    await expect(alert).toHaveText(rescueRequested);
+    await expect(alert).toHaveAttribute("lang", "en");
+    expect(await page.evaluate(() => Reflect.get(window, "__rescueMediaType"))).toBe("application/octet-stream");
+
+    // The next two controls are the second Restore and the second raw download.
+    await recoveryTabs(page, 2);
+    const secondRequest = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const secondDownload = await secondRequest;
+    expect(secondDownload.suggestedFilename()).toBe("thinoda-recovery-record.utf16le");
+    expect(await secondDownload.failure()).toBeNull();
+    expect(await readFile(await secondDownload.path())).toEqual(Buffer.from(second.value, "utf16le"));
+
+    for (const { key, value } of [first, second]) {
+        expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(value);
+    }
+    expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+    expect(await page.evaluate(() => Reflect.get(window, "__rescueMutations"))).toEqual([]);
+
+    // Keep both originals and release the orphan lease; they remain offerable after reload.
+    await recoveryTabs(page, 2);
+    await page.keyboard.press("Enter");
+    await expect(alert).toBeEmpty();
+    await page.reload();
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await expect(page.locator("#thinoda-recovery-discovery")).toHaveText(
+        "Some recovery data could not be checked. Keep existing storage and save your work.",
+    );
+    for (const { key, value } of [first, second]) {
+        expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(value);
+    }
+});
+
+test("raw recovery preserves every JavaScript UTF-16 code unit without substitution", async ({ page }) => {
+    const units = Array.from({ length: 0x10000 }, (_, unit) => unit);
+    // Include isolated and repeated surrogates, a valid pair, NUL, and a trailing lone surrogate.
+    units.push(0xd800, 0x0000, 0xdc00, 0xd800, 0xd800, 0xdc00, 0xdc00, 0xfeff, 0xd800);
+    const value = Array.from({ length: Math.ceil(units.length / 1024) }, (_, index) =>
+        String.fromCharCode(...units.slice(index * 1024, (index + 1) * 1024))).join("");
+    const key = `${rescueBase}all-code-units.json`;
+    const emptyKey = `${rescueBase}empty.json`;
+    await openRescueFixture(page, [{ key, value }, { key: emptyKey, value: "" }]);
+
+    const storedUnits = () => page.evaluate((key) => {
+        const stored = localStorage.getItem(key);
+        if (stored === null) throw new Error("Missing recovery record");
+        return Array.from({ length: stored.length }, (_, index) => stored.charCodeAt(index));
+    }, key);
+    expect(await storedUnits()).toEqual(units);
+    await page.evaluate(({ key, emptyKey }) => {
+        const original = localStorage.getItem(key);
+        const set = Storage.prototype.setItem;
+        const remove = Storage.prototype.removeItem;
+        const clear = Storage.prototype.clear;
+        const mutations: string[] = [];
+        Reflect.set(window, "__utf16RescueOriginal", original);
+        Reflect.set(window, "__utf16RescueMutations", mutations);
+        Storage.prototype.setItem = function (name, value) {
+            if (this === localStorage && (name === key || name === emptyKey)) mutations.push("set");
+            return set.call(this, name, value);
+        };
+        Storage.prototype.removeItem = function (name) {
+            if (this === localStorage && (name === key || name === emptyKey)) mutations.push("remove");
+            return remove.call(this, name);
+        };
+        Storage.prototype.clear = function () {
+            if (this === localStorage) mutations.push("clear");
+            return clear.call(this);
+        };
+    }, { key, emptyKey });
+
+    await recoveryTabs(page, 5);
+    const request = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const download = await request;
+    expect(download.suggestedFilename()).toBe("thinoda-recovery-record.utf16le");
+    expect(await download.failure()).toBeNull();
+    const actual = await readFile(await download.path());
+    const expected = Buffer.alloc(units.length * 2);
+    units.forEach((unit, index) => expected.writeUInt16LE(unit, index * 2));
+    expect(actual.length).toBe(expected.length);
+    expect(actual.findIndex((byte, index) => byte !== expected[index]), "first mismatched byte").toBe(-1);
+    await recoveryTabs(page, 2);
+    const emptyRequest = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const emptyDownload = await emptyRequest;
+    expect(await emptyDownload.failure()).toBeNull();
+    expect(await readFile(await emptyDownload.path())).toHaveLength(0);
+    expect(await storedUnits()).toEqual(units);
+    expect(await page.evaluate((key) => localStorage.getItem(key), emptyKey)).toBe("");
+    expect(await page.evaluate((key) => ({
+        unchanged: localStorage.getItem(key) === Reflect.get(window, "__utf16RescueOriginal"),
+        mutations: Reflect.get(window, "__utf16RescueMutations"),
+    }), key)).toEqual({ unchanged: true, mutations: [] });
+    expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+});
+
+test("raw recovery refuses ambiguous storage keys without changing either record", async ({ page }) => {
+    const records = [
+        { key: `${rescueBase}bad-\ud800.json`, value: "unpaired surrogate key" },
+        { key: `${rescueBase}bad-\ufffd.json`, value: "replacement character key" },
+    ];
+    await openRescueFixture(page, records);
+    const downloads: string[] = [];
+    page.on("download", (download) => downloads.push(download.suggestedFilename()));
+    await recoveryTabs(page, 5);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#thinoda-recovery-download")).toHaveText(rescueError);
+    expect(downloads).toEqual([]);
+    for (const { key, value } of records) {
+        expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(value);
+    }
+    expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+});
+
+test("raw recovery failures report an error, keep originals, and allow retry", async ({ page }) => {
+    const record = { key: `${rescueBase}broken.json`, value: '\ud800\u0000{"m":1,"l":4,"d":"%%%"}\udc00\ud800' };
+    await openRescueFixture(page, [record]);
+    const alert = page.locator("#thinoda-recovery-download");
+    const downloads: string[] = [];
+    page.on("download", (download) => downloads.push(download.suggestedFilename()));
+    await page.evaluate((protectedKeys) => {
+        const set = Storage.prototype.setItem;
+        const remove = Storage.prototype.removeItem;
+        const clear = Storage.prototype.clear;
+        const mutations: string[] = [];
+        Reflect.set(window, "__rescueMutations", mutations);
+        Storage.prototype.setItem = function (key, value) {
+            if (this === localStorage && protectedKeys.includes(key)) mutations.push(`set:${key}`);
+            return set.call(this, key, value);
+        };
+        Storage.prototype.removeItem = function (key) {
+            if (this === localStorage && protectedKeys.includes(key)) mutations.push(`remove:${key}`);
+            return remove.call(this, key);
+        };
+        Storage.prototype.clear = function () {
+            if (this === localStorage) mutations.push("clear");
+            return clear.call(this);
+        };
+    }, [record.key, sourceKey]);
+    await recoveryTabs(page, 5);
+
+    async function expectFailure() {
+        await page.evaluate(() => {
+            const element = document.getElementById("thinoda-recovery-download");
+            if (element) element.textContent = "";
+        });
+        await page.keyboard.press("Enter");
+        await expect(alert).toHaveText(rescueError);
+        expect(downloads).toEqual([]);
+    }
+
+    await page.evaluate((key) => {
+        const original = Storage.prototype.getItem;
+        Reflect.set(window, "__restoreRescueRead", () => { Storage.prototype.getItem = original; });
+        Storage.prototype.getItem = function (name) {
+            if (this === localStorage && name === key) throw new DOMException("read denied", "SecurityError");
+            return original.call(this, name);
+        };
+    }, record.key);
+    await expectFailure();
+    await page.evaluate(() => (Reflect.get(window, "__restoreRescueRead") as () => void)());
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+
+    await page.evaluate(() => {
+        const original = window.Blob;
+        Reflect.set(window, "__restoreRescueBlob", () => { window.Blob = original; });
+        window.Blob = new Proxy(original, {
+            construct() { throw new DOMException("allocation denied", "QuotaExceededError"); },
+        });
+    });
+    await expectFailure();
+    await page.evaluate(() => (Reflect.get(window, "__restoreRescueBlob") as () => void)());
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+
+    await page.evaluate(() => {
+        const original = URL.createObjectURL;
+        Reflect.set(window, "__restoreRescueUrl", () => { URL.createObjectURL = original; });
+        URL.createObjectURL = () => { throw new DOMException("download denied", "SecurityError"); };
+    });
+    await expectFailure();
+    await page.evaluate(() => (Reflect.get(window, "__restoreRescueUrl") as () => void)());
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+
+    await page.evaluate(() => {
+        const original = Element.prototype.setAttribute;
+        Reflect.set(window, "__restoreRescueAttribute", () => { Element.prototype.setAttribute = original; });
+        Element.prototype.setAttribute = function (name, value) {
+            if (this instanceof HTMLAnchorElement && name === "download"
+                && value === "thinoda-recovery-record.utf16le") {
+                throw new DOMException("link denied", "SecurityError");
+            }
+            return original.call(this, name, value);
+        };
+    });
+    await expectFailure();
+    await page.evaluate(() => (Reflect.get(window, "__restoreRescueAttribute") as () => void)());
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+
+    await page.evaluate(() => {
+        const original = HTMLElement.prototype.click;
+        Reflect.set(window, "__restoreRescueClick", () => { HTMLElement.prototype.click = original; });
+        HTMLElement.prototype.click = function () {
+            if (this instanceof HTMLAnchorElement && this.download === "thinoda-recovery-record.utf16le") {
+                throw new DOMException("click denied", "SecurityError");
+            }
+            return original.call(this);
+        };
+    });
+    await expectFailure();
+    await page.evaluate(() => (Reflect.get(window, "__restoreRescueClick") as () => void)());
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+
+    const lockKey = record.key.replace(/\/docs\/[^/]+\.json$/, "/lock");
+    const lease = await page.evaluate((key) => {
+        const original = localStorage.getItem(key);
+        if (!original) throw new Error("Missing orphan lease");
+        const entry: { m: number; l: number; d: string } = JSON.parse(original);
+        const lock = JSON.parse(atob(entry.d)) as { owner: string; heartbeat_ms: number };
+        lock.owner = "other-tab";
+        const bytes = JSON.stringify(lock);
+        entry.l = bytes.length;
+        entry.d = btoa(bytes);
+        const competing = JSON.stringify(entry);
+        localStorage.setItem(key, competing);
+        return { original, competing };
+    }, lockKey);
+    await expectFailure();
+    expect(await page.evaluate((key) => localStorage.getItem(key), lockKey)).toBe(lease.competing);
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+    expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+    await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+        key: lockKey, value: lease.original,
+    });
+
+    const retry = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const download = await retry;
+    expect(await download.failure()).toBeNull();
+    expect(await readFile(await download.path())).toEqual(Buffer.from(record.value, "utf16le"));
+    await expect(alert).toHaveText(rescueRequested);
+    expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+    expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+    expect(await page.evaluate(() => Reflect.get(window, "__rescueMutations"))).toEqual([]);
+});
+
+test("a recovery load that fails after discovery offers raw download without discarding", async ({ page }) => {
+    page.on("dialog", (dialog) => dialog.accept());
+    const snapshot = await startBoard(page);
+    await page.reload();
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await expect(page.locator("#thinoda-recovery-discovery")).toBeEmpty();
+    await frames(page);
+
+    const corrupt = "changed after discovery";
+    await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+        key: snapshot.key, value: corrupt,
+    });
+    await recoveryTabs(page, 4);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#thinoda-recovery-discovery")).toHaveText(
+        "Some recovery data could not be checked. Keep existing storage and save your work.",
+    );
+    expect(await page.evaluate((key) => localStorage.getItem(key), snapshot.key)).toBe(corrupt);
+
+    // The failed restore changes the dialog contents, so its focus order restarts.
+    await recoveryTabs(page, 5);
+    const request = page.waitForEvent("download", { timeout: 30_000 });
+    await page.keyboard.press("Enter");
+    const download = await request;
+    expect(await download.failure()).toBeNull();
+    expect(await readFile(await download.path())).toEqual(Buffer.from(corrupt, "utf16le"));
+    expect(await page.evaluate((key) => localStorage.getItem(key), snapshot.key)).toBe(corrupt);
+});
+
+test.describe("raw recovery on a narrow German viewport", () => {
+    test.use({ locale: "de-DE", viewport: { width: 390, height: 844 } });
+
+    test("keeps the modal keyboard-operable and announces failures in German", async ({ page }) => {
+        const record = { key: `${rescueBase}broken.json`, value: "invalid storage" };
+        await openRescueFixture(page, [record]);
+        await expect(page.locator("html")).toHaveAttribute("lang", "de");
+        await page.evaluate(() => {
+            const original = URL.createObjectURL;
+            Reflect.set(window, "__restoreRescueUrl", () => { URL.createObjectURL = original; });
+            URL.createObjectURL = () => { throw new DOMException("download denied", "SecurityError"); };
+        });
+        await recoveryTabs(page, 5);
+        await page.keyboard.press("Enter");
+        const alert = page.locator("#thinoda-recovery-download");
+        await expect(alert).toHaveAttribute("lang", "de");
+        await expect(alert).toHaveText(
+            "Der Rohdaten-Download ist fehlgeschlagen. Bewahren Sie die Wiederherstellungsdaten auf, prüfen Sie den Browserspeicher und Downloads, schließen Sie andere Tabs und versuchen Sie es erneut.",
+        );
+        expect(await page.evaluate((key) => localStorage.getItem(key), record.key)).toBe(record.value);
+        await page.evaluate(() => (Reflect.get(window, "__restoreRescueUrl") as () => void)());
+
+        const request = page.waitForEvent("download", { timeout: 30_000 });
+        await page.keyboard.press("Enter");
+        const download = await request;
+        expect(await download.failure()).toBeNull();
+        expect(await readFile(await download.path())).toEqual(Buffer.from(record.value, "utf16le"));
+        await expect(alert).toHaveText(
+            "Download angefordert. Prüfen Sie die Browser-Downloads; die ursprünglichen Wiederherstellungsdaten bleiben erhalten.",
+        );
+        expect(await page.evaluate((key) => localStorage.getItem(key), sourceKey)).toBe(sourceValue);
+    });
 });

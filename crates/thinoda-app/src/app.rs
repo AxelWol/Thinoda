@@ -3318,6 +3318,31 @@ impl ThinodaApp {
         self.dialogs.recovery = keep;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn download_raw_recovery(&mut self, doc: &thinoda_platform::recovery::OrphanDoc) {
+        const ANNOUNCEMENT: &str = "thinoda-recovery-download";
+        set_browser_recovery_announcement(ANNOUNCEMENT, None);
+        let result = doc.raw_browser_record().map_err(|_| ()).and_then(|blob| {
+            thinoda_platform::web::download_blob("thinoda-recovery-record.utf16le", &blob)
+                .map_err(|_| ())
+        });
+        let message = if result.is_ok() {
+            let message = t(
+                "Download requested. Check browser downloads; the original recovery data was kept.",
+            );
+            self.toasts.success(message);
+            message
+        } else {
+            log::warn!("Raw recovery download could not be started");
+            let message = t(
+                "Raw download failed. Keep recovery data, check browser storage and downloads, close other tabs, and try again.",
+            );
+            self.toasts.error(message);
+            message
+        };
+        set_browser_recovery_announcement(ANNOUNCEMENT, Some(message));
+    }
+
     pub fn discard_orphans(&mut self) {
         if self.recovery_discovery_incomplete {
             log::warn!("Recovery discard blocked because discovery was incomplete");

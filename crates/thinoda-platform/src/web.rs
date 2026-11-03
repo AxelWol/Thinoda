@@ -156,6 +156,11 @@ mod imp {
         download_as(file_name, bytes, "application/octet-stream")
     }
 
+    /// Offer an already prepared blob; its creator is responsible for the media type.
+    pub fn download_blob(file_name: &str, blob: &web_sys::Blob) -> Result<(), String> {
+        start_download(file_name, blob)
+    }
+
     fn download_as(file_name: &str, bytes: &[u8], media_type: &str) -> Result<(), String> {
         let array = js_sys::Uint8Array::from(bytes);
         let parts = js_sys::Array::of1(&array);
@@ -163,23 +168,39 @@ mod imp {
         options.set_type(media_type);
         let blob =
             web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).map_err(err)?;
-        let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(err)?;
+        start_download(file_name, &blob)
+    }
+
+    fn start_download(file_name: &str, blob: &web_sys::Blob) -> Result<(), String> {
         let document = document()?;
         let anchor: web_sys::HtmlAnchorElement = document
             .create_element("a")
             .map_err(err)?
             .dyn_into()
             .map_err(|_| "Could not create a download link".to_owned())?;
-        anchor.set_href(&url);
-        anchor.set_download(file_name);
-        anchor
-            .style()
-            .set_property("display", "none")
-            .map_err(err)?;
         let body = document.body().ok_or("No document body")?;
-        body.append_child(&anchor).map_err(err)?;
-        anchor.click();
+        let url = web_sys::Url::create_object_url_with_blob(blob).map_err(err)?;
+        let result = (|| {
+            anchor.set_attribute("href", &url).map_err(err)?;
+            anchor.set_attribute("download", file_name).map_err(err)?;
+            anchor
+                .style()
+                .set_property("display", "none")
+                .map_err(err)?;
+            body.append_child(&anchor).map_err(err)?;
+            // Calling through Function::call0 catches browser or extension errors.
+            let click = js_sys::Reflect::get(anchor.as_ref(), &JsValue::from_str("click"))
+                .map_err(err)?
+                .dyn_into::<js_sys::Function>()
+                .map_err(|_| "Could not activate the download link".to_owned())?;
+            click.call0(anchor.as_ref()).map_err(err)?;
+            Ok(())
+        })();
         anchor.remove();
+        if let Err(error) = result {
+            let _ = web_sys::Url::revoke_object_url(&url);
+            return Err(error);
+        }
         // Revoke after the browser has started the download.
         let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
             let _ = web_sys::Url::revoke_object_url(&url);
@@ -251,7 +272,7 @@ mod imp {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use imp::{download, download_opaque, print_html, prompt_file_name};
+pub use imp::{download, download_blob, download_opaque, print_html, prompt_file_name};
 
 /// Print a prepared PNG page with the browser's print dialog.
 #[cfg(target_arch = "wasm32")]

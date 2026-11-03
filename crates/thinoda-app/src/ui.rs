@@ -5081,6 +5081,8 @@ impl ThinodaApp {
                 Restore(Option<usize>),
                 Discard,
                 Keep,
+                #[cfg(target_arch = "wasm32")]
+                Download(thinoda_platform::recovery::OrphanDoc),
             }
             let touch_allowed = widgets::touch_activation_allowed(ctx);
             let mut action = None;
@@ -5102,6 +5104,10 @@ impl ThinodaApp {
                 } else {
                     "Thinoda was not closed properly. The following documents can be restored:"
                 }));
+                #[cfg(target_arch = "wasm32")]
+                if self.recovery_discovery_incomplete {
+                    ui.label(t("Raw downloads contain a browser storage record (UTF-16LE code units, no BOM), not a .thinoda document. The original stays in browser storage."));
+                }
                 ui.add_space(8.0);
                 for (i, s) in self.dialogs.recovery.iter().enumerate() {
                     for doc in &s.docs {
@@ -5116,6 +5122,13 @@ impl ThinodaApp {
                                 }
                             });
                         });
+                        #[cfg(target_arch = "wasm32")]
+                        if self.recovery_discovery_incomplete
+                            && ui.button(t("Download raw record")).clicked()
+                            && touch_allowed
+                        {
+                            action = Some(RecoveryAction::Download(doc.clone()));
+                        }
                     }
                 }
                 ui.add_space(8.0);
@@ -5140,7 +5153,13 @@ impl ThinodaApp {
                 Some(RecoveryAction::Restore(which)) => self.restore_orphans(which),
                 Some(RecoveryAction::Discard) => self.discard_orphans(),
                 Some(RecoveryAction::Keep) => self.dialogs.recovery.clear(),
+                #[cfg(target_arch = "wasm32")]
+                Some(RecoveryAction::Download(doc)) => self.download_raw_recovery(&doc),
                 None => {}
+            }
+            #[cfg(target_arch = "wasm32")]
+            if self.dialogs.recovery.is_empty() {
+                crate::app::set_browser_recovery_announcement("thinoda-recovery-download", None);
             }
         }
 
