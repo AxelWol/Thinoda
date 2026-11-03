@@ -753,8 +753,12 @@ Browser recovery uses cooperative localStorage leases, not transactional
 cross-tab locks. It checks the current claim before recovery operations and
 retains queued snapshots when a write fails; missing, corrupt or competing
 claims stop the former owner from intentionally resuming its writes. An
-unavailable journal or incomplete recovery scan produces a warning. A browser
-can still interleave a claim change between checking it and writing or
+unavailable journal, a failed snapshot or an incomplete recovery scan produces
+a warning. A previous complete snapshot is retained when a pending draft cannot
+be prepared; resolve or copy the draft and save or download the document. An
+active availability warning does not clear just because an empty flush succeeds
+or a retry is queued: outstanding snapshots must first be written or canceled.
+A browser can still interleave a claim change between checking it and writing or
 removing a value, so this is not a guarantee against simultaneous-tab races.
 When discovery is incomplete, the recovery dialog offers **Keep recovery
 data** instead of **Discard All**; this closes the dialog without deleting the

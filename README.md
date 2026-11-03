@@ -724,7 +724,9 @@ those system-owned controls. WinGet publishing remains paused.
   page-sized bitmap, so zooming stays sharp. Outlined PDF text is not selectable.
   This works on Windows, macOS, Linux and the web; raster scale only affects
   PNG/JPEG. The separate **Save print PDF...** path remains paper-sized raster output.
-- Crash safety: atomic saves plus a recovery journal that restores unsaved work after a crash
+- Crash safety: atomic saves and a local recovery journal for unsaved work.
+  Thinoda warns when recovery snapshots cannot be prepared or written; save
+  important work and keep backups rather than relying on recovery alone.
 - Cloud folders: opens/saves local files in OneDrive, iCloud Drive, Dropbox,
   Google Drive, Box and Nextcloud sync folders. A separate backup folder can be
   selected outside detected sync roots; this is not a claim that provider rename,

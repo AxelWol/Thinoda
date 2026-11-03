@@ -171,6 +171,7 @@ pub struct OpenDoc {
     pub(crate) externally_changed: bool,
     snapshot_state: u64,
     snapshot_dirty: bool,
+    pub(crate) recovery_snapshot_failed: bool,
     last_change: Instant,
     last_seen_state: u64,
     /// Set when the user accepted that the on-disk file may be overwritten.
@@ -211,6 +212,7 @@ impl OpenDoc {
             externally_changed: false,
             snapshot_state: state,
             snapshot_dirty: false,
+            recovery_snapshot_failed: false,
             last_change: Instant::now(),
             last_seen_state: state,
             ignore_conflict: false,
@@ -775,6 +777,13 @@ impl OpenDoc {
         Ok(())
     }
 
+    fn record_recovery_snapshot_failure(&mut self, error: impl std::fmt::Display) {
+        if !self.recovery_snapshot_failed {
+            log::warn!("recovery snapshot failed; draft retained: {error}");
+        }
+        self.recovery_snapshot_failed = true;
+    }
+
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
         // Never replace an earlier complete snapshot with one that silently
@@ -801,9 +810,11 @@ impl OpenDoc {
             && self.fim_draft_revision == self.snapshot_fim_revision
             && !self.snapshot_saw_ink
         {
+            self.recovery_snapshot_failed = false;
             return;
         }
         if !dirty {
+            self.recovery_snapshot_failed = false;
             match recovery.remove(&self.key) {
                 Ok(()) => {
                     self.snapshot_state = s;
@@ -828,7 +839,7 @@ impl OpenDoc {
         let snapshot = match self.document_with_drafts() {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                log::warn!("recovery snapshot failed; draft retained: {error}");
+                self.record_recovery_snapshot_failure(error);
                 return;
             }
         };
@@ -842,10 +853,11 @@ impl OpenDoc {
                     self.snapshot_board_label = board_label;
                     self.snapshot_fim_revision = self.fim_draft_revision;
                     self.snapshot_saw_ink = false;
+                    self.recovery_snapshot_failed = false;
                 }
-                Err(error) => log::warn!("recovery snapshot queue failed: {error}"),
+                Err(error) => self.record_recovery_snapshot_failure(error),
             },
-            Err(e) => log::warn!("snapshot failed: {e}"),
+            Err(error) => self.record_recovery_snapshot_failure(error),
         }
     }
 }

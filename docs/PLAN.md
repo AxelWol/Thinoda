@@ -57,6 +57,10 @@ overhead is unmeasured. Board accessibility registration now uses per-pass
 indexes without dropping targets or changing reading order. Matched native CPU
 and headless software-rendered browser comparisons show improvement on the
 10,000-stroke placeholder fixture, but do not close the performance gate.
+Recovery availability warnings now also cover native background-write and
+worker failures and document snapshot-preparation failures on both platforms.
+An active warning waits for queued retries to finish; this is failure visibility,
+not a solution for large browser snapshots or non-atomic tab leases.
 The next open work remains the browser accessibility bridge, safe large-board
 recovery, export acceptance and realistic performance/device gates;
 cloud-provider work stays paused.
@@ -3112,7 +3116,11 @@ acceptance remain open. See the F6 critique in FREEFORM.
 The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;
 localStorage still cannot provide atomic cross-tab compare-and-swap. The
-current synchronous path can also download a listed unreadable record as
+app also reports snapshot preparation/queue failures and native background
+worker failures. Failed snapshots retain the prior complete recovery copy;
+warnings do not clear merely because an unrelated or empty flush succeeds.
+Native workers are not automatically restarted if they stop. The current
+synchronous path can also download a listed unreadable record as
 lossless UTF-16LE storage data without changing the original; this is not a
 native document or a repair mechanism. The browser may silently cancel the
 download, and records that could not be listed remain inaccessible to this

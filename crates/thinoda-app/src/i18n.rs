@@ -3728,6 +3728,14 @@ mod tests {
     }
 
     #[test]
+    fn recovery_unavailable_warning_is_translated_in_every_catalog() {
+        let key = "Crash recovery is unavailable. Save or download your work.";
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+        }
+    }
+
+    #[test]
     fn new_frame_board_templates_use_localized_starter_content() {
         let affinity_labels = [
             "Affinity Diagram",

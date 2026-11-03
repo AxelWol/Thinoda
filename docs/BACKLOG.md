@@ -14,7 +14,9 @@ include Storyboard with three initially empty image cards and independent visual
 frames. The template's image upload, native persistence and undo/redo are covered
 in desktop browsers. Browser screen-reader access, safe large-board recovery,
 realistic ink/image performance, export acceptance and physical-device checks
-remain open. Integrated cloud providers stay disabled and paused until publisher
+remain open. Recovery failure visibility now covers document snapshot creation
+and native background writes; it does not remove browser quota or tab-race
+limitations. Integrated cloud providers stay disabled and paused until publisher
 registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
 
 **2026-10-30 continuation:** vector presentation redesign is implemented and

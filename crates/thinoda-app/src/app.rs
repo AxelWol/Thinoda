@@ -225,6 +225,8 @@ impl SearchState {
 pub struct Services {
     pub paths: Option<Paths>,
     pub recovery: Option<Arc<RecoveryManager>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub recovery_flusher: Option<std::thread::JoinHandle<()>>,
     pub instance: Option<SingleInstance>,
     pub cloud: Vec<CloudFolder>,
 }
@@ -301,7 +303,6 @@ pub struct ThinodaApp {
     pub discard_late_sheet_paste: bool,
     pub toasts: Toasts,
     pub(crate) recovery_discovery_incomplete: bool,
-    #[cfg(any(test, target_arch = "wasm32"))]
     recovery_warning: Option<u64>,
     #[cfg(target_arch = "wasm32")]
     recovery_is_memory_only: bool,
@@ -414,7 +415,6 @@ impl ThinodaApp {
             discard_late_sheet_paste: false,
             toasts: Toasts::default(),
             recovery_discovery_incomplete: false,
-            #[cfg(any(test, target_arch = "wasm32"))]
             recovery_warning: None,
             #[cfg(target_arch = "wasm32")]
             recovery_is_memory_only,
@@ -451,20 +451,14 @@ impl ThinodaApp {
             last_titles: HashMap::new(),
             launch: None,
         };
-        #[cfg(target_arch = "wasm32")]
-        if app.services.paths.is_some()
-            && (app.services.recovery.is_none() || app.recovery_is_memory_only)
-        {
-            app.update_browser_recovery_warning(Some("browser recovery storage is unavailable"));
-        }
+        app.refresh_recovery_warning();
         for f in files {
             app.open_path(f);
         }
         app
     }
 
-    #[cfg(any(test, target_arch = "wasm32"))]
-    fn update_browser_recovery_warning(&mut self, error: Option<&str>) {
+    fn update_recovery_warning(&mut self, error: Option<&str>) {
         match error {
             Some(error) if self.recovery_warning.is_none() => {
                 log::warn!("crash recovery unavailable: {error}");
@@ -485,6 +479,49 @@ impl ThinodaApp {
             }
             Some(_) => {}
         }
+    }
+
+    fn refresh_recovery_warning(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        let memory_only = self.recovery_is_memory_only;
+        #[cfg(not(target_arch = "wasm32"))]
+        let memory_only = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let worker_stopped = self
+            .services
+            .recovery_flusher
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished);
+        #[cfg(target_arch = "wasm32")]
+        let worker_stopped = false;
+
+        let error = if self.services.paths.is_some() && self.services.recovery.is_none() {
+            Some("recovery service is unavailable")
+        } else if memory_only {
+            Some("browser recovery storage is memory-only")
+        } else if worker_stopped {
+            Some("recovery worker stopped")
+        } else if self.docs.iter().any(|doc| doc.recovery_snapshot_failed) {
+            Some("a document recovery snapshot could not be queued")
+        } else if self
+            .services
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.last_flush_failed())
+        {
+            Some("recovery flush failed")
+        } else if self.recovery_warning.is_some()
+            && self
+                .services
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.has_unflushed_snapshots())
+        {
+            Some("recovery snapshots are awaiting persistence")
+        } else {
+            None
+        };
+        self.update_recovery_warning(error);
     }
 
     pub(crate) fn warn_incomplete_recovery_discovery(&mut self) {
@@ -3036,17 +3073,10 @@ impl ThinodaApp {
             // The browser has no background flusher thread; this also refreshes the
             // recovery lock heartbeat of this tab.
             #[cfg(target_arch = "wasm32")]
-            if let Some(result) = self.services.recovery.as_ref().map(|r| r.flush()) {
-                match result {
-                    Err(error) => {
-                        self.update_browser_recovery_warning(Some(&error.to_string()));
-                    }
-                    Ok(()) if !self.recovery_is_memory_only => {
-                        self.update_browser_recovery_warning(None);
-                    }
-                    Ok(()) => {}
-                }
+            if let Some(Err(error)) = self.services.recovery.as_ref().map(|r| r.flush()) {
+                self.update_recovery_warning(Some(&error.to_string()));
             }
+            self.refresh_recovery_warning();
             let paths = self
                 .services
                 .instance
@@ -4266,6 +4296,30 @@ pub struct Startup {
     pub recovery_discovery_incomplete: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_recovery_flusher(
+    recovery: &Arc<RecoveryManager>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let weak = Arc::downgrade(recovery);
+    std::thread::Builder::new()
+        .name("thinoda-recovery".into())
+        .spawn(move || {
+            while let Some(recovery) = weak.upgrade() {
+                let already_failed = recovery.last_flush_failed();
+                match recovery.flush() {
+                    Ok(()) => {}
+                    Err(thinoda_platform::Error::Finished) => break,
+                    Err(error) if !already_failed => {
+                        log::warn!("recovery flush failed: {error}");
+                    }
+                    Err(_) => {}
+                }
+                drop(recovery);
+                std::thread::sleep(Duration::from_millis(750));
+            }
+        })
+}
+
 /// Creates the services used by the real application (settings dir, recovery, single instance).
 pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup {
     let _ = paths.ensure();
@@ -4284,27 +4338,25 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
     thinoda_platform::crash::install_panic_hook(paths.clone(), recovery.clone());
     // Browser: no threads; `housekeeping` flushes snapshots instead.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(r) = recovery.clone() {
-        // Flush queued snapshots off the UI thread.
-        let weak = Arc::downgrade(&r);
-        drop(r);
-        std::thread::Builder::new()
-            .name("thinoda-recovery".into())
-            .spawn(move || {
-                while let Some(r) = weak.upgrade() {
-                    if let Err(e) = r.flush() {
-                        log::debug!("recovery flush: {e}");
-                    }
-                    drop(r);
-                    std::thread::sleep(Duration::from_millis(750));
+    let (recovery, recovery_flusher) = match recovery {
+        Some(recovery) => match spawn_recovery_flusher(&recovery) {
+            Ok(worker) => (Some(recovery), Some(worker)),
+            Err(error) => {
+                log::error!("crash recovery worker unavailable: {error}");
+                if let Err(error) = recovery.finish() {
+                    log::warn!("recovery session cleanup failed: {error}");
                 }
-            })
-            .ok();
-    }
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
     let services = Services {
         instance: instance.filter(SingleInstance::is_primary),
         cloud: detect_cloud_folders(),
         recovery,
+        #[cfg(not(target_arch = "wasm32"))]
+        recovery_flusher,
         paths: Some(paths),
     };
     Startup {
@@ -4319,31 +4371,344 @@ pub fn start_services(paths: Paths, instance: Option<SingleInstance>) -> Startup
 mod tests {
     use super::*;
 
+    fn recovery_fixture() -> (tempfile::TempDir, Arc<RecoveryManager>, ThinodaApp) {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let recovery = Arc::new(RecoveryManager::start(&Paths::from_root(dir.path())).unwrap());
+        let mut app = ThinodaApp::headless();
+        app.services.recovery = Some(Arc::clone(&recovery));
+        (dir, recovery, app)
+    }
+
     #[test]
-    fn browser_recovery_warning_is_deduplicated_and_cleared_on_success() {
+    fn recovery_warning_is_deduplicated_and_cleared_on_success() {
         let mut app = ThinodaApp::headless();
         let warning = "Crash recovery is unavailable. Save or download your work.";
-        app.update_browser_recovery_warning(Some("lease lost"));
+        app.update_recovery_warning(Some("lease lost"));
         let first = app.recovery_warning.unwrap();
         assert_eq!(
             app.toasts.texts().filter(|text| *text == warning).count(),
             1
         );
-        app.update_browser_recovery_warning(Some("lease still lost"));
+        app.update_recovery_warning(Some("lease still lost"));
         assert_eq!(app.recovery_warning, Some(first));
         assert_eq!(
             app.toasts.texts().filter(|text| *text == warning).count(),
             1
         );
-        app.update_browser_recovery_warning(None);
+        app.update_recovery_warning(None);
         assert_eq!(app.recovery_warning, None);
         assert!(!app.toasts.texts().any(|text| text == warning));
-        app.update_browser_recovery_warning(Some("quota"));
+        app.update_recovery_warning(Some("quota"));
         assert_ne!(app.recovery_warning, Some(first));
         assert_eq!(
             app.toasts.texts().filter(|text| *text == warning).count(),
             1
         );
+    }
+
+    #[test]
+    fn missing_recovery_service_warns_on_startup() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                paths: Some(Paths::from_root(dir.path())),
+                ..Services::default()
+            },
+            &[],
+        );
+        assert!(app.recovery_warning.is_some());
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text == t("Crash recovery is unavailable. Save or download your work."))
+        );
+    }
+
+    #[test]
+    fn snapshot_queue_failure_remains_visible_until_the_retry_is_persisted() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Before", |sheet| sheet.set_title(sheet.root, "Before"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        recovery.flush().unwrap();
+        let key = doc.key.clone();
+        let path = recovery
+            .session_dir()
+            .join("docs")
+            .join(format!("{key}.json"));
+        let previous = std::fs::read(&path).unwrap();
+        doc.key = "invalid/key".into();
+        doc.doc
+            .edit_sheet("After", |sheet| sheet.set_title(sheet.root, "After"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        assert!(doc.recovery_snapshot_failed);
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(
+            app.recovery_warning.is_some(),
+            "an empty successful flush cannot repair a failed snapshot"
+        );
+
+        let doc = app.doc_mut().unwrap();
+        doc.key = key;
+        doc.snapshot(&recovery);
+        assert!(!doc.recovery_snapshot_failed);
+        assert!(recovery.has_unflushed_snapshots());
+        app.refresh_recovery_warning();
+        assert!(
+            app.recovery_warning.is_some(),
+            "queueing is not the same as persisting the retry"
+        );
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_none());
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(snapshot.workbook.active().root_topic().title, "After");
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn stale_recovery_draft_stays_visible_and_preserves_the_previous_snapshot() {
+        use crate::doc::{InspectorEdit, InspectorField};
+
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Before", |sheet| sheet.set_title(sheet.root, "Before"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        recovery.flush().unwrap();
+        let path = recovery
+            .session_dir()
+            .join("docs")
+            .join(format!("{}.json", doc.key));
+        let previous = std::fs::read(&path).unwrap();
+        let root = doc.doc.sheet().root;
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 0,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Notes,
+            original: Some("outdated".into()),
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        doc.snapshot(&recovery);
+        assert!(doc.recovery_snapshot_failed);
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(doc.inspector_edit.as_ref().unwrap().text, "Pending notes");
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+
+        let doc = app.doc_mut().unwrap();
+        doc.inspector_edit.as_mut().unwrap().original = None;
+        doc.snapshot(&recovery);
+        assert!(!doc.recovery_snapshot_failed);
+        assert_eq!(doc.inspector_edit.as_ref().unwrap().text, "Pending notes");
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_none());
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            snapshot.workbook.active().root_topic().notes.as_deref(),
+            Some("Pending notes")
+        );
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn abandoning_a_failed_draft_restores_the_previous_recovery_state() {
+        use crate::doc::{InspectorEdit, InspectorField};
+
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Before", |sheet| sheet.set_title(sheet.root, "Before"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        recovery.flush().unwrap();
+        let path = recovery
+            .session_dir()
+            .join("docs")
+            .join(format!("{}.json", doc.key));
+        let previous = std::fs::read(&path).unwrap();
+        let root = doc.doc.sheet().root;
+        doc.inspector_edit = Some(InspectorEdit {
+            buffer_id: None,
+            sheet_index: 0,
+            sheet_root: root,
+            topic: root,
+            field: InspectorField::Notes,
+            original: Some("outdated".into()),
+            format_notes: false,
+            text: "Pending notes".into(),
+        });
+        doc.snapshot(&recovery);
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+
+        let doc = app.doc_mut().unwrap();
+        doc.inspector_edit = None;
+        doc.snapshot(&recovery);
+        assert!(!doc.recovery_snapshot_failed);
+        assert!(!recovery.has_unflushed_snapshots());
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_none());
+        assert_eq!(std::fs::read(path).unwrap(), previous);
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn recovery_flush_failure_warns_and_clears_after_successful_retry() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let docs = recovery.session_dir().join("docs");
+        std::fs::remove_dir(&docs).unwrap();
+        std::fs::write(&docs, b"blocker").unwrap();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Unsaved"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        assert!(recovery.flush().is_err());
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        std::fs::remove_file(&docs).unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_none());
+        let doc = app.doc().unwrap();
+        let path = docs.join(format!("{}.json", doc.key));
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(snapshot.workbook.active().root_topic().title, "Unsaved");
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn recovery_warning_waits_for_every_failed_document() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        app.new_doc(templates::instantiate("mind-map"));
+        let keys: Vec<_> = app.docs.iter().map(|doc| doc.key.clone()).collect();
+        for doc in &mut app.docs {
+            doc.key = format!("invalid/{}", doc.key);
+            doc.doc
+                .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Unsaved"))
+                .unwrap();
+            doc.snapshot(&recovery);
+        }
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+
+        app.docs[0].key.clone_from(&keys[0]);
+        app.docs[0].snapshot(&recovery);
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+
+        app.docs[1].key.clone_from(&keys[1]);
+        app.docs[1].snapshot(&recovery);
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_none());
+        recovery.finish().unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_worker_reports_failures_to_housekeeping_and_retries() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let docs = recovery.session_dir().join("docs");
+        std::fs::remove_dir(&docs).unwrap();
+        std::fs::write(&docs, b"blocker").unwrap();
+        let doc = app.doc_mut().unwrap();
+        doc.doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, "Unsaved"))
+            .unwrap();
+        doc.snapshot(&recovery);
+        app.services.recovery_flusher = Some(spawn_recovery_flusher(&recovery).unwrap());
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !recovery.last_flush_failed() {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not report the failure"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        app.last_poll = Instant::now() - Duration::from_secs(1);
+        app.housekeeping(&Context::default());
+        assert!(app.recovery_warning.is_some());
+        assert!(recovery.has_unflushed_snapshots());
+        std::fs::remove_file(&docs).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while recovery.last_flush_failed() || recovery.has_unflushed_snapshots() {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not persist the retry"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        app.last_poll = Instant::now() - Duration::from_secs(1);
+        app.housekeeping(&Context::default());
+        assert!(app.recovery_warning.is_none());
+        let path = docs.join(format!("{}.json", app.doc().unwrap().key));
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(snapshot.workbook.active().root_topic().title, "Unsaved");
+        recovery.finish().unwrap();
+        app.services
+            .recovery_flusher
+            .take()
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stopped_recovery_worker_stays_visible_after_an_empty_flush() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let worker = std::thread::spawn(|| {});
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !worker.is_finished() {
+            assert!(Instant::now() < deadline, "test worker did not stop");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        app.services.recovery_flusher = Some(worker);
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.flush().unwrap();
+        app.refresh_recovery_warning();
+        assert!(app.recovery_warning.is_some());
+        recovery.finish().unwrap();
+        app.services
+            .recovery_flusher
+            .take()
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

@@ -976,6 +976,39 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   snapshots, real devices and concurrent-tab races remain separate acceptance
   work. The asynchronous recovery draft is not integrated.
 
+### Recovery failure visibility checkpoint: critique
+
+- Failed draft preparation, serialization or queueing no longer only reach the
+  log: the app shows its existing localized recovery warning, retaining both the
+  draft and any previous complete snapshot. A failed native background write or
+  stopped worker is also reported. Startup reports an unavailable service.
+- A warning remains active while any document has an unresolved snapshot error
+  or a queued retry has not been persisted. Queueing during an in-flight write
+  retains the newer snapshot for a subsequent flush; successfully writing an
+  older snapshot cannot falsely clear the warning.
+- An earlier production web build passed 36 recovery and localization scenarios
+  across desktop Chromium, Firefox and WebKit, including real localStorage
+  quota failure, retry, stale ownership and startup failure. After the final
+  source correction, the production build passed 30 selected recovery and
+  localization scenarios across the same three desktop engines. Native
+  regressions exercise draft serialization, failed queueing, real worker write
+  failure, worker termination and concurrent newer snapshots.
+- Serialized native suites passed 131 platform, 509 application-library and
+  77 application integration tests; two application-library tests were ignored.
+  Strict native and WebAssembly Clippy passed with integrated cloud services
+  both disabled and explicitly enabled. The production configuration remains
+  disabled by default. All 25 documentation metadata tests, formatting and
+  whitespace checks passed.
+- This is not a storage-capacity, transaction or automatic worker-restart fix.
+  Pending edits may require conflict resolution before they can be saved;
+  saving or downloading and independent backups remain necessary. The warning
+  can be dismissed, and an indefinitely blocked write is not detected by a
+  watchdog. Serialization-error and worker-spawn failures are not artificially
+  injected by these checks. Cleanup failures are still logged and retried while
+  the document remains open; a closed document can leave a stale recovery copy.
+  Browser localStorage quotas, non-atomic cross-tab leases, physical-device
+  testing and safe large-board recovery remain open.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

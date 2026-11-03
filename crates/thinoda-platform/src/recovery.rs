@@ -67,6 +67,8 @@ pub struct RecoveryManager {
     session_dir: PathBuf,
     pending: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     state: Mutex<State>,
+    unflushed: AtomicBool,
+    flush_failed: AtomicBool,
     preserve: AtomicBool,
     closed: AtomicBool,
 }
@@ -139,6 +141,8 @@ impl RecoveryManager {
                 lock: Some(lock),
                 finished: false,
             }),
+            unflushed: AtomicBool::new(false),
+            flush_failed: AtomicBool::new(false),
             preserve: AtomicBool::new(false),
             closed: AtomicBool::new(false),
         };
@@ -167,6 +171,16 @@ impl RecoveryManager {
     /// On-disk session directory, useful for diagnostics.
     pub fn session_dir(&self) -> &Path {
         &self.session_dir
+    }
+
+    /// Whether a queued snapshot has not yet been persisted or canceled.
+    pub fn has_unflushed_snapshots(&self) -> bool {
+        self.unflushed.load(Ordering::Acquire)
+    }
+
+    /// Whether the last flush or suspension write attempt failed.
+    pub fn last_flush_failed(&self) -> bool {
+        self.flush_failed.load(Ordering::Acquire)
     }
 
     /// Serialize and synchronously persist a document; replaces an older queued snapshot.
@@ -199,6 +213,7 @@ impl RecoveryManager {
             false,
         )?;
         pending.remove(doc_key);
+        self.unflushed.store(!pending.is_empty(), Ordering::Release);
         Ok(())
     }
 
@@ -211,6 +226,7 @@ impl RecoveryManager {
             return Err(Error::Finished);
         }
         pending.insert(doc_key.into(), bytes);
+        self.unflushed.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -245,7 +261,9 @@ impl RecoveryManager {
         if state.lock.is_none() {
             return Ok(());
         }
-        self.flush_locked(&state)?;
+        let result = self.flush_locked(&state);
+        self.flush_failed.store(result.is_err(), Ordering::Release);
+        result?;
         state.lock.take();
         Ok(())
     }
@@ -269,8 +287,17 @@ impl RecoveryManager {
     /// Persist pending snapshots synchronously. Failed writes remain queued for retry.
     /// A suspended session must resume ownership before writing again.
     pub fn flush(&self) -> Result<()> {
-        let state = self.state.lock().map_err(|_| Error::Poisoned)?;
-        self.flush_locked(&state)
+        match self.state.lock() {
+            Ok(state) => {
+                let result = self.flush_locked(&state);
+                self.flush_failed.store(result.is_err(), Ordering::Release);
+                result
+            }
+            Err(_) => {
+                self.flush_failed.store(true, Ordering::Release);
+                Err(Error::Poisoned)
+            }
+        }
     }
 
     fn flush_locked(&self, state: &State) -> Result<()> {
@@ -279,17 +306,20 @@ impl RecoveryManager {
         }
         let lock = state.lock.as_ref().ok_or(Error::Suspended)?;
         lock.refresh()?;
+        self.flush_pending(|| lock.refresh())
+    }
+
+    fn flush_pending(&self, refresh: impl FnMut() -> io::Result<()>) -> Result<()> {
         let mut pending = {
             let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
             std::mem::take(&mut *shared)
         };
-        let result = self.write_pending(&mut pending, || lock.refresh());
-        if !pending.is_empty() {
-            let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
-            for (key, bytes) in pending {
-                shared.entry(key).or_insert(bytes);
-            }
+        let result = self.write_pending(&mut pending, refresh);
+        let mut shared = self.pending.lock().map_err(|_| Error::Poisoned)?;
+        for (key, bytes) in pending {
+            shared.entry(key).or_insert(bytes);
         }
+        self.unflushed.store(!shared.is_empty(), Ordering::Release);
         result
     }
 
@@ -312,7 +342,9 @@ impl RecoveryManager {
         let Ok(mut pending) = self.pending.try_lock() else {
             return false;
         };
-        self.write_pending(&mut pending, || lock.refresh()).is_ok()
+        let result = self.write_pending(&mut pending, || lock.refresh());
+        self.unflushed.store(!pending.is_empty(), Ordering::Release);
+        result.is_ok()
     }
 
     /// Remove a saved/closed document and cancel its pending snapshot.
@@ -335,6 +367,7 @@ impl RecoveryManager {
             Err(e) => return Err(e.into()),
         }
         pending.remove(doc_key);
+        self.unflushed.store(!pending.is_empty(), Ordering::Release);
         Ok(())
     }
 
@@ -360,6 +393,7 @@ impl RecoveryManager {
         state.finished = true;
         self.closed.store(true, Ordering::Release);
         pending.clear();
+        self.unflushed.store(false, Ordering::Release);
         state.lock.take();
         Ok(())
     }
@@ -690,6 +724,52 @@ mod lock_tests {
         drop(state);
         assert!(manager.try_flush_for_crash());
         manager.finish().unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_snapshot_queued_during_a_flush_remains_unflushed() {
+        use std::{sync::mpsc, time::Duration};
+
+        for fail in [false, true] {
+            let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+            let manager = RecoveryManager::start(&Paths::from_root(dir.path())).unwrap();
+            manager.queue_snapshot("doc", b"earlier".to_vec()).unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let (resume_tx, resume_rx) = mpsc::channel();
+            std::thread::scope(|scope| {
+                let manager = &manager;
+                let writer = scope.spawn(move || {
+                    manager.flush_pending(|| {
+                        started_tx.send(()).unwrap();
+                        resume_rx
+                            .recv_timeout(Duration::from_secs(5))
+                            .map_err(io::Error::other)?;
+                        if fail {
+                            Err(io::Error::other("injected write failure"))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                });
+                started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert!(manager.has_unflushed_snapshots());
+                manager.queue_snapshot("doc", b"newer".to_vec()).unwrap();
+                resume_tx.send(()).unwrap();
+                assert_eq!(writer.join().unwrap().is_err(), fail);
+            });
+            assert!(manager.has_unflushed_snapshots());
+            let path = manager.session_dir.join("docs").join("doc.json");
+            if fail {
+                assert!(!fs::exists(&path));
+            } else {
+                assert_eq!(fs::read(&path).unwrap(), b"earlier");
+            }
+            manager.flush().unwrap();
+            assert!(!manager.has_unflushed_snapshots());
+            assert_eq!(fs::read(path).unwrap(), b"newer");
+            manager.finish().unwrap();
+        }
     }
 
     #[test]

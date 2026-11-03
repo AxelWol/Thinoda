@@ -1267,6 +1267,8 @@ fn failed_recovery_flush_retains_pending_bytes_for_retry() {
     let dir = directory();
     let paths = paths(&dir);
     let manager = RecoveryManager::start(&paths).unwrap();
+    assert!(!manager.last_flush_failed());
+    assert!(!manager.has_unflushed_snapshots());
     let docs = manager.session_dir().join("docs");
     fs::remove_dir(&docs).unwrap();
     fs::write(&docs, b"blocking directory creation").unwrap();
@@ -1276,12 +1278,36 @@ fn failed_recovery_flush_retains_pending_bytes_for_retry() {
             Snapshot::to_bytes(meta("Retry"), &Workbook::default()).unwrap(),
         )
         .unwrap();
+    assert!(manager.has_unflushed_snapshots());
     assert!(manager.flush().is_err());
+    assert!(manager.last_flush_failed());
+    assert!(manager.has_unflushed_snapshots());
     fs::remove_file(&docs).unwrap();
     manager.flush().unwrap();
+    assert!(!manager.last_flush_failed());
+    assert!(!manager.has_unflushed_snapshots());
     let snapshot: Snapshot =
         serde_json::from_slice(&fs::read(docs.join("retry.json")).unwrap()).unwrap();
     assert_eq!(snapshot.meta.title, "Retry");
+}
+
+#[test]
+fn recovery_pending_status_tracks_canceled_and_persisted_snapshots() {
+    let dir = directory();
+    let manager = RecoveryManager::start(&paths(&dir)).unwrap();
+    let bytes = Snapshot::to_bytes(meta("Queued"), &Workbook::default()).unwrap();
+    manager.queue_snapshot("one", bytes.clone()).unwrap();
+    manager.queue_snapshot("two", bytes.clone()).unwrap();
+    manager.remove("one").unwrap();
+    assert!(manager.has_unflushed_snapshots());
+    manager
+        .persist_snapshot("two", meta("Persisted"), &Workbook::default())
+        .unwrap();
+    assert!(!manager.has_unflushed_snapshots());
+    manager.queue_snapshot("one", bytes).unwrap();
+    manager.remove("one").unwrap();
+    assert!(!manager.has_unflushed_snapshots());
+    manager.finish().unwrap();
 }
 
 #[test]
@@ -1529,12 +1555,16 @@ fn failed_suspend_retains_the_live_lock_and_pending_snapshot() {
         )
         .unwrap();
     assert!(manager.suspend().is_err());
+    assert!(manager.last_flush_failed());
+    assert!(manager.has_unflushed_snapshots());
     assert!(
         RecoveryManager::find_orphans(&paths).is_empty(),
         "failed suspension must not expose stale snapshots as an orphan"
     );
     fs::remove_dir(&blocked).unwrap();
     manager.suspend().unwrap();
+    assert!(!manager.last_flush_failed());
+    assert!(!manager.has_unflushed_snapshots());
     let orphans = RecoveryManager::find_orphans(&paths);
     assert_eq!(orphans.len(), 1);
     assert_eq!(orphans[0].docs.len(), 2);
