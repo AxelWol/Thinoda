@@ -763,10 +763,12 @@ removing a value, so this is not a guarantee against simultaneous-tab races.
 When discovery is incomplete, the recovery dialog offers **Keep recovery
 data** instead of **Discard All**; this closes the dialog without deleting the
 listed snapshots. They can be inspected again after a later restart.
-Failed cleanup is logged and preserves recovery data. While a saved document
-remains open, Thinoda retries removing its snapshot on a later recovery cycle.
-A persistent failure or a document closed before cleanup succeeds can still
-leave a snapshot to be offered again on a later launch.
+Failed cleanup is logged, preserves recovery data and displays a separate
+warning. Thinoda retries while the saved document remains open and, in memory,
+after it closes. It never removes an open document's newer recovery snapshot as
+a closed-document retry. Persistent failures, lost ownership, a full retry
+queue, or shutting down before a retry succeeds can still leave a snapshot to
+be offered again on a later launch.
 Do not treat crash recovery as a substitute for downloaded backups.
 
 GitHub Pages serves all project sites of an account from the same

@@ -31,6 +31,7 @@ struct MenuOwner {
     sheet: usize,
     revision: u64,
     selection: Vec<thinoda_core::TopicId>,
+    board_selection: Vec<thinoda_core::CanvasObjectId>,
     object: Option<thinoda_canvas::ObjectSelection>,
 }
 
@@ -137,6 +138,7 @@ impl ThinodaApp {
             sheet: doc.doc.active_index(),
             revision: doc.doc.state_id(),
             selection: doc.view.selection.clone(),
+            board_selection: doc.view.board_selection.clone(),
             object: doc.view.selected_object,
         })
     }
@@ -703,7 +705,38 @@ mod tests {
         let mut app = ThinodaApp::headless();
         app.docs.clear();
         let groups = app.main_menu_entries();
-        assert_eq!(groups.len(), 8);
+        assert_eq!(groups.len(), 9);
+        let names: Vec<_> = groups
+            .iter()
+            .map(|entry| match entry {
+                MenuEntry::Submenu { label, .. } => label.as_str(),
+                _ => panic!("Expected root menu category"),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "File", "Edit", "Sheet", "Insert", "AI", "Tools", "Board", "View", "Help",
+            ]
+            .map(t)
+        );
+        let MenuEntry::Submenu { entries: board, .. } = &groups[6] else {
+            panic!("Board group")
+        };
+        let commands: Vec<_> = board
+            .iter()
+            .map(|entry| match entry {
+                MenuEntry::Command { label, command } => (command.clone(), label.as_str()),
+                _ => panic!("Unexpected Board entry"),
+            })
+            .collect();
+        assert_eq!(
+            commands,
+            ThinodaApp::board_menu_commands()
+                .iter()
+                .map(|(command, label)| (command.clone(), t(label)))
+                .collect::<Vec<_>>()
+        );
         let MenuEntry::Submenu { entries, .. } = &groups[1] else {
             panic!("Edit group")
         };
@@ -891,6 +924,57 @@ mod tests {
         let count = app.docs.len();
         app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, Cmd::New));
         assert_eq!(app.docs.len(), count);
+    }
+
+    #[test]
+    fn changed_board_selection_invalidates_native_and_ribbon_commands() {
+        use thinoda_canvas::BoardAction;
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+
+        let ctx = Context::default();
+        let mut app = ThinodaApp::headless();
+        let ids = [0.0, 150.0].map(|x| {
+            app.doc_mut()
+                .unwrap()
+                .doc
+                .add_canvas_object(CanvasObject::shape(
+                    ShapeKind::Rectangle,
+                    Rect::from_min_size(Vec2::new(x, 0.0), Vec2::new(100.0, 70.0)),
+                ))
+                .unwrap()
+        });
+        app.doc_mut().unwrap().view.select_board_object(ids[0]);
+        let snapshot = app.native_menu_snapshot(&ctx);
+        let lock = Cmd::BoardAction(BoardAction::Lock(true));
+        assert!(snapshot.command_enabled(&lock));
+        let before = app.doc().unwrap().doc.workbook().clone();
+        app.doc_mut().unwrap().view.select_board_object(ids[1]);
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, lock.clone()));
+        app.dispatch_ribbon_command(&ctx, &snapshot, &lock);
+        assert_eq!(app.doc().unwrap().doc.workbook(), &before);
+
+        let snapshot = app.native_menu_snapshot(&ctx);
+        app.dispatch_native_menu(&ctx, &snapshot, id(&snapshot, lock));
+        assert!(
+            app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(ids[1])
+                .unwrap()
+                .locked
+        );
+        assert!(
+            !app.doc()
+                .unwrap()
+                .doc
+                .sheet()
+                .canvas
+                .object(ids[0])
+                .unwrap()
+                .locked
+        );
     }
 
     #[test]

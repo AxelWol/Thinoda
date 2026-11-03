@@ -78,6 +78,12 @@ fn translated_ribbon_tabs_and_commands_remain_bounded_at_desktop_scales() {
                         Cmd::Ai(thinoda_app::ai::AiCommand::Brainstorm),
                     ),
                     ("Capture", "Map Shot", "Capture", Cmd::MapShot),
+                    (
+                        "Board",
+                        "Select tool",
+                        "Board",
+                        Cmd::BoardTool(thinoda_canvas::BoardTool::Select),
+                    ),
                     ("View", "Previous Sheet", "Sheet", Cmd::PreviousSheet),
                     ("Help", "Quick Start", "Help", Cmd::QuickStart),
                 ] {

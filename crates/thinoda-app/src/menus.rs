@@ -38,6 +38,22 @@ fn items(commands: impl IntoIterator<Item = (&'static str, Cmd)>) -> Vec<MenuEnt
 }
 
 impl ThinodaApp {
+    pub(crate) fn board_menu_commands() -> Vec<(Cmd, &'static str)> {
+        Self::board_commands()
+            .into_iter()
+            .chain(
+                Self::arrangement_commands().into_iter().filter_map(
+                    |(action, label)| match action {
+                        Action::AlignFloating(arrangement) => {
+                            Some((Cmd::BoardAction(BoardAction::Arrange(arrangement)), label))
+                        }
+                        _ => None,
+                    },
+                ),
+            )
+            .collect()
+    }
+
     pub(crate) fn menu_entries_available(&self, entries: &[MenuEntry]) -> bool {
         // Preserve the disabled Export group without hiding discoverable editing
         // groups whose individual actions depend on the current selection.
@@ -229,24 +245,12 @@ impl ThinodaApp {
                 MenuEntry::Separator,
                 item("Work Calendar", Cmd::WorkCalendar),
                 item("Zones", Cmd::Zones),
-                submenu(
-                    "Board",
-                    Self::board_commands()
-                        .into_iter()
-                        .map(|(command, label)| item(label, command))
-                        .chain(Self::arrangement_commands().into_iter().filter_map(
-                            |(action, label)| match action {
-                                Action::AlignFloating(arrangement) => Some(item(
-                                    label,
-                                    Cmd::BoardAction(BoardAction::Arrange(arrangement)),
-                                )),
-                                _ => None,
-                            },
-                        ))
-                        .collect(),
-                ),
                 item("Edit FIM node", Cmd::EditFimNode),
             ]),
+            submenu("Board", Self::board_menu_commands()
+                .into_iter()
+                .map(|(command, label)| item(label, command))
+                .collect()),
             submenu("View", items([
                 ("Gantt Chart", Cmd::Gantt),
                 ("Pitch", Cmd::Pitch),

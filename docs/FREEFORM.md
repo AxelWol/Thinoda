@@ -1015,6 +1015,37 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   Browser localStorage quotas, non-atomic cross-tab leases, physical-device
   testing and safe large-board recovery remain open.
 
+### Recovery cleanup and menu checkpoint: critique
+
+- Failed removal now has a distinct warning rather than suggesting that a
+  successful save also removed every recovery copy. A clean open document
+  retries its own cleanup; closed-document retries check for a reopened key and
+  retain the recovery manager's ownership checks. Pending snapshot bytes remain
+  governed by the existing remove/flush contract, and newer edits are never
+  removed by the retry. Failed recovery handoffs retain their original source
+  and only schedule cleanup for copies that were actually attempted.
+- Closed-document retries are round-robin, at most one per housekeeping poll,
+  with a 256-key in-memory bound. Overflow is visibly flagged but is not
+  automatically retried; persistent failure, lost ownership, a crash or exit
+  before retry can leave a stale copy for the next launch. The warning can be
+  dismissed. This is not a durable cleanup journal, a transactional browser
+  lease, or a fix for localStorage quota and large-board recovery.
+- Board now shares its command list between the first-level main menu and the
+  canvas context menu. Styles groups the requested topic/style commands, Board
+  sits between Select and Arrange, and New Sheet from Topic is last. Native-menu
+  and ribbon snapshots now include the selected board objects, preventing a
+  stale action from affecting a different board selection. The underlying
+  command availability, shortcut bindings and edit transactions are reused.
+- The localized menu matrix covers short windows and scaling, popup bounds,
+  first/last command reachability, context submenu order and command dispatch.
+  It exercises a selected board shape's lock action and verifies its resulting
+  state. The final production candidate passed seven recovery/ownership cases
+  in each of desktop Chromium, Firefox and WebKit. Native library suites passed
+  521 application tests (two ignored) and 131 platform tests; strict native
+  all-target application and WebAssembly web Clippy passed.
+- Actual operating-system menus, assistive technology and physical touch devices
+  still require acceptance; the browser canvas accessibility gap is unchanged.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

@@ -417,6 +417,7 @@ Default save folder|Pasta padrão de salvamento
 Open settings folder|Abrir pasta de configurações
 Saved to|Salvo em
 Could not save|Não foi possível salvar
+A recovery copy could not be removed. It may reappear after restart.|Não foi possível remover uma cópia de recuperação. Ela pode reaparecer após reiniciar.
 Crash recovery is unavailable. Save or download your work.|A recuperação após falha não está disponível. Salve ou baixe seu trabalho.
 Some recovery data could not be checked. Keep existing storage and save your work.|Não foi possível verificar alguns dados de recuperação. Não exclua os dados salvos e salve seu trabalho.
 Download raw record|Baixar registro bruto

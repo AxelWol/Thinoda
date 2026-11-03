@@ -172,6 +172,7 @@ pub struct OpenDoc {
     snapshot_state: u64,
     snapshot_dirty: bool,
     pub(crate) recovery_snapshot_failed: bool,
+    pub(crate) recovery_cleanup_failed: bool,
     last_change: Instant,
     last_seen_state: u64,
     /// Set when the user accepted that the on-disk file may be overwritten.
@@ -213,6 +214,7 @@ impl OpenDoc {
             snapshot_state: state,
             snapshot_dirty: false,
             recovery_snapshot_failed: false,
+            recovery_cleanup_failed: false,
             last_change: Instant::now(),
             last_seen_state: state,
             ignore_conflict: false,
@@ -784,6 +786,23 @@ impl OpenDoc {
         self.recovery_snapshot_failed = true;
     }
 
+    pub(crate) fn cleanup_recovery(&mut self, recovery: &RecoveryManager) -> bool {
+        debug_assert!(!self.is_dirty());
+        match recovery.remove(&self.key) {
+            Ok(()) => {
+                self.recovery_cleanup_failed = false;
+                true
+            }
+            Err(error) => {
+                if !self.recovery_cleanup_failed {
+                    log::warn!("recovery snapshot cleanup failed: {error}");
+                }
+                self.recovery_cleanup_failed = true;
+                false
+            }
+        }
+    }
+
     /// Queues a crash-recovery snapshot if the document changed since the last one.
     pub fn snapshot(&mut self, recovery: &RecoveryManager) {
         // Never replace an earlier complete snapshot with one that silently
@@ -809,23 +828,21 @@ impl OpenDoc {
             && board_label == self.snapshot_board_label
             && self.fim_draft_revision == self.snapshot_fim_revision
             && !self.snapshot_saw_ink
+            && !self.recovery_cleanup_failed
         {
             self.recovery_snapshot_failed = false;
             return;
         }
         if !dirty {
             self.recovery_snapshot_failed = false;
-            match recovery.remove(&self.key) {
-                Ok(()) => {
-                    self.snapshot_state = s;
-                    self.snapshot_dirty = false;
-                    self.snapshot_inspector_edit = self.inspector_edit.clone();
-                    self.snapshot_title = title_draft;
-                    self.snapshot_board_label = board_label;
-                    self.snapshot_fim_revision = self.fim_draft_revision;
-                    self.snapshot_saw_ink = false;
-                }
-                Err(error) => log::warn!("recovery snapshot cleanup failed: {error}"),
+            if self.cleanup_recovery(recovery) {
+                self.snapshot_state = s;
+                self.snapshot_dirty = false;
+                self.snapshot_inspector_edit = self.inspector_edit.clone();
+                self.snapshot_title = title_draft;
+                self.snapshot_board_label = board_label;
+                self.snapshot_fim_revision = self.fim_draft_revision;
+                self.snapshot_saw_ink = false;
             }
             return;
         }
@@ -854,6 +871,7 @@ impl OpenDoc {
                     self.snapshot_fim_revision = self.fim_draft_revision;
                     self.snapshot_saw_ink = false;
                     self.recovery_snapshot_failed = false;
+                    self.recovery_cleanup_failed = false;
                 }
                 Err(error) => self.record_recovery_snapshot_failure(error),
             },

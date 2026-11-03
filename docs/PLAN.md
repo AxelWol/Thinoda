@@ -11,6 +11,16 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
+**2026-11-03 menu and recovery continuation (implemented locally):** Board is
+at the first level of the shared main menu. The canvas context menu groups
+Indent, Outdent and the four style actions under Styles, places Board between
+Select and Arrange, and ends with New Sheet from Topic. The main menu, ribbon,
+native menu and context menu reuse Board commands, availability and shortcuts.
+Localized short-window navigation, command dispatch and selection ownership have
+focused coverage. Failed recovery-copy cleanup is reported and retried after a
+saved document closes without discarding newer edits or changing the recovery
+manager's ownership and pending-write contracts.
+
 The Freeform implementation, fifteen board templates, responsive toolbox and
 existing style controls are in place. An earlier production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
@@ -3210,21 +3220,22 @@ completing the deferred sprint, CRDTs or plugins.
 Use one command identity/availability/shortcut/execution model across native
 menus, ribbon, hamburger, palette and context menus. A workbook remains a document
 with one or more sheets/maps; menus must not create a competing file hierarchy.
-The shared hierarchy is File, Edit, Sheet, Insert, AI, Tools, View and Help.
+The shared hierarchy is File, Edit, Sheet, Insert, AI, Tools, Board, View and Help.
 Put Settings in Edit on every platform; retain the standard macOS application
 menu Settings entry and shortcut as an alias to the same command. Add OS-required
 Application/Window entries and standard actions where appropriate, with accurate
 enabled states and no nonfunctional placeholders.
-For Windows the ribbon tabs follow these shared categories, including Edit;
-"Office-like" describes the collapsible tab/group interaction, not Office's exact
-tab taxonomy or File/Options placement. Settings in Edit is a user-directed
+For Windows the ribbon uses the same command categories, displaying Edit as
+Home and Tools as Capture, and includes a Board tab. "Office-like" describes the
+collapsible tab/group interaction, not Office's exact tab taxonomy or
+File/Options placement. Settings in Edit is a user-directed
 choice even where a host normally uses another location. Standard host aliases
 may coexist without changing command identity. Context menus expose relevant
 subsets rather than repeating every top-level category.
 This deliberately differs from Windows Office's File/Options and Ubuntu
 desktop-specific Preferences placement; P4.1 audits and documents that settled
 choice rather than reopening it. Command parity does not require identical
-group layouts, but Windows tab names must remain the eight shared categories.
+group layouts; the Windows ribbon also exposes Board as a first-level tab.
 The initial same-process viewport mechanism is now selected and implemented with
 egui/eframe `show_viewport_immediate`; this does not replace the P4.1 audit of
 single-instance IPC, startup/open/reopen routing and recovery ownership. Those

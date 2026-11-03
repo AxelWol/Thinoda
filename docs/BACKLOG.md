@@ -12,7 +12,9 @@ are not lists of wholly missing features; audit and reuse existing implementatio
 **2026-11-03 Freeform continuation:** fifteen localized board templates now
 include Storyboard with three initially empty image cards and independent visual
 frames. The template's image upload, native persistence and undo/redo are covered
-in desktop browsers. Browser screen-reader access, safe large-board recovery,
+in desktop browsers. The user-directed menu reorganization and recovery-cleanup
+warning/retry checkpoint are implemented locally; see the current plan. Browser
+screen-reader access, safe large-board recovery,
 realistic ink/image performance, export acceptance and physical-device checks
 remain open. Recovery failure visibility now covers document snapshot creation
 and native background writes; it does not remove browser quota or tab-race
@@ -1824,7 +1826,7 @@ requirements to add XMind's cloud account, billing or hosted AI service.
   desktop/session's standard menu conventions with an in-window fallback. WASM
   retains a compact hamburger with grouped, height-bounded menus; an optional
   wide-screen menu bar is evaluated without pretending to be an OS-global menu.
-  Shared actions include File/Edit/Sheet/Insert/AI/Tools/View/Help, Settings in
+  Shared actions include File/Edit/Sheet/Insert/AI/Tools/Board/View/Help, Settings in
   Edit (plus the standard macOS alias), native shortcuts and required OS actions.
   Audit and regroup **all** main/context menus so no item becomes unreachable in
   short viewports or at high scaling. All 13 accepted locales, light/dark/Auto,

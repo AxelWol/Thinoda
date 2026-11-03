@@ -92,9 +92,43 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     d.view.selected_topic_rect(&d.doc).unwrap().center()
                 };
                 right_click(&mut h, pos);
-                for label in ["Fit Map", "Topic", "Delete", "Paste Style", "Arrange"] {
+                for label in [
+                    "Fit Map",
+                    "Topic",
+                    "Delete",
+                    "Styles",
+                    "Select",
+                    "Board",
+                    "Arrange",
+                    "New Sheet from Topic",
+                ] {
                     reveal(&mut h, t(label));
                 }
+                reveal(&mut h, t("Styles"));
+                h.get_by_role_and_label(Role::Button, t("Styles")).click();
+                h.run_steps(3);
+                for label in [
+                    "Indent",
+                    "Outdent",
+                    "Copy Style",
+                    "Paste Style",
+                    "Reset Style",
+                    "Save Quick Style…",
+                ] {
+                    reveal(&mut h, t(label));
+                }
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                right_click(&mut h, pos);
+                reveal(&mut h, t("Board"));
+                h.get_by_role_and_label(Role::Button, t("Board")).click();
+                h.run_steps(3);
+                reveal(&mut h, t("Select tool"));
+                reveal(&mut h, t("Distribute Vertical Centers"));
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                right_click(&mut h, pos);
+                reveal(&mut h, t("Arrange"));
                 h.get_by_role_and_label(Role::Button, t("Arrange")).click();
                 h.run_steps(3);
                 reveal(&mut h, t("Distribute Vertical Centers"));
@@ -154,4 +188,101 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
             }
         }
     }
+
+    let mut app = ThinodaApp::headless();
+    app.settings.show_format_panel = false;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 1600.0))
+        .allow_missing_glyphs()
+        .build_ui_state(|ui, app: &mut ThinodaApp| app.draw(ui), app);
+    h.run_steps(4);
+    let pos = {
+        let d = h.state().doc().unwrap();
+        d.view.selected_topic_rect(&d.doc).unwrap().center()
+    };
+    right_click(&mut h, pos);
+    let menu_order = [
+        "Styles",
+        "Select",
+        "Board",
+        "Arrange",
+        "Fit Map",
+        "New Sheet from Topic",
+    ];
+    let positions: Vec<_> = menu_order
+        .iter()
+        .map(|label| menu_action(&h, t(label)).rect().min.y)
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(h.state().style_clipboard.is_none());
+    menu_action(&h, t("Styles")).click();
+    h.run_steps(3);
+    let style_order = [
+        "Indent",
+        "Outdent",
+        "Copy Style",
+        "Paste Style",
+        "Reset Style",
+        "Save Quick Style…",
+    ];
+    let positions: Vec<_> = style_order
+        .iter()
+        .map(|label| menu_action(&h, t(label)).rect().min.y)
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    menu_action(&h, t("Copy Style")).click();
+    h.run_steps(3);
+    assert!(h.state().style_clipboard.is_some());
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    right_click(&mut h, pos);
+    menu_action(&h, t("Board")).click();
+    h.run_steps(3);
+    reveal(&mut h, t("Sticky note"));
+    menu_action(&h, t("Sticky note")).click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().doc().unwrap().view.board_tool,
+        thinoda_canvas::BoardTool::Sticky
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+
+    let shape = {
+        use thinoda_core::{CanvasObject, Rect, ShapeKind, Vec2};
+        let doc = h.state_mut().doc_mut().unwrap();
+        doc.view.set_board_tool(thinoda_canvas::BoardTool::Select);
+        doc.doc
+            .add_canvas_object(CanvasObject::shape(
+                ShapeKind::Rectangle,
+                Rect::from_min_size(Vec2::new(-400.0, -250.0), Vec2::new(100.0, 70.0)),
+            ))
+            .unwrap()
+    };
+    h.run_steps(3);
+    let pos = {
+        let view = &h.state().doc().unwrap().view;
+        view.canvas_rect().center() + view.offset + egui::vec2(-350.0, -215.0) * view.zoom
+    };
+    right_click(&mut h, pos);
+    assert_eq!(h.state().doc().unwrap().view.board_selection, vec![shape]);
+    menu_action(&h, t("Board")).click();
+    h.run_steps(3);
+    reveal(&mut h, t("Lock board selection"));
+    let lock = menu_action(&h, t("Lock board selection"));
+    assert!(!lock.accesskit_node().is_disabled());
+    lock.click();
+    h.run_steps(3);
+    assert!(
+        h.state()
+            .doc()
+            .unwrap()
+            .doc
+            .sheet()
+            .canvas
+            .object(shape)
+            .unwrap()
+            .locked
+    );
 }

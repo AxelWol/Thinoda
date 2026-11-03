@@ -359,8 +359,10 @@ those system-owned controls. WinGet publishing remains paused.
   expose color, width, opacity and stroke type controls, while erasers expose
   their radius. Selected-topic actions move to avoid visible cards, frame
   titles and toolbars. If they cannot fit, use the main menu or the topic's
-  context menu instead. Board commands also provide grid, snapping, grouping,
-  locking, arrangement and a minimap. Native files use version 6 when board
+  context menu instead. **Board** is a first-level main-menu category; the
+  canvas context menu also has Board and a Styles submenu. Board commands
+  provide grid, snapping, grouping, locking, arrangement and a minimap. Native
+  files use version 6 when board
   features are present; other formats may show an itemized warning before
   exporting content they cannot retain. Frame clipping is visual, not secure
   redaction.

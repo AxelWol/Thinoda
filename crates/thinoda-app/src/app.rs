@@ -1,7 +1,7 @@
 //! Application state, command dispatch and lifecycle (recovery, autosave, close handling).
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -34,6 +34,15 @@ const MAP_FILTERS: &[files::Filter<'static>] = &[
     ("XMind", &["xmind"]),
     ("MindManager", &["mmap"]),
 ];
+
+const MAX_PENDING_RECOVERY_CLEANUPS: usize = 256;
+pub(crate) const RECOVERY_CLEANUP_WARNING: &str =
+    "A recovery copy could not be removed. It may reappear after restart.";
+
+struct PendingRecoveryCleanup {
+    key: String,
+    failure_logged: bool,
+}
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn set_browser_recovery_announcement(id: &str, message: Option<&str>) {
@@ -304,6 +313,9 @@ pub struct ThinodaApp {
     pub toasts: Toasts,
     pub(crate) recovery_discovery_incomplete: bool,
     recovery_warning: Option<u64>,
+    recovery_cleanup_warning: Option<u64>,
+    recovery_cleanup_pending: VecDeque<PendingRecoveryCleanup>,
+    recovery_cleanup_overflow: bool,
     #[cfg(target_arch = "wasm32")]
     recovery_is_memory_only: bool,
     pub(crate) updates: crate::updates::Updates,
@@ -416,6 +428,9 @@ impl ThinodaApp {
             toasts: Toasts::default(),
             recovery_discovery_incomplete: false,
             recovery_warning: None,
+            recovery_cleanup_warning: None,
+            recovery_cleanup_pending: VecDeque::new(),
+            recovery_cleanup_overflow: false,
             #[cfg(target_arch = "wasm32")]
             recovery_is_memory_only,
             updates: Default::default(),
@@ -522,6 +537,83 @@ impl ThinodaApp {
             None
         };
         self.update_recovery_warning(error);
+    }
+
+    fn defer_recovery_cleanup(&mut self, key: &str, failure_logged: bool) {
+        if let Some(pending) = self
+            .recovery_cleanup_pending
+            .iter_mut()
+            .find(|pending| pending.key == key)
+        {
+            pending.failure_logged |= failure_logged;
+        } else if self.recovery_cleanup_pending.len() < MAX_PENDING_RECOVERY_CLEANUPS {
+            self.recovery_cleanup_pending
+                .push_back(PendingRecoveryCleanup {
+                    key: key.to_owned(),
+                    failure_logged,
+                });
+        } else {
+            if !self.recovery_cleanup_overflow {
+                log::warn!("recovery cleanup retry limit reached; some copies may remain");
+            }
+            self.recovery_cleanup_overflow = true;
+        }
+    }
+
+    fn cleanup_closed_recovery(&mut self, key: &str) {
+        let Some(recovery) = self.services.recovery.clone() else {
+            return;
+        };
+        if self.docs.iter().any(|doc| doc.key == key) {
+            self.defer_recovery_cleanup(key, false);
+            return;
+        }
+        match recovery.remove(key) {
+            Ok(()) => self
+                .recovery_cleanup_pending
+                .retain(|pending| pending.key != key),
+            Err(error) => {
+                log::warn!("recovery snapshot cleanup failed: {error}");
+                self.defer_recovery_cleanup(key, true);
+            }
+        }
+    }
+
+    fn retry_closed_recovery_cleanup(&mut self) {
+        let Some(recovery) = self.services.recovery.as_ref() else {
+            return;
+        };
+        let Some(mut pending) = self.recovery_cleanup_pending.pop_front() else {
+            return;
+        };
+        if self.docs.iter().any(|doc| doc.key == pending.key) {
+            self.recovery_cleanup_pending.push_back(pending);
+        } else if let Err(error) = recovery.remove(&pending.key) {
+            if !pending.failure_logged {
+                log::warn!("recovery snapshot cleanup failed: {error}");
+                pending.failure_logged = true;
+            }
+            self.recovery_cleanup_pending.push_back(pending);
+        }
+    }
+
+    fn refresh_recovery_cleanup_warning(&mut self) {
+        let failed = self.recovery_cleanup_overflow
+            || !self.recovery_cleanup_pending.is_empty()
+            || self.docs.iter().any(|doc| doc.recovery_cleanup_failed);
+        if failed && self.recovery_cleanup_warning.is_none() {
+            let message = t(RECOVERY_CLEANUP_WARNING);
+            #[cfg(target_arch = "wasm32")]
+            set_browser_recovery_announcement("thinoda-recovery-cleanup", Some(message));
+            self.recovery_cleanup_warning = Some(
+                self.toasts
+                    .sticky(thinoda_ui::toast::ToastKind::Warning, message),
+            );
+        } else if !failed && let Some(id) = self.recovery_cleanup_warning.take() {
+            self.toasts.dismiss(id);
+            #[cfg(target_arch = "wasm32")]
+            set_browser_recovery_announcement("thinoda-recovery-cleanup", None);
+        }
     }
 
     pub(crate) fn warn_incomplete_recovery_discovery(&mut self) {
@@ -2594,10 +2686,10 @@ impl ThinodaApp {
         ) {
             Ok(()) => {
                 self.cloud_program.forget_document(&d.key);
-                if let Some(r) = &self.services.recovery
-                    && let Err(error) = r.remove(&d.key)
+                if !d.is_dirty()
+                    && let Some(r) = &self.services.recovery
                 {
-                    log::warn!("recovery snapshot cleanup failed: {error}");
+                    d.cleanup_recovery(r);
                 }
                 self.settings.add_recent(target);
                 self.save_settings();
@@ -2785,11 +2877,7 @@ impl ThinodaApp {
         if let Some(owner) = owner {
             self.prune_empty_document_window(owner);
         }
-        if let Some(r) = &self.services.recovery
-            && let Err(error) = r.remove(&d.key)
-        {
-            log::warn!("recovery snapshot cleanup failed: {error}");
-        }
+        self.cleanup_closed_recovery(&d.key);
         if home {
             self.active = self.docs.len();
         } else if i < self.active {
@@ -3003,8 +3091,11 @@ impl ThinodaApp {
         // Crash recovery snapshots.
         if let Some(r) = self.services.recovery.clone() {
             let interval = self.settings.recovery_interval_secs.max(1) as f32;
+            let cleanup_retry_due = self.last_poll.elapsed() > Duration::from_millis(500);
             for d in &mut self.docs {
-                if d.idle_secs() >= interval.min(2.0) || d.idle_secs() >= interval {
+                if (d.idle_secs() >= interval.min(2.0) || d.idle_secs() >= interval)
+                    && (!d.recovery_cleanup_failed || d.is_dirty() || cleanup_retry_due)
+                {
                     d.snapshot(&r);
                 }
             }
@@ -3053,10 +3144,10 @@ impl ThinodaApp {
                     if let Err(e) = d.save_to(&p, backup) {
                         d.autosave_failed(interval);
                         self.toasts.error(format!("{}: {e}", t("Could not save")));
-                    } else if let Some(r) = &self.services.recovery
-                        && let Err(error) = r.remove(&d.key)
+                    } else if !d.is_dirty()
+                        && let Some(r) = &self.services.recovery
                     {
-                        log::warn!("recovery snapshot cleanup failed: {error}");
+                        d.cleanup_recovery(r);
                     }
                 }
             }
@@ -3070,6 +3161,7 @@ impl ThinodaApp {
         // Files forwarded from secondary instances (e.g. double-click in Explorer/Finder).
         if self.last_poll.elapsed() > Duration::from_millis(500) {
             self.last_poll = Instant::now();
+            self.retry_closed_recovery_cleanup();
             // The browser has no background flusher thread; this also refreshes the
             // recovery lock heartbeat of this tab.
             #[cfg(target_arch = "wasm32")]
@@ -3077,6 +3169,7 @@ impl ThinodaApp {
                 self.update_recovery_warning(Some(&error.to_string()));
             }
             self.refresh_recovery_warning();
+            self.refresh_recovery_cleanup_warning();
             let paths = self
                 .services
                 .instance
@@ -3287,22 +3380,22 @@ impl ThinodaApp {
                         d.doc.mark_dirty();
                         restored.push(d);
                     }
-                    if let Some(recovery) = &self.services.recovery {
+                    if let Some(recovery) = self.services.recovery.clone() {
+                        let mut attempted = Vec::new();
                         let persisted =
                             restored.iter().zip(&s.docs).try_for_each(|(doc, source)| {
                                 let mut meta = source.meta.clone();
                                 meta.original_path = doc.path.clone();
                                 meta.dirty = true;
+                                attempted.push(doc.key.clone());
                                 recovery.persist_snapshot(&doc.key, meta, doc.doc.workbook())
                             });
                         if let Err(error) = persisted {
                             log::warn!("Recovery handoff failed: {error}");
                             self.toasts
                                 .error(format!("{}: {error}", t("Recover Unsaved Work")));
-                            for doc in &restored {
-                                if let Err(error) = recovery.remove(&doc.key) {
-                                    log::warn!("Recovery handoff rollback failed: {error}");
-                                }
+                            for key in attempted {
+                                self.cleanup_closed_recovery(&key);
                             }
                             keep.push(s);
                             continue;
@@ -4423,6 +4516,289 @@ mod tests {
                 .texts()
                 .any(|text| text == t("Crash recovery is unavailable. Save or download your work."))
         );
+    }
+
+    fn snapshot_path(recovery: &RecoveryManager, key: &str) -> PathBuf {
+        recovery
+            .session_dir()
+            .join("docs")
+            .join(format!("{key}.json"))
+    }
+
+    fn snapshot_edit(doc: &mut OpenDoc, recovery: &RecoveryManager, title: &str) {
+        doc.doc
+            .edit_sheet("Edit", |sheet| sheet.set_title(sheet.root, title))
+            .unwrap();
+        doc.snapshot(recovery);
+    }
+
+    #[test]
+    fn failed_save_cleanup_is_retried_after_the_document_closes() {
+        let (dir, recovery, mut app) = recovery_fixture();
+        snapshot_edit(app.doc_mut().unwrap(), &recovery, "Saved document");
+        recovery.suspend().unwrap();
+        let snapshot = snapshot_path(&recovery, &app.docs[0].key);
+        let original = std::fs::read(&snapshot).unwrap();
+        let saved = dir.path().join("saved.thinoda");
+        assert!(app.save_active_file(&saved, false, false, false, false));
+        assert!(!app.docs[0].is_dirty());
+        assert!(app.docs[0].recovery_cleanup_failed);
+        app.refresh_recovery_cleanup_warning();
+        assert!(app.recovery_cleanup_warning.is_some());
+        assert!(
+            app.toasts
+                .texts()
+                .any(|text| text == t(RECOVERY_CLEANUP_WARNING))
+        );
+
+        app.close_tab_now(0);
+        assert_eq!(app.recovery_cleanup_pending.len(), 1);
+        app.retry_closed_recovery_cleanup();
+        assert_eq!(std::fs::read(&snapshot).unwrap(), original);
+        recovery.resume().unwrap();
+        app.retry_closed_recovery_cleanup();
+        app.refresh_recovery_cleanup_warning();
+        assert!(!snapshot.exists());
+        assert!(saved.exists());
+        assert!(app.recovery_cleanup_warning.is_none());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn cleanup_warning_waits_for_each_failed_open_document() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        app.new_doc(templates::instantiate("mind-map"));
+        for doc in &mut app.docs {
+            snapshot_edit(doc, &recovery, "Saved");
+        }
+        recovery.suspend().unwrap();
+        for doc in &mut app.docs {
+            doc.doc.mark_saved();
+            doc.snapshot(&recovery);
+            assert!(doc.recovery_cleanup_failed);
+        }
+        app.refresh_recovery_cleanup_warning();
+        let warning = app.recovery_cleanup_warning.unwrap();
+        app.refresh_recovery_cleanup_warning();
+        assert_eq!(app.recovery_cleanup_warning, Some(warning));
+
+        recovery.resume().unwrap();
+        app.docs[0].snapshot(&recovery);
+        app.refresh_recovery_cleanup_warning();
+        assert_eq!(app.recovery_cleanup_warning, Some(warning));
+        app.docs[1].snapshot(&recovery);
+        app.refresh_recovery_cleanup_warning();
+        assert!(app.recovery_cleanup_warning.is_none());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn failed_cleanup_preserves_pending_bytes_until_retry_or_flush() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        let doc = app.doc_mut().unwrap();
+        snapshot_edit(doc, &recovery, "Queued before save");
+        let path = snapshot_path(&recovery, &doc.key);
+        std::fs::create_dir(&path).unwrap();
+        doc.doc.mark_saved();
+        doc.snapshot(&recovery);
+        assert!(doc.recovery_cleanup_failed);
+        assert!(recovery.has_unflushed_snapshots());
+        std::fs::remove_dir(&path).unwrap();
+        recovery.flush().unwrap();
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            snapshot.workbook.active().root_topic().title,
+            "Queued before save"
+        );
+        assert!(doc.recovery_cleanup_failed);
+        doc.snapshot(&recovery);
+        assert!(!path.exists());
+        assert!(!doc.recovery_cleanup_failed);
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn failed_cleanup_never_removes_new_edits_or_unresolved_ink() {
+        use thinoda_canvas::ink_controller::InkControllerError;
+
+        let (_dir, recovery, mut app) = recovery_fixture();
+        snapshot_edit(app.doc_mut().unwrap(), &recovery, "Before");
+        recovery.suspend().unwrap();
+        let path = snapshot_path(&recovery, &app.docs[0].key);
+        let original = std::fs::read(&path).unwrap();
+        app.docs[0].doc.mark_saved();
+        app.docs[0].snapshot(&recovery);
+        assert!(app.docs[0].recovery_cleanup_failed);
+        recovery.resume().unwrap();
+
+        app.docs[0]
+            .ink_feedback
+            .record(InkControllerError::GesturePending);
+        app.docs[0].snapshot(&recovery);
+        app.close_tab_now(0);
+        assert_eq!(app.docs.len(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(app.docs[0].recovery_cleanup_failed);
+        app.docs[0].discard_pending_ink();
+        snapshot_edit(&mut app.docs[0], &recovery, "After");
+        assert!(!app.docs[0].recovery_cleanup_failed);
+        recovery.flush().unwrap();
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(snapshot.workbook.active().root_topic().title, "After");
+        assert!(app.docs[0].is_dirty());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn closed_cleanup_respects_claims_and_a_reopened_document_key() {
+        let (dir, recovery, mut app) = recovery_fixture();
+        snapshot_edit(app.doc_mut().unwrap(), &recovery, "Original");
+        let key = app.docs[0].key.clone();
+        let path = snapshot_path(&recovery, &key);
+        recovery.suspend().unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let claim = RecoveryManager::find_orphans(&Paths::from_root(dir.path()));
+        assert_eq!(claim.len(), 1);
+        app.close_tab_now(0);
+        app.retry_closed_recovery_cleanup();
+        assert!(recovery.resume().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        app.new_doc(templates::instantiate("mind-map"));
+        app.docs[0].key = key;
+        snapshot_edit(&mut app.docs[0], &recovery, "New unsaved edit");
+        app.retry_closed_recovery_cleanup();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        drop(claim);
+        recovery.resume().unwrap();
+        recovery.flush().unwrap();
+        let newer = std::fs::read(&path).unwrap();
+        app.retry_closed_recovery_cleanup();
+        assert_eq!(std::fs::read(&path).unwrap(), newer);
+        let snapshot: thinoda_platform::recovery::Snapshot =
+            serde_json::from_slice(&newer).unwrap();
+        assert_eq!(
+            snapshot.workbook.active().root_topic().title,
+            "New unsaved edit"
+        );
+        app.close_tab_now(0);
+        assert!(!path.exists());
+        assert!(app.recovery_cleanup_pending.is_empty());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn closed_cleanup_retries_are_round_robin_and_bounded() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        app.new_doc(templates::instantiate("mind-map"));
+        for doc in &mut app.docs {
+            snapshot_edit(doc, &recovery, "Closed");
+        }
+        let first = snapshot_path(&recovery, &app.docs[0].key);
+        let second = snapshot_path(&recovery, &app.docs[1].key);
+        recovery.suspend().unwrap();
+        app.close_tab_now(0);
+        app.close_tab_now(0);
+        assert_eq!(app.recovery_cleanup_pending.len(), 2);
+        recovery.resume().unwrap();
+        let first_bytes = std::fs::read(&first).unwrap();
+        std::fs::remove_file(&first).unwrap();
+        std::fs::create_dir(&first).unwrap();
+
+        app.retry_closed_recovery_cleanup();
+        assert!(second.exists());
+        assert_eq!(app.recovery_cleanup_pending.len(), 2);
+        app.retry_closed_recovery_cleanup();
+        assert!(!second.exists());
+        assert_eq!(app.recovery_cleanup_pending.len(), 1);
+        app.refresh_recovery_cleanup_warning();
+        assert!(app.recovery_cleanup_warning.is_some());
+        std::fs::remove_dir(&first).unwrap();
+        std::fs::write(&first, first_bytes).unwrap();
+        app.retry_closed_recovery_cleanup();
+        app.refresh_recovery_cleanup_warning();
+        assert!(!first.exists());
+        assert!(app.recovery_cleanup_warning.is_none());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn cleanup_queue_overflow_remains_visible() {
+        let (_dir, recovery, mut app) = recovery_fixture();
+        for index in 0..=MAX_PENDING_RECOVERY_CLEANUPS {
+            app.defer_recovery_cleanup(&format!("closed-{index}"), true);
+        }
+        assert_eq!(
+            app.recovery_cleanup_pending.len(),
+            MAX_PENDING_RECOVERY_CLEANUPS
+        );
+        assert!(app.recovery_cleanup_overflow);
+        app.refresh_recovery_cleanup_warning();
+        app.recovery_cleanup_pending.clear();
+        app.refresh_recovery_cleanup_warning();
+        assert!(app.recovery_cleanup_warning.is_some());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn inline_autosave_reports_failed_cleanup() {
+        let (dir, recovery, mut app) = recovery_fixture();
+        let path = dir.path().join("autosave.thinoda");
+        app.docs[0].save_to(&path, false).unwrap();
+        snapshot_edit(&mut app.docs[0], &recovery, "Autosaved");
+        recovery.suspend().unwrap();
+        app.settings.autosave = true;
+        app.settings.autosave_interval_secs = 5;
+        app.docs[0].tick();
+        app.docs[0].backdate_change(60);
+        app.last_poll = Instant::now() - Duration::from_secs(1);
+        app.housekeeping(&Context::default());
+        assert!(!app.docs[0].is_dirty());
+        assert!(app.docs[0].recovery_cleanup_failed);
+        assert!(app.recovery_cleanup_warning.is_some());
+        recovery.resume().unwrap();
+        app.docs[0].snapshot(&recovery);
+        app.refresh_recovery_cleanup_warning();
+        assert!(app.recovery_cleanup_warning.is_none());
+        recovery.finish().unwrap();
+    }
+
+    #[test]
+    fn failed_handoff_only_defers_cleanup_for_attempted_copies() {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let paths = Paths::from_root(dir.path());
+        let original = RecoveryManager::start(&paths).unwrap();
+        for key in ["one", "two", "three"] {
+            original
+                .snapshot(key, Default::default(), &Workbook::default())
+                .unwrap();
+        }
+        original.suspend().unwrap();
+        let recovery = Arc::new(RecoveryManager::start(&paths).unwrap());
+        let mut app = ThinodaApp::new(
+            Settings::default(),
+            Services {
+                recovery: Some(Arc::clone(&recovery)),
+                ..Services::default()
+            },
+            &[],
+        );
+        app.dialogs.recovery = RecoveryManager::find_orphans(&paths);
+        assert_eq!(app.dialogs.recovery[0].docs.len(), 3);
+        recovery.suspend().unwrap();
+        app.restore_orphans(None);
+        assert!(app.docs.is_empty());
+        assert_eq!(app.dialogs.recovery[0].docs.len(), 3);
+        assert_eq!(app.recovery_cleanup_pending.len(), 1);
+        recovery.resume().unwrap();
+        app.retry_closed_recovery_cleanup();
+        assert!(app.recovery_cleanup_pending.is_empty());
+        app.restore_orphans(None);
+        assert_eq!(app.docs.len(), 3);
+        assert!(app.dialogs.recovery.is_empty());
+        recovery.finish().unwrap();
     }
 
     #[test]

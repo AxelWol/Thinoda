@@ -566,9 +566,8 @@ impl ThinodaApp {
                     // Edits made while writing keep their crash-recovery snapshot.
                     if !doc.is_dirty()
                         && let Some(recovery) = &self.services.recovery
-                        && let Err(error) = recovery.remove(&doc.key)
                     {
-                        log::warn!("recovery snapshot cleanup failed: {error}");
+                        doc.cleanup_recovery(recovery);
                     }
                 }
                 if !save.autosave {
@@ -1032,6 +1031,55 @@ mod tests {
                 .unwrap()
             )
         );
+    }
+
+    #[test]
+    fn background_save_cleanup_failure_does_not_remove_newer_edits() {
+        use std::sync::Arc;
+        use thinoda_platform::{Paths, recovery::RecoveryManager};
+
+        for (autosave, newer_edit) in [(false, false), (true, false), (false, true), (true, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("background.thinoda");
+            let recovery = Arc::new(RecoveryManager::start(&Paths::from_root(dir.path())).unwrap());
+            let mut app = ThinodaApp::headless();
+            app.services.recovery = Some(Arc::clone(&recovery));
+            let doc = &mut app.docs[0];
+            doc.doc
+                .edit_sheet("Before", |sheet| sheet.set_title(sheet.root, "Before"))
+                .unwrap();
+            doc.snapshot(&recovery);
+            recovery.suspend().unwrap();
+            let snapshot_path = recovery
+                .session_dir()
+                .join("docs")
+                .join(format!("{}.json", doc.key));
+            let original = std::fs::read(&snapshot_path).unwrap();
+            app.set_file_work_mode(FileWorkMode::Background);
+            app.queue_save(0, &path, false, false, autosave).unwrap();
+            if newer_edit {
+                app.docs[0]
+                    .doc
+                    .edit_sheet("After", |sheet| sheet.set_title(sheet.root, "After"))
+                    .unwrap();
+                app.docs[0].snapshot(&recovery);
+            }
+            finish(&mut app, &egui::Context::default());
+            assert_eq!(std::fs::read(&snapshot_path).unwrap(), original);
+            assert_eq!(app.docs[0].is_dirty(), newer_edit);
+            assert_eq!(app.docs[0].recovery_cleanup_failed, !newer_edit);
+            recovery.resume().unwrap();
+            if newer_edit {
+                recovery.flush().unwrap();
+                let snapshot: thinoda_platform::recovery::Snapshot =
+                    serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+                assert_eq!(snapshot.workbook.active().root_topic().title, "After");
+            } else {
+                app.docs[0].snapshot(&recovery);
+                assert!(!snapshot_path.exists());
+            }
+            recovery.finish().unwrap();
+        }
     }
 
     #[test]

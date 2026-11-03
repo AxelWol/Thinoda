@@ -202,6 +202,9 @@ test("failed cleanup of a saved snapshot is retried without another edit", async
         () => page.evaluate(() => (Reflect.get(window, "__recoveryRemovalFailures") as { count: number }).count),
         { timeout: 10_000 },
     ).toBeGreaterThan(0);
+    await expect(page.locator("#thinoda-recovery-cleanup")).toHaveText(
+        "A recovery copy could not be removed. It may reappear after restart.",
+    );
     const retained = await page.evaluate((key) => localStorage.getItem(key), snapshot.key);
     if (retained === null) throw new Error("Failed cleanup removed the recovery snapshot");
     expect(JSON.parse(retained).d).toBe(JSON.parse(snapshot.value).d);
@@ -210,6 +213,57 @@ test("failed cleanup of a saved snapshot is retried without another edit", async
         () => page.evaluate((key) => localStorage.getItem(key), snapshot.key),
         { timeout: 10_000 },
     ).toBeNull();
+    await expect(page.locator("#thinoda-recovery-cleanup")).toBeEmpty();
+});
+
+test("failed cleanup remains visible and retries after the saved document closes", async ({ page }) => {
+    const snapshot = await startBoard(page);
+    await page.evaluate((snapshotKey) => {
+        const original = Storage.prototype.removeItem;
+        const failures = { count: 0 };
+        Reflect.set(window, "__recoveryRemovalFailures", failures);
+        Reflect.set(window, "__restoreRecoveryRemoval", () => { Storage.prototype.removeItem = original; });
+        Storage.prototype.removeItem = function (key) {
+            if (this === localStorage && key === snapshotKey) {
+                failures.count++;
+                throw new DOMException("synthetic removal failure", "InvalidStateError");
+            }
+            return original.call(this, key);
+        };
+    }, snapshot.key);
+
+    const archive = await saveAs(page, "closed-recovery-board.thinoda");
+    expect(zipEntry(archive, "content.json").toString("utf8")).toContain("Before takeover");
+    await expect.poll(
+        () => page.evaluate(() => (Reflect.get(window, "__recoveryRemovalFailures") as { count: number }).count),
+        { timeout: 10_000 },
+    ).toBeGreaterThan(0);
+    await expect(page.locator("#thinoda-recovery-cleanup")).toHaveText(
+        "A recovery copy could not be removed. It may reappear after restart.",
+    );
+    await command(page, "Close Tab");
+    await page.evaluate(() => {
+        Reflect.set(window, "__closeCheckPrompts", 0);
+        window.prompt = () => {
+            Reflect.set(window, "__closeCheckPrompts", (Reflect.get(window, "__closeCheckPrompts") as number) + 1);
+            return "unexpected.thinoda";
+        };
+    });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+s");
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() => Reflect.get(window, "__closeCheckPrompts"))).toBe(0);
+    const retained = await page.evaluate((key) => localStorage.getItem(key), snapshot.key);
+    if (retained === null) throw new Error("Failed cleanup removed the recovery snapshot");
+    expect(JSON.parse(retained).d).toBe(JSON.parse(snapshot.value).d);
+    await expect(page.locator("#thinoda-recovery-cleanup")).not.toBeEmpty();
+
+    await page.evaluate(() => (Reflect.get(window, "__restoreRecoveryRemoval") as () => void)());
+    await expect.poll(
+        () => page.evaluate((key) => localStorage.getItem(key), snapshot.key),
+        { timeout: 10_000 },
+    ).toBeNull();
+    await expect(page.locator("#thinoda-recovery-cleanup")).toBeEmpty();
 });
 
 test("a real browser quota failure preserves the previous snapshot and allows a full download", async ({ page }) => {

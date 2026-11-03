@@ -293,6 +293,10 @@ fn german() -> &'static HashMap<&'static str, &'static str> {
 const DE: &[(&str, &str)] = &[
     // Pending freehand input and recovery.
     (
+        "A recovery copy could not be removed. It may reappear after restart.",
+        "Eine Wiederherstellungskopie konnte nicht entfernt werden. Sie kann nach einem Neustart erneut angezeigt werden.",
+    ),
+    (
         "Crash recovery is unavailable. Save or download your work.",
         "Die Wiederherstellung nach einem Absturz ist nicht verfügbar. Speichern Sie Ihre Arbeit oder laden Sie sie herunter.",
     ),
@@ -3730,6 +3734,14 @@ mod tests {
     #[test]
     fn recovery_unavailable_warning_is_translated_in_every_catalog() {
         let key = "Crash recovery is unavailable. Save or download your work.";
+        for language in TRANSLATED {
+            assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+        }
+    }
+
+    #[test]
+    fn recovery_cleanup_warning_is_translated_in_every_catalog() {
+        let key = crate::app::RECOVERY_CLEANUP_WARNING;
         for language in TRANSLATED {
             assert_ne!(t_in(language, key), key, "{language:?}: {key}");
         }

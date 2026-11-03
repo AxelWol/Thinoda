@@ -2484,22 +2484,29 @@ impl ThinodaApp {
             );
         }
         ui.separator();
-        for (label, command) in [
-            ("Indent", Cmd::Canvas(Action::Indent)),
-            ("Outdent", Cmd::Canvas(Action::Outdent)),
-            ("Copy Style", Cmd::CopyStyle),
-            ("Paste Style", Cmd::PasteStyle),
-            ("Reset Style", Cmd::ResetStyle),
-            ("Save Quick Style…", Cmd::SaveQuickStyle),
-            ("New Sheet from Topic", Cmd::NewSheetFromTopic),
-        ] {
-            let available = self.command_available(&command);
-            item(ui, t(label), command, available);
-        }
+        menu_button(ui, t("Styles"), |ui| {
+            for (label, command) in [
+                ("Indent", Cmd::Canvas(Action::Indent)),
+                ("Outdent", Cmd::Canvas(Action::Outdent)),
+                ("Copy Style", Cmd::CopyStyle),
+                ("Paste Style", Cmd::PasteStyle),
+                ("Reset Style", Cmd::ResetStyle),
+                ("Save Quick Style…", Cmd::SaveQuickStyle),
+            ] {
+                let available = self.command_available(&command);
+                item(ui, t(label), command, available);
+            }
+        });
         ui.separator();
         menu_button(ui, t("Select"), |ui| {
             for (action, label) in Self::selection_commands() {
                 let command = Cmd::Canvas(action);
+                let available = self.command_available(&command);
+                item(ui, t(label), command, available);
+            }
+        });
+        menu_button(ui, t("Board"), |ui| {
+            for (command, label) in Self::board_menu_commands() {
                 let available = self.command_available(&command);
                 item(ui, t(label), command, available);
             }
@@ -2570,6 +2577,10 @@ impl ThinodaApp {
             true,
         );
         item(ui, t("Fit Map"), Cmd::Canvas(Action::Fit), true);
+        ui.separator();
+        let command = Cmd::NewSheetFromTopic;
+        let available = self.command_available(&command);
+        item(ui, t("New Sheet from Topic"), command, available);
     }
 
     fn home(&mut self, ui: &mut Ui) {
