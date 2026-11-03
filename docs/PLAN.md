@@ -11,13 +11,15 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-**2026-11-03 contextual board editing request (planned):** use the supplied
+**2026-11-03 contextual board editing request (in progress):** use the supplied
 Freeform examples as interaction references while retaining Thinoda's own theme,
 commands and document semantics. Deliver in independently verified slices:
 
-1. Replace the text-only Shape library with a searchable, keyboard-accessible
-   graphical picker for the existing shape catalog. Keep localized names,
-   tooltips, selection feedback and usable scrolling in short/narrow windows.
+1. **Implemented locally:** replace the text-only Shape library with a
+   searchable graphical picker for the existing shape catalog. Localized names,
+   tooltips, selection feedback, keyboard navigation and scrolling are retained.
+   Native egui tests and light/dark GPU previews cover narrow and short windows;
+   real assistive technology and physical touch remain acceptance work.
 2. Add contextual formatting for selected sticky notes, including supported
    text styles, size, lists and alignment. Preserve existing content and
    explicitly extend the document model before offering unsupported rich text.

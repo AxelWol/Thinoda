@@ -417,40 +417,10 @@ impl ThinodaApp {
                             matches!(tool, BoardTool::Shape(_)),
                             row_height,
                             |ui| {
-                                let id = ui.make_persistent_id("board_shape_search");
-                                let mut query =
-                                    ui.data(|data| data.get_temp::<String>(id).unwrap_or_default());
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut query)
-                                        .hint_text(t("Search shapes"))
-                                        .desired_width(140.0),
-                                )
-                                .accessible_name(t("Search shapes"));
-                                ui.data_mut(|data| data.insert_temp(id, query.clone()));
-                                let query = query.to_lowercase();
-                                egui::ScrollArea::vertical()
-                                    .max_height((canvas.height() * 0.6).min(280.0))
-                                    .show(ui, |ui| {
-                                        for shape in ShapeKind::ALL {
-                                            let name = t(shape_name(shape));
-                                            if !query.is_empty()
-                                                && !name.to_lowercase().contains(&query)
-                                            {
-                                                continue;
-                                            }
-                                            if ui
-                                                .selectable_label(
-                                                    tool == BoardTool::Shape(shape),
-                                                    name,
-                                                )
-                                                .clicked()
-                                            {
-                                                command =
-                                                    Some(Cmd::BoardTool(BoardTool::Shape(shape)));
-                                                ui.close_kind(egui::UiKind::Menu);
-                                            }
-                                        }
-                                    });
+                                if let Some(shape) = shape_library(ui, canvas, tool, t) {
+                                    command = Some(Cmd::BoardTool(BoardTool::Shape(shape)));
+                                    ui.close_kind(egui::UiKind::Menu);
+                                }
                             },
                         );
                         for (value, label) in [
@@ -743,6 +713,7 @@ fn board_tool_popup(
 ) -> egui::Response {
     let (response, activated) = board_tool_button(ui, icon, label, selected, collapsed, row_height);
     let popup = egui::Popup::menu(&response)
+        .accessible_name(t(label))
         .open_memory(None)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     let id = popup.get_id();
@@ -760,8 +731,202 @@ fn board_tool_popup(
         ui.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
         });
+        response.request_focus();
     }
+    let open = egui::Popup::is_id_open(ui.ctx(), id);
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_has_popup(egui::accesskit::HasPopup::Menu);
+        node.set_expanded(open);
+    });
     response
+}
+
+fn shape_library(
+    ui: &mut Ui,
+    canvas: Rect,
+    tool: BoardTool,
+    translate: fn(&'static str) -> &'static str,
+) -> Option<ShapeKind> {
+    const TILE: f32 = 44.0;
+    const GAP: f32 = 4.0;
+    const COLUMNS: f32 = 6.0;
+
+    let available = canvas.size().min(ui.ctx().content_rect().size());
+    let frame = egui::Frame::popup(ui.style()).total_margin().sum();
+    let width = (available.x - frame.x - 8.0)
+        .max(1.0)
+        .min(COLUMNS * TILE + (COLUMNS - 1.0) * GAP + ui.spacing().scroll.allocated_width());
+    ui.set_width(width);
+
+    let top = ui.cursor().min.y;
+    let id = ui.make_persistent_id("board_shape_search");
+    let mut query = ui.data(|data| data.get_temp::<String>(id).unwrap_or_default());
+    let search = ui
+        .add(
+            egui::TextEdit::singleline(&mut query)
+                .hint_text(translate("Search shapes"))
+                .desired_width(width),
+        )
+        .accessible_name(translate("Search shapes"));
+    ui.data_mut(|data| data.insert_temp(id, query.clone()));
+    let query = query.to_lowercase();
+    let shapes: Vec<_> = ShapeKind::ALL
+        .into_iter()
+        .filter_map(|shape| {
+            let name = translate(shape_name(shape));
+            (query.is_empty() || name.to_lowercase().contains(&query)).then_some((shape, name))
+        })
+        .collect();
+
+    let height = (available.y - frame.y - (ui.cursor().min.y - top) - 8.0).clamp(0.0, 280.0);
+    let mut scroll = egui::ScrollArea::vertical()
+        .id_salt("board_shape_grid")
+        .min_scrolled_height(0.0)
+        .max_height(height);
+    if search.changed() {
+        scroll = scroll.vertical_scroll_offset(0.0);
+    }
+
+    let mut selected = None;
+    scroll.show(ui, |ui| {
+        if shapes.is_empty() {
+            widgets::caption(ui, translate("No results"));
+        } else {
+            let tile_size = TILE.min(ui.available_width()).min(height).max(1.0);
+            let columns = ((ui.available_width() + GAP) / (tile_size + GAP))
+                .floor()
+                .max(1.0) as usize;
+            ui.spacing_mut().interact_size.y = tile_size;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(GAP, GAP);
+                let mut focused = None;
+                let mut ids = Vec::with_capacity(shapes.len());
+                for (index, (shape, name)) in shapes.iter().copied().enumerate() {
+                    let (response, activated) =
+                        shape_tile(ui, shape, name, tool == BoardTool::Shape(shape), tile_size);
+                    ids.push(response.id);
+                    if response.has_focus() {
+                        focused = Some(index);
+                    }
+                    if activated {
+                        selected = Some(shape);
+                    }
+                }
+                if let Some(index) = focused {
+                    let direction = ui.input_mut(|input| {
+                        [
+                            egui::Key::ArrowLeft,
+                            egui::Key::ArrowRight,
+                            egui::Key::ArrowUp,
+                            egui::Key::ArrowDown,
+                        ]
+                        .into_iter()
+                        .find(|key| input.consume_key(egui::Modifiers::NONE, *key))
+                    });
+                    if let Some(direction) = direction {
+                        let next = match direction {
+                            egui::Key::ArrowLeft if index % columns != 0 => Some(index - 1),
+                            egui::Key::ArrowRight
+                                if index % columns + 1 < columns && index + 1 < ids.len() =>
+                            {
+                                Some(index + 1)
+                            }
+                            egui::Key::ArrowUp => index.checked_sub(columns),
+                            egui::Key::ArrowDown if index + columns < ids.len() => {
+                                Some(index + columns)
+                            }
+                            _ => None,
+                        };
+                        ui.memory_mut(|memory| {
+                            memory.move_focus(egui::FocusDirection::None);
+                            if let Some(next) = next {
+                                memory.request_focus(ids[next]);
+                            }
+                        });
+                        ui.ctx().request_repaint();
+                    }
+                }
+            });
+        }
+    });
+    selected
+}
+
+fn shape_tile(
+    ui: &mut Ui,
+    shape: ShapeKind,
+    name: &str,
+    selected: bool,
+    size: f32,
+) -> (egui::Response, bool) {
+    let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+    let palette = thinoda_ui::Palette::of_ui(ui);
+    let (_, rect) = ui.allocate_space(egui::Vec2::splat(size));
+    let id = ui.make_persistent_id(("board_shape_tile", shape.id()));
+    let response = ui.interact(rect, id, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, name)
+    });
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered() || response.is_pointer_button_down_on();
+        let fill = if selected {
+            palette.accent_soft
+        } else if hovered {
+            ui.style().interact(&response).bg_fill
+        } else {
+            palette.surface_alt
+        };
+        let border = if selected {
+            palette.accent
+        } else {
+            palette.border
+        };
+        ui.painter().rect(
+            rect.shrink(0.5),
+            7,
+            fill,
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
+        if response.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                rect.shrink(2.0),
+                6,
+                egui::Stroke::new(2.0, palette.text),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if selected {
+            palette.accent
+        } else {
+            palette.text
+        };
+        let icon = Rect::from_center_size(rect.center(), vec2(size * 0.62, size * 0.52));
+        let point =
+            |p: thinoda_core::Vec2| icon.min + vec2(p.x * icon.width(), p.y * icon.height());
+        let stroke = egui::Stroke::new(1.5, color);
+        ui.painter().add(egui::Shape::closed_line(
+            shape.unit_outline().into_iter().map(point).collect(),
+            stroke,
+        ));
+        for detail in shape.unit_details() {
+            ui.painter().add(egui::Shape::line(
+                detail.into_iter().map(point).collect(),
+                stroke,
+            ));
+        }
+    }
+    let keyboard = ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::Space)
+        });
+    let activated = ui.is_enabled() && ((touch_allowed && response.clicked()) || keyboard);
+    (response.on_hover_text(name), activated)
 }
 
 fn route_name(route: ConnectorRoute) -> &'static str {
@@ -804,7 +969,10 @@ fn optional_color(ui: &mut Ui, label: &'static str, color: &mut Option<Color>, f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::{Harness, kittest::Queryable};
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
     use thinoda_core::{
         CanvasConnector, CanvasObject, Endpoint, InkStroke, Rect as BoardRect, Vec2,
         board::{Card, CardKind},
@@ -822,6 +990,18 @@ mod tests {
     fn expanded_toolbar(ui: &mut Ui, app: &mut ThinodaApp) {
         start_expanded(ui.ctx(), app);
         app.board_toolbar(ui.ctx(), ui.max_rect());
+    }
+
+    fn shape_test_theme(ctx: &Context, dark: bool) {
+        thinoda_ui::theme::install(
+            ctx,
+            if dark {
+                thinoda_ui::theme::ThemeMode::Dark
+            } else {
+                thinoda_ui::theme::ThemeMode::Light
+            },
+            thinoda_ui::tokens::DEFAULT_ACCENT,
+        );
     }
 
     fn harness() -> Harness<'static, ThinodaApp> {
@@ -914,23 +1094,692 @@ mod tests {
     #[test]
     fn shape_library_filters_and_selects_a_shape() {
         let mut harness = harness();
+        let before = harness.state().doc().unwrap().doc.workbook().clone();
+        let before_state = harness.state().doc().unwrap().doc.state_id();
+        let before_dirty = harness.state().doc().unwrap().is_dirty();
         harness.get_by_label("Shape library").click();
-        harness.run_steps(2);
+        harness.run_steps(4);
         harness
             .get_by_role_and_label(egui::Role::TextInput, "Search shapes")
             .click();
         harness.run_steps(2);
         harness
             .get_by_role_and_label(egui::Role::TextInput, "Search shapes")
+            .type_text("TRIANGLE");
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Triangle").is_some());
+        assert!(harness.query_by_label("Right triangle").is_some());
+        assert!(harness.query_by_label("Pentagon").is_none());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "Search shapes")
             .type_text("Pentagon");
         harness.run_steps(2);
         assert!(harness.query_by_label("Triangle").is_none());
-        harness.get_by_label("Pentagon").click();
+        harness
+            .get_by_role_and_label(egui::Role::Button, "Pentagon")
+            .click();
         harness.run_steps(2);
         assert_eq!(
             harness.state().doc().unwrap().view.board_tool,
             BoardTool::Shape(ShapeKind::Pentagon)
         );
+        assert!(harness.query_by_label("Search shapes").is_none());
+
+        harness.get_by_label("Shape library").click();
+        harness.run_steps(4);
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::Role::Button, "Pentagon")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "Search shapes")
+            .click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, "Search shapes")
+            .type_text("star");
+        harness.run_steps(2);
+        harness.get_by_label("Star").click();
+        harness.run_steps(3);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(doc.view.board_tool, BoardTool::Shape(ShapeKind::Star));
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.doc.state_id(), before_state);
+        assert_eq!(doc.is_dirty(), before_dirty);
+    }
+
+    #[test]
+    fn shape_library_exposes_every_shape_as_a_named_grid_button() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 800.0))
+            .build_ui_state(expanded_toolbar, ThinodaApp::headless());
+        harness.run_steps(3);
+        harness.get_by_label("Shape library").click();
+        harness.run_steps(4);
+
+        for shape in ShapeKind::ALL {
+            let button = harness.get_by_role_and_label(egui::Role::Button, shape_name(shape));
+            assert_eq!(
+                button.accesskit_node().toggled(),
+                Some(egui::accesskit::Toggled::False),
+                "{shape:?}"
+            );
+        }
+        let rectangle = harness.get_by_label("Rectangle").rect();
+        let rounded = harness.get_by_label("Rounded rectangle").rect();
+        let diamond = harness.get_by_label("Diamond").rect();
+        assert_eq!(rectangle.size(), vec2(44.0, 44.0));
+        assert_eq!(rectangle.top(), rounded.top());
+        assert!(rounded.left() > rectangle.right());
+        assert_eq!(rectangle.top(), diamond.top());
+
+        harness.hover_at(harness.get_by_label("Rectangle").rect().center());
+        harness.run_steps(90);
+        assert!(
+            harness.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Rectangle")
+            }),
+            "shape name should appear as a tooltip"
+        );
+    }
+
+    #[test]
+    fn shape_library_uses_localized_search_accessible_names_and_tooltips() {
+        fn german(key: &'static str) -> &'static str {
+            i18n::t_in(i18n::Lang::De, key)
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(vec2(500.0, 500.0))
+            .build_ui_state(
+                |ui, selected: &mut ShapeKind| {
+                    if let Some(shape) =
+                        shape_library(ui, ui.max_rect(), BoardTool::Shape(*selected), german)
+                    {
+                        *selected = shape;
+                    }
+                },
+                ShapeKind::Rectangle,
+            );
+        harness.run_steps(3);
+        let search = "Formen suchen";
+        harness
+            .get_by_role_and_label(egui::Role::TextInput, search)
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label(search).type_text("dReIeCk");
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Dreieck").is_some());
+        assert!(harness.query_by_label("Rechtwinkliges Dreieck").is_some());
+        assert!(harness.query_by_label("Triangle").is_none());
+        assert!(harness.query_by_label("Fünfeck").is_none());
+        harness.hover_at(harness.get_by_label("Dreieck").rect().center());
+        harness.run_steps(90);
+        assert!(harness.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Dreieck")
+        }));
+
+        harness.get_by_label(search).click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label(search).type_text("FÜNF");
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Dreieck").is_none());
+        harness.get_by_label("Fünfeck").click();
+        harness.run_steps(3);
+        assert_eq!(*harness.state(), ShapeKind::Pentagon);
+        assert_eq!(
+            harness.get_by_label("Fünfeck").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+
+        harness.get_by_label(search).click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label(search).type_text("no-such-shape");
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Keine Treffer").is_some());
+        assert!(harness.query_by_label("Fünfeck").is_none());
+    }
+
+    #[test]
+    fn shape_library_supports_keyboard_and_accesskit_activation() {
+        let mut app = ThinodaApp::headless();
+        app.doc_mut().unwrap().view.board_tool = BoardTool::Shape(ShapeKind::Rectangle);
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 800.0))
+            .build_ui_state(expanded_toolbar, app);
+        harness.run_steps(3);
+        let before = harness.state().doc().unwrap().doc.state_id();
+        let trigger = harness.get_by_label("Shape library");
+        assert_eq!(
+            trigger.accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        assert_eq!(trigger.accesskit_node().data().is_expanded(), Some(false));
+        assert_eq!(
+            trigger.accesskit_node().has_popup(),
+            Some(egui::accesskit::HasPopup::Menu)
+        );
+        trigger.focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Search shapes").is_some());
+        assert_eq!(
+            harness
+                .get_by_role_and_label(egui::Role::Button, "Shape library")
+                .accesskit_node()
+                .data()
+                .is_expanded(),
+            Some(true)
+        );
+        assert_eq!(
+            harness.get_by_label("Rectangle").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        assert_eq!(
+            harness
+                .get_by_label("Rounded rectangle")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::False)
+        );
+
+        if !harness.get_by_label("Search shapes").is_focused() {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+        }
+        assert!(harness.get_by_label("Search shapes").is_focused());
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert!(harness.get_by_label("Rectangle").is_focused());
+        harness.key_press(egui::Key::ArrowRight);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Rounded rectangle").is_focused());
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Trapezoid").is_focused());
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Rounded rectangle").is_focused());
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Rectangle").is_focused());
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert!(harness.get_by_label("Rounded rectangle").is_focused());
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::RoundedRectangle)
+        );
+        assert!(harness.query_by_label("Search shapes").is_none());
+
+        harness.get_by_label("Shape library").click();
+        harness.run_steps(4);
+        harness.get_by_label("Off-page connector").click_accesskit();
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::OffPageConnector)
+        );
+        assert_eq!(harness.state().doc().unwrap().doc.state_id(), before);
+        harness.get_by_label("Shape library").click();
+        harness.run_steps(4);
+        assert_eq!(
+            harness
+                .get_by_label("Off-page connector")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness.get_by_label("Off-page connector").focus();
+        harness.run_steps(12);
+        let last = harness.get_by_label("Off-page connector").rect();
+        let search = harness.get_by_label("Search shapes").rect();
+        assert!(
+            harness.ctx.content_rect().contains_rect(last) && last.top() >= search.bottom(),
+            "focused tile is not visible: last={last:?}, search={search:?}"
+        );
+        assert!(harness.get_by_label("Off-page connector").is_focused());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Search shapes").is_none());
+        assert!(harness.get_by_label("Shape library").is_focused());
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Shape(ShapeKind::OffPageConnector)
+        );
+    }
+
+    #[test]
+    fn shape_library_keyboard_selection_does_not_edit_the_underlying_canvas() {
+        let mut harness = harness();
+        let before = harness.state().doc().unwrap().doc.workbook().clone();
+        let state = harness.state().doc().unwrap().doc.state_id();
+        harness.get_by_label("Shape library").focus();
+        harness.run_steps(3);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(4);
+        harness.get_by_label("Triangle").focus();
+        harness.run_steps(3);
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(4);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(doc.view.board_tool, BoardTool::Shape(ShapeKind::Triangle));
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.doc.state_id(), state);
+    }
+
+    #[test]
+    fn shape_tiles_draw_every_actual_outline_and_detail_in_both_themes() {
+        for dark in [false, true] {
+            let mut harness =
+                Harness::builder()
+                    .with_size(vec2(1400.0, 300.0))
+                    .build_ui(move |ui| {
+                        shape_test_theme(ui.ctx(), dark);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                            for shape in ShapeKind::ALL {
+                                shape_tile(
+                                    ui,
+                                    shape,
+                                    shape_name(shape),
+                                    shape == ShapeKind::Star,
+                                    44.0,
+                                );
+                            }
+                        });
+                    });
+            harness.run_steps(3);
+            let palette = thinoda_ui::Palette::of(&harness.ctx);
+            assert_eq!(palette.dark, dark);
+            for shape in ShapeKind::ALL {
+                let rect = harness.get_by_label(shape_name(shape)).rect();
+                let icon = Rect::from_center_size(rect.center(), vec2(44.0 * 0.62, 44.0 * 0.52));
+                let to_points = |outline: Vec<thinoda_core::Vec2>| {
+                    outline
+                        .into_iter()
+                        .map(|p| icon.min + vec2(p.x * icon.width(), p.y * icon.height()))
+                        .collect::<Vec<_>>()
+                };
+                let outline = to_points(shape.unit_outline());
+                let color = if shape == ShapeKind::Star {
+                    palette.accent
+                } else {
+                    palette.text
+                };
+                let find_path = |points: &[egui::Pos2], closed| {
+                    harness.output().shapes.iter().any(|clipped| {
+                        matches!(&clipped.shape, egui::Shape::Path(path)
+                            if path.closed == closed
+                                && path.points == points
+                                && path.fill == Color32::TRANSPARENT
+                                && path.stroke.color == egui::epaint::ColorMode::Solid(color))
+                    })
+                };
+                assert!(
+                    find_path(&outline, true),
+                    "missing {shape:?} in dark={dark}"
+                );
+                for detail in shape.unit_details() {
+                    assert!(
+                        find_path(&to_points(detail), false),
+                        "missing {shape:?} detail in dark={dark}"
+                    );
+                }
+                assert!(
+                    harness.output().shapes.iter().any(|clipped| {
+                        matches!(&clipped.shape, egui::Shape::Rect(tile)
+                        if tile.rect == rect.shrink(0.5)
+                            && tile.corner_radius.nw > 0
+                            && tile.fill == if shape == ShapeKind::Star {
+                                palette.accent_soft
+                            } else {
+                                palette.surface_alt
+                            })
+                    }),
+                    "missing rounded tile for {shape:?} in dark={dark}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shape_library_clamps_and_scrolls_in_short_narrow_windows() {
+        fn painted_rectangles(shape: &egui::Shape, rectangles: &mut Vec<(Rect, Color32)>) {
+            match shape {
+                egui::Shape::Rect(rect) => rectangles.push((rect.rect, rect.fill)),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        painted_rectangles(shape, rectangles);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for dark in [false, true] {
+            for size in [
+                vec2(320.0, 240.0),
+                vec2(180.0, 120.0),
+                vec2(106.0, 80.0),
+                vec2(520.0, 180.0),
+            ] {
+                for collapsed in [false, true] {
+                    let mut app = ThinodaApp::headless();
+                    app.doc_mut().unwrap().view.dark = dark;
+                    let mut harness = Harness::builder().with_size(size).build_ui_state(
+                        move |ui, app: &mut ThinodaApp| {
+                            shape_test_theme(ui.ctx(), dark);
+                            expanded_toolbar(ui, app);
+                        },
+                        app,
+                    );
+                    harness.run_steps(4);
+                    if collapsed {
+                        harness.get_by_label("Collapse board toolbar").click();
+                        harness.run_steps(3);
+                    }
+                    click_scrolled_into_view(&mut harness, "Shape library");
+                    harness.run_steps(20);
+                    let bounds = harness.ctx.content_rect();
+                    assert!(
+                        harness
+                            .query_by_role_and_label(egui::Role::Menu, "Shape library")
+                            .is_some()
+                    );
+                    let search = harness.get_by_label("Search shapes").rect();
+                    let first = harness.get_by_label("Rectangle").rect();
+                    let trigger = harness
+                        .get_by_role_and_label(egui::Role::Button, "Shape library")
+                        .rect();
+                    let mut rectangles = Vec::new();
+                    for clipped in &harness.output().shapes {
+                        painted_rectangles(&clipped.shape, &mut rectangles);
+                    }
+                    let popup = rectangles
+                        .iter()
+                        .filter(|(rect, fill)| {
+                            *fill == thinoda_ui::Palette::of(&harness.ctx).surface
+                                && rect.contains_rect(search)
+                                && rect.contains_rect(first)
+                        })
+                        .map(|(rect, _)| *rect)
+                        .min_by(|a, b| {
+                            (a.width() * a.height()).total_cmp(&(b.width() * b.height()))
+                        })
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "popup frame enclosing search and first tile not found: \
+                                 dark={dark} size={size:?} collapsed={collapsed} search={search:?} \
+                                 first={first:?} surface={:?}, enclosing_search={:?}",
+                                thinoda_ui::Palette::of(&harness.ctx).surface,
+                                rectangles
+                                    .iter()
+                                    .filter(|(rect, _)| rect.contains_rect(search))
+                                    .collect::<Vec<_>>(),
+                            )
+                        });
+                    assert!(
+                        bounds.contains_rect(popup)
+                            && bounds.contains_rect(search)
+                            && bounds.contains_rect(first),
+                        "picker outside viewport: dark={dark} size={size:?} collapsed={collapsed}, \
+                         bounds={bounds:?} popup={popup:?} search={search:?} first={first:?} trigger={trigger:?}"
+                    );
+                    harness.get_by_label("Off-page connector").scroll_to_me();
+                    harness.run_steps(12);
+                    let last = harness.get_by_label("Off-page connector").rect();
+                    assert!(
+                        bounds.contains_rect(last),
+                        "last tile outside viewport: dark={dark} size={size:?} \
+                         collapsed={collapsed}, bounds={bounds:?} last={last:?}"
+                    );
+                    harness.get_by_label("Off-page connector").click();
+                    harness.run_steps(3);
+                    assert_eq!(
+                        harness.state().doc().unwrap().view.board_tool,
+                        BoardTool::Shape(ShapeKind::OffPageConnector),
+                        "last tile not clickable: dark={dark} size={size:?} collapsed={collapsed}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shape_library_reflows_and_resets_scrolling_when_search_changes() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 800.0))
+            .build_ui_state(expanded_toolbar, ThinodaApp::headless());
+        harness.run_steps(4);
+        let before = harness.state().doc().unwrap().doc.state_id();
+        harness.get_by_label("Shape library").click();
+        harness.run_steps(5);
+        let wide_first = harness.get_by_label("Rectangle").rect();
+        let wide_sixth = harness.get_by_label("Right triangle").rect();
+        assert_eq!(wide_first.top(), wide_sixth.top());
+
+        harness.set_size(vec2(180.0, 160.0));
+        harness.run_steps(8);
+        let bounds = harness.ctx.content_rect();
+        let search = harness.get_by_label("Search shapes").rect();
+        let first = harness.get_by_label("Rectangle").rect();
+        let sixth = harness.get_by_label("Right triangle").rect();
+        assert!(
+            bounds.contains_rect(search) && bounds.contains_rect(first),
+            "search={search:?} first={first:?} bounds={bounds:?}"
+        );
+        assert!(
+            sixth.top() > first.top(),
+            "grid should have fewer columns: first={first:?}, sixth={sixth:?}, bounds={bounds:?}"
+        );
+        harness.get_by_label("Rectangle").focus();
+        harness.run_steps(3);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Diamond").is_focused());
+        let last_before = harness.get_by_label("Off-page connector").rect();
+        harness.hover_at(first.center());
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -1200.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(15);
+        let last_after = harness.get_by_label("Off-page connector").rect();
+        assert!(
+            last_after.top() < last_before.top() - 10.0,
+            "wheel did not scroll grid: before={last_before:?}, after={last_after:?}"
+        );
+
+        harness.get_by_label("Search shapes").click();
+        harness.run_steps(2);
+        harness.get_by_label("Search shapes").type_text("rectangle");
+        harness.run_steps(5);
+        let first = harness.get_by_label("Rectangle").rect();
+        assert!(bounds.contains_rect(first), "filtered result={first:?}");
+        assert!(harness.query_by_label("Off-page connector").is_none());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Backspace);
+        harness.run_steps(5);
+        assert!(bounds.contains_rect(harness.get_by_label("Rectangle").rect()));
+        assert!(harness.query_by_label("Off-page connector").is_some());
+
+        harness.set_size(vec2(800.0, 800.0));
+        harness.run_steps(8);
+        assert_eq!(
+            harness.get_by_label("Rectangle").rect().top(),
+            harness.get_by_label("Ellipse").rect().top()
+        );
+        assert_eq!(harness.state().doc().unwrap().doc.state_id(), before);
+    }
+
+    #[test]
+    fn shape_library_accepts_touch_taps_but_not_canceled_taps_or_swipes() {
+        fn touch(
+            harness: &mut Harness<'_, ThinodaApp>,
+            phase: egui::TouchPhase,
+            pos: egui::Pos2,
+            pointer_pressed: Option<bool>,
+        ) {
+            harness.event(egui::Event::PointerMoved(pos));
+            harness.event(egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase,
+                pos,
+                force: None,
+            });
+            if let Some(pressed) = pointer_pressed {
+                harness.event(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.run_steps(1);
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(vec2(320.0, 240.0))
+            .build_ui_state(expanded_toolbar, ThinodaApp::headless());
+        harness.run_steps(4);
+        let before = harness.state().doc().unwrap().doc.workbook().clone();
+        let before_state = harness.state().doc().unwrap().doc.state_id();
+        click_scrolled_into_view(&mut harness, "Shape library");
+        harness.run_steps(4);
+
+        let first = harness.get_by_label("Rectangle").rect().center();
+        touch(&mut harness, egui::TouchPhase::Start, first, Some(true));
+        touch(&mut harness, egui::TouchPhase::Cancel, first, Some(false));
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Search shapes").is_some());
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Select
+        );
+
+        touch(&mut harness, egui::TouchPhase::Start, first, Some(true));
+        let second = first + vec2(8.0, 0.0);
+        for phase in [egui::TouchPhase::Start, egui::TouchPhase::End] {
+            harness.event(egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(2),
+                phase,
+                pos: second,
+                force: None,
+            });
+            harness.run_steps(1);
+        }
+        touch(&mut harness, egui::TouchPhase::End, first, Some(false));
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Search shapes").is_some());
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Select
+        );
+
+        let start = harness.get_by_label("Triangle").rect().center();
+        let last_before = harness.get_by_label("Off-page connector").rect();
+        touch(&mut harness, egui::TouchPhase::Start, start, Some(true));
+        for dy in [15.0, 45.0, 75.0] {
+            touch(
+                &mut harness,
+                egui::TouchPhase::Move,
+                start - vec2(0.0, dy),
+                None,
+            );
+        }
+        touch(
+            &mut harness,
+            egui::TouchPhase::End,
+            start - vec2(0.0, 75.0),
+            Some(false),
+        );
+        harness.run_steps(8);
+        let last_after = harness.get_by_label("Off-page connector").rect();
+        assert!(
+            last_after.top() < last_before.top() - 10.0,
+            "touch swipe did not scroll grid: before={last_before:?}, after={last_after:?}"
+        );
+        assert_eq!(
+            harness.state().doc().unwrap().view.board_tool,
+            BoardTool::Select
+        );
+
+        harness.get_by_label("Off-page connector").scroll_to_me();
+        harness.run_steps(12);
+        let last = harness.get_by_label("Off-page connector").rect();
+        assert!(harness.ctx.content_rect().contains_rect(last), "{last:?}");
+        touch(
+            &mut harness,
+            egui::TouchPhase::Start,
+            last.center(),
+            Some(true),
+        );
+        touch(
+            &mut harness,
+            egui::TouchPhase::End,
+            last.center(),
+            Some(false),
+        );
+        harness.run_steps(4);
+        let doc = harness.state().doc().unwrap();
+        assert_eq!(
+            doc.view.board_tool,
+            BoardTool::Shape(ShapeKind::OffPageConnector)
+        );
+        assert_eq!(doc.doc.workbook(), &before);
+        assert_eq!(doc.doc.state_id(), before_state);
+    }
+
+    #[cfg(feature = "gpu-tests")]
+    #[test]
+    fn shape_library_visual_previews() {
+        let Some(directory) = std::env::var_os("THINODA_BOARD_VISUAL_DIR") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).expect("create shape library preview directory");
+        for dark in [false, true] {
+            for (size, width) in [
+                (vec2(800.0, 600.0), "wide"),
+                (vec2(320.0, 240.0), "compact"),
+            ] {
+                let mut app = ThinodaApp::headless();
+                app.doc_mut().unwrap().view.dark = dark;
+                app.doc_mut().unwrap().view.board_tool = BoardTool::Shape(ShapeKind::Star);
+                let mut harness = Harness::builder().wgpu().with_size(size).build_ui_state(
+                    move |ui, app: &mut ThinodaApp| {
+                        shape_test_theme(ui.ctx(), dark);
+                        expanded_toolbar(ui, app);
+                    },
+                    app,
+                );
+                harness.run_steps(4);
+                click_scrolled_into_view(&mut harness, "Shape library");
+                harness.run_steps(6);
+                let theme = if dark { "dark" } else { "light" };
+                harness
+                    .render()
+                    .expect("shape library render")
+                    .save(directory.join(format!("shape-library-{theme}-{width}.png")))
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

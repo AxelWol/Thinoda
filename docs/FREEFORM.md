@@ -1105,6 +1105,20 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   guards and verify undo/redo, save/reopen, clipboard and every supported visual
   output rather than inferring correctness from the control state alone.
 
+### Graphical Shape picker checkpoint
+
+- The Shape library now presents the existing shapes as a searchable grid. Each
+  tile draws the model's actual outline and detail strokes, has a localized name
+  and tooltip, and shows the active shape. Arrow keys, Tab, Enter, Space and
+  Escape work alongside pointer and touch input; picking a tool does not edit
+  the document. The popup reflows and scrolls inside short or narrow windows.
+- Duck check: an icon can misrepresent a concave shape if it is filled as a
+  convex polygon, so previews draw the actual outlines rather than a convex fill.
+  Selection, filtered search, focus and scroll behavior have native egui
+  regression coverage. GPU-rendered light/dark previews were inspected at wide
+  and compact sizes; this is not browser screen-reader or physical-touch
+  acceptance. The other contextual editing slices remain open.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.
