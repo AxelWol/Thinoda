@@ -252,6 +252,8 @@ branch.
 The later editable-rotation fixture passes the Open XML SDK alongside the other
 nine Office fixtures. Windows PowerPoint opened it without repair and exported
 a PDF showing its rotated sticky, photo and diamond, branch, relationship and
-free connector. The slide surface could not be captured, so this single PDF is
-not a systematic visual comparison or proof of interactive editing. Other
-Office versions and hosts remain unverified.
+free connector. In a separate copy opened in Windows PowerPoint, the rotated
+sticky's text was edited and a native custom-geometry path was nudged. Both
+changes persisted in the saved PPTX; the original fixture was unchanged. This
+is evidence for those two editing operations, not a systematic appearance or
+editing matrix. Other Office versions and hosts remain unverified.

@@ -721,8 +721,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - The rotated-board fixture opened in Windows PowerPoint without repair. A PDF
   exported by PowerPoint rendered its rotated sticky, photo and diamond, along
   with the branch, relationship and free connector. This single-fixture check
-  is not a systematic visual comparison: the captured slide surface was blank,
-  and interactive editing and other Office hosts remain unverified. Editable
+  is not a systematic visual comparison. In a separate fixture copy, a rotated
+  sticky's text edit and a nudge of a native path persisted after saving in
+  PowerPoint. This does not cover every object or other Office hosts. Editable
   components remain separate objects, and editing them does not update the
   Thinoda document.
 - The Pitch stage now fits its containing player rather than the height of the

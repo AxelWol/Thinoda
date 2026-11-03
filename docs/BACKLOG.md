@@ -1902,8 +1902,9 @@ Chromium, Firefox and WebKit. Actual system-clipboard acceptance remains open.
 Editable PowerPoint card and shape-label rotation and matching canvas card
 content, editing controls and connector anchors have focused geometry and SDK
 coverage. Windows PowerPoint also exported the rotated fixture to a visible
-PDF. Systematic Office appearance and interactive-editing acceptance remain
-open.
+PDF; a rotated text edit and a native path nudge persisted in a separately
+saved copy. Systematic Office appearance and broader interactive-editing
+acceptance remain open.
 Eleven focused startup, retry and offline cases also passed in each of
 desktop Firefox and WebKit. An earlier build with the same Wasm passed focused
 touch checks in both engines. CI runs the Chromium and

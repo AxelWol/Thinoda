@@ -3011,8 +3011,9 @@ and rotates card contents and image-resize interactions; text editors remain
 upright at their rotated positions for usability.
 The rotated Office fixture passes schema validation. Windows PowerPoint also
 opened it without repair and exported a PDF showing the rotated objects and
-connectors; systematic appearance comparison and interactive editing remain
-open. See the F6 critique in FREEFORM.
+connectors. Editing rotated sticky text and moving a native path in a separate
+copy persisted after saving; systematic appearance and broader editing
+acceptance remain open. See the F6 critique in FREEFORM.
 
 The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;
