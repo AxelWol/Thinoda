@@ -1896,7 +1896,10 @@ captured Pitch viewport and inspected SVG/PNG/JPEG/PDF/PowerPoint exports. The
 production candidate passed all 47 Chromium cases, including image-card
 SVG/PNG/JPEG checks. Focused mixed-board and expanded image-card PDF checks
 passed in desktop Chromium, Firefox and WebKit using a separate Chromium PDF
-viewer. Eleven focused startup, retry and offline cases also passed in each of
+viewer. Focused virtual-clipboard regressions cover mixed-board paste and undo,
+plain-text replacement and rejected cuts; all nine cases passed in desktop
+Chromium, Firefox and WebKit. Actual system-clipboard acceptance remains open.
+Eleven focused startup, retry and offline cases also passed in each of
 desktop Firefox and WebKit. An earlier build with the same Wasm passed focused
 touch checks in both engines. CI runs the Chromium and
 startup/offline suite against the release build; these checks do not establish

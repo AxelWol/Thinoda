@@ -2996,6 +2996,12 @@ change. A bounded visible-mesh cache improved the 10,000-stroke headless
 Windows CPU benchmark, but does not close the GPU, web or device performance
 gate; details and tradeoffs are in FREEFORM.
 
+Focused production-browser regressions exercise mixed-board copy/paste, image
+resources, connector remapping, undo, plain-text replacement and rejected cuts
+through synthetic events and an isolated virtual clipboard. All nine cases passed
+across desktop Chromium, Firefox and WebKit. They do not prove real
+system-clipboard ownership, browser permissions or sanitization.
+
 The browser recovery hardening detects lost or corrupt cooperative
 leases, retains failed queued writes, and warns about incomplete discovery;
 localStorage still cannot provide atomic cross-tab compare-and-swap. The

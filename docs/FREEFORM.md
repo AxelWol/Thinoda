@@ -595,7 +595,7 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   object geometry, stacking and text replacement.
 - Board clipboard payloads remap internal references and resources, convert
   external connector ends to their resolved positions, and validate before
-  mutation. Plain-text clipboard ownership and host integration still require
+  mutation. Real system-clipboard ownership and host integration still require
   end-to-end verification.
 - Connector-to-connector geometry is resolved iteratively; cycles are rejected.
   Allocating after an imported maximum identifier finds an unused ID instead of
@@ -608,6 +608,19 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - This checkpoint does not complete the phases: board controls, export clipping,
   browser/native interaction, and cloud reload history still need integration
   and validation.
+
+### Browser clipboard checkpoint: critique
+
+- Production-browser regressions use synthetic clipboard events and an isolated
+  in-page Clipboard API to exercise a mixed rootless board. They verify rich
+  copy/paste, connector endpoint remapping, embedded-image bytes, cross-document
+  paste and undo. Replacing the clipboard with identical plain text must not
+  resurrect rich objects, and a rejected cut write must leave the board intact.
+  All nine cases passed across desktop Chromium, Firefox and WebKit.
+- The virtual clipboard deliberately does not touch the user's system clipboard.
+  These checks do not establish trusted keyboard-event handling, real clipboard
+  permissions or sanitization, operating-system ownership, cross-application
+  interchange, or screen-reader behavior; those host checks remain open.
 
 ### Toolbox checkpoint: critique
 
