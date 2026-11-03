@@ -722,16 +722,23 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Ten board templates use the same validated primitives and translated
-  creation-time strings. Affinity notes can be moved among persistent visual
-  frames, and the Eisenhower quadrants accept user-created content. Neither
-  automatically assigns membership or manages tasks; the additional layouts
-  also do not imply structured Kanban, table or collaboration semantics.
+- Eleven board templates use the same validated primitives and translated
+  creation-time strings. Affinity and Meeting Board notes can be moved among
+  persistent visual frames, and the Eisenhower quadrants accept user-created
+  content. These layouts do not automatically assign membership or manage
+  tasks; Meeting Board does not include a timer. The additional layouts also
+  do not imply structured Kanban, table or collaboration semantics.
 - The new starter content is checked in all ten supported languages; gallery
   previews fit every frame in light and dark themes. Template creation is
   exercised in English and German, and localized board templates round-trip
-  through native v6 with byte-stable re-export. These checks do not replace
+  through native v6 with byte-stable re-export. A production-browser regression
+  also selects and saves Meeting Board in desktop Chromium, Firefox and WebKit,
+  checking its cards and persistent frames. These checks do not replace
   physical-device or screen-reader acceptance.
+- Meeting Board reuses existing v6 primitives, so it adds no new file format;
+  its starter text is translated only when the document is created. The
+  gallery still eagerly builds its preview cache per language and theme, so
+  this adds one sample and does not establish iPad first-start performance.
 
 ### F5 ink checkpoint: critique
 
@@ -899,6 +906,7 @@ catalog coverage.
 | SWOT board | Four tinted frames with one prompt sticky each |
 | Affinity diagram | Idea stickies and persistent frames for sorting and naming themes |
 | Eisenhower matrix | Four persistent, labeled priority-quadrant frames |
+| Meeting board | Purpose heading and independent prompt stickies in visual Agenda, Notes, Decisions and Actions frames; no timer or task automation |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -914,7 +922,6 @@ compatibility with the topic renderer.
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |
 | Venn diagram | Shape opacity and intersections |
-| Meeting board | Frames, stickies, optional timer |
 
 Existing tree templates stay unchanged.
 

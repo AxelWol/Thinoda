@@ -1713,13 +1713,19 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
     let mut h = harness(ThinodaApp::new(english(), Services::default(), &[]));
     let ctx = h.ctx.clone();
     h.state_mut().exec(&ctx, Cmd::Home);
-    h.state_mut().template_category = Some(TemplateCategory::Boards);
+    h.run_steps(3);
+    h.get_by_label("Template Category").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "Boards")
+        .scroll_to_me();
+    h.run_steps(8);
+    h.get_by_role_and_label(Role::Button, "Boards").click();
     h.run_steps(3);
     let boards: Vec<_> = TEMPLATES
         .iter()
         .filter(|t| t.category == TemplateCategory::Boards)
         .collect();
-    assert_eq!(boards.len(), 10);
+    assert_eq!(boards.len(), 11);
     for template in &boards {
         h.get_by_role_and_label(Role::Button, template.name);
     }
@@ -1727,27 +1733,36 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         h.query_by_role_and_label(Role::Button, "Mind Map")
             .is_none()
     );
-    h.get_by_role_and_label(Role::Button, "Kanban Board")
-        .scroll_to_me();
-    h.run_steps(8);
-    h.get_by_role_and_label(Role::Button, "Kanban Board")
-        .focus();
-    h.run_steps(2);
-    h.key_press(egui::Key::Enter);
-    h.run_steps(3);
-    h.get_by_role_and_label(Role::Button, "Create").click();
-    h.run_steps(3);
-    let sheet = h.state().doc().unwrap().doc.workbook().active().clone();
-    assert_eq!(sheet.root_mode, thinoda_core::SheetRootMode::Hidden);
-    assert!(sheet.central_topic_content().is_none());
-    let names: Vec<_> = sheet.zones.iter().map(|z| z.name.as_str()).collect();
-    assert_eq!(names, ["To do", "Doing", "Done"]);
-    assert!(
-        sheet
-            .floating
-            .iter()
-            .all(|id| sheet.topic(*id).unwrap().card.is_some())
-    );
+    for (name, expected) in [
+        ("Kanban Board", &["To do", "Doing", "Done"][..]),
+        (
+            "Meeting Board",
+            &["Agenda", "Notes", "Decisions", "Actions"][..],
+        ),
+    ] {
+        h.state_mut().exec(&ctx, Cmd::Home);
+        h.state_mut().template_category = Some(TemplateCategory::Boards);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, name).scroll_to_me();
+        h.run_steps(8);
+        h.get_by_role_and_label(Role::Button, name).focus();
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, "Create").click();
+        h.run_steps(3);
+        let sheet = h.state().doc().unwrap().doc.workbook().active().clone();
+        assert_eq!(sheet.root_mode, thinoda_core::SheetRootMode::Hidden);
+        assert!(sheet.central_topic_content().is_none());
+        let names: Vec<_> = sheet.zones.iter().map(|z| z.name.as_str()).collect();
+        assert_eq!(names, expected);
+        assert!(
+            sheet
+                .floating
+                .iter()
+                .all(|id| sheet.topic(*id).unwrap().card.is_some())
+        );
+    }
 }
 
 #[test]

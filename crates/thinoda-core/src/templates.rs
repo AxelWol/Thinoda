@@ -276,6 +276,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("swot-board", "SWOT Board"),
     board_info("affinity-diagram", "Affinity Diagram"),
     board_info("eisenhower-matrix", "Eisenhower Matrix"),
+    board_info("meeting-board", "Meeting Board"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -774,6 +775,7 @@ mod tests {
                 "swot-board",
                 "affinity-diagram",
                 "eisenhower-matrix",
+                "meeting-board",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -783,6 +785,7 @@ mod tests {
         for (id, name) in [
             ("affinity-diagram", "Affinity Diagram"),
             ("eisenhower-matrix", "Eisenhower Matrix"),
+            ("meeting-board", "Meeting Board"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -991,8 +994,75 @@ mod tests {
     }
 
     #[test]
+    fn meeting_board_has_independent_prompts_and_persistent_visual_frames() {
+        use crate::board::{BoardMember, CardKind};
+
+        let mut wb = instantiate("meeting-board");
+        let sheet = wb.active();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|z| z.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Agenda", "Notes", "Decisions", "Actions"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.canvas.groups.is_empty());
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let heading = sheet
+            .content_topics()
+            .find(|topic| topic.title == "Meeting: purpose and date")
+            .unwrap();
+        assert_eq!(heading.card.unwrap().kind, CardKind::Text);
+        assert!(layout.topics[&heading.id].rect.max().y < sheet.zones[0].frame.min.y);
+        let mut stickies = Vec::new();
+        for (zone, text) in sheet.zones.iter().zip([
+            "Topic and timebox",
+            "Key points and questions",
+            "Decision and reason",
+            "Action, owner and due date",
+        ]) {
+            let topic = sheet
+                .content_topics()
+                .find(|topic| topic.title == text)
+                .unwrap();
+            let card = topic.card.unwrap();
+            assert_eq!(card.kind, CardKind::Sticky);
+            assert!(card.color.is_some());
+            let rect = layout.topics[&topic.id].rect;
+            assert!(zone.frame.contains(rect.min) && zone.frame.contains(rect.max()));
+            stickies.push(topic.id);
+        }
+        assert_eq!(sheet.content_topics().count(), 5);
+
+        let from = sheet.topic(stickies[0]).unwrap().position.unwrap();
+        let target = sheet.zones[1].frame.max() - crate::Vec2::new(90.0, 90.0);
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Card(stickies[0])], target - from)
+            .unwrap();
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let moved = layout.topics[&stickies[0]].rect;
+        assert!(sheet.zones[1].frame.contains(moved.min));
+        assert!(sheet.zones[1].frame.contains(moved.max()));
+        assert!(sheet.zones.iter().all(|zone| zone.roots.is_empty()));
+        for id in stickies {
+            assert!(sheet.detach_subtree(id).is_some());
+        }
+        assert_eq!(sheet.zones.len(), 4);
+        assert!(sheet.zones.iter().all(|zone| zone.keep_empty));
+        wb.validate().unwrap();
+    }
+
+    #[test]
     fn additional_board_templates_round_trip_with_localized_content() {
-        for id in ["affinity-diagram", "eisenhower-matrix"] {
+        for id in ["affinity-diagram", "eisenhower-matrix", "meeting-board"] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
             let json = serde_json::to_string(&original).unwrap();
@@ -1026,6 +1096,15 @@ mod tests {
             "Schedule: important, not urgent",
             "Delegate: urgent, not important",
             "Eliminate: neither urgent nor important",
+            "Meeting: purpose and date",
+            "Agenda",
+            "Notes",
+            "Decisions",
+            "Actions",
+            "Topic and timebox",
+            "Key points and questions",
+            "Decision and reason",
+            "Action, owner and due date",
         ] {
             assert!(
                 strings.contains(&key),

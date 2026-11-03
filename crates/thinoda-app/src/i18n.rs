@@ -1312,6 +1312,13 @@ const DE: &[(&str, &str)] = &[
     ("SWOT Board", "SWOT-Board"),
     ("Affinity Diagram", "Affinitätsdiagramm"),
     ("Eisenhower Matrix", "Eisenhower-Matrix"),
+    ("Meeting Board", "Besprechungsboard"),
+    ("Meeting: purpose and date", "Besprechung: Ziel und Datum"),
+    ("Agenda", "Tagesordnung"),
+    ("Decisions", "Entscheidungen"),
+    ("Topic and timebox", "Thema und Zeitrahmen"),
+    ("Key points and questions", "Wichtige Punkte und Fragen"),
+    ("Decision and reason", "Entscheidung und Begründung"),
     (
         "Group related ideas, then name each theme",
         "Gruppiere verwandte Ideen und benenne jedes Thema",
@@ -1433,6 +1440,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.",
         "Affinitätsdiagramm und Eisenhower-Matrix bieten visuelle Rahmen. Eine Notiz im Rahmen wird weder automatisch gruppiert noch als Aufgabe geplant.",
+    ),
+    (
+        "Meeting Board has visual areas for agenda, notes, decisions and actions. Its frames do not group notes automatically, and it has no timer.",
+        "Das Besprechungsboard hat visuelle Bereiche für Tagesordnung, Notizen, Entscheidungen und Maßnahmen. Seine Rahmen gruppieren Notizen nicht automatisch; ein Timer ist nicht enthalten.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3714,6 +3725,42 @@ mod tests {
             affinity.validate().unwrap();
             matrix.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn meeting_board_uses_localized_content_in_every_language() {
+        let sections = [
+            ("Agenda", "Topic and timebox"),
+            ("Notes", "Key points and questions"),
+            ("Decisions", "Decision and reason"),
+            ("Actions", "Action, owner and due date"),
+        ];
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("meeting-board", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Meeting Board"));
+            assert_eq!(sheet.zones.len(), sections.len());
+            assert_eq!(sheet.content_topics().count(), sections.len() + 1);
+            assert!(
+                sheet
+                    .content_topics()
+                    .any(|topic| { topic.title == t_in(language, "Meeting: purpose and date") })
+            );
+            for (zone, (name, prompt)) in sheet.zones.iter().zip(sections) {
+                assert_eq!(zone.name, t_in(language, name));
+                assert!(zone.keep_empty && zone.roots.is_empty());
+                assert!(
+                    sheet
+                        .content_topics()
+                        .any(|topic| topic.title == t_in(language, prompt))
+                );
+            }
+            wb.validate().unwrap();
+        }
+        assert_eq!(t_in(Lang::De, "Meeting Board"), "Besprechungsboard");
+        assert_eq!(t_in(Lang::PtBr, "Agenda"), "Pauta");
     }
 
     #[test]

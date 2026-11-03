@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, ten board templates, responsive toolbox and
+The Freeform implementation, eleven board templates, responsive toolbox and
 existing style controls are in place. The production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -38,9 +38,12 @@ frame titles and the other board toolbars, including rotated and clipped cards.
 When no safe space exists, selection and existing menu actions remain available;
 ordinary map placement is unchanged. Embedded-resource unions now avoid
 revalidating the growing store for each item while preserving validation,
-deduplication and atomic paste. The next open work remains the browser
-accessibility bridge, safe large-board recovery, export acceptance and
-realistic performance/device gates; cloud-provider work stays paused.
+deduplication and atomic paste. Pixel erasing has a saved-state browser
+regression, and Meeting Board adds a localized, rootless meeting template with
+independent prompt cards and persistent visual frames. The next open work
+remains the browser accessibility bridge, safe large-board recovery, export
+acceptance and realistic performance/device gates; cloud-provider work stays
+paused.
 
 ## Current next-value state (2026-10-30)
 
@@ -3035,6 +3038,10 @@ styles and IDs plus exact one-step undo/redo in desktop Chromium, Firefox and
 WebKit. Synthetic mouse input does not establish physical pen/touch or
 screen-reader acceptance.
 
+Meeting Board adds a localized purpose heading, four visual frames and
+independent prompt stickies. Moving a note does not automatically assign frame
+membership, and the template does not schedule tasks or provide a timer.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3097,7 +3104,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (ten implemented).
+5. F4 data-driven "Boards" templates (eleven implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 

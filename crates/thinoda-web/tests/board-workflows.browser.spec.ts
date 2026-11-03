@@ -14,10 +14,11 @@ test.use({
 test.setTimeout(180_000);
 
 type BoardSheet = {
+    title: string;
     root_mode: string;
     floating: number[];
     topics: Record<string, { id: number; title: string; card?: { kind: string; color?: string } }>;
-    zones: { keep_empty?: boolean; frame: { size: { x: number; y: number } } }[];
+    zones: { name: string; roots?: number[]; keep_empty?: boolean; frame: { size: { x: number; y: number } } }[];
     canvas: {
         objects: {
             id: number;
@@ -36,6 +37,41 @@ function sheetFrom(zip: Buffer): BoardSheet {
     const content: { sheets: BoardSheet[] } = JSON.parse(zipEntry(zip, "content.json").toString("utf8"));
     return content.sheets[0];
 }
+
+test.describe("meeting board gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("creates the selected board with independent cards and persistent frames", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        // The egui gallery currently exposes only one browser canvas.
+        const categoryFilter = { x: 220, y: 128 };
+        const boardsCategory = { x: 220, y: 225 };
+        const meetingTemplate = { x: 640, y: 394 };
+        const createButton = { x: 67, y: 722 };
+        for (const position of [categoryFilter, boardsCategory, meetingTemplate, createButton]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        const saved = sheetFrom(await saveAs(page, "meeting-board.thinoda"));
+        expect(saved.title).toBe("Meeting Board");
+        expect(saved.root_mode).toBe("hidden");
+        expect(saved.zones.map(zone => zone.name)).toEqual(["Agenda", "Notes", "Decisions", "Actions"]);
+        expect(saved.zones.every(zone => zone.keep_empty && !zone.roots?.length)).toBe(true);
+        const cards = Object.values(saved.topics).filter(topic => topic.card);
+        expect(cards.map(card => [card.title, card.card?.kind])).toEqual([
+            ["Meeting: purpose and date", "text"],
+            ["Topic and timebox", "sticky"],
+            ["Key points and questions", "sticky"],
+            ["Decision and reason", "sticky"],
+            ["Action, owner and due date", "sticky"],
+        ]);
+        expect(saved.floating).toEqual(cards.map(card => card.id));
+    });
+});
 
 test("rootless board objects, styling, connections and ink survive a native save", async ({ page }) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");

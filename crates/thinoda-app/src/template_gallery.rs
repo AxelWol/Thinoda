@@ -328,6 +328,7 @@ mod tests {
             "swot-board",
             "affinity-diagram",
             "eisenhower-matrix",
+            "meeting-board",
         ] {
             assert!(counts[id] > counts["blank-canvas"], "{id}: {counts:?}");
         }
@@ -337,7 +338,7 @@ mod tests {
     fn new_frame_board_thumbnails_fit_every_frame() {
         let rect = egui::Rect::from_min_size(Pos2::ZERO, vec2(160.0, 94.0));
         let visible = rect.shrink(5.0).expand(0.01);
-        for id in ["affinity-diagram", "eisenhower-matrix"] {
+        for id in ["affinity-diagram", "eisenhower-matrix", "meeting-board"] {
             let wb = templates::instantiate(id);
             let sheet = wb.active();
             for dark in [false, true] {

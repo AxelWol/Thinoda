@@ -1934,8 +1934,8 @@ draft remains blocked on safe bounded discovery and is not integrated.
   existing styling controls for applicable shapes.
 - [x] P3 F4 "Boards" template category: Blank canvas, Multi-root map,
   Brainstorm sticky wall, Retrospective, Kanban board, Business Model Canvas,
-  Flowchart, SWOT board, Affinity diagram and Eisenhower matrix (more templates
-  listed with prerequisites).
+  Flowchart, SWOT board, Affinity diagram, Eisenhower matrix and Meeting board
+  (more templates listed with prerequisites).
 - P3 F5 freehand ink (implemented; realistic performance gate open): pen,
   highlighter, object/pixel eraser and lasso; pressure optional.
 - P3 F6 viewport scenes in Pitch/PDF and mini-map implemented; export acceptance

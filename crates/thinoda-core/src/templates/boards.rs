@@ -520,6 +520,28 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "meeting-board",
+        cards: &[
+            note("Meeting: purpose and date", 450.0, -70.0, 560.0),
+            sticky("Topic and timebox", 105.0, 120.0, YELLOW),
+            sticky("Key points and questions", 565.0, 120.0, BLUE),
+            sticky("Decision and reason", 105.0, 440.0, GREEN),
+            sticky("Action, owner and due date", 565.0, 440.0, ORANGE),
+        ],
+        frames: &[
+            frame("Agenda", rect(0.0, 0.0, 440.0, 300.0), TINT_BLUE, &[]),
+            frame("Notes", rect(460.0, 0.0, 440.0, 300.0), TINT_GRAY, &[]),
+            frame("Decisions", rect(0.0, 320.0, 440.0, 300.0), TINT_GREEN, &[]),
+            frame(
+                "Actions",
+                rect(460.0, 320.0, 440.0, 300.0),
+                TINT_ORANGE,
+                &[],
+            ),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {
