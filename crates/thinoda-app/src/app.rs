@@ -2775,9 +2775,6 @@ impl ThinodaApp {
             self.export_fim(format);
             return;
         }
-        let dark = self
-            .applied
-            .is_some_and(|(th, ..)| th == SettingsTheme::Dark);
         let Some(d) = self.docs.get_mut(self.active) else {
             return;
         };
@@ -2792,18 +2789,13 @@ impl ThinodaApp {
         ) else {
             return;
         };
-        let opts = ExportOptions {
+        let opts = crate::visual_export::options_for_gui_export(
+            format,
+            d.view.dark,
+            self.dialogs.powerpoint_aspect_ratio,
             allow_symbol_color_loss,
             allow_note_format_loss,
-            dark: dark
-                && matches!(
-                    format,
-                    Format::Png | Format::Jpeg | Format::Svg | Format::Pdf
-                ),
-            scale: 2.0,
-            presentation_aspect_ratio: self.dialogs.powerpoint_aspect_ratio,
-            ..Default::default()
-        };
+        );
         let visual = crate::visual_export::for_view(d.view.accent, d.view.dark);
         let res = thinoda_io::export_bytes_with_consent_and_visual_context(
             d.doc.workbook(),

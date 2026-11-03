@@ -1213,11 +1213,9 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   management may still differ, so pixel-identical rendering is not promised.
   Print's light/dark controls change the page theme, not the captured stroke;
   an accent chosen for a different page theme can therefore have low contrast.
-- Duck check: this change does not resolve every page-theme mismatch. The
-  PowerPoint preview currently follows the UI theme while export retains its
-  existing light page theme. Ordinary image/PDF export also checks the explicit
-  theme setting rather than the resolved view, so a dark system theme can
-  export a light page. Both require separate correction and acceptance.
+- Duck check: the initial checkpoint left two page-theme mismatches. The
+  subsequent page-theme checkpoint below addresses them; real-host acceptance
+  remains separate.
 - Focused regressions cover both themes, transparent accents, opacity including
   zero, labels and arrows, explicit/inherited/automatic strokes, shape details,
   unchanged sources and historical defaults. They inspect SVG and editable
@@ -1225,6 +1223,25 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   print snapshots and worker output. PDFium rasterization checks map,
   presentation and print PDFs in both themes. These tests are not physical
   printer, external Office, hardware-GPU, screen-reader or iPad acceptance.
+
+### Visual export page-theme checkpoint and critique
+
+- GUI image, PDF and PowerPoint exports now use the document view's resolved
+  theme, including changes to the operating system theme while the System
+  setting is active. PowerPoint export now uses dark pages in dark mode,
+  matching its preview instead of silently exporting light pages. This is an
+  intentional change to GUI output; nonvisual formats and the default
+  programmatic and CLI export options retain their existing behavior.
+- Duck check: page appearance is distinct from document content and the
+  selected aspect ratio or loss consent. The exporter still captures the
+  active document view at export time, keeps those options unchanged and does
+  not mutate the source. Print retains its independent page-theme controls and
+  its previously captured stroke color.
+- Focused tests simulate light-to-dark-to-light system changes, inspect SVG
+  backgrounds, compare the live PowerPoint preview with a rendered slide,
+  and inspect both editable slide backgrounds and flattened viewport images
+  inside generated decks in both themes. They do not replace acceptance in
+  installed Office, on physical printers, or on real browser/OS hosts.
 
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library

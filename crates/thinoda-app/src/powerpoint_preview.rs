@@ -141,6 +141,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preview_and_export_use_the_same_resolved_page_theme() {
+        let sheet = crate::visual_export::test_helpers::sheet();
+        for dark in [false, true] {
+            let accent = egui::Color32::from_rgb(221, 12, 179);
+            let ctx = crate::visual_export::test_helpers::context(accent, dark);
+            let mut preview = PowerPointPreview::default();
+            let mut output = ctx.run_ui(crate::visual_export::test_helpers::input(), |ui| {
+                preview.show(
+                    ui,
+                    &sheet,
+                    &("source".into(), 0, 1),
+                    PresentationAspectRatio::Widescreen16x9,
+                    vec2(400.0, 300.0),
+                );
+            });
+            output.textures_delta.clear();
+            let background = thinoda_core::theme::Theme::for_settings(&sheet.theme)
+                .background(&sheet.theme, dark);
+            let canvas_background = thinoda_canvas::color32(background);
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::Shape::Rect(rect)
+                    if rect.fill == canvas_background
+                        && rect.rect.width() > 100.0
+                        && rect.rect.height() > 100.0
+            )));
+            let options = crate::visual_export::options_for_gui_export(
+                thinoda_io::Format::PowerPoint,
+                dark,
+                PresentationAspectRatio::Widescreen16x9,
+                false,
+                false,
+            );
+            let bytes =
+                thinoda_io::presentation::render_presentation_pptx_slide_png_with_visual_context(
+                    &sheet,
+                    0,
+                    &options,
+                    crate::visual_export::for_view(accent, dark),
+                )
+                .unwrap();
+            let image = image::load_from_memory(&bytes).unwrap().to_rgba8();
+            assert_eq!(
+                image.get_pixel(0, 0).0,
+                [background.r, background.g, background.b, background.a]
+            );
+        }
+    }
+
+    #[test]
     fn powerpoint_preview_uses_the_current_accent_for_automatic_board_strokes() {
         let sheet = crate::visual_export::test_helpers::sheet();
         for dark in [false, true] {

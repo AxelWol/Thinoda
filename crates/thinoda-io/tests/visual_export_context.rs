@@ -264,6 +264,52 @@ fn assert_magenta(bytes: &[u8]) {
 }
 
 #[test]
+fn powerpoint_page_theme_matches_the_flattened_viewport_in_both_themes() {
+    let fixture = fixture();
+    let workbook = Workbook::new(fixture.sheet.clone());
+    for dark in [false, true] {
+        let options = ExportOptions {
+            dark,
+            ..Default::default()
+        };
+        let pptx = export_bytes_with_visual_context(
+            &workbook,
+            Format::PowerPoint,
+            &options,
+            VisualExportContext::default(),
+        )
+        .unwrap();
+        let background = thinoda_core::theme::Theme::for_settings(&fixture.sheet.theme)
+            .background(&fixture.sheet.theme, dark);
+        let rgb = format!(
+            "{:02X}{:02X}{:02X}",
+            background.r, background.g, background.b
+        );
+        for index in [1, 2] {
+            let slide = String::from_utf8(archive_entry(
+                &pptx,
+                &format!("ppt/slides/slide{index}.xml"),
+            ))
+            .unwrap();
+            let page_fill = slide
+                .split("<p:bg>")
+                .nth(1)
+                .unwrap()
+                .split("</p:bg>")
+                .next()
+                .unwrap();
+            assert!(page_fill.contains(&format!("val=\"{rgb}\"")));
+        }
+        let viewport = archive_entry(&pptx, "ppt/media/slide2-viewport.png");
+        let image = image::load_from_memory(&viewport).unwrap().to_rgba8();
+        assert_eq!(
+            image.get_pixel(0, 0).0,
+            [background.r, background.g, background.b, background.a]
+        );
+    }
+}
+
+#[test]
 fn visual_context_reaches_raster_pdf_presentations_and_print_without_mutating_sources() {
     let fixture = fixture();
     let before = fixture.sheet.clone();

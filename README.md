@@ -714,8 +714,11 @@ those system-owned controls. WinGet publishing remains paused.
 - Export: XMind, PNG, JPEG, SVG, PDF, editable vector PowerPoint `.pptx`, Word, Excel,
   CSV, Markdown, OPML, TextBundle, and a bounded native MindManager `.mmap`
   subset. PowerPoint export previews the first saved Pitch slide, reuses all
-  slide visibility/framing and offers 16:9 or 4:3. Text, shapes and connecting
-  paths are separate editable objects; original photos remain images.
+  slide visibility/framing and offers 16:9 or 4:3. Image, PDF and PowerPoint
+  exports follow the resolved light or dark app appearance, including the
+  system theme; PowerPoint's preview reflects the exported page theme.
+  Text, shapes and connecting paths are separate editable objects; original
+  photos remain images.
   Unsupported resources are refused. Native-object PowerPoint/LibreOffice
   opening acceptance is separate from schema validation. MindManager conversion uses
   explicit loss/sheet-scope warnings and protects imported source files;

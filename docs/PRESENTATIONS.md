@@ -165,6 +165,12 @@ individual restoration and **Restore all topics**.
 ratio/export flow. PDF and slide-image actions export the draft without applying
 it. AI suggestions remain reviewable and do not bypass Apply.
 
+GUI PowerPoint export uses the current resolved light or dark app appearance,
+including the system setting, as shown in the slide preview. This changes
+dark-mode PowerPoint exports that previously used a light page; programmatic
+and CLI callers continue to choose their existing export options. Print has
+its own page-appearance controls.
+
 Pitch and Presenter View use the same slide scene resolution. The presenter's
 **Map** orientation panel deliberately shows the complete map with the current
 slide viewport highlighted. It is not exported, but is visible whenever Presenter

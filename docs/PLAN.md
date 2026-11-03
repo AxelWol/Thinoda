@@ -59,8 +59,14 @@ their captured appearance. Explicit and inherited colors still take priority,
 and existing CLI/API callers retain their historical defaults. Focused
 SVG, image, PDFium, print and editable/flattened PowerPoint checks cover the
 change; see the [critique](FREEFORM.md) for opacity, page-theme mismatches and
-host-acceptance limits. Follow up on resolved system-theme export and the
-PowerPoint preview/export page-theme mismatch.
+host-acceptance limits. Its page-theme follow-up is recorded below.
+
+**2026-11-03 visual export page-theme checkpoint:** GUI image, PDF and
+PowerPoint exports follow the resolved app appearance, including System theme
+changes. PowerPoint output now uses the same light/dark page as its preview;
+this intentionally changes GUI PowerPoint output in dark mode, without changing
+CLI/API defaults or print's separate controls. The [critique](FREEFORM.md)
+records focused evidence and real-host acceptance still required.
 
 **2026-11-03 whole-card formatting checkpoint:** selected sticky and text cards
 have a docked, scrollable formatting strip, reachable from the selected-topic

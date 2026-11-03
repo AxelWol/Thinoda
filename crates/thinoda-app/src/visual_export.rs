@@ -1,5 +1,26 @@
 use egui::Color32;
-use thinoda_io::VisualExportContext;
+use thinoda_io::{ExportOptions, Format, PresentationAspectRatio, VisualExportContext};
+
+pub(crate) fn options_for_gui_export(
+    format: Format,
+    view_dark: bool,
+    aspect_ratio: PresentationAspectRatio,
+    allow_symbol_color_loss: bool,
+    allow_note_format_loss: bool,
+) -> ExportOptions {
+    ExportOptions {
+        allow_symbol_color_loss,
+        allow_note_format_loss,
+        dark: view_dark
+            && matches!(
+                format,
+                Format::Png | Format::Jpeg | Format::Svg | Format::Pdf | Format::PowerPoint
+            ),
+        scale: 2.0,
+        presentation_aspect_ratio: aspect_ratio,
+        ..Default::default()
+    }
+}
 
 pub(crate) fn for_view(accent: Color32, dark: bool) -> VisualExportContext {
     let [r, g, b, a] = thinoda_canvas::automatic_board_stroke(accent, dark).to_srgba_unmultiplied();
@@ -91,6 +112,88 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::*;
     use thinoda_core::Color;
+
+    #[test]
+    fn gui_export_options_follow_the_resolved_system_theme() {
+        let mut app = crate::ThinodaApp::headless();
+        app.settings.theme = thinoda_platform::settings::ThemeMode::System;
+        let ctx = egui::Context::default();
+        let sheet = super::test_helpers::sheet();
+        let workbook = thinoda_core::Workbook::new(sheet.clone());
+
+        for theme in [egui::Theme::Light, egui::Theme::Dark, egui::Theme::Light] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    system_theme: Some(theme),
+                    ..super::test_helpers::input()
+                },
+                |ui| app.apply_appearance(ui.ctx()),
+            );
+            output.textures_delta.clear();
+            let view = &app.doc().unwrap().view;
+            let dark = theme == egui::Theme::Dark;
+            assert_eq!(view.dark, dark);
+            for format in [
+                Format::Png,
+                Format::Jpeg,
+                Format::Svg,
+                Format::Pdf,
+                Format::PowerPoint,
+            ] {
+                let options = options_for_gui_export(
+                    format,
+                    view.dark,
+                    PresentationAspectRatio::Standard4x3,
+                    true,
+                    true,
+                );
+                assert_eq!(options.dark, dark);
+                assert_eq!(
+                    options.presentation_aspect_ratio,
+                    PresentationAspectRatio::Standard4x3
+                );
+                assert!(options.allow_symbol_color_loss);
+                assert!(options.allow_note_format_loss);
+                assert_eq!(options.scale, 2.0);
+            }
+            assert!(
+                !options_for_gui_export(
+                    Format::Word,
+                    view.dark,
+                    PresentationAspectRatio::default(),
+                    false,
+                    false,
+                )
+                .dark
+            );
+
+            let options = options_for_gui_export(
+                Format::Svg,
+                view.dark,
+                PresentationAspectRatio::default(),
+                false,
+                false,
+            );
+            let svg = thinoda_io::export_bytes_with_visual_context(
+                &workbook,
+                Format::Svg,
+                &options,
+                for_view(view.accent, view.dark),
+            )
+            .unwrap();
+            let svg = String::from_utf8(svg).unwrap();
+            let background = thinoda_core::theme::Theme::for_settings(&sheet.theme)
+                .background(&sheet.theme, dark);
+            let first_rect = svg
+                .split("<rect")
+                .nth(1)
+                .unwrap()
+                .split("/>")
+                .next()
+                .unwrap();
+            assert!(first_rect.contains(&format!("fill=\"{}\"", background.to_hex())));
+        }
+    }
 
     #[test]
     fn resolves_the_same_accent_and_transparent_fallback_as_the_canvas() {

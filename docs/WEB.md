@@ -496,8 +496,10 @@ presentation. Neither changes the map. The browser downloads these outputs;
 native builds use a save dialog. Oversized frames/outputs fail visibly rather
 than being truncated. **File > Export > PowerPoint** offers 16:9/4:3 and native
 editable text, vector shapes and connecting paths; original photos remain
-images. Playback transitions are not exported animations. Presentation video
-is not provided. See [the presentation contract and acceptance notes](PRESENTATIONS.md).
+images. Its preview and exported pages follow the resolved light or dark app
+appearance, including the browser's system theme. Playback transitions are not
+exported animations. Presentation video is not provided. See [the presentation
+contract and acceptance notes](PRESENTATIONS.md).
 
 ## Task planning and Gantt
 
