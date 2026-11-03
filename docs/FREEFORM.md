@@ -1130,6 +1130,34 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   and compact sizes; this is not browser screen-reader or physical-touch
   acceptance. The other contextual editing slices remain open.
 
+### Whole-card formatting checkpoint and critique
+
+- Selected sticky notes and text cards expose bold, italic, underline, alignment,
+  font family, size and color presets for the **whole card**. The strip is
+  reachable from the contextual topic toolbar and canvas context menu, names its
+  scope in every supported language, and scrolls horizontally in narrow windows.
+  Custom colors remain available through the existing Text color control. This
+  does not add selected-range formatting, lists or formatting while editing a
+  title; the title editor still owns its draft and IME input.
+- Duck check: a dock can reduce the canvas enough for the floating insert
+  toolbar to obscure a selected card. While formatting is open, its insert and
+  marker commands move into an accessible overflow instead; the regular toolbar
+  returns when the strip closes. Compact and wide light/dark GPU previews and
+  keyboard, pointer and overflow-command tests cover the transition.
+- Duck check: closing a dock during an unfinished resize or ink stroke changes
+  the canvas coordinates underneath the gesture. An unchanged owner keeps the
+  dock in place but disabled until the gesture or draft finishes; document,
+  sheet, revision, selection and lock checks still reject stale transactions.
+  Tests cover resize commit/cancel, pending ink, drafts, locks, undo/redo and
+  separate document viewports.
+- SVG output now includes italic and text decorations and positions each line
+  according to the existing alignment; the editable PowerPoint path also writes
+  paragraph alignment. Native round-trips, SVG and PowerPoint XML, PNG/JPEG
+  pixels, and rasterized PDF output are covered. Font shaping still measures
+  the non-italic face and exported viewers may substitute fonts, so exact
+  italic geometry and cross-host rendering are not claimed. Physical touch,
+  screen readers and external Office acceptance remain open.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

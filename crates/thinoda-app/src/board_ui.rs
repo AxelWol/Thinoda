@@ -179,7 +179,12 @@ pub(crate) fn configure_board_labels(ctx: &Context, key: &str, view: &mut MapVie
 }
 
 impl ThinodaApp {
-    pub(crate) fn board_toolbar(&mut self, ctx: &Context, canvas: Rect) -> Option<Rect> {
+    pub(crate) fn board_toolbar(
+        &mut self,
+        ctx: &Context,
+        canvas: Rect,
+        editing_toolbar: Option<Rect>,
+    ) -> Option<Rect> {
         let doc = self.doc()?;
         let tool = doc.view.board_tool;
         let show_minimap = doc.view.show_minimap;
@@ -216,8 +221,7 @@ impl ThinodaApp {
         };
         let toolbar_left = canvas.left() + 12.0;
         let toolbar_right = toolbar_left + toolbar_width + 16.0;
-        let editing_toolbar = ctx
-            .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
+        let editing_toolbar = editing_toolbar
             .filter(|rect| rect.right() > toolbar_left && rect.left() < toolbar_right);
         let top_inset = editing_toolbar
             .map_or(8.0, |rect| (rect.bottom() - canvas.top() + 8.0).max(8.0))
@@ -1060,7 +1064,7 @@ mod tests {
 
     fn expanded_toolbar(ui: &mut Ui, app: &mut ThinodaApp) {
         start_expanded(ui.ctx(), app);
-        app.board_toolbar(ui.ctx(), ui.max_rect());
+        app.board_toolbar(ui.ctx(), ui.max_rect(), None);
     }
 
     fn shape_test_theme(ctx: &Context, dark: bool) {
@@ -1115,7 +1119,7 @@ mod tests {
     fn maps_and_board_documents_start_collapsed_and_can_expand() {
         let mut legacy = Harness::builder().build_ui_state(
             |ui, app: &mut ThinodaApp| {
-                app.board_toolbar(ui.ctx(), ui.max_rect());
+                app.board_toolbar(ui.ctx(), ui.max_rect(), None);
             },
             ThinodaApp::headless(),
         );
@@ -1137,7 +1141,7 @@ mod tests {
             .unwrap();
         let mut board = Harness::builder().build_ui_state(
             |ui, app: &mut ThinodaApp| {
-                app.board_toolbar(ui.ctx(), ui.max_rect());
+                app.board_toolbar(ui.ctx(), ui.max_rect(), None);
             },
             board,
         );

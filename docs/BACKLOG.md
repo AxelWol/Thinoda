@@ -23,9 +23,10 @@ registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
 
 **Contextual board editing:** the graphical Shape picker and pen color/width
 presets are implemented locally with native keyboard and responsive-layout
-coverage. Context menus for sticky-note formatting, text styling and connectors
-remain in progress; additional brushes are not represented as working features.
-Their persistence, accessibility and verification constraints are in the current
+coverage. Sticky-note and text-card controls now format the whole card; active
+editing, selected ranges, lists and selected-connector controls remain in
+progress. Additional brushes are not represented as working features. Their
+persistence, accessibility and verification constraints are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).
 
 **Camera photo acceptance:** EXIF rotations/mirrors are applied to previews and

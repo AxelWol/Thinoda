@@ -57,6 +57,10 @@ impl State {
         self.gesture.is_some() || self.creation_press.is_some() || self.suppress_until_release
     }
 
+    pub(super) fn has_pending_gesture(&self) -> bool {
+        self.is_active() || self.connector.is_some()
+    }
+
     pub(super) fn has_control_focus(&self) -> bool {
         self.control_focused
     }

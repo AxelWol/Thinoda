@@ -2106,6 +2106,8 @@ const DE: &[(&str, &str)] = &[
     ("Edit notes", "Notizen bearbeiten"),
     ("Toggle to-do", "Aufgabe umschalten"),
     ("Topic style", "Themenstil"),
+    ("Format whole card text", "Gesamten Kartentext formatieren"),
+    ("Whole-card text", "Gesamter Kartentext"),
     ("More insert actions", "Weitere Einfügeaktionen"),
     ("Find and Replace…", "Suchen und Ersetzen…"),
     ("Previous result", "Vorheriges Ergebnis"),

@@ -461,6 +461,15 @@ impl MapView {
         matches!(self.drag, Drag::Topics { .. })
     }
 
+    /// Whether a canvas interaction is still owned by an unfinished gesture.
+    pub fn has_active_canvas_gesture(&self) -> bool {
+        !matches!(self.drag, Drag::None)
+            || self.image_resize.is_some()
+            || self.relationship_drag.is_some()
+            || self.board_input.has_pending_gesture()
+            || self.ink_controller.has_pending_gesture()
+    }
+
     /// Whether a held or failed ink gesture is retained outside the document.
     pub fn has_pending_ink_gesture(&self) -> bool {
         self.ink_controller.has_pending_gesture()

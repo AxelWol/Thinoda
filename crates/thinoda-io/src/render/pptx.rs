@@ -5,7 +5,7 @@ use crate::presentation::xml_escape as esc;
 use crate::{ExportOptions, IoError};
 use std::collections::HashMap;
 use thinoda_core::{
-    Color, Rect, ResolvedPresentationSlide, Sheet, TopicId, TopicShape, Vec2,
+    Color, Rect, ResolvedPresentationSlide, Sheet, TextAlign, TopicId, TopicShape, Vec2,
     board::{CardKind, rotate_around},
     layout::{ConnectorKind, Icon},
     theme::Theme,
@@ -170,6 +170,7 @@ impl Drawing {
         italic: bool,
         underline: bool,
         strike: bool,
+        align: TextAlign,
     ) {
         let id = self.id();
         let size = (size * self.scale / 127.0).round().clamp(100.0, 400_000.0) as u32;
@@ -179,8 +180,13 @@ impl Drawing {
             .unwrap_or("Segoe UI")
             .trim()
             .trim_matches('"'));
+        let align = match align {
+            TextAlign::Left => "l",
+            TextAlign::Center => "ctr",
+            TextAlign::Right => "r",
+        };
         self.xml.push_str(&format!(
-            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}">{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t>{}</a:t></a:r><a:endParaRPr sz="{size}"/></a:p></p:txBody></p:sp>"#,
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/><a:r><a:rPr lang="en-US" sz="{size}" b="{}" i="{}" u="{}" strike="{}">{}<a:latin typeface="{family}"/><a:ea typeface="{family}"/><a:cs typeface="{family}"/></a:rPr><a:t>{}</a:t></a:r><a:endParaRPr sz="{size}"/></a:p></p:txBody></p:sp>"#,
             esc(name), self.transform(rect), u8::from(bold), u8::from(italic),
             if underline { "sng" } else { "none" }, if strike { "sngStrike" } else { "noStrike" },
             fill(Some(color)), esc(text)));
@@ -188,7 +194,17 @@ impl Drawing {
 
     fn label(&mut self, rect: Rect, value: &str, size: f32, color: Color) {
         self.text(
-            "Label", rect, value, size, "Segoe UI", color, false, false, false, false,
+            "Label",
+            rect,
+            value,
+            size,
+            "Segoe UI",
+            color,
+            false,
+            false,
+            false,
+            false,
+            TextAlign::Center,
         );
     }
 
@@ -606,6 +622,7 @@ pub(crate) fn editable_slide(
                 s.italic,
                 s.underline,
                 s.strikethrough,
+                s.align,
             );
         }
         if let Some((number, rect)) = &tl.number {
@@ -620,6 +637,7 @@ pub(crate) fn editable_slide(
                 false,
                 false,
                 false,
+                TextAlign::Center,
             );
         }
         for (index, (marker, rect)) in tl.markers.iter().enumerate() {
@@ -728,6 +746,7 @@ pub(crate) fn editable_slide(
             false,
             false,
             false,
+            TextAlign::Center,
         );
         let mut y = start_y + 34.0;
         for row in &appendix.rows {
@@ -749,6 +768,7 @@ pub(crate) fn editable_slide(
                     false,
                     false,
                     false,
+                    TextAlign::Center,
                 );
             }
             let origin_x = resolved.frame.min.x + 16.0;
@@ -774,6 +794,7 @@ pub(crate) fn editable_slide(
                         false,
                         false,
                         false,
+                        TextAlign::Center,
                     ),
                     thinoda_core::equations::Primitive::Rule { x, y, width } => draw.path(
                         "Equation fraction rule",

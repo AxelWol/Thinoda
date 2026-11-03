@@ -20,12 +20,13 @@ commands and document semantics. Deliver in independently verified slices:
    tooltips, selection feedback, keyboard navigation and scrolling are retained.
    Native egui tests and light/dark GPU previews cover narrow and short windows;
    real assistive technology and physical touch remain acceptance work.
-2. Add contextual formatting for selected sticky notes, including supported
-   text styles, size, lists and alignment. Preserve existing content and
-   explicitly extend the document model before offering unsupported rich text.
-3. Add contextual font, color and text styling for text cards and active text
-   editing. Specify whole-object versus selected-range formatting, migration,
-   undo, clipboard, accessibility and export behavior before enabling new styles.
+2. **Partial locally:** selected sticky notes have explicitly labeled whole-card
+   bold, italic, underline, alignment, font, size and color controls. Lists and
+   selected-range formatting remain open and require a document-model extension.
+3. **Partial locally:** text cards use the same whole-card controls and supported
+   visual/export styles. Active title editing and selected-range formatting remain
+   open; define migration, undo, clipboard, accessibility and export behavior
+   before enabling them.
 4. Add selected-connector controls for the existing route, stroke and endpoint
    options, respecting locked objects and existing edit transactions.
 5. **Pen controls implemented locally:** color swatches and graphical width
@@ -39,6 +40,17 @@ accessible names and keyboard navigation, and test selection ownership,
 undo/redo, native save/reopen and visual/export parity where behavior changes.
 The browser accessibility bridge and physical-device acceptance remain separate
 open gates; integrated cloud providers remain paused.
+
+**2026-11-03 whole-card formatting checkpoint:** selected sticky and text cards
+have a docked, scrollable formatting strip, reachable from the selected-topic
+toolbar or canvas context menu. Its visible scope label distinguishes whole-card
+formatting from selected text. While it is open, the global insert toolbar's
+actions remain in its overflow instead of obscuring compact canvases. Pending
+canvas gestures and inspector drafts disable the strip without shifting the
+canvas; stale, locked and changed document/selection owners cannot be edited.
+SVG-derived exports now carry italic, underline, strikethrough and alignment;
+editable PowerPoint text respects alignment. See the [critique](FREEFORM.md)
+for export-font and active-editor limits.
 
 **2026-11-03 photo-orientation implementation:** bounded previews and visual
 exports apply all eight EXIF rotations/mirrors while native documents and

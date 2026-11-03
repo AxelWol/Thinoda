@@ -952,6 +952,8 @@ Edit hyperlink|Editar hipervínculo|Modifier l'hyperlien|Rediger hyperlink|Hyper
 Edit notes|Editar notas|Modifier les notes|Rediger noter|Notities bewerken|Editar notas|Modifica note|Edytuj notatki
 Toggle to-do|Alternar tarea|Activer/désactiver la tâche|Slå opgave til/fra|Taak omschakelen|Alternar tarefa|Attiva/disattiva attività|Przełącz zadanie
 Topic style|Estilo del tema|Style du sujet|Emnestil|Onderwerpstijl|Estilo do tópico|Stile del nodo|Styl węzła
+Format whole card text|Formatear todo el texto de la tarjeta|Mettre en forme tout le texte de la carte|Formatér hele kortets tekst|Alle tekst op de kaart opmaken|Formatar todo o texto do cartão|Formatta tutto il testo della scheda|Formatuj cały tekst karty
+Whole-card text|Texto de toda la tarjeta|Texte de toute la carte|Hele kortets tekst|Alle kaarttekst|Texto de todo o cartão|Testo dell'intera scheda|Cały tekst karty
 More insert actions|Más acciones de inserción|Autres actions d'insertion|Flere indsættelseshandlinger|Meer invoegacties|Mais ações de inserção|Altre azioni di inserimento|Więcej opcji wstawiania
 Find and Replace…|Buscar y reemplazar…|Rechercher et remplacer…|Find og erstat…|Zoeken en vervangen…|Localizar e substituir…|Trova e sostituisci…|Znajdź i zamień…
 Previous result|Resultado anterior|Résultat précédent|Forrige resultat|Vorig resultaat|Resultado anterior|Risultato precedente|Poprzedni wynik

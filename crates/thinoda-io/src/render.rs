@@ -1,7 +1,7 @@
 use crate::{ExportOptions, IoError};
 use std::{borrow::Cow, collections::HashMap, io::Cursor};
 use thinoda_core::{
-    Rect, Sheet, TopicId, Workbook,
+    Rect, Sheet, TextAlign, TopicId, Workbook,
     equations::{self as math, Layout as EquationLayout, Primitive as EquationPrimitive},
     geometry::{Color, Vec2},
     layout::{ConnectorKind, Dir, layout_sheet},
@@ -859,8 +859,23 @@ fn svg_layout_with_fonts(
             .font_family
             .as_deref()
             .unwrap_or("Segoe UI, Helvetica, Arial, sans-serif");
+        let italic = if style.italic {
+            " font-style=\"italic\""
+        } else {
+            ""
+        };
+        let decoration = match (style.underline, style.strikethrough) {
+            (true, true) => " text-decoration=\"underline line-through\"",
+            (true, false) => " text-decoration=\"underline\"",
+            (false, true) => " text-decoration=\"line-through\"",
+            (false, false) => "",
+        };
         for (index, line) in block.lines.iter().enumerate() {
-            let x = tl.title_rect.center().x - line.bounds.center().x;
+            let x = match style.align {
+                TextAlign::Left => tl.title_rect.min.x - line.bounds.min.x,
+                TextAlign::Center => tl.title_rect.center().x - line.bounds.center().x,
+                TextAlign::Right => tl.title_rect.max().x - line.bounds.max().x,
+            };
             let baseline = y + (block.line_height - line.bounds.size.y) / 2.0 - line.bounds.min.y;
             // Standalone SVG viewers may substitute fonts; retain the measured width.
             let length = if line.text.is_empty() {
@@ -871,7 +886,7 @@ fn svg_layout_with_fonts(
                     line.bounds.size.x
                 )
             };
-            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\" fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(text_color),esc(&line.text)));
+            out.push_str(&format!("<text id=\"topic-{id}-line-{index}\" x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{:.2}\" font-weight=\"{weight}\"{italic}{decoration} fill=\"{}\"{length}>{}</text>",esc(font),style.font_size,col(text_color),esc(&line.text)));
             y += block.line_height;
         }
         if let Some((label, nr)) = &tl.number {

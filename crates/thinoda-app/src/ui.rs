@@ -7,8 +7,8 @@ use egui::{
 use thinoda_canvas::{Action, BoardTool, MapCanvas, MapView, ObjectSelection};
 use thinoda_core::numbering::{NumberFormat, Numbering};
 use thinoda_core::{
-    Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers, templates,
-    theme::Theme,
+    CardKind, Color, LineShape, Structure, TextAlign, TopicId, TopicShape, TopicStyle, markers,
+    templates, theme::Theme,
 };
 use thinoda_platform::settings::{Language, ThemeMode as SettingsTheme};
 use thinoda_ui::{
@@ -27,6 +27,133 @@ use crate::{
 
 type StyleChange = (&'static str, Box<dyn Fn(&mut TopicStyle)>);
 type StyleToggle = fn(&mut TopicStyle, bool);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct CardTextTarget {
+    document: String,
+    instance: u64,
+    sheet: usize,
+    root: TopicId,
+    topic: TopicId,
+    revision: u64,
+}
+
+enum CardTextChange {
+    Bold(bool),
+    Italic(bool),
+    Underline(bool),
+    Align(TextAlign),
+    Family(Option<String>),
+    Size(f32),
+    Color(Option<Color>),
+}
+
+impl CardTextChange {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Bold(_) | Self::Italic(_) | Self::Underline(_) => "Text Style",
+            Self::Align(_) => "Align",
+            Self::Family(_) => "Font Family",
+            Self::Size(_) => "Font Size",
+            Self::Color(_) => "Text Color",
+        }
+    }
+
+    fn apply(&self, style: &mut TopicStyle) {
+        match self {
+            Self::Bold(value) => style.bold = Some(*value),
+            Self::Italic(value) => style.italic = Some(*value),
+            Self::Underline(value) => style.underline = Some(*value),
+            Self::Align(value) => style.align = Some(*value),
+            Self::Family(value) => style.font_family = value.clone(),
+            Self::Size(value) => style.font_size = Some(*value),
+            Self::Color(value) => style.text_color = *value,
+        }
+    }
+}
+
+fn card_text_slot(viewport: egui::ViewportId) -> egui::Id {
+    egui::Id::unique(("thinoda_card_text_target", viewport))
+}
+
+fn card_text_label() -> &'static str {
+    t("Format whole card text")
+}
+
+fn card_text_icon(ui: &mut Ui, icon: &str, label: &str, selected: bool, focus: bool) -> bool {
+    let response = widgets::icon_button(ui, icon, label, selected);
+    if focus {
+        response.request_focus();
+    }
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    let keyboard = ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        });
+    ui.is_enabled()
+        && ((widgets::touch_activation_allowed(ui.ctx()) && response.clicked()) || keyboard)
+}
+
+fn card_text_swatch(ui: &mut Ui, color: Color, selected: bool) -> bool {
+    let value = from_color(color);
+    let hex = if color.a == 255 {
+        format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+    } else {
+        format!(
+            "#{:02X}{:02X}{:02X}{:02X}",
+            color.r, color.g, color.b, color.a
+        )
+    };
+    let label = format!("{} {hex}", t("Text Color"));
+    let palette = Palette::of_ui(ui);
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::ColorWell, ui.is_enabled(), selected, &label)
+    });
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    if ui.is_rect_visible(rect) {
+        let swatch = egui::Rect::from_center_size(rect.center(), vec2(18.0, 18.0));
+        ui.painter()
+            .rect_filled(swatch.shrink(2.0), Tokens::RADIUS_S, value);
+        ui.painter().rect_stroke(
+            swatch,
+            Tokens::RADIUS_S,
+            egui::Stroke::new(
+                if selected { 2.0 } else { 1.0 },
+                if selected {
+                    palette.accent
+                } else {
+                    palette.border
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        if response.has_focus() && ui.is_enabled() {
+            ui.painter().rect_stroke(
+                rect,
+                Tokens::RADIUS_S,
+                egui::Stroke::new(2.0, palette.text),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    let keyboard = ui.is_enabled()
+        && response.has_focus()
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        });
+    let activated = ui.is_enabled()
+        && ((widgets::touch_activation_allowed(ui.ctx()) && response.clicked()) || keyboard);
+    response.on_hover_text(label);
+    activated
+}
 
 fn fim_hierarchy_shortcut(action: &Action) -> bool {
     matches!(
@@ -478,6 +605,7 @@ struct TopicToolbarMeasureKey {
     ai_enabled: bool,
     has_link: bool,
     todo: bool,
+    card_text: bool,
     language: i18n::Lang,
     available_size: [u32; 2],
     pixels_per_point: u32,
@@ -492,6 +620,7 @@ fn topic_toolbar_measure_key(
     ai_enabled: bool,
     has_link: bool,
     todo: bool,
+    card_text: bool,
 ) -> TopicToolbarMeasureKey {
     use std::hash::{Hash, Hasher};
 
@@ -519,6 +648,7 @@ fn topic_toolbar_measure_key(
         ai_enabled,
         has_link,
         todo,
+        card_text,
         language: i18n::lang(),
         available_size: [available.width().to_bits(), available.height().to_bits()],
         pixels_per_point: ctx.pixels_per_point().to_bits(),
@@ -1173,6 +1303,23 @@ impl ThinodaApp {
             }
         }
 
+        let card_text_open = if show_doc
+            && self.mode == CenterMode::Map
+            && !self.task_table_visible()
+            && !self.search.open
+            && !self.palette.open
+            && !self.any_modal_open()
+            && !self.dialogs.settings
+            && !self.dialogs.about
+        {
+            self.card_text_toolbar(ui)
+        } else {
+            ctx.data_mut(|data| {
+                data.remove::<CardTextTarget>(card_text_slot(self.current_viewport));
+            });
+            false
+        };
+
         let center = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
@@ -1214,17 +1361,24 @@ impl ThinodaApp {
                 }
             });
 
-        let board_toolbar = if show_doc
+        let (board_toolbar, editing_toolbar) = if show_doc
             && self.mode == CenterMode::Map
             && !self.task_table_visible()
             && !self.zen
             && !self.any_modal_open()
             && !self.dialogs.settings
         {
-            self.editing_toolbar(&ctx, center.response.rect);
-            self.board_toolbar(&ctx, center.response.rect)
+            let editing_toolbar = if card_text_open {
+                None
+            } else {
+                self.editing_toolbar(&ctx, center.response.rect)
+            };
+            (
+                self.board_toolbar(&ctx, center.response.rect, editing_toolbar),
+                editing_toolbar,
+            )
         } else {
-            None
+            (None, None)
         };
 
         if show_doc
@@ -1235,7 +1389,7 @@ impl ThinodaApp {
             && !self.any_modal_open()
             && !self.dialogs.settings
         {
-            self.topic_toolbar(&ctx, board_toolbar);
+            self.topic_toolbar(&ctx, board_toolbar, editing_toolbar);
         }
 
         if show_doc && self.search.open && !self.map_shot.active() && !self.printing.active() {
@@ -1689,11 +1843,11 @@ impl ThinodaApp {
 
     // ----- center -------------------------------------------------------------------------------
 
-    fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) {
-        let Some(d) = self.doc() else { return };
+    fn editing_toolbar(&mut self, ctx: &Context, canvas: egui::Rect) -> Option<egui::Rect> {
+        let d = self.doc()?;
         let has_selection = !d.view.selection.is_empty();
         let mut cmd = None;
-        egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
+        let rect = egui::Area::new(egui::Id::unique("thinoda_editing_toolbar"))
             .order(egui::Order::Middle)
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(canvas.center_top() + vec2(0.0, 12.0))
@@ -1727,83 +1881,124 @@ impl ThinodaApp {
                         menu_button(
                             ui,
                             format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
-                            |ui| {
-                                ui.set_min_width(190.0);
-                                for (icon, label, enabled, command) in [
-                                    (
-                                        icons::NOTE,
-                                        "Notes",
-                                        self.command_available(&Cmd::EditField(FocusField::Notes)),
-                                        Cmd::EditField(FocusField::Notes),
-                                    ),
-                                    (
-                                        icons::LINK,
-                                        "Hyperlink",
-                                        self.command_available(&Cmd::EditField(
-                                            FocusField::Hyperlink,
-                                        )),
-                                        Cmd::EditField(FocusField::Hyperlink),
-                                    ),
-                                    (
-                                        icons::LABEL,
-                                        "Labels",
-                                        self.command_available(&Cmd::Labels),
-                                        Cmd::Labels,
-                                    ),
-                                    (
-                                        icons::IMAGE,
-                                        "Local Image",
-                                        self.command_available(&Cmd::LocalImage),
-                                        Cmd::LocalImage,
-                                    ),
-                                    (
-                                        icons::NEW_FILE,
-                                        "Attachment",
-                                        self.command_available(&Cmd::Attachment),
-                                        Cmd::Attachment,
-                                    ),
-                                    (
-                                        icons::SAVE_AS,
-                                        "Save/Download attachment",
-                                        self.command_available(&Cmd::SaveAttachment),
-                                        Cmd::SaveAttachment,
-                                    ),
-                                    (
-                                        icons::TODO,
-                                        "To-Do",
-                                        has_selection,
-                                        Cmd::Canvas(Action::ToggleTodo),
-                                    ),
-                                    (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
-                                ] {
-                                    if ui
-                                        .add_enabled(
-                                            enabled,
-                                            egui::Button::new(format!("{icon} {}", t(label))),
-                                        )
-                                        .accessible_name(t(label))
-                                        .clicked()
-                                    {
-                                        cmd = Some(command);
-                                        ui.close();
-                                    }
-                                }
-                                ui.separator();
-                                if ui.button(t("Find and Replace…")).clicked() {
-                                    cmd = Some(Cmd::FindReplace);
-                                    ui.close();
-                                }
-                            },
+                            |ui| self.more_insert_actions(ui, &mut cmd, has_selection),
                         )
                         .response
                         .accessible_name(t("More insert actions"))
                         .on_hover_text(t("More insert actions"));
                     });
                 });
-            });
+            })
+            .response
+            .rect;
         if let Some(command) = cmd {
             self.exec(ctx, command);
         }
+        Some(rect)
+    }
+
+    fn more_insert_actions(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>, has_selection: bool) {
+        ui.set_min_width(190.0);
+        for (icon, label, enabled, command) in [
+            (
+                icons::NOTE,
+                "Notes",
+                self.command_available(&Cmd::EditField(FocusField::Notes)),
+                Cmd::EditField(FocusField::Notes),
+            ),
+            (
+                icons::LINK,
+                "Hyperlink",
+                self.command_available(&Cmd::EditField(FocusField::Hyperlink)),
+                Cmd::EditField(FocusField::Hyperlink),
+            ),
+            (
+                icons::LABEL,
+                "Labels",
+                self.command_available(&Cmd::Labels),
+                Cmd::Labels,
+            ),
+            (
+                icons::IMAGE,
+                "Local Image",
+                self.command_available(&Cmd::LocalImage),
+                Cmd::LocalImage,
+            ),
+            (
+                icons::NEW_FILE,
+                "Attachment",
+                self.command_available(&Cmd::Attachment),
+                Cmd::Attachment,
+            ),
+            (
+                icons::SAVE_AS,
+                "Save/Download attachment",
+                self.command_available(&Cmd::SaveAttachment),
+                Cmd::SaveAttachment,
+            ),
+            (
+                icons::TODO,
+                "To-Do",
+                has_selection,
+                Cmd::Canvas(Action::ToggleTodo),
+            ),
+            (icons::FORMAT, "Topic style", has_selection, Cmd::TopicStyle),
+        ] {
+            if ui
+                .add_enabled(enabled, egui::Button::new(format!("{icon} {}", t(label))))
+                .accessible_name(t(label))
+                .clicked()
+                && widgets::touch_activation_allowed(ui.ctx())
+            {
+                *cmd = Some(command);
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button(t("Find and Replace…")).clicked()
+            && widgets::touch_activation_allowed(ui.ctx())
+        {
+            *cmd = Some(Cmd::FindReplace);
+            ui.close();
+        }
+    }
+
+    fn formatting_insert_actions(&mut self, ui: &mut Ui, cmd: &mut Option<Cmd>) {
+        let has_selection = self.doc().is_some_and(|doc| !doc.view.selection.is_empty());
+        for (icon, label, action) in [
+            (icons::TOPIC, "Topic", Action::InsertSibling),
+            (icons::SUBTOPIC, "Subtopic", Action::InsertChild),
+            (
+                icons::RELATIONSHIP,
+                "Relationship",
+                Action::StartRelationship,
+            ),
+            (icons::BOUNDARY, "Boundary", Action::AddBoundary),
+            (icons::SUMMARY, "Summary", Action::AddSummary),
+        ] {
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(format!("{icon} {}", t(label))),
+                )
+                .accessible_name(t(label))
+                .clicked()
+                && widgets::touch_activation_allowed(ui.ctx())
+            {
+                *cmd = Some(Cmd::Canvas(action));
+                ui.close();
+            }
+        }
+        let touch_allowed = widgets::touch_activation_allowed(ui.ctx());
+        ui.add_enabled_ui(touch_allowed, |ui| {
+            menu_button(ui, format!("{} {}", icons::MARKER, t("Marker")), |ui| {
+                self.marker_menu(ui, cmd);
+            })
+            .response
+            .accessible_name(t("Marker"));
+        });
+        ui.separator();
+        self.more_insert_actions(ui, cmd, has_selection);
     }
 
     fn map(&mut self, ui: &mut Ui) {
@@ -2029,10 +2224,367 @@ impl ThinodaApp {
         }
     }
 
-    fn topic_toolbar(&mut self, ctx: &Context, board_toolbar: Option<egui::Rect>) {
+    fn card_text_target(&self) -> Option<(CardTextTarget, bool)> {
+        let doc = self.doc()?;
+        let view = &doc.view;
+        if view.selection.len() != 1
+            || !view.board_selection.is_empty()
+            || view.selected_object.is_some()
+            || view.relationship_from.is_some()
+            || view.editing_topic().is_some()
+            || view.editing_board_object().is_some()
+        {
+            return None;
+        }
+        let id = view.primary()?;
+        let sheet = doc.doc.sheet();
+        let card = sheet.topic(id)?.card?;
+        if !matches!(card.kind, CardKind::Sticky | CardKind::Text)
+            || !sheet.is_visible(id)
+            || sheet.board_member_for_topic(id).is_none()
+        {
+            return None;
+        }
+        let targets = StyleTargets::from_view(sheet, view)?;
+        let enabled = !targets.locked
+            && targets.topics == [id]
+            && targets.shapes.is_empty()
+            && !view.has_active_canvas_gesture()
+            && !doc.has_inspector_changes()
+            && doc.fim_edit.is_none()
+            && doc.ensure_no_pending_ink().is_ok();
+        Some((
+            CardTextTarget {
+                document: doc.key.clone(),
+                instance: doc.doc.instance_id(),
+                sheet: doc.doc.active_index(),
+                root: sheet.root,
+                topic: id,
+                revision: doc.doc.state_id(),
+            },
+            enabled,
+        ))
+    }
+
+    fn open_card_text_toolbar(ctx: &Context, viewport: egui::ViewportId, target: CardTextTarget) {
+        let slot = card_text_slot(viewport);
+        ctx.data_mut(|data| {
+            data.insert_temp(slot, target);
+            data.insert_temp(slot.with("focus"), true);
+            data.insert_temp(slot.with("size_editing"), false);
+        });
+        ctx.request_repaint();
+    }
+
+    fn apply_card_text_change(
+        &mut self,
+        target: &CardTextTarget,
+        change: CardTextChange,
+    ) -> Option<CardTextTarget> {
+        if !self
+            .card_text_target()
+            .is_some_and(|(current, enabled)| enabled && current == *target)
+        {
+            return None;
+        }
+        let doc = self.doc_mut()?;
+        let result = doc.doc.edit_sheet(change.label(), |sheet| {
+            sheet.update_style(&[target.topic], |style| change.apply(style))
+        });
+        match result {
+            Ok(()) => Some(CardTextTarget {
+                revision: doc.doc.state_id(),
+                ..target.clone()
+            }),
+            Err(error) => {
+                self.toasts.error(error.to_string());
+                None
+            }
+        }
+    }
+
+    fn card_text_toolbar(&mut self, ui: &mut Ui) -> bool {
+        let ctx = ui.ctx().clone();
+        let viewport = self.current_viewport;
+        let slot = card_text_slot(viewport);
+        let Some(target) = ctx.data(|data| data.get_temp::<CardTextTarget>(slot)) else {
+            return false;
+        };
+        let Some((current, enabled)) = self.card_text_target() else {
+            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            return false;
+        };
+        if current != target {
+            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            return false;
+        }
+        let size_was_editing = ctx
+            .data(|data| data.get_temp::<bool>(slot.with("size_editing")))
+            .unwrap_or(false);
+        if enabled
+            && !egui::Popup::is_any_open(&ctx)
+            && !ctx.text_edit_focused()
+            && !size_was_editing
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+            return false;
+        }
+
+        let doc = self.doc().unwrap();
+        let sheet = doc.doc.sheet();
+        let topic = sheet.topic(target.topic).unwrap();
+        let style = topic.style.clone();
+        let resolved = thinoda_core::theme::resolve_style(sheet, target.topic, doc.view.dark);
+        let text_color = StyleTargets::from_view(sheet, &doc.view)
+            .and_then(|targets| targets.common_color(sheet, doc.view.dark, StyleColor::Text))
+            .unwrap_or(resolved.text_color);
+        let numeric_owner = egui::Id::unique(("card_text_size", &target, doc.doc.state_id()));
+        let request_focus = ctx.data_mut(|data| {
+            let focus = data.get_temp::<bool>(slot.with("focus")).unwrap_or(false);
+            data.remove::<bool>(slot.with("focus"));
+            focus
+        });
+        let mut change = None;
+        let mut close = false;
+        let mut command = None;
+        let palette = Palette::of(&ctx);
+        egui::Panel::top(egui::Id::unique(("thinoda_card_text_toolbar", viewport)))
+            .exact_size(48.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .inner_margin(Margin::symmetric(6, 3)),
+            )
+            .show(ui, |ui| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.push_id(
+                        (
+                            &target.document,
+                            target.instance,
+                            target.sheet,
+                            target.root,
+                            target.topic,
+                        ),
+                        |ui| {
+                            ui.horizontal_centered(|ui| {
+                                close = card_text_icon(ui, icons::CLOSE, t("Close"), false, false);
+                                guarded_menu_button(
+                                    ui,
+                                    format!("{} {}", icons::ADD, icons::CHEVRON_DOWN),
+                                    |ui| self.formatting_insert_actions(ui, &mut command),
+                                )
+                                .response
+                                .accessible_name(t("More insert actions"))
+                                .on_hover_text(t("More insert actions"));
+                                let width = ui.available_width().max(0.0);
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("card_text_controls")
+                                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                    )
+                                    .max_width(width)
+                                    .max_height(42.0)
+                                    .min_scrolled_height(Tokens::ICON_BUTTON)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.horizontal_centered(|ui| {
+                                            ui.label(RichText::new(t("Whole-card text")).small());
+                                            for (icon, label, on, next, focus) in [
+                                                (
+                                                    icons::BOLD,
+                                                    "Bold",
+                                                    resolved.bold,
+                                                    CardTextChange::Bold(!resolved.bold),
+                                                    request_focus,
+                                                ),
+                                                (
+                                                    icons::ITALIC,
+                                                    "Italic",
+                                                    resolved.italic,
+                                                    CardTextChange::Italic(!resolved.italic),
+                                                    false,
+                                                ),
+                                                (
+                                                    icons::UNDERLINE,
+                                                    "Underline",
+                                                    resolved.underline,
+                                                    CardTextChange::Underline(!resolved.underline),
+                                                    false,
+                                                ),
+                                            ] {
+                                                if card_text_icon(ui, icon, t(label), on, focus) {
+                                                    change = Some(next);
+                                                }
+                                            }
+                                            widgets::vdivider(ui);
+                                            for (align, icon, label) in [
+                                                (
+                                                    TextAlign::Left,
+                                                    icons::TEXT_ALIGN_LEFT,
+                                                    "Align Left",
+                                                ),
+                                                (
+                                                    TextAlign::Center,
+                                                    icons::TEXT_ALIGN_CENTER,
+                                                    "Align Center",
+                                                ),
+                                                (
+                                                    TextAlign::Right,
+                                                    icons::TEXT_ALIGN_RIGHT,
+                                                    "Align Right",
+                                                ),
+                                            ] {
+                                                if card_text_icon(
+                                                    ui,
+                                                    icon,
+                                                    t(label),
+                                                    resolved.align == align,
+                                                    false,
+                                                ) && resolved.align != align
+                                                {
+                                                    change = Some(CardTextChange::Align(align));
+                                                }
+                                            }
+                                            widgets::vdivider(ui);
+                                            let mut family = style.font_family.clone();
+                                            ui.allocate_ui_with_layout(
+                                                vec2(120.0, Tokens::ICON_BUTTON),
+                                                Layout::left_to_right(Align::Center),
+                                                |ui| {
+                                                    ui.set_max_width(120.0);
+                                                    let response = font_selector(
+                                                        ui,
+                                                        &mut self.fonts,
+                                                        &mut family,
+                                                        t("Auto"),
+                                                    )
+                                                    .accessible_name(t("Font Family"));
+                                                    if response.gained_focus() {
+                                                        response.scroll_to_me(None);
+                                                    }
+                                                },
+                                            );
+                                            if family != style.font_family
+                                                && widgets::touch_activation_allowed(&ctx)
+                                            {
+                                                change = Some(CardTextChange::Family(family));
+                                            }
+                                            let mut size = resolved.font_size;
+                                            let (response, commit) = touch_numeric_value(
+                                                ui,
+                                                &mut size,
+                                                "card-text-size",
+                                                Some(numeric_owner),
+                                                |ui, value| {
+                                                    ui.add_sized(
+                                                        vec2(62.0, Tokens::ICON_BUTTON),
+                                                        egui::DragValue::new(value)
+                                                            .range(6.0..=96.0)
+                                                            .speed(0.5),
+                                                    )
+                                                    .accessible_name(t("Font Size"))
+                                                },
+                                            );
+                                            let size_is_editing =
+                                                response.has_focus() && ctx.text_edit_focused();
+                                            ctx.data_mut(|data| {
+                                                data.insert_temp(
+                                                    slot.with("size_editing"),
+                                                    size_is_editing,
+                                                );
+                                            });
+                                            if response.gained_focus() {
+                                                response.scroll_to_me(None);
+                                            }
+                                            if response.lost_focus() && enabled {
+                                                // DragValue can surrender focus on commit/cancel before
+                                                // the canvas handles its own keyboard shortcuts.
+                                                ctx.input_mut(|input| {
+                                                    input.consume_key(Modifiers::NONE, Key::Enter);
+                                                    input.consume_key(Modifiers::NONE, Key::Escape);
+                                                });
+                                            }
+                                            if commit
+                                                && size != resolved.font_size
+                                                && size.is_finite()
+                                            {
+                                                change = Some(CardTextChange::Size(size));
+                                            }
+                                            widgets::vdivider(ui);
+                                            ui.label(t("Text Color"));
+                                            let auto = ui
+                                                .selectable_label(
+                                                    style.text_color.is_none(),
+                                                    t("Auto"),
+                                                )
+                                                .accessible_name(format!(
+                                                    "{} · {}",
+                                                    t("Text Color"),
+                                                    t("Auto")
+                                                ));
+                                            if auto.gained_focus() {
+                                                auto.scroll_to_me(None);
+                                            }
+                                            if auto.clicked()
+                                                && widgets::touch_activation_allowed(&ctx)
+                                                && style.text_color.is_some()
+                                            {
+                                                change = Some(CardTextChange::Color(None));
+                                            }
+                                            let custom = (!SWATCHES
+                                                .contains(&from_color(text_color)))
+                                            .then_some(text_color);
+                                            for color in custom
+                                                .into_iter()
+                                                .chain(SWATCHES.iter().copied().map(to_color))
+                                            {
+                                                if card_text_swatch(ui, color, color == text_color)
+                                                {
+                                                    change =
+                                                        Some(CardTextChange::Color(Some(color)));
+                                                }
+                                            }
+                                        });
+                                        reveal_changed_focus(ui);
+                                    });
+                            });
+                        },
+                    );
+                });
+            });
+        if close {
+            ctx.data_mut(|data| data.remove::<CardTextTarget>(slot));
+            ctx.memory_mut(|memory| memory.request_focus(MapCanvas::id()));
+        } else if let Some(change) = change
+            && let Some(updated) = self.apply_card_text_change(&target, change)
+        {
+            ctx.data_mut(|data| data.insert_temp(slot, updated));
+        }
+        if let Some(command) = command {
+            self.exec(&ctx, command);
+        }
+        !close
+    }
+
+    fn topic_toolbar(
+        &mut self,
+        ctx: &Context,
+        board_toolbar: Option<egui::Rect>,
+        editing_toolbar: Option<egui::Rect>,
+    ) {
         if !self.settings.show_topic_toolbar {
             return;
         }
+        let viewport = self.current_viewport;
+        let text_target = self.card_text_target();
+        let text_open = text_target.as_ref().is_some_and(|(target, _)| {
+            ctx.data(|data| data.get_temp::<CardTextTarget>(card_text_slot(viewport)))
+                .as_ref()
+                == Some(target)
+        });
         let ai_enabled = self.settings.ai.enabled;
         let Some(d) = self.doc_mut() else { return };
         if d.view.selection.len() != 1
@@ -2088,8 +2640,17 @@ impl ThinodaApp {
             .memory(|memory| memory.area_rect(toolbar_id))
             .map(|rect| rect.size());
         let measure_id = toolbar_id.with(("board_measure_key", ctx.viewport_id()));
-        let measure_key = is_board
-            .then(|| topic_toolbar_measure_key(ctx, available, &d.key, ai_enabled, has_link, todo));
+        let measure_key = is_board.then(|| {
+            topic_toolbar_measure_key(
+                ctx,
+                available,
+                &d.key,
+                ai_enabled,
+                has_link,
+                todo,
+                text_target.is_some(),
+            )
+        });
         if !is_board {
             ctx.data_mut(|data| data.remove::<TopicToolbarMeasureKey>(measure_id));
         }
@@ -2160,9 +2721,7 @@ impl ThinodaApp {
             }
             if let Some(board) = board_toolbar {
                 obstacles.push(board.expand(6.0));
-                if let Some(editing) = ctx
-                    .memory(|memory| memory.area_rect(egui::Id::unique("thinoda_editing_toolbar")))
-                {
+                if let Some(editing) = editing_toolbar {
                     obstacles.push(editing.expand(4.0));
                 }
             }
@@ -2223,6 +2782,7 @@ impl ThinodaApp {
             }
         }
         let mut cmd = None;
+        let mut toggle_text = false;
         let shown = egui::Area::new(toolbar_id)
             .order(egui::Order::Middle)
             .pivot(if below {
@@ -2296,6 +2856,19 @@ impl ThinodaApp {
                                 cmd = Some(command);
                             }
                         }
+                        if let Some((_, enabled)) = &text_target {
+                            toggle_text = ui
+                                .add_enabled_ui(*enabled, |ui| {
+                                    card_text_icon(
+                                        ui,
+                                        icons::BOARD_TEXT,
+                                        card_text_label(),
+                                        text_open,
+                                        false,
+                                    )
+                                })
+                                .inner;
+                        }
                     });
                 });
             });
@@ -2322,6 +2895,13 @@ impl ThinodaApp {
         }
         if let Some(command) = cmd {
             self.exec(ctx, command);
+        }
+        if toggle_text && let Some((target, true)) = text_target {
+            if text_open {
+                ctx.data_mut(|data| data.remove::<CardTextTarget>(card_text_slot(viewport)));
+            } else {
+                Self::open_card_text_toolbar(ctx, viewport, target);
+            }
         }
     }
 
@@ -2457,6 +3037,26 @@ impl ThinodaApp {
                 Cmd::EditField(FocusField::Notes),
                 self.command_available(&Cmd::EditField(FocusField::Notes)),
             );
+            if let Some((target, enabled)) = self.card_text_target() {
+                let label = card_text_label();
+                if ui
+                    .add_enabled_ui(enabled, |ui| {
+                        thinoda_ui::ribbon::menu_item(
+                            ui,
+                            Some(icons::BOARD_TEXT.into()),
+                            label,
+                            None,
+                        )
+                    })
+                    .inner
+                    .accessible_name(label)
+                    .clicked()
+                    && widgets::touch_activation_allowed(ui.ctx())
+                {
+                    Self::open_card_text_toolbar(ui.ctx(), self.current_viewport, target);
+                    ui.close();
+                }
+            }
             item(ui, t("Topic style"), Cmd::TopicStyle, true);
             item(
                 ui,
@@ -6399,3 +6999,7 @@ fn track_inspector_edit(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "card_text_tests.rs"]
+mod card_text_tests;

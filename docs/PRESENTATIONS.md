@@ -177,7 +177,8 @@ the player ends safely. A deleted source's slide can be restored by undoing the
 map deletion.
 
 For branch and Zone slides, PowerPoint text is emitted as editable text boxes
-with measured line placement. Connecting curves are editable freeform vector
+with measured line placement and the topic's paragraph alignment and text
+styles. Connecting curves are editable freeform vector
 paths, not a promise of PowerPoint auto-routing/reconnection; photographs remain
 separate pictures. Viewport slides instead become non-editable images, as
 reported before export. Some frame clipping on editable branch and Zone slides
