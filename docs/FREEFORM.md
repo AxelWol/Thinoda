@@ -537,14 +537,14 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The production candidate passed 47 headless Chromium cases, including
+open. The production candidate at source checkpoint `03cbac1` passed 56
+headless Chromium cases, including
 mixed-board editing, mini-map input, SVG/PNG/JPEG/PDF/PowerPoint export,
-SVG/PNG/JPEG image cards, browser-language selection and browser recovery
-failures, before the later image-card PDF assertion was added. The final cache
-source also passed the full local native
-`cargo xtask ci` with live AI disabled and tests serialized. Eleven focused
-startup, retry and offline checks passed in each of desktop WebKit and Firefox on Windows; an
-earlier build with identical Wasm also passed focused touch checks there.
+image-card export, browser-language selection and browser recovery failures.
+The same source passed the full local native `cargo xtask ci` with live AI
+disabled and tests serialized. Eleven startup/offline and three raw recovery
+checks passed on that production bundle in each of desktop WebKit and Firefox
+on Windows; earlier builds also passed focused touch checks there.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).

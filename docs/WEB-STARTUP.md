@@ -275,14 +275,14 @@ bytes. This does not recover the oversized unsaved board or establish storage
 limits on other browsers. Device-level reload, quota, concurrent-tab and
 large-board acceptance therefore remain open.
 
-The candidate production bundle passed 47 headless Chromium regressions,
+The production bundle at source checkpoint `03cbac1` passed 56 headless
+Chromium regressions,
 including startup and offline-shell failures, browser-language selection,
 mixed-board editing, mini-map input, SVG/PNG/JPEG/PDF/PowerPoint export,
-SVG/PNG/JPEG image-card export, recovery lease loss, quota retry and the
-real-quota case, before a later PDF image-card assertion was added. Eleven
-startup and offline checks passed in headless WebKit and Firefox on Windows.
-An earlier build with identical Wasm
-also passed focused touch and language checks in those engines; desktop and
+image-card export, recovery lease loss, quota retry and the real-quota case.
+Eleven startup/offline and three raw recovery checks passed on that bundle in
+headless WebKit and Firefox on Windows. An earlier build also passed focused
+touch and language checks in those engines; desktop and
 390-pixel screenshots showed the warning and dismiss control within the
 viewport. An earlier run had one failure when its loopback
 server refused a static-resource connection; that case passed three isolated

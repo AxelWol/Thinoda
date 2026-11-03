@@ -1893,8 +1893,8 @@ export acceptance, browser recovery, and native/web integration verification
 remain open as described in the linked plan. Production-browser regressions now
 cover a saved mixed board, ink undo, touch cancellation, mini-map input, a
 captured Pitch viewport and inspected SVG/PNG/JPEG/PDF/PowerPoint exports. The
-production candidate passed all 47 Chromium cases, including image-card
-SVG/PNG/JPEG checks. Focused mixed-board and expanded image-card PDF checks
+production candidate passed all 56 Chromium cases, including image-card
+SVG/PNG/JPEG/PDF checks. Earlier focused mixed-board and image-card PDF checks
 passed in desktop Chromium, Firefox and WebKit using a separate Chromium PDF
 viewer. Focused virtual-clipboard regressions cover mixed-board paste and undo,
 plain-text replacement and rejected cuts; all nine cases passed in desktop
@@ -1905,9 +1905,9 @@ coverage. Windows PowerPoint also exported the rotated fixture to a visible
 PDF; a rotated text edit and a native path nudge persisted in a separately
 saved copy. Systematic Office appearance and broader interactive-editing
 acceptance remain open.
-Eleven focused startup, retry and offline cases also passed in each of
-desktop Firefox and WebKit. An earlier build with the same Wasm passed focused
-touch checks in both engines. CI runs the Chromium and
+Eleven startup/offline and three raw recovery cases also passed on that
+production bundle in each of desktop Firefox and WebKit. Earlier builds passed
+focused touch checks in both engines. CI runs the Chromium and
 startup/offline suite against the release build; these checks do not establish
 physical touch-device, screen-reader or remaining export-format acceptance.
 
