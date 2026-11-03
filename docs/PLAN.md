@@ -22,7 +22,8 @@ screen-reader acceptance.
 The remaining R14 gates are realistic ink performance, integrated
 accessibility and cross-platform/physical-device acceptance, and safe
 large-board browser recovery. First-start contention is reduced in a measured
-desktop comparison; warm-start and actual iPad measurements remain open.
+desktop comparison; small desktop comparisons cover controlled warm reloads and
+the subsequent integrity guard, but actual iPad acceptance remains open.
 Integrated cloud providers remain **disabled by default** and paused until
 publisher registrations are complete. See the R14 status and
 [FREEFORM.md](FREEFORM.md) for phase-specific evidence and limits.
@@ -3042,8 +3043,9 @@ losing features or offline/update reliability. Loading feedback must be
 accessible and truthful. Compare reproducible cold and warm starts and clearly
 distinguish emulation from actual iPad measurements. The investigation, concept
 and rubber-duck review are in [WEB-STARTUP.md](WEB-STARTUP.md). A measured
-desktop cold-start improvement now avoids concurrent Wasm precaching; warm and
-physical iPad acceptance remain open. The loading surface now also waits for
+desktop cold-start improvement now avoids concurrent Wasm precaching. Small
+controlled warm comparisons do not substitute for physical iPad acceptance.
+The loading surface now also waits for
 both renderer and application readiness before allowing interaction.
 
 ### Phase P4 - OS-integrated menus and windows (R12 and above)

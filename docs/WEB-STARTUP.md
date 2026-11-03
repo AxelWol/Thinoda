@@ -165,6 +165,21 @@ not the magnitude of an improvement on a real iPad, a compressed production
 connection, a warm launch, or a busy document. Actual iPad Safari and Edge
 acceptance remains open.
 
+Six additional interleaved pairs compared the original and optimized shells
+over an unthrottled loopback connection, with a fresh browser profile for each
+cold run and a service-worker-controlled reload for its warm run. All
+interactions succeeded. Median cold interaction was 0.65 s before and 0.64 s
+after; median warm interaction was 0.25 s for both. These small, noisy samples
+do not establish a warm-performance bound, and the OS file cache was not cleared.
+
+After adding the initial-module integrity guard, four interleaved pairs compared
+the preceding and guarded production shells with identical Wasm in headless
+Edge on Windows over an unthrottled loopback connection. All cold and
+service-worker-controlled warm interactions succeeded. Median cold interaction
+was 1.02 s before and 0.83 s after; median warm interaction was 0.33 s and
+0.34 s, respectively. These few noisy samples do not establish an overhead
+bound. Neither comparison is a physical-iPad or representative-network result.
+
 As a size-only probe, applying `wasm-opt -Oz` to the already optimized final
 Wasm reduced it from 27,318,620 to 25,889,852 bytes; gzip level 6 reduced the
 same artifacts from 9,738,066 to 9,649,777 bytes (about 0.9%). This is not a
