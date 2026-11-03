@@ -838,11 +838,14 @@ the raw error under **Technical details**:
   `npx playwright install chromium`, and `npm run test:browser`. The suite
   serves `dist` on loopback with Python, runs one isolated Chromium context per
   test, and covers the production loader, deferred offline installation,
-  rootless board editing, SVG export, image cards and Pitch viewport. Set
+  rootless board editing, SVG/PNG/PDF and PowerPoint exports, image cards and
+  Pitch viewport. Set
   `THINODA_BROWSER_DIST` to serve another built directory, `THINODA_WEB_URL` to
   test an existing server instead, or `THINODA_BROWSER_EXECUTABLE` to use an
-  installed Chromium-compatible browser. These desktop checks do not replace
-  physical iPad or screen-reader testing.
+  installed Chromium-compatible browser. The PDF-content check uses Playwright's
+  full Chromium build independently; set `THINODA_PDF_BROWSER_EXECUTABLE` only
+  if a different browser with an inline PDF viewer is required. These desktop
+  checks do not replace physical iPad or screen-reader testing.
 - Browser smoke test (manual or scripted): load the site, create a map from a
   template, add a topic, save (download), reload and confirm the recovery
   prompt, open the downloaded file, print and save the print PDF.

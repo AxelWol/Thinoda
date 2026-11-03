@@ -36,6 +36,54 @@ export async function frames(page: Page) {
     }));
 }
 
+export async function drag(
+    page: Page,
+    from: [number, number],
+    to: [number, number],
+    steps = 8,
+) {
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    await frames(page);
+    await page.mouse.move(...to, { steps });
+    await frames(page);
+    await page.mouse.up();
+    await frames(page);
+}
+
+export async function touchEvents(
+    page: Page,
+    events: { type: "touchstart" | "touchmove" | "touchend" | "touchcancel"; x: number; y: number }[],
+) {
+    await page.evaluate((events) => {
+        const canvas = document.querySelector("#thinoda_canvas");
+        if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Missing board canvas");
+        const createTouch = Reflect.get(document, "createTouch");
+        const createTouchList = Reflect.get(document, "createTouchList");
+        const legacy = typeof createTouch === "function" && typeof createTouchList === "function";
+        for (const { type, x, y } of events) {
+            const touch: Touch = legacy
+                ? createTouch.call(document, window, canvas, 1, x, y, x, y, x, y)
+                : new Touch({
+                    identifier: 1, target: canvas, clientX: x, clientY: y,
+                    pageX: x, pageY: y, screenX: x, screenY: y,
+                });
+            if (touch.clientX !== x || touch.clientY !== y) {
+                throw new Error("Synthetic touch has incorrect client coordinates");
+            }
+            const active = type === "touchend" || type === "touchcancel" ? [] : [touch];
+            const list = (items: Touch[]) => legacy ? createTouchList.call(document, ...items) : items;
+            canvas.dispatchEvent(new TouchEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                touches: list(active),
+                targetTouches: list(active),
+                changedTouches: list([touch]),
+            }));
+        }
+    }, events);
+}
+
 export async function command(page: Page, name: string) {
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("Control+Shift+p");

@@ -14,10 +14,12 @@ use thinoda_core::{
 pub(super) struct State {
     pub(super) label: Option<LabelEdit>,
     gesture: Option<Gesture>,
+    creation_press: Option<CreationPress>,
     connector: Option<PendingConnector>,
     rotation_pivot: Option<RotationPivot>,
     last_tool: BoardTool,
     suppress_until_release: bool,
+    resume_after_touch_cancel: bool,
     control_focused: bool,
     focus_exit: Option<FocusExit>,
     focus_after_duplicate: Option<SceneId>,
@@ -29,7 +31,7 @@ struct RotationPivot {
     selected_objects: Vec<CanvasObjectId>,
     states: VecDeque<u64>,
     sheet: usize,
-    sheet_identity: usize,
+    sheet_identity: SheetIdentity,
     center: Vec2,
 }
 
@@ -43,17 +45,54 @@ enum FocusExit {
 
 impl State {
     pub(super) fn cancel_gesture(&mut self) {
-        self.suppress_until_release |= self.gesture.is_some();
+        self.suppress_until_release |= self.gesture.is_some() || self.creation_press.is_some();
         self.gesture = None;
+        self.creation_press = None;
         self.connector = None;
     }
 
     pub(super) fn is_active(&self) -> bool {
-        self.gesture.is_some() || self.suppress_until_release
+        self.gesture.is_some() || self.creation_press.is_some() || self.suppress_until_release
     }
 
     pub(super) fn has_control_focus(&self) -> bool {
         self.control_focused
+    }
+
+    pub(super) fn touch_canceled(&mut self, restart: bool) {
+        self.cancel_gesture();
+        self.suppress_until_release = !restart;
+        self.resume_after_touch_cancel = !restart;
+    }
+
+    pub(super) fn resume_after_touch_cancel(&mut self, ctx: &egui::Context) {
+        if self.resume_after_touch_cancel
+            && ctx.input(|input| {
+                (input.pointer.primary_pressed()
+                    || input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Touch {
+                                phase: egui::TouchPhase::Start,
+                                ..
+                            }
+                        )
+                    }))
+                    && input.multi_touch().is_none()
+                    && !input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Touch {
+                                phase: egui::TouchPhase::Cancel,
+                                ..
+                            }
+                        )
+                    })
+            })
+        {
+            self.suppress_until_release = false;
+            self.resume_after_touch_cancel = false;
+        }
     }
 }
 
@@ -103,22 +142,33 @@ struct PendingConnector {
     point: Vec2,
     state: u64,
     sheet: usize,
-    sheet_identity: usize,
+    sheet_identity: SheetIdentity,
 }
 
 struct Gesture {
     kind: GestureKind,
     origin: Vec2,
+    guard: GestureGuard,
+    moved: bool,
+    canceled: bool,
+}
+
+struct GestureGuard {
     state: u64,
     sheet: usize,
-    sheet_identity: usize,
+    sheet_identity: SheetIdentity,
     camera: (EVec2, f32, Rect),
     topics: Vec<TopicId>,
     objects: Vec<CanvasObjectId>,
     selected_object: Option<ObjectSelection>,
     tool: BoardTool,
+}
+
+struct CreationPress {
+    guard: GestureGuard,
+    screen_origin: Pos2,
+    touch: Option<(egui::TouchDeviceId, egui::TouchId)>,
     moved: bool,
-    canceled: bool,
 }
 
 enum GestureKind {
@@ -160,7 +210,7 @@ pub(super) struct LabelEdit {
     text: String,
     original: String,
     sheet: usize,
-    sheet_identity: usize,
+    sheet_identity: SheetIdentity,
     focus_requested: bool,
     ime_composing: bool,
 }
@@ -572,27 +622,155 @@ fn is_board_topic(sheet: &Sheet, view: &MapView, id: TopicId) -> bool {
             || !view.board_selection.is_empty())
 }
 
-// A document can be replaced with another at the same revision and sheet index.
-// The sheet lives in the workbook's allocation even if the outer view moves.
-fn sheet_identity(doc: &Document) -> usize {
-    std::ptr::from_ref(doc.sheet()) as usize
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SheetIdentity {
+    document: u64,
+    allocation: usize,
+}
+
+fn sheet_identity(doc: &Document) -> SheetIdentity {
+    SheetIdentity {
+        document: doc.instance_id(),
+        allocation: std::ptr::from_ref(doc.sheet()) as usize,
+    }
 }
 
 fn gesture(doc: &Document, view: &MapView, kind: GestureKind, origin: Vec2) -> Gesture {
     Gesture {
         kind,
         origin,
-        state: doc.state_id(),
-        sheet: doc.active_index(),
-        sheet_identity: sheet_identity(doc),
-        camera: (view.offset, view.zoom, view.canvas_rect),
-        topics: view.selection.clone(),
-        objects: view.board_selection.clone(),
-        selected_object: view.selected_object,
-        tool: view.board_tool,
+        guard: GestureGuard::new(doc, view),
         moved: false,
         canceled: false,
     }
+}
+
+impl GestureGuard {
+    fn new(doc: &Document, view: &MapView) -> Self {
+        Self {
+            state: doc.state_id(),
+            sheet: doc.active_index(),
+            sheet_identity: sheet_identity(doc),
+            camera: (view.offset, view.zoom, view.canvas_rect),
+            topics: view.selection.clone(),
+            objects: view.board_selection.clone(),
+            selected_object: view.selected_object,
+            tool: view.board_tool,
+        }
+    }
+
+    fn changed(&self, doc: &Document, view: &MapView) -> bool {
+        self.state != doc.state_id()
+            || self.sheet != doc.active_index()
+            || self.sheet_identity != sheet_identity(doc)
+            || self.camera != (view.offset, view.zoom, view.canvas_rect)
+            || self.topics != view.selection
+            || self.objects != view.board_selection
+            || self.selected_object != view.selected_object
+            || self.tool != view.board_tool
+    }
+}
+
+fn canvas_point_unobscured(ui: &Ui, response: &Response, point: Pos2) -> bool {
+    response.interact_rect.contains(point)
+        && ui.clip_rect().contains(point)
+        && ui.ctx().layer_id_at(point) == Some(response.layer_id)
+        && !ui
+            .ctx()
+            .interactive_rects_last_pass()
+            .into_iter()
+            .any(|rect| rect != response.interact_rect && rect.contains(point))
+}
+
+fn creation_input(
+    ctx: &egui::Context,
+    press: &mut CreationPress,
+    started_here: bool,
+    event_offset: usize,
+) -> (Option<Pos2>, bool) {
+    let threshold = ctx.options(|options| options.input_options.max_click_dist);
+    ctx.input(|input| {
+        let mut started = !started_here;
+        let mut duplicate_touch_press = false;
+        let mut released = None;
+        let mut touch_ended = false;
+        let mut canceled = !input.focused || input.key_pressed(Key::Escape);
+        let events = &input.events[event_offset..];
+        let matching_touch_start = events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Touch {
+                    device_id,
+                    id,
+                    phase: egui::TouchPhase::Start,
+                    pos,
+                    ..
+                } if pos.distance(press.screen_origin) <= 1.0
+                    && press.touch.is_none_or(|touch| touch == (*device_id, *id))
+            )
+        });
+        for event in events {
+            match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } if !started && released.is_none() && *pos == press.screen_origin => {
+                    started = true;
+                }
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } if started
+                    && released.is_none()
+                    && !duplicate_touch_press
+                    && matching_touch_start
+                    && pos.distance(press.screen_origin) <= 1.0 =>
+                {
+                    // Some browsers send both pointerdown and touchstart for one contact.
+                    duplicate_touch_press = true;
+                }
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } if started && released.is_none() => {
+                    press.moved |= press.screen_origin.distance(*pos) > threshold;
+                    released = Some(*pos);
+                }
+                egui::Event::PointerMoved(pos) if started && released.is_none() => {
+                    press.moved |= press.screen_origin.distance(*pos) > threshold;
+                }
+                egui::Event::PointerGone if started && released.is_none() => canceled = true,
+                egui::Event::PointerButton { .. } | egui::Event::WindowFocused(false) => {
+                    canceled = true;
+                }
+                egui::Event::Touch {
+                    device_id,
+                    id,
+                    phase,
+                    ..
+                } => {
+                    let touch = (*device_id, *id);
+                    if press.touch.is_some_and(|previous| previous != touch) {
+                        canceled = true;
+                    } else {
+                        press.touch = Some(touch);
+                    }
+                    canceled |= *phase == egui::TouchPhase::Cancel;
+                    touch_ended |= *phase == egui::TouchPhase::End;
+                }
+                _ => {}
+            }
+        }
+        canceled |=
+            !started || (released.is_none() && (!input.pointer.primary_down() || touch_ended));
+        (released, canceled)
+    })
 }
 
 fn create(
@@ -1088,6 +1266,7 @@ fn interact_controls(
     blocked
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_gesture(
     ui: &Ui,
     doc: &mut Document,
@@ -1095,33 +1274,37 @@ fn update_gesture(
     scene: &Scene,
     pointer: Option<Pos2>,
     enabled: bool,
+    event_offset: usize,
     out: &mut CanvasOutput,
 ) -> bool {
     let Some(mut drag) = view.board_input.gesture.take() else {
         return false;
     };
     let ctx = ui.ctx();
-    let canceled_event = ctx.input(|input| {
-        input.events.iter().any(|event| {
-            matches!(
-                event,
-                egui::Event::PointerGone
-                    | egui::Event::WindowFocused(false)
-                    | egui::Event::Touch {
-                        phase: egui::TouchPhase::Cancel,
-                        ..
-                    }
-            )
-        })
+    let (release, canceled_event) = ctx.input(|input| {
+        let mut release = None;
+        let mut canceled = false;
+        for event in &input.events[event_offset..] {
+            match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } => release = Some(*pos),
+                egui::Event::PointerGone if release.is_none() => canceled = true,
+                egui::Event::WindowFocused(false)
+                | egui::Event::Touch {
+                    phase: egui::TouchPhase::Cancel,
+                    ..
+                } => canceled = true,
+                _ => {}
+            }
+        }
+        (release, canceled)
     });
-    let changed = drag.state != doc.state_id()
-        || drag.sheet != doc.active_index()
-        || drag.sheet_identity != sheet_identity(doc)
-        || drag.camera != (view.offset, view.zoom, view.canvas_rect)
-        || drag.topics != view.selection
-        || drag.objects != view.board_selection
-        || drag.selected_object != view.selected_object
-        || drag.tool != view.board_tool;
+    let pointer = release.or(pointer);
+    let changed = drag.guard.changed(doc, view);
     drag.canceled |= !enabled
         || !ui.is_enabled()
         || egui::Popup::is_any_open(ctx)
@@ -1167,7 +1350,7 @@ fn update_gesture(
             GestureKind::Endpoint { point: p, .. } => *p = current,
         }
     }
-    if ctx.input(|input| input.pointer.primary_released()) {
+    if release.is_some() {
         if !drag.canceled
             && drag.moved
             && pointer.is_some_and(|point| view.canvas_rect.contains(point))
@@ -1275,6 +1458,7 @@ pub(super) fn interact(
     response: &Response,
     pointer: Option<Pos2>,
     enabled: bool,
+    event_offset: usize,
     out: &mut CanvasOutput,
 ) -> bool {
     view.observe_board_rotation_selection(doc);
@@ -1293,15 +1477,17 @@ pub(super) fn interact(
     if view.board_input.suppress_until_release {
         if !ctx.input(|input| input.pointer.primary_down()) {
             view.board_input.suppress_until_release = false;
+            view.board_input.resume_after_touch_cancel = false;
         }
         return true;
     }
-    if !enabled && view.board_input.gesture.is_some() {
+    if !enabled && (view.board_input.gesture.is_some() || view.board_input.creation_press.is_some())
+    {
         view.board_input.cancel_gesture();
         return true;
     }
     let over_controls = interact_controls(ui, doc, view, layout, scene, enabled, out);
-    if update_gesture(ui, doc, view, scene, pointer, enabled, out) {
+    if update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out) {
         return true;
     }
     if !enabled {
@@ -1313,6 +1499,9 @@ pub(super) fn interact(
         && (response.dragged_by(PointerButton::Middle)
             || response.dragged_by(PointerButton::Secondary))
     {
+        if view.board_input.creation_press.is_some() {
+            view.board_input.cancel_gesture();
+        }
         view.drag = Drag::Pan;
         return true;
     }
@@ -1323,25 +1512,90 @@ pub(super) fn interact(
         return true;
     }
     if tool != BoardTool::Select {
-        if response.drag_started() && prepare_edit(doc, view, out) {
+        let mut started_here = false;
+        let pressed_origin = ctx.input(|input| {
+            input.events[event_offset..]
+                .iter()
+                .find_map(|event| match event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        ..
+                    } => Some(*pos),
+                    _ => None,
+                })
+        });
+        if view.board_input.creation_press.is_none()
+            && let Some(origin) = pressed_origin
+            && canvas_point_unobscured(ui, response, origin)
+        {
+            view.board_input.creation_press = Some(CreationPress {
+                guard: GestureGuard::new(doc, view),
+                screen_origin: origin,
+                touch: None,
+                moved: false,
+            });
+            started_here = true;
+        }
+        if view
+            .board_input
+            .creation_press
+            .as_ref()
+            .is_some_and(|press| press.guard.changed(doc, view))
+        {
+            view.board_input.cancel_gesture();
+            out.error = Some(EditError::Invalid(
+                "board gesture canceled because the document, camera, tool or selection changed"
+                    .into(),
+            ));
+            return true;
+        }
+        let (released, canceled) = view
+            .board_input
+            .creation_press
+            .as_mut()
+            .map_or((None, false), |press| {
+                creation_input(&ctx, press, started_here, event_offset)
+            });
+        if canceled {
+            view.board_input.cancel_gesture();
+            return true;
+        }
+        let released_drag = released.is_some()
+            && view
+                .board_input
+                .creation_press
+                .as_ref()
+                .is_some_and(|press| press.moved);
+        if response.drag_started() || released_drag {
+            let press = view.board_input.creation_press.take();
             let origin = ctx
                 .input(|input| input.pointer.press_origin())
-                .unwrap_or_default();
-            let start = view.xf().sheet(origin);
-            let from = view
-                .board_input
-                .connector
-                .as_ref()
-                .map_or_else(|| endpoint_at(doc.sheet(), scene, start, None), |p| p.from);
-            let kind = GestureKind::Create {
-                tool,
-                start,
-                current: start,
-                from,
-            };
-            view.board_input.gesture = Some(gesture(doc, view, kind, start));
-            update_gesture(ui, doc, view, scene, pointer, enabled, out);
+                .or_else(|| press.as_ref().map(|press| press.screen_origin));
+            if let Some(origin) = origin
+                && canvas_point_unobscured(ui, response, origin)
+                && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
+                && prepare_edit(doc, view, out)
+            {
+                let start = view.xf().sheet(origin);
+                let from = view
+                    .board_input
+                    .connector
+                    .as_ref()
+                    .map_or_else(|| endpoint_at(doc.sheet(), scene, start, None), |p| p.from);
+                let kind = GestureKind::Create {
+                    tool,
+                    start,
+                    current: start,
+                    from,
+                };
+                view.board_input.gesture = Some(gesture(doc, view, kind, start));
+                update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
+            }
         } else if response.clicked()
+            && (pressed_origin.is_none() || view.board_input.creation_press.is_some())
+            && released.is_none_or(|point| canvas_point_unobscured(ui, response, point))
             && let Some(point) = response.interact_pointer_pos()
             && prepare_edit(doc, view, out)
         {
@@ -1372,6 +1626,9 @@ pub(super) fn interact(
             if let Err(error) = result {
                 out.error = Some(error);
             }
+        }
+        if released.is_some() {
+            view.board_input.creation_press = None;
         }
         return true;
     }
@@ -1416,7 +1673,7 @@ pub(super) fn interact(
                 duplicate: modifiers.alt,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, out);
+            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
             return true;
         }
         // Frames use the legacy zone hit test. Capture only board-frame
@@ -1445,7 +1702,7 @@ pub(super) fn interact(
                 duplicate: true,
             };
             view.board_input.gesture = Some(gesture(doc, view, kind, point));
-            update_gesture(ui, doc, view, scene, pointer, enabled, out);
+            update_gesture(ui, doc, view, scene, pointer, enabled, event_offset, out);
             return true;
         }
     }
@@ -2212,6 +2469,35 @@ pub(super) fn show_label_editor(
         if !out.minimap_blocks_keyboard {
             ui.memory_mut(|memory| memory.request_focus(edit_id));
         }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn creation_and_label_guards_reject_a_reused_sheet_address() {
+        let mut workbook = thinoda_core::Workbook::default();
+        let object = workbook
+            .active_mut()
+            .add_canvas_object(CanvasObject::shape(
+                thinoda_core::ShapeKind::Rectangle,
+                thinoda_core::Rect::from_center_size(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+            ))
+            .unwrap();
+        let original = Document::new(workbook);
+        let replacement = original.clone();
+        let replacement_address = sheet_identity(&replacement).allocation;
+        let mut view = MapView::default();
+        let mut guard = GestureGuard::new(&original, &view);
+        guard.sheet_identity.allocation = replacement_address;
+        assert!(guard.changed(&replacement, &view));
+
+        assert!(begin_label(&mut view, &original, object));
+        let draft = view.board_input.label.as_mut().unwrap();
+        draft.sheet_identity.allocation = replacement_address;
+        assert!(validate_label_source(draft, &replacement).is_err());
     }
 }
 

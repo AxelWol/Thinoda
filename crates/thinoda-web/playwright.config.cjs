@@ -6,6 +6,7 @@ module.exports = defineConfig({
     testDir: "./tests",
     testMatch: [
         "board-export.browser.spec.ts",
+        "board-pptx.browser.spec.ts",
         "board-workflows.browser.spec.ts",
         "image-card.browser.spec.ts",
         "language.browser.spec.ts",

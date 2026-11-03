@@ -1,12 +1,12 @@
 /**
  * Production-browser coverage for exporting a mixed rootless board.
  * The document is created in the test's isolated browser context, and the
- * downloaded SVG and PDF are inspected rather than inferred from the canvas.
+ * downloaded SVG, PNG and PDF are inspected rather than inferred from the canvas.
  */
 import { chromium, expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
-import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { command, drag, frames, saveAs, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -97,7 +97,7 @@ async function startSvgPreflight(page: Page) {
     await expect(page.locator("input[type='text']")).not.toBeFocused();
 }
 
-async function confirmSvgPreflight(page: Page) {
+async function confirmVisualPreflight(page: Page) {
     // egui paints this dialog into the canvas, without DOM button nodes.
     // At the fixed viewport above, Confirm is the right-hand action in the
     // centered board-loss dialog; require its interactive cursor before clicking.
@@ -109,7 +109,7 @@ async function confirmSvgPreflight(page: Page) {
     await frames(page);
 }
 
-test("mixed rootless board SVG export requires consent and downloads its objects", async ({ page }) => {
+test("mixed rootless board SVG and PNG exports require consent and preserve their objects", async ({ page }, testInfo) => {
     await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await page.locator("#thinoda_canvas").focus();
@@ -141,11 +141,7 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     await frames(page);
 
     await command(page, "Connector tool");
-    await page.mouse.move(260, 400);
-    await page.mouse.down();
-    await page.mouse.move(610, 400, { steps: 8 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [260, 400], [610, 400]);
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("F2");
     await frames(page);
@@ -155,17 +151,9 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     await frames(page);
 
     await command(page, "Frame tool");
-    await page.mouse.move(300, 750);
-    await page.mouse.down();
-    await page.mouse.move(850, 1000, { steps: 8 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [300, 750], [850, 1000]);
     await command(page, "Pen");
-    await page.mouse.move(450, 850);
-    await page.mouse.down();
-    await page.mouse.move(600, 900, { steps: 12 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [450, 850], [600, 900], 12);
     // SVG preserves the objects but omits editing-grid settings, exercising the
     // board export preflight on an otherwise visually faithful export.
     await command(page, "Line grid");
@@ -215,7 +203,7 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     // Consent followed by canceling the filename prompt also must not download.
     await setExportPrompt(page, null);
     await startSvgPreflight(page);
-    await confirmSvgPreflight(page);
+    await confirmVisualPreflight(page);
     await expect.poll(async () => (await exportPrompts(page)).length).toBe(1);
     expect(await exportPrompts(page)).toEqual([{
         message: "File name",
@@ -227,7 +215,7 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     await setExportPrompt(page, "f6-rootless-board.svg");
     await startSvgPreflight(page);
     const pending = page.waitForEvent("download", { timeout: 30_000 });
-    await confirmSvgPreflight(page);
+    await confirmVisualPreflight(page);
     const download = await pending;
     expect(download.suggestedFilename()).toBe("f6-rootless-board.svg");
     expect(await exportPrompts(page)).toHaveLength(1);
@@ -361,6 +349,31 @@ test("mixed rootless board SVG export requires consent and downloads its objects
     expect(raster.height).toBeGreaterThan(0);
     expect(raster.styledPixels).toBeGreaterThan(1_000);
 
+    await setExportPrompt(page, "f6-rootless-board.png");
+    await command(page, "PNG");
+    await page.waitForTimeout(300);
+    expect(await exportPrompts(page)).toEqual([]);
+    const pendingPng = page.waitForEvent("download", { timeout: 30_000 });
+    await confirmVisualPreflight(page);
+    const pngDownload = await pendingPng;
+    expect(pngDownload.suggestedFilename()).toBe("f6-rootless-board.png");
+    expect(await exportPrompts(page)).toEqual([{
+        message: "File name",
+        suggested: expect.stringMatching(/\.png$/i),
+    }]);
+    const pngPath = testInfo.outputPath("downloaded-board.png");
+    await pngDownload.saveAs(pngPath);
+    const png = await readFile(pngPath);
+    await testInfo.attach("downloaded PNG", { path: pngPath, contentType: "image/png" });
+    expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const rendered = await inspectRasterScene(page, png, frame.frame, ink.kind.ink!.points, true);
+    expect(rendered.warnings).toHaveLength(2);
+    expect(rendered.frame.count).toBeGreaterThan(500);
+    expect(rendered.labelPixels.every((count) => count > 10)).toBe(true);
+    expect(rendered.connectorPixels).toBeGreaterThan(30);
+    expect(rendered.connectorHits).toEqual([true, true]);
+    expect(rendered.inkHits).toEqual([true, true, true]);
+
     expect(sheetFrom(await saveAs(page, "f6-after-export.thinoda"))).toEqual(baseline);
 });
 
@@ -423,14 +436,14 @@ function inspectVectorPdf(bytes: Buffer) {
     return { width, height };
 }
 
-async function renderedPdfPixels(
+async function inspectRasterScene(
     page: Page,
-    viewer: Page,
+    screenshot: Buffer,
     frame: BoardRect,
     points: { x: number; y: number }[],
+    pngExport = false,
 ) {
-    const screenshot = await viewer.screenshot();
-    return page.evaluate(async ({ screenshot, frame, points }) => {
+    return page.evaluate(async ({ screenshot, frame, points, pngExport }) => {
         const image = new Image();
         image.src = `data:image/png;base64,${screenshot}`;
         await image.decode();
@@ -438,7 +451,7 @@ async function renderedPdfPixels(
         canvas.width = image.naturalWidth;
         canvas.height = image.naturalHeight;
         const context = canvas.getContext("2d");
-        if (!context) throw new Error("Cannot inspect the rendered PDF");
+        if (!context) throw new Error("Cannot inspect the rendered scene");
         context.drawImage(image, 0, 0);
         const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
         const emptyBounds = () => ({
@@ -459,7 +472,10 @@ async function renderedPdfPixels(
                 const i = (y * canvas.width + x) * 4;
                 const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
                 if (r === 255 && g === 255 && b === 255) include(paper, x, y);
-                if (r === 242 && g === 244 && b === 246) include(framePixels, x, y);
+                // PNG compositing can round green one unit above the PDF viewer.
+                if (r === 242 && b === 246 && (g === 244 || (pngExport && g === 245))) {
+                    include(framePixels, x, y);
+                }
                 if (r === 255 && g === 237 && b === 213) include(columns[x], x, y);
             }
         }
@@ -536,7 +552,16 @@ async function renderedPdfPixels(
             return false;
         });
         return { paper, frame: framePixels, warnings, labelPixels, connectorPixels, connectorHits, inkHits };
-    }, { screenshot: screenshot.toString("base64"), frame, points });
+    }, { screenshot: screenshot.toString("base64"), frame, points, pngExport });
+}
+
+async function renderedPdfPixels(
+    page: Page,
+    viewer: Page,
+    frame: BoardRect,
+    points: { x: number; y: number }[],
+) {
+    return inspectRasterScene(page, await viewer.screenshot(), frame, points);
 }
 
 test.describe("PDF export", () => {
@@ -572,11 +597,7 @@ test.describe("PDF export", () => {
         await frames(page);
 
         await command(page, "Connector tool");
-        await page.mouse.move(260, 400);
-        await page.mouse.down();
-        await page.mouse.move(610, 400, { steps: 8 });
-        await page.mouse.up();
-        await frames(page);
+        await drag(page, [260, 400], [610, 400]);
         await page.locator("#thinoda_canvas").focus();
         await page.keyboard.press("F2");
         await frames(page);
@@ -586,17 +607,9 @@ test.describe("PDF export", () => {
         await frames(page);
 
         await command(page, "Frame tool");
-        await page.mouse.move(300, 750);
-        await page.mouse.down();
-        await page.mouse.move(850, 1000, { steps: 8 });
-        await page.mouse.up();
-        await frames(page);
+        await drag(page, [300, 750], [850, 1000]);
         await command(page, "Pen");
-        await page.mouse.move(450, 850);
-        await page.mouse.down();
-        await page.mouse.move(600, 900, { steps: 12 });
-        await page.mouse.up();
-        await frames(page);
+        await drag(page, [450, 850], [600, 900], 12);
         await command(page, "Line grid");
 
         const baseline = sheetFrom(await saveAs(page, "f6-pdf-before.thinoda"));
@@ -630,7 +643,7 @@ test.describe("PDF export", () => {
         await page.waitForTimeout(300);
         expect(await exportPrompts(page)).toEqual([]);
         const pending = page.waitForEvent("download", { timeout: 30_000 });
-        await confirmSvgPreflight(page); // PDF uses the same grid-loss dialog.
+        await confirmVisualPreflight(page); // PDF uses the same grid-loss dialog.
         const download = await pending;
         expect(download.suggestedFilename()).toBe("f6-rootless-board.pdf");
         expect(await exportPrompts(page)).toEqual([{
@@ -663,7 +676,7 @@ test.describe("PDF export", () => {
         // loopback URL, without starting another server or adding a dependency.
         const renderer = await chromium.launch({
             channel: "chromium",
-            executablePath: process.env.THINODA_BROWSER_EXECUTABLE || undefined,
+            executablePath: process.env.THINODA_PDF_BROWSER_EXECUTABLE || undefined,
             headless: true,
             args: ["--enable-unsafe-swiftshader"],
         });

@@ -11,7 +11,13 @@ use crate::{
     geometry::{Rect, Vec2},
     model::{Presentation, PresentationSource, Sheet, SlideFrame, SlideId, Workbook, ZoneId},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 const MAX_HISTORY: usize = 300;
 /// Approximate memory budget for retained undo and redo snapshots. Shared ink
@@ -256,9 +262,35 @@ pub fn approx_sheet_bytes(sheet: &Sheet) -> usize {
             * (size_of::<crate::schedule::LocalDate>() + size_of::<bool>() + 48)
 }
 
+#[derive(Debug)]
+struct DocumentInstance(u64);
+
+impl Default for DocumentInstance {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let mut current = NEXT.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .checked_add(1)
+                .expect("document instance identifiers exhausted");
+            match NEXT.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return Self(current),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+impl Clone for DocumentInstance {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 /// Editable document with undo history.
 #[derive(Debug, Clone)]
 pub struct Document {
+    instance: DocumentInstance,
     workbook: Workbook,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
@@ -278,6 +310,7 @@ impl Default for Document {
 impl Document {
     pub fn new(workbook: Workbook) -> Self {
         Self {
+            instance: DocumentInstance::default(),
             workbook,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -327,6 +360,7 @@ impl Document {
     /// Independent working copy with the same content state, but no copied undo history.
     pub fn preview(&self) -> Self {
         Self {
+            instance: DocumentInstance::default(),
             workbook: self.workbook.clone(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -358,6 +392,11 @@ impl Document {
     /// Opaque id of the current content state (changes on every edit/undo/redo).
     pub fn state_id(&self) -> u64 {
         self.state
+    }
+
+    /// Opaque identity of this in-memory document, distinct for clones and replacements.
+    pub fn instance_id(&self) -> u64 {
+        self.instance.0
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -1035,6 +1074,26 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_instance_identity_is_stable_and_distinct_for_copies_and_replacement() {
+        let mut document = Document::default();
+        let original = document.instance_id();
+        assert_ne!(document.clone().instance_id(), original);
+        assert_ne!(document.preview().instance_id(), original);
+        document.mark_dirty();
+        assert_eq!(document.instance_id(), original);
+        let mut external = Workbook::default();
+        external.metadata.creator = "External".into();
+        document.reload(external).unwrap();
+        assert_eq!(document.instance_id(), original);
+        assert!(document.undo());
+        assert_eq!(document.instance_id(), original);
+        assert!(document.redo());
+        assert_eq!(document.instance_id(), original);
+        document.replace(Workbook::default());
+        assert_ne!(document.instance_id(), original);
+    }
 
     #[test]
     fn reload_is_one_undo_step_including_metadata_and_restores_dirty_edits() {

@@ -3,7 +3,7 @@
  * The native archive is inspected rather than inferring edits from pixels.
  */
 import { expect, test } from "@playwright/test";
-import { command, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { command, drag, frames, saveAs, touchEvents, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -17,11 +17,12 @@ type BoardSheet = {
     root_mode: string;
     floating: number[];
     topics: Record<string, { id: number; title: string; card?: { kind: string; color?: string } }>;
-    zones: { keep_empty?: boolean }[];
+    zones: { keep_empty?: boolean; frame: { size: { x: number; y: number } } }[];
     canvas: {
         objects: {
             id: number;
             kind: { shape?: { shape: string; label?: string }; connector?: { from: unknown; to: unknown; label?: string }; ink?: { points: unknown[] } };
+            rect: { min: { x: number; y: number }; size: { x: number; y: number } };
             style: { fill?: string; text_color?: string };
         }[];
     };
@@ -64,11 +65,7 @@ test("rootless board objects, styling, connections and ink survive a native save
     await frames(page);
 
     await command(page, "Connector tool");
-    await page.mouse.move(260, 400);
-    await page.mouse.down();
-    await page.mouse.move(610, 400, { steps: 8 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [260, 400], [610, 400]);
     await page.locator("#thinoda_canvas").focus();
     await page.keyboard.press("F2");
     await frames(page);
@@ -78,18 +75,10 @@ test("rootless board objects, styling, connections and ink survive a native save
     await frames(page);
 
     await command(page, "Frame tool");
-    await page.mouse.move(300, 750);
-    await page.mouse.down();
-    await page.mouse.move(850, 1000, { steps: 8 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [300, 750], [850, 1000]);
 
     await command(page, "Pen");
-    await page.mouse.move(450, 850);
-    await page.mouse.down();
-    await page.mouse.move(600, 900, { steps: 12 });
-    await page.mouse.up();
-    await frames(page);
+    await drag(page, [450, 850], [600, 900], 12);
 
     const saved = sheetFrom(await saveAs(page, "browser-board.thinoda"));
     expect(saved.root_mode).toBe("hidden");
@@ -118,6 +107,221 @@ test("rootless board objects, styling, connections and ink survive a native save
     expect(undone.canvas.objects).toEqual(saved.canvas.objects.filter(object => !object.kind.ink));
     expect(undone.topics).toEqual(saved.topics);
     expect(undone.zones).toEqual(saved.zones);
+});
+
+test("keyboard creation, labeling and movement work on a rootless board", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    const canvas = page.locator("#thinoda_canvas");
+    const input = page.locator("input[type='text']");
+    await canvas.focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+
+    await command(page, "Sticky note");
+    await canvas.focus();
+    await page.keyboard.press("Enter");
+    await frames(page);
+    await expect(input).toBeFocused();
+    await input.pressSequentially("Keyboard idea");
+    await page.keyboard.press("Enter");
+    await frames(page);
+    await page.keyboard.press("Escape");
+    await frames(page);
+
+    await command(page, "Shape tool");
+    await canvas.focus();
+    await page.keyboard.press("Enter");
+    await frames(page);
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await page.keyboard.press("F2");
+    await frames(page);
+    await expect(input).toBeFocused();
+    await input.pressSequentially("Keyboard shape");
+    await page.keyboard.press("Enter");
+    await frames(page);
+
+    const baseline = sheetFrom(await saveAs(page, "keyboard-board.thinoda"));
+    expect(baseline.root_mode).toBe("hidden");
+    const sticky = Object.values(baseline.topics).find(topic => topic.card?.kind === "sticky");
+    const shape = baseline.canvas.objects.find(object => object.kind.shape);
+    expect(sticky?.title).toBe("Keyboard idea");
+    expect(shape?.kind.shape).toMatchObject({ shape: "rectangle", label: "Keyboard shape" });
+    if (!shape) throw new Error("Keyboard shape was not saved");
+
+    await canvas.focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await frames(page);
+    const moved = sheetFrom(await saveAs(page, "keyboard-board-moved.thinoda"));
+    const movedShape = moved.canvas.objects.find(object => object.id === shape.id);
+    expect(movedShape?.rect.min.x).toBeCloseTo(shape.rect.min.x + 10, 4);
+    expect(movedShape?.rect.min.y).toBeCloseTo(shape.rect.min.y, 4);
+
+    await canvas.focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "keyboard-board-undo.thinoda"))).toEqual(baseline);
+    await canvas.focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "keyboard-board-redo.thinoda"))).toEqual(moved);
+});
+
+test("a fast mouse drag commits its full geometry", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+    await command(page, "Shape tool");
+
+    await page.mouse.move(300, 500);
+    await page.mouse.down();
+    // Both events enter eframe before its pointerup handler runs the next UI frame.
+    await page.evaluate(() => {
+        document.dispatchEvent(new MouseEvent("mousemove", {
+            bubbles: true, clientX: 650, clientY: 700, buttons: 1,
+        }));
+        document.dispatchEvent(new PointerEvent("pointerup", {
+            bubbles: true, clientX: 650, clientY: 700, button: 0, pointerType: "mouse",
+        }));
+    });
+    await page.mouse.up();
+    await frames(page);
+
+    const sheet = sheetFrom(await saveAs(page, "fast-mouse-board.thinoda"));
+    const shapes = sheet.canvas?.objects.filter((object) => object.kind.shape) ?? [];
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0].rect.size.x).toBeGreaterThan(300);
+    expect(shapes[0].rect.size.y).toBeGreaterThan(150);
+});
+
+test.describe("touch gestures", () => {
+    test.use({ hasTouch: true });
+
+    test("a real emulated tap creates exactly one shape", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+        await command(page, "Shape tool");
+        await page.touchscreen.tap(600, 500);
+        await frames(page);
+
+        const sheet = sheetFrom(await saveAs(page, "touch-tap-board.thinoda"));
+        expect(sheet.root_mode).toBe("hidden");
+        expect(sheet.canvas?.objects.filter((object) => object.kind.shape) ?? []).toHaveLength(1);
+    });
+
+    test("touch releases and fully batched touch drags preserve their geometry", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+
+        await command(page, "Frame tool");
+        await touchEvents(page, [{ type: "touchstart", x: 300, y: 750 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchmove", x: 700, y: 950 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchend", x: 850, y: 1000 }]);
+        await frames(page);
+
+        await command(page, "Shape tool");
+        await touchEvents(page, [
+            { type: "touchstart", x: 300, y: 400 },
+            { type: "touchmove", x: 650, y: 600 },
+            { type: "touchend", x: 650, y: 600 },
+        ]);
+        await frames(page);
+
+        const sheet = sheetFrom(await saveAs(page, "touch-drag-board.thinoda"));
+        expect(sheet.root_mode).toBe("hidden");
+        const frame = sheet.zones?.find((zone) => zone.keep_empty);
+        const shape = sheet.canvas?.objects.find((object) => object.kind.shape);
+        expect(frame?.frame.size.x).toBeGreaterThan(500);
+        expect(frame?.frame.size.y).toBeGreaterThan(200);
+        expect(shape?.rect.size.x).toBeGreaterThan(300);
+        expect(shape?.rect.size.y).toBeGreaterThan(150);
+    });
+
+    test("a canceled touch does not block the next drag or create a ghost shape", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+        await command(page, "Shape tool");
+
+        await touchEvents(page, [{ type: "touchstart", x: 300, y: 400 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchmove", x: 600, y: 600 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchcancel", x: 600, y: 600 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchstart", x: 320, y: 450 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchmove", x: 680, y: 650 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchend", x: 680, y: 650 }]);
+        await frames(page);
+
+        const sheet = sheetFrom(await saveAs(page, "touch-cancel-board.thinoda"));
+        expect(sheet.root_mode).toBe("hidden");
+        const shapes = sheet.canvas?.objects.filter((object) => object.kind.shape) ?? [];
+        expect(shapes).toHaveLength(1);
+        expect(shapes[0].rect.size.x).toBeGreaterThan(300);
+        expect(shapes[0].rect.size.y).toBeGreaterThan(150);
+    });
+
+    test("a canceled touch and its replacement can arrive in one browser frame", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        await page.locator("#thinoda_canvas").focus();
+        await page.keyboard.press("Control+n");
+        await frames(page);
+        await command(page, "Hide central topic");
+        await page.keyboard.press("Escape");
+        await frames(page);
+        await command(page, "Shape tool");
+
+        await touchEvents(page, [{ type: "touchstart", x: 300, y: 400 }]);
+        await frames(page);
+        await touchEvents(page, [{ type: "touchmove", x: 600, y: 600 }]);
+        await frames(page);
+        await touchEvents(page, [
+            { type: "touchcancel", x: 600, y: 600 },
+            { type: "touchstart", x: 320, y: 450 },
+            { type: "touchmove", x: 680, y: 650 },
+            { type: "touchend", x: 680, y: 650 },
+        ]);
+        await frames(page);
+
+        const sheet = sheetFrom(await saveAs(page, "batched-touch-cancel-board.thinoda"));
+        expect(sheet.root_mode).toBe("hidden");
+        const shapes = sheet.canvas?.objects.filter((object) => object.kind.shape) ?? [];
+        expect(shapes).toHaveLength(1);
+        expect(shapes[0].rect.size.x).toBeGreaterThan(300);
+        expect(shapes[0].rect.size.y).toBeGreaterThan(150);
+    });
 });
 
 test("captured board viewport fits in the Pitch player", async ({ page }) => {

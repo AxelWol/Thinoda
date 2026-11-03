@@ -61,9 +61,14 @@ function bootstrapFixture({ initiallyMissing = false } = {}) {
     };
     const window = {
         WebAssembly,
+        location: { href: "https://example.org/Thinoda/?keep=1#section" },
+        sessionStorage: {
+            values: new Map(),
+            setItem(key, value) { this.values.set(key, value); },
+        },
         addEventListener(name, callback) { listeners[name] = callback; },
     };
-    vm.runInNewContext(source, { window, document });
+    vm.runInNewContext(source, { window, document, URL });
     return {
         window, listeners, loading,
         mount() {
@@ -92,13 +97,23 @@ test("bootstrap failures expose an accessible reload without masking unrelated e
         assert.equal(fixture.loading.attributes["aria-live"], "assertive");
         assert.equal(fixture.loading.children[0].textContent, "Thinoda could not load");
         assert.equal(fixture.loading.children[2].textContent, "Reload Thinoda");
-        assert.equal(fixture.loading.children[2].href, "");
+        const retry = new URL(fixture.loading.children[2].href);
+        assert.equal(retry.searchParams.get("keep"), "1");
+        assert.ok(retry.searchParams.get("__thinoda_retry"));
+        assert.equal(retry.hash, "#section");
+        assert.equal(fixture.window.sessionStorage.values.get("thinoda-bootstrap-retry"),
+            retry.searchParams.get("__thinoda_retry"));
     }
 
     const started = bootstrapFixture();
     started.listeners.TrunkApplicationStarted();
     started.window.thinodaBootstrapFailed();
     assert.equal(started.loading.className, "");
+
+    const blockedStorage = bootstrapFixture();
+    blockedStorage.window.sessionStorage.setItem = () => { throw new Error("storage blocked"); };
+    blockedStorage.window.thinodaBootstrapFailed();
+    assert.ok(new URL(blockedStorage.loading.children[2].href).searchParams.get("__thinoda_retry"));
 
     const early = bootstrapFixture({ initiallyMissing: true });
     early.listeners.error({ target: { id: "thinoda-app-bootstrap" } });
@@ -107,11 +122,90 @@ test("bootstrap failures expose an accessible reload without masking unrelated e
     assert.equal(early.loading.attributes.role, "alert");
 
     const trunk = fs.readFileSync(path.join(root, "Trunk.toml"), "utf8");
-    assert.match(trunk, /import init, \* as bindings from '\{base\}\{js\}'/);
-    assert.match(trunk, /init\(\{ module_or_path: '\{base\}\{wasm\}' \}\)/);
+    assert.match(trunk, /new URL\('\{base\}\{js\}', document\.baseURI\)/);
+    assert.match(trunk, /script\.integrity = preload\.integrity/);
+    assert.match(trunk, /import\(moduleUrl\.href\)/);
+    assert.match(trunk, /bindings\.default\(\{ module_or_path: '\{base\}\{wasm\}' \}\)/);
     assert.match(trunk, /window\.wasmBindings = bindings/);
     assert.match(trunk, /TrunkApplicationStarted/);
     assert.match(trunk, /catch \(error\)[\s\S]*thinodaBootstrapFailed/);
+});
+
+test("the bootstrap verifies the app module on initial and retry loads", async () => {
+    const trunk = fs.readFileSync(path.join(root, "Trunk.toml"), "utf8");
+    const source = trunk.match(/pattern_script = '''\s*<script[^>]*>([\s\S]*?)<\/script>\s*'''/)?.[1];
+    assert.ok(source, "Trunk bootstrap pattern is present");
+    const executable = source.replace("await import(moduleUrl.href)", "await loadBindings(moduleUrl.href)");
+    assert.notEqual(executable, source, "the bindings import is present");
+
+    async function run({ retry = false, integrity = "sha384-example", failScript = false } = {}) {
+        const href = `https://example.org/Thinoda/?keep=1${retry ? "&__thinoda_retry=again" : ""}#section`;
+        const moduleHref = new URL("{base}{js}", href).href;
+        const scripts = [];
+        const imports = [];
+        const events = [];
+        let failed = false;
+        let replacedUrl;
+        const bindings = { default: async () => "wasm" };
+        const document = {
+            baseURI: href,
+            querySelectorAll: () => [{ href: moduleHref, integrity, crossOrigin: "anonymous" }],
+            createElement: tag => {
+                assert.equal(tag, "script");
+                return {};
+            },
+            head: {
+                append(script) {
+                    scripts.push(script);
+                    if (failScript) script.onerror();
+                    else script.onload();
+                },
+            },
+        };
+        const window = {
+            location: { href },
+            sessionStorage: { getItem: () => null, removeItem: () => {} },
+            history: { state: null, replaceState: (_, __, value) => { replacedUrl = value; } },
+            thinodaBootstrapFailed: () => { failed = true; },
+        };
+        const loadBindings = async url => {
+            imports.push(url);
+            return bindings;
+        };
+        await vm.runInNewContext(`(async () => { ${executable} })()`, {
+            URL, window, document, loadBindings,
+            console: { warn() {}, error() {} },
+            CustomEvent: class { constructor(type) { this.type = type; } },
+            dispatchEvent: event => { events.push(event.type); },
+        });
+        return { scripts, imports, events, failed, replacedUrl, bindings: window.wasmBindings };
+    }
+
+    for (const retry of [false, true]) {
+        const result = await run({ retry });
+        assert.equal(result.failed, false);
+        assert.equal(result.scripts.length, 1);
+        assert.equal(result.scripts[0].type, "module");
+        assert.equal(result.scripts[0].integrity, "sha384-example");
+        assert.equal(result.scripts[0].crossOrigin, "anonymous");
+        assert.equal(result.imports.length, 1);
+        assert.equal(result.imports[0], result.scripts[0].src);
+        assert.equal(new URL(result.imports[0]).searchParams.has("__thinoda_retry"), retry);
+        assert.deepEqual(result.events, ["TrunkApplicationStarted"]);
+        assert.ok(result.bindings);
+        if (retry) {
+            const cleaned = new URL(result.replacedUrl);
+            assert.equal(cleaned.searchParams.get("keep"), "1");
+            assert.equal(cleaned.searchParams.has("__thinoda_retry"), false);
+            assert.equal(cleaned.hash, "#section");
+        }
+    }
+    for (const options of [{ integrity: "" }, { failScript: true }]) {
+        const result = await run(options);
+        assert.equal(result.failed, true);
+        assert.equal(result.imports.length, 0);
+        assert.equal(result.events.length, 0);
+    }
 });
 
 test("the bootstrap signal settles only on Wasm initialization or a scoped failure", async () => {
@@ -320,7 +414,7 @@ test("offline worker caches only the versioned shell and respects scope and upda
     let cachedRequests = [];
     const matches = [];
     const source = fs.readFileSync(path.join(root, "sw.js"), "utf8")
-        .replace("__THINODA_FILES__", '["./index.html","./app.wasm","./app.js"]')
+        .replace("__THINODA_FILES__", '["./index.html","./app.wasm","./app.js","./thinoda-web-abcd.js"]')
         .replace("__THINODA_VERSION__", "0.18.0")
         .replace("__THINODA_REVISION__", "new");
     vm.runInNewContext(source, {
@@ -345,7 +439,7 @@ test("offline worker caches only the versioned shell and respects scope and upda
     let operation;
     listeners.install({ waitUntil(promise) { operation = promise; } });
     await operation;
-    assert.equal(cachedRequests.length, 3);
+    assert.equal(cachedRequests.length, 4);
     assert.ok(cachedRequests.every(request => request.cache === "reload"));
     listeners.activate({ waitUntil(promise) { operation = promise; } });
     await operation;
@@ -361,11 +455,16 @@ test("offline worker caches only the versioned shell and respects scope and upda
     assert.equal(await fetchShell(`${scope}?launch=1`, "navigate"), "cached shell");
     assert.equal(matches.at(-1), `${scope}index.html`);
     assert.equal(await fetchShell(`${scope}app.wasm`), "cached shell");
+    assert.equal(await fetchShell(`${scope}thinoda-web-abcd.js?__thinoda_retry=retry`), "cached shell");
+    assert.equal(matches.at(-1), `${scope}thinoda-web-abcd.js`);
     for (const [url, mode, method] of [
         ["https://ai.example/chat", "cors", "GET"],
         ["https://example.org/Other/app.js", "cors", "GET"],
         [`${scope}private.thinoda`, "cors", "GET"],
         [`${scope}app.js`, "cors", "POST"],
+        [`${scope}app.js?__thinoda_retry=retry`, "cors", "GET"],
+        [`${scope}thinoda-web-abcd.js?__thinoda_retry=retry&other=1`, "cors", "GET"],
+        [`${scope}thinoda-web-unlisted.js?__thinoda_retry=retry`, "cors", "GET"],
     ]) {
         assert.equal(await fetchShell(url, mode, method), undefined);
     }

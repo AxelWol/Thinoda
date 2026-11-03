@@ -353,7 +353,8 @@ performance gate; GPU, browser and physical-device measurements remain open.
 
 ### 5.5 Input devices
 
-- Mouse and touch drawing work everywhere. Pressure is **optional metadata**:
+- Mouse and touch are supported drawing inputs, but real-device and
+  cross-platform acceptance remain open. Pressure is **optional metadata**:
   egui 0.37 delivers `Touch.force` but no pen identity, tilt, eraser end or
   hover, so drawing must never depend on it.
 - Spike before promising pressure: Windows Ink, macOS tablet events, Linux
@@ -488,10 +489,11 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The candidate production bundle passed 35 headless Chromium cases,
-including mixed-board editing, SVG/PDF export, browser-language selection and
-browser recovery failures; eight focused startup/recovery checks and six
-language cases passed in each of WebKit and Firefox on Windows.
+open. The final production candidate passed 45 headless Chromium cases,
+including mixed-board editing, SVG/PNG/PDF/PowerPoint export, browser-language
+selection and browser recovery failures. Eleven focused startup, retry and
+offline checks passed in each of desktop WebKit and Firefox on Windows; an
+earlier build with identical Wasm also passed focused touch checks there.
 Cloud-provider code is merged upstream behind a default-off feature and stays
 disabled until publisher registrations are in place; see
 [CLOUD-STORAGE.md](CLOUD-STORAGE.md).
@@ -610,10 +612,10 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - The Pitch stage now fits its containing player rather than the height of the
   browser window. An automated production-browser check captures a rootless
   board containing both a sticky and a floating tree and verifies that both
-  appear within the player. A browser SVG regression verifies consent and
-  cancellation, the exported objects and an actual image decode. A PDF
-  regression checks downloaded vector commands, page framing and rendered
-  sticky, shape, connector, frame and ink while verifying the board is unchanged.
+  appear within the player. Browser SVG, PNG and PDF regressions inspect the
+  downloads after consent and verify rendered board content and source
+  preservation. A separate PowerPoint regression checks consent, cancellation,
+  the flattened viewport image, its board content and the unchanged source.
   These do not substitute for the remaining format, physical-device and
   cross-platform presentation acceptance.
 
@@ -628,6 +630,22 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   sticky, styled shape, labeled connector, frame and ink, then undoes the ink.
   The picker used by browser automation is not a real OS picker, and this
   workflow does not close screen-reader or physical-device acceptance.
+- Browser input can batch a canceled touch and a replacement contact into one
+  frame. Gesture routing now separates the canceled and replacement events,
+  preserves interrupted ink for retry or explicit discard, and keeps
+  multi-touch and in-progress label drafts protected. Focused canvas tests
+  cover the ordered events and duplicate touch/pointer reports; simulated
+  input is not physical-device acceptance.
+- Both clicks and drags retain the document, revision and camera guard captured
+  at pointer-down. A click is canceled rather than creating an object on a
+  different view or a replacement document with the same revision. Focused
+  regressions exercise both stale-click cases.
+- In-memory document identities distinguish new documents and clones even if a
+  sheet allocation is reused. Creation, shape/connector-label, pending
+  connector, rotation and ink ownership also retain their sheet checks; ordinary edits,
+  undo/redo and undoable reload keep the document identity. Deterministic
+  address-collision tests and repeated-replacement regressions cover the
+  distinction. These identifiers are runtime-only, not document data.
 
 ### Recovery safety checkpoint: critique
 

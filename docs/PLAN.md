@@ -9,6 +9,24 @@ future companion apps. Sources for the feature set: [XMIND-RESEARCH.md](XMIND-RE
 
 Legend: ✅ done · 🟡 partial · ⬜ open
 
+## Current Freeform and web-startup status
+
+The Freeform implementation, eight board templates, responsive toolbox and
+existing style controls are in place. The latest production candidate passed
+45 Chromium browser scenarios, including mixed-board editing, SVG/PNG/PDF and
+PowerPoint exports, startup, offline behavior and recovery failures. Focused
+startup checks also passed in desktop Firefox and WebKit, as did touch checks
+on an earlier build with identical Wasm. These are not physical-device or
+screen-reader acceptance.
+
+The remaining R14 gates are realistic ink performance, integrated
+accessibility and cross-platform/physical-device acceptance, and safe
+large-board browser recovery. First-start contention is reduced in a measured
+desktop comparison; warm-start and actual iPad measurements remain open.
+Integrated cloud providers remain **disabled by default** and paused until
+publisher registrations are complete. See the R14 status and
+[FREEFORM.md](FREEFORM.md) for phase-specific evidence and limits.
+
 ## Current next-value state (2026-10-30)
 
 **Ordered continuation and release handoff (2026-10-30):** equation vector
@@ -2980,17 +2998,18 @@ available. Recovery of the oversized unsaved board itself is not established.
 The published cross-platform CI run passed both Windows jobs but failed two
 macOS tests; local fixes require a fresh CI run before that gate can close.
 
-Automated production-browser checks now exercise a rootless board's saved
-sticky, shape, connector, frame and ink, plus ink undo and a captured Pitch
-viewport. It also checks SVG export consent, cancellation and output, and a
-downloaded vector PDF's framing and rendered objects without mutating the board.
-The locked browser suite passed 35 headless Chromium cases against the production
-candidate; eight focused startup and recovery checks and six browser-language
-cases also passed in both WebKit and Firefox on Windows. CI runs the Chromium
-suite before publishing. Same-frame
-text entry and touch-menu ownership have focused regressions. These checks do not
-replace real-device, screen-reader, remaining export-format or large-board
-recovery acceptance; see the checkpoint critiques in FREEFORM.
+Automated production-browser checks exercise a rootless board's saved sticky,
+shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
+inspect SVG, PNG, vector PDF and PowerPoint downloads without mutating the
+source board, including export cancellation and consent. The locked suite passed
+45 headless Chromium cases against the final production candidate; 11 focused
+startup, retry and offline checks passed in each of desktop WebKit and Firefox
+on Windows. Focused touch checks passed in both on an earlier build with
+identical Wasm. CI runs the Chromium suite before
+publishing. Same-frame text entry and canceled-touch ownership have focused
+regressions. These checks do not replace physical-device, screen-reader,
+additional export-format or large-board recovery acceptance; see the checkpoint
+critiques in FREEFORM.
 
 Desktop browser inspection found that the editor's canvas controls are absent
 from the browser accessibility tree and its transparent IME input is unlabeled.

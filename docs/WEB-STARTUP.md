@@ -108,11 +108,29 @@ The static loader now exposes the storage-preparation and app-start phases as
 an accessible status, announces the existing storage, startup and graphics
 error paths as alerts, and offers a reload link. A bootstrap guard also reports
 application-module and Wasm loading failures before Rust can render an error.
-Trunk's custom bootstrap pattern preserves its normal Wasm fetch, preloads,
-bindings and success event while catching initialization failures; a scoped
-listener handles failure to import the application module itself. Unrelated
-script errors are not classified as bootstrap failures. The brand mark gently
-pulses while pending; reduced-motion users get no animation.
+Trunk's custom bootstrap pattern dynamically imports its generated bindings and
+preserves the normal Wasm fetch, preloads and success event while catching
+initialization failures. Unrelated script errors are not classified as
+bootstrap failures. The brand mark gently pulses while pending; reduced-motion
+users get no animation.
+
+Some browsers can retain a failed module response across a normal reload.
+The error link therefore adds a fresh, temporary retry query, also remembered
+in session storage when available for an ordinary browser reload. On both the
+initial load and a retry, an explicit module script applies the generated
+preload's integrity metadata before the bindings are imported. This avoids
+relying on modulepreload enforcement alone: in a desktop WebKit probe,
+modulepreload did not prevent a modified initial module from executing.
+A successful bootstrap removes the temporary retry markers.
+If session storage is unavailable, the error link still supplies its own
+marker. The service worker maps only that retry query on a whitelisted app
+module to its cached, version-matched URL; it does not cache arbitrary
+queries, documents or other resources. An isolated desktop WebKit check against
+an actual HTTP 503 confirms both the retry link and a browser reload recover
+without losing unrelated URL parameters, fragments or existing local data.
+Actual tampered HTTP responses for the initial module were also rejected in
+desktop Chromium, Firefox and WebKit; a subsequent retry loaded the valid
+module without losing the same URL or local data.
 
 The loader now waits for both the browser renderer and the app's initial
 launch state before it disappears. Previously a shortcut sent immediately
@@ -225,13 +243,14 @@ bytes. This does not recover the oversized unsaved board or establish storage
 limits on other browsers. Device-level reload, quota, concurrent-tab and
 large-board acceptance therefore remain open.
 
-The current candidate production bundle passed 35 headless Chromium regressions,
+The current candidate production bundle passed 45 headless Chromium regressions,
 including startup and offline-shell failures, browser-language selection,
-mixed-board editing, SVG and PDF export, recovery lease loss, quota retry and
-the real-quota case. Desktop and 390-pixel screenshots showed the warning and
-dismiss control within the viewport. Eight focused startup and recovery checks
-and six language cases also passed in headless WebKit and Firefox on Windows.
-An earlier run had one failure when its loopback
+mixed-board editing, SVG/PNG/PDF/PowerPoint export, recovery lease loss, quota
+retry and the real-quota case. Eleven startup and offline checks passed in
+headless WebKit and Firefox on Windows. An earlier build with identical Wasm
+also passed focused touch and language checks in those engines; desktop and
+390-pixel screenshots showed the warning and dismiss control within the
+viewport. An earlier run had one failure when its loopback
 server refused a static-resource connection; that case passed three isolated
 repeats and the later full run passed on a dedicated server. These checks do not
 replace physical-device, screen-reader or cross-platform CI acceptance.

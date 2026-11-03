@@ -40,7 +40,15 @@
                 detail.textContent = "The app could not download or start. Check your connection and reload. "
                     + "Do not clear browser data; it may contain your documents.";
                 const retry = document.createElement("a");
-                retry.href = "";
+                const retryUrl = new URL(window.location.href);
+                const retryToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+                retryUrl.searchParams.set("__thinoda_retry", retryToken);
+                retry.href = retryUrl.href;
+                try {
+                    window.sessionStorage.setItem("thinoda-bootstrap-retry", retryToken);
+                } catch (error) {
+                    console.warn("Could not remember the bootstrap retry for a browser reload", error);
+                }
                 retry.textContent = "Reload Thinoda";
                 loading.append(heading, detail, retry);
             };

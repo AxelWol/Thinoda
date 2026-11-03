@@ -1454,22 +1454,36 @@ impl MapCanvas {
                 SceneHit::Object(_) => None,
             });
 
-        let (multi_touch, any_touches, touch_canceled) = ctx.input(|input| {
+        let previous_touch_navigation = view.touch_navigation.is_some();
+        let (multi_touch, any_touches, touch_canceled, restart_after_cancel) = ctx.input(|input| {
+            let canceled = input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Touch {
+                        phase: egui::TouchPhase::Cancel,
+                        ..
+                    }
+                )
+            });
             (
                 input.multi_touch(),
                 input.any_touches(),
-                input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Touch {
-                            phase: egui::TouchPhase::Cancel,
-                            ..
-                        }
-                    )
-                }),
+                canceled,
+                (canceled && input.focused)
+                    .then(|| {
+                        view.ink_controller
+                            .restart_after_touch_cancel(&input.events)
+                    })
+                    .flatten(),
             )
         });
-        if touch_canceled || (minimap_blocks_pointer && any_touches) {
+        let restart_after_cancel = restart_after_cancel.filter(|_| multi_touch.is_none());
+        if touch_canceled {
+            view.board_input
+                .touch_canceled(restart_after_cancel.is_some());
+            view.touch_navigation = restart_after_cancel.is_none().then_some(false);
+        }
+        if minimap_blocks_pointer && any_touches {
             view.touch_navigation = Some(false);
         }
         if let Some(touch) = multi_touch {
@@ -1481,6 +1495,9 @@ impl MapCanvas {
                     && !minimap_blocks_pointer
                     && !egui::Popup::is_any_open(&ctx)
             });
+        }
+        if !touch_canceled {
+            view.board_input.resume_after_touch_cancel(&ctx);
         }
         let touch_navigation = view.touch_navigation.is_some();
         out.context_menu_allowed = !touch_navigation && !minimap_blocks_pointer && ui.is_enabled();
@@ -1520,6 +1537,8 @@ impl MapCanvas {
                 minimap_pointer: minimap_blocks_pointer,
                 minimap_keyboard: minimap_blocks_keyboard,
                 touch_navigation,
+                previous_touch_navigation,
+                restart_after_cancel,
                 space,
             },
             &mut out,
@@ -1557,6 +1576,7 @@ impl MapCanvas {
                 && !ink_captured
                 && ui.is_enabled()
                 && !egui::Popup::is_any_open(&ctx),
+            restart_after_cancel.unwrap_or(0),
             &mut out,
         );
         board_pointer |= ink_tool || ink_captured;
@@ -1996,7 +2016,7 @@ impl MapCanvas {
         }
 
         // The synthesized pointer release can arrive after the final raw touch event.
-        if !any_touches && !ctx.input(|input| input.pointer.primary_down()) {
+        if !any_touches && (touch_canceled || !ctx.input(|input| input.pointer.primary_down())) {
             view.touch_navigation = None;
         }
 

@@ -165,6 +165,52 @@ for (const scenario of ["unavailable", "invalid"] as const) {
 
 test("an unavailable app module exposes a reload action", async ({ page }) => {
     const module = /\/thinoda-web(?:-[a-f0-9]+)?\.js(?:[?#].*)?$/;
+    await page.addInitScript(() => {
+        if (sessionStorage.getItem("thinoda-module-retry-seeded") !== "yes") {
+            localStorage.setItem("thinoda-module-retry-preserved", "yes");
+            sessionStorage.setItem("thinoda-module-retry-seeded", "yes");
+        }
+    });
+    await page.route(module, route => route.fulfill({
+        status: 503,
+        contentType: "text/javascript",
+        headers: { "Cache-Control": "no-store" },
+        body: "unavailable",
+    }));
+    const original = new URL(url);
+    original.searchParams.set("keep", "value");
+    original.hash = "section";
+    await page.goto(original.href, { waitUntil: "commit", timeout: 120_000 });
+    const loader = page.locator("#loading");
+    await expect(loader).toHaveAttribute("role", "alert", { timeout: 120_000 });
+    await expect(loader).toContainText("Thinoda could not load");
+    const reload = loader.getByRole("link", { name: "Reload Thinoda" });
+    const retryUrl = new URL((await reload.getAttribute("href")) ?? "");
+    expect(retryUrl.searchParams.get("__thinoda_retry")).toBeTruthy();
+    expect(retryUrl.searchParams.get("keep")).toBe("value");
+    expect(retryUrl.hash).toBe("#section");
+    await page.unroute(module);
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
+        reload.click(),
+    ]);
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    expect(new URL(page.url()).searchParams.has("__thinoda_retry")).toBe(false);
+    expect(new URL(page.url()).searchParams.get("keep")).toBe("value");
+    expect(new URL(page.url()).hash).toBe("#section");
+    expect(await page.evaluate(() => localStorage.getItem("thinoda-module-retry-preserved"))).toBe("yes");
+    expect(await page.evaluate(() => sessionStorage.getItem("thinoda-bootstrap-retry"))).toBeNull();
+    await openCommandPalette(page);
+});
+
+test("browser reload retries a failed app module without clearing data", async ({ page }) => {
+    const module = /\/thinoda-web(?:-[a-f0-9]+)?\.js(?:[?#].*)?$/;
+    await page.addInitScript(() => {
+        if (sessionStorage.getItem("thinoda-reload-seeded") !== "yes") {
+            localStorage.setItem("thinoda-reload-preserved", "yes");
+            sessionStorage.setItem("thinoda-reload-seeded", "yes");
+        }
+    });
     await page.route(module, route => route.fulfill({
         status: 503,
         contentType: "text/javascript",
@@ -172,11 +218,85 @@ test("an unavailable app module exposes a reload action", async ({ page }) => {
         body: "unavailable",
     }));
     await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+    await expect(page.locator("#loading")).toHaveAttribute("role", "alert", { timeout: 120_000 });
+    expect(await page.evaluate(() => sessionStorage.getItem("thinoda-bootstrap-retry"))).toBeTruthy();
+    await page.unroute(module);
+    await page.reload({ waitUntil: "commit", timeout: 120_000 });
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    expect(await page.evaluate(() => sessionStorage.getItem("thinoda-bootstrap-retry"))).toBeNull();
+    expect(await page.evaluate(() => localStorage.getItem("thinoda-reload-preserved"))).toBe("yes");
+    await openCommandPalette(page);
+});
+
+test("the initial app module must pass integrity verification", async ({ page }) => {
+    const module = /\/thinoda-web(?:-[a-f0-9]+)?\.js$/;
+    let intercepted = 0;
+    await page.route(module, route => {
+        intercepted++;
+        return route.fulfill({
+            status: 200,
+            contentType: "text/javascript",
+            headers: { "Cache-Control": "no-store" },
+            body: "window.__thinoda_tampered_module = true; throw new Error('tampered');",
+        });
+    });
+
+    await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
     const loader = page.locator("#loading");
     await expect(loader).toHaveAttribute("role", "alert", { timeout: 120_000 });
-    await expect(loader).toContainText("Thinoda could not load");
-    const reload = loader.getByRole("link", { name: "Reload Thinoda" });
+    expect(intercepted).toBeGreaterThan(0);
+    expect(await page.evaluate(() => Reflect.get(window, "__thinoda_tampered_module"))).toBeUndefined();
+
     await page.unroute(module);
+    const reload = loader.getByRole("link", { name: "Reload Thinoda" });
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
+        reload.click(),
+    ]);
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await openCommandPalette(page);
+});
+
+test("a retried app module must still pass integrity verification", async ({ page }) => {
+    const module = /\/thinoda-web(?:-[a-f0-9]+)?\.js$/;
+    await page.route(module, route => route.fulfill({
+        status: 503,
+        contentType: "text/javascript",
+        headers: { "Cache-Control": "no-store" },
+        body: "unavailable",
+    }));
+    await page.goto(url, { waitUntil: "commit", timeout: 120_000 });
+    await expect(page.locator("#loading")).toHaveAttribute("role", "alert", { timeout: 120_000 });
+    await page.unroute(module);
+
+    const retriedModule = (requestUrl: URL) =>
+        module.test(requestUrl.pathname) && requestUrl.searchParams.has("__thinoda_retry");
+    let intercepted = 0;
+    await page.route(retriedModule, route => {
+        intercepted++;
+        return route.fulfill({
+            status: 200,
+            contentType: "text/javascript",
+            headers: { "Cache-Control": "no-store" },
+            body: "window.__thinoda_tampered_module = true; export default async function () {}",
+        });
+    });
+    const reload = page.getByRole("link", { name: "Reload Thinoda" });
+    const firstRetry = new URL((await reload.getAttribute("href")) ?? "")
+        .searchParams.get("__thinoda_retry");
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
+        reload.click(),
+    ]);
+    await expect(page.locator("#loading")).toHaveAttribute("role", "alert", { timeout: 120_000 });
+    expect(intercepted).toBeGreaterThan(0);
+    expect(await page.evaluate(() => Reflect.get(window, "__thinoda_tampered_module"))).toBeUndefined();
+    const secondRetry = new URL((await reload.getAttribute("href")) ?? "")
+        .searchParams.get("__thinoda_retry");
+    expect(secondRetry).toBeTruthy();
+    expect(secondRetry).not.toBe(firstRetry);
+
+    await page.unroute(retriedModule);
     await Promise.all([
         page.waitForNavigation({ waitUntil: "commit", timeout: 120_000 }),
         reload.click(),

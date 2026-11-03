@@ -11,6 +11,8 @@ pub(super) struct Routing {
     pub minimap_pointer: bool,
     pub minimap_keyboard: bool,
     pub touch_navigation: bool,
+    pub previous_touch_navigation: bool,
+    pub restart_after_cancel: Option<usize>,
     pub space: bool,
 }
 
@@ -78,18 +80,74 @@ pub(super) fn interact(
     out: &mut CanvasOutput,
 ) -> bool {
     let ctx = ui.ctx();
-    let mode = view.board_tool.ink_mode();
-    let popup = egui::Popup::is_any_open(ctx);
-    let enabled = ui.is_enabled()
-        && !popup
-        && !routing.minimap_pointer
-        && (!routing.space || view.ink_controller.has_pending_gesture());
     let (focused, mut events) = ctx.input(|input| (input.focused, input.events.clone()));
     let frame = (ctx.viewport_id(), ctx.cumulative_frame_nr());
     if view.ink_events_frame == Some(frame) {
         events.clear();
     }
     view.ink_events_frame = Some(frame);
+    let remaining = routing
+        .restart_after_cancel
+        .filter(|offset| *offset <= events.len())
+        .map(|offset| events.split_off(offset));
+    let scene_state = doc.state_id();
+    let first_navigation = if remaining.is_some() {
+        routing.previous_touch_navigation
+    } else {
+        routing.touch_navigation
+    };
+    let mut captured = interact_events(
+        ui,
+        doc,
+        view,
+        scene,
+        response,
+        &routing,
+        focused,
+        first_navigation,
+        scene_state,
+        &mut events,
+        out,
+    );
+    if let Some(mut remaining) = remaining {
+        captured |= interact_events(
+            ui,
+            doc,
+            view,
+            scene,
+            response,
+            &routing,
+            focused,
+            routing.touch_navigation,
+            scene_state,
+            &mut remaining,
+            out,
+        );
+    }
+    captured
+}
+
+#[allow(clippy::too_many_arguments)]
+fn interact_events(
+    ui: &Ui,
+    doc: &mut Document,
+    view: &mut MapView,
+    scene: &Scene,
+    response: &Response,
+    routing: &Routing,
+    focused: bool,
+    touch_navigation: bool,
+    scene_state: u64,
+    events: &mut Vec<Event>,
+    out: &mut CanvasOutput,
+) -> bool {
+    let ctx = ui.ctx();
+    let mode = view.board_tool.ink_mode();
+    let popup = egui::Popup::is_any_open(ctx);
+    let enabled = ui.is_enabled()
+        && !popup
+        && !routing.minimap_pointer
+        && (!routing.space || view.ink_controller.has_pending_gesture());
     let keyboard_owned = focused
         && !routing.minimap_keyboard
         && !popup
@@ -116,10 +174,10 @@ pub(super) fn interact(
         )
     });
     let canvas = view.canvas_rect.intersect(ui.clip_rect());
-    let start = attempted_start(&events, &view.ink_controller, canvas);
+    let start = attempted_start(events, &view.ink_controller, canvas);
     let can_start = enabled
         && focused
-        && !routing.touch_navigation
+        && !touch_navigation
         && mode.is_some()
         && matches!(view.drag, Drag::None)
         && !view.board_input.is_active()
@@ -132,7 +190,6 @@ pub(super) fn interact(
         })
         && (response.contains_pointer() || touch_start);
 
-    let before_edit = doc.state_id();
     let blocked_start = if can_start
         && !view.ink_controller.has_pending_gesture()
         && let Some((position, pressure)) = start
@@ -154,7 +211,7 @@ pub(super) fn interact(
     };
 
     let updated_scene;
-    let scene = if doc.state_id() != before_edit {
+    let scene = if doc.state_id() != scene_state {
         let layout = view.layout_with(ctx, doc);
         updated_scene = build_scene(doc.sheet(), &layout);
         &updated_scene
@@ -169,7 +226,7 @@ pub(super) fn interact(
         mode,
         settings,
         InkFrameInput {
-            events: &events,
+            events,
             canvas,
             transform,
             enabled,
@@ -182,7 +239,7 @@ pub(super) fn interact(
     }
     for outcome in frame.outcomes {
         if matches!(outcome, InkOutcome::Canceled(InkCancelReason::Escape)) {
-            for event in &events {
+            for event in events.iter() {
                 if let Event::Key {
                     key: Key::Escape,
                     pressed: true,

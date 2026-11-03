@@ -39,6 +39,7 @@ test("offline shell installation starts after the initial Wasm load", async ({ p
 
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
     await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+    await page.unroute(/\.wasm(?:[?#].*)?$/);
     await context.setOffline(true);
     await page.reload({ waitUntil: "commit", timeout: 120_000 });
     await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
@@ -49,6 +50,14 @@ test("offline shell installation starts after the initial Wasm load", async ({ p
     }));
     await page.keyboard.press("Control+Shift+p");
     await expect(page.locator("input[type='text']")).toBeFocused();
+
+    const retry = new URL(url);
+    retry.searchParams.set("__thinoda_retry", "offline-test");
+    await page.goto(retry.href, { waitUntil: "commit", timeout: 120_000 });
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    expect(await page.evaluate(() => new URL(location.href).searchParams.has("__thinoda_retry")))
+        .toBe(false);
+    expect(await page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
 });
 
 for (const scenario of ["wasm", "module"] as const) {

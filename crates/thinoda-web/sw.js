@@ -32,10 +32,18 @@ self.addEventListener("fetch", event => {
     const url = new URL(request.url);
     const root = new URL(self.registration.scope);
     if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname)) return;
-    const target = request.mode === "navigate"
+    let target = request.mode === "navigate"
         && (url.pathname === root.pathname || url.pathname === `${root.pathname}index.html`)
         ? new URL("index.html", root).href
         : url.href;
+    const parameters = [...url.searchParams.keys()];
+    if (request.mode !== "navigate"
+        && /\/thinoda-web(?:-[a-f0-9]+)?\.js$/.test(url.pathname)
+        && parameters.length === 1 && parameters[0] === "__thinoda_retry") {
+        const original = new URL(url.href);
+        original.search = "";
+        if (urls.includes(original.href)) target = original.href;
+    }
     if (!urls.includes(target)) return; // Never cache documents, AI or unrelated sites.
     event.respondWith((async () => {
         const cache = await caches.open(CACHE);

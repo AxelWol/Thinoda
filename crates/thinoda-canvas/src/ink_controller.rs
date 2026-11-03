@@ -249,6 +249,7 @@ struct PointerSample {
 struct DocumentStamp {
     state: u64,
     sheet: usize,
+    document: u64,
     identity: usize,
 }
 
@@ -257,6 +258,7 @@ impl DocumentStamp {
         Self {
             state: document.state_id(),
             sheet: document.active_index(),
+            document: document.instance_id(),
             identity: std::ptr::from_ref(document.sheet()) as usize,
         }
     }
@@ -264,6 +266,7 @@ impl DocumentStamp {
     fn matches(self, document: &Document) -> bool {
         self.state == document.state_id()
             && self.sheet == document.active_index()
+            && self.document == document.instance_id()
             && self.identity == std::ptr::from_ref(document.sheet()) as usize
     }
 }
@@ -381,6 +384,55 @@ impl InkController {
             }
             _ => false,
         }
+    }
+
+    /// Find a new press after cancellation only once all earlier contacts have ended.
+    pub(crate) fn restart_after_touch_cancel(&self, events: &[Event]) -> Option<usize> {
+        let mut touches = self.touches.clone();
+        let mut canceled = false;
+        let mut restart = None;
+        for (index, event) in events.iter().enumerate() {
+            match event {
+                Event::Touch {
+                    device_id,
+                    id,
+                    phase,
+                    ..
+                } => {
+                    let key = TouchKey(*device_id, *id);
+                    match phase {
+                        TouchPhase::Start => {
+                            if !touches.is_empty() && !touches.contains(&key) {
+                                restart = None;
+                            }
+                            if !touches.contains(&key) {
+                                touches.push(key);
+                            }
+                        }
+                        TouchPhase::End | TouchPhase::Cancel => {
+                            touches.retain(|touch| *touch != key);
+                            if *phase == TouchPhase::Cancel {
+                                canceled = true;
+                                restart = None;
+                            }
+                        }
+                        TouchPhase::Move => {}
+                    }
+                }
+                Event::PointerButton {
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } if canceled && touches.is_empty() => restart = Some(index),
+                Event::WindowFocused(false) => {
+                    canceled = false;
+                    restart = None;
+                    touches.clear();
+                }
+                _ => {}
+            }
+        }
+        restart
     }
 
     /// Explicitly discard the buffered gesture. Pointer ownership is suppressed
@@ -1417,6 +1469,17 @@ mod tests {
         ApproxMeasure, CanvasConnector, Card, CardKind, Endpoint, Rect as BoardRect, ShapeKind,
         Workbook, build_scene, layout_sheet,
     };
+
+    #[test]
+    fn document_stamp_rejects_a_reused_sheet_address() {
+        let original = Document::default();
+        let replacement = original.clone();
+        let mut stamp = DocumentStamp::capture(&original);
+        stamp.identity = std::ptr::from_ref(replacement.sheet()) as usize;
+        assert_eq!(stamp.state, replacement.state_id());
+        assert_eq!(stamp.sheet, replacement.active_index());
+        assert!(!stamp.matches(&replacement));
+    }
 
     fn scene(document: &Document) -> Scene {
         build_scene(

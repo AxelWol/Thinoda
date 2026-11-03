@@ -20,6 +20,10 @@ fn board() -> Sheet {
 }
 
 fn harness(sheet: Sheet) -> Harness<'static, State> {
+    harness_with_overlay(sheet, None)
+}
+
+fn harness_with_overlay(sheet: Sheet, overlay: Option<Rect>) -> Harness<'static, State> {
     let view = MapView {
         show_add_controls: false,
         ..Default::default()
@@ -30,12 +34,15 @@ fn harness(sheet: Sheet) -> Harness<'static, State> {
         .with_size(vec2(1200.0, 900.0))
         .with_step_dt(1.0 / 60.0)
         .build_ui_state(
-            |ui, state: &mut State| {
+            move |ui, state: &mut State| {
                 let out = MapCanvas::show(ui, &mut state.doc, &mut state.view);
                 if let Some(error) = out.error {
                     state.errors.push(error);
                 }
                 state.clipboard_requests.extend(out.clipboard_requests);
+                if let Some(rect) = overlay {
+                    ui.interact(rect, Id::unique("test-overlay"), Sense::click_and_drag());
+                }
             },
             State {
                 doc,
@@ -1122,6 +1129,966 @@ fn frame_tool_uses_persistent_empty_zone_and_localized_name() {
     );
     assert!(h.state_mut().doc.undo());
     assert!(h.state().doc.sheet().zones.is_empty());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+fn assert_drag_created(h: &Harness<'_, State>, tool: BoardTool) {
+    let start = Vec2::new(-200.0, -100.0);
+    let end = Vec2::new(100.0, 100.0);
+    let size = end - start;
+    match tool {
+        BoardTool::Sticky | BoardTool::Text => {
+            assert_eq!(h.state().doc.sheet().floating.len(), 1, "{tool:?}");
+            let topic = h
+                .state()
+                .doc
+                .sheet()
+                .topic(h.state().doc.sheet().floating[0])
+                .unwrap();
+            assert_eq!(topic.position, Some((start + end) * 0.5), "{tool:?}");
+            assert_eq!(topic.card.unwrap().size, size, "{tool:?}");
+        }
+        BoardTool::Frame => {
+            assert_eq!(h.state().doc.sheet().zones.len(), 1);
+            let frame = &h.state().doc.sheet().zones[0];
+            assert_eq!(frame.frame.min, start);
+            assert_eq!(frame.frame.size, size);
+        }
+        BoardTool::Shape(_) => {
+            assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+            let object = &h.state().doc.sheet().canvas.objects[0];
+            assert_eq!(object.rect.min, start);
+            assert_eq!(object.rect.size, size);
+        }
+        BoardTool::Connector => {
+            assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+            let CanvasObjectKind::Connector(connector) =
+                &h.state().doc.sheet().canvas.objects[0].kind
+            else {
+                panic!("expected connector");
+            };
+            assert_eq!(connector.from, Endpoint::Point(start));
+            assert_eq!(connector.to, Endpoint::Point(end));
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn same_frame_creation_drags_are_not_lost() {
+    for tool in [
+        BoardTool::Sticky,
+        BoardTool::Text,
+        BoardTool::Shape(ShapeKind::Rectangle),
+        BoardTool::Frame,
+        BoardTool::Connector,
+    ] {
+        let mut h = harness(board());
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-200.0, -100.0));
+        let end = point(&h, Vec2::new(100.0, 100.0));
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_drag_created(&h, tool);
+        assert!(h.state_mut().doc.undo(), "{tool:?}");
+        assert_eq!(h.state().doc.workbook(), &before, "{tool:?}");
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn release_frame_movement_after_canvas_press_is_not_lost() {
+    for tool in [
+        BoardTool::Sticky,
+        BoardTool::Text,
+        BoardTool::Shape(ShapeKind::Rectangle),
+        BoardTool::Frame,
+        BoardTool::Connector,
+    ] {
+        let mut h = harness(board());
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-200.0, -100.0));
+        let end = point(&h, Vec2::new(100.0, 100.0));
+        h.hover_at(start);
+        h.event(egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        h.run_steps(3);
+        assert_drag_created(&h, tool);
+        assert!(h.state_mut().doc.undo(), "{tool:?}");
+        assert_eq!(h.state().doc.workbook(), &before, "{tool:?}");
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn batched_creation_drag_does_not_start_on_an_overlapping_control() {
+    let start = pos2(400.0, 350.0);
+    let end = pos2(650.0, 500.0);
+    let overlay = Rect::from_center_size(start, vec2(80.0, 80.0));
+    let mut h = harness_with_overlay(board(), Some(overlay));
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn batched_creation_drag_does_not_end_on_an_overlapping_control() {
+    let start = pos2(400.0, 350.0);
+    let end = pos2(650.0, 500.0);
+    let overlay = Rect::from_center_size(end, vec2(80.0, 80.0));
+    let mut h = harness_with_overlay(board(), Some(overlay));
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn batched_creation_click_does_not_start_on_an_overlapping_control() {
+    let start = pos2(438.0, 350.0);
+    let end = pos2(442.0, 350.0);
+    let overlay = Rect::from_center_size(pos2(400.0, 350.0), vec2(80.0, 80.0));
+    let mut h = harness_with_overlay(board(), Some(overlay));
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn batched_creation_respects_the_configured_click_distance() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    h.ctx
+        .options_mut(|options| options.input_options.max_click_dist = 30.0);
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = start + vec2(15.0, 10.0);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    let objects = &h.state().doc.sheet().canvas.objects;
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].rect.size, Vec2::new(160.0, 100.0));
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn batched_creation_rejects_cancellation_and_multiple_pointers() {
+    let start = pos2(400.0, 350.0);
+    let end = pos2(650.0, 500.0);
+    let press = egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    };
+    let release = egui::Event::PointerButton {
+        pos: end,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    };
+    let touch = |id, phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(id),
+        phase,
+        pos,
+        force: None,
+    };
+    let cases = [
+        (
+            "pointer gone before release",
+            vec![
+                press.clone(),
+                egui::Event::PointerMoved(end),
+                egui::Event::PointerGone,
+                release.clone(),
+            ],
+        ),
+        (
+            "touch cancellation after release",
+            vec![
+                press.clone(),
+                touch(1, egui::TouchPhase::Start, start),
+                egui::Event::PointerMoved(end),
+                release.clone(),
+                touch(1, egui::TouchPhase::Cancel, end),
+            ],
+        ),
+        (
+            "focus loss after release",
+            vec![
+                press.clone(),
+                egui::Event::PointerMoved(end),
+                release.clone(),
+                egui::Event::WindowFocused(false),
+            ],
+        ),
+        (
+            "escape",
+            vec![
+                press.clone(),
+                egui::Event::PointerMoved(end),
+                egui::Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                },
+                release.clone(),
+            ],
+        ),
+        (
+            "second pointer button",
+            vec![
+                press.clone(),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                egui::Event::PointerMoved(end),
+                release.clone(),
+            ],
+        ),
+        (
+            "duplicate primary press without a touch",
+            vec![
+                press.clone(),
+                press.clone(),
+                egui::Event::PointerMoved(end),
+                release.clone(),
+            ],
+        ),
+        (
+            "second touch",
+            vec![
+                press.clone(),
+                touch(1, egui::TouchPhase::Start, start),
+                touch(2, egui::TouchPhase::Start, end),
+                egui::Event::PointerMoved(end),
+                touch(2, egui::TouchPhase::End, end),
+                release.clone(),
+                egui::Event::PointerGone,
+                touch(1, egui::TouchPhase::End, end),
+            ],
+        ),
+        (
+            "release outside canvas",
+            vec![
+                press.clone(),
+                egui::Event::PointerMoved(end),
+                egui::Event::PointerButton {
+                    pos: pos2(-20.0, -20.0),
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        ),
+    ];
+    for (name, events) in cases {
+        let mut h = harness(board());
+        set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+        let before = h.state().doc.workbook().clone();
+        h.input_mut().events = events;
+        h.run_steps(3);
+        assert_eq!(h.state().doc.workbook(), &before, "{name}");
+        assert!(!h.state_mut().doc.undo(), "{name}");
+        assert!(
+            h.state().errors.is_empty(),
+            "{name}: {:?}",
+            h.state().errors
+        );
+    }
+}
+
+#[test]
+fn browser_touch_creation_survives_fully_batched_input() {
+    for tool in [
+        BoardTool::Sticky,
+        BoardTool::Text,
+        BoardTool::Shape(ShapeKind::Rectangle),
+        BoardTool::Frame,
+        BoardTool::Connector,
+    ] {
+        let mut h = harness(board());
+        set_tool(&mut h, tool);
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-200.0, -100.0));
+        let end = point(&h, Vec2::new(100.0, 100.0));
+        let touch = |phase, pos| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        h.input_mut().events.extend([
+            egui::Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            touch(egui::TouchPhase::Start, start),
+            egui::Event::PointerMoved(end),
+            touch(egui::TouchPhase::Move, end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            egui::Event::PointerGone,
+            touch(egui::TouchPhase::End, end),
+        ]);
+        h.run_steps(3);
+        assert_drag_created(&h, tool);
+        assert!(h.state_mut().doc.undo(), "{tool:?}");
+        assert_eq!(h.state().doc.workbook(), &before, "{tool:?}");
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn browser_pointer_and_touch_events_do_not_cancel_the_same_contact() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch = |phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase,
+        pos,
+        force: None,
+    };
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        touch(egui::TouchPhase::Move, end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+        touch(egui::TouchPhase::End, end),
+    ]);
+    h.run_steps(3);
+    assert_drag_created(&h, BoardTool::Shape(ShapeKind::Rectangle));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn canceled_browser_touch_does_not_block_the_next_contact() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch = |id, phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(id),
+        phase,
+        pos,
+        force: None,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(1, egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        touch(1, egui::TouchPhase::Move, end),
+    ]);
+    h.run_steps(1);
+    h.input_mut()
+        .events
+        .push(touch(1, egui::TouchPhase::Cancel, end));
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(2, egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        touch(2, egui::TouchPhase::Move, end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+        touch(2, egui::TouchPhase::End, end),
+    ]);
+    h.run_steps(3);
+    assert_drag_created(&h, BoardTool::Shape(ShapeKind::Rectangle));
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn canceled_touch_and_next_contact_can_share_a_frame() {
+    for batched_release in [false, true] {
+        let mut h = harness(board());
+        set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+        let before = h.state().doc.workbook().clone();
+        let start = point(&h, Vec2::new(-200.0, -100.0));
+        let end = point(&h, Vec2::new(100.0, 100.0));
+        let touch = |id, phase, pos| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(id),
+            phase,
+            pos,
+            force: None,
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        h.input_mut().events.extend([
+            button(start, true),
+            touch(1, egui::TouchPhase::Start, start),
+        ]);
+        h.run_steps(1);
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(end),
+            touch(1, egui::TouchPhase::Move, end),
+        ]);
+        h.run_steps(1);
+        h.input_mut().events.extend([
+            touch(1, egui::TouchPhase::Cancel, end),
+            button(start, true),
+            touch(2, egui::TouchPhase::Start, start),
+        ]);
+        if !batched_release {
+            h.run_steps(1);
+            assert_eq!(h.state().doc.workbook(), &before);
+        }
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(end),
+            touch(2, egui::TouchPhase::Move, end),
+            button(end, false),
+            egui::Event::PointerGone,
+            touch(2, egui::TouchPhase::End, end),
+        ]);
+        h.run_steps(3);
+        assert_drag_created(&h, BoardTool::Shape(ShapeKind::Rectangle));
+        assert!(h.state_mut().doc.undo());
+        assert_eq!(h.state().doc.workbook(), &before);
+        assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    }
+}
+
+#[test]
+fn batched_touch_restart_does_not_escape_an_active_multitouch() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch = |id, phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(id),
+        phase,
+        pos,
+        force: None,
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut().events.extend([
+        button(start, true),
+        touch(1, egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut()
+        .events
+        .push(touch(2, egui::TouchPhase::Start, end));
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        touch(1, egui::TouchPhase::Cancel, start),
+        button(start, true),
+        touch(3, egui::TouchPhase::Start, start),
+        egui::Event::PointerMoved(end),
+        touch(3, egui::TouchPhase::Move, end),
+        button(end, false),
+        egui::Event::PointerGone,
+        touch(3, egui::TouchPhase::End, end),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.touch_navigation, Some(false));
+    h.input_mut()
+        .events
+        .push(touch(2, egui::TouchPhase::End, end));
+    h.run_steps(2);
+    assert_eq!(h.state().view.touch_navigation, None);
+    assert!(!h.state_mut().doc.undo());
+}
+
+#[test]
+fn stray_release_after_touch_cancel_does_not_create_an_object() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch = |phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase,
+        pos,
+        force: None,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        touch(egui::TouchPhase::Cancel, end),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(!h.state_mut().doc.undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn touch_cancel_during_multitouch_stays_blocked_until_all_contacts_end() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch = |id, phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(id),
+        phase,
+        pos,
+        force: None,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(1, egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    h.input_mut()
+        .events
+        .push(touch(2, egui::TouchPhase::Start, end));
+    h.run_steps(1);
+    h.input_mut()
+        .events
+        .push(touch(1, egui::TouchPhase::Cancel, start));
+    h.run_steps(1);
+    assert_eq!(h.state().view.touch_navigation, Some(false));
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch(3, egui::TouchPhase::Start, start),
+        egui::Event::PointerMoved(end),
+        touch(3, egui::TouchPhase::Move, end),
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+        touch(2, egui::TouchPhase::End, end),
+        touch(3, egui::TouchPhase::End, end),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert_eq!(h.state().view.touch_navigation, None);
+    assert!(!h.state_mut().doc.undo());
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+}
+
+#[test]
+fn pending_fast_creation_rejects_camera_changes() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    h.state_mut().view.offset += vec2(10.0, 0.0);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("canceled"))
+    );
+}
+
+#[test]
+fn pending_creation_click_rejects_camera_changes() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    h.event(egui::Event::PointerMoved(start));
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    h.state_mut().view.offset += vec2(10.0, 0.0);
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("canceled"))
+    );
+}
+
+#[test]
+fn pending_creation_click_rejects_a_replaced_document_at_the_same_revision() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    h.event(egui::Event::PointerMoved(start));
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    let before = h.state().doc.workbook().clone();
+    for _ in 0..2 {
+        let replacement = Document::new(h.state().doc.workbook().clone());
+        assert_eq!(replacement.state_id(), h.state().doc.state_id());
+        h.state_mut().doc = replacement;
+    }
+    h.event(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert_eq!(h.state().doc.workbook(), &before);
+    assert!(
+        h.state()
+            .errors
+            .iter()
+            .any(|error| error.to_string().contains("canceled"))
+    );
+}
+
+#[test]
+fn fast_creation_preserves_an_active_label_draft() {
+    let mut sheet = board();
+    let existing = shape(&mut sheet, 0.0, 0.0, "Original");
+    let mut h = harness(sheet);
+    {
+        let state = h.state_mut();
+        assert!(state.view.begin_board_label(&state.doc, existing));
+    }
+    h.run_steps(3);
+    h.get_by_label("Board object label").type_text("Updated");
+    h.run_steps(2);
+    set_tool(&mut h, BoardTool::Shape(ShapeKind::Rectangle));
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(end),
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.run_steps(3);
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 2);
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(existing)
+            .unwrap()
+            .label(),
+        "Updated"
+    );
+    assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.sheet().canvas.objects.len(), 1);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(
+        h.state()
+            .doc
+            .sheet()
+            .canvas
+            .object(existing)
+            .unwrap()
+            .label(),
+        "Original"
+    );
+}
+
+#[test]
+fn browser_touch_release_commits_the_frame_before_pointer_gone() {
+    let mut h = harness(board());
+    set_tool(&mut h, BoardTool::Frame);
+    let before = h.state().doc.workbook().clone();
+    let start = point(&h, Vec2::new(-200.0, -100.0));
+    let end = point(&h, Vec2::new(100.0, 100.0));
+    let touch_event = |phase, pos| egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase,
+        pos,
+        force: None,
+    };
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        touch_event(egui::TouchPhase::Start, start),
+    ]);
+    h.run_steps(1);
+    let intermediate = start + (end - start) * 0.75;
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(intermediate),
+        touch_event(egui::TouchPhase::Move, intermediate),
+    ]);
+    h.run_steps(2);
+    h.input_mut().events.extend([
+        egui::Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        egui::Event::PointerGone,
+        touch_event(egui::TouchPhase::End, end),
+    ]);
+    h.run_steps(3);
+    assert_drag_created(&h, BoardTool::Frame);
+    assert!(h.state_mut().doc.undo());
+    assert_eq!(h.state().doc.workbook(), &before);
     assert!(h.state().errors.is_empty(), "{:?}", h.state().errors);
 }
 
@@ -2272,9 +3239,11 @@ fn replacing_document_at_same_revision_does_not_commit_a_gesture_or_label_draft(
     let start = point(&h, Vec2::ZERO);
     let end = start + vec2(60.0, 30.0);
     drag(&mut h, start, end);
-    let replacement = Document::new(h.state().doc.workbook().clone());
-    assert_eq!(replacement.state_id(), h.state().doc.state_id());
-    h.state_mut().doc = replacement;
+    for _ in 0..2 {
+        let replacement = Document::new(h.state().doc.workbook().clone());
+        assert_eq!(replacement.state_id(), h.state().doc.state_id());
+        h.state_mut().doc = replacement;
+    }
     h.run_steps(1);
     finish_drag(&mut h, end);
     assert_eq!(h.state().doc.workbook(), &before);
@@ -2291,8 +3260,10 @@ fn replacing_document_at_same_revision_does_not_commit_a_gesture_or_label_draft(
     h.run_steps(2);
     h.get_by_label("Board object label").type_text("Draft");
     h.run_steps(2);
-    let replacement = Document::new(h.state().doc.workbook().clone());
-    h.state_mut().doc = replacement;
+    for _ in 0..2 {
+        let replacement = Document::new(h.state().doc.workbook().clone());
+        h.state_mut().doc = replacement;
+    }
     {
         let state = h.state_mut();
         assert!(state.view.try_commit_board_label(&mut state.doc).is_err());

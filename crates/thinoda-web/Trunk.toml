@@ -5,15 +5,55 @@ dist = "dist"
 # Relative URLs let the same build run from any sub path, such as GitHub Pages.
 public_url = "./"
 filehash = true
-# Keep the normal wasm-bindgen loader and preloads, but report a rejected
-# initialization before the Rust UI is available.
+# Keep the normal wasm-bindgen loader and preloads, and make failed module
+# downloads retryable without clearing browser data or bypassing integrity.
 pattern_script = '''
 <script id="thinoda-app-bootstrap" type="module">
-import init, * as bindings from '{base}{js}';
 try {
-    const wasm = await init({ module_or_path: '{base}{wasm}' });
+    const pageUrl = new URL(window.location.href);
+    let retry = pageUrl.searchParams.get("__thinoda_retry");
+    if (!retry) {
+        try {
+            retry = window.sessionStorage.getItem("thinoda-bootstrap-retry");
+        } catch (error) {
+            console.warn("Could not read the bootstrap retry marker", error);
+        }
+    }
+    const moduleUrl = new URL('{base}{js}', document.baseURI);
+    const preload = [...document.querySelectorAll('link[rel="modulepreload"]')]
+        .find(link => link.href === moduleUrl.href);
+    if (!preload?.integrity) throw new Error("Missing app module integrity metadata");
+    if (retry) {
+        moduleUrl.searchParams.set("__thinoda_retry", retry);
+    }
+    await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.type = "module";
+        script.src = moduleUrl.href;
+        script.integrity = preload.integrity;
+        script.crossOrigin = preload.crossOrigin || "anonymous";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Could not verify or load the app module"));
+        document.head.append(script);
+    });
+    const bindings = await import(moduleUrl.href);
+    const wasm = await bindings.default({ module_or_path: '{base}{wasm}' });
     window.wasmBindings = bindings;
     dispatchEvent(new CustomEvent("TrunkApplicationStarted", { detail: { wasm } }));
+    if (retry) {
+        try {
+            window.sessionStorage.removeItem("thinoda-bootstrap-retry");
+        } catch (error) {
+            console.warn("Could not remove the saved bootstrap retry marker", error);
+        }
+        try {
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.delete("__thinoda_retry");
+            window.history.replaceState(window.history.state, "", currentUrl.href);
+        } catch (error) {
+            console.warn("Could not remove the bootstrap retry marker", error);
+        }
+    }
 } catch (error) {
     console.error("Thinoda bootstrap failed", error);
     window.thinodaBootstrapFailed();
