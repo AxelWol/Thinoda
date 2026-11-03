@@ -21,9 +21,13 @@ type BoardSheet = {
     canvas: {
         objects: {
             id: number;
-            kind: { shape?: { shape: string; label?: string }; connector?: { from: unknown; to: unknown; label?: string }; ink?: { points: unknown[] } };
+            kind: {
+                shape?: { shape: string; label?: string };
+                connector?: { from: unknown; to: unknown; label?: string };
+                ink?: { tool: string; color: string; width: number; points: { x: number; y: number }[] };
+            };
             rect: { min: { x: number; y: number }; size: { x: number; y: number } };
-            style: { fill?: string; text_color?: string };
+            style: { fill?: string; text_color?: string; stroke_width?: number; opacity?: number };
         }[];
     };
 };
@@ -201,6 +205,60 @@ test("a fast mouse drag commits its full geometry", async ({ page }) => {
     expect(shapes).toHaveLength(1);
     expect(shapes[0].rect.size.x).toBeGreaterThan(300);
     expect(shapes[0].rect.size.y).toBeGreaterThan(150);
+});
+
+test("pixel eraser splits a stroke and preserves one-step undo and redo", async ({ page }) => {
+    await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+n");
+    await frames(page);
+    await command(page, "Hide central topic");
+    await page.keyboard.press("Escape");
+    await frames(page);
+
+    await command(page, "Pen");
+    await drag(page, [300, 850], [800, 850], 20);
+    const before = sheetFrom(await saveAs(page, "pixel-erase-before.thinoda"));
+    const original = before.canvas.objects.filter((object) => object.kind.ink);
+    expect(before.root_mode).toBe("hidden");
+    expect(original).toHaveLength(1);
+    const stroke = original[0].kind.ink;
+    if (!stroke) throw new Error("Missing original stroke");
+    expect(stroke.points.length).toBeGreaterThanOrEqual(2);
+
+    await command(page, "Pixel eraser");
+    await drag(page, [550, 830], [550, 870]);
+    const after = sheetFrom(await saveAs(page, "pixel-erase-after.thinoda"));
+    const fragments = after.canvas.objects.filter((object) => object.kind.ink);
+    expect(fragments).toHaveLength(2);
+    const first = fragments[0].kind.ink;
+    const second = fragments[1].kind.ink;
+    if (!first || !second) throw new Error("Missing pixel-erase fragments");
+    expect(fragments[0].id).toBe(original[0].id);
+    expect(fragments[1].id).not.toBe(original[0].id);
+    expect(first.points.length).toBeGreaterThanOrEqual(2);
+    expect(second.points.length).toBeGreaterThanOrEqual(2);
+    expect(first.points[0]).toEqual(stroke.points[0]);
+    expect(second.points.at(-1)).toEqual(stroke.points.at(-1));
+    const gap = second.points[0].x - first.points.at(-1)!.x;
+    expect(gap).toBeGreaterThan(20);
+    expect(gap).toBeLessThan(24);
+    for (const fragment of fragments) {
+        expect(fragment.kind.ink).toMatchObject({
+            tool: stroke.tool, color: stroke.color, width: stroke.width,
+        });
+        expect(fragment.style).toEqual(original[0].style);
+    }
+
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "pixel-erase-undo.thinoda"))).toEqual(before);
+    await page.locator("#thinoda_canvas").focus();
+    await page.keyboard.press("Control+Shift+z");
+    await frames(page);
+    expect(sheetFrom(await saveAs(page, "pixel-erase-redo.thinoda"))).toEqual(after);
 });
 
 test.describe("touch gestures", () => {

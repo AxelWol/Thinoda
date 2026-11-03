@@ -80,8 +80,8 @@ with the reason.
 | Snap to grid | Adapt | Needs object geometry from the shared scene |
 | Alignment, size and spacing guides while dragging | Adapt | Same; topics take part only when floating |
 | Zoom to fit / zoom to selection | Fits | Extend bounds to canvas objects |
-| Scenes (saved, ordered views; present, print) | Adapt | Extend Presentation with a viewport source (section 5.6) |
-| Mini-map / navigator | Later | Reuses scene bounds |
+| Scenes (saved, ordered views; present, print) | Adapt | Viewport scenes are implemented; export and host acceptance remain open (section 5.6) |
+| Mini-map / navigator | Fits | Implemented using scene bounds; real-device and screen-reader acceptance remain open |
 | Follow a collaborator's view | Out | Needs real-time collaboration (PLAN R12) |
 
 ### 4.2 Objects
@@ -90,7 +90,7 @@ with the reason.
 |---|---|---|
 | Sticky notes (colour, size, text, lists) | Fits | Floating topic with a `Card` presentation (5.2) |
 | Text boxes | Fits | Floating topic, card presentation without fill |
-| Shape library with search | Adapt | New canvas object `Shape`; start with ~20 basic and flowchart shapes |
+| Shape library with search | Adapt | Implemented as canvas `Shape` objects with a searchable basic and flowchart library |
 | Edit shape points, combine/subtract shapes | Out (for now) | Boolean path operations need a vector geometry library; revisit after F4 |
 | Lines and arrows (straight, angled, curved) | Adapt | Canvas object `Connector` reusing relationship routing |
 | Connectors that stick to objects and follow them | Adapt | Typed endpoints: topic, canvas object, free point |
@@ -108,13 +108,13 @@ with the reason.
 
 | Feature | Verdict | Notes |
 |---|---|---|
-| Freehand pen with mouse, touch, pen | Adapt | Canvas object `Ink`; phased (F5) |
-| Pen styles: pen, marker, pencil, fountain pen, watercolour, crayon | Adapt / Later | Start with pen + highlighter (opacity); textured brushes later |
-| Width, colour, opacity | Adapt | Per stroke |
+| Freehand pen with mouse, touch, pen | Adapt | Implemented as canvas `Ink`; real input-device acceptance remains open |
+| Pen styles: pen, marker, pencil, fountain pen, watercolour, crayon | Adapt / Later | Pen and highlighter are implemented; textured brushes remain later |
+| Width, colour, opacity | Adapt | Implemented per stroke |
 | Pressure sensitivity | Later | egui reports `Touch.force` only; no pen type, tilt, eraser or hover. Optional, never required (5.5) |
-| Object eraser | Adapt | Removes whole strokes |
-| Pixel eraser (split strokes) | Later | Stroke splitting after F5 |
-| Lasso selection | Adapt | Shared selection model |
+| Object eraser | Adapt | Implemented; removes whole strokes |
+| Pixel eraser (split strokes) | Adapt | Implemented with atomic stroke splitting and undo |
+| Lasso selection | Adapt | Implemented with the shared selection model |
 | Fill tool | Later | Needs closed-path detection |
 | Convert drawing to shape | Later | Shape recognition heuristics |
 | Handwriting recognition / search | Out | No cross-platform on-device recogniser |
@@ -739,7 +739,13 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   for retry or cancellation rather than silently discarded. Pending ink is not
   crash-recoverable until it is committed.
 - Pixel erasing can split strokes while retaining their metadata and undo
-  behavior; pressure remains optional and does not affect rendering.
+  behavior. Sixteen focused canvas tests cover geometry, limits, atomicity,
+  grouping and undo. A production-browser regression checks the saved
+  fragments, their original endpoints, styles and IDs, and exact one-step
+  undo/redo in desktop Chromium, Firefox and WebKit. It uses synthetic mouse
+  input at one viewport and does not establish physical pen/touch or
+  screen-reader acceptance. Pressure remains optional and does not affect
+  rendering.
 - Touch de-duplication now distinguishes a mouse press owned by ink from a
   non-ink synthetic press. This keeps a single-finger context menu open after
   release without forwarding a canceled ink gesture; multi-touch cancellation

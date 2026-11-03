@@ -3029,6 +3029,12 @@ microbenchmark shows lower union times in Chromium, Firefox and WebKit, but no
 material archive-import change. Tests and limits, including the distinction
 from end-to-end paste and device acceptance, are recorded in FREEFORM.
 
+Pixel erasing has focused native coverage for geometry, limits, atomicity and
+undo. A production-browser regression checks saved split-stroke geometry,
+styles and IDs plus exact one-step undo/redo in desktop Chromium, Firefox and
+WebKit. Synthetic mouse input does not establish physical pen/touch or
+screen-reader acceptance.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3092,7 +3098,8 @@ access; F1-F3 accessibility acceptance remains open.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
 5. F4 data-driven "Boards" templates (ten implemented).
-6. F5 ink; F6 viewport scenes, mini-map, optional pen pressure.
+6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
+   with optional pen-pressure support still requiring its device spike.
 
 **Exit:** existing maps and golden exports unchanged; anchor-root contract tests;
 v5 readers refuse v6; every export itemises board losses; benchmark gates met on
