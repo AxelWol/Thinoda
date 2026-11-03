@@ -257,10 +257,14 @@ topics, relationships), and `Layout::hit_test` only knows topics. Add a derived
   tessellation settings. Changes such as panning invalidate affected entries.
   Each paint protects currently visible meshes in both object bands before
   admitting misses; visible strokes beyond the budget still retessellate.
-  The cache is not a guarantee of the frame-time target.
+  The cache is not a guarantee of an interactive frame-time budget.
 - F0 benchmark gate: 1,000 and 10,000 strokes, plus a 50-image board, on native
   and web: frame time, memory, undo memory, save/load time, recovery journal
   size.
+
+The original gate does not specify numerical frame-time or input-latency budgets
+or representative hardware. These must be defined before a measurement can
+establish a pass or failure; the recorded CPU results alone do not close F5.
 
 #### F0 benchmark report (native, CPU only)
 
@@ -349,8 +353,9 @@ candidate for 1,000 strokes, and 57.00/56.26 ms versus 58.61/55.83 ms for
 10,000. After-cold process private commit for 10,000 was 129.69/128.72 MB
 baseline versus 126.07/125.51 MB candidate. This is a whole-process
 measurement, not an isolated cache allocation. It supports a modest memory
-reduction but does not demonstrate a frame-time improvement or meet the F5
-performance gate; GPU, browser and physical-device measurements remain open.
+reduction but does not demonstrate a frame-time improvement or establish that
+F5 performance acceptance is met; GPU, browser and physical-device
+measurements remain open.
 
 #### Visible ink-cache admission checkpoint: critique
 
@@ -370,8 +375,8 @@ overview paint plus tessellation p50 was 51.92–52.99 ms before and
 38.13–39.66 ms afterward; p95 was 54.89–55.78 ms and 40.01–43.09 ms.
 At 1,000 strokes, p50 was 2.43–2.53 ms before and 2.15–2.35 ms afterward.
 This headless CPU result excludes GPU presentation, input latency, recovery
-and browser execution. It does not meet the overall F5 frame-time gate or
-establish physical-device performance.
+and browser execution. It does not establish that the overall F5 performance
+gate is met or establish physical-device performance.
 
 In the first 10,000-stroke candidate run, the separate p50 measurements were
 8.01 ms for paint and 30.22 ms for tessellation, with approximately 1.92 million
@@ -527,11 +532,12 @@ undo coverage is in place. F1/F2 and F3 remain open for broader integration
 acceptance; F5 remains open for the realistic performance gate; F6 remains
 open for final scene/export acceptance. Local browser large-board storage and
 recovery, complete history accounting, and cross-platform verification remain
-open. The production candidate passed 46 headless Chromium cases before the
-later export-test additions, including mixed-board editing, mini-map input,
-SVG/PNG/PDF/PowerPoint export, browser-language selection and browser recovery
-failures. Subsequent focused Chromium checks also cover JPEG and embedded
-image-card exports. Eleven focused
+open. The production candidate passed 47 headless Chromium cases, including
+mixed-board editing, mini-map input, SVG/PNG/JPEG/PDF/PowerPoint export,
+SVG/PNG/JPEG image cards, browser-language selection and browser recovery
+failures, before the later image-card PDF assertion was added. The final cache
+source also passed the full local native
+`cargo xtask ci` with live AI disabled and tests serialized. Eleven focused
 startup, retry and offline checks passed in each of desktop WebKit and Firefox on Windows; an
 earlier build with identical Wasm also passed focused touch checks there.
 Cloud-provider code is merged upstream behind a default-off feature and stays
@@ -667,15 +673,16 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   These do not substitute for the remaining format, physical-device and
   cross-platform presentation acceptance.
 - A focused rootless image-card regression checks that SVG embeds the original
-  JPEG and references it, and that SVG, PNG and JPEG render all four colored
-  fixture quadrants in their expected positions. It compares native board
-  content, resource metadata and image bytes before and after export. The
-  mixed-board JPEG check allows compression differences and locates the frame
-  by dense pixel extents instead of treating isolated compression artifacts as
-  its edges. Both the image-card and mixed-board SVG/PNG/JPEG regressions passed
-  in desktop Chromium, Firefox and WebKit on Windows. This synthetic 64-pixel
-  image does not establish PDF image-card, large-image, EXIF-orientation,
-  physical-device or screen-reader acceptance.
+  JPEG and references it, and that SVG, PNG, JPEG and PDF render all four
+  colored fixture quadrants in their expected positions. It compares native
+  board content, resource metadata and image bytes before and after export.
+  The mixed-board JPEG check allows compression differences and locates the
+  frame by dense pixel extents instead of treating isolated compression
+  artifacts as its edges. Image-card and mixed-board SVG/PNG/JPEG/PDF
+  regressions passed in desktop Chromium, Firefox and WebKit on Windows; the
+  downloaded PDFs are rendered by a separate Chromium viewer in every case.
+  This synthetic 64-pixel image does not establish large-image,
+  EXIF-orientation, physical-device or screen-reader acceptance.
 - A production-browser regression checks that the mini-map pans without
   creating a shape underneath it and that hiding the mini-map restores canvas
   input. It passed in desktop Chromium, Firefox and WebKit at one viewport;

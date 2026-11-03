@@ -3,10 +3,10 @@
  * The document is created in the test's isolated browser context, and the
  * downloaded SVG, PNG, JPEG and PDF are inspected rather than inferred from the canvas.
  */
-import { chromium, expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
-import { command, drag, frames, saveAs, zipEntry } from "./board-browser-helpers";
+import { command, drag, frames, saveAs, withPdfViewer, zipEntry } from "./board-browser-helpers";
 
 test.use({
     viewport: { width: 1252, height: 1278 },
@@ -730,27 +730,7 @@ test.describe("PDF export", () => {
         expect(pdf.width).toBeLessThan(spanX + 600);
         expect(pdf.height).toBeLessThan(spanY + 600);
 
-        // The full Chromium build has a PDF viewer; headless-shell downloads
-        // PDFs instead. Serve the exact downloaded bytes through an intercepted
-        // loopback URL, without starting another server or adding a dependency.
-        const renderer = await chromium.launch({
-            channel: "chromium",
-            executablePath: process.env.THINODA_PDF_BROWSER_EXECUTABLE || undefined,
-            headless: true,
-            args: ["--enable-unsafe-swiftshader"],
-        });
-        try {
-            const viewer = await renderer.newPage({
-                viewport: { width: 1252, height: 1278 },
-                deviceScaleFactor: 1,
-            });
-            const url = "http://127.0.0.1:9/f6-downloaded.pdf";
-            await viewer.route(url, (route) => route.fulfill({
-                status: 200, contentType: "application/pdf", body: bytes,
-            }));
-            const response = await viewer.goto(`${url}#toolbar=0&navpanes=0&view=Fit`);
-            expect(response?.status()).toBe(200);
-            expect(await viewer.evaluate(() => document.contentType)).toBe("application/pdf");
+        await withPdfViewer(bytes, async (viewer) => {
             await expect.poll(async () => {
                 const image = await renderedPdfPixels(page, viewer, frame.frame, ink.kind.ink!.points);
                 return image.warnings.length === 2 && image.frame.count > 500;
@@ -779,8 +759,6 @@ test.describe("PDF export", () => {
                 expect(Math.abs((pixels.maxY - pixels.minY + 1) / paperHeight - rect.size.y / pdf.height))
                     .toBeLessThan(0.02);
             }
-        } finally {
-            await renderer.close();
-        }
+        });
     });
 });

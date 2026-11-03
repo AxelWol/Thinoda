@@ -13,9 +13,11 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 The Freeform implementation, eight board templates, responsive toolbox and
 existing style controls are in place. The production candidate passed
-46 Chromium browser scenarios before later export-test additions, including
-mixed-board editing, SVG/PNG/PDF and PowerPoint exports, startup, offline
-behavior and recovery failures. Focused
+47 Chromium browser scenarios, including mixed-board editing,
+SVG/PNG/JPEG/PDF and PowerPoint exports, SVG/PNG/JPEG image-card export,
+startup, offline behavior and recovery failures. An additional focused
+image-card PDF assertion passed in desktop Chromium, Firefox and WebKit,
+using a separate Chromium PDF viewer. Focused
 startup checks also passed in desktop Firefox and WebKit, as did touch checks
 on an earlier build with identical Wasm. These are not physical-device or
 screen-reader acceptance.
@@ -3005,16 +3007,19 @@ available. Recovery of the oversized unsaved board itself is not established.
 The fixes for two earlier macOS test failures are published. A fresh CI run on
 published commit `351f4e1` passed the macOS, Windows x64/ARM, Linux x64/ARM and
 web jobs. It does not cover the later local cache and export-test changes or
-replace real-device acceptance.
+replace real-device acceptance. The final cache source passed the full local
+native `cargo xtask ci` with live AI disabled and tests serialized.
 
 Automated production-browser checks exercise a rootless board's saved sticky,
 shape, connector, frame and ink, ink undo and a captured Pitch viewport. They
 inspect SVG, PNG, vector PDF and PowerPoint downloads without mutating the
-source board, including export cancellation and consent. Later focused Chromium
-checks cover mixed-board JPEG and SVG/PNG/JPEG image-card exports, including
-the embedded bytes and rendered image quadrants. The locked suite passed
-46 headless Chromium cases against the production candidate before those test
-additions; 11 focused
+source board, including export cancellation and consent. The suite also covers
+mixed-board JPEG and SVG/PNG/JPEG image-card exports, including embedded bytes
+and rendered image quadrants. The locked suite passed 47 headless Chromium
+cases against the production candidate before the later image-card PDF
+assertion; focused mixed-board and expanded image-card PDF checks passed in
+desktop Chromium, Firefox and WebKit with a separate Chromium PDF viewer.
+Eleven focused
 startup, retry and offline checks passed in each of desktop WebKit and Firefox
 on Windows. Focused touch checks passed in both on an earlier build with
 identical Wasm. CI runs the Chromium suite before
@@ -3044,7 +3049,9 @@ access; F1-F3 accessibility acceptance remains open.
 **Exit:** existing maps and golden exports unchanged; anchor-root contract tests;
 v5 readers refuse v6; every export itemises board losses; benchmark gates met on
 native and web; all locales, Light/Dark, keyboard and screen-reader acceptance.
-Per-phase rubber-duck reviews as for P4.
+F0 lists performance measurements but not numerical frame-time/input-latency
+budgets or representative hardware; define these before claiming that gate
+passes or fails. Per-phase rubber-duck reviews as for P4.
 
 **Cross-cutting web first-start work:** A user reports that a clean-cache load on
 iPad Safari/Edge can take about two minutes. Audit the download, Wasm

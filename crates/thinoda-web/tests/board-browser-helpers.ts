@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { chromium, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
 
@@ -134,4 +134,30 @@ export async function saveAs(page: Page, name: string): Promise<Buffer> {
     const download = await pending;
     expect(download.suggestedFilename()).toBe(name);
     return readFile(await download.path());
+}
+
+export async function withPdfViewer(bytes: Buffer, inspect: (viewer: Page) => Promise<void>): Promise<void> {
+    // The full Chromium build renders PDFs; headless-shell downloads them instead.
+    const renderer = await chromium.launch({
+        channel: "chromium",
+        executablePath: process.env.THINODA_PDF_BROWSER_EXECUTABLE || undefined,
+        headless: true,
+        args: ["--enable-unsafe-swiftshader"],
+    });
+    try {
+        const viewer = await renderer.newPage({
+            viewport: { width: 1252, height: 1278 },
+            deviceScaleFactor: 1,
+        });
+        const url = "http://127.0.0.1:9/downloaded.pdf";
+        await viewer.route(url, (route) => route.fulfill({
+            status: 200, contentType: "application/pdf", body: bytes,
+        }));
+        const response = await viewer.goto(`${url}#toolbar=0&navpanes=0&view=Fit`);
+        expect(response?.status()).toBe(200);
+        expect(await viewer.evaluate(() => document.contentType)).toBe("application/pdf");
+        await inspect(viewer);
+    } finally {
+        await renderer.close();
+    }
 }
