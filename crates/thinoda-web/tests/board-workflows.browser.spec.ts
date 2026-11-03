@@ -18,13 +18,18 @@ type BoardSheet = {
     root_mode: string;
     floating: number[];
     topics: Record<string, { id: number; title: string; card?: { kind: string; color?: string } }>;
-    zones: { name: string; roots?: number[]; keep_empty?: boolean; frame: { size: { x: number; y: number } } }[];
+    zones: {
+        name: string;
+        roots?: number[];
+        keep_empty?: boolean;
+        frame: { min: { x: number; y: number }; size: { x: number; y: number } };
+    }[];
     canvas: {
         objects: {
             id: number;
             kind: {
                 shape?: { shape: string; label?: string };
-                connector?: { from: unknown; to: unknown; label?: string };
+                connector?: { from: unknown; to: unknown; label?: string; route?: string; arrow_end?: boolean };
                 ink?: { tool: string; color: string; width: number; points: { x: number; y: number }[] };
             };
             rect: { min: { x: number; y: number }; size: { x: number; y: number } };
@@ -70,6 +75,51 @@ test.describe("meeting board gallery", () => {
             ["Action, owner and due date", "sticky"],
         ]);
         expect(saved.floating).toEqual(cards.map(card => card.id));
+    });
+});
+
+test.describe("swimlane gallery", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    test("creates editable handoffs in persistent visual role lanes", async ({ page }) => {
+        await page.goto(process.env.THINODA_WEB_URL ?? "http://127.0.0.1:8080/");
+        await expect(page.locator("#loading")).toBeHidden({ timeout: 120_000 });
+        const canvas = page.locator("#thinoda_canvas");
+        await frames(page);
+        for (const position of [
+            { x: 220, y: 128 },
+            { x: 220, y: 225 },
+            { x: 815, y: 394 },
+            { x: 67, y: 722 },
+        ]) {
+            await canvas.click({ position });
+            await frames(page);
+        }
+
+        await drag(page, [210, 316], [210, 459], 12);
+        const saved = sheetFrom(await saveAs(page, "swimlane.thinoda"));
+        expect(saved.title).toBe("Swimlane");
+        expect(saved.root_mode).toBe("hidden");
+        expect(saved.zones.map(zone => zone.name)).toEqual(["Role 1", "Role 2", "Role 3"]);
+        expect(saved.zones.every(zone => zone.keep_empty && !zone.roots?.length)).toBe(true);
+        const shapes = saved.canvas.objects.filter(object => object.kind.shape);
+        expect(shapes.map(object => object.kind.shape?.label)).toEqual(["Start", "Step", "Step", "Action", "End"]);
+        const moved = shapes[0].rect;
+        const lane = saved.zones[1].frame;
+        expect(moved.min.x).toBeGreaterThanOrEqual(lane.min.x);
+        expect(moved.min.y).toBeGreaterThanOrEqual(lane.min.y);
+        expect(moved.min.x + moved.size.x).toBeLessThanOrEqual(lane.min.x + lane.size.x);
+        expect(moved.min.y + moved.size.y).toBeLessThanOrEqual(lane.min.y + lane.size.y);
+        const connectors = saved.canvas.objects.flatMap(object => object.kind.connector ? [object.kind.connector] : []);
+        expect(connectors).toHaveLength(4);
+        for (let index = 0; index < connectors.length; index++) {
+            expect(connectors[index]).toMatchObject({
+                from: { object: shapes[index].id },
+                to: { object: shapes[index + 1].id },
+                route: "elbow",
+                arrow_end: true,
+            });
+        }
     });
 });
 

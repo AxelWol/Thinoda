@@ -722,12 +722,13 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 
 ### F4 templates checkpoint: critique
 
-- Eleven board templates use the same validated primitives and translated
+- Twelve board templates use the same validated primitives and translated
   creation-time strings. Affinity and Meeting Board notes can be moved among
-  persistent visual frames, and the Eisenhower quadrants accept user-created
-  content. These layouts do not automatically assign membership or manage
-  tasks; Meeting Board does not include a timer. The additional layouts also
-  do not imply structured Kanban, table or collaboration semantics.
+  persistent visual frames, the Eisenhower quadrants accept user-created
+  content, and Swimlane provides three role frames and editable linked shapes.
+  These layouts do not automatically assign membership or manage tasks;
+  Meeting Board does not include a timer. The additional layouts also do not
+  imply structured Kanban, table or collaboration semantics.
 - The new starter content is checked in all ten supported languages; gallery
   previews fit every frame in light and dark themes. Template creation is
   exercised in English and German, and localized board templates round-trip
@@ -740,6 +741,16 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
   gallery builds visible previews on demand and caches them separately per
   template, language and theme. This does not establish iPad first-start
   performance; see [WEB-STARTUP.md](WEB-STARTUP.md).
+- Swimlane's lane names, shapes and connectors can be edited. Its lanes are
+  visual guides, not role assignments: moving a shape into a lane does not
+  create membership, and changing a lane frame does not move its shapes. The
+  example arrows stay attached when their shapes move, but later edits can
+  reroute lines across other objects; no obstacle-avoidance or workflow engine
+  is implied. Core geometry, all-language content, gallery previews, native v6
+  round-trips and SVG/raster/PDF generation have focused coverage. Production
+  desktop Chromium, Firefox and WebKit regressions create the template, move a
+  shape and inspect the saved lanes and connector endpoints; they do not prove
+  physical-device behavior or broad export appearance parity.
 
 ### F5 ink checkpoint: critique
 
@@ -908,6 +919,7 @@ catalog coverage.
 | Affinity diagram | Idea stickies and persistent frames for sorting and naming themes |
 | Eisenhower matrix | Four persistent, labeled priority-quadrant frames |
 | Meeting board | Purpose heading and independent prompt stickies in visual Agenda, Notes, Decisions and Actions frames; no timer or task automation |
+| Swimlane | Three visual role frames and five editable process shapes linked by elbow connectors; no role or workflow automation |
 
 Canvas shapes, connectors and frame tints are now painted by the editor and
 the SVG/PDF scene renderer. Interactive authoring and complete export parity
@@ -919,7 +931,6 @@ compatibility with the topic renderer.
 | Template | Needs |
 |---|---|
 | Lean Canvas, Empathy map | Frames (F2), text-heavy responsive regions |
-| Swimlane | Shapes and connector routing (F3) |
 | User journey map, Roadmap | Structured axes or lanes |
 | Storyboard, Moodboard | Image cards, scalable resource storage |
 | Venn diagram | Shape opacity and intersections |

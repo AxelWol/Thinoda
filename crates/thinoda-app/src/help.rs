@@ -28,6 +28,7 @@ const PAGES: &[Page] = &[
             "The Boards category starts canvas maps without a visible central topic: a blank canvas, several independent mind maps, sticky-note walls, retrospectives, Kanban, the Business Model Canvas, flowcharts and SWOT. Board text uses the interface language.",
             "Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.",
             "Meeting Board has visual areas for agenda, notes, decisions and actions. Its frames do not group notes automatically, and it has no timer.",
+            "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
             "Use the board toolbar to add sticky notes, text cards, shapes, connectors and frames. Use the select tool to move items and the hand tool to pan. The Board menu includes grouping, locking, grid and minimap options.",
             BOARD_TOOLBAR_FALLBACK_GUIDE,
             BOARD_INK_GUIDE,

@@ -277,6 +277,7 @@ pub const TEMPLATES: &[TemplateInfo] = &[
     board_info("affinity-diagram", "Affinity Diagram"),
     board_info("eisenhower-matrix", "Eisenhower Matrix"),
     board_info("meeting-board", "Meeting Board"),
+    board_info("swimlane", "Swimlane"),
 ];
 
 const fn board_info(id: &'static str, name: &'static str) -> TemplateInfo {
@@ -776,6 +777,7 @@ mod tests {
                 "affinity-diagram",
                 "eisenhower-matrix",
                 "meeting-board",
+                "swimlane",
             ]
         );
         assert_eq!(boards::BOARDS.len(), board_ids().len());
@@ -786,6 +788,7 @@ mod tests {
             ("affinity-diagram", "Affinity Diagram"),
             ("eisenhower-matrix", "Eisenhower Matrix"),
             ("meeting-board", "Meeting Board"),
+            ("swimlane", "Swimlane"),
         ] {
             let info = TEMPLATES.iter().find(|info| info.id == id).unwrap();
             assert_eq!(info.name, name);
@@ -1061,8 +1064,154 @@ mod tests {
     }
 
     #[test]
+    fn swimlane_has_editable_handoffs_between_persistent_visual_lanes() {
+        use crate::board::{BoardMember, CanvasObjectKind, CardKind, ConnectorRoute, Endpoint};
+        use crate::geometry::{Rect, Vec2};
+
+        let mut wb = instantiate("swimlane");
+        let sheet = wb.active();
+        assert_eq!(
+            sheet
+                .zones
+                .iter()
+                .map(|z| z.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Role 1", "Role 2", "Role 3"]
+        );
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        assert!(sheet.canvas.groups.is_empty());
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let heading = sheet.content_topics().next().unwrap();
+        assert_eq!(heading.title, "Name roles and map the handoffs");
+        assert_eq!(heading.card.unwrap().kind, CardKind::Text);
+        assert!(layout.topics[&heading.id].rect.max().y < sheet.zones[0].frame.min.y);
+        assert_eq!(sheet.content_topics().count(), 1);
+        let shapes: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter(|object| matches!(object.kind, CanvasObjectKind::Shape { .. }))
+            .collect();
+        let links: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector) => Some(connector),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shapes.len(), 5);
+        assert_eq!(links.len(), 4);
+        for (shape, lane) in shapes.iter().zip([0, 1, 2, 1, 0]) {
+            let frame = sheet.zones[lane].frame;
+            assert!(frame.contains(shape.rect.min) && frame.contains(shape.rect.max()));
+            assert!(shape.group.is_none() && !shape.locked);
+        }
+        for (index, link) in links.iter().enumerate() {
+            assert_eq!(link.from, Endpoint::Object(shapes[index].id));
+            assert_eq!(link.to, Endpoint::Object(shapes[index + 1].id));
+            assert_eq!(link.route, ConnectorRoute::Elbow);
+            assert!(!link.arrow_start && link.arrow_end);
+            let path = crate::scene::connector_path(sheet, &layout, link);
+            assert_eq!(path.len(), 4);
+            assert_eq!(path[0], shapes[index].rect.right_center());
+            assert_eq!(path[3], shapes[index + 1].rect.left_center());
+            for segment in path.windows(2) {
+                assert!(segment[0].x == segment[1].x || segment[0].y == segment[1].y);
+                let min = Vec2::new(
+                    segment[0].x.min(segment[1].x),
+                    segment[0].y.min(segment[1].y),
+                );
+                let max = Vec2::new(
+                    segment[0].x.max(segment[1].x),
+                    segment[0].y.max(segment[1].y),
+                );
+                let bounds = Rect::from_min_size(min, max - min);
+                for (other, shape) in shapes.iter().enumerate() {
+                    if other != index && other != index + 1 {
+                        assert!(
+                            !bounds.intersects(&shape.rect),
+                            "link {index} crosses unrelated shape {other}"
+                        );
+                    }
+                }
+            }
+        }
+
+        let moving = shapes[0].id;
+        let old_path = crate::scene::connector_path(sheet, &layout, links[0]);
+        let sheet = wb.active_mut();
+        sheet
+            .move_board_members(&[BoardMember::Object(moving)], Vec2::new(0.0, 190.0))
+            .unwrap();
+        let moved = sheet
+            .canvas
+            .objects
+            .iter()
+            .find(|object| object.id == moving)
+            .unwrap();
+        assert!(sheet.zones[1].frame.contains(moved.rect.min));
+        assert!(sheet.zones[1].frame.contains(moved.rect.max()));
+        assert!(
+            sheet
+                .zones
+                .iter()
+                .all(|zone| zone.keep_empty && zone.roots.is_empty())
+        );
+        let link = sheet
+            .canvas
+            .objects
+            .iter()
+            .find_map(|object| match &object.kind {
+                CanvasObjectKind::Connector(connector)
+                    if connector.from == Endpoint::Object(moving) =>
+                {
+                    Some(connector)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let layout = crate::layout_sheet(sheet, &crate::ApproxMeasure, false);
+        let moved_path = crate::scene::connector_path(sheet, &layout, link);
+        assert_ne!(moved_path, old_path);
+        assert_eq!(moved_path[0], moved.rect.right_center());
+
+        let positions: Vec<_> = sheet
+            .canvas
+            .objects
+            .iter()
+            .map(|object| (object.id, object.rect))
+            .collect();
+        let lane = sheet.zones[0].id;
+        sheet.rename_zone(lane, "Requester").unwrap();
+        sheet.move_zone(lane, Vec2::new(0.0, 600.0)).unwrap();
+        assert_eq!(sheet.zones[0].name, "Requester");
+        assert_eq!(
+            positions,
+            sheet
+                .canvas
+                .objects
+                .iter()
+                .map(|object| (object.id, object.rect))
+                .collect::<Vec<_>>()
+        );
+        wb.validate().unwrap();
+    }
+
+    #[test]
     fn additional_board_templates_round_trip_with_localized_content() {
-        for id in ["affinity-diagram", "eisenhower-matrix", "meeting-board"] {
+        for id in [
+            "affinity-diagram",
+            "eisenhower-matrix",
+            "meeting-board",
+            "swimlane",
+        ] {
             let original = instantiate_localized(id, &|key| format!("<{key}>"));
             original.validate().unwrap();
             let json = serde_json::to_string(&original).unwrap();
@@ -1105,6 +1254,10 @@ mod tests {
             "Key points and questions",
             "Decision and reason",
             "Action, owner and due date",
+            "Name roles and map the handoffs",
+            "Role 1",
+            "Role 2",
+            "Role 3",
         ] {
             assert!(
                 strings.contains(&key),

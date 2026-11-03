@@ -765,6 +765,8 @@ Affinity Diagram|Diagrama de afinidade
 Affinity Diagram and Eisenhower Matrix provide visual frames. Moving a note into a frame does not automatically group it or schedule a task.|O diagrama de afinidade e a matriz de Eisenhower oferecem molduras visuais. Mover uma nota para uma moldura não a agrupa nem agenda uma tarefa automaticamente.
 Agenda|Pauta
 Meeting Board has visual areas for agenda, notes, decisions and actions. Its frames do not group notes automatically, and it has no timer.|O quadro de reunião tem áreas visuais para pauta, notas, decisões e ações. As molduras não agrupam notas automaticamente e não há cronômetro.
+Name roles and map the handoffs|Nomeie as funções e mapeie as transferências
+Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.|O diagrama de raias mostra transferências entre funções. As raias são guias visuais; mover uma forma não atribui uma função nem automatiza um fluxo de trabalho.
 What do we need to learn?|O que precisamos aprender?
 Retrospective: team and time period|Retrospectiva: equipe e período
 Went well|Deu certo

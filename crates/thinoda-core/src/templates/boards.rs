@@ -542,6 +542,55 @@ pub(crate) const BOARDS: &[BoardDef] = &[
         ],
         ..EMPTY
     },
+    BoardDef {
+        id: "swimlane",
+        grid: GridKind::Lines,
+        cards: &[note("Name roles and map the handoffs", 570.0, -70.0, 680.0)],
+        frames: &[
+            frame("Role 1", rect(0.0, 0.0, 1140.0, 170.0), TINT_BLUE, &[]),
+            frame("Role 2", rect(0.0, 190.0, 1140.0, 170.0), TINT_GREEN, &[]),
+            frame("Role 3", rect(0.0, 380.0, 1140.0, 170.0), TINT_ORANGE, &[]),
+        ],
+        shapes: &[
+            shape(
+                ShapeKind::Terminator,
+                "Start",
+                rect(80.0, 70.0, 150.0, 60.0),
+                GREEN,
+            ),
+            shape(
+                ShapeKind::Process,
+                "Step",
+                rect(300.0, 250.0, 180.0, 70.0),
+                BLUE,
+            ),
+            shape(
+                ShapeKind::Process,
+                "Step",
+                rect(520.0, 430.0, 180.0, 70.0),
+                YELLOW,
+            ),
+            shape(
+                ShapeKind::Process,
+                "Action",
+                rect(740.0, 250.0, 180.0, 70.0),
+                BLUE,
+            ),
+            shape(
+                ShapeKind::Terminator,
+                "End",
+                rect(960.0, 70.0, 150.0, 60.0),
+                GREEN,
+            ),
+        ],
+        links: &[
+            link(0, 1, "", ConnectorRoute::Elbow),
+            link(1, 2, "", ConnectorRoute::Elbow),
+            link(2, 3, "", ConnectorRoute::Elbow),
+            link(3, 4, "", ConnectorRoute::Elbow),
+        ],
+        ..EMPTY
+    },
 ];
 
 pub(crate) fn find(id: &str) -> Option<&'static BoardDef> {

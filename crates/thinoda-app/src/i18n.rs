@@ -1313,6 +1313,14 @@ const DE: &[(&str, &str)] = &[
     ("Affinity Diagram", "Affinitätsdiagramm"),
     ("Eisenhower Matrix", "Eisenhower-Matrix"),
     ("Meeting Board", "Besprechungsboard"),
+    ("Swimlane", "Swimlane-Diagramm"),
+    (
+        "Name roles and map the handoffs",
+        "Rollen benennen und Übergaben darstellen",
+    ),
+    ("Role 1", "Rolle 1"),
+    ("Role 2", "Rolle 2"),
+    ("Role 3", "Rolle 3"),
     ("Meeting: purpose and date", "Besprechung: Ziel und Datum"),
     ("Agenda", "Tagesordnung"),
     ("Decisions", "Entscheidungen"),
@@ -1444,6 +1452,10 @@ const DE: &[(&str, &str)] = &[
     (
         "Meeting Board has visual areas for agenda, notes, decisions and actions. Its frames do not group notes automatically, and it has no timer.",
         "Das Besprechungsboard hat visuelle Bereiche für Tagesordnung, Notizen, Entscheidungen und Maßnahmen. Seine Rahmen gruppieren Notizen nicht automatisch; ein Timer ist nicht enthalten.",
+    ),
+    (
+        "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
+        "Das Swimlane-Diagramm zeigt Übergaben zwischen Rollen. Die Bahnen sind visuelle Hilfen; das Verschieben einer Form weist keine Rolle zu und automatisiert keinen Ablauf.",
     ),
     ("User Guide", "Benutzerhandbuch"),
     ("Quick Start", "Schnellstart"),
@@ -3761,6 +3773,58 @@ mod tests {
         }
         assert_eq!(t_in(Lang::De, "Meeting Board"), "Besprechungsboard");
         assert_eq!(t_in(Lang::PtBr, "Agenda"), "Pauta");
+    }
+
+    #[test]
+    fn swimlane_uses_localized_content_in_every_language() {
+        use thinoda_core::board::CanvasObjectKind;
+
+        let lane_names = ["Role 1", "Role 2", "Role 3"];
+        let shape_names = ["Start", "Step", "Step", "Action", "End"];
+        for language in Lang::ALL {
+            let wb = thinoda_core::templates::instantiate_localized("swimlane", &|key| {
+                t_in(language, key).to_owned()
+            });
+            let sheet = wb.active();
+            assert_eq!(sheet.title, t_in(language, "Swimlane"));
+            assert_eq!(sheet.zones.len(), lane_names.len());
+            for (zone, name) in sheet.zones.iter().zip(lane_names) {
+                assert_eq!(zone.name, t_in(language, name));
+                assert!(zone.keep_empty && zone.roots.is_empty());
+            }
+            assert_eq!(sheet.content_topics().count(), 1);
+            assert_eq!(
+                sheet.content_topics().next().unwrap().title,
+                t_in(language, "Name roles and map the handoffs")
+            );
+            let labels: Vec<_> = sheet
+                .canvas
+                .objects
+                .iter()
+                .filter_map(|object| match &object.kind {
+                    CanvasObjectKind::Shape { label, .. } => Some(label.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                labels,
+                shape_names.map(|name| t_in(language, name)),
+                "{language:?}"
+            );
+            wb.validate().unwrap();
+        }
+        for language in TRANSLATED {
+            for key in [
+                "Swimlane",
+                "Name roles and map the handoffs",
+                "Role 1",
+                "Role 2",
+                "Role 3",
+                "Swimlane shows handoffs across role lanes. Lanes are visual guides; moving a shape does not assign a role or automate a workflow.",
+            ] {
+                assert_ne!(t_in(language, key), key, "{language:?}: {key}");
+            }
+        }
     }
 
     #[test]

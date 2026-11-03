@@ -717,6 +717,42 @@ fn svg_paints_the_board_scene() {
 }
 
 #[test]
+fn swimlane_exports_frames_shapes_and_handoffs() {
+    let wb = thinoda_core::templates::instantiate("swimlane");
+    let sheet = wb.active();
+    let svg = String::from_utf8(export(&wb, Format::Svg)).unwrap();
+    for zone in &sheet.zones {
+        assert!(svg.contains(&zone.name), "missing lane {}", zone.name);
+    }
+    for object in &sheet.canvas.objects {
+        let start = svg
+            .find(&format!("id=\"object-{}\"", object.id.0))
+            .unwrap_or_else(|| panic!("missing object {}", object.id.0));
+        let end = start + svg[start..].find("</g>").unwrap();
+        assert!(
+            svg[start..end].contains("<path "),
+            "empty object {}",
+            object.id.0
+        );
+    }
+    let [x, y, w, h] = view_box(&svg);
+    for zone in &sheet.zones {
+        assert!(x <= zone.frame.min.x && y <= zone.frame.min.y);
+        assert!(x + w >= zone.frame.max().x && y + h >= zone.frame.max().y);
+    }
+    let png = image::load_from_memory(&export(&wb, Format::Png))
+        .unwrap()
+        .to_rgb8();
+    for color in [[0xB7, 0xEB, 0x8F], [0xA5, 0xD8, 0xFF], [0xFF, 0xE5, 0x8F]] {
+        assert!(
+            png.pixels().any(|pixel| pixel.0 == color),
+            "shape fill {color:?} missing from raster export"
+        );
+    }
+    assert!(export(&wb, Format::Pdf).starts_with(b"%PDF"));
+}
+
+#[test]
 fn svg_rotates_an_offset_shape_label_around_the_shape_center() {
     let mut wb = board();
     let mut triangle = CanvasObject::shape(

@@ -1725,7 +1725,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
         .iter()
         .filter(|t| t.category == TemplateCategory::Boards)
         .collect();
-    assert_eq!(boards.len(), 11);
+    assert_eq!(boards.len(), 12);
     for template in &boards {
         h.get_by_role_and_label(Role::Button, template.name);
     }
@@ -1739,6 +1739,7 @@ fn boards_category_lists_board_templates_and_creates_a_hidden_root_board() {
             "Meeting Board",
             &["Agenda", "Notes", "Decisions", "Actions"][..],
         ),
+        ("Swimlane", &["Role 1", "Role 2", "Role 3"][..]),
     ] {
         h.state_mut().exec(&ctx, Cmd::Home);
         h.state_mut().template_category = Some(TemplateCategory::Boards);

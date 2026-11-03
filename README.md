@@ -326,7 +326,7 @@ those system-owned controls. WinGet publishing remains paused.
   Ctrl+Q requests normal window closing,
   retaining the save prompt for unsaved documents.
 
-- Home offers rendered previews of 43 original templates across nine categories.
+- Home offers rendered previews of 47 original templates across nine categories.
   Select a card, then Create, or double-click a card to create immediately.
   Cancel returns to the previous document without
   changing it. The last eight used template IDs are stored locally, separately
@@ -342,10 +342,11 @@ those system-owned controls. WinGet publishing remains paused.
   is English and editable. These are original Thinoda maps, not XMind template copies.
   The Boards category starts maps with a hidden central topic: Blank Canvas,
   Multi-root Map (three independent trees), Brainstorm Wall, Retrospective Board,
-  Kanban Board, Business Model Canvas, Flowchart, SWOT Board, Affinity Diagram
-  and Eisenhower Matrix. Frames, sticky/text cards and shapes are created in the
-  current UI language. The Affinity and Eisenhower frames are visual guides;
-  they do not automatically group notes or schedule tasks.
+  Kanban Board, Business Model Canvas, Flowchart, SWOT Board, Affinity Diagram,
+  Eisenhower Matrix, Meeting Board and Swimlane. Frames, sticky/text cards and
+  shapes are created in the current UI language. Affinity, Eisenhower, Meeting
+  and Swimlane frames are visual guides; they do not automatically group
+  content, assign roles or schedule tasks.
 - Freeform boards combine independent topic trees with cards, shapes, connectors,
   frames and ink. Use **Board > Hide central topic** to turn a map into a
   rootless board, or **Show central topic** to bring it back; existing content

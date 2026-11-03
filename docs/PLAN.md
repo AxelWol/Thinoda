@@ -11,7 +11,7 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
-The Freeform implementation, eleven board templates, responsive toolbox and
+The Freeform implementation, twelve board templates, responsive toolbox and
 existing style controls are in place. The production candidate passed
 56 Chromium browser scenarios, including mixed-board editing,
 SVG/PNG/JPEG/PDF and PowerPoint exports, image-card export, startup, offline
@@ -40,11 +40,13 @@ ordinary map placement is unchanged. Embedded-resource unions now avoid
 revalidating the growing store for each item while preserving validation,
 deduplication and atomic paste. Pixel erasing has a saved-state browser
 regression, and Meeting Board adds a localized, rootless meeting template with
-independent prompt cards and persistent visual frames. Gallery previews are
-now generated on demand; a small desktop startup comparison did not establish
-a speedup. The next open work remains the browser accessibility bridge, safe
-large-board recovery, export acceptance and realistic performance/device
-gates; cloud-provider work stays paused.
+independent prompt cards and persistent visual frames. Swimlane adds editable
+process shapes and handoffs across three visual role lanes; it does not assign
+roles or automate workflows. Gallery previews are now generated on demand; a
+small desktop startup comparison did not establish a speedup. The next open
+work remains the browser accessibility bridge, safe large-board recovery,
+export acceptance and realistic performance/device gates; cloud-provider work
+stays paused.
 
 ## Current next-value state (2026-10-30)
 
@@ -3043,6 +3045,13 @@ Meeting Board adds a localized purpose heading, four visual frames and
 independent prompt stickies. Moving a note does not automatically assign frame
 membership, and the template does not schedule tasks or provide a timer.
 
+Swimlane adds three persistent visual role lanes with five editable process
+shapes and attached elbow connectors. Moving a shape reroutes its connectors
+without assigning lane membership; changing a lane frame does not move shapes.
+The localized gallery, native round-trip and scene exports have focused
+coverage. Desktop browser checks create, move and save the template, but do
+not replace physical-device or broader export acceptance.
+
 Editable PowerPoint slides now preserve card-component rotation and rotate
 shape labels about the parent shape. The canvas applies that shape-label pivot
 and rotates card contents and image-resize interactions; text editors remain
@@ -3105,7 +3114,7 @@ access; F1-F3 accessibility acceptance remains open.
    existing quick styles and Shape/Text controls alongside the custom fill picker.
 4. F3 shapes, typed connectors, z-order within bands, groups, lock, rotation;
    the same existing styling controls for applicable shapes.
-5. F4 data-driven "Boards" templates (eleven implemented).
+5. F4 data-driven "Boards" templates (twelve implemented).
 6. F5 ink; F6 viewport scenes, mini-map and pixel eraser are implemented,
    with optional pen-pressure support still requiring its device spike.
 
