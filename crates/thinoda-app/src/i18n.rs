@@ -1865,6 +1865,10 @@ const DE: &[(&str, &str)] = &[
     ),
     ("Shapes omitted", "Ausgelassene Formen"),
     (
+        "Camera image metadata or color profiles may be omitted",
+        "Metadaten oder Farbprofile von Kamerabildern können entfallen",
+    ),
+    (
         "Card presentation omitted",
         "Ausgelassene Kartendarstellung",
     ),

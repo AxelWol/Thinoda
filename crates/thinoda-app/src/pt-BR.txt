@@ -80,6 +80,7 @@ Bold notes|Notas em negrito
 Board export changes|Alterações na exportação do quadro
 The selected format changes or omits board content. The board in memory stays unchanged; save as Thinoda to preserve it.|O formato selecionado altera ou omite conteúdo do quadro. O quadro na memória permanece inalterado; salve-o como Thinoda para preservá-lo.
 Shapes omitted|Formas omitidas
+Camera image metadata or color profiles may be omitted|Metadados ou perfis de cor das imagens da câmera podem ser omitidos
 Card presentation omitted|Apresentação dos cartões omitida
 Sheet {sheet}: hidden root mode omitted.|Folha {sheet}: o modo de raiz oculta foi omitido.
 Autosave skipped because this format cannot preserve board content. Save as Thinoda to keep it.|O salvamento automático foi ignorado porque este formato não preserva o conteúdo do quadro. Salve como Thinoda para mantê-lo.

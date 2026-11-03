@@ -11,6 +11,40 @@ Legend: ✅ done · 🟡 partial · ⬜ open
 
 ## Current Freeform and web-startup status
 
+**2026-11-03 contextual board editing request (planned):** use the supplied
+Freeform examples as interaction references while retaining Thinoda's own theme,
+commands and document semantics. Deliver in independently verified slices:
+
+1. Replace the text-only Shape library with a searchable, keyboard-accessible
+   graphical picker for the existing shape catalog. Keep localized names,
+   tooltips, selection feedback and usable scrolling in short/narrow windows.
+2. Add contextual formatting for selected sticky notes, including supported
+   text styles, size, lists and alignment. Preserve existing content and
+   explicitly extend the document model before offering unsupported rich text.
+3. Add contextual font, color and text styling for text cards and active text
+   editing. Specify whole-object versus selected-range formatting, migration,
+   undo, clipboard, accessibility and export behavior before enabling new styles.
+4. Add selected-connector controls for the existing route, stroke and endpoint
+   options, respecting locked objects and existing edit transactions.
+5. Improve pen and eraser context menus for color, width, opacity, supported
+   stroke types and pixel/object erasing. Additional brush appearances require
+   real rendering and persistence support rather than decorative placeholders.
+
+All slices must fit light/dark themes and constrained windows, retain localized
+accessible names and keyboard navigation, and test selection ownership,
+undo/redo, native save/reopen and visual/export parity where behavior changes.
+The browser accessibility bridge and physical-device acceptance remain separate
+open gates; integrated cloud providers remain paused.
+
+**2026-11-03 photo-orientation implementation:** bounded previews and visual
+exports apply all eight EXIF rotations/mirrors while native documents and
+clipboard retain original resources. SVG and editable PowerPoint normalize only
+transformed images, with cumulative output limits and shared-media reuse.
+Preflight warns that normalized images can lose metadata and color profiles.
+Generated PNG/JPEG fixtures cover pixel order, visual sizing, native round-trips,
+exported media and insufficient output budgets. Real-camera, external Office,
+browser accessibility and physical-device acceptance remain open.
+
 **2026-11-03 menu and recovery continuation (implemented locally):** Board is
 at the first level of the shared main menu. The canvas context menu groups
 Indent, Outdent and the four style actions under Styles, places Board between

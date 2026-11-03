@@ -639,6 +639,61 @@ mod tests {
     }
 
     #[test]
+    fn camera_photo_upload_uses_oriented_dimensions_without_changing_source_bytes() {
+        use image::ImageEncoder;
+
+        let exif = [
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+        encoder.set_exif_metadata(exif.to_vec()).unwrap();
+        encoder
+            .write_image(&[127; 40 * 20 * 4], 40, 20, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        for board in [false, true] {
+            let mut app = if board {
+                rootless_app()
+            } else {
+                ThinodaApp::headless()
+            };
+            let before = app.doc().unwrap().doc.workbook().clone();
+            let request = if board {
+                begin_async_board_pick(&mut app)
+            } else {
+                app.image_request = Some(owner(&mut app, 41));
+                41
+            };
+            app.complete_image_upload(
+                request,
+                files::ImageUpload {
+                    name: "camera.png".into(),
+                    bytes: bytes.clone(),
+                },
+            );
+            let doc = app.doc().unwrap();
+            let topic = doc.doc.sheet().topic(doc.view.primary().unwrap()).unwrap();
+            assert_eq!(topic.image_size, Some(Vec2::new(20.0, 40.0)));
+            assert_eq!(
+                doc.doc
+                    .sheet()
+                    .resources
+                    .get(topic.image.as_deref().unwrap())
+                    .unwrap()
+                    .bytes(),
+                bytes
+            );
+            let after = doc.doc.workbook().clone();
+            let doc = app.doc_mut().unwrap();
+            assert!(doc.doc.undo());
+            assert_eq!(doc.doc.workbook(), &before);
+            assert!(doc.doc.redo());
+            assert_eq!(doc.doc.workbook(), &after);
+        }
+    }
+
+    #[test]
     fn browser_dropped_image_keeps_topic_ownership_and_does_not_replace_picker() {
         let mut app = ThinodaApp::headless();
         let ctx = egui::Context::default();

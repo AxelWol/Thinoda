@@ -21,6 +21,17 @@ and native background writes; it does not remove browser quota or tab-race
 limitations. Integrated cloud providers stay disabled and paused until publisher
 registrations are complete; see [FREEFORM.md](FREEFORM.md) for phase critiques.
 
+**Contextual board editing:** the user requested a graphical Shape picker and
+context menus for sticky-note formatting, text styling, connectors, and pen
+styles/colors. The ordered slices and their persistence, accessibility and
+verification constraints are in the current [plan](PLAN.md#current-freeform-and-web-startup-status).
+These requests are planned, not yet complete.
+
+**Camera photo acceptance:** EXIF rotations/mirrors are applied to previews and
+visual exports with original native/clipboard bytes preserved and metadata-loss
+preflight. Verify real camera files, color-profile appearance and external
+Office/XMind rendering on physical devices before closing acceptance.
+
 **2026-10-30 continuation:** vector presentation redesign is implemented and
 accepted in local user review; see [PRESENTATIONS.md](PRESENTATIONS.md).
 Task Planning now belongs in Data after Equation, including its schedule

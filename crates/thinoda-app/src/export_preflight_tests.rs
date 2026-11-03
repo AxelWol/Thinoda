@@ -24,6 +24,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         ExportLoss::RelationshipsDropped(12),
         ExportLoss::BoundariesDropped(13),
         ExportLoss::CardsDropped(14),
+        ExportLoss::OrientedImageMetadataDropped(15),
         ExportLoss::BoardSettingsDropped,
         ExportLoss::SynthesizedRoot {
             sheet: 2,
@@ -36,7 +37,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
     };
     let lines = loss_lines(&report, Format::Markdown);
     assert_eq!(lines.len(), losses.len());
-    for (line, count) in lines.iter().take(13).zip(2..=14) {
+    for (line, count) in lines.iter().take(14).zip(2..=15) {
         assert!(line.starts_with(&format!("{count} — ")), "{line}");
     }
     for (count, label) in [
@@ -44,6 +45,7 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         (12, "Relationships omitted"),
         (13, "Boundaries omitted"),
         (14, "Cards omitted"),
+        (15, "Camera image metadata or color profiles may be omitted"),
     ] {
         assert!(lines.contains(&format!("{count} — {}", t(label))));
     }
@@ -60,6 +62,46 @@ fn loss_rows_cover_every_variant_and_do_not_expand_title_placeholders() {
         )
     );
     assert!(!fim.last().unwrap().contains("title {sheet}"));
+}
+
+#[test]
+fn oriented_photo_metadata_loss_requires_visual_export_consent() {
+    use image::ImageEncoder;
+
+    let exif = [
+        b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut bytes = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+    encoder.set_exif_metadata(exif.to_vec()).unwrap();
+    encoder
+        .write_image(&[127; 8 * 4 * 4], 8, 4, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let resource =
+        thinoda_core::resources::Resource::new("camera.png", "image/png", bytes).unwrap();
+    let mut book = Workbook::default();
+    let sheet = book.active_mut();
+    thinoda_core::images::set_image(sheet, sheet.root, Some((resource, Vec2::new(8.0, 4.0))))
+        .unwrap();
+    let options = ExportOptions::default();
+    let label = t("Camera image metadata or color profiles may be omitted");
+    let message = require_board_consent(&book, Format::Svg, &options, false).unwrap_err();
+    assert!(message.contains(label));
+    assert!(require_board_consent(&book, Format::Svg, &options, true).is_ok());
+    assert!(require_board_consent(&book, Format::Thinoda, &options, false).is_ok());
+    assert!(require_board_consent(&book, Format::XMind, &options, false).is_ok());
+}
+
+#[test]
+fn oriented_photo_metadata_warning_is_localized() {
+    let key = "Camera image metadata or color profiles may be omitted";
+    for language in i18n::Lang::ALL {
+        let value = i18n::t_in(language, key);
+        assert!(!value.is_empty());
+        if language != i18n::Lang::En {
+            assert_ne!(value, key, "missing {language:?} warning");
+        }
+    }
 }
 
 #[test]

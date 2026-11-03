@@ -1046,6 +1046,65 @@ recorded in [WEB-STARTUP.md](WEB-STARTUP.md#browser-accessibility-checkpoint).
 - Actual operating-system menus, assistive technology and physical touch devices
   still require acceptance; the browser canvas accessibility gap is unchanged.
 
+### Photo orientation checkpoint: concept and critique
+
+- Camera JPEGs can contain rotated or mirrored EXIF orientation even when their
+  stored pixel dimensions are landscape. A native regression reproduces an
+  incorrectly mirrored preview. Decode orientation before sizing and painting;
+  cover all eight transforms and keep the original resource bytes in the document.
+- Visual exports must not rely on inconsistent host interpretation of EXIF or
+  apply an orientation twice. SVG and editable PowerPoint now embed a lossless,
+  orientation-normalized PNG only when a transform is required; unchanged images
+  keep their source bytes. SVG bounds aggregate image bytes to 64 MiB, and
+  PowerPoint bounds media against its 128 MiB archive budget and reuses a shared
+  image within each slide. Inadequate budgets fail explicitly. Native documents,
+  XMind resources and clipboard retain the original bytes.
+- Duck check: normalization preserves decoded pixels but removes image metadata
+  and embedded color profiles. A localized export preflight warns about this
+  potential loss; saving as Thinoda keeps the original. It is not a color-managed
+  conversion. PNG and JPEG fixtures with all eight EXIF values check preview
+  pixels, SVG payload and dimensions, raster output, PDF generation, PowerPoint
+  media and dimensions, and native/clipboard round-trips. The PNG writer's final
+  chunk can fail during cleanup, so the byte limit is checked after finalization
+  as well as during writes. A generated rotated upload also verifies default
+  sizing, source bytes and undo/redo for both topic and rootless-board images.
+- Real camera/profile files, physical iPad/browser behavior, and rendering in
+  external PowerPoint and XMind clients remain acceptance work. XMind keeps the
+  original metadata rather than claiming that every external viewer interprets it.
+
+### Contextual board editing: concept and critique
+
+- Replace the shape-name list with an icon grid derived from Thinoda's actual
+  shape geometry. Search and accessible localized names remain available; the
+  grid scrolls rather than clipping controls at small sizes.
+- Sticky and text-card formatting needs a clear distinction between whole-card
+  styling and selected text ranges. Existing plain titles and topic style fields
+  must not be silently promoted to an unsupported rich-text representation.
+  Rich lists, fonts and alignment require explicit model, editing, import/export,
+  clipboard, undo and migration contracts.
+- Connector controls should reuse the existing straight, elbow and curve routes,
+  endpoint arrows, width and color rather than inventing alternate geometry.
+  Locked or stale selections must not be edited.
+- Pen controls should expose real pen/highlighter and eraser settings. The
+  reference shows additional brushes; do not imply those render faithfully until
+  their stroke model, rendering, persistence and export are implemented.
+- Context controls must avoid obscuring selected content and toolbars, remain
+  navigable by keyboard, announce localized names, and respect short viewports,
+  dark mode and pending text/ink drafts. A visual match alone is not functional
+  or screen-reader acceptance.
+- Duck check: an icon grid is not an accessible shape picker merely because its
+  pictures are recognizable. Search, focus order, selected state, localized
+  names, concave silhouettes and access to every item must survive filtering,
+  scrolling and narrow windows.
+- Duck check: opening formatting while a text editor owns focus can accidentally
+  commit or discard its draft. Resolve selection and lock ownership at the
+  transaction boundary; preserve unfinished text and IME composition, and never
+  represent whole-card changes as selected-range formatting.
+- Duck check: changing a connector or tool during an active gesture can leave
+  stale handles or mutate an unfinished stroke. Reuse the existing gesture
+  guards and verify undo/redo, save/reopen, clipboard and every supported visual
+  output rather than inferring correctness from the control state alone.
+
 Not in this package: real-time collaboration (R12), comments with identities,
 boolean shape operations, handwriting recognition, tables, board library
 management.

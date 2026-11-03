@@ -157,6 +157,10 @@ pub(crate) fn loss_lines(report: &LossReport, format: Format) -> Vec<String> {
                 ExportLoss::SummaryTreesDropped(count) => (*count, "Summary topic trees omitted"),
                 ExportLoss::RelationshipsDropped(count) => (*count, "Relationships omitted"),
                 ExportLoss::BoundariesDropped(count) => (*count, "Boundaries omitted"),
+                ExportLoss::OrientedImageMetadataDropped(count) => (
+                    *count,
+                    "Camera image metadata or color profiles may be omitted",
+                ),
                 ExportLoss::BoardSettingsDropped => {
                     return t("Board grid and snapping settings omitted").to_owned();
                 }

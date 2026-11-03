@@ -13,7 +13,7 @@ use thinoda_core::{
 
 pub(crate) struct NativeSlide {
     pub shapes: String,
-    /// Archive path and original PNG/JPEG bytes, only for actual topic images.
+    /// Archive path and visual PNG/JPEG bytes, only for actual topic images.
     pub media: Vec<(String, Vec<u8>)>,
     pub relationships: String,
     pub background: String,
@@ -304,13 +304,14 @@ pub(crate) fn editable_slide(
     resolved: &ResolvedPresentationSlide,
     options: &ExportOptions,
     slide_number: usize,
-    width: u64,
-    height: u64,
+    size: (u64, u64),
+    mut image_budget: usize,
 ) -> Result<NativeSlide, IoError> {
     crate::render::validate_equation_notes(sheet)?;
     let dimensions = thinoda_core::images::validate_visual(sheet).map_err(IoError::Invalid)?;
     let text = ExportText::new(sheet, options.dark, crate::fonts::database())?;
     let layout = &resolved.layout;
+    let (width, height) = size;
     let mut draw = Drawing {
         xml: String::new(),
         next_id: 2,
@@ -475,6 +476,7 @@ pub(crate) fn editable_slide(
         );
     }
     let mut media = Vec::new();
+    let mut image_relationships = HashMap::new();
     let mut relationships = String::from(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>"#,
     );
@@ -551,30 +553,37 @@ pub(crate) fn editable_slide(
             );
         }
         if let (Some(rect), Some(reference)) = (tl.image_rect, topic.image.as_deref()) {
-            let resource = sheet.resources.get(reference).map_err(IoError::Invalid)?;
-            let extension = match resource.media_type.as_str() {
-                "image/png" => "png",
-                "image/jpeg" => "jpg",
-                other => {
-                    return Err(IoError::Invalid(format!(
-                        "editable PowerPoint does not support image type {other}"
-                    )));
-                }
-            };
             let size = dimensions
                 .get(reference)
                 .ok_or_else(|| IoError::Invalid("missing native image dimensions".into()))?;
             let scale = (rect.size.x / size.x).min(rect.size.y / size.y);
             let rect = Rect::from_center_size(rect.center(), *size * scale);
-            let image_number = media.len() + 1;
-            let relationship_id = image_number + 1;
-            let filename = format!("slide{slide_number}-photo{image_number}.{extension}");
-            relationships.push_str(&format!(r#"<Relationship Id="rId{relationship_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{filename}"/>"#));
+            let relationship_id = if let Some(id) = image_relationships.get(reference) {
+                *id
+            } else {
+                let resource = sheet.resources.get(reference).map_err(IoError::Invalid)?;
+                let image = super::visual_image(resource, &mut image_budget)?;
+                let extension = match image.media_type {
+                    "image/png" => "png",
+                    "image/jpeg" => "jpg",
+                    other => {
+                        return Err(IoError::Invalid(format!(
+                            "editable PowerPoint does not support image type {other}"
+                        )));
+                    }
+                };
+                let image_number = media.len() + 1;
+                let relationship_id = image_number + 1;
+                let filename = format!("slide{slide_number}-photo{image_number}.{extension}");
+                relationships.push_str(&format!(r#"<Relationship Id="rId{relationship_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{filename}"/>"#));
+                media.push((format!("ppt/media/{filename}"), image.bytes.into_owned()));
+                image_relationships.insert(reference, relationship_id);
+                relationship_id
+            };
             let id = draw.id();
             draw.xml.push_str(&format!(
                 r#"<p:pic><p:nvPicPr><p:cNvPr id="{id}" name="Topic photo"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId{relationship_id}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
                 draw.transform(rect)));
-            media.push((format!("ppt/media/{filename}"), resource.bytes().to_vec()));
         }
         let family = s.font_family.as_deref().unwrap_or("Segoe UI");
         let block = text.topic(*id);
@@ -793,4 +802,81 @@ pub(crate) fn editable_slide(
         relationships,
         background,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::ImageEncoder;
+    use thinoda_core::{PresentationSource, resolve_presentation_slide, resources::Resource};
+
+    #[test]
+    fn editable_slide_bounds_normalized_media_and_deduplicates_shared_photos() {
+        let exif = [
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+        encoder.set_exif_metadata(exif.to_vec()).unwrap();
+        encoder
+            .write_image(&[127; 8 * 4 * 4], 8, 4, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let normalized = thinoda_core::images::normalized_visual_image(&bytes, 1024)
+            .unwrap()
+            .unwrap();
+        let mut sheet = Sheet::new("Camera", "Root");
+        let first = sheet.add_child(sheet.root, None, "Photo");
+        let second = sheet.add_child(first, None, "Copy");
+        thinoda_core::images::set_image(
+            &mut sheet,
+            first,
+            Some((
+                Resource::new("camera.png", "image/png", bytes).unwrap(),
+                Vec2::new(8.0, 4.0),
+            )),
+        )
+        .unwrap();
+        let photo = sheet.topic(first).unwrap().clone();
+        let copy = sheet.topic_mut(second).unwrap();
+        copy.image = photo.image;
+        copy.image_size = photo.image_size;
+        sheet
+            .add_presentation_slide(
+                "Camera",
+                PresentationSource::Branch(first),
+                Rect::from_min_size(Vec2::new(-200.0, -150.0), Vec2::new(400.0, 300.0)),
+            )
+            .unwrap();
+        let options = ExportOptions::default();
+        let layout = super::super::presentation_layout(&sheet, false).unwrap();
+        let resolved =
+            resolve_presentation_slide(&sheet, &sheet.presentation.slides[0], &layout).unwrap();
+        let size = (9_144_000, 6_858_000);
+        assert!(
+            editable_slide(
+                &sheet,
+                &sheet,
+                &resolved,
+                &options,
+                1,
+                size,
+                normalized.len() - 1
+            )
+            .is_err()
+        );
+        let slide = editable_slide(
+            &sheet,
+            &sheet,
+            &resolved,
+            &options,
+            1,
+            size,
+            normalized.len(),
+        )
+        .unwrap();
+        assert_eq!(slide.media.len(), 1);
+        assert_eq!(slide.media[0].1, normalized);
+        assert_eq!(slide.shapes.matches("r:embed=\"rId2\"").count(), 2);
+    }
 }

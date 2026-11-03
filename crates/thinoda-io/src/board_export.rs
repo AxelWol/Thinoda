@@ -137,6 +137,8 @@ pub enum ExportLoss {
     RelationshipsDropped(usize),
     /// Boundary annotations around topics are not written.
     BoundariesDropped(usize),
+    /// Camera-image metadata or color profiles may be omitted during normalization.
+    OrientedImageMetadataDropped(usize),
     /// Board grid and snapping settings are not written.
     BoardSettingsDropped,
 }
@@ -174,6 +176,32 @@ pub fn export_losses(book: &Workbook, format: Format, opts: &ExportOptions) -> V
         format,
         Format::Svg | Format::Png | Format::Jpeg | Format::Pdf | Format::PowerPoint
     ) {
+        let oriented_images = sheets
+            .iter()
+            .map(|(_, sheet)| {
+                let references: HashSet<_> = sheet
+                    .topics
+                    .values()
+                    .filter_map(|topic| topic.image.as_deref())
+                    .collect();
+                references
+                    .into_iter()
+                    .filter(|reference| {
+                        match sheet.resources.get(reference).and_then(|resource| {
+                            thinoda_core::images::requires_visual_normalization(resource.bytes())
+                        }) {
+                            Ok(required) => required,
+                            Err(error) => {
+                                log::warn!("Could not inspect image for visual export: {error}");
+                                // The export itself will report the invalid resource.
+                                true
+                            }
+                        }
+                    })
+                    .count()
+            })
+            .sum();
+        push(ExportLoss::OrientedImageMetadataDropped, oriented_images);
         if format == Format::PowerPoint
             && sheets.iter().any(|(_, sheet)| {
                 sheet.presentation.slides.is_empty()

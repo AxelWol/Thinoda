@@ -473,8 +473,8 @@ pub fn export_presentation_pptx(
                 &resolved,
                 options,
                 index + 1,
-                width_emu,
-                height_emu,
+                (width_emu, height_emu),
+                MAX_PRESENTATION_ARCHIVE_BYTES.saturating_sub(native_bytes),
             )?;
             PresentationPptxSlide {
                 shapes: native.shapes,

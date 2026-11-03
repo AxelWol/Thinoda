@@ -1,7 +1,7 @@
 //! Local PNG/JPEG only. Never resolves a URL or a filesystem reference.
 use crate::{Sheet, Vec2, resources::MAX_RESOURCE_BYTES};
-use image::{ImageFormat, ImageReader};
-use std::io::Cursor;
+use image::{ImageDecoder, ImageEncoder, ImageFormat, ImageReader, metadata::Orientation};
+use std::io::{Cursor, Write};
 
 pub const MAX_DIMENSION: u32 = 4096;
 pub const MAX_PIXELS: u64 = 4 * 1024 * 1024;
@@ -16,7 +16,7 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
-    /// Bounded interactive preview; visual exports keep original encoded pixels.
+    /// Bounded interactive preview; the document retains its original bytes.
     pub fn preview(self) -> Self {
         let image = image::RgbaImage::from_raw(self.width, self.height, self.rgba)
             .expect("decoder produced complete RGBA pixels");
@@ -46,7 +46,13 @@ fn reader(bytes: &[u8], format: ImageFormat) -> ImageReader<Cursor<&[u8]>> {
     reader
 }
 
-pub fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
+struct ImageMetadata {
+    format: ImageFormat,
+    media_type: &'static str,
+    orientation: Orientation,
+}
+
+fn inspect(bytes: &[u8]) -> Result<ImageMetadata, String> {
     if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
         return Err("image must contain 1 byte to 8 MiB".into());
     }
@@ -57,9 +63,10 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
         _ => return Err("unsupported image; use PNG or JPEG".into()),
     };
     // Header inspection precedes full pixel allocation, including RGBA conversion.
-    let (width, height) = reader(bytes, format)
-        .into_dimensions()
+    let mut decoder = reader(bytes, format)
+        .into_decoder()
         .map_err(|e| format!("invalid image header: {e}"))?;
+    let (width, height) = decoder.dimensions();
     if width == 0
         || height == 0
         || width > MAX_DIMENSION
@@ -68,17 +75,89 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
     {
         return Err("image exceeds 4096 pixels per side or 4 megapixels".into());
     }
-    let rgba = reader(bytes, format)
-        .decode()
-        .map_err(|e| format!("invalid image: {e}"))?
-        .into_rgba8()
-        .into_raw();
-    Ok(DecodedImage {
-        width,
-        height,
-        rgba,
+    let orientation = decoder
+        .orientation()
+        .map_err(|e| format!("invalid image metadata: {e}"))?;
+    Ok(ImageMetadata {
+        format,
         media_type,
+        orientation,
     })
+}
+
+fn decode_pixels(bytes: &[u8], metadata: &ImageMetadata) -> Result<image::RgbaImage, String> {
+    let mut image = reader(bytes, metadata.format)
+        .decode()
+        .map_err(|e| format!("invalid image: {e}"))?;
+    image.apply_orientation(metadata.orientation);
+    Ok(image.into_rgba8())
+}
+
+pub fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
+    let metadata = inspect(bytes)?;
+    let image = decode_pixels(bytes, &metadata)?;
+    Ok(DecodedImage {
+        width: image.width(),
+        height: image.height(),
+        rgba: image.into_raw(),
+        media_type: metadata.media_type,
+    })
+}
+
+struct LimitedImageOutput {
+    bytes: Vec<u8>,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl Write for LimitedImageOutput {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() > self.limit.saturating_sub(self.bytes.len()) {
+            self.overflowed = true;
+            return Err(std::io::Error::other(
+                "normalized images exceed the visual export size limit",
+            ));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Whether visual consumers need pixels normalized to avoid differing EXIF handling.
+pub fn requires_visual_normalization(bytes: &[u8]) -> Result<bool, String> {
+    Ok(inspect(bytes)?.orientation != Orientation::NoTransforms)
+}
+
+/// Re-encodes transformed pixels for visual consumers that may handle EXIF differently.
+/// `None` retains the source bytes and their metadata unchanged.
+pub fn normalized_visual_image(bytes: &[u8], limit: usize) -> Result<Option<Vec<u8>>, String> {
+    let metadata = inspect(bytes)?;
+    if metadata.orientation == Orientation::NoTransforms {
+        return Ok(None);
+    }
+    let image = decode_pixels(bytes, &metadata)?;
+    let mut output = LimitedImageOutput {
+        bytes: Vec::new(),
+        limit,
+        overflowed: false,
+    };
+    image::codecs::png::PngEncoder::new(&mut output)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| format!("could not normalize image orientation: {error}"))?;
+    // The PNG encoder can encounter a write error while finalizing its stream.
+    if output.overflowed {
+        return Err("normalized images exceed the visual export size limit".into());
+    }
+    Ok(Some(output.bytes))
 }
 
 /// Default fit, without upscaling small source images.
@@ -185,6 +264,7 @@ pub fn validate_visual(sheet: &Sheet) -> Result<std::collections::BTreeMap<Strin
 mod tests {
     use super::*;
     use crate::{Document, Workbook, resources::Resource};
+    use image::{ExtendedColorType, ImageEncoder, codecs::jpeg::JpegEncoder};
 
     fn encoded(format: ImageFormat) -> Vec<u8> {
         let mut bytes = Cursor::new(Vec::new());
@@ -196,6 +276,153 @@ mod tests {
         .write_to(&mut bytes, format)
         .unwrap();
         bytes.into_inner()
+    }
+
+    fn oriented_image(format: ImageFormat, orientation: u8) -> Vec<u8> {
+        let pixels = image::RgbImage::from_fn(80, 40, |x, y| {
+            image::Rgb(match (x < 40, y < 20) {
+                (true, true) => [240, 20, 30],
+                (false, true) => [20, 230, 40],
+                (true, false) => [30, 40, 240],
+                (false, false) => [235, 220, 20],
+            })
+        });
+        let exif = vec![
+            b'I',
+            b'I',
+            42,
+            0,
+            8,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0x12,
+            0x01,
+            3,
+            0,
+            1,
+            0,
+            0,
+            0,
+            orientation,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        let mut bytes = Vec::new();
+        match format {
+            ImageFormat::Jpeg => {
+                let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 100);
+                encoder.set_exif_metadata(exif).unwrap();
+                encoder
+                    .encode(pixels.as_raw(), 80, 40, ExtendedColorType::Rgb8)
+                    .unwrap();
+            }
+            ImageFormat::Png => {
+                let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+                encoder.set_exif_metadata(exif).unwrap();
+                encoder
+                    .write_image(pixels.as_raw(), 80, 40, ExtendedColorType::Rgb8)
+                    .unwrap();
+            }
+            _ => panic!("unsupported fixture"),
+        }
+        bytes
+    }
+
+    #[test]
+    fn camera_orientations_rotate_and_mirror_decoded_pixels() {
+        let expected = [
+            [0, 1, 2, 3],
+            [1, 0, 3, 2],
+            [3, 2, 1, 0],
+            [2, 3, 0, 1],
+            [0, 2, 1, 3],
+            [2, 0, 3, 1],
+            [3, 1, 2, 0],
+            [1, 3, 0, 2],
+        ];
+        for format in [ImageFormat::Jpeg, ImageFormat::Png] {
+            for (index, corners) in expected.iter().enumerate() {
+                let orientation = index as u8 + 1;
+                let bytes = oriented_image(format, orientation);
+                let raw = image::load_from_memory(&bytes).unwrap().into_rgba8();
+                let source = [
+                    raw.get_pixel(10, 10).0,
+                    raw.get_pixel(69, 10).0,
+                    raw.get_pixel(10, 29).0,
+                    raw.get_pixel(69, 29).0,
+                ];
+                let decoded = decode(&bytes).unwrap();
+                let dimensions = if orientation >= 5 { (40, 80) } else { (80, 40) };
+                assert_eq!(
+                    (decoded.width, decoded.height),
+                    dimensions,
+                    "{format:?} orientation {orientation}"
+                );
+                let image = image::RgbaImage::from_raw(decoded.width, decoded.height, decoded.rgba)
+                    .unwrap();
+                for ((x, y), &source_index) in [
+                    (10, 10),
+                    (dimensions.0 - 11, 10),
+                    (10, dimensions.1 - 11),
+                    (dimensions.0 - 11, dimensions.1 - 11),
+                ]
+                .into_iter()
+                .zip(corners)
+                {
+                    assert_eq!(
+                        image.get_pixel(x, y).0,
+                        source[source_index],
+                        "{format:?} orientation {orientation} at {x},{y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn oriented_visual_encoding_is_lossless_bounded_and_leaves_identity_unchanged() {
+        for format in [ImageFormat::Png, ImageFormat::Jpeg] {
+            for orientation in [0, 1, 2, 5, 6, 8, 9] {
+                let original = oriented_image(format, orientation);
+                let decoded = decode(&original).unwrap();
+                assert_eq!(
+                    requires_visual_normalization(&original).unwrap(),
+                    !matches!(orientation, 0 | 1 | 9)
+                );
+                let normalized = normalized_visual_image(&original, 1024 * 1024).unwrap();
+                if matches!(orientation, 0 | 1 | 9) {
+                    assert!(normalized.is_none());
+                    assert!(normalized_visual_image(&original, 0).unwrap().is_none());
+                } else {
+                    let normalized = normalized.unwrap();
+                    let png = image::load_from_memory_with_format(&normalized, ImageFormat::Png)
+                        .unwrap()
+                        .into_rgba8();
+                    assert_eq!((png.width(), png.height()), (decoded.width, decoded.height));
+                    assert_eq!(png.as_raw(), &decoded.rgba);
+                    assert!(normalized_visual_image(&original, normalized.len() - 1).is_err());
+                    assert_eq!(
+                        normalized_visual_image(&original, normalized.len()).unwrap(),
+                        Some(normalized)
+                    );
+                }
+                assert_eq!(
+                    decode(&original).unwrap().rgba,
+                    decoded.rgba,
+                    "the source image must remain unchanged"
+                );
+            }
+        }
+        assert!(normalized_visual_image(b"invalid", 1024).is_err());
+        assert!(requires_visual_normalization(b"invalid").is_err());
     }
 
     #[test]

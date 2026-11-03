@@ -1,5 +1,5 @@
 use crate::{ExportOptions, IoError};
-use std::{collections::HashMap, io::Cursor};
+use std::{borrow::Cow, collections::HashMap, io::Cursor};
 use thinoda_core::{
     Rect, Sheet, TopicId, Workbook,
     equations::{self as math, Layout as EquationLayout, Primitive as EquationPrimitive},
@@ -41,6 +41,31 @@ fn xy(p: Vec2) -> String {
 fn sheet<'a>(w: &'a Workbook, o: &ExportOptions) -> &'a thinoda_core::Sheet {
     &w.sheets[o.sheet.unwrap_or(w.active_sheet).min(w.sheets.len() - 1)]
 }
+
+struct VisualImage<'a> {
+    media_type: &'a str,
+    bytes: Cow<'a, [u8]>,
+}
+
+fn visual_image<'a>(
+    resource: &'a thinoda_core::resources::Resource,
+    remaining: &mut usize,
+) -> Result<VisualImage<'a>, IoError> {
+    let normalized = thinoda_core::images::normalized_visual_image(resource.bytes(), *remaining)
+        .map_err(|error| IoError::Invalid(format!("could not prepare visual image: {error}")))?;
+    let (media_type, bytes) = match normalized {
+        Some(bytes) => ("image/png", Cow::Owned(bytes)),
+        None => (
+            resource.media_type.as_str(),
+            Cow::Borrowed(resource.bytes()),
+        ),
+    };
+    *remaining = remaining
+        .checked_sub(bytes.len())
+        .ok_or_else(|| IoError::Invalid("visual images exceed the export size limit".into()))?;
+    Ok(VisualImage { media_type, bytes })
+}
+
 pub(crate) fn svg(w: &Workbook, o: &ExportOptions) -> Result<String, IoError> {
     svg_with_fonts(w, o, crate::fonts::database())
 }
@@ -498,19 +523,21 @@ fn svg_layout_with_fonts(
     out.push_str("<defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"6\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L0,6 L7,3 z\" fill=\"#777777\"/></marker></defs>");
     // Embed each referenced blob once, even when thousands of topics share it.
     out.push_str("<defs>");
+    let mut image_budget = thinoda_core::resources::MAX_WORKBOOK_RESOURCE_BYTES;
     for (reference, size) in &image_dimensions {
         use base64::Engine;
         let resource = s.resources.get(reference).map_err(IoError::Invalid)?;
+        let image = visual_image(resource, &mut image_budget)?;
         let id = reference
             .strip_prefix(thinoda_core::resources::RESOURCE_PREFIX)
             .ok_or_else(|| IoError::Invalid("not an embedded image".into()))?;
-        let data = base64::engine::general_purpose::STANDARD.encode(resource.bytes());
+        let data = base64::engine::general_purpose::STANDARD.encode(&image.bytes);
         out.push_str(&format!(
             "<image id=\"image-{}\" width=\"{}\" height=\"{}\" xlink:href=\"data:{};base64,{}\"/>",
             esc(id),
             size.x,
             size.y,
-            resource.media_type,
+            image.media_type,
             data
         ));
     }
@@ -1289,7 +1316,7 @@ fn pdf_svg_tree(source: &str) -> Result<svg2pdf::usvg::Tree, IoError> {
 }
 
 /// Compose independent vector SVG form XObjects into a multipage PDF. Text is
-/// outlined with the same fonts as SVG exports; only original photos are images.
+/// outlined with the same fonts as SVG exports; only photo content is rasterized.
 pub(crate) fn pdf_svg_pages(
     pages: &[(String, f32, f32)],
     limit: usize,
@@ -1439,6 +1466,53 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use thinoda_core::{Rect, Sheet};
+
+    #[test]
+    fn visual_image_budget_is_cumulative_and_does_not_change_on_failure() {
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(8, 4)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = bytes.into_inner();
+        let resource =
+            thinoda_core::resources::Resource::new("identity.png", "image/png", bytes.clone())
+                .unwrap();
+        let mut remaining = bytes.len() * 2 - 1;
+        let image = visual_image(&resource, &mut remaining).unwrap();
+        assert_eq!(image.bytes.as_ref(), bytes);
+        assert_eq!(remaining, bytes.len() - 1);
+        let before = remaining;
+        assert!(visual_image(&resource, &mut remaining).is_err());
+        assert_eq!(remaining, before);
+    }
+
+    #[test]
+    fn visual_image_budget_limits_normalization_before_allocation_grows() {
+        use image::ImageEncoder;
+
+        let exif = [
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+        encoder.set_exif_metadata(exif.to_vec()).unwrap();
+        encoder
+            .write_image(&[127; 8 * 4 * 4], 8, 4, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let resource =
+            thinoda_core::resources::Resource::new("camera.png", "image/png", bytes).unwrap();
+        let normalized = thinoda_core::images::normalized_visual_image(resource.bytes(), 1024)
+            .unwrap()
+            .unwrap();
+        let mut too_small = normalized.len() - 1;
+        assert!(visual_image(&resource, &mut too_small).is_err());
+        assert_eq!(too_small, normalized.len() - 1);
+        let mut exact = normalized.len();
+        let image = visual_image(&resource, &mut exact).unwrap();
+        assert_eq!(image.bytes.as_ref(), normalized);
+        assert_eq!(exact, 0);
+    }
 
     #[test]
     fn svg_escapes_topic_text() {
