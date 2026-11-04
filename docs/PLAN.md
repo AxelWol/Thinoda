@@ -53,9 +53,11 @@ over-budget edits. A separate experimental draft history tests snapshot
 undo/redo and explicit IME transactions, but is not wired to egui or the app;
 synthetic egui tests now characterize actual buffer operations, undo and
 surrounding deletion. The isolated history experiment now estimates retained
-snapshot bytes and reports eviction or over-budget retention. Hard/peak memory
-limits, input-event mapping, real IME behavior, lists, persistence and rendering
-remain open.
+snapshot bytes and reports eviction or over-budget retention. A test-only egui
+frame guard restores a rejected draft but can discard earlier input and expose
+transient widget state, so it is not an acceptable production adapter.
+Hard/peak memory limits, input-event mapping, real IME behavior, lists,
+persistence and rendering remain open.
 
 **Notes strikethrough checkpoint:** the Notes inspector and enlarged editor
 now provide a localized, reversible Markdown-source strikethrough action. It

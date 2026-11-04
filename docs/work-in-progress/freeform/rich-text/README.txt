@@ -50,6 +50,15 @@ and cancellation behavior for real platform input, including whether surrounding
 deletions survive a canceled composition, must be established before adapting
 these APIs.
 
+A separate test-only egui guard restores a rejected frame's styled draft,
+directional selection and separately copied undoer after invalid paste or IME
+operations. It also demonstrates why whole-frame rollback is insufficient:
+an earlier valid event in the same frame is lost, and egui's changed response
+and accessibility value can expose a partial edit until the next repaint.
+Plain-text undo/redo via replace_with cannot recover the toy inserted styles.
+The guard is not a production editor, and the synthetic events do not prove
+real-device IME behavior.
+
 The history clones complete snapshots. Its budget is an estimate, not a hard
 process-memory limit: it excludes the current draft, active composition, stack
 container capacity, allocator overhead and temporary copies, and depends on

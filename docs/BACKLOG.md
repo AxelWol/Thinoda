@@ -36,6 +36,8 @@ Conflicting drafts retain their text without taking focus or keyboard and IME
 input from the minimap and other editors.
 Selected-range formatting and lists remain open. An isolated history experiment
 estimates retained snapshot bytes but does not implement board-card rich text.
+An egui frame-rollback experiment preserves the draft on rejection but can
+discard other input and briefly expose stale widget state; it is not enabled.
 Additional brushes are not represented as working features. The persistence,
 accessibility and verification constraints for these features are in the current
 [plan](PLAN.md#current-freeform-and-web-startup-status).

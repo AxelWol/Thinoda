@@ -1444,12 +1444,28 @@ hard or peak-memory bound. Caret-style inheritance, eviction policy and real
 input acceptance remain open. A passing scalar-level oracle does not establish
 grapheme, bidirectional or egui-editor correctness.
 
-The implementation must audit `Sheet::set_title`, search/replace, FIM
-projection, template/copy paths and direct title assignments as well as canvas
-editing. These paths currently operate on plain strings; adding a span field
-without defining their behavior would leave stale offsets or silently lose
-formatting. The native JSON fallback and the versioned archive must both be
-covered by malformed-content and backward-compatibility tests.
+Duck check: a test-only bounded `TextBuffer` guard snapshots the draft, selection
+and a separate copy of egui's shared undoer before rendering. Synthetic
+over-limit paste, preedit and surrounding-deletion failures restore text and
+styles, including directional selection. That is not a production solution:
+egui can already report the rejected response as changed and expose the
+partially edited widget value until the next repaint. If several input events
+share a frame, rolling back the frame also discards earlier valid input.
+Plain-text `replace_with` still cannot reconstruct style history; the toy
+implementation loses the inserted style on redo. Per-event atomicity, visible
+error handling, composition ownership and rich undo need a different design.
+These simulated events do not establish physical IME or browser behavior.
+
+The title-write audit identifies `Sheet::set_title` and bulk search/replace,
+tree-table and Outliner editing, generated FIM labels that assign titles
+directly, and template and copy paths. Snapshot undo copies the current fields,
+but these plain-string write paths need explicit preserve, replace or reject
+semantics before spans can be persisted. Native archives currently gate
+versions 2–6 by content; raw legacy JSON bypasses the archive manifest. Sheet
+clipboard prefixes, separate subtree/board clipboard payloads and recovery
+snapshots have independent compatibility boundaries. A rich-text version
+must cover each path, including malformed data and content under older declared
+versions, without changing output for existing plain documents.
 
 
 ### Compact Settings notification checkpoint and rubber-duck critique
