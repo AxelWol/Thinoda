@@ -102,6 +102,9 @@ if (params.has("child")) {
         throw new Error(`Timed out: ${description}`);
     };
     const discover = testApi => testApi.recoveryDiscover(testApi.recoveryStartupDeadline());
+    const coordinationWarning =
+        "Browser recovery cannot exclude uncoordinated writes after verification. Editing remains gated until writer coordination is available.";
+    const onlyCoordinationWarning = result => result.warning === coordinationWarning;
     const idle = async id => eventually(() => {
         const state = JSON.parse(api.recoveryStatus(id));
         if (state.error) throw new Error(state.error);
@@ -139,12 +142,15 @@ if (params.has("child")) {
         try {
             await new Promise((resolve, reject) => {
                 const tx = fixtureWrite(connection, ["sessions", "documents"]);
-                tx.objectStore("sessions").add({
+                const watch = request => {
+                    request.onerror = () => reject(request.error || new Error("Fixture write failed"));
+                };
+                watch(tx.objectStore("sessions").add({
                     id, token: "synthetic-abandoned-writer", created: Date.now(), manifest,
-                });
-                for (const record of records) tx.objectStore("documents").add(record);
+                }));
+                for (const record of records) watch(tx.objectStore("documents").add(record));
                 tx.oncomplete = resolve;
-                tx.onabort = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error("Fixture transaction aborted"));
             });
         } finally {
             connection.close();
@@ -292,7 +298,17 @@ if (params.has("child")) {
     const test = async (name, body) => {
         const filter = params.get("filter")?.toLowerCase();
         if (filter && !name.toLowerCase().includes(filter)) return;
-        await body();
+        let timer;
+        try {
+            await Promise.race([
+                body(),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(`Timed out browser recovery check: ${name}`)), 90_000);
+                }),
+            ]);
+        } finally {
+            clearTimeout(timer);
+        }
         testsRun++;
         write(`PASS ${name}`);
     };
@@ -1117,7 +1133,7 @@ if (params.has("child")) {
                 await removeFixture(empty, ["deleted"]);
             }
         });
-        await test("tombstone and empty-session limits remain gated across reload", async () => {
+        await test("retained tombstones and empty sessions do not exhaust previews across reload", async () => {
             const suffix = crypto.randomUUID();
             const tombSession = `scan-${suffix}`;
             const liveSession = `z-live-${suffix}`;
@@ -1129,6 +1145,9 @@ if (params.has("child")) {
                 return {
                     id: `${tombSession}/${key}`, session: tombSession, key,
                     revision: index + 1, deleted: true, bytes: null,
+                    ...(index === 0 ? {
+                        discardReceipt: { version: 1, id: "retained-receipt", digest: "a".repeat(64) },
+                    } : {}),
                 };
             });
             const row = (id, manifest = []) => ({
@@ -1150,8 +1169,9 @@ if (params.has("child")) {
             try {
                 await other.recoveryInitialize();
                 const first = await discover(other);
-                assert(first.warning.includes("preview limit"),
-                    "A limited tombstone scan looked complete");
+                assert(onlyCoordinationWarning(first), `Retained metadata exhausted discovery: ${first.warning}`);
+                assert(first.sessions.find(session => session.id === liveSession)?.docs[0]?.bytes.join() === "0,255,42",
+                    "Retained metadata hid the live snapshot");
                 for (const session of first.sessions) other.recoveryRelease(session.id, session.lease);
                 const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
                 frame.contentWindow.location.reload();
@@ -1160,15 +1180,17 @@ if (params.has("child")) {
                 await other.recoveryInitialize();
                 await other.recoveryCreate(writer);
                 const next = await discover(other);
-                assert(next.warning.includes("preview limit"),
-                    "Reload hid the unresolved tombstone and session limits");
+                assert(onlyCoordinationWarning(next), `Reload reintroduced the metadata limit: ${next.warning}`);
+                assert(next.sessions.find(session => session.id === liveSession)?.docs[0]?.bytes.join() === "0,255,42",
+                    "Reload lost the live snapshot");
                 assert(new Uint8Array((await readRecord(liveSession, "doc")).bytes).join() === "0,255,42",
                     "The limited scan changed the live source");
                 assert(JSON.stringify(await readSessionDocuments(tombSession)) === JSON.stringify(tombstones),
                     "The scan changed or removed a tombstone");
-                assert(JSON.stringify(await readSessionRecord(tombSession)) === JSON.stringify(beforeSession)
-                    && JSON.stringify(await readSessionRecord(emptySessions[150])) === JSON.stringify(beforeEmpty),
-                "The scan changed an empty or tombstone-only session");
+                const withoutToken = ({ token, ...row }) => JSON.stringify(row);
+                assert(withoutToken(await readSessionRecord(tombSession)) === withoutToken(beforeSession)
+                    && withoutToken(await readSessionRecord(emptySessions[150])) === withoutToken(beforeEmpty),
+                "The scan changed non-fencing session metadata");
                 for (const session of next.sessions) other.recoveryRelease(session.id, session.lease);
                 assert(other.recoveryFinish(writer) === "finished", "Could not finish the empty test writer");
             } finally {
@@ -1194,7 +1216,7 @@ if (params.has("child")) {
             try {
                 await other.recoveryInitialize();
                 const first = await other.recoveryDiscover();
-                assert(first.warning.includes("preview limit"), "The first scan was unexpectedly complete");
+                assert(onlyCoordinationWarning(first), `Tombstones blocked the first scan: ${first.warning}`);
                 for (const session of first.sessions) other.recoveryRelease(session.id, session.lease);
                 const connection = await db();
                 try {
@@ -1221,9 +1243,9 @@ if (params.has("child")) {
                 }
                 const found = await discover(other);
                 const recovered = found.sessions.find(session => session.id === id);
-                assert(found.warning || recovered?.docs.some(doc =>
+                assert(onlyCoordinationWarning(found) && recovered?.docs.some(doc =>
                     doc.key === "000-new" && doc.bytes.join() === "51,52"),
-                "A successful retry silently skipped the newly inserted snapshot");
+                "Retry did not recover the newly inserted snapshot");
                 assert(new Uint8Array((await readRecord(id, "000-new")).bytes).join() === "51,52",
                     "Retry changed the newly inserted snapshot");
                 assert(JSON.stringify((await readSessionDocuments(id)).filter(record => record.deleted))
@@ -1233,6 +1255,895 @@ if (params.has("child")) {
                 other.recoveryRelease(id);
                 frame.remove();
                 await removeBatch([id], [...tombstones.map(record => record.id), `${id}/000-new`]);
+            }
+        });
+        await test("an uncoordinated insertion behind a session page is detected and recovered after reload", async () => {
+            const suffix = crypto.randomUUID();
+            const id = `-new-${suffix}`;
+            const empty = Array.from({ length: 70 }, (_, index) =>
+                `paging-${suffix}-${String(index).padStart(3, "0")}`);
+            const rows = empty.map(key => ({
+                id: key, token: "abandoned", created: 1, manifest: [],
+            }));
+            await seedBatch(rows, []);
+            const original = await readSessionRecord(empty[35]);
+            const connection = await db();
+            const frame = await child();
+            let other = frame.contentWindow.recoveryTestApi;
+            const prototype = frame.contentWindow.IDBObjectStore.prototype;
+            const originalGetAllKeys = prototype.getAllKeys;
+            let inserted;
+            let insertedBehindPage = false;
+            try {
+                await other.recoveryInitialize();
+                prototype.getAllKeys = function (...args) {
+                    const request = originalGetAllKeys.apply(this, args);
+                    if (this.name === "sessions" && !inserted) {
+                        request.addEventListener("success", () => {
+                            if (inserted) return;
+                            insertedBehindPage = request.result.length > 0 && id < request.result[0];
+                            inserted = new Promise((resolve, reject) => {
+                                const tx = connection.transaction(["sessions", "documents"], "readwrite");
+                                tx.objectStore("sessions").add({
+                                    id, token: "uncoordinated", created: 2,
+                                    manifest: [{ key: "doc", revision: 1 }],
+                                });
+                                tx.objectStore("documents").add({
+                                    id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                                    deleted: false, bytes: new Uint8Array([81, 82]).buffer,
+                                });
+                                tx.oncomplete = resolve;
+                                tx.onabort = () => reject(tx.error);
+                            });
+                        });
+                    }
+                    return request;
+                };
+                const first = await discover(other);
+                assert(inserted && insertedBehindPage, "The concurrent write did not precede the saved page cursor");
+                await inserted;
+                prototype.getAllKeys = originalGetAllKeys;
+                assert(first.warning.includes("changed"), "An unvisited concurrent session looked complete");
+                assert(!first.sessions.some(session => session.id === id), "An unclaimed session was presented as owned");
+                assert(new Uint8Array((await readRecord(id, "doc")).bytes).join() === "81,82",
+                    "The concurrent snapshot was changed or removed");
+                const { token: beforeToken, ...before } = original;
+                const { token: afterToken, ...after } = await readSessionRecord(empty[35]);
+                assert(JSON.stringify(before) === JSON.stringify(after), "Empty session data was changed");
+                for (const session of first.sessions) other.recoveryRelease(session.id, session.lease);
+
+                const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+                frame.contentWindow.location.reload();
+                await reloaded;
+                other = await eventually(() => frame.contentWindow.recoveryTestApi, "reloaded concurrent scan");
+                await other.recoveryInitialize();
+                const retried = await eventually(async () => {
+                    const found = await discover(other);
+                    if (onlyCoordinationWarning(found)) return found;
+                    for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+                    return null;
+                }, "complete retry after the concurrent insertion");
+                assert(retried.sessions.find(session => session.id === id)?.docs[0]?.bytes.join() === "81,82",
+                    "Retry did not recover the concurrent snapshot");
+                for (const session of retried.sessions) other.recoveryRelease(session.id, session.lease);
+            } finally {
+                prototype.getAllKeys = originalGetAllKeys;
+                other.recoveryRelease(id);
+                frame.remove();
+                connection.close();
+                await removeBatch([...empty, id], [`${id}/doc`]);
+            }
+        });
+        await test("a write queued after the final snapshot cannot clear the editing gate", async () => {
+            const suffix = crypto.randomUUID();
+            const oldId = `prior-${suffix}`;
+            const newId = `late-${suffix}`;
+            await seedSession(oldId, [{
+                id: `${oldId}/doc`, session: oldId, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([83]).buffer,
+            }], [{ key: "doc", revision: 1 }]);
+            const connection = await db();
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            const prototype = frame.contentWindow.IDBDatabase.prototype;
+            const originalTransaction = prototype.transaction;
+            let audits = 0;
+            let insertion;
+            try {
+                await other.recoveryInitialize();
+                prototype.transaction = function (stores, mode, ...options) {
+                    const tx = originalTransaction.call(this, stores, mode, ...options);
+                    if (mode === "readonly" && Array.isArray(stores) &&
+                        stores.includes("sessions") && stores.includes("documents") && ++audits === 2) {
+                        insertion = new Promise((resolve, reject) => {
+                            const write = connection.transaction(["sessions", "documents"], "readwrite");
+                            write.objectStore("sessions").add({
+                                id: newId, token: "uncoordinated", created: 1,
+                                manifest: [{ key: "doc", revision: 1 }],
+                            });
+                            write.objectStore("documents").add({
+                                id: `${newId}/doc`, session: newId, key: "doc", revision: 1,
+                                deleted: false, bytes: new Uint8Array([84]).buffer,
+                            });
+                            write.oncomplete = resolve;
+                            write.onabort = () => reject(write.error);
+                        });
+                    }
+                    return tx;
+                };
+                const found = await discover(other);
+                assert(insertion, "The late write was not queued during final verification");
+                await insertion;
+                prototype.transaction = originalTransaction;
+                assert(onlyCoordinationWarning(found) && !found.sessions.some(item => item.id === newId),
+                    "The post-snapshot write did not leave the otherwise clean scan gated");
+                assert(new Uint8Array((await readRecord(newId, "doc")).bytes)[0] === 84,
+                    "The late source was changed or removed");
+                for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+                const retried = await eventually(async () => {
+                    const next = await discover(other);
+                    if (onlyCoordinationWarning(next) &&
+                        next.sessions.some(item => item.id === newId)) return next;
+                    for (const item of next.sessions) other.recoveryRelease(item.id, item.lease);
+                    return null;
+                }, "recovering the post-snapshot insertion");
+                assert(retried.sessions.find(item => item.id === newId).docs[0].bytes[0] === 84,
+                    "Retry lost the post-snapshot source");
+                for (const item of retried.sessions) other.recoveryRelease(item.id, item.lease);
+            } finally {
+                prototype.transaction = originalTransaction;
+                other.recoveryRelease(oldId);
+                other.recoveryRelease(newId);
+                frame.remove();
+                connection.close();
+                await removeBatch([oldId, newId], [`${oldId}/doc`, `${newId}/doc`]);
+            }
+        });
+        await test("an uncoordinated same-revision replacement invalidates the claimed preview", async () => {
+            const id = `replace-${crypto.randomUUID()}`;
+            await seedSession(id, [{
+                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([91]).buffer,
+            }], [{ key: "doc", revision: 1 }]);
+            const connection = await db();
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            const prototype = frame.contentWindow.IDBDatabase.prototype;
+            const originalTransaction = prototype.transaction;
+            let audits = 0;
+            let replacement;
+            try {
+                await other.recoveryInitialize();
+                prototype.transaction = function (stores, mode, ...options) {
+                    if (mode === "readonly" && Array.isArray(stores) &&
+                        stores.includes("sessions") && stores.includes("documents") && ++audits === 2) {
+                        replacement = new Promise((resolve, reject) => {
+                            const tx = connection.transaction(["documents"], "readwrite");
+                            tx.objectStore("documents").put({
+                                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                                deleted: false, bytes: new Uint8Array([92]).buffer,
+                            });
+                            tx.oncomplete = resolve;
+                            tx.onabort = () => reject(tx.error);
+                        });
+                    }
+                    return originalTransaction.call(this, stores, mode, ...options);
+                };
+                const found = await discover(other);
+                assert(replacement, "The replacement was not scheduled before final verification");
+                await replacement;
+                prototype.transaction = originalTransaction;
+                assert(found.warning.includes("changed"), "A changed claimed snapshot looked complete");
+                assert(!found.sessions.some(session => session.id === id) && !other.recoveryHeld(id),
+                    "The stale preview or its claim remained available");
+                assert(new Uint8Array((await readRecord(id, "doc")).bytes)[0] === 92,
+                    "Verification changed the replacement bytes");
+                let rejected = false;
+                try { await other.recoveryDiscard(id, "doc", 1, undefined, new Uint8Array([91])); }
+                catch (_) { rejected = true; }
+                assert(rejected, "The invalidated preview was allowed to discard the replacement");
+                for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+                const retried = await eventually(async () => {
+                    const next = await discover(other);
+                    const session = next.sessions.find(item => item.id === id);
+                    if (session) return session;
+                    for (const item of next.sessions) other.recoveryRelease(item.id, item.lease);
+                    return null;
+                }, "retrying the replaced snapshot");
+                assert(retried.docs[0].bytes[0] === 92, "Retry recovered the stale bytes");
+                other.recoveryRelease(id, retried.lease);
+            } finally {
+                prototype.transaction = originalTransaction;
+                other.recoveryRelease(id);
+                frame.remove();
+                connection.close();
+                await removeFixture(id, ["doc"]);
+            }
+        });
+        await test("session or manifest metadata made opaque before the final audit invalidates the claim", async () => {
+            const id = `opaque-race-${crypto.randomUUID()}`;
+            const manifestId = `opaque-manifest-race-${crypto.randomUUID()}`;
+            await seedSession(id, [{
+                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([93]).buffer,
+            }], [{ key: "doc", revision: 1 }]);
+            await seedSession(manifestId, [{
+                id: `${manifestId}/doc`, session: manifestId, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([95]).buffer,
+            }], [{ key: "doc", revision: 1 }]);
+            const connection = await db();
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            const prototype = frame.contentWindow.IDBDatabase.prototype;
+            const originalTransaction = prototype.transaction;
+            let audits = 0;
+            let replacement;
+            try {
+                await other.recoveryInitialize();
+                prototype.transaction = function (stores, mode, ...options) {
+                    if (mode === "readonly" && Array.isArray(stores) &&
+                        stores.includes("sessions") && stores.includes("documents") && ++audits === 2) {
+                        replacement = new Promise((resolve, reject) => {
+                            const tx = connection.transaction(["sessions"], "readwrite");
+                            const store = tx.objectStore("sessions");
+                            const request = store.get(id);
+                            request.onsuccess = () => {
+                                store.put({ ...request.result, extraBytes: new Uint8Array([94]).buffer });
+                            };
+                            const manifestRequest = store.get(manifestId);
+                            manifestRequest.onsuccess = () => {
+                                const row = manifestRequest.result;
+                                row.manifest[0].extraBytes = new Uint8Array([96]).buffer;
+                                store.put(row);
+                            };
+                            tx.oncomplete = resolve;
+                            tx.onabort = () => reject(tx.error);
+                        });
+                    }
+                    return originalTransaction.call(this, stores, mode, ...options);
+                };
+                const found = await discover(other);
+                assert(replacement, "The opaque session change was not scheduled before final verification");
+                await replacement;
+                prototype.transaction = originalTransaction;
+                assert(found.warning.includes("malformed") && found.warning.includes("changed"),
+                    "The opaque session change was not reported");
+                assert(!found.sessions.some(item => [id, manifestId].includes(item.id)) &&
+                    !other.recoveryHeld(id) && !other.recoveryHeld(manifestId),
+                "A claim with opaque session or manifest metadata remained usable");
+                const before = await readSessionRecord(id);
+                const beforeManifest = await readSessionRecord(manifestId);
+                assert(new Uint8Array(before.extraBytes)[0] === 94 &&
+                    new Uint8Array((await readRecord(id, "doc")).bytes)[0] === 93 &&
+                    new Uint8Array(beforeManifest.manifest[0].extraBytes)[0] === 96 &&
+                    new Uint8Array((await readRecord(manifestId, "doc")).bytes)[0] === 95,
+                "The opaque sessions or their snapshots were changed");
+                for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+                const retried = await discover(other);
+                assert(retried.warning.includes("malformed") &&
+                    !retried.sessions.some(item => [id, manifestId].includes(item.id)),
+                "Retry reclaimed an opaque session or manifest");
+                assert((await readSessionRecord(id)).token === before.token &&
+                    (await readSessionRecord(manifestId)).token === beforeManifest.token,
+                "Retry fenced an opaque session or manifest");
+                for (const item of retried.sessions) other.recoveryRelease(item.id, item.lease);
+            } finally {
+                prototype.transaction = originalTransaction;
+                other.recoveryRelease(id);
+                other.recoveryRelease(manifestId);
+                frame.remove();
+                connection.close();
+                await removeBatch([id, manifestId], [`${id}/doc`, `${manifestId}/doc`]);
+            }
+        });
+        await test("an uncoordinated unlisted snapshot cannot hide behind an empty-session fence", async () => {
+            const id = `unlisted-${crypto.randomUUID()}`;
+            await seedSession(id, [], []);
+            const connection = await db();
+            const frame = await child();
+            let other = frame.contentWindow.recoveryTestApi;
+            const prototype = frame.contentWindow.IDBDatabase.prototype;
+            const originalTransaction = prototype.transaction;
+            let audits = 0;
+            let insertion;
+            try {
+                await other.recoveryInitialize();
+                prototype.transaction = function (stores, mode, ...options) {
+                    if (mode === "readonly" && Array.isArray(stores) &&
+                        stores.includes("sessions") && stores.includes("documents") && ++audits === 2) {
+                        insertion = new Promise((resolve, reject) => {
+                            const tx = connection.transaction(["documents"], "readwrite");
+                            tx.objectStore("documents").add({
+                                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                                deleted: false, bytes: new Uint8Array([95, 96]).buffer,
+                            });
+                            tx.oncomplete = resolve;
+                            tx.onabort = () => reject(tx.error);
+                        });
+                    }
+                    return originalTransaction.call(this, stores, mode, ...options);
+                };
+                const found = await discover(other);
+                assert(insertion, "The unlisted insertion was not scheduled before verification");
+                await insertion;
+                prototype.transaction = originalTransaction;
+                assert(found.warning.includes("malformed"), "An unlisted concurrent snapshot looked complete");
+                assert(new Uint8Array((await readRecord(id, "doc")).bytes).join() === "95,96",
+                    "The unlisted source was changed or removed");
+                assert((await readSessionRecord(id)).manifest.length === 0,
+                    "Discovery silently repaired the uncoordinated manifest");
+                for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+
+                const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+                frame.contentWindow.location.reload();
+                await reloaded;
+                other = await eventually(() => frame.contentWindow.recoveryTestApi, "reloaded unlisted source");
+                await other.recoveryInitialize();
+                const retried = await discover(other);
+                assert(retried.warning.includes("malformed"), "Reload hid the unlisted snapshot");
+                const rescue = await other.recoveryRescueBrowserRecord("documents", `${id}/doc`);
+                assert(rescue.raw && new Uint8Array(await rescue.raw.arrayBuffer()).join() === "95,96",
+                    "The unlisted snapshot was not preserved for rescue");
+                for (const session of retried.sessions) other.recoveryRelease(session.id, session.lease);
+            } finally {
+                prototype.transaction = originalTransaction;
+                other.recoveryRelease(id);
+                frame.remove();
+                connection.close();
+                await removeFixture(id, ["doc"]);
+            }
+        });
+        await test("unknown recovery fields remain gated and are preserved for rescue", async () => {
+            const suffix = crypto.randomUUID();
+            const tomb = `opaque-tomb-${suffix}`;
+            const live = `opaque-live-${suffix}`;
+            const session = `opaque-session-${suffix}`;
+            const liveSession = `opaque-session-live-${suffix}`;
+            const manifest = `opaque-manifest-${suffix}`;
+            const rows = [
+                { id: tomb, token: "abandoned", created: 1, manifest: [] },
+                { id: live, token: "abandoned", created: 1, manifest: [{ key: "doc", revision: 1 }] },
+                { id: session, token: "abandoned", created: 1, manifest: [],
+                    extraBytes: new Uint8Array([120, 121]).buffer },
+                { id: liveSession, token: "abandoned", created: 1,
+                    manifest: [{ key: "doc", revision: 1 }],
+                    extraBytes: new Uint8Array([116, 117]).buffer },
+                { id: manifest, token: "abandoned", created: 1, manifest: [{
+                    key: "doc", revision: 1, extraBytes: new Uint8Array([119]).buffer,
+                }] },
+            ];
+            const records = [
+                { id: `${tomb}/doc`, session: tomb, key: "doc", revision: 3, deleted: true,
+                    bytes: null, extraBytes: new Uint8Array([122, 123]).buffer },
+                { id: `${live}/doc`, session: live, key: "doc", revision: 1, deleted: false,
+                    bytes: new Uint8Array([124]).buffer, extraBytes: new Uint8Array([125]).buffer },
+                { id: `${liveSession}/doc`, session: liveSession, key: "doc", revision: 1, deleted: false,
+                    bytes: new Uint8Array([115]).buffer },
+                { id: `${manifest}/doc`, session: manifest, key: "doc", revision: 1, deleted: false,
+                    bytes: new Uint8Array([118]).buffer },
+            ];
+            await seedBatch(rows, records);
+            const frame = await child();
+            let other = frame.contentWindow.recoveryTestApi;
+            try {
+                await other.recoveryInitialize();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const found = await discover(other);
+                    assert(found.warning.includes("malformed"), "Unknown fields were silently ignored");
+                    assert(!found.sessions.some(item => [live, liveSession, manifest].includes(item.id)),
+                        "Opaque session, manifest or record data was treated as a claimable preview");
+                    assert(new Uint8Array((await readRecord(tomb, "doc")).extraBytes).join() === "122,123",
+                        "The opaque tombstone data was changed or removed");
+                    const liveRecord = await readRecord(live, "doc");
+                    assert(new Uint8Array(liveRecord.bytes)[0] === 124 &&
+                        new Uint8Array(liveRecord.extraBytes)[0] === 125,
+                    "The opaque live record was changed or removed");
+                    assert(new Uint8Array((await readSessionRecord(session)).extraBytes).join() === "120,121",
+                        "The opaque session data was changed or removed");
+                    const opaqueSession = await readSessionRecord(liveSession);
+                    assert(opaqueSession.token === "abandoned" &&
+                        new Uint8Array(opaqueSession.extraBytes).join() === "116,117" &&
+                        new Uint8Array((await readRecord(liveSession, "doc")).bytes)[0] === 115,
+                    "The opaque live session was fenced or changed");
+                    assert((await readSessionRecord(manifest)).token === "abandoned",
+                        "The opaque manifest was fenced");
+                    assert(new Uint8Array((await readSessionRecord(manifest)).manifest[0].extraBytes)[0] === 119,
+                        "The opaque manifest data was changed or removed");
+                    const rescue = await other.recoveryRescueBrowserRecord("documents", `${tomb}/doc`);
+                    assert(rescue.archive, "The opaque tombstone was not available for rescue");
+                    for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+                    if (attempt === 0) {
+                        const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+                        frame.contentWindow.location.reload();
+                        await reloaded;
+                        other = await eventually(() => frame.contentWindow.recoveryTestApi, "reloaded opaque records");
+                        await other.recoveryInitialize();
+                    }
+                }
+            } finally {
+                for (const id of [tomb, live, session, liveSession, manifest]) other.recoveryRelease(id);
+                frame.remove();
+                await removeBatch([tomb, live, session, liveSession, manifest], records.map(record => record.id));
+            }
+        });
+        await test("opaque session metadata blocks new and pending discard mutations", async () => {
+            const id = `opaque-discard-${crypto.randomUUID()}`;
+            const keys = ["pending", "fresh"];
+            await seedSession(id, keys.map((key, index) => ({
+                id: `${id}/${key}`, session: id, key, revision: 1, deleted: false,
+                bytes: new Uint8Array([130 + index]).buffer,
+            })), keys.map(key => ({ key, revision: 1 })));
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            try {
+                await other.recoveryInitialize();
+                const found = await discover(other);
+                const claim = found.sessions.find(item => item.id === id);
+                assert(claim, "The valid fixture was not claimed");
+                await other.recoveryDiscard(id, "pending", 1, claim.lease, new Uint8Array([130]));
+                const pending = await readRecord(id, "pending");
+                assert(pending.discardIntent, "The pending discard intent was not recorded");
+                const connection = await db();
+                try {
+                    await new Promise((resolve, reject) => {
+                        const tx = connection.transaction(["sessions"], "readwrite");
+                        const store = tx.objectStore("sessions");
+                        const request = store.get(id);
+                        request.onsuccess = () => {
+                            store.put({ ...request.result, extraBytes: new Uint8Array([132]).buffer });
+                        };
+                        tx.oncomplete = resolve;
+                        tx.onabort = () => reject(tx.error);
+                    });
+                } finally {
+                    connection.close();
+                }
+                for (const action of [
+                    () => other.recoveryDiscard(id, "fresh", 1, claim.lease, new Uint8Array([131])),
+                    () => other.recoveryCompleteDiscard(id, "pending", 1, claim.lease, new Uint8Array([130])),
+                    () => other.recoveryCancelDiscard(id, "pending", 1, claim.lease, new Uint8Array([130])),
+                ]) {
+                    let rejected = false;
+                    try { await action(); } catch (_) { rejected = true; }
+                    assert(rejected, "Opaque session metadata allowed a discard mutation");
+                }
+                const retainedPending = await readRecord(id, "pending");
+                const retainedFresh = await readRecord(id, "fresh");
+                assert(new Uint8Array(retainedPending.bytes)[0] === 130 &&
+                    JSON.stringify(retainedPending.discardIntent) === JSON.stringify(pending.discardIntent) &&
+                    new Uint8Array(retainedFresh.bytes)[0] === 131 &&
+                    !Object.hasOwn(retainedFresh, "discardIntent") &&
+                    new Uint8Array((await readSessionRecord(id)).extraBytes)[0] === 132,
+                "A rejected mutation changed the opaque session or its snapshots");
+                for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+            } finally {
+                other.recoveryRelease(id);
+                frame.remove();
+                await removeFixture(id, keys);
+            }
+        });
+        await test("a writer cannot replace snapshots after its session becomes opaque", async () => {
+            const id = `opaque-writer-session-${crypto.randomUUID()}`;
+            const frame = await child();
+            const owner = frame.contentWindow.recoveryTestApi;
+            try {
+                await owner.recoveryInitialize();
+                await owner.recoveryCreate(id);
+                await owner.recoveryPersist(id, "doc", new Uint8Array([133]));
+                const original = await readRecord(id, "doc");
+                const connection = await db();
+                try {
+                    await new Promise((resolve, reject) => {
+                        const tx = connection.transaction(["sessions"], "readwrite");
+                        const store = tx.objectStore("sessions");
+                        const request = store.get(id);
+                        request.onsuccess = () => {
+                            store.put({ ...request.result, extraBytes: new Uint8Array([134]).buffer });
+                        };
+                        tx.oncomplete = resolve;
+                        tx.onabort = () => reject(tx.error);
+                    });
+                } finally {
+                    connection.close();
+                }
+                owner.recoveryQueue(id, "doc", new Uint8Array([135]));
+                const status = await eventually(() => {
+                    const value = JSON.parse(owner.recoveryStatus(id));
+                    return value.error && value;
+                }, "rejecting an opaque writer session");
+                assert(status.error.includes("metadata"), "The writer did not report the opaque session");
+                const retained = await readRecord(id, "doc");
+                assert(new Uint8Array(retained.bytes)[0] === 133 &&
+                    retained.revision === original.revision &&
+                    new Uint8Array((await readSessionRecord(id)).extraBytes)[0] === 134,
+                "The writer changed an opaque session or its committed snapshot");
+            } finally {
+                owner.recoveryRelease(id);
+                frame.remove();
+                await removeFixture(id, ["doc"]);
+            }
+        });
+        await test("a writer cannot overwrite unknown fields on a committed recovery record", async () => {
+            const id = `opaque-writer-${crypto.randomUUID()}`;
+            const frame = await child();
+            const owner = frame.contentWindow.recoveryTestApi;
+            try {
+                await owner.recoveryInitialize();
+                await owner.recoveryCreate(id);
+                await owner.recoveryPersist(id, "doc", new Uint8Array([126]));
+                const original = await readRecord(id, "doc");
+                const connection = await db();
+                try {
+                    await new Promise((resolve, reject) => {
+                        const tx = connection.transaction(["documents"], "readwrite");
+                        tx.objectStore("documents").put({
+                            ...original, extraBytes: new Uint8Array([127, 128]).buffer,
+                        });
+                        tx.oncomplete = resolve;
+                        tx.onabort = () => reject(tx.error);
+                    });
+                } finally {
+                    connection.close();
+                }
+                owner.recoveryQueue(id, "doc", new Uint8Array([129]));
+                const status = await eventually(() => {
+                    const value = JSON.parse(owner.recoveryStatus(id));
+                    return value.error && value;
+                }, "rejecting an opaque committed record");
+                assert(status.error.includes("inconsistent"), "The writer did not report the opaque record");
+                const retained = await readRecord(id, "doc");
+                assert(new Uint8Array(retained.bytes)[0] === 126 &&
+                    new Uint8Array(retained.extraBytes).join() === "127,128" &&
+                    retained.revision === original.revision,
+                "The writer overwrote recoverable record data");
+            } finally {
+                owner.recoveryRelease(id);
+                frame.remove();
+                await removeFixture(id, ["doc"]);
+            }
+        });
+        await test("same-revision writer conflicts do not acknowledge different bytes or actions", async () => {
+            const suffix = crypto.randomUUID();
+            const fixtures = [
+                { id: `equal-bytes-conflict-${suffix}`, bytes: [141], deleted: false },
+                { id: `equal-put-conflict-${suffix}`, bytes: null, deleted: true },
+                { id: `equal-delete-conflict-${suffix}`, bytes: [142], deleted: false },
+                { id: `equal-put-retry-${suffix}`, bytes: [143], deleted: false },
+                { id: `equal-delete-retry-${suffix}`, bytes: null, deleted: true },
+            ];
+            const frame = await child();
+            const owner = frame.contentWindow.recoveryTestApi;
+            try {
+                await owner.recoveryInitialize();
+                for (const fixture of fixtures) await owner.recoveryCreate(fixture.id);
+                const connection = await db();
+                try {
+                    await new Promise((resolve, reject) => {
+                        const tx = connection.transaction(["sessions", "documents"], "readwrite");
+                        const sessions = tx.objectStore("sessions");
+                        const documents = tx.objectStore("documents");
+                        for (const fixture of fixtures) {
+                            const request = sessions.get(fixture.id);
+                            request.onsuccess = () => {
+                                const row = request.result;
+                                row.manifest = fixture.deleted ? [] : [{ key: "doc", revision: 1 }];
+                                sessions.put(row);
+                            };
+                            documents.put({
+                                id: `${fixture.id}/doc`, session: fixture.id, key: "doc", revision: 1,
+                                deleted: fixture.deleted,
+                                bytes: fixture.bytes === null ? null : new Uint8Array(fixture.bytes).buffer,
+                            });
+                        }
+                        tx.oncomplete = resolve;
+                        tx.onabort = () => reject(tx.error);
+                    });
+                } finally {
+                    connection.close();
+                }
+                for (const [fixture, bytes] of [[fixtures[0], [144]], [fixtures[1], [145]]]) {
+                    let rejected = false;
+                    try { await owner.recoveryPersist(fixture.id, "doc", new Uint8Array(bytes)); }
+                    catch (_) { rejected = true; }
+                    assert(rejected, "A different same-revision put was acknowledged");
+                }
+                owner.recoveryRemove(fixtures[2].id, "doc");
+                const conflict = await eventually(() => {
+                    const status = JSON.parse(owner.recoveryStatus(fixtures[2].id));
+                    return status.error || !status.pending ? status : null;
+                }, "checking a conflicting same-revision deletion");
+                assert(conflict.error, "A different same-revision deletion was acknowledged");
+                await owner.recoveryPersist(fixtures[3].id, "doc", new Uint8Array([143]));
+                owner.recoveryRemove(fixtures[4].id, "doc");
+                const retry = await eventually(() => {
+                    const status = JSON.parse(owner.recoveryStatus(fixtures[4].id));
+                    return status.error || !status.pending ? status : null;
+                }, "checking an identical same-revision deletion");
+                assert(!retry.error, "An identical same-revision deletion was rejected");
+                for (const fixture of fixtures) {
+                    const record = await readRecord(fixture.id, "doc");
+                    assert(record.revision === 1 && record.deleted === fixture.deleted &&
+                        (fixture.bytes === null ? record.bytes === null :
+                            new Uint8Array(record.bytes).join() === fixture.bytes.join()),
+                    "A same-revision conflict changed the existing recovery record");
+                }
+            } finally {
+                for (const fixture of fixtures) owner.recoveryRelease(fixture.id);
+                frame.remove();
+                await removeBatch(fixtures.map(fixture => fixture.id),
+                    fixtures.map(fixture => `${fixture.id}/doc`));
+            }
+        });
+        await test("an interrupted metadata audit retains every source and restarts after reload", async () => {
+            const id = `audit-${crypto.randomUUID()}`;
+            const tombstones = Array.from({ length: 128 }, (_, index) => {
+                const key = `dead${String(index).padStart(4, "0")}`;
+                return {
+                    id: `${id}/${key}`, session: id, key, revision: index + 1,
+                    deleted: true, bytes: null,
+                };
+            });
+            const live = {
+                id: `${id}/live`, session: id, key: "live", revision: 1,
+                deleted: false, bytes: new Uint8Array([101, 102]).buffer,
+            };
+            await seedSession(id, [...tombstones, live], [{ key: "live", revision: 1 }]);
+            const original = await readSessionRecord(id);
+            const frame = await child();
+            let other = frame.contentWindow.recoveryTestApi;
+            const performance = frame.contentWindow.performance;
+            const nowDescriptor = Object.getOwnPropertyDescriptor(performance, "now");
+            const realNow = performance.now.bind(performance);
+            const prototype = frame.contentWindow.IDBObjectStore.prototype;
+            const originalOpenCursor = prototype.openCursor;
+            let expired = false;
+            let visited = 0;
+            try {
+                await other.recoveryInitialize();
+                Object.defineProperty(performance, "now", {
+                    configurable: true, value: () => realNow() + (expired ? 60_000 : 0),
+                });
+                prototype.openCursor = function (...args) {
+                    const request = originalOpenCursor.apply(this, args);
+                    if (this.name === "documents") {
+                        request.addEventListener("success", () => {
+                            if (request.result && ++visited === 8) expired = true;
+                        });
+                    }
+                    return request;
+                };
+                let timedOut = false;
+                try { await other.recoveryDiscover(performance.now() + 5_000); }
+                catch (error) { timedOut = String(error).includes("timed out"); }
+                assert(timedOut && visited >= 8, "An interrupted audit was reported as complete");
+                prototype.openCursor = originalOpenCursor;
+                if (nowDescriptor) Object.defineProperty(performance, "now", nowDescriptor);
+                else delete performance.now;
+                assert(JSON.stringify(await readSessionRecord(id)) === JSON.stringify(original),
+                    "An interrupted pre-audit rewrote the session");
+                assert(JSON.stringify((await readSessionDocuments(id)).filter(record => record.deleted))
+                    === JSON.stringify(tombstones), "An interrupted audit changed tombstones");
+                assert(new Uint8Array((await readRecord(id, "live")).bytes).join() === "101,102",
+                    "An interrupted audit changed live bytes");
+
+                const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+                frame.contentWindow.location.reload();
+                await reloaded;
+                other = await eventually(() => frame.contentWindow.recoveryTestApi, "reloaded interrupted audit");
+                await other.recoveryInitialize();
+                const found = await discover(other);
+                assert(onlyCoordinationWarning(found) &&
+                    found.sessions.find(session => session.id === id)?.docs[0]?.bytes.join() === "101,102",
+                    `The intact source was not recovered after reload: ${found.warning}`);
+                for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+            } finally {
+                prototype.openCursor = originalOpenCursor;
+                if (nowDescriptor) Object.defineProperty(performance, "now", nowDescriptor);
+                else delete performance.now;
+                other.recoveryRelease(id);
+                frame.remove();
+                await removeBatch([id], [...tombstones.map(record => record.id), live.id]);
+            }
+        });
+        await test("a timed-out final audit releases claimed snapshots for a safe retry", async () => {
+            const id = `final-timeout-${crypto.randomUUID()}`;
+            await seedSession(id, [{
+                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([103, 104]).buffer,
+            }], [{ key: "doc", revision: 1 }]);
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            const performance = frame.contentWindow.performance;
+            const nowDescriptor = Object.getOwnPropertyDescriptor(performance, "now");
+            const realNow = performance.now.bind(performance);
+            const prototype = frame.contentWindow.IDBObjectStore.prototype;
+            const originalOpenCursor = prototype.openCursor;
+            let expired = false;
+            let audits = 0;
+            try {
+                await other.recoveryInitialize();
+                Object.defineProperty(performance, "now", {
+                    configurable: true, value: () => realNow() + (expired ? 60_000 : 0),
+                });
+                prototype.openCursor = function (...args) {
+                    const request = originalOpenCursor.apply(this, args);
+                    if (this.name === "documents" && ++audits === 2) {
+                        request.addEventListener("success", () => { if (request.result) expired = true; });
+                    }
+                    return request;
+                };
+                let timedOut = false;
+                try { await other.recoveryDiscover(performance.now() + 5_000); }
+                catch (error) { timedOut = String(error).includes("timed out"); }
+                assert(timedOut && expired, "The final audit timeout was reported as complete");
+                prototype.openCursor = originalOpenCursor;
+                if (nowDescriptor) Object.defineProperty(performance, "now", nowDescriptor);
+                else delete performance.now;
+                assert(!other.recoveryHeld(id), "The failed attempt retained its orphan claim");
+                assert(new Uint8Array((await readRecord(id, "doc")).bytes).join() === "103,104",
+                    "The failed final audit changed the source");
+                const recovered = await eventually(async () => {
+                    const found = await discover(other);
+                    const session = found.sessions.find(item => item.id === id);
+                    if (session) return session;
+                    for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+                    return null;
+                }, "retrying after the final audit timeout");
+                assert(recovered.docs[0].bytes.join() === "103,104", "Retry lost the claimed bytes");
+                other.recoveryRelease(id, recovered.lease);
+            } finally {
+                prototype.openCursor = originalOpenCursor;
+                if (nowDescriptor) Object.defineProperty(performance, "now", nowDescriptor);
+                else delete performance.now;
+                other.recoveryRelease(id);
+                frame.remove();
+                await removeFixture(id, ["doc"]);
+            }
+        });
+        await test("the global live-snapshot limit stays gated across reload without deleting originals", async () => {
+            const suffix = crypto.randomUUID();
+            const ids = Array.from({ length: 5 }, (_, index) => `budget-${suffix}-${index}`);
+            const documents = [];
+            const rows = ids.map((id, sessionIndex) => {
+                const manifest = [];
+                const count = sessionIndex < 4 ? 128 : 1;
+                for (let index = 0; index < count; index++) {
+                    const key = `doc${String(index).padStart(3, "0")}`;
+                    manifest.push({ key, revision: 1 });
+                    documents.push({
+                        id: `${id}/${key}`, session: id, key, revision: 1,
+                        deleted: false, bytes: new Uint8Array([sessionIndex, index]).buffer,
+                    });
+                }
+                return { id, token: "abandoned", created: 1, manifest };
+            });
+            await seedBatch(rows, documents);
+            const frame = await child();
+            let other = frame.contentWindow.recoveryTestApi;
+            try {
+                await other.recoveryInitialize();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const found = await discover(other);
+                    assert(found.warning.includes("preview limit"), "A partial global scan looked complete");
+                    assert(found.sessions.reduce((sum, session) => sum + session.docs.length, 0) <= 512,
+                        "The live preview exceeded its global bound");
+                    assert(new Uint8Array((await readRecord(ids[4], "doc000")).bytes).join() === "4,0",
+                        "The unscanned original was changed or removed");
+                    assert((await readSessionDocuments(ids[0])).length === 128,
+                        "The scan removed a previously inspected original");
+                    for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+                    if (attempt === 0) {
+                        const reloaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+                        frame.contentWindow.location.reload();
+                        await reloaded;
+                        other = await eventually(() => frame.contentWindow.recoveryTestApi, "reloaded bounded scan");
+                        await other.recoveryInitialize();
+                    }
+                }
+            } finally {
+                for (const id of ids) other.recoveryRelease(id);
+                frame.remove();
+                await removeBatch(ids, documents.map(record => record.id));
+            }
+        });
+        await test("the live-session limit leaves additional recovery sources intact", async () => {
+            const suffix = crypto.randomUUID();
+            const ids = Array.from({ length: 257 }, (_, index) =>
+                `session-budget-${suffix}-${String(index).padStart(3, "0")}`);
+            const rows = ids.map(id => ({
+                id, token: "abandoned", created: 1, manifest: [{ key: "doc", revision: 1 }],
+            }));
+            const records = ids.map((id, index) => ({
+                id: `${id}/doc`, session: id, key: "doc", revision: 1,
+                deleted: false, bytes: new Uint8Array([index % 256]).buffer,
+            }));
+            await seedBatch(rows, records);
+            const frame = await child();
+            const other = frame.contentWindow.recoveryTestApi;
+            try {
+                await other.recoveryInitialize();
+                const found = await discover(other);
+                assert(found.warning.includes("preview limit"), "A partial session scan looked complete");
+                assert(found.sessions.length <= 256, "The session preview exceeded its bound");
+                assert(new Uint8Array((await readRecord(ids[256], "doc")).bytes)[0] === 0,
+                    "The additional session's original was changed or removed");
+                assert((await readSessionRecord(ids[256])).manifest[0].revision === 1,
+                    "The additional session's manifest was changed");
+                for (const item of found.sessions) other.recoveryRelease(item.id, item.lease);
+            } finally {
+                for (const id of ids) other.recoveryRelease(id);
+                frame.remove();
+                await removeBatch(ids, records.map(record => record.id));
+            }
+        });
+        await test("an empty session held by another tab remains an unresolved recovery decision", async () => {
+            const id = `empty-held-${crypto.randomUUID()}`;
+            const first = await child();
+            const second = await child();
+            const owner = first.contentWindow.recoveryTestApi;
+            const other = second.contentWindow.recoveryTestApi;
+            try {
+                await owner.recoveryInitialize();
+                await other.recoveryInitialize();
+                const token = await owner.recoveryCreate(id);
+                const found = await discover(other);
+                assert(found.warning.includes("in use in another tab"), "An active empty session was silently skipped");
+                assert(owner.recoveryHeld(id, token), "Discovery fenced the active empty writer");
+                for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+                assert(owner.recoveryFinish(id, token) === "finished", "Could not release the empty writer");
+                const retried = await eventually(async () => {
+                    const next = await discover(other);
+                    if (onlyCoordinationWarning(next)) return next;
+                    for (const session of next.sessions) other.recoveryRelease(session.id, session.lease);
+                    return null;
+                }, "retrying the released empty session");
+                for (const session of retried.sessions) other.recoveryRelease(session.id, session.lease);
+                assert(await readSessionRecord(id), "The empty session was deleted");
+            } finally {
+                owner.recoveryRelease(id);
+                other.recoveryRelease(id);
+                first.remove();
+                second.remove();
+                await removeSessionRecord(id);
+            }
+        });
+        await test("fencing a tombstone-only session rejects its suspended old writer", async () => {
+            const id = `empty-fence-${crypto.randomUUID()}`;
+            const first = await child();
+            const second = await child();
+            const owner = first.contentWindow.recoveryTestApi;
+            const other = second.contentWindow.recoveryTestApi;
+            try {
+                await owner.recoveryInitialize();
+                await other.recoveryInitialize();
+                const token = await owner.recoveryCreate(id);
+                await owner.recoveryPersist(id, "doc", new Uint8Array([111]));
+                owner.recoveryRemove(id, "doc");
+                await eventually(() => !JSON.parse(owner.recoveryStatus(id)).pending,
+                    "committing the deletion tombstone");
+                const tombstone = await readRecord(id, "doc");
+                assert(tombstone?.deleted && tombstone.revision > 1, "The deletion was not committed");
+                assert(owner.recoverySuspend(id) === "suspended", "Could not suspend the old writer");
+                const found = await discover(other);
+                assert(onlyCoordinationWarning(found) && !found.sessions.some(session => session.id === id),
+                    `The empty session was not fully inspected: ${found.warning}`);
+                assert(JSON.stringify(await readRecord(id, "doc")) === JSON.stringify(tombstone),
+                    "The fencing scan changed the tombstone or its revision");
+                assert((await readSessionRecord(id)).token !== token, "The old token was not fenced");
+                for (const session of found.sessions) other.recoveryRelease(session.id, session.lease);
+                await owner.recoveryResumeAll();
+                assert(!owner.recoveryHeld(id, token), "The old token resumed after the empty fence");
+                let rejected = false;
+                try { owner.recoveryQueue(id, "doc", new Uint8Array([112])); } catch (_) { rejected = true; }
+                assert(rejected, "The stale writer could resurrect the deleted snapshot");
+                assert(JSON.stringify(await readRecord(id, "doc")) === JSON.stringify(tombstone),
+                    "The stale writer changed the retained tombstone");
+            } finally {
+                owner.recoveryRelease(id);
+                other.recoveryRelease(id);
+                first.remove();
+                second.remove();
+                await removeFixture(id, ["doc"]);
             }
         });
         await test("an old version-1 client cannot reopen the upgraded recovery store for writing", async () => {
@@ -1480,7 +2391,8 @@ if (params.has("child")) {
             assert(await api.recoveryClaimLegacy(), "Could not claim legacy snapshots");
             assert(!(await other.recoveryClaimLegacy()), "Two tabs claimed legacy snapshots");
             assert(api.recoverySuspend(writer) === "suspended", "Could not suspend test page");
-            assert(await other.recoveryClaimLegacy(), "Released legacy snapshots were not claimable");
+            assert(await eventually(() => other.recoveryClaimLegacy(), "releasing the legacy lock"),
+                "Released legacy snapshots were not claimable");
             await api.recoveryResumeAll();
             assert(!api.recoveryHeld("legacy-localstorage"),
                 "A resumed page retained a legacy lease claimed by another tab");
@@ -2202,7 +3114,7 @@ if (params.has("child")) {
             : `All ${testsRun} browser recovery storage checks passed.`);
     } catch (error) {
         document.body.dataset.result = "fail";
-        write(`FAIL ${error.stack || error}`);
+        write(`FAIL ${error.name || "Error"}: ${error.message || error}\n${error.stack || ""}`);
         console.error(error);
     }
 }

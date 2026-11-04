@@ -24,6 +24,9 @@ const MAX_DISCOVERY_DOCUMENTS = 512;
 const MAX_DISCOVERY_DOCUMENTS_PER_SESSION = 128;
 const MAX_DISCOVERY_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const MAX_DISCOVERY_BYTES = 64 * 1024 * 1024;
+const DISCOVERY_SESSION_PAGE_SIZE = 64;
+const DISCOVERY_COORDINATION_WARNING =
+    "Browser recovery cannot exclude uncoordinated writes after verification. Editing remains gated until writer coordination is available.";
 // Rust strings cannot represent unpaired UTF-16 surrogates. Reject them
 // before crossing the JS/Wasm bridge rather than silently replacing them.
 const MAX_LEGACY_BRIDGE_CODE_UNITS = 32 * 1024 * 1024;
@@ -1207,6 +1210,17 @@ function abort(tx, failure, message) {
     try { tx.abort(); } catch (_) { /* Already aborted. */ }
 }
 
+function continueStartup(tx, failure, deadline, generation) {
+    try {
+        ensureStartup(deadline, generation);
+        return true;
+    } catch (error) {
+        failure.value = error;
+        try { tx.abort(); } catch (_) { /* Already inactive. */ }
+        return false;
+    }
+}
+
 function randomToken() {
     if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
     if (!globalThis.crypto?.getRandomValues) {
@@ -1350,9 +1364,32 @@ function validRecoveryKey(key) {
     return typeof key === "string" && /^[A-Za-z0-9_-]{1,180}$/.test(key);
 }
 
+const SESSION_FIELDS = new Set(["id", "token", "created", "manifest"]);
+const MANIFEST_FIELDS = new Set(["key", "revision"]);
+const RECORD_FIELDS = new Set([
+    "id", "session", "key", "revision", "deleted", "bytes", "discardIntent", "discardReceipt",
+]);
+
+function onlyKnownFields(value, fields) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    // IndexedDB structured clones retain enumerable own string properties.
+    // An unknown field could itself contain recoverable data.
+    for (const key in value) {
+        if (!Object.hasOwn(value, key) || !fields.has(key)) return false;
+    }
+    return true;
+}
+
+function validSessionRecord(row, id) {
+    return onlyKnownFields(row, SESSION_FIELDS) && row.id === id &&
+        typeof row.token === "string" && row.token.length > 0 &&
+        Number.isSafeInteger(row.created) && row.created >= 0 &&
+        Array.isArray(row.manifest);
+}
+
 function validManifest(manifest) {
     return Array.isArray(manifest) &&
-        manifest.every(entry => entry && validRecoveryKey(entry.key) &&
+        manifest.every(entry => onlyKnownFields(entry, MANIFEST_FIELDS) && validRecoveryKey(entry.key) &&
             Number.isSafeInteger(entry.revision) && entry.revision > 0) &&
         new Set(manifest.map(entry => entry.key)).size === manifest.length;
 }
@@ -1368,7 +1405,7 @@ function validDiscardProof(proof) {
 }
 
 function validRecord(record, session) {
-    return record && validRecoveryKey(record.key) &&
+    return onlyKnownFields(record, RECORD_FIELDS) && validRecoveryKey(record.key) &&
         record.id === docId(session, record.key) && record.session === session &&
         Number.isSafeInteger(record.revision) && record.revision > 0 &&
         typeof record.deleted === "boolean" &&
@@ -1387,7 +1424,10 @@ async function createSession(id, token, deadline) {
     await done;
 }
 
-async function claimSession(id, token, deadline, remainingDocuments, remainingBytes, allowEmptyFence) {
+async function claimSession(
+    id, token, emptyToken, deadline, generation, remainingDocuments, remainingBytes,
+    allowEmptyFence, allowPreview,
+) {
     const tx = transaction(["sessions", "documents"], "readwrite", deadline);
     const failure = { value: null };
     const done = completed(tx, failure, deadline);
@@ -1399,10 +1439,16 @@ async function claimSession(id, token, deadline, remainingDocuments, remainingBy
     let incomplete = false;
     let scanned = 0;
     let bytesRead = 0;
+    let fenced = false;
     request.onsuccess = () => {
+        if (!continueStartup(tx, failure, deadline, generation)) return;
         const row = request.result;
         // A tab may have completed cleanup after the initial session listing.
         if (!row) return;
+        if (!validSessionRecord(row, id)) {
+            records = [];
+            return;
+        }
         if (Array.isArray(row.manifest)) {
             manifest = row.manifest;
             // Validate at most the configured number of entries synchronously.
@@ -1411,15 +1457,19 @@ async function claimSession(id, token, deadline, remainingDocuments, remainingBy
         }
         records = [];
         const finishClaim = () => {
+            // An opaque manifest is not safe to claim. Oversized manifests
+            // remain preview-only; mutation paths reject them independently.
+            if (!manifestValid && manifest.length <= MAX_DISCOVERY_DOCUMENTS_PER_SESSION) return;
             const hasPreview = records.some(record => validRecord(record, id) && !record.deleted);
             const completeEmpty = allowEmptyFence && !incomplete && manifestValid && manifest.length === 0
-                && records.every(record => validRecord(record, id) && record.deleted);
+                && records.length === 0;
             // A claim returning a preview (or a fully checked empty session)
             // must fence late writers. An uninspectable session with no
             // preview stays gated and needs no metadata mutation at all.
             if (hasPreview || completeEmpty) {
-                row.token = token;
+                row.token = hasPreview ? token : emptyToken;
                 sessions.put(row);
+                fenced = hasPreview;
             }
         };
         // A cursor lets the event loop run between records and stops before
@@ -1428,18 +1478,26 @@ async function claimSession(id, token, deadline, remainingDocuments, remainingBy
         // byteLength can be inspected.
         const read = tx.objectStore("documents").index("session").openCursor(IDBKeyRange.only(id));
         read.onsuccess = () => {
+            if (!continueStartup(tx, failure, deadline, generation)) return;
             const cursor = read.result;
             if (!cursor) {
                 finishClaim();
                 return;
             }
-            if (scanned >= remainingDocuments || scanned >= MAX_DISCOVERY_DOCUMENTS_PER_SESSION) {
+            const record = cursor.value;
+            // Valid tombstones contain no snapshot bytes. They still have to
+            // be inspected, but must not consume the live-preview allowance.
+            if (validRecord(record, id) && record.deleted) {
+                cursor.continue();
+                return;
+            }
+            if (!allowPreview || scanned >= remainingDocuments ||
+                scanned >= MAX_DISCOVERY_DOCUMENTS_PER_SESSION) {
                 incomplete = true;
                 finishClaim();
                 return;
             }
             scanned++;
-            const record = cursor.value;
             const size = record?.bytes instanceof ArrayBuffer ? record.bytes.byteLength : 0;
             if (size > MAX_DISCOVERY_SNAPSHOT_BYTES || size > remainingBytes - bytesRead) {
                 incomplete = true;
@@ -1451,46 +1509,186 @@ async function claimSession(id, token, deadline, remainingDocuments, remainingBy
         };
     };
     await done;
-    return records ? { records, manifest, manifestValid, incomplete, scanned, bytesRead } : null;
+    return records ? { records, manifest, manifestValid, incomplete, scanned, bytesRead, fenced } : null;
 }
 
-// Session-index cursors alone cannot see a damaged document with a missing
-// session field (or a document whose session row disappeared). Audit the
-// primary store as well, or such an original could look like "no recovery".
-// IndexedDB may still materialize one oversized record before exposing its
-// length; the cursor stops as soon as the bounded audit cannot continue.
-async function auditRecoveryRecords(deadline, generation, knownSessions) {
-    const tx = transaction(["documents"], "readonly", deadline);
-    const done = completed(tx, { value: null }, deadline);
-    const request = tx.objectStore("documents").openCursor();
-    let scanned = 0;
+// Both stores are read in one transaction. In particular, a later atomic
+// verification cannot overlook a write inserted behind a paginated session
+// cursor. Tombstones and empty sessions are streamed without being retained
+// in memory; the shared deadline still bounds the work of the entire scan.
+// IndexedDB can materialize one oversized legacy record before its size is
+// available, and a synchronous byte comparison cannot be preempted.
+async function auditRecoveryRecords(deadline, generation, verification = null) {
+    const tx = transaction(["sessions", "documents"], "readonly", deadline);
+    const failure = { value: null };
+    const done = completed(tx, failure, deadline);
+    const sessions = tx.objectStore("sessions");
+    const documents = tx.objectStore("documents");
+    const expected = new Map();
+    const claims = new Map((verification?.sessions || []).map(session => [session.id, session]));
+    const seenSessions = new Set();
+    const seenDocuments = new Set();
+    const invalidClaims = new Set();
+    const livePerSession = new Map();
+    let liveSessions = 0;
+    let liveDocuments = 0;
     let bytesRead = 0;
     let incomplete = false;
     let malformed = false;
+    let changed = false;
+    let exhausted = false;
+    let cachedOwner = null;
+    let cachedOwnerExists = false;
+
+    const ownWriter = (id, row) => {
+        const state = leases.get(id);
+        return !!state && state.kind === "writer" && state.active && !!state.lock
+            && !state.lost && (!row || row.token === state.token);
+    };
+    const readDocuments = () => {
+        const request = documents.openCursor();
+        request.onsuccess = () => {
+            if (!continueStartup(tx, failure, deadline, generation)) return;
+            const cursor = request.result;
+            if (!cursor) {
+                exhausted = true;
+                return;
+            }
+            const record = cursor.value;
+            const size = record?.bytes instanceof ArrayBuffer ? record.bytes.byteLength : 0;
+            if (!validRecoveryKey(record?.session) || !validRecord(record, record.session)) {
+                malformed = true;
+                if (size > MAX_DISCOVERY_SNAPSHOT_BYTES || size > MAX_DISCOVERY_BYTES - bytesRead) {
+                    incomplete = true;
+                    return;
+                }
+                bytesRead += size;
+                cursor.continue();
+                return;
+            }
+            if (record.deleted) {
+                if (cachedOwner === record.session) {
+                    if (!cachedOwnerExists) malformed = true;
+                    cursor.continue();
+                    return;
+                }
+                const owner = sessions.getKey(record.session);
+                owner.onsuccess = () => {
+                    if (!continueStartup(tx, failure, deadline, generation)) return;
+                    cachedOwner = record.session;
+                    cachedOwnerExists = owner.result !== undefined;
+                    if (!cachedOwnerExists) malformed = true;
+                    cursor.continue();
+                };
+                return;
+            }
+            liveDocuments++;
+            const count = (livePerSession.get(record.session) || 0) + 1;
+            livePerSession.set(record.session, count);
+            if (count > MAX_DISCOVERY_DOCUMENTS_PER_SESSION) incomplete = true;
+            if (liveDocuments > MAX_DISCOVERY_DOCUMENTS ||
+                size > MAX_DISCOVERY_SNAPSHOT_BYTES || size > MAX_DISCOVERY_BYTES - bytesRead) {
+                incomplete = true;
+                return;
+            }
+            bytesRead += size;
+            const revision = expected.get(record.id);
+            if (revision !== record.revision) {
+                malformed = true;
+            } else {
+                expected.delete(record.id);
+            }
+            if (verification) {
+                const claim = claims.get(record.session);
+                if (claim) {
+                    const preview = claim.docs.find(doc => doc.key === record.key);
+                    if (!preview) {
+                        changed = true;
+                    } else if (preview.revision !== record.revision ||
+                        preview.pendingDiscard !== Object.hasOwn(record, "discardIntent") ||
+                        !matchesExpectedSnapshot(record, preview.bytes)) {
+                        invalidClaims.add(record.session);
+                        changed = true;
+                    } else {
+                        seenDocuments.add(record.id);
+                    }
+                } else if (!ownWriter(record.session)) {
+                    changed = true;
+                }
+            }
+            cursor.continue();
+        };
+    };
+    const request = sessions.openCursor();
     request.onsuccess = () => {
+        if (!continueStartup(tx, failure, deadline, generation)) return;
         const cursor = request.result;
-        if (!cursor) return;
-        if (scanned >= MAX_DISCOVERY_DOCUMENTS) {
-            incomplete = true;
+        if (!cursor) {
+            readDocuments();
             return;
         }
-        scanned++;
-        const record = cursor.value;
-        const size = record?.bytes instanceof ArrayBuffer ? record.bytes.byteLength : 0;
-        if (size > MAX_DISCOVERY_SNAPSHOT_BYTES || size > MAX_DISCOVERY_BYTES - bytesRead) {
-            incomplete = true;
-            return;
-        }
-        bytesRead += size;
-        if (!validRecoveryKey(record?.session) || !knownSessions.has(record.session)
-            || !validRecord(record, record.session)) {
+        const id = cursor.primaryKey;
+        const row = cursor.value;
+        let invalidSession = false;
+        if (!validRecoveryKey(id) || id === LEGACY_LEASE_ID) {
             malformed = true;
+            invalidSession = true;
+        } else if (!validSessionRecord(row, id)) {
+            malformed = true;
+            invalidSession = true;
+        } else {
+            if (row.manifest.length > 0 && ++liveSessions > MAX_DISCOVERY_SESSIONS) {
+                incomplete = true;
+            }
+            if (row.manifest.length > MAX_DISCOVERY_DOCUMENTS_PER_SESSION) {
+                incomplete = true;
+            } else if (!validManifest(row.manifest)) {
+                malformed = true;
+                invalidSession = true;
+            } else {
+                for (const entry of row.manifest) {
+                    if (expected.size >= MAX_DISCOVERY_DOCUMENTS) {
+                        incomplete = true;
+                        break;
+                    }
+                    expected.set(docId(id, entry.key), entry.revision);
+                }
+            }
+        }
+        if (verification) {
+            const claim = claims.get(id);
+            if (claim) {
+                seenSessions.add(id);
+                const state = leases.get(id);
+                if (invalidSession || row?.token !== claim.lease || !state || state.token !== claim.lease ||
+                    !state.active || !state.lock || state.lost) {
+                    invalidClaims.add(id);
+                    changed = true;
+                }
+            } else if (!ownWriter(id, row) && row?.token !== verification.emptyToken) {
+                changed = true;
+            }
         }
         cursor.continue();
     };
     await done;
     ensureStartup(deadline, generation);
-    return { incomplete, malformed };
+    if (verification) {
+        for (const claim of claims.values()) {
+            if (!seenSessions.has(claim.id) ||
+                claim.docs.some(doc => !seenDocuments.has(docId(claim.id, doc.key)))) {
+                invalidClaims.add(claim.id);
+                changed = true;
+            }
+        }
+    }
+    return {
+        incomplete,
+        malformed,
+        missing: exhausted && expected.size > 0,
+        changed,
+        invalidClaims,
+    };
 }
 
 async function checkSession(state, deadline) {
@@ -1522,7 +1720,7 @@ async function commit(state, op) {
             return;
         }
         const row = session.result;
-        if (!validManifest(row.manifest)) {
+        if (!validSessionRecord(row, state.id) || !validManifest(row.manifest)) {
             abort(tx, failure, "Recovery metadata is invalid or was evicted. Save or download your work.");
             return;
         }
@@ -1531,13 +1729,9 @@ async function commit(state, op) {
         current.onsuccess = () => {
             const record = current.result;
             const listed = row.manifest.find(entry => entry.key === op.key);
-            const validRecord = !record || (
-                record.id === id && record.session === state.id && record.key === op.key &&
-                Number.isSafeInteger(record.revision) && record.revision > 0 &&
-                typeof record.deleted === "boolean" &&
-                (record.deleted ? record.bytes === null : record.bytes instanceof ArrayBuffer)
-            );
-            if (!validRecord || (listed && (!record || record.deleted || listed.revision !== record.revision)) ||
+            const recordValid = !record || (validRecord(record, state.id) &&
+                !Object.hasOwn(record, "discardIntent") && !Object.hasOwn(record, "discardReceipt"));
+            if (!recordValid || (listed && (!record || record.deleted || listed.revision !== record.revision)) ||
                 (record && !record.deleted && !listed)) {
                 abort(tx, failure, "A committed recovery snapshot is missing or inconsistent. Save or download your work.");
                 return;
@@ -1546,7 +1740,15 @@ async function commit(state, op) {
                 abort(tx, failure, "A newer recovery revision already exists.");
                 return;
             }
-            if (record && record.revision === op.revision) return;
+            if (record && record.revision === op.revision) {
+                const identical = op.kind === "delete"
+                    ? record.deleted
+                    : !record.deleted && matchesExpectedSnapshot(record, new Uint8Array(op.bytes));
+                if (!identical) {
+                    abort(tx, failure, "A different recovery snapshot already has this revision.");
+                }
+                return;
+            }
             documents.put({
                 id,
                 session: state.id,
@@ -1758,122 +1960,158 @@ export async function recoveryClaimLegacy(startupDeadline, attemptGeneration = s
     }
 }
 
-// A bounded audit must report an incomplete result rather than trust a saved
-// cursor: same-origin writers can change records without advancing a checkpoint.
+async function discoverySessionPage(after, deadline, generation) {
+    const tx = transaction(["sessions"], "readonly", deadline);
+    const failure = { value: null };
+    const done = completed(tx, failure, deadline);
+    const range = after === undefined ? undefined : IDBKeyRange.lowerBound(after, true);
+    const request = tx.objectStore("sessions").getAllKeys(range, DISCOVERY_SESSION_PAGE_SIZE);
+    let keys = [];
+    request.onsuccess = () => {
+        if (continueStartup(tx, failure, deadline, generation)) keys = request.result;
+    };
+    await done;
+    ensureStartup(deadline, generation);
+    return keys;
+}
+
+// Pagination is only a way to acquire locks in bounded batches. It is not a
+// resumable proof: an independent writer need not update a checkpoint. The
+// final two-store transaction below rechecks the entire current snapshot.
 export async function recoveryDiscover(startupDeadline, attemptGeneration = startupGeneration) {
     const deadline = deadlineOrDefault(startupDeadline);
     const generation = attemptGeneration;
     ensureStartup(deadline, generation);
-    const tx = transaction(["sessions"], "readonly", deadline);
-    const failure = { value: null };
-    const done = completed(tx, failure, deadline);
-    const request = tx.objectStore("sessions").getAllKeys(undefined, MAX_DISCOVERY_SESSIONS + 1);
-    let sessions = [];
-    request.onsuccess = () => { sessions = request.result; };
-    await done;
-    ensureStartup(deadline, generation);
-    const warnings = new Set();
-    if (sessions.length > MAX_DISCOVERY_SESSIONS) {
-        warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
-        sessions = sessions.slice(0, MAX_DISCOVERY_SESSIONS);
-    }
-    const audit = await auditRecoveryRecords(deadline, generation, new Set(sessions));
+    // A consistent snapshot alone cannot prevent an independent same-origin
+    // writer from committing immediately afterward. Do not let the draft's
+    // application adapter treat the result as safe to edit.
+    const warnings = new Set([DISCOVERY_COORDINATION_WARNING]);
+    const audit = await auditRecoveryRecords(deadline, generation);
     if (audit.incomplete) {
         warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
     }
     if (audit.malformed) {
         warnings.add("Some browser recovery records are unindexed, malformed, or missing their session. The originals were retained for rescue.");
     }
-    return claimListedSessions(sessions, deadline, generation, warnings, audit);
+    if (audit.missing) {
+        warnings.add("Some browser recovery snapshots are missing, malformed, or were evicted. Remaining snapshots were retained.");
+    }
+    return claimListedSessions(deadline, generation, warnings, audit);
 }
 
 // Each claimed session changes its fencing token before returning bytes, so
 // an old page cannot subsequently mutate that source.
-async function claimListedSessions(sessions, deadline, generation, warnings, audit) {
-    const result = [];
+async function claimListedSessions(deadline, generation, warnings, audit) {
+    let result = [];
     let scanned = 0;
     let bytesRead = 0;
     const claimed = [];
+    const emptyToken = randomToken();
+    let allowEmptyFence = !audit.incomplete && !audit.malformed && !audit.missing;
+    let after;
     try {
-        for (const id of sessions) {
+        for (;;) {
             ensureStartup(deadline, generation);
-            if (!validRecoveryKey(id) || id === LEGACY_LEASE_ID) {
-                warnings.add("Some browser recovery metadata is invalid. The original data was retained.");
-                continue;
-            }
-            const existing = leases.get(id);
-            if (existing) {
-                if (existing.kind !== "writer" || !existing.active || !existing.lock || existing.lost) {
-                    // A previous attempt can still hold an orphan while its
-                    // stale asynchronous result is being dropped. Skipping it
-                    // as if discovery were complete would un-gate editing
-                    // without returning that snapshot to the application.
-                    warnings.add("Some browser recovery claims are still owned by an earlier attempt. Retry after ownership is resolved.");
-                }
-                continue;
-            }
-            if (scanned >= MAX_DISCOVERY_DOCUMENTS) {
-                warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
-                break;
-            }
-            const lock = await tryStartupLock(id, deadline, generation);
-            if (!lock) {
-                warnings.add("Some browser recovery snapshots are in use in another tab. Close that tab and retry; the originals were retained.");
-                continue;
-            }
-            let token;
-            let claimedSession;
-            try {
-                token = randomToken();
-                claimedSession = await claimSession(
-                    id, token, deadline,
-                    MAX_DISCOVERY_DOCUMENTS - scanned,
-                    MAX_DISCOVERY_BYTES - bytesRead,
-                    !audit.incomplete && !audit.malformed,
-                );
+            const page = await discoverySessionPage(after, deadline, generation);
+            if (page.length === 0) break;
+            after = page[page.length - 1];
+            for (const id of page) {
                 ensureStartup(deadline, generation);
-            } catch (error) {
-                startupLocks.delete(lock);
-                releaseLock(lock);
-                throw error;
-            }
-            if (!claimedSession) {
-                startupLocks.delete(lock);
-                releaseLock(lock);
-                continue;
-            }
-            const state = newLease(id, token, lock, "orphan");
-            adoptStartupLock(state);
-            claimed.push([id, token]);
-            const { records, manifest, manifestValid, incomplete } = claimedSession;
-            scanned += claimedSession.scanned;
-            bytesRead += claimedSession.bytesRead;
-            if (incomplete) {
-                warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
-            }
-            const docs = records.filter(record => validRecord(record, id) && !record.deleted).map(record => ({
-                key: record.key,
-                revision: record.revision,
-                bytes: new Uint8Array(record.bytes),
-                pendingDiscard: Object.hasOwn(record, "discardIntent"),
-            }));
-            const malformed = records.some(record => !validRecord(record, id));
-            const missing = incomplete || !manifestValid || malformed || manifest.some(entry =>
-                !records.some(record => validRecord(record, id) && record.key === entry.key &&
-                    !record.deleted && record.revision === entry.revision)) ||
-                records.some(record => validRecord(record, id) && !record.deleted &&
-                    !manifest.some(entry => entry.key === record.key && entry.revision === record.revision));
-            if (missing) {
-                warnings.add("Some browser recovery snapshots are missing, malformed, or were evicted. Remaining snapshots were retained.");
-            }
-            if (docs.length === 0) {
-                // Discovery and retry never delete even empty/tombstoned or
-                // damaged records. Cleanup needs a separate safe policy.
-                recoveryRelease(id, token);
-            } else {
-                result.push({ id, lease: token, docs });
+                if (!validRecoveryKey(id) || id === LEGACY_LEASE_ID) {
+                    warnings.add("Some browser recovery metadata is invalid. The original data was retained.");
+                    continue;
+                }
+                const existing = leases.get(id);
+                if (existing) {
+                    if (existing.kind !== "writer" || !existing.active || !existing.lock || existing.lost) {
+                        // A previous attempt can still hold an orphan while
+                        // its stale asynchronous result is being dropped.
+                        warnings.add("Some browser recovery claims are still owned by an earlier attempt. Retry after ownership is resolved.");
+                    }
+                    continue;
+                }
+                const lock = await tryStartupLock(id, deadline, generation);
+                if (!lock) {
+                    warnings.add("Some browser recovery snapshots are in use in another tab. Close that tab and retry; the originals were retained.");
+                    continue;
+                }
+                let token;
+                let claimedSession;
+                try {
+                    token = randomToken();
+                    claimedSession = await claimSession(
+                        id, token, emptyToken, deadline, generation,
+                        MAX_DISCOVERY_DOCUMENTS - scanned,
+                        MAX_DISCOVERY_BYTES - bytesRead,
+                        allowEmptyFence,
+                        result.length < MAX_DISCOVERY_SESSIONS && scanned < MAX_DISCOVERY_DOCUMENTS,
+                    );
+                    ensureStartup(deadline, generation);
+                } catch (error) {
+                    startupLocks.delete(lock);
+                    releaseLock(lock);
+                    throw error;
+                }
+                if (!claimedSession) {
+                    warnings.add("Browser recovery changed while it was being inspected. Retry; original snapshots were retained.");
+                    startupLocks.delete(lock);
+                    releaseLock(lock);
+                    continue;
+                }
+                const { records, manifest, manifestValid, incomplete } = claimedSession;
+                scanned += claimedSession.scanned;
+                bytesRead += claimedSession.bytesRead;
+                if (incomplete) {
+                    allowEmptyFence = false;
+                    warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
+                }
+                const docs = records.filter(record => validRecord(record, id) && !record.deleted).map(record => ({
+                    key: record.key,
+                    revision: record.revision,
+                    bytes: new Uint8Array(record.bytes),
+                    pendingDiscard: Object.hasOwn(record, "discardIntent"),
+                }));
+                const malformed = records.some(record => !validRecord(record, id));
+                const missing = incomplete || !manifestValid || malformed || manifest.some(entry =>
+                    !records.some(record => validRecord(record, id) && record.key === entry.key &&
+                        !record.deleted && record.revision === entry.revision)) ||
+                    records.some(record => validRecord(record, id) && !record.deleted &&
+                        !manifest.some(entry => entry.key === record.key && entry.revision === record.revision));
+                if (missing) {
+                    allowEmptyFence = false;
+                    warnings.add("Some browser recovery snapshots are missing, malformed, or were evicted. Remaining snapshots were retained.");
+                }
+                if (claimedSession.fenced && docs.length > 0) {
+                    const state = newLease(id, token, lock, "orphan");
+                    adoptStartupLock(state);
+                    claimed.push([id, token]);
+                    result.push({ id, lease: token, docs });
+                } else {
+                    // Empty fences invalidate old writers but never remove
+                    // session records, tombstones, receipts, or snapshots.
+                    startupLocks.delete(lock);
+                    releaseLock(lock);
+                }
             }
         }
+        const finalAudit = await auditRecoveryRecords(deadline, generation, { sessions: result, emptyToken });
+        if (finalAudit.incomplete) {
+            warnings.add("Browser recovery discovery reached its safe preview limit. Some snapshots remain uninspected and were retained.");
+        }
+        if (finalAudit.malformed) {
+            warnings.add("Some browser recovery records are unindexed, malformed, or missing their session. The originals were retained for rescue.");
+        }
+        if (finalAudit.missing) {
+            warnings.add("Some browser recovery snapshots are missing, malformed, or were evicted. Remaining snapshots were retained.");
+        }
+        if (finalAudit.changed) {
+            warnings.add("Browser recovery changed while it was being inspected. Retry; original snapshots were retained.");
+        }
+        result = result.filter(session => {
+            if (!finalAudit.invalidClaims.has(session.id)) return true;
+            recoveryRelease(session.id, session.lease);
+            return false;
+        });
         ensureStartup(deadline, generation);
         return { sessions: result, warning: Array.from(warnings).join(" ") };
     } catch (error) {
@@ -2239,7 +2477,7 @@ export async function recoveryDiscard(id, key, revision, expectedToken, expected
             return;
         }
         const row = session.result;
-        if (!Array.isArray(row.manifest) ||
+        if (!validSessionRecord(row, id) ||
             row.manifest.length > MAX_DISCOVERY_DOCUMENTS_PER_SESSION ||
             !validManifest(row.manifest) ||
             !row.manifest.some(entry => entry.key === key && entry.revision === revision)) {
@@ -2294,7 +2532,7 @@ async function inspectDiscard(id, key, revision, expectedToken, expectedBytes, a
             return;
         }
         const row = session.result;
-        if (!Array.isArray(row.manifest)
+        if (!validSessionRecord(row, id)
             || row.manifest.length > MAX_DISCOVERY_DOCUMENTS_PER_SESSION
             || !validManifest(row.manifest)) {
             failure.value = unknownOutcome("Recovery metadata cannot verify the discard. The cached copy was retained.");
