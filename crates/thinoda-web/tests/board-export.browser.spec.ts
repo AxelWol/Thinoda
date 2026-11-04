@@ -46,6 +46,7 @@ type BoardSheet = {
     zones: {
         name: string;
         keep_empty?: boolean;
+        color?: string;
         frame: BoardRect;
     }[];
     canvas: {
@@ -222,7 +223,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
     expect(downloads).toEqual(["f6-after-cancel.thinoda", "f6-rootless-board.svg"]);
 
     const source = (await readFile(await download.path())).toString("utf8");
-    const svg = await page.evaluate(({ source, rootId, stickyId, shapeId, connectorId, inkId }) => {
+    const svg = await page.evaluate(({ source, rootId, stickyId, shapeId, connectorId, inkId, frameStroke }) => {
         const doc = new DOMParser().parseFromString(source, "image/svg+xml");
         const root = doc.documentElement;
         const group = (id: number) => doc.getElementById(`object-${id}`);
@@ -230,7 +231,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
             ? Object.fromEntries(names.map((name) => [name, element.getAttribute(name)]))
             : null;
         const frameRect = Array.from(doc.querySelectorAll("rect"))
-            .find((rect) => rect.getAttribute("stroke") === "#5D7A91") ?? null;
+            .find((rect) => rect.getAttribute("stroke")?.toUpperCase() === frameStroke) ?? null;
         return {
             parseError: doc.querySelector("parsererror")?.textContent ?? null,
             name: root.localName,
@@ -255,6 +256,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
         shapeId: shape.id,
         connectorId: connector.id,
         inkId: ink.id,
+        frameStroke: frameStrokeHex(frame),
     });
 
     expect(svg.parseError).toBeNull();
@@ -366,7 +368,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
     const png = await readFile(pngPath);
     await testInfo.attach("downloaded PNG", { path: pngPath, contentType: "image/png" });
     expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    const rendered = await inspectRasterScene(page, png, frame.frame, ink.kind.ink!.points, "png");
+    const rendered = await inspectRasterScene(page, png, frame, ink.kind.ink!.points, "png");
     expect(rendered.warnings).toHaveLength(2);
     expect(rendered.frame.count).toBeGreaterThan(500);
     expect(rendered.labelPixels.every((count) => count > 10)).toBe(true);
@@ -391,7 +393,7 @@ test("mixed rootless board SVG, PNG and JPEG exports require consent and preserv
     const jpeg = await readFile(jpegPath);
     await testInfo.attach("downloaded JPEG", { path: jpegPath, contentType: "image/jpeg" });
     expect(jpeg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
-    const renderedJpeg = await inspectRasterScene(page, jpeg, frame.frame, ink.kind.ink!.points, "jpeg");
+    const renderedJpeg = await inspectRasterScene(page, jpeg, frame, ink.kind.ink!.points, "jpeg");
     expect(renderedJpeg.transparentPixels).toBe(0);
     expect(renderedJpeg.warnings).toHaveLength(2);
     expect(renderedJpeg.frame.count).toBeGreaterThan(500);
@@ -465,11 +467,13 @@ function inspectVectorPdf(bytes: Buffer) {
 async function inspectRasterScene(
     page: Page,
     screenshot: Buffer,
-    frame: BoardRect,
+    zone: { frame: BoardRect; color?: string },
     points: { x: number; y: number }[],
     rasterFormat: "viewer" | "png" | "jpeg" = "viewer",
 ) {
-    return page.evaluate(async ({ screenshot, frame, points, rasterFormat }) => {
+    const frame = zone.frame;
+    const tint = frameTint(zone);
+    return page.evaluate(async ({ screenshot, frame, points, rasterFormat, tint }) => {
         const image = new Image();
         image.src = `data:image/${rasterFormat === "jpeg" ? "jpeg" : "png"};base64,${screenshot}`;
         await image.decode();
@@ -495,30 +499,30 @@ async function inspectRasterScene(
         const columns = Array.from({ length: canvas.width }, emptyBounds);
         let transparentPixels = 0;
         const jpegExport = rasterFormat === "jpeg";
-        const frameRows = jpegExport ? new Uint32Array(canvas.height) : null;
-        const frameColumns = jpegExport ? new Uint32Array(canvas.width) : null;
+        const frameRows = new Uint32Array(canvas.height);
+        const frameColumns = new Uint32Array(canvas.width);
         const near = (value: number, expected: number) =>
             Math.abs(value - expected) <= (jpegExport ? 8 : 0);
+        // Rasterizers may round the translucent frame tint one unit differently.
+        const nearTint = (value: number, expected: number) =>
+            Math.abs(value - expected) <= (jpegExport ? 8 : 1);
         for (let y = 0; y < canvas.height; y++) {
             for (let x = 0; x < canvas.width; x++) {
                 const i = (y * canvas.width + x) * 4;
                 const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
                 if (pixels[i + 3] !== 255) transparentPixels++;
                 if (near(r, 255) && near(g, 255) && near(b, 255)) include(paper, x, y);
-                // PNG compositing can round green one unit above the PDF viewer.
-                if (near(r, 242) && near(b, 246)
-                    && (near(g, 244) || (rasterFormat === "png" && g === 245))) {
+                if (nearTint(r, tint[0]) && nearTint(g, tint[1]) && nearTint(b, tint[2])) {
                     include(framePixels, x, y);
-                    if (frameRows && frameColumns) {
-                        frameRows[y]++;
-                        frameColumns[x]++;
-                    }
+                    frameRows[y]++;
+                    frameColumns[x]++;
                 }
                 if (near(r, 255) && near(g, 237) && near(b, 213)) include(columns[x], x, y);
             }
         }
-        if (frameRows && frameColumns) {
-            // Compression creates isolated frame-colored pixels outside the frame.
+        if (framePixels.count) {
+            // Compression and antialiased strokes in the frame's hue create
+            // isolated tint-coloured pixels outside the frame.
             const denseExtent = (counts: Uint32Array) => {
                 const cutoff = Math.max(1, Math.floor(counts.reduce((max, value) => Math.max(max, value), 0) * 0.6));
                 let first = -1;
@@ -617,16 +621,29 @@ async function inspectRasterScene(
             paper, frame: framePixels, warnings, labelPixels, connectorPixels,
             connectorHits, inkHits, transparentPixels,
         };
-    }, { screenshot: screenshot.toString("base64"), frame, points, rasterFormat });
+    }, { screenshot: screenshot.toString("base64"), frame, points, rasterFormat, tint });
+}
+
+function frameStrokeHex(zone: { color?: string }) {
+    return (zone.color ?? "#5D7A91").slice(0, 7).toUpperCase();
+}
+
+// Exported frames use their stroke colour at alpha 0x14 over the white paper.
+function frameTint(zone: { color?: string }): [number, number, number] {
+    const hex = frameStrokeHex(zone);
+    return [1, 3, 5].map((i) => {
+        const channel = parseInt(hex.slice(i, i + 2), 16);
+        return Math.round(255 - (255 - channel) * 0x14 / 255);
+    }) as [number, number, number];
 }
 
 async function renderedPdfPixels(
     page: Page,
     viewer: Page,
-    frame: BoardRect,
+    zone: { frame: BoardRect; color?: string },
     points: { x: number; y: number }[],
 ) {
-    return inspectRasterScene(page, await viewer.screenshot(), frame, points);
+    return inspectRasterScene(page, await viewer.screenshot(), zone, points);
 }
 
 test.describe("PDF export", () => {
@@ -738,10 +755,10 @@ test.describe("PDF export", () => {
 
         await withPdfViewer(bytes, async (viewer) => {
             await expect.poll(async () => {
-                const image = await renderedPdfPixels(page, viewer, frame.frame, ink.kind.ink!.points);
+                const image = await renderedPdfPixels(page, viewer, frame, ink.kind.ink!.points);
                 return image.warnings.length === 2 && image.frame.count > 500;
             }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe(true);
-            const image = await renderedPdfPixels(page, viewer, frame.frame, ink.kind.ink.points);
+            const image = await renderedPdfPixels(page, viewer, frame, ink.kind.ink.points);
             expect(image.paper.count).toBeGreaterThan(1_000);
             expect(image.warnings).toHaveLength(2);
             expect(image.labelPixels.every((count) => count > 10)).toBe(true);

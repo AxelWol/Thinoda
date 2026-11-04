@@ -29,7 +29,9 @@ fn right_click(h: &mut Harness<'_, ThinodaApp>, pos: egui::Pos2) {
 }
 
 fn assert_popups_fit(h: &Harness<'_, ThinodaApp>) {
-    let viewport = h.ctx.content_rect().expand(0.5 / h.ctx.pixels_per_point());
+    let ppp = h.ctx.pixels_per_point();
+    // egui snaps popups to physical pixels; allow one pixel of rounding slack.
+    let viewport = h.ctx.content_rect().expand(1.0 / ppp);
     h.ctx.memory(|memory| {
         for layer in memory
             .layer_ids()
@@ -100,6 +102,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                     "Select",
                     "Board",
                     "Arrange",
+                    "Tools",
                     "New Sheet from Topic",
                 ] {
                     reveal(&mut h, t(label));
@@ -123,8 +126,14 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
                 reveal(&mut h, t("Board"));
                 h.get_by_role_and_label(Role::Button, t("Board")).click();
                 h.run_steps(3);
-                reveal(&mut h, t("Select tool"));
                 reveal(&mut h, t("Distribute Vertical Centers"));
+                h.key_press(egui::Key::Escape);
+                h.run_steps(3);
+                right_click(&mut h, pos);
+                reveal(&mut h, t("Tools"));
+                h.get_by_role_and_label(Role::Button, t("Tools")).click();
+                h.run_steps(3);
+                reveal(&mut h, t("Select tool"));
                 h.key_press(egui::Key::Escape);
                 h.run_steps(3);
                 right_click(&mut h, pos);
@@ -237,7 +246,7 @@ fn context_actions_fit_short_localized_windows_without_losing_commands() {
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
     right_click(&mut h, pos);
-    menu_action(&h, t("Board")).click();
+    menu_action(&h, t("Tools")).click();
     h.run_steps(3);
     reveal(&mut h, t("Sticky note"));
     menu_action(&h, t("Sticky note")).click();
