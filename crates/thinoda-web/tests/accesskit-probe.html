@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Isolated AccessKit feasibility probe</title>
+    <link data-trunk rel="rust" href="../Cargo.toml">
+    <style>
+        body { font-family: sans-serif; }
+        canvas { display: block; width: 640px; height: 240px; }
+    </style>
+</head>
+<body>
+    <h1>Isolated AccessKit feasibility probe</h1>
+    <p>This synthetic test is not Thinoda and does not provide editor accessibility.</p>
+    <canvas id="probe-canvas" tabindex="0"></canvas>
+    <button id="probe-action" type="button" hidden disabled></button>
+    <div id="probe-debug" aria-hidden="true"></div>
+</body>
+</html>

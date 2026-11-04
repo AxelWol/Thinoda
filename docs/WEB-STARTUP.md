@@ -278,6 +278,55 @@ Browser recovery warnings additionally have localized live-alert regions, but
 these do not expose the editor controls and do not replace real screen-reader
 testing.
 
+#### Isolated AccessKit feasibility probe
+
+`crates/thinoda-web/examples/accesskit_probe.rs` and the accompanying test-only
+HTML are a separate synthetic eframe app, not an adapter installed in Thinoda.
+The normal web entry point and production shell do not load them. The probe
+allows only one nominated button and three fixed synthetic labels; it never
+mounts a document. Its egui plugin reads a completed AccessKit tree in
+`output_hook`, mirrors that button as a native DOM button, and sends a Click
+request back through `input_hook`. The button remains hidden and disabled until
+the expected node is present and the click listener is installed. Disabled,
+hidden, mismatched and unrecognized nodes cannot authorize actions; detaching
+the test button revokes queued clicks. Queued actions are bounded and delivered
+at most one per frame because egui coalesces same-frame button clicks.
+
+On Windows, isolated Playwright tests passed in headless Chromium, Firefox and
+WebKit: the synthetic name and disabled state followed egui, pointer/Enter/Space
+activation reached egui, and two rapid activations were delivered on separate
+frames. Chromium's accessibility tree also exposed the button and its disabled
+state. These tests programmatically focus the DOM button; they do **not** show
+that a keyboard or screen reader can navigate the application. In all three
+engines, three Tab presses from the canvas did not reach the separate button:
+the existing eframe web backend consumes Tab for egui's own focus navigation.
+When the button is focused, eframe reports the canvas/text-agent host as
+unfocused. In all three engines, a rapid sequence of synthetic pointer events
+returned to the same canvas position after a DOM-button activation, selected a
+word and replaced it on subsequent input. A deterministic egui test reproduces
+the cause: the intervening AccessKit click does not interrupt egui's pointer
+double-click sequence. This does not establish how often physical input reaches
+that timing, but it is a data-loss hazard to resolve. The separate
+text-resumption check deliberately waits past that interval; it is not evidence
+that selection or IME ownership is solved.
+
+The proof deliberately does not implement a general semantic tree, DOM order or
+geometry, focus synchronization, modal isolation, text selection/composition,
+localized names, board nodes, or stale-ID and hidden-ancestor handling. It also
+does not establish performance, mobile behavior or real screen-reader support.
+The bounded queue can reject excess activations. These are blockers to exposing
+the experiment in the editor, not completed accessibility gates.
+
+From the repository root, with the locked `wasm-bindgen` version and Playwright
+browsers installed, the focused checks can be reproduced on Windows with:
+
+```powershell
+cargo test --locked --package thinoda-web --example accesskit_probe
+trunk build --config crates\thinoda-web\tests\accesskit-probe.Trunk.toml --offline --locked --example accesskit_probe --dist ..\..\..\target\accesskit-probe accesskit-probe.html
+$env:THINODA_PROBE_BROWSER = "chromium" # or "firefox" / "webkit"
+node crates\thinoda-web\node_modules\@playwright\test\cli.js test --config crates\thinoda-web\tests\accesskit-probe.playwright.config.cjs
+```
+
 Browser **Auto** language previously always resolved to English because the
 native locale provider did not read the browser's language. It now uses the
 browser preference while preserving explicit Settings choices. The document
